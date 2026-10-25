@@ -21,9 +21,10 @@
     }
   ],
   "vars": {
-    // claude-haiku-5-5 is about 40 times cheaper and faster, see docs/SETUP.md.
+    // See docs/SETUP.md for what each call costs.
     "MERGE_MODEL": "claude-opus-5-5",
-    "DESCRIBE_MODEL": "claude-opus-5-5"
+    "DESCRIBE_MODEL": "claude-haiku-5-5",
+    "SPELL_MODEL": "claude-opus-5-5"
   },
   "observability": { "enabled": true }
 }

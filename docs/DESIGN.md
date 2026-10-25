@@ -24,14 +24,36 @@ Descriptions are generated separately and are never fed back into merges, so ric
 
 If drift still shows up in play, the next lever is to show the model a short list of existing names to reuse, not hidden stats.
 
-## Spell format (proposal for v1, not built yet)
+## Spell format (v1)
 
-A spell is generated once, on demand, from its name and description, and stored like recipes. Three parts:
+Types, limits and the verb list live in `shared/spell.ts`. The same list is pasted into Claude's prompt, so the engine and the prompt cannot disagree. A spell is designed once by `SPELL_MODEL` from its name, recipe and grimoire entry, sanitized (every number clamped, every unknown value replaced by a safe default), then stored in D1. Only the admin can force a redesign.
 
-1. **Incantation**: the magic circle drawn before the cast. Parameters, not pixels: rings, symmetry, rune set, rotation speed, colours.
-2. **Animation**: one to three phases (charge, travel, release, linger). Each phase is a set of particle emitters with shape, motion, colours, gravity, lifetime and trail.
-3. **Impact**: a list of effects on the world. Each effect is a verb applied to a target in an area for a duration.
+Three parts:
 
-Rule of thumb: restrict the verbs, not the outcomes. The world exposes generic physics (heat, wetness, velocity, health, mood, size, material) and the spell spec combines verbs on them. Fire on a wet tile makes steam because of the world's rules, not because the spell says so. That is how Noita and Powder Toy get emergent results from a small rule set.
+1. **Incantation**: the magic circle. Rings, star symmetry, rune count, two colors, spin. Drawn flat on the ground, or upright in the sky for projectiles and beams.
+2. **Animation**: four phases (charge, travel, release, linger), each with a duration and up to three particle emitters (pattern, colors, count, speed, gravity, lifetime, size, glow).
+3. **Impact**: one to five effects. Each is a verb with a strength, a duration (0 = instant), a shape (circle, column, ground band), and a material or creature when the verb needs one.
 
-Size budget: the model picks a scale class (tiny to cataclysmic), and the engine caps it by depth, so huge spells must be earned through long merge chains.
+The 23 verbs: damage, heal, ignite, freeze, heat, cool, push, pull, levitate, fear, calm, sleep, shrink, enlarge, transform, summon, revive, teleport, spawn, erase, convert, grow_plants, quake.
+
+Restrict the verbs, not the outcomes: the world has its own physics (falling sand, flowing water and lava, rising steam that rains back, spreading fire, freezing and melting), and spells set it in motion. Fire on a forest burns the forest because the fire spreads, not because the spell says so.
+
+### Size budget
+
+| Depth | Max scale | Radius in cells |
+| --- | --- | --- |
+| 0 to 1 | small | 6 |
+| 2 to 3 | medium | 10 |
+| 4 to 5 | large | 16 |
+| 6 to 8 | huge | 26 |
+| 9+ | cataclysmic | 40 |
+
+Claude is told the maximum and the sanitizer enforces it, so a primal force can never wipe the map.
+
+### World
+
+1. Falling sand grid of 16 materials, one byte per cell, 30 ticks per second, about 0.3 ms per tick on the large world.
+2. Sizes: small 120, medium 200, large 320 cells wide; the height follows the screen shape, capped so a phone gets sky, not a tower of stone.
+3. Creatures: villagers, beasts, spirits (float), golems (heavy, fireproof). They walk, climb steps, avoid cliffs, fire and water, flee, burn, drown, freeze, levitate, sleep, and die from falls.
+4. Saved in the browser every 10 seconds and when the page closes. Reset from the tab, with a size choice.
+5. A tap in open sky just above the ground is aimed at the ground; far up in the sky it is taken as it is.

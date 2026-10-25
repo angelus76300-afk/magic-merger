@@ -1,12 +1,27 @@
 import * as api from "./api";
+import { session } from "./session";
 import type { Store } from "./store";
+import { toast } from "./toast";
 
 let dialog: HTMLDialogElement | null = null;
-// Each opening gets a number, so a slow description never lands on the wrong card.
+// Each opening gets a number, so a slow answer never lands on the wrong card.
 let openSerial = 0;
 
-// The spell card: what an element is, how it was made, and (from v1) the button
-// that turns a spell into something castable in the World tab.
+export interface CardActions {
+  // Switches to the World tab with this spell ready to cast.
+  cast(key: string): void;
+  // Admin only: designs the spell again from scratch.
+  regenerateSpell(key: string): Promise<void>;
+}
+
+let actions: CardActions | null = null;
+
+export function setCardActions(a: CardActions): void {
+  actions = a;
+}
+
+// The spell card: what an element is, how it was made, and for spells the
+// button that sends it to the World tab.
 export function openCard(store: Store, key: string): void {
   const discovery = store.get(key);
   if (!discovery) return;
@@ -22,19 +37,25 @@ export function openCard(store: Store, key: string): void {
   d.querySelector(".card-depth")!.textContent = element.depth === 0 ? "Primal force" : `Depth ${element.depth}`;
   d.querySelector(".card-recipe")!.textContent = recipe ? `${recipe[0]} + ${recipe[1]}` : "One of the eight primal forces";
 
+  const isSpell = element.kind === "spell";
+  const summary = d.querySelector<HTMLElement>(".card-summary")!;
+  const spec = store.spell(key);
+  summary.hidden = !isSpell || !spec?.summary;
+  summary.textContent = spec ? `${spec.summary} (${spec.scale})` : "";
+
   const cast = d.querySelector<HTMLButtonElement>(".card-cast")!;
-  cast.hidden = element.kind !== "spell";
+  cast.hidden = !isSpell;
+  cast.onclick = () => {
+    d.close();
+    actions?.cast(key);
+  };
 
   const text = d.querySelector<HTMLElement>(".card-description")!;
-  const cached = store.description(key);
-  if (cached) {
-    text.textContent = cached;
-    text.classList.remove("loading");
-  } else {
-    text.textContent = "Reading the grimoire…";
+  const showDescription = (regenerate: boolean) => {
+    text.textContent = regenerate ? "Rewriting the grimoire…" : "Reading the grimoire…";
     text.classList.add("loading");
     api
-      .describe(element.name)
+      .describe(element.name, regenerate)
       .then((res) => {
         if (!res.mock) store.setDescription(key, res.description);
         if (serial !== openSerial) return;
@@ -46,7 +67,34 @@ export function openCard(store: Store, key: string): void {
         text.textContent = err instanceof Error ? err.message : "The grimoire is unreadable right now.";
         text.classList.remove("loading");
       });
-  }
+  };
+  const cached = store.description(key);
+  if (cached) {
+    text.textContent = cached;
+    text.classList.remove("loading");
+  } else showDescription(false);
+
+  const admin = d.querySelector<HTMLElement>(".card-admin")!;
+  admin.hidden = !session.admin;
+  d.querySelector<HTMLButtonElement>(".card-new-description")!.onclick = () => showDescription(true);
+  const newSpell = d.querySelector<HTMLButtonElement>(".card-new-spell")!;
+  newSpell.hidden = !isSpell;
+  newSpell.onclick = async () => {
+    newSpell.disabled = true;
+    newSpell.textContent = "Designing…";
+    try {
+      await actions?.regenerateSpell(key);
+      const fresh = store.spell(key);
+      if (serial === openSerial && fresh) {
+        summary.hidden = false;
+        summary.textContent = `${fresh.summary} (${fresh.scale})`;
+      }
+      toast(`${element.name} was redesigned`);
+    } finally {
+      newSpell.disabled = false;
+      newSpell.textContent = "New spell";
+    }
+  };
 
   d.showModal();
 }
@@ -66,7 +114,13 @@ function ensureDialog(): HTMLDialogElement {
     </div>
     <p class="card-recipe"></p>
     <p class="card-description"></p>
-    <button class="card-cast" disabled>Cast in the World (coming in v1)</button>
+    <p class="card-summary"></p>
+    <button class="card-cast">Cast in the World</button>
+    <div class="card-admin">
+      <span class="card-admin-label">Admin</span>
+      <button class="card-new-description">New description</button>
+      <button class="card-new-spell">New spell</button>
+    </div>
   `;
   dialog.querySelector(".card-close")!.addEventListener("click", () => dialog!.close());
   // A click on the backdrop lands on the dialog element itself.

@@ -22,12 +22,13 @@ Source: https://platform.claude.com/docs/en/about-claude/api-credits-for-subscri
 npm install
 npx wrangler d1 migrations apply magic-merger --local
 echo 'ANTHROPIC_API_KEY=sk-ant-...' > .dev.vars   # optional, without it the game runs in mock mode
+echo 'ADMIN_TOKEN=pick-something' >> .dev.vars    # optional, unlocks regeneration
 npm run preview                                    # builds, then serves everything on http://localhost:8787
 ```
 
 For hot reload while editing the frontend, run `npm run dev:api` in one terminal and `npm run dev` in another, then open the Vite URL.
 
-Without an API key the Worker answers with fake, clearly labelled results and stores nothing.
+Without an API key the Worker answers with fake, clearly labelled results and stores nothing. Mock spells are built from keywords in the name (fire, water, ice, stone, wind, light, shadow, life, crystal...), so the World tab can be played fully offline.
 
 ## 3. Deploy to Cloudflare (free tier is enough)
 
@@ -36,6 +37,7 @@ npx wrangler login
 npx wrangler d1 create magic-merger          # copy the database_id it prints into wrangler.jsonc
 npx wrangler secret put ANTHROPIC_API_KEY
 npx wrangler secret put ACCESS_TOKEN         # any long random string, the game asks for it once per device
+npx wrangler secret put ADMIN_TOKEN          # a different long random string, only for you
 npm run deploy
 ```
 
@@ -43,13 +45,20 @@ The game is then at `https://magic-merger.<your-subdomain>.workers.dev`. It is a
 
 `ACCESS_TOKEN` matters: the Worker URL is public, and without the token anyone who finds it could spend your credit.
 
+### Admin mode
+
+Tap the "Magic Merger" title five times quickly and enter your `ADMIN_TOKEN`. An "admin" badge appears, and every card gets two extra buttons: **New description** and **New spell**. They throw away the stored text or spell design and ask Claude again. Everyone else gets the stored version forever. The admin token also works as an access token.
+
 ## 4. Models and cost
 
-Both calls use `claude-opus-5-5` at low effort by default, set in `wrangler.jsonc`:
+Set in `wrangler.jsonc`:
 
-| Variable | Used for | Called |
-| --- | --- | --- |
-| `MERGE_MODEL` | deciding what two items make | once per new pair, ever |
-| `DESCRIBE_MODEL` | the grimoire text on a card | once per element, ever |
+| Variable | Default | Used for | Called |
+| --- | --- | --- | --- |
+| `MERGE_MODEL` | `claude-opus-5-5`, low effort | deciding what two items make | once per new pair, ever |
+| `DESCRIBE_MODEL` | `claude-haiku-5-5`, low effort | the grimoire text on a card | once per element, ever |
+| `SPELL_MODEL` | `claude-opus-5-5`, medium effort | designing how a spell looks and acts | once per spell, ever |
 
-Rough cost per new merge with Opus 5.5 ($4 / $20 per million tokens): about one cent at most, mostly thinking tokens. `claude-haiku-5-5` ($0.10 / $0.50) is about 40 times cheaper and faster, at some cost in creativity. Switching is a one line change in `wrangler.jsonc`, then `npm run deploy`. Track real spend on https://platform.claude.com/cost.
+Rough costs, mostly thinking tokens: a new merge is about one cent at most, a description a small fraction of a cent, a spell design a few cents. Opus is $4 / $20 per million tokens, Haiku 5.5 is $0.10 / $0.50. Track real spend on https://platform.claude.com/cost.
+
+Haiku 5.5 has no server side refusal fallback, so the Worker only sends that option to models that support it.

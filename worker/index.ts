@@ -1,11 +1,15 @@
 import { PRIMITIVES, elementKey, pairKey } from "../shared/elements";
+import { maxScaleForDepth, sanitizeSpellSpec } from "../shared/spell";
 import type {
   DescribeRequest,
   DescribeResponse,
   ElementKind,
   GameElement,
+  HealthResponse,
   MergeRequest,
   MergeResponse,
+  SpellRequest,
+  SpellResponse,
 } from "../shared/types";
 import { ClaudeOracle, MockOracle, OracleError, type Oracle } from "./oracle";
 
@@ -14,9 +18,13 @@ export interface Env {
   ASSETS: Fetcher;
   MERGE_MODEL: string;
   DESCRIBE_MODEL: string;
-  // Secrets, set with `wrangler secret put`. Both optional.
+  SPELL_MODEL: string;
+  // Secrets, set with `wrangler secret put`. All optional.
   ANTHROPIC_API_KEY?: string;
+  // Locks the API for everyone who does not have it.
   ACCESS_TOKEN?: string;
+  // Also grants access, plus forcing a new description or spell.
+  ADMIN_TOKEN?: string;
   // Optional: route Claude calls through a gateway, or a local stub in tests.
   ANTHROPIC_BASE_URL?: string;
 }
@@ -28,7 +36,9 @@ export default {
     const url = new URL(request.url);
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
 
-    if (env.ACCESS_TOKEN && request.headers.get("x-access-token") !== env.ACCESS_TOKEN) {
+    const token = request.headers.get("x-access-token");
+    const admin = !!env.ADMIN_TOKEN && token === env.ADMIN_TOKEN;
+    if (env.ACCESS_TOKEN && token !== env.ACCESS_TOKEN && !admin) {
       return json({ error: "Wrong or missing access token" }, 401);
     }
 
@@ -37,10 +47,13 @@ export default {
         return json(await handleMerge(await readBody<MergeRequest>(request), env));
       }
       if (request.method === "POST" && url.pathname === "/api/describe") {
-        return json(await handleDescribe(await readBody<DescribeRequest>(request), env));
+        return json(await handleDescribe(await readBody<DescribeRequest>(request), env, admin));
+      }
+      if (request.method === "POST" && url.pathname === "/api/spell") {
+        return json(await handleSpell(await readBody<SpellRequest>(request), env, admin));
       }
       if (request.method === "GET" && url.pathname === "/api/health") {
-        return json({ ok: true, mock: !env.ANTHROPIC_API_KEY });
+        return json({ ok: true, mock: !env.ANTHROPIC_API_KEY, admin } satisfies HealthResponse);
       }
       return json({ error: "Not found" }, 404);
     } catch (err) {
@@ -62,9 +75,9 @@ class HttpError extends Error {
 }
 
 function oracleFor(env: Env): Oracle {
-  return env.ANTHROPIC_API_KEY
-    ? new ClaudeOracle(env.ANTHROPIC_API_KEY, env.MERGE_MODEL, env.DESCRIBE_MODEL, env.ANTHROPIC_BASE_URL)
-    : new MockOracle();
+  if (!env.ANTHROPIC_API_KEY) return new MockOracle();
+  const models = { merge: env.MERGE_MODEL, describe: env.DESCRIBE_MODEL, spell: env.SPELL_MODEL };
+  return new ClaudeOracle(env.ANTHROPIC_API_KEY, models, env.ANTHROPIC_BASE_URL);
 }
 
 async function handleMerge(body: MergeRequest, env: Env): Promise<MergeResponse> {
@@ -121,29 +134,81 @@ async function handleMerge(body: MergeRequest, env: Env): Promise<MergeResponse>
   return { element, firstDiscovery, mock: false };
 }
 
-async function handleDescribe(body: DescribeRequest, env: Env): Promise<DescribeResponse> {
+async function handleDescribe(body: DescribeRequest, env: Env, admin: boolean): Promise<DescribeResponse> {
+  const regenerate = checkRegenerate(body.regenerate, admin);
   const oracle = oracleFor(env);
   const element = await resolveInput(env.DB, body.name, oracle.mock);
-  const key = elementKey(element.name);
+  const description = await ensureDescription(env.DB, oracle, element, regenerate);
+  return { name: element.name, description, mock: oracle.mock };
+}
 
-  if (!oracle.mock) {
-    const cached = await env.DB.prepare("SELECT description FROM elements WHERE key = ?")
-      .bind(key)
-      .first<{ description: string | null }>();
-    if (cached?.description) return { name: element.name, description: cached.description, mock: false };
+async function handleSpell(body: SpellRequest, env: Env, admin: boolean): Promise<SpellResponse> {
+  const regenerate = checkRegenerate(body.regenerate, admin);
+  const oracle = oracleFor(env);
+  const element = await resolveInput(env.DB, body.name, oracle.mock);
+  if (element.kind !== "spell") throw new HttpError(400, `${element.name} is an artifact and cannot be cast`);
+  const key = elementKey(element.name);
+  const maxScale = maxScaleForDepth(element.depth);
+
+  if (!oracle.mock && !regenerate) {
+    const cached = await env.DB.prepare("SELECT spec FROM spells WHERE key = ?").bind(key).first<{ spec: string }>();
+    if (cached) return { name: element.name, spec: sanitizeSpellSpec(JSON.parse(cached.spec), maxScale), mock: false };
   }
 
-  const description = await oracle.describe(element.name, element.kind, await firstRecipe(env.DB, key));
+  // The spell is designed from its grimoire entry, so that comes first.
+  const description = await ensureDescription(env.DB, oracle, element, false);
+  const raw = await oracle.spell({
+    name: element.name,
+    description,
+    recipe: await firstRecipe(env.DB, key),
+    maxScale,
+  });
+  const spec = sanitizeSpellSpec(raw, maxScale);
+
+  if (!oracle.mock) {
+    await env.DB.prepare(
+      `INSERT INTO spells (key, spec, model, created_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT (key) DO UPDATE SET spec = excluded.spec, model = excluded.model, created_at = excluded.created_at`,
+    )
+      .bind(key, JSON.stringify(spec), env.SPELL_MODEL, Date.now())
+      .run();
+  }
+  return { name: element.name, spec, mock: oracle.mock };
+}
+
+function checkRegenerate(requested: unknown, admin: boolean): boolean {
+  if (requested !== true) return false;
+  if (!admin) throw new HttpError(403, "Only the admin can regenerate");
+  return true;
+}
+
+async function ensureDescription(
+  db: D1Database,
+  oracle: Oracle,
+  element: GameElement,
+  regenerate: boolean,
+): Promise<string> {
+  const key = elementKey(element.name);
+  if (!oracle.mock && !regenerate) {
+    const cached = await db
+      .prepare("SELECT description FROM elements WHERE key = ?")
+      .bind(key)
+      .first<{ description: string | null }>();
+    if (cached?.description) return cached.description;
+  }
+
+  const description = await oracle.describe(element.name, element.kind, await firstRecipe(db, key));
   if (!oracle.mock) {
     // Primitives have no row until they are first described.
-    await env.DB.prepare(
-      `INSERT INTO elements (key, name, emoji, kind, depth, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (key) DO UPDATE SET description = excluded.description`,
-    )
+    await db
+      .prepare(
+        `INSERT INTO elements (key, name, emoji, kind, depth, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (key) DO UPDATE SET description = excluded.description`,
+      )
       .bind(key, element.name, element.emoji, element.kind, element.depth, description, Date.now())
       .run();
   }
-  return { name: element.name, description, mock: oracle.mock };
+  return description;
 }
 
 async function resolveInput(db: D1Database, raw: unknown, lenient: boolean): Promise<GameElement> {

@@ -11,6 +11,7 @@
     <header class="topbar">
       <h1 class="title">Magic Merger</h1>
       <span id="mock-badge" class="badge" hidden title="No API key on the Worker: results are fake and not saved">mock mode</span>
+      <span id="admin-badge" class="badge badge-admin" hidden>admin</span>
       <nav class="tabs" role="tablist">
         <button class="tab" role="tab" data-view="craft-view" aria-selected="true">Craft</button>
         <button class="tab" role="tab" data-view="world-view" aria-selected="false">World</button>
@@ -32,10 +33,22 @@
     </main>
 
     <main id="world-view" class="view world" hidden>
-      <div class="world-placeholder">
-        <p class="world-title">The world is still being shaped.</p>
-        <p>In v1 this tab becomes a small pixel world with tiny people, where your spells are cast for real.</p>
+      <div id="world-stage" class="world-stage">
+        <canvas id="world-canvas" aria-label="The world: tap to cast the selected spell"></canvas>
+        <div class="world-tools">
+          <button id="world-add">+ Villager</button>
+          <select id="world-size" aria-label="World size for the next reset">
+            <option value="small">Small</option>
+            <option value="medium">Medium</option>
+            <option value="large">Large</option>
+          </select>
+          <button id="world-reset">Reset</button>
+        </div>
       </div>
+      <section class="spellbar" aria-label="Your spells">
+        <p id="world-status" class="world-status"></p>
+        <div id="spell-list" class="spell-list"></div>
+      </section>
     </main>
 
     <div id="toasts" class="toasts" aria-live="polite"></div>

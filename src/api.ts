@@ -1,4 +1,4 @@
-import type { ApiError, DescribeResponse, MergeResponse } from "../shared/types";
+import type { ApiError, DescribeResponse, HealthResponse, MergeResponse, SpellResponse } from "../shared/types";
 
 const TOKEN_KEY = "magic-merger.token";
 
@@ -8,11 +8,23 @@ export function merge(a: string, b: string): Promise<MergeResponse> {
   return post<MergeResponse>("/api/merge", { a, b });
 }
 
-export function describe(name: string): Promise<DescribeResponse> {
-  return post<DescribeResponse>("/api/describe", { name });
+export function describe(name: string, regenerate = false): Promise<DescribeResponse> {
+  return post<DescribeResponse>("/api/describe", { name, regenerate });
 }
 
-export async function health(): Promise<{ ok: boolean; mock: boolean } | null> {
+export function spell(name: string, regenerate = false): Promise<SpellResponse> {
+  return post<SpellResponse>("/api/spell", { name, regenerate });
+}
+
+export function setToken(token: string): void {
+  try {
+    localStorage.setItem(TOKEN_KEY, token.trim());
+  } catch {
+    sessionToken = token.trim();
+  }
+}
+
+export async function health(): Promise<HealthResponse | null> {
   try {
     const res = await fetch("/api/health", { headers: authHeaders() });
     return res.ok ? await res.json() : null;
@@ -37,11 +49,7 @@ async function post<T>(path: string, body: unknown, retried = false): Promise<T>
   if (res.status === 401 && !retried) {
     const token = window.prompt("Access token for this Magic Merger server:");
     if (token) {
-      try {
-        localStorage.setItem(TOKEN_KEY, token.trim());
-      } catch {
-        sessionToken = token.trim();
-      }
+      setToken(token);
       return post<T>(path, body, true);
     }
   }

@@ -1,4 +1,5 @@
 import { PRIMITIVES, elementKey } from "../shared/elements";
+import type { SpellSpec } from "../shared/spell";
 import type { GameElement } from "../shared/types";
 
 export interface Discovery {
@@ -19,6 +20,8 @@ interface SaveData {
   version: 1;
   discoveries: Record<string, Discovery>;
   descriptions: Record<string, string>;
+  // Added after v0, so older saves do not have it.
+  spells?: Record<string, SpellSpec>;
   board: BoardChip[];
   nextChipId: number;
 }
@@ -70,6 +73,15 @@ export class Store {
     this.save();
   }
 
+  spell(key: string): SpellSpec | undefined {
+    return this.data.spells?.[key];
+  }
+
+  setSpell(key: string, spec: SpellSpec): void {
+    (this.data.spells ??= {})[key] = spec;
+    this.save();
+  }
+
   board(): BoardChip[] {
     return this.data.board;
   }
@@ -113,7 +125,7 @@ export class Store {
 }
 
 function fresh(): SaveData {
-  return { version: 1, discoveries: {}, descriptions: {}, board: [], nextChipId: 1 };
+  return { version: 1, discoveries: {}, descriptions: {}, spells: {}, board: [], nextChipId: 1 };
 }
 
 function load(): SaveData | null {
