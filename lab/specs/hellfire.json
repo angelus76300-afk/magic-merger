@@ -1,0 +1,166 @@
+{
+  "name": "Hellfire",
+  "spec": {
+    "summary": "A wave of black-wreathed crimson flame rolls along the ground, setting everything it touches ablaze in sooty fire that chills creatures with dread.",
+    "scale": "small",
+    "delivery": "wave",
+    "incantation": {
+      "rings": 3,
+      "symmetry": 5,
+      "runes": 10,
+      "primary": "#b3001b",
+      "secondary": "#1a0a12",
+      "spin": -1.2
+    },
+    "phases": {
+      "charge": {
+        "duration": 1.2,
+        "emitters": [
+          {
+            "pattern": "spiral",
+            "colors": [
+              "#b3001b",
+              "#2b0a14",
+              "#ff3b1f"
+            ],
+            "count": 80,
+            "speed": 7,
+            "gravity": -4,
+            "lifetime": 0.9,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "orbit",
+            "colors": [
+              "#0d0d0d",
+              "#2b0a14"
+            ],
+            "count": 40,
+            "speed": 5,
+            "gravity": 0,
+            "lifetime": 1,
+            "size": 2,
+            "glow": false
+          }
+        ]
+      },
+      "travel": {
+        "duration": 0,
+        "emitters": []
+      },
+      "release": {
+        "duration": 0.6,
+        "emitters": [
+          {
+            "pattern": "ring",
+            "colors": [
+              "#ff3b1f",
+              "#b3001b",
+              "#4a0010"
+            ],
+            "count": 160,
+            "speed": 28,
+            "gravity": 2,
+            "lifetime": 0.7,
+            "size": 2,
+            "glow": true
+          },
+          {
+            "pattern": "burst",
+            "colors": [
+              "#0d0d0d",
+              "#1a0a12"
+            ],
+            "count": 90,
+            "speed": 18,
+            "gravity": -6,
+            "lifetime": 0.9,
+            "size": 2,
+            "glow": false
+          }
+        ]
+      },
+      "linger": {
+        "duration": 5,
+        "emitters": [
+          {
+            "pattern": "fountain",
+            "colors": [
+              "#b3001b",
+              "#ff3b1f",
+              "#4a0010"
+            ],
+            "count": 260,
+            "speed": 10,
+            "gravity": -14,
+            "lifetime": 1,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "column",
+            "colors": [
+              "#0d0d0d",
+              "#2a2a2a",
+              "#1a0a12"
+            ],
+            "count": 180,
+            "speed": 8,
+            "gravity": -12,
+            "lifetime": 2,
+            "size": 2,
+            "glow": false
+          },
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#ff6a3d",
+              "#7a0010"
+            ],
+            "count": 60,
+            "speed": 3,
+            "gravity": -2,
+            "lifetime": 0.6,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      }
+    },
+    "effects": [
+      {
+        "verb": "ignite",
+        "strength": 0.85,
+        "duration": 5,
+        "shape": "ground",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "damage",
+        "strength": 0.6,
+        "duration": 0,
+        "shape": "ground",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "fear",
+        "strength": 0.7,
+        "duration": 5,
+        "shape": "ground",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "spawn",
+        "strength": 0.4,
+        "duration": 5,
+        "shape": "ground",
+        "material": "smoke",
+        "creature": "none"
+      }
+    ]
+  }
+}

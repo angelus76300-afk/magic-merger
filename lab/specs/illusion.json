@@ -1,0 +1,145 @@
+{
+  "name": "Illusion",
+  "spec": {
+    "summary": "A shimmering veil of mirage-light and shadow fills the area, conjuring phantom spirits and false scenes that send creatures fleeing from things that are not there.",
+    "scale": "large",
+    "delivery": "zone",
+    "incantation": {
+      "rings": 3,
+      "symmetry": 7,
+      "runes": 12,
+      "primary": "#c9b6ff",
+      "secondary": "#3a2456",
+      "spin": -0.6
+    },
+    "phases": {
+      "charge": {
+        "duration": 1.4,
+        "emitters": [
+          {
+            "pattern": "spiral",
+            "colors": [
+              "#f4e9c1",
+              "#c9b6ff",
+              "#9ad7e8"
+            ],
+            "count": 90,
+            "speed": 7,
+            "gravity": -4,
+            "lifetime": 1,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "orbit",
+            "colors": [
+              "#3a2456",
+              "#1c1029"
+            ],
+            "count": 40,
+            "speed": 5,
+            "gravity": 0,
+            "lifetime": 1.2,
+            "size": 2,
+            "glow": false
+          }
+        ]
+      },
+      "travel": {
+        "duration": 0,
+        "emitters": []
+      },
+      "release": {
+        "duration": 0.6,
+        "emitters": [
+          {
+            "pattern": "ring",
+            "colors": [
+              "#ffffff",
+              "#c9b6ff",
+              "#9ad7e8"
+            ],
+            "count": 140,
+            "speed": 24,
+            "gravity": 0,
+            "lifetime": 0.8,
+            "size": 2,
+            "glow": true
+          },
+          {
+            "pattern": "burst",
+            "colors": [
+              "#3a2456",
+              "#5b3a8a"
+            ],
+            "count": 60,
+            "speed": 12,
+            "gravity": -2,
+            "lifetime": 1,
+            "size": 2,
+            "glow": false
+          }
+        ]
+      },
+      "linger": {
+        "duration": 5,
+        "emitters": [
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#f4e9c1",
+              "#c9b6ff",
+              "#9ad7e8",
+              "#ffffff"
+            ],
+            "count": 260,
+            "speed": 3,
+            "gravity": -3,
+            "lifetime": 1.6,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "fountain",
+            "colors": [
+              "#5b3a8a",
+              "#3a2456"
+            ],
+            "count": 80,
+            "speed": 6,
+            "gravity": -6,
+            "lifetime": 2,
+            "size": 2,
+            "glow": false
+          }
+        ]
+      }
+    },
+    "effects": [
+      {
+        "verb": "fear",
+        "strength": 0.6,
+        "duration": 6,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "summon",
+        "strength": 0.4,
+        "duration": 0,
+        "shape": "circle",
+        "material": "none",
+        "creature": "spirit"
+      },
+      {
+        "verb": "spawn",
+        "strength": 0.3,
+        "duration": 4,
+        "shape": "ground",
+        "material": "smoke",
+        "creature": "none"
+      }
+    ]
+  }
+}

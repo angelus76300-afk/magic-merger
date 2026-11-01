@@ -1,0 +1,158 @@
+{
+  "name": "Eternal Night",
+  "spec": {
+    "summary": "Deep violet night falls over a vast area as silver frost freezes the water, snuffs out fires and lulls every creature into a long, dreamless sleep.",
+    "scale": "huge",
+    "delivery": "zone",
+    "incantation": {
+      "rings": 3,
+      "symmetry": 8,
+      "runes": 12,
+      "primary": "#4b2e83",
+      "secondary": "#b8d8f0",
+      "spin": -0.4
+    },
+    "phases": {
+      "charge": {
+        "duration": 1.5,
+        "emitters": [
+          {
+            "pattern": "spiral",
+            "colors": [
+              "#4b2e83",
+              "#2a1b4a",
+              "#7a5cc2"
+            ],
+            "count": 90,
+            "speed": 6,
+            "gravity": -3,
+            "lifetime": 1.2,
+            "size": 2,
+            "glow": false
+          },
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#e8f4ff",
+              "#b8d8f0"
+            ],
+            "count": 40,
+            "speed": 2,
+            "gravity": 0,
+            "lifetime": 1,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      },
+      "travel": {
+        "duration": 0,
+        "emitters": []
+      },
+      "release": {
+        "duration": 0.6,
+        "emitters": [
+          {
+            "pattern": "ring",
+            "colors": [
+              "#b8d8f0",
+              "#e8f4ff",
+              "#7a9cc6"
+            ],
+            "count": 160,
+            "speed": 28,
+            "gravity": 2,
+            "lifetime": 1,
+            "size": 2,
+            "glow": true
+          },
+          {
+            "pattern": "burst",
+            "colors": [
+              "#2a1b4a",
+              "#4b2e83"
+            ],
+            "count": 120,
+            "speed": 16,
+            "gravity": -4,
+            "lifetime": 1.4,
+            "size": 3,
+            "glow": false
+          }
+        ]
+      },
+      "linger": {
+        "duration": 5,
+        "emitters": [
+          {
+            "pattern": "rain",
+            "colors": [
+              "#e8f4ff",
+              "#b8d8f0",
+              "#ffffff"
+            ],
+            "count": 220,
+            "speed": 4,
+            "gravity": 3,
+            "lifetime": 2.5,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#f4f1ff",
+              "#c9b8ff"
+            ],
+            "count": 80,
+            "speed": 0.5,
+            "gravity": 0,
+            "lifetime": 2,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "column",
+            "colors": [
+              "#2a1b4a",
+              "#3b2763",
+              "#4b2e83"
+            ],
+            "count": 150,
+            "speed": 3,
+            "gravity": -1,
+            "lifetime": 3,
+            "size": 3,
+            "glow": false
+          }
+        ]
+      }
+    },
+    "effects": [
+      {
+        "verb": "cool",
+        "strength": 0.65,
+        "duration": 6,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "calm",
+        "strength": 0.8,
+        "duration": 0,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "sleep",
+        "strength": 0.9,
+        "duration": 6,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      }
+    ]
+  }
+}

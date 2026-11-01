@@ -1,0 +1,156 @@
+{
+  "name": "Dawn",
+  "spec": {
+    "summary": "A golden seam of sunrise splits the dark and spreads warm light that melts frost, heals creatures and wakes the land into fresh grass and saplings.",
+    "scale": "large",
+    "delivery": "zone",
+    "incantation": {
+      "rings": 3,
+      "symmetry": 12,
+      "runes": 12,
+      "primary": "#ffd166",
+      "secondary": "#ff8fa3",
+      "spin": 0.3
+    },
+    "phases": {
+      "charge": {
+        "duration": 1.5,
+        "emitters": [
+          {
+            "pattern": "column",
+            "colors": [
+              "#fff3c4",
+              "#ffd166"
+            ],
+            "count": 80,
+            "speed": 6,
+            "gravity": 0,
+            "lifetime": 1,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#2b2d5c",
+              "#4a3f7a"
+            ],
+            "count": 40,
+            "speed": 2,
+            "gravity": 0,
+            "lifetime": 1.2,
+            "size": 1,
+            "glow": false
+          }
+        ]
+      },
+      "travel": {
+        "duration": 0,
+        "emitters": []
+      },
+      "release": {
+        "duration": 0.6,
+        "emitters": [
+          {
+            "pattern": "ring",
+            "colors": [
+              "#fff3c4",
+              "#ffd166",
+              "#ffb38a"
+            ],
+            "count": 160,
+            "speed": 28,
+            "gravity": 0,
+            "lifetime": 0.9,
+            "size": 2,
+            "glow": true
+          },
+          {
+            "pattern": "burst",
+            "colors": [
+              "#ff8fa3",
+              "#ffb38a"
+            ],
+            "count": 80,
+            "speed": 14,
+            "gravity": -4,
+            "lifetime": 1,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      },
+      "linger": {
+        "duration": 5,
+        "emitters": [
+          {
+            "pattern": "rain",
+            "colors": [
+              "#ffd166",
+              "#fff3c4"
+            ],
+            "count": 220,
+            "speed": 5,
+            "gravity": 4,
+            "lifetime": 2.5,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "fountain",
+            "colors": [
+              "#ffb38a",
+              "#ff8fa3",
+              "#ffd166"
+            ],
+            "count": 100,
+            "speed": 6,
+            "gravity": -6,
+            "lifetime": 2,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#fff3c4",
+              "#ffffff"
+            ],
+            "count": 90,
+            "speed": 1,
+            "gravity": -1,
+            "lifetime": 2.5,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      }
+    },
+    "effects": [
+      {
+        "verb": "grow_plants",
+        "strength": 0.6,
+        "duration": 5,
+        "shape": "ground",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "heat",
+        "strength": 0.4,
+        "duration": 5,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "heal",
+        "strength": 0.5,
+        "duration": 5,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      }
+    ]
+  }
+}

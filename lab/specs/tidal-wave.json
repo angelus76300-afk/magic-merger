@@ -1,0 +1,172 @@
+{
+  "name": "Tidal Wave",
+  "spec": {
+    "summary": "A rolling wall of seawater surges along the ground, knocking creatures back, scattering the small ones and leaving the land flooded.",
+    "scale": "small",
+    "delivery": "wave",
+    "incantation": {
+      "rings": 2,
+      "symmetry": 8,
+      "runes": 10,
+      "primary": "#1e6fd9",
+      "secondary": "#9fe7ff",
+      "spin": -1.2
+    },
+    "phases": {
+      "charge": {
+        "duration": 1.2,
+        "emitters": [
+          {
+            "pattern": "spiral",
+            "colors": [
+              "#1e6fd9",
+              "#4fb3ff",
+              "#9fe7ff"
+            ],
+            "count": 80,
+            "speed": 10,
+            "gravity": -4,
+            "lifetime": 0.9,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#ffffff",
+              "#bdf2ff"
+            ],
+            "count": 30,
+            "speed": 3,
+            "gravity": 0,
+            "lifetime": 0.6,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      },
+      "travel": {
+        "duration": 0,
+        "emitters": []
+      },
+      "release": {
+        "duration": 0.7,
+        "emitters": [
+          {
+            "pattern": "fountain",
+            "colors": [
+              "#1e6fd9",
+              "#4fb3ff",
+              "#e6fbff"
+            ],
+            "count": 220,
+            "speed": 32,
+            "gravity": 30,
+            "lifetime": 1.1,
+            "size": 2,
+            "glow": false
+          },
+          {
+            "pattern": "burst",
+            "colors": [
+              "#ffffff",
+              "#9fe7ff"
+            ],
+            "count": 100,
+            "speed": 40,
+            "gravity": 20,
+            "lifetime": 0.6,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "ring",
+            "colors": [
+              "#4fb3ff",
+              "#bdf2ff"
+            ],
+            "count": 60,
+            "speed": 28,
+            "gravity": 0,
+            "lifetime": 0.5,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      },
+      "linger": {
+        "duration": 3,
+        "emitters": [
+          {
+            "pattern": "rain",
+            "colors": [
+              "#4fb3ff",
+              "#9fe7ff"
+            ],
+            "count": 120,
+            "speed": 12,
+            "gravity": 25,
+            "lifetime": 0.8,
+            "size": 1,
+            "glow": false
+          },
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#e6fbff",
+              "#4fb3ff"
+            ],
+            "count": 50,
+            "speed": 2,
+            "gravity": 0,
+            "lifetime": 1,
+            "size": 1,
+            "glow": false
+          }
+        ]
+      }
+    },
+    "effects": [
+      {
+        "verb": "spawn",
+        "strength": 0.9,
+        "duration": 0,
+        "shape": "circle",
+        "material": "water",
+        "creature": "none"
+      },
+      {
+        "verb": "spawn",
+        "strength": 0.7,
+        "duration": 0,
+        "shape": "ground",
+        "material": "water",
+        "creature": "none"
+      },
+      {
+        "verb": "push",
+        "strength": 0.85,
+        "duration": 0,
+        "shape": "ground",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "fear",
+        "strength": 0.5,
+        "duration": 3,
+        "shape": "ground",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "cool",
+        "strength": 0.4,
+        "duration": 0,
+        "shape": "ground",
+        "material": "none",
+        "creature": "none"
+      }
+    ]
+  }
+}

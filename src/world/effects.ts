@@ -270,7 +270,8 @@ function affectTerrain(ctx: EffectContext, area: Area): void {
           break;
         case "grow_plants":
           if (m === M.DIRT && grid.get(x, y - 1) === M.EMPTY) grid.set(x, y, M.GRASS);
-          else if (m === M.GRASS && grid.get(x, y - 1) === M.EMPTY && trees < maxTrees && Math.random() < 0.04) {
+          // A one shot cast gets one chance per cell, so it needs better odds to sprout anything.
+          else if (m === M.GRASS && grid.get(x, y - 1) === M.EMPTY && trees < maxTrees && Math.random() < (instant ? 0.15 : 0.04)) {
             growTree(grid, x, y - 1, grid.rng);
             trees++;
           }

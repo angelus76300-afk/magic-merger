@@ -1,0 +1,152 @@
+{
+  "name": "Healing Rain",
+  "spec": {
+    "summary": "A soft blue cloud rains warm, glimmering drops that heal and soothe every creature beneath it and leave the ground greener.",
+    "scale": "small",
+    "delivery": "rain",
+    "incantation": {
+      "rings": 2,
+      "symmetry": 8,
+      "runes": 6,
+      "primary": "#6ec6ff",
+      "secondary": "#b8ffcf",
+      "spin": 0.4
+    },
+    "phases": {
+      "charge": {
+        "duration": 1.2,
+        "emitters": [
+          {
+            "pattern": "spiral",
+            "colors": [
+              "#9bd8ff",
+              "#e0f7ff"
+            ],
+            "count": 60,
+            "speed": 5,
+            "gravity": -6,
+            "lifetime": 1,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#b8ffcf",
+              "#ffffff"
+            ],
+            "count": 25,
+            "speed": 2,
+            "gravity": -2,
+            "lifetime": 0.8,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      },
+      "travel": {
+        "duration": 0,
+        "emitters": []
+      },
+      "release": {
+        "duration": 0.5,
+        "emitters": [
+          {
+            "pattern": "ring",
+            "colors": [
+              "#e0f7ff",
+              "#9bd8ff",
+              "#b8ffcf"
+            ],
+            "count": 70,
+            "speed": 12,
+            "gravity": 0,
+            "lifetime": 0.6,
+            "size": 2,
+            "glow": true
+          }
+        ]
+      },
+      "linger": {
+        "duration": 5,
+        "emitters": [
+          {
+            "pattern": "rain",
+            "colors": [
+              "#6ec6ff",
+              "#9bd8ff",
+              "#e0f7ff"
+            ],
+            "count": 280,
+            "speed": 20,
+            "gravity": 25,
+            "lifetime": 1,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#b8ffcf",
+              "#7dff9a",
+              "#ffffff"
+            ],
+            "count": 90,
+            "speed": 3,
+            "gravity": -4,
+            "lifetime": 1.2,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "fountain",
+            "colors": [
+              "#7dff9a",
+              "#b8ffcf"
+            ],
+            "count": 40,
+            "speed": 6,
+            "gravity": 8,
+            "lifetime": 0.8,
+            "size": 1,
+            "glow": false
+          }
+        ]
+      }
+    },
+    "effects": [
+      {
+        "verb": "heal",
+        "strength": 0.7,
+        "duration": 5,
+        "shape": "column",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "calm",
+        "strength": 0.5,
+        "duration": 5,
+        "shape": "column",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "spawn",
+        "strength": 0.3,
+        "duration": 4,
+        "shape": "column",
+        "material": "water",
+        "creature": "none"
+      },
+      {
+        "verb": "grow_plants",
+        "strength": 0.6,
+        "duration": 3,
+        "shape": "ground",
+        "material": "none",
+        "creature": "none"
+      }
+    ]
+  }
+}

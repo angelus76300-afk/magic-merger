@@ -1,0 +1,136 @@
+{
+  "name": "Earthquake",
+  "spec": {
+    "summary": "Three stamps send a rolling tremor through the ground that shakes loose stones and knocks creatures off their feet without harming them.",
+    "scale": "small",
+    "delivery": "wave",
+    "incantation": {
+      "rings": 3,
+      "symmetry": 4,
+      "runes": 12,
+      "primary": "#8b5a2b",
+      "secondary": "#c8a165",
+      "spin": 0.5
+    },
+    "phases": {
+      "charge": {
+        "duration": 1.2,
+        "emitters": [
+          {
+            "pattern": "ring",
+            "colors": [
+              "#8b5a2b",
+              "#c8a165",
+              "#5e4a3a"
+            ],
+            "count": 50,
+            "speed": 6,
+            "gravity": 20,
+            "lifetime": 0.6,
+            "size": 2,
+            "glow": false
+          },
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#e0c080",
+              "#c8a165"
+            ],
+            "count": 30,
+            "speed": 3,
+            "gravity": 0,
+            "lifetime": 0.5,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      },
+      "travel": {
+        "duration": 0,
+        "emitters": []
+      },
+      "release": {
+        "duration": 0.5,
+        "emitters": [
+          {
+            "pattern": "ring",
+            "colors": [
+              "#a0784a",
+              "#7a7a7a",
+              "#5e4a3a"
+            ],
+            "count": 140,
+            "speed": 35,
+            "gravity": 25,
+            "lifetime": 0.7,
+            "size": 2,
+            "glow": false
+          },
+          {
+            "pattern": "fountain",
+            "colors": [
+              "#8a8a8a",
+              "#6b5a4a"
+            ],
+            "count": 60,
+            "speed": 20,
+            "gravity": 40,
+            "lifetime": 0.9,
+            "size": 2,
+            "glow": false
+          }
+        ]
+      },
+      "linger": {
+        "duration": 5,
+        "emitters": [
+          {
+            "pattern": "fountain",
+            "colors": [
+              "#9a9a9a",
+              "#7a6a5a",
+              "#c8a165"
+            ],
+            "count": 200,
+            "speed": 12,
+            "gravity": 35,
+            "lifetime": 0.8,
+            "size": 1,
+            "glow": false
+          },
+          {
+            "pattern": "rain",
+            "colors": [
+              "#b8a888",
+              "#8b7a6a"
+            ],
+            "count": 120,
+            "speed": 5,
+            "gravity": 10,
+            "lifetime": 1.5,
+            "size": 1,
+            "glow": false
+          }
+        ]
+      }
+    },
+    "effects": [
+      {
+        "verb": "quake",
+        "strength": 0.85,
+        "duration": 6,
+        "shape": "ground",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "levitate",
+        "strength": 0.4,
+        "duration": 1.5,
+        "shape": "ground",
+        "material": "none",
+        "creature": "none"
+      }
+    ]
+  }
+}

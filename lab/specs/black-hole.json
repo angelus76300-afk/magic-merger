@@ -1,0 +1,165 @@
+{
+  "name": "Black Hole",
+  "spec": {
+    "summary": "Collapses into a sphere of absolute black that drags creatures and loose debris into a slow spiral, then pops and leaves the grass scorched to ash.",
+    "scale": "medium",
+    "delivery": "zone",
+    "incantation": {
+      "rings": 3,
+      "symmetry": 8,
+      "runes": 12,
+      "primary": "#8a2be2",
+      "secondary": "#1a0026",
+      "spin": -1.8
+    },
+    "phases": {
+      "charge": {
+        "duration": 1.2,
+        "emitters": [
+          {
+            "pattern": "ring",
+            "colors": [
+              "#b266ff",
+              "#8a2be2"
+            ],
+            "count": 90,
+            "speed": 10,
+            "gravity": 0,
+            "lifetime": 0.8,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "spiral",
+            "colors": [
+              "#3d0066",
+              "#0a0014"
+            ],
+            "count": 60,
+            "speed": 6,
+            "gravity": 0,
+            "lifetime": 1,
+            "size": 2,
+            "glow": false
+          }
+        ]
+      },
+      "travel": {
+        "duration": 0,
+        "emitters": []
+      },
+      "release": {
+        "duration": 0.5,
+        "emitters": [
+          {
+            "pattern": "burst",
+            "colors": [
+              "#000000",
+              "#1a0026",
+              "#8a2be2"
+            ],
+            "count": 140,
+            "speed": 24,
+            "gravity": 0,
+            "lifetime": 0.5,
+            "size": 2,
+            "glow": false
+          },
+          {
+            "pattern": "ring",
+            "colors": [
+              "#d9b3ff",
+              "#8a2be2"
+            ],
+            "count": 60,
+            "speed": 30,
+            "gravity": 0,
+            "lifetime": 0.4,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      },
+      "linger": {
+        "duration": 5,
+        "emitters": [
+          {
+            "pattern": "orbit",
+            "colors": [
+              "#000000",
+              "#0a0014",
+              "#3d0066"
+            ],
+            "count": 260,
+            "speed": 12,
+            "gravity": 0,
+            "lifetime": 1.5,
+            "size": 3,
+            "glow": false
+          },
+          {
+            "pattern": "spiral",
+            "colors": [
+              "#8a2be2",
+              "#b266ff",
+              "#5c3a1e"
+            ],
+            "count": 200,
+            "speed": 9,
+            "gravity": -2,
+            "lifetime": 1.8,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#d9b3ff",
+              "#ffffff"
+            ],
+            "count": 40,
+            "speed": 2,
+            "gravity": 0,
+            "lifetime": 0.6,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      }
+    },
+    "effects": [
+      {
+        "verb": "pull",
+        "strength": 0.8,
+        "duration": 6,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "levitate",
+        "strength": 0.4,
+        "duration": 5,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "damage",
+        "strength": 0.3,
+        "duration": 5,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "convert",
+        "strength": 0.6,
+        "duration": 0,
+        "shape": "ground",
+        "material": "ash",
+        "creature": "none"
+      }
+    ]
+  }
+}

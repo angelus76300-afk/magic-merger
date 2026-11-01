@@ -1,0 +1,159 @@
+{
+  "name": "Firestorm",
+  "spec": {
+    "summary": "A roaring vortex of wind and flame that scorches the ground, sets grass and wood ablaze and drives creatures before it.",
+    "scale": "small",
+    "delivery": "zone",
+    "incantation": {
+      "rings": 2,
+      "symmetry": 6,
+      "runes": 10,
+      "primary": "#ff6a00",
+      "secondary": "#ffe08a",
+      "spin": 1.8
+    },
+    "phases": {
+      "charge": {
+        "duration": 1.2,
+        "emitters": [
+          {
+            "pattern": "spiral",
+            "colors": [
+              "#ff6a00",
+              "#ffd166",
+              "#fff3c4"
+            ],
+            "count": 90,
+            "speed": 10,
+            "gravity": -6,
+            "lifetime": 0.8,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "orbit",
+            "colors": [
+              "#d9e4ec",
+              "#b8c6d1"
+            ],
+            "count": 40,
+            "speed": 12,
+            "gravity": 0,
+            "lifetime": 0.6,
+            "size": 1,
+            "glow": false
+          }
+        ]
+      },
+      "travel": {
+        "duration": 0,
+        "emitters": []
+      },
+      "release": {
+        "duration": 0.5,
+        "emitters": [
+          {
+            "pattern": "burst",
+            "colors": [
+              "#ffffff",
+              "#ffd166",
+              "#ff6a00"
+            ],
+            "count": 140,
+            "speed": 32,
+            "gravity": 0,
+            "lifetime": 0.6,
+            "size": 2,
+            "glow": true
+          },
+          {
+            "pattern": "ring",
+            "colors": [
+              "#e0e8ee",
+              "#ff9e3d"
+            ],
+            "count": 60,
+            "speed": 26,
+            "gravity": 0,
+            "lifetime": 0.5,
+            "size": 1,
+            "glow": false
+          }
+        ]
+      },
+      "linger": {
+        "duration": 5,
+        "emitters": [
+          {
+            "pattern": "column",
+            "colors": [
+              "#ff6a00",
+              "#ffb703",
+              "#d62828"
+            ],
+            "count": 360,
+            "speed": 20,
+            "gravity": -22,
+            "lifetime": 1.2,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "spiral",
+            "colors": [
+              "#d9e4ec",
+              "#9aa8b3",
+              "#ff9e3d"
+            ],
+            "count": 200,
+            "speed": 16,
+            "gravity": -12,
+            "lifetime": 1,
+            "size": 1,
+            "glow": false
+          },
+          {
+            "pattern": "column",
+            "colors": [
+              "#4a4a4a",
+              "#6b6b6b",
+              "#2e2e2e"
+            ],
+            "count": 120,
+            "speed": 10,
+            "gravity": -14,
+            "lifetime": 2,
+            "size": 2,
+            "glow": false
+          }
+        ]
+      }
+    },
+    "effects": [
+      {
+        "verb": "ignite",
+        "strength": 0.9,
+        "duration": 6,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "push",
+        "strength": 0.6,
+        "duration": 6,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "fear",
+        "strength": 0.8,
+        "duration": 6,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      }
+    ]
+  }
+}

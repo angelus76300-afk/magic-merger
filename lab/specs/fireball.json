@@ -1,0 +1,161 @@
+{
+  "name": "Fireball",
+  "spec": {
+    "summary": "Hurls a blazing orange sphere that bursts on impact, scorching creatures and setting the grass around it alight.",
+    "scale": "small",
+    "delivery": "projectile",
+    "incantation": {
+      "rings": 2,
+      "symmetry": 5,
+      "runes": 6,
+      "primary": "#ff8c1a",
+      "secondary": "#b45cff",
+      "spin": 1.2
+    },
+    "phases": {
+      "charge": {
+        "duration": 1.2,
+        "emitters": [
+          {
+            "pattern": "spiral",
+            "colors": [
+              "#ffd166",
+              "#ff8c1a",
+              "#b45cff"
+            ],
+            "count": 70,
+            "speed": 6,
+            "gravity": 0,
+            "lifetime": 0.7,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "orbit",
+            "colors": [
+              "#ffb347",
+              "#ff7a1a"
+            ],
+            "count": 40,
+            "speed": 4,
+            "gravity": 0,
+            "lifetime": 0.9,
+            "size": 2,
+            "glow": true
+          }
+        ]
+      },
+      "travel": {
+        "duration": 0.6,
+        "emitters": [
+          {
+            "pattern": "trail",
+            "colors": [
+              "#fff3b0",
+              "#ff8c1a",
+              "#d62828",
+              "#5c5c5c"
+            ],
+            "count": 120,
+            "speed": 5,
+            "gravity": -6,
+            "lifetime": 0.5,
+            "size": 2,
+            "glow": true
+          }
+        ]
+      },
+      "release": {
+        "duration": 0.4,
+        "emitters": [
+          {
+            "pattern": "burst",
+            "colors": [
+              "#ffffff",
+              "#ffd166",
+              "#ff7a1a",
+              "#d62828"
+            ],
+            "count": 160,
+            "speed": 32,
+            "gravity": 5,
+            "lifetime": 0.6,
+            "size": 2,
+            "glow": true
+          },
+          {
+            "pattern": "ring",
+            "colors": [
+              "#ff8c1a",
+              "#b45cff"
+            ],
+            "count": 50,
+            "speed": 24,
+            "gravity": 0,
+            "lifetime": 0.4,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      },
+      "linger": {
+        "duration": 3,
+        "emitters": [
+          {
+            "pattern": "fountain",
+            "colors": [
+              "#ff7a1a",
+              "#ffd166",
+              "#d62828"
+            ],
+            "count": 120,
+            "speed": 10,
+            "gravity": -12,
+            "lifetime": 0.9,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "column",
+            "colors": [
+              "#5c5c5c",
+              "#3a3a3a"
+            ],
+            "count": 80,
+            "speed": 8,
+            "gravity": -15,
+            "lifetime": 1.5,
+            "size": 2,
+            "glow": false
+          }
+        ]
+      }
+    },
+    "effects": [
+      {
+        "verb": "damage",
+        "strength": 0.6,
+        "duration": 0,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "ignite",
+        "strength": 0.85,
+        "duration": 3,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "push",
+        "strength": 0.4,
+        "duration": 0,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      }
+    ]
+  }
+}

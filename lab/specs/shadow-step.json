@@ -1,0 +1,152 @@
+{
+  "name": "Shadow Step",
+  "spec": {
+    "summary": "The caster's shadow peels away and swallows nearby creatures, flinging them to distant shadows in a cold gust and a puff of dark smoke.",
+    "scale": "small",
+    "delivery": "burst",
+    "incantation": {
+      "rings": 2,
+      "symmetry": 5,
+      "runes": 6,
+      "primary": "#2a1a3d",
+      "secondary": "#8fa3b8",
+      "spin": -1.2
+    },
+    "phases": {
+      "charge": {
+        "duration": 0.8,
+        "emitters": [
+          {
+            "pattern": "spiral",
+            "colors": [
+              "#1a1024",
+              "#3d2a5c",
+              "#5a4a78"
+            ],
+            "count": 70,
+            "speed": 6,
+            "gravity": 0,
+            "lifetime": 0.7,
+            "size": 2,
+            "glow": false
+          },
+          {
+            "pattern": "ring",
+            "colors": [
+              "#8fa3b8",
+              "#c9d6e3"
+            ],
+            "count": 30,
+            "speed": 4,
+            "gravity": -3,
+            "lifetime": 0.5,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      },
+      "travel": {
+        "duration": 0,
+        "emitters": []
+      },
+      "release": {
+        "duration": 0.3,
+        "emitters": [
+          {
+            "pattern": "burst",
+            "colors": [
+              "#0d0814",
+              "#2a1a3d",
+              "#5a4a78"
+            ],
+            "count": 110,
+            "speed": 28,
+            "gravity": 0,
+            "lifetime": 0.5,
+            "size": 2,
+            "glow": false
+          },
+          {
+            "pattern": "ring",
+            "colors": [
+              "#c9d6e3",
+              "#8fa3b8"
+            ],
+            "count": 50,
+            "speed": 35,
+            "gravity": 0,
+            "lifetime": 0.4,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      },
+      "linger": {
+        "duration": 1.2,
+        "emitters": [
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#3d2a5c",
+              "#5a4a78",
+              "#8fa3b8"
+            ],
+            "count": 40,
+            "speed": 3,
+            "gravity": -6,
+            "lifetime": 1,
+            "size": 1,
+            "glow": false
+          },
+          {
+            "pattern": "fountain",
+            "colors": [
+              "#1a1024",
+              "#2a1a3d"
+            ],
+            "count": 30,
+            "speed": 5,
+            "gravity": -8,
+            "lifetime": 1.1,
+            "size": 2,
+            "glow": false
+          }
+        ]
+      }
+    },
+    "effects": [
+      {
+        "verb": "teleport",
+        "strength": 0.9,
+        "duration": 0,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "push",
+        "strength": 0.4,
+        "duration": 0,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "spawn",
+        "strength": 0.35,
+        "duration": 0,
+        "shape": "circle",
+        "material": "smoke",
+        "creature": "none"
+      },
+      {
+        "verb": "cool",
+        "strength": 0.4,
+        "duration": 0,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      }
+    ]
+  }
+}

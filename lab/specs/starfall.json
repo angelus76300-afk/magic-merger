@@ -1,0 +1,166 @@
+{
+  "name": "Starfall",
+  "spec": {
+    "summary": "A glittering shower of silver star motes drifts down over the area, leaving creatures calm and floating lightly while the ground sparkles with starlight.",
+    "scale": "large",
+    "delivery": "rain",
+    "incantation": {
+      "rings": 3,
+      "symmetry": 5,
+      "runes": 10,
+      "primary": "#b98cff",
+      "secondary": "#e8eaff",
+      "spin": 0.8
+    },
+    "phases": {
+      "charge": {
+        "duration": 1.5,
+        "emitters": [
+          {
+            "pattern": "fountain",
+            "colors": [
+              "#e8eaff",
+              "#b98cff",
+              "#ffffff"
+            ],
+            "count": 70,
+            "speed": 14,
+            "gravity": -12,
+            "lifetime": 1.2,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "orbit",
+            "colors": [
+              "#c0c8ff",
+              "#ffffff"
+            ],
+            "count": 40,
+            "speed": 6,
+            "gravity": 0,
+            "lifetime": 1.5,
+            "size": 2,
+            "glow": true
+          }
+        ]
+      },
+      "travel": {
+        "duration": 0,
+        "emitters": []
+      },
+      "release": {
+        "duration": 1.5,
+        "emitters": [
+          {
+            "pattern": "rain",
+            "colors": [
+              "#ffffff",
+              "#e8eaff",
+              "#c0c8ff",
+              "#b98cff"
+            ],
+            "count": 220,
+            "speed": 22,
+            "gravity": 25,
+            "lifetime": 1.2,
+            "size": 2,
+            "glow": true
+          },
+          {
+            "pattern": "trail",
+            "colors": [
+              "#c0c8ff",
+              "#8a6cff"
+            ],
+            "count": 120,
+            "speed": 4,
+            "gravity": 5,
+            "lifetime": 0.6,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "burst",
+            "colors": [
+              "#ffffff",
+              "#e8eaff"
+            ],
+            "count": 90,
+            "speed": 16,
+            "gravity": 20,
+            "lifetime": 0.5,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      },
+      "linger": {
+        "duration": 5,
+        "emitters": [
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#e8eaff",
+              "#c0c8ff",
+              "#ffffff"
+            ],
+            "count": 200,
+            "speed": 2,
+            "gravity": -3,
+            "lifetime": 1.5,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "fountain",
+            "colors": [
+              "#b98cff",
+              "#e8eaff"
+            ],
+            "count": 60,
+            "speed": 5,
+            "gravity": -6,
+            "lifetime": 2,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      }
+    },
+    "effects": [
+      {
+        "verb": "levitate",
+        "strength": 0.35,
+        "duration": 5,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "calm",
+        "strength": 0.6,
+        "duration": 5,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "spawn",
+        "strength": 0.25,
+        "duration": 0,
+        "shape": "ground",
+        "material": "crystal",
+        "creature": "none"
+      },
+      {
+        "verb": "grow_plants",
+        "strength": 0.4,
+        "duration": 0,
+        "shape": "ground",
+        "material": "none",
+        "creature": "none"
+      }
+    ]
+  }
+}

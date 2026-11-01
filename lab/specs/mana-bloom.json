@@ -1,0 +1,146 @@
+{
+  "name": "Mana Bloom",
+  "spec": {
+    "summary": "A ring of glowing blue-green flowers blooms across the ground, greening the earth, soothing weary creatures and slowly mending their wounds.",
+    "scale": "medium",
+    "delivery": "zone",
+    "incantation": {
+      "rings": 3,
+      "symmetry": 8,
+      "runes": 12,
+      "primary": "#2ee6c4",
+      "secondary": "#7fd4ff",
+      "spin": 0.6
+    },
+    "phases": {
+      "charge": {
+        "duration": 1.4,
+        "emitters": [
+          {
+            "pattern": "spiral",
+            "colors": [
+              "#2ee6c4",
+              "#7fd4ff",
+              "#c8fff0"
+            ],
+            "count": 90,
+            "speed": 7,
+            "gravity": -6,
+            "lifetime": 1,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "orbit",
+            "colors": [
+              "#5effa8",
+              "#2ee6c4"
+            ],
+            "count": 40,
+            "speed": 5,
+            "gravity": 0,
+            "lifetime": 1.2,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      },
+      "travel": {
+        "duration": 0,
+        "emitters": []
+      },
+      "release": {
+        "duration": 0.6,
+        "emitters": [
+          {
+            "pattern": "ring",
+            "colors": [
+              "#c8fff0",
+              "#2ee6c4",
+              "#5effa8"
+            ],
+            "count": 140,
+            "speed": 20,
+            "gravity": 0,
+            "lifetime": 0.7,
+            "size": 2,
+            "glow": true
+          },
+          {
+            "pattern": "fountain",
+            "colors": [
+              "#7fd4ff",
+              "#5effa8",
+              "#ffffff"
+            ],
+            "count": 80,
+            "speed": 14,
+            "gravity": 10,
+            "lifetime": 0.9,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      },
+      "linger": {
+        "duration": 5,
+        "emitters": [
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#2ee6c4",
+              "#7fd4ff",
+              "#b6ffdf",
+              "#ffffff"
+            ],
+            "count": 220,
+            "speed": 3,
+            "gravity": -4,
+            "lifetime": 2,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "fountain",
+            "colors": [
+              "#5effa8",
+              "#2ee6c4"
+            ],
+            "count": 90,
+            "speed": 6,
+            "gravity": -3,
+            "lifetime": 2.5,
+            "size": 2,
+            "glow": true
+          }
+        ]
+      }
+    },
+    "effects": [
+      {
+        "verb": "grow_plants",
+        "strength": 0.8,
+        "duration": 0,
+        "shape": "ground",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "heal",
+        "strength": 0.6,
+        "duration": 5,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "calm",
+        "strength": 0.6,
+        "duration": 5,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      }
+    ]
+  }
+}

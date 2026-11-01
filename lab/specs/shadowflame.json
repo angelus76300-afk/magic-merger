@@ -1,0 +1,166 @@
+{
+  "name": "Shadowflame",
+  "spec": {
+    "summary": "A coiling column of cold black fire that wreathes creatures in flickering darkness, sending them stumbling blindly away while leaving grass and stone unscorched.",
+    "scale": "medium",
+    "delivery": "zone",
+    "incantation": {
+      "rings": 3,
+      "symmetry": 5,
+      "runes": 10,
+      "primary": "#1a0f2e",
+      "secondary": "#5a7bff",
+      "spin": -1.2
+    },
+    "phases": {
+      "charge": {
+        "duration": 1.2,
+        "emitters": [
+          {
+            "pattern": "spiral",
+            "colors": [
+              "#0a0612",
+              "#2a1446",
+              "#5a7bff"
+            ],
+            "count": 80,
+            "speed": 6,
+            "gravity": 8,
+            "lifetime": 0.9,
+            "size": 1,
+            "glow": false
+          },
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#6b8cff",
+              "#a8b8ff"
+            ],
+            "count": 25,
+            "speed": 2,
+            "gravity": 0,
+            "lifetime": 0.5,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      },
+      "travel": {
+        "duration": 0,
+        "emitters": []
+      },
+      "release": {
+        "duration": 0.5,
+        "emitters": [
+          {
+            "pattern": "column",
+            "colors": [
+              "#000000",
+              "#1a0f2e",
+              "#2a1446"
+            ],
+            "count": 160,
+            "speed": 35,
+            "gravity": -25,
+            "lifetime": 0.8,
+            "size": 2,
+            "glow": false
+          },
+          {
+            "pattern": "ring",
+            "colors": [
+              "#3a5fcd",
+              "#6b8cff"
+            ],
+            "count": 60,
+            "speed": 22,
+            "gravity": 0,
+            "lifetime": 0.5,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      },
+      "linger": {
+        "duration": 5,
+        "emitters": [
+          {
+            "pattern": "spiral",
+            "colors": [
+              "#000000",
+              "#140a24",
+              "#2a1446"
+            ],
+            "count": 320,
+            "speed": 14,
+            "gravity": -18,
+            "lifetime": 1.4,
+            "size": 2,
+            "glow": false
+          },
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#3a5fcd",
+              "#6b8cff",
+              "#c0ccff"
+            ],
+            "count": 90,
+            "speed": 4,
+            "gravity": -6,
+            "lifetime": 0.7,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "column",
+            "colors": [
+              "#1a0f2e",
+              "#3a2a5c"
+            ],
+            "count": 100,
+            "speed": 10,
+            "gravity": -12,
+            "lifetime": 1.8,
+            "size": 1,
+            "glow": false
+          }
+        ]
+      }
+    },
+    "effects": [
+      {
+        "verb": "fear",
+        "strength": 0.8,
+        "duration": 5,
+        "shape": "column",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "damage",
+        "strength": 0.4,
+        "duration": 5,
+        "shape": "column",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "cool",
+        "strength": 0.45,
+        "duration": 5,
+        "shape": "column",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "spawn",
+        "strength": 0.5,
+        "duration": 4,
+        "shape": "column",
+        "material": "smoke",
+        "creature": "none"
+      }
+    ]
+  }
+}

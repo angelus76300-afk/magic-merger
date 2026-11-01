@@ -1,0 +1,162 @@
+{
+  "name": "Mudslide",
+  "spec": {
+    "summary": "A brown wave of churning earth rolls across the ground, knocking creatures flat and burying everything under a layer of wet, sloppy mud.",
+    "scale": "medium",
+    "delivery": "wave",
+    "incantation": {
+      "rings": 2,
+      "symmetry": 4,
+      "runes": 6,
+      "primary": "#6b4423",
+      "secondary": "#4a90a4",
+      "spin": -0.6
+    },
+    "phases": {
+      "charge": {
+        "duration": 1.2,
+        "emitters": [
+          {
+            "pattern": "fountain",
+            "colors": [
+              "#6b4423",
+              "#8b5a2b",
+              "#4e342e"
+            ],
+            "count": 70,
+            "speed": 10,
+            "gravity": 25,
+            "lifetime": 0.9,
+            "size": 2,
+            "glow": false
+          },
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#4a90a4",
+              "#7fb8c9"
+            ],
+            "count": 25,
+            "speed": 3,
+            "gravity": 10,
+            "lifetime": 0.6,
+            "size": 1,
+            "glow": false
+          }
+        ]
+      },
+      "travel": {
+        "duration": 0,
+        "emitters": []
+      },
+      "release": {
+        "duration": 0.8,
+        "emitters": [
+          {
+            "pattern": "burst",
+            "colors": [
+              "#6b4423",
+              "#8b5a2b",
+              "#3e2a1c",
+              "#4a90a4"
+            ],
+            "count": 200,
+            "speed": 28,
+            "gravity": 30,
+            "lifetime": 1,
+            "size": 3,
+            "glow": false
+          },
+          {
+            "pattern": "fountain",
+            "colors": [
+              "#5d4037",
+              "#795548",
+              "#7fb8c9"
+            ],
+            "count": 120,
+            "speed": 22,
+            "gravity": 35,
+            "lifetime": 1.2,
+            "size": 2,
+            "glow": false
+          }
+        ]
+      },
+      "linger": {
+        "duration": 3,
+        "emitters": [
+          {
+            "pattern": "rain",
+            "colors": [
+              "#5d4037",
+              "#4e342e",
+              "#6d8a96"
+            ],
+            "count": 90,
+            "speed": 6,
+            "gravity": 20,
+            "lifetime": 1,
+            "size": 1,
+            "glow": false
+          },
+          {
+            "pattern": "sparkle",
+            "colors": [
+              "#8b6b4a",
+              "#a1887f"
+            ],
+            "count": 40,
+            "speed": 1,
+            "gravity": 2,
+            "lifetime": 1.5,
+            "size": 1,
+            "glow": false
+          }
+        ]
+      }
+    },
+    "effects": [
+      {
+        "verb": "push",
+        "strength": 0.75,
+        "duration": 0,
+        "shape": "ground",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "quake",
+        "strength": 0.5,
+        "duration": 2,
+        "shape": "ground",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "spawn",
+        "strength": 0.85,
+        "duration": 0,
+        "shape": "ground",
+        "material": "dirt",
+        "creature": "none"
+      },
+      {
+        "verb": "spawn",
+        "strength": 0.6,
+        "duration": 0,
+        "shape": "circle",
+        "material": "water",
+        "creature": "none"
+      },
+      {
+        "verb": "damage",
+        "strength": 0.3,
+        "duration": 0,
+        "shape": "ground",
+        "material": "none",
+        "creature": "none"
+      }
+    ]
+  }
+}

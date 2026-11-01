@@ -1,0 +1,167 @@
+{
+  "name": "Hurricane",
+  "spec": {
+    "summary": "A roaring column of wind and sea spray that lifts creatures and loose ground into a whirling storm, flings them outward, and leaves the land slick with water.",
+    "scale": "medium",
+    "delivery": "zone",
+    "incantation": {
+      "rings": 3,
+      "symmetry": 8,
+      "runes": 12,
+      "primary": "#bfe9f2",
+      "secondary": "#2a9d8f",
+      "spin": -2
+    },
+    "phases": {
+      "charge": {
+        "duration": 1.2,
+        "emitters": [
+          {
+            "pattern": "spiral",
+            "colors": [
+              "#e8f7fa",
+              "#bfe9f2",
+              "#7fd1d9"
+            ],
+            "count": 90,
+            "speed": 14,
+            "gravity": -8,
+            "lifetime": 0.8,
+            "size": 1,
+            "glow": false
+          },
+          {
+            "pattern": "orbit",
+            "colors": [
+              "#2a9d8f",
+              "#7fd1d9"
+            ],
+            "count": 40,
+            "speed": 10,
+            "gravity": 0,
+            "lifetime": 1,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      },
+      "travel": {
+        "duration": 0,
+        "emitters": []
+      },
+      "release": {
+        "duration": 0.5,
+        "emitters": [
+          {
+            "pattern": "ring",
+            "colors": [
+              "#ffffff",
+              "#bfe9f2",
+              "#48cae4"
+            ],
+            "count": 140,
+            "speed": 40,
+            "gravity": 0,
+            "lifetime": 0.6,
+            "size": 2,
+            "glow": false
+          },
+          {
+            "pattern": "fountain",
+            "colors": [
+              "#48cae4",
+              "#0077b6",
+              "#e8f7fa"
+            ],
+            "count": 80,
+            "speed": 30,
+            "gravity": 20,
+            "lifetime": 0.9,
+            "size": 1,
+            "glow": false
+          }
+        ]
+      },
+      "linger": {
+        "duration": 5,
+        "emitters": [
+          {
+            "pattern": "column",
+            "colors": [
+              "#e8f7fa",
+              "#bfe9f2",
+              "#9aa9b0"
+            ],
+            "count": 380,
+            "speed": 30,
+            "gravity": -25,
+            "lifetime": 1.2,
+            "size": 1,
+            "glow": false
+          },
+          {
+            "pattern": "spiral",
+            "colors": [
+              "#48cae4",
+              "#0077b6",
+              "#ffffff"
+            ],
+            "count": 220,
+            "speed": 24,
+            "gravity": -10,
+            "lifetime": 1.4,
+            "size": 1,
+            "glow": false
+          },
+          {
+            "pattern": "rain",
+            "colors": [
+              "#7fd1d9",
+              "#48cae4"
+            ],
+            "count": 150,
+            "speed": 12,
+            "gravity": 30,
+            "lifetime": 1,
+            "size": 1,
+            "glow": false
+          }
+        ]
+      }
+    },
+    "effects": [
+      {
+        "verb": "levitate",
+        "strength": 0.85,
+        "duration": 6,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "push",
+        "strength": 0.7,
+        "duration": 6,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "spawn",
+        "strength": 0.5,
+        "duration": 0,
+        "shape": "ground",
+        "material": "water",
+        "creature": "none"
+      },
+      {
+        "verb": "fear",
+        "strength": 0.5,
+        "duration": 6,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      }
+    ]
+  }
+}

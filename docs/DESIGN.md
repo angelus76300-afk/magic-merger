@@ -38,6 +38,19 @@ The 23 verbs: damage, heal, ignite, freeze, heat, cool, push, pull, levitate, fe
 
 Restrict the verbs, not the outcomes: the world has its own physics (falling sand, flowing water and lava, rising steam that rains back, spreading fire, freezing and melting), and spells set it in motion. Fire on a forest burns the forest because the fire spreads, not because the spell says so.
 
+### What the prompt has to tell Claude about the engine
+
+The first real specs were coherent but played weakly. Claude could not know how the engine plays them, so the spell prompt now states it plainly:
+
+1. Strength is intensity inside the area, not size. Below 0.3 an effect is barely visible.
+2. The real size of each shape: the ground band is 3.2 R wide but only 0.8 R tall.
+3. Spawn only fills empty cells. An instant circle drops one blob that falls or flows; a ground band only makes a film.
+4. A lasting terrain effect touches nearly every cell of its area within a second or two.
+5. Which statuses cancel: fear wakes sleepers, calm removes fear, ignite thaws, freeze puts out fire.
+6. Which effects only show when there is something to act on (heal, cool, revive, teleport).
+
+When the engine changes, this part of `worker/prompts.ts` must change with it. The Spell Lab (`scripts/spell-lab.mjs`, see SETUP.md) is how to check both.
+
 ### Size budget
 
 | Depth | Max scale | Radius in cells |

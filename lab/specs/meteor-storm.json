@@ -1,0 +1,174 @@
+{
+  "name": "Meteor Storm",
+  "spec": {
+    "summary": "Tears open the sky to rain burning rock across a wide field, setting it ablaze, shaking the ground loose and knocking everything flat.",
+    "scale": "huge",
+    "delivery": "rain",
+    "incantation": {
+      "rings": 3,
+      "symmetry": 8,
+      "runes": 12,
+      "primary": "#ff4d1a",
+      "secondary": "#ffb347",
+      "spin": -1.2
+    },
+    "phases": {
+      "charge": {
+        "duration": 1.5,
+        "emitters": [
+          {
+            "pattern": "column",
+            "colors": [
+              "#ff4d1a",
+              "#ffb347",
+              "#fff1c1"
+            ],
+            "count": 120,
+            "speed": 25,
+            "gravity": -30,
+            "lifetime": 1,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "spiral",
+            "colors": [
+              "#ff7a1a",
+              "#8a2be2"
+            ],
+            "count": 80,
+            "speed": 10,
+            "gravity": -8,
+            "lifetime": 0.9,
+            "size": 1,
+            "glow": true
+          }
+        ]
+      },
+      "travel": {
+        "duration": 0,
+        "emitters": []
+      },
+      "release": {
+        "duration": 0.6,
+        "emitters": [
+          {
+            "pattern": "burst",
+            "colors": [
+              "#ffffff",
+              "#ffd166",
+              "#ff4d1a"
+            ],
+            "count": 200,
+            "speed": 45,
+            "gravity": 10,
+            "lifetime": 0.7,
+            "size": 2,
+            "glow": true
+          },
+          {
+            "pattern": "ring",
+            "colors": [
+              "#6b6b6b",
+              "#3a3a3a"
+            ],
+            "count": 100,
+            "speed": 30,
+            "gravity": 5,
+            "lifetime": 1,
+            "size": 2,
+            "glow": false
+          }
+        ]
+      },
+      "linger": {
+        "duration": 4.5,
+        "emitters": [
+          {
+            "pattern": "rain",
+            "colors": [
+              "#ff4d1a",
+              "#ff9a1a",
+              "#ffd166"
+            ],
+            "count": 260,
+            "speed": 55,
+            "gravity": 40,
+            "lifetime": 1.2,
+            "size": 3,
+            "glow": true
+          },
+          {
+            "pattern": "trail",
+            "colors": [
+              "#ffb347",
+              "#5c5c5c"
+            ],
+            "count": 200,
+            "speed": 20,
+            "gravity": -5,
+            "lifetime": 0.8,
+            "size": 1,
+            "glow": true
+          },
+          {
+            "pattern": "fountain",
+            "colors": [
+              "#4a4a4a",
+              "#7a7a7a",
+              "#2b2b2b"
+            ],
+            "count": 180,
+            "speed": 12,
+            "gravity": -15,
+            "lifetime": 2.5,
+            "size": 2,
+            "glow": false
+          }
+        ]
+      }
+    },
+    "effects": [
+      {
+        "verb": "spawn",
+        "strength": 0.5,
+        "duration": 4,
+        "shape": "column",
+        "material": "lava",
+        "creature": "none"
+      },
+      {
+        "verb": "quake",
+        "strength": 0.8,
+        "duration": 4,
+        "shape": "ground",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "ignite",
+        "strength": 0.75,
+        "duration": 4,
+        "shape": "ground",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "damage",
+        "strength": 0.7,
+        "duration": 0,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      },
+      {
+        "verb": "push",
+        "strength": 0.7,
+        "duration": 0,
+        "shape": "circle",
+        "material": "none",
+        "creature": "none"
+      }
+    ]
+  }
+}
