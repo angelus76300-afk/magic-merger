@@ -61,4 +61,6 @@ Set in `wrangler.jsonc`:
 
 Rough costs, mostly thinking tokens: a new merge is about one cent at most, a description a small fraction of a cent, a spell design a few cents. Opus is $4 / $20 per million tokens, Haiku 5.5 is $0.10 / $0.50. Track real spend on https://platform.claude.com/cost.
 
+Every Claude call also logs one JSON line with its token counts and cost in dollars. Watch them live with `npx wrangler tail --search usage`, or later in the Cloudflare dashboard under Workers Logs.
+
 Haiku 5.5 has no server side refusal fallback, so the Worker only sends that option to models that support it.

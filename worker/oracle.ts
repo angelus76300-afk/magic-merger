@@ -75,6 +75,7 @@ export class ClaudeOracle implements Oracle {
       system: [{ type: "text", text: MERGE_SYSTEM, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: mergeUserMessage(a, b) }],
     });
+    logUsage("merge", response);
     const { name, emoji, kind } = parseJson(readText(response)) as Partial<MergeAnswer>;
     if (typeof name !== "string" || typeof emoji !== "string" || (kind !== "spell" && kind !== "artifact")) {
       throw new OracleError("The merge answer did not match the schema");
@@ -91,6 +92,7 @@ export class ClaudeOracle implements Oracle {
       system: [{ type: "text", text: DESCRIBE_SYSTEM, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: describeUserMessage(name, kind, recipe) }],
     });
+    logUsage("describe", response);
     return readText(response).trim();
   }
 
@@ -109,8 +111,33 @@ export class ClaudeOracle implements Oracle {
         },
       ],
     });
+    logUsage("spell", response);
     return parseJson(readText(response));
   }
+}
+
+// Dollars per million tokens: input, output, cache read, cache write (5 minute TTL).
+// Thinking is billed as output. Check https://platform.claude.com/docs/en/about-claude/pricing
+const PRICES: Record<string, [number, number, number, number]> = {
+  "claude-opus-5-5": [4, 20, 0.2, 5],
+  "claude-haiku-5-5": [0.1, 0.5, 0.01, 0.125],
+};
+
+// One JSON line per call, visible with `wrangler tail` and in Workers Logs, so the
+// real cost of each kind of call can be measured instead of guessed.
+function logUsage(call: string, response: Anthropic.Beta.BetaMessage): void {
+  const u = response.usage;
+  const input = u.input_tokens ?? 0;
+  const output = u.output_tokens ?? 0;
+  const cacheRead = u.cache_read_input_tokens ?? 0;
+  const cacheWrite = u.cache_creation_input_tokens ?? 0;
+  const price = PRICES[response.model];
+  const usd = price
+    ? (input * price[0] + output * price[1] + cacheRead * price[2] + cacheWrite * price[3]) / 1e6
+    : null;
+  console.log(
+    JSON.stringify({ usage: call, model: response.model, stop: response.stop_reason, input, output, cacheRead, cacheWrite, usd }),
+  );
 }
 
 function parseJson(text: string): unknown {
