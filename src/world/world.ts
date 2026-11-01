@@ -6,6 +6,15 @@ import { Particles } from "./particles";
 
 export const TICK = 1 / 30;
 
+// Moments the view turns into sound and screen effects. The simulation only
+// records them; whoever draws the world decides what to do with them.
+export interface WorldEvent {
+  kind: "charge" | "release";
+  spec: SpellSpec;
+  x: number;
+  y: number;
+}
+
 interface SavedWorld {
   version: 1;
   w: number;
@@ -19,6 +28,7 @@ interface SavedWorld {
 export class World {
   readonly particles = new Particles();
   readonly casts: Cast[] = [];
+  readonly events: WorldEvent[] = [];
   time = 0;
 
   constructor(
@@ -46,19 +56,22 @@ export class World {
 
   cast(spec: SpellSpec, x: number, y: number): void {
     this.casts.push(new Cast(spec, x, y, this));
+    this.events.push({ kind: "charge", spec, x, y });
   }
 
   step(): void {
     this.time += TICK;
     this.grid.step();
-    const events = {
+    const creatureEvents = {
       emit: (x: number, y: number, color: number, vx: number, vy: number, life: number) =>
         this.particles.add(x, y, vx, vy, life, color, 1, true),
     };
-    for (const c of this.creatures) updateCreature(c, this.grid, TICK, events);
+    for (const c of this.creatures) updateCreature(c, this.grid, TICK, creatureEvents);
     for (const cast of this.casts) cast.update(TICK);
     for (let i = this.casts.length - 1; i >= 0; i--) if (this.casts[i].done) this.casts.splice(i, 1);
     this.particles.update(TICK);
+    // Nobody may be listening (a hidden tab, the Spell Lab): keep only the latest.
+    if (this.events.length > 32) this.events.splice(0, this.events.length - 32);
     // The world forgets the dead after a while, so it never fills up with bodies.
     if (this.creatures.length > 400) {
       const firstDead = this.creatures.findIndex((c) => c.dead);

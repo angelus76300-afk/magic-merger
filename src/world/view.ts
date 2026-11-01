@@ -1,10 +1,11 @@
 import { elementKey } from "../../shared/elements";
-import { SCALE_RADIUS, maxScaleForDepth, sanitizeSpellSpec, type SpellSpec } from "../../shared/spell";
+import { SCALES, SCALE_RADIUS, maxScaleForDepth, sanitizeSpellSpec, type SpellSpec } from "../../shared/spell";
 import * as api from "../api";
 import { chipElement } from "../craft";
 import type { Store } from "../store";
 import { toast } from "../toast";
 import { Renderer } from "./render";
+import { SpellSound } from "./sound";
 import { TICK, World } from "./world";
 
 const WORLD_KEY = "magic-merger.world";
@@ -19,6 +20,7 @@ export interface WorldElements {
   add: HTMLButtonElement;
   reset: HTMLButtonElement;
   size: HTMLSelectElement;
+  sound: HTMLButtonElement;
 }
 
 // The World tab: runs the simulation while visible, and casts the selected
@@ -35,6 +37,11 @@ export class WorldView {
   private preparing = new Set<string>();
   // Mock specs are never saved, but are kept for the session so casting is instant.
   private sessionSpecs = new Map<string, SpellSpec>();
+  private sound = new SpellSound();
+  // Screen shake and flash after a release, fading out over a fraction of a second.
+  private shake = 0;
+  private flash = 0;
+  private readonly calmMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 
   constructor(
     private store: Store,
@@ -53,6 +60,15 @@ export class WorldView {
       }
     });
     window.addEventListener("pagehide", () => this.save());
+    const showSound = () => {
+      this.el.sound.textContent = this.sound.muted ? "Sound off" : "Sound on";
+      this.el.sound.setAttribute("aria-pressed", String(!this.sound.muted));
+    };
+    this.el.sound.addEventListener("click", () => {
+      this.sound.setMuted(!this.sound.muted);
+      showSound();
+    });
+    showSound();
   }
 
   show(): void {
@@ -151,12 +167,54 @@ export class WorldView {
       this.world.step();
       this.acc -= TICK;
     }
+    this.playEvents(this.world);
     this.renderer.draw(this.world);
+    this.applyScreenEffects();
     if (now - this.lastSave > 10_000) {
       this.lastSave = now;
       this.save();
     }
     requestAnimationFrame((t) => this.frame(t));
+  }
+
+  // Sound, shake, flash and a buzz on phones: what makes a cast land.
+  private playEvents(world: World): void {
+    for (const event of world.events.splice(0)) {
+      const size = SCALES.indexOf(event.spec.scale) / (SCALES.length - 1);
+      if (event.kind === "charge") {
+        this.sound.charge(event.spec.phases.charge.duration);
+        continue;
+      }
+      this.sound.release(
+        event.spec.effects.map((e) => e.verb),
+        event.spec.delivery,
+        size,
+      );
+      if (this.calmMotion) continue;
+      this.shake = Math.max(this.shake, 1 + 7 * size);
+      this.flash = Math.max(this.flash, 0.25 + 0.5 * size);
+      if (size >= 0.6) navigator.vibrate?.(Math.round(40 + 120 * size));
+    }
+  }
+
+  private applyScreenEffects(): void {
+    const canvas = this.el.canvas;
+    if (this.shake > 0.2) {
+      const dx = (Math.random() - 0.5) * this.shake;
+      const dy = (Math.random() - 0.5) * this.shake;
+      canvas.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px)`;
+      this.shake *= 0.85;
+    } else if (this.shake > 0) {
+      this.shake = 0;
+      canvas.style.transform = "";
+    }
+    if (this.flash > 0.02) {
+      canvas.style.filter = `brightness(${(1 + this.flash).toFixed(2)})`;
+      this.flash *= 0.8;
+    } else if (this.flash > 0) {
+      this.flash = 0;
+      canvas.style.filter = "";
+    }
   }
 
   private newWorld(size: WorldSize): void {

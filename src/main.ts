@@ -29,6 +29,7 @@ const world = new WorldView(store, {
   add: $<HTMLButtonElement>("#world-add"),
   reset: $<HTMLButtonElement>("#world-reset"),
   size: $<HTMLSelectElement>("#world-size"),
+  sound: $<HTMLButtonElement>("#world-sound"),
 });
 
 function showTab(view: string): void {

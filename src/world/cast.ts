@@ -232,6 +232,7 @@ export class Cast {
     const { t, releaseAt, spec } = this;
     if (t < releaseAt) return;
     const first = t - dt < releaseAt;
+    if (first) this.world.events.push({ kind: "release", spec, x: this.target.x, y: this.target.y });
     spec.effects.forEach((effect, index) => {
       const lasting = effect.duration > 0;
       if (!lasting && !first) return;
