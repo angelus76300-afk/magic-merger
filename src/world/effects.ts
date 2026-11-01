@@ -189,16 +189,35 @@ function affectTerrain(ctx: EffectContext, area: Area): void {
   // Instant spawn, erase and convert carve a clean round shape instead of noise.
   const blob = instant && effect.shape === "circle" && (verb === "spawn" || verb === "erase" || verb === "convert");
   const blobR = r * (0.35 + 0.65 * s);
+  // Spells are aimed at the ground, so a blob centered on the target would lose
+  // its lower half inside the earth. A spawned blob is lifted to sit on top of
+  // the ground and then falls or flows from there.
+  const blobY = verb === "spawn" ? cy - blobR : cy;
   // Rain only spawns in the top rows of the area and lets it fall.
-  const rainTop = verb === "spawn" && ctx.delivery === "rain";
+  const rainTop = verb === "spawn" && ctx.delivery === "rain" && !blob;
   let trees = 0;
   const maxTrees = 1 + Math.round(3 * s);
-
-  for (let y = Math.max(0, area.y0); y <= Math.min(grid.h - 1, area.y1); y++) {
-    if (rainTop && y > area.y0 + 2) break;
+  // Solid material cannot float, so solid "rain" (hail, crystal shards) settles
+  // straight onto the surface below and piles up there, like snow.
+  if (rainTop && solidMaterial) {
     for (let x = Math.max(0, area.x0); x <= Math.min(grid.w - 1, area.x1); x++) {
-      if (!area.contains(x, y)) continue;
-      const inBlob = blob && (x - cx) ** 2 + (y - cy) ** 2 <= blobR * blobR;
+      if (Math.random() >= p) continue;
+      let y = Math.max(0, area.y0);
+      while (y < grid.h - 1 && grid.get(x, y + 1) === M.EMPTY) y++;
+      if (grid.get(x, y) === M.EMPTY && area.contains(x, y)) grid.set(x, y, material);
+    }
+    return;
+  }
+  // A blob is its own shape: it may reach outside the effect area once lifted.
+  const bounds = blob
+    ? { x0: Math.floor(cx - blobR), x1: Math.ceil(cx + blobR), y0: Math.floor(blobY - blobR), y1: Math.ceil(blobY + blobR) }
+    : area;
+
+  for (let y = Math.max(0, bounds.y0); y <= Math.min(grid.h - 1, bounds.y1); y++) {
+    if (rainTop && y > area.y0 + 2) break;
+    for (let x = Math.max(0, bounds.x0); x <= Math.min(grid.w - 1, bounds.x1); x++) {
+      if (!blob && !area.contains(x, y)) continue;
+      const inBlob = blob && (x - cx) ** 2 + (y - blobY) ** 2 <= blobR * blobR;
       if (blob ? !inBlob : Math.random() >= p) continue;
       const m = grid.get(x, y);
       const info = MATERIALS[m];

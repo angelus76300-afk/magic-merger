@@ -98,19 +98,31 @@ You write a spell spec in three parts.
 3. effects: 1 to 5 effects on the world, applied when the spell is released. Each effect has a verb, a strength from 0 to 1, a duration in seconds (0 means instant, otherwise it keeps acting), a shape, a material and a creature (use "none" when the verb takes none).
    Verbs:
 ${VERBS.map((v) => `   ${v}: ${VERB_DOCS[v]}`).join("\n")}
-   Shapes: circle (around the target), column (from the sky down to the target), ground (a wide flat band along the ground).
+   Shapes, where R is the radius of the scale:
+   circle: a disc of radius R around the target.
+   column: a vertical strip R wide, from the top of the sky down to just below the target.
+   ground: a flat band 3.2 R wide but only 0.8 R tall, centered on the ground surface. Good for things that run along the ground; it holds very little air.
    Materials: ${MATERIALS.filter((m) => m !== "none").join(", ")}.
    Creatures: ${CREATURES.filter((c) => c !== "none").join(", ")}.
 
 Other fields:
    delivery: how the spell reaches its target. burst (appears on the spot), projectile (flies in from the sky at an angle), beam (strikes straight down from the sky), rain (falls over the area), wave (rolls outward along the ground), zone (a lasting area).
-   scale: the size of the affected area: tiny (3 cells), small (6), medium (10), large (16), huge (26), cataclysmic (40). Never go above the maximum scale given for the spell.
+   scale: the size of the affected area: tiny (R = 3 cells), small (6), medium (10), large (16), huge (26), cataclysmic (40). Never go above the maximum scale given for the spell. A villager is 2 cells wide and 4 tall, so a small spell covers about four villagers standing side by side.
    summary: one plain sentence saying what the spell does, for the spell card.
+
+How the engine plays effects:
+   strength is how hard an effect acts inside its area, not how big the area is: scale already sets the size. Below 0.3 an effect is barely visible. A spell whose name promises force (a wave, a quake, an inferno, a meteor) should use 0.6 to 1 even at a small scale; keep low strengths for spells meant to be subtle.
+   spawn only fills empty cells. Instant spawn in a circle drops one solid round blob that then falls or flows: the way to dump a lot of water, sand or lava at once. Spawn in a ground band only fills the thin layer of air just above the ground, so it makes a film, not a flood. With rain delivery and a duration, spawned material keeps falling from the top of the area.
+   A lasting terrain effect (one with a duration) acts on part of the area every tick, so within a second or two it has touched nearly every cell. A lasting erase or convert wipes the whole area.
+   On creatures the last state wins: fear wakes sleepers, calm removes fear, ignite thaws and freeze puts out fire, heal cures both. Never put opposites in one spell.
+   Fear, sleep, calm, levitation, freezing and burning show on the creatures themselves. heal, cool, revive and teleport only show when there is something to act on: a hurt creature, a fire, a body.
 
 Guidelines:
    Let the name and the grimoire entry decide everything. The colors, motion and effects should make a player say "yes, that is exactly what this spell looks like".
    The verbs are fixed, the combinations are not. The world has its own physics: fire spreads to grass and trees, water puts out fire and freezes into ice, lava and water make stone and steam, sand and gravel fall, steam rises and rains back down. Prefer effects that set this physics in motion over effects that just deal damage.
-   Keep the whole cast under 10 seconds. Small, gentle spells should be short and modest; only the maximum scale should feel overwhelming.
+   Every spell needs at least one effect a player can see on an ordinary patch of grass with a few villagers, whatever else it does.
+   Make the linger phase last about as long as the longest lasting effect, so the player sees why the world keeps changing.
+   Keep the whole cast under 10 seconds.
 
 Example for "Firestorm":
 ${JSON.stringify(SPELL_EXAMPLE)}`;
@@ -136,11 +148,22 @@ const strict = <P extends Record<string, unknown>>(properties: P) => ({
   required: Object.keys(properties),
   additionalProperties: false,
 });
-const PHASE_SCHEMA = strict({
-  duration: NUM,
-  emitters: {
-    type: "array",
-    items: strict({
+// The four phases share one definition through $ref. Written out four times,
+// the compiled grammar was too large and the API refused every spell request.
+const PHASE_REF = { $ref: "#/$defs/phase" } as const;
+
+export const SPELL_SCHEMA = {
+  ...strict({
+    summary: STR,
+    scale: { type: "string", enum: [...SCALES] },
+    delivery: { type: "string", enum: [...DELIVERIES] },
+    incantation: strict({ rings: NUM, symmetry: NUM, runes: NUM, primary: STR, secondary: STR, spin: NUM }),
+    phases: strict({ charge: PHASE_REF, travel: PHASE_REF, release: PHASE_REF, linger: PHASE_REF }),
+    effects: { type: "array", items: { $ref: "#/$defs/effect" } },
+  }),
+  $defs: {
+    phase: strict({ duration: NUM, emitters: { type: "array", items: { $ref: "#/$defs/emitter" } } }),
+    emitter: strict({
       pattern: { type: "string", enum: [...PATTERNS] },
       colors: { type: "array", items: STR },
       count: NUM,
@@ -150,18 +173,7 @@ const PHASE_SCHEMA = strict({
       size: NUM,
       glow: { type: "boolean" },
     }),
-  },
-});
-
-export const SPELL_SCHEMA = strict({
-  summary: STR,
-  scale: { type: "string", enum: [...SCALES] },
-  delivery: { type: "string", enum: [...DELIVERIES] },
-  incantation: strict({ rings: NUM, symmetry: NUM, runes: NUM, primary: STR, secondary: STR, spin: NUM }),
-  phases: strict({ charge: PHASE_SCHEMA, travel: PHASE_SCHEMA, release: PHASE_SCHEMA, linger: PHASE_SCHEMA }),
-  effects: {
-    type: "array",
-    items: strict({
+    effect: strict({
       verb: { type: "string", enum: [...VERBS] },
       strength: NUM,
       duration: NUM,
@@ -170,4 +182,4 @@ export const SPELL_SCHEMA = strict({
       creature: { type: "string", enum: [...CREATURES] },
     }),
   },
-});
+};

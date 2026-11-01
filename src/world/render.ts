@@ -125,6 +125,14 @@ export class Renderer {
       this.plot(Math.round(c.x), bottom - bh - 2, 0xffe066, 1, true);
       this.plot(Math.round(c.x), bottom - bh - 3, 0xffe066, 1, true);
     }
+    // A small "z" drifting up and down above sleepers, so sleep reads as sleep and not as idling.
+    if (!c.dead && c.sleep > 0 && c.fear <= 0) {
+      const rise = Math.floor(time * 2 + c.id) % 3;
+      const zx = Math.round(c.x) + 1;
+      const zy = bottom - bh - 2 - rise;
+      this.plot(zx, zy, 0xa9c8ff, 0.9, true);
+      this.plot(zx + 1, zy - 1, 0xa9c8ff, 0.9, true);
+    }
   }
 
   private drawCircle(c: CircleState, inc: Incantation): void {
@@ -135,6 +143,16 @@ export class Renderer {
       x: c.x + Math.cos(angle) * radius,
       y: c.y + Math.sin(angle) * radius * squash,
     });
+    // Each pixel of the circle is lit once. Glow adds light, so a pixel hit by
+    // several ring steps, a star line and a rune used to saturate to white, and
+    // every circle looked the same whatever its colors.
+    const lit = new Set<number>();
+    const dot = (x: number, y: number, color: number, alpha: number) => {
+      const key = y * this.w + x;
+      if (lit.has(key)) return;
+      lit.add(key);
+      this.plot(x, y, color, alpha, true);
+    };
 
     // Rings.
     for (let k = 0; k < inc.rings; k++) {
@@ -142,7 +160,15 @@ export class Renderer {
       const steps = Math.ceil(radius * 8);
       for (let s = 0; s < steps; s++) {
         const p = point((s / steps) * Math.PI * 2, radius);
-        this.plot(Math.round(p.x), Math.round(p.y), k === 0 ? primary : secondary, c.alpha, true);
+        dot(Math.round(p.x), Math.round(p.y), k === 0 ? primary : secondary, c.alpha);
+      }
+    }
+    // Runes: tiny 3 by 3 glyphs riding the outer ring.
+    for (let i = 0; i < inc.runes; i++) {
+      const p = point(-c.angle * 0.5 + (i / inc.runes) * Math.PI * 2, c.r * 0.9);
+      const bits = runeBits(i * 7 + inc.symmetry * 13 + inc.rings);
+      for (let b = 0; b < 9; b++) {
+        if (bits & (1 << b)) dot(Math.round(p.x) + (b % 3) - 1, Math.round(p.y) + Math.floor(b / 3) - 1, primary, c.alpha);
       }
     }
     // Star polygon.
@@ -151,22 +177,23 @@ export class Renderer {
     for (let i = 0; i < n; i++) {
       const a = point(c.angle + (i / n) * Math.PI * 2, c.r * 0.75);
       const b = point(c.angle + (((i + step) % n) / n) * Math.PI * 2, c.r * 0.75);
-      this.line(a.x, a.y, b.x, b.y, secondary, c.alpha * 0.9);
-    }
-    // Runes: tiny 3 by 3 glyphs riding the outer ring.
-    for (let i = 0; i < inc.runes; i++) {
-      const p = point(-c.angle * 0.5 + (i / inc.runes) * Math.PI * 2, c.r * 0.9);
-      const bits = runeBits(i * 7 + inc.symmetry * 13 + inc.rings);
-      for (let b = 0; b < 9; b++) {
-        if (bits & (1 << b)) this.plot(Math.round(p.x) + (b % 3) - 1, Math.round(p.y) + Math.floor(b / 3) - 1, primary, c.alpha, true);
+      const steps = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y), 1);
+      for (let s = 0; s <= steps; s++) {
+        const k = s / steps;
+        dot(Math.round(a.x + (b.x - a.x) * k), Math.round(a.y + (b.y - a.y) * k), secondary, c.alpha * 0.9);
       }
     }
   }
 
   private drawParticles(world: World): void {
     const p = world.particles;
+    const { mat, w, h } = world.grid;
     for (let i = 0; i < p.capacity; i++) {
       if (p.life[i] <= 0) continue;
+      // Sparks are light in the air: one inside rock or earth would read as a glitch.
+      const cx = Math.round(p.x[i]);
+      const cy = Math.round(p.y[i]);
+      if (cx >= 0 && cy >= 0 && cx < w && cy < h && MATERIALS[mat[cy * w + cx]].solid) continue;
       const alpha = Math.min(1, (p.life[i] / p.maxLife[i]) * 1.5);
       const size = p.size[i];
       const x0 = Math.round(p.x[i] - (size - 1) / 2);
@@ -174,14 +201,6 @@ export class Renderer {
       for (let dy = 0; dy < size; dy++) {
         for (let dx = 0; dx < size; dx++) this.plot(x0 + dx, y0 + dy, p.color[i], alpha, p.glow[i] === 1);
       }
-    }
-  }
-
-  private line(x0: number, y0: number, x1: number, y1: number, color: number, alpha: number): void {
-    const steps = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1);
-    for (let s = 0; s <= steps; s++) {
-      const k = s / steps;
-      this.plot(Math.round(x0 + (x1 - x0) * k), Math.round(y0 + (y1 - y0) * k), color, alpha, true);
     }
   }
 
