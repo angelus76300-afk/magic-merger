@@ -33,6 +33,8 @@ export class Craft {
   private busy = new Set<number>();
   private hovered: HTMLElement | null = null;
   private tappedChip: number | null = null;
+  // Called when this player finds a spell they did not have yet.
+  onNewSpell: (key: string) => void = () => {};
 
   constructor(
     private store: Store,
@@ -223,6 +225,7 @@ export class Craft {
       if (result.firstDiscovery) toast(`First discovery: ${label}`, "special");
       else if (newForMe) toast(`New: ${label}`);
       if (newForMe) this.renderInventory();
+      if (newForMe && result.element.kind === "spell") this.onNewSpell(chip.key);
     } catch (err) {
       draggedNode.classList.remove("merging");
       targetNode.classList.remove("merging");

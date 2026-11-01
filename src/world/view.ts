@@ -81,7 +81,9 @@ export class WorldView {
   }
 
   // Asks the Worker for the spell spec, once. Admins can force a new one.
-  async prepare(key: string, regenerate = false): Promise<SpellSpec | null> {
+  // A quiet prepare runs in the background and keeps its errors to itself: the
+  // player will see them if they actually try to cast.
+  async prepare(key: string, regenerate = false, quiet = false): Promise<SpellSpec | null> {
     if (!regenerate) {
       const known = this.specFor(key);
       if (known) {
@@ -100,7 +102,7 @@ export class WorldView {
       else this.store.setSpell(key, spec);
       return spec;
     } catch (err) {
-      toast(err instanceof Error ? err.message : "The spell could not be prepared", "error");
+      if (!quiet) toast(err instanceof Error ? err.message : "The spell could not be prepared", "error");
       return null;
     } finally {
       this.preparing.delete(key);
