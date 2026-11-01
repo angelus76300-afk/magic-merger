@@ -18,9 +18,10 @@ export function areaOf(effect: Effect, cx: number, cy: number, r: number, h: num
     return box(cx - half, cx + half, 0, Math.min(h - 1, cy + r * 0.5), (x) => Math.abs(x - cx) <= half);
   }
   if (effect.shape === "ground") {
+    // An ellipse, not a box: hard rectangular edges in the terrain read as a bug.
     const half = r * 1.6;
     const tall = Math.max(2, r * 0.4);
-    return box(cx - half, cx + half, cy - tall, cy + tall, () => true);
+    return box(cx - half, cx + half, cy - tall, cy + tall, (x, y) => ((x - cx) / half) ** 2 + ((y - cy) / tall) ** 2 <= 1);
   }
   return box(cx - r, cx + r, cy - r, cy + r, (x, y) => (x - cx) ** 2 + (y - cy) ** 2 <= r * r);
 }
@@ -195,6 +196,9 @@ function affectTerrain(ctx: EffectContext, area: Area): void {
   const blobY = verb === "spawn" ? cy - blobR : cy;
   // Rain only spawns in the top rows of the area and lets it fall.
   const rainTop = verb === "spawn" && ctx.delivery === "rain" && !blob;
+  // Rain starts a little above the target, not at the top of the sky: from up
+  // there a tall column took seconds to land, long after the spell had ended.
+  const rainY0 = Math.max(area.y0, Math.floor(cy - Math.max(16, r * 2)));
   let trees = 0;
   const maxTrees = 1 + Math.round(3 * s);
   // Solid material cannot float, so solid "rain" (hail, crystal shards) settles
@@ -202,7 +206,7 @@ function affectTerrain(ctx: EffectContext, area: Area): void {
   if (rainTop && solidMaterial) {
     for (let x = Math.max(0, area.x0); x <= Math.min(grid.w - 1, area.x1); x++) {
       if (Math.random() >= p) continue;
-      let y = Math.max(0, area.y0);
+      let y = Math.max(0, rainY0);
       while (y < grid.h - 1 && grid.get(x, y + 1) === M.EMPTY) y++;
       if (grid.get(x, y) === M.EMPTY && area.contains(x, y)) grid.set(x, y, material);
     }
@@ -213,8 +217,8 @@ function affectTerrain(ctx: EffectContext, area: Area): void {
     ? { x0: Math.floor(cx - blobR), x1: Math.ceil(cx + blobR), y0: Math.floor(blobY - blobR), y1: Math.ceil(blobY + blobR) }
     : area;
 
-  for (let y = Math.max(0, bounds.y0); y <= Math.min(grid.h - 1, bounds.y1); y++) {
-    if (rainTop && y > area.y0 + 2) break;
+  for (let y = Math.max(0, rainTop ? rainY0 : bounds.y0); y <= Math.min(grid.h - 1, bounds.y1); y++) {
+    if (rainTop && y > rainY0 + 2) break;
     for (let x = Math.max(0, bounds.x0); x <= Math.min(grid.w - 1, bounds.x1); x++) {
       if (!blob && !area.contains(x, y)) continue;
       const inBlob = blob && (x - cx) ** 2 + (y - blobY) ** 2 <= blobR * blobR;

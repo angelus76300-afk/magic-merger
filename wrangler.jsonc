@@ -24,7 +24,8 @@
     // See docs/SETUP.md for what each call costs.
     "MERGE_MODEL": "claude-opus-5-5",
     "DESCRIBE_MODEL": "claude-haiku-5-5",
-    "SPELL_MODEL": "claude-opus-5-5"
+    "SPELL_MODEL": "claude-opus-5-5",
+    "SPELL_EFFORT": "medium"
   },
   "observability": { "enabled": true }
 }

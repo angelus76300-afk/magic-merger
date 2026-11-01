@@ -11,7 +11,7 @@ import type {
   SpellRequest,
   SpellResponse,
 } from "../shared/types";
-import { ClaudeOracle, MockOracle, OracleError, type Oracle } from "./oracle";
+import { ClaudeOracle, MockOracle, OracleError, parseEffort, type Oracle } from "./oracle";
 
 export interface Env {
   DB: D1Database;
@@ -19,6 +19,8 @@ export interface Env {
   MERGE_MODEL: string;
   DESCRIBE_MODEL: string;
   SPELL_MODEL: string;
+  // low, medium, high, xhigh or max. How long the spell designer thinks.
+  SPELL_EFFORT?: string;
   // Secrets, set with `wrangler secret put`. All optional.
   ANTHROPIC_API_KEY?: string;
   // Locks the API for everyone who does not have it.
@@ -76,7 +78,12 @@ class HttpError extends Error {
 
 function oracleFor(env: Env): Oracle {
   if (!env.ANTHROPIC_API_KEY) return new MockOracle();
-  const models = { merge: env.MERGE_MODEL, describe: env.DESCRIBE_MODEL, spell: env.SPELL_MODEL };
+  const models = {
+    merge: env.MERGE_MODEL,
+    describe: env.DESCRIBE_MODEL,
+    spell: env.SPELL_MODEL,
+    spellEffort: parseEffort(env.SPELL_EFFORT, "medium"),
+  };
   return new ClaudeOracle(env.ANTHROPIC_API_KEY, models, env.ANTHROPIC_BASE_URL);
 }
 

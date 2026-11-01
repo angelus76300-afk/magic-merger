@@ -39,6 +39,14 @@ export interface OracleModels {
   merge: string;
   describe: string;
   spell: string;
+  spellEffort: Effort;
+}
+
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+const EFFORTS: readonly Effort[] = ["low", "medium", "high", "xhigh", "max"];
+
+export function parseEffort(raw: string | undefined, fallback: Effort): Effort {
+  return EFFORTS.includes(raw as Effort) ? (raw as Effort) : fallback;
 }
 
 export class OracleError extends Error {}
@@ -102,7 +110,7 @@ export class ClaudeOracle implements Oracle {
       model: this.models.spell,
       max_tokens: 16000,
       ...fallbackFor(this.models.spell),
-      output_config: { effort: "medium", format: { type: "json_schema", schema: SPELL_SCHEMA } },
+      output_config: { effort: this.models.spellEffort, format: { type: "json_schema", schema: SPELL_SCHEMA } },
       system: [{ type: "text", text: SPELL_SYSTEM, cache_control: { type: "ephemeral" } }],
       messages: [
         {
