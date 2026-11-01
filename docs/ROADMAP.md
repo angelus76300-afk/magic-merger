@@ -42,9 +42,10 @@ Ask the merge model for a tier (minor, major, legendary, mythic) alongside the n
 
 ### 4. Game feel
 
-1. A short flash and a few frames of screen shake on release, scaled by the spell's size.
-2. Sound. Procedural Web Audio blips per verb (a crackle for ignite, a rumble for quake, a chime for heal) would do more for feel than any visual change.
-3. A "First discovery" moment that is more than a toast: the card opens with a little ceremony.
+Done in this session: a flash and a short screen shake on release scaled by the spell's size, a buzz on phones for large spells, and procedural Web Audio sounds chosen by the spell's verbs (crackle, rumble, chime, ping, whoosh), with a mute button. Still to do:
+
+1. A "First discovery" moment that is more than a toast: the card opens with a little ceremony.
+2. Tune the sounds by ear on a real phone. They were checked for errors, not listened to.
 
 ### 5. Widen the palette, carefully
 
