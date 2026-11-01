@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "magic-merger",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // The Worker serves the built frontend and only runs its own code for /api/*.
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "magic-merger",
+      // Replace with the id printed by `npx wrangler d1 create magic-merger`.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    // See docs/SETUP.md for what each call costs.
+    "MERGE_MODEL": "claude-opus-5-5",
+    "DESCRIBE_MODEL": "claude-haiku-5-5",
+    "SPELL_MODEL": "claude-opus-5-5"
+  },
+  "observability": { "enabled": true }
+}

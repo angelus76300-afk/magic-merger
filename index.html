@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#15101f" />
+    <title>Magic Merger</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1 class="title">Magic Merger</h1>
+      <span id="mock-badge" class="badge" hidden title="No API key on the Worker: results are fake and not saved">mock mode</span>
+      <span id="admin-badge" class="badge badge-admin" hidden>admin</span>
+      <nav class="tabs" role="tablist">
+        <button class="tab" role="tab" data-view="craft-view" aria-selected="true">Craft</button>
+        <button class="tab" role="tab" data-view="world-view" aria-selected="false">World</button>
+      </nav>
+    </header>
+
+    <main id="craft-view" class="view craft">
+      <section id="board" class="board" aria-label="Crafting board">
+        <p class="board-hint">Drop one item onto another to merge them. Tap an item to read its card.</p>
+        <button id="clear" class="board-clear">Clear</button>
+      </section>
+      <aside id="inventory" class="inventory" aria-label="Discovered items">
+        <div class="inventory-head">
+          <input id="search" type="search" placeholder="Search" autocomplete="off" />
+          <span id="count" class="count"></span>
+        </div>
+        <div id="inventory-list" class="inventory-list"></div>
+      </aside>
+    </main>
+
+    <main id="world-view" class="view world" hidden>
+      <div id="world-stage" class="world-stage">
+        <canvas id="world-canvas" aria-label="The world: tap to cast the selected spell"></canvas>
+        <div class="world-tools">
+          <button id="world-add">+ Villager</button>
+          <select id="world-size" aria-label="World size for the next reset">
+            <option value="small">Small</option>
+            <option value="medium">Medium</option>
+            <option value="large">Large</option>
+          </select>
+          <button id="world-reset">Reset</button>
+        </div>
+      </div>
+      <section class="spellbar" aria-label="Your spells">
+        <p id="world-status" class="world-status"></p>
+        <div id="spell-list" class="spell-list"></div>
+      </section>
+    </main>
+
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
