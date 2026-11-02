@@ -122,6 +122,12 @@ export interface Creature {
 
 let nextId = 1;
 
+// Tests only: creature ids feed some choices, so a replay that must give the
+// same answer whatever ran before it starts from the same id.
+export function resetCreatureIds(): void {
+  nextId = 1;
+}
+
 export function kindOf(c: Creature): CreatureKind {
   return KINDS.get(c.kind) ?? KINDS.get("villager")!;
 }

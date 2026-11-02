@@ -5,7 +5,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { guardLoops } from "../shared/spellcode";
-import { lifeCycle, populate, updateCreature } from "../src/sim/creatures";
+import { lifeCycle, populate, resetCreatureIds, updateCreature } from "../src/sim/creatures";
 import { C } from "../src/sim/materials";
 import { stepPhysics } from "../src/sim/physics";
 import { Runtime } from "../src/sim/runtime";
@@ -74,6 +74,30 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   let worst = 0;
   for (let k = 0; k < 30 * 12; k++) worst = Math.max(worst, step(world, rt));
   check(`spell ${file}`, ok && errors.length === 0 && worst < 120, `${errors[0] ?? "no errors"}, worst tick ${worst.toFixed(1)}ms`);
+}
+
+// 2b. Programs written for older World API versions still run: they are
+// never rewritten in bulk, so the API must stay backward compatible.
+// Its own random stream, so adding a file never shifts the checks below.
+{
+  const shared = Math.random;
+  seed(2);
+  const legacyDir = "lab/legacy";
+  const files = readdirSync(legacyDir).filter((f) => f.endsWith(".js"));
+  const broken: string[] = [];
+  for (const file of files) {
+    const code = readFileSync(join(legacyDir, file), "utf8");
+    const tier = (/\((cantrip|minor|major|grand|legendary|cosmic)\)/.exec(code)?.[1] ?? "major") as "major";
+    const world = generateWorld(112, 112, 9);
+    populate(world);
+    const errors: string[] = [];
+    const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
+    const ok = rt.cast({ key: file, name: file, tier, code }, 56, 56);
+    for (let k = 0; k < 30 * 6 && !errors.length; k++) step(world, rt);
+    if (!ok || errors.length) broken.push(`${file}: ${errors[0] ?? "did not start"}`);
+  }
+  check(`old programs still run (${files.length})`, files.length > 0 && broken.length === 0, broken[0] ?? "");
+  Math.random = shared;
 }
 
 // 3. A spell that loops forever is stopped, not frozen.
@@ -260,6 +284,7 @@ const solutions: Record<string, { file: string; tier: "major" | "grand" | "legen
 for (const scenario of SCENARIOS) {
   for (const withMagic of [false, true]) {
     seed(17);
+    resetCreatureIds();
     const { world, run } = scenario.build();
     const errors: string[] = [];
     const rt = new Runtime(world, (_k, _n, m) => errors.push(m));

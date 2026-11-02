@@ -1,5 +1,5 @@
 import { PRIMITIVES, elementKey, pairKey } from "../shared/elements";
-import { PROGRAM_VERSION, type SpellProgram } from "../shared/spellcode";
+import { FIRST_PROGRAM_VERSION, PROGRAM_VERSION, type SpellProgram } from "../shared/spellcode";
 import { TIERS, capTier, isTier, tierFromDepth, type Tier } from "../shared/tiers";
 import type {
   DescribeRequest,
@@ -9,6 +9,9 @@ import type {
   HealthResponse,
   MergeRequest,
   MergeResponse,
+  MergeTrialRequest,
+  PerfSample,
+  SpendResponse,
   RepairRequest,
   SpellRequest,
   SpellResponse,
@@ -24,6 +27,11 @@ export interface Env {
   // by SPELL_MODEL: small spells are simple and frequent, big ones rare and ambitious.
   SPELL_MODEL: string;
   SPELL_MODEL_SMALL?: string;
+  // Who mends a crashing program, whatever its tier. A repair is a small edit
+  // of code that already exists: Haiku does it for a fortieth of Opus.
+  REPAIR_MODEL?: string;
+  // How long the merge model thinks: low unless measured otherwise.
+  MERGE_EFFORT?: string;
   SPELL_SMALL_UP_TO?: string;
   // low, medium, high, xhigh or max. How long the spell designer thinks.
   SPELL_EFFORT?: string;
@@ -66,7 +74,7 @@ export default {
       if (request.method === "POST" && url.pathname === "/api/spell") {
         const body = await readBody<SpellRequest>(request);
         // The admin can try another model or effort for one design.
-        const tried = admin && (body.model || body.effort) ? oracleFor(env, body.model, body.effort) : oracle;
+        const tried = admin && (body.model || body.effort) ? oracleFor(env, { spellModel: body.model, spellEffort: body.effort }) : oracle;
         try {
           return json(await handleSpell(body, env, tried, admin));
         } finally {
@@ -80,7 +88,32 @@ export default {
         return json({ ok: true, mock: !env.ANTHROPIC_API_KEY, admin } satisfies HealthResponse);
       }
       if (request.method === "GET" && url.pathname === "/api/spend" && admin) {
-        return json({ month: await monthSpend(env.DB), budget: budget(env) });
+        return json(await spendReport(env));
+      }
+      if (request.method === "POST" && url.pathname === "/api/perf") {
+        await recordPerf(env.DB, await readBody<PerfSample>(request), request.headers.get("user-agent") ?? "");
+        return json({ ok: true });
+      }
+      if (request.method === "GET" && url.pathname === "/api/perf" && admin) {
+        const rows = await env.DB.prepare("SELECT at, ua, sample FROM perf ORDER BY at DESC LIMIT 200").all<{ at: number; ua: string; sample: string }>();
+        return json(rows.results.map((r) => ({ at: r.at, ua: r.ua, ...(JSON.parse(r.sample) as object) })));
+      }
+      // Admin tools, for measuring: what another model would answer for a
+      // pair (nothing is stored), and the one-off tier backfill.
+      if (request.method === "POST" && url.pathname === "/api/admin/merge-trial" && admin) {
+        const body = await readBody<MergeTrialRequest>(request);
+        const trial = oracleFor(env, { mergeModel: body.model, mergeEffort: body.effort });
+        try {
+          await ensureBudget(env, trial);
+          const t0 = Date.now();
+          const answer = await trial.merge(String(body.a), String(body.b));
+          return json({ answer, ms: Date.now() - t0, usd: trial.spent.reduce((sum, s) => sum + s.usd, 0) });
+        } finally {
+          await recordSpend(env.DB, trial);
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/api/admin/backfill-tiers" && admin) {
+        return json(await backfillTiers(env, oracle));
       }
       return json({ error: "Not found" }, 404);
     } catch (err) {
@@ -106,13 +139,21 @@ class HttpError extends Error {
 
 const SPELL_MODELS = new Set(["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1"]);
 
-function oracleFor(env: Env, spellModel?: string, spellEffort?: string): Oracle {
+interface OracleOverrides {
+  spellModel?: string;
+  spellEffort?: string;
+  mergeModel?: string;
+  mergeEffort?: string;
+}
+
+function oracleFor(env: Env, o: OracleOverrides = {}): Oracle {
   if (!env.ANTHROPIC_API_KEY) return new MockOracle();
   const models = {
-    merge: env.MERGE_MODEL,
+    merge: o.mergeModel && SPELL_MODELS.has(o.mergeModel) ? o.mergeModel : env.MERGE_MODEL,
+    mergeEffort: parseEffort(o.mergeEffort ?? env.MERGE_EFFORT, "low"),
     describe: env.DESCRIBE_MODEL,
-    spell: spellModel && SPELL_MODELS.has(spellModel) ? spellModel : env.SPELL_MODEL,
-    spellEffort: parseEffort(spellEffort ?? env.SPELL_EFFORT, "medium"),
+    spell: o.spellModel && SPELL_MODELS.has(o.spellModel) ? o.spellModel : env.SPELL_MODEL,
+    spellEffort: parseEffort(o.spellEffort ?? env.SPELL_EFFORT, "medium"),
   };
   return new ClaudeOracle(env.ANTHROPIC_API_KEY, models, env.ANTHROPIC_BASE_URL);
 }
@@ -135,6 +176,54 @@ async function ensureBudget(env: Env, oracle: Oracle): Promise<void> {
   if ((await monthSpend(env.DB)) >= budget(env)) {
     throw new HttpError(402, "The magic is spent for this month: the Claude budget is used up. Known recipes still work.");
   }
+}
+
+// The month so far, call by call, for the admin badge and `/api/spend`.
+async function spendReport(env: Env): Promise<SpendResponse> {
+  const now = new Date();
+  const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const rows = await env.DB.prepare(
+    `SELECT call, model, COUNT(*) AS n, SUM(usd) AS usd, SUM(CASE WHEN at >= ? THEN usd ELSE 0 END) AS today
+     FROM spend WHERE at >= ? GROUP BY call, model ORDER BY usd DESC`,
+  )
+    .bind(today, start)
+    .all<{ call: string; model: string; n: number; usd: number; today: number }>();
+  const calls = rows.results.map((r) => ({ call: r.call, model: r.model, n: r.n, usd: round(r.usd), avg: round(r.usd / r.n, 5), today: round(r.today) }));
+  return {
+    month: round(calls.reduce((sum, c) => sum + c.usd, 0)),
+    today: round(calls.reduce((sum, c) => sum + c.today, 0)),
+    budget: budget(env),
+    calls,
+  };
+}
+
+function round(v: number, digits = 4): number {
+  const f = 10 ** digits;
+  return Math.round(v * f) / f;
+}
+
+// Frame samples sent by the HUD on a real device, kept for a month.
+async function recordPerf(db: D1Database, body: PerfSample, ua: string): Promise<void> {
+  const sample = JSON.stringify(body ?? {});
+  if (sample.length > 4000) throw new HttpError(413, "The sample is too big");
+  const now = Date.now();
+  await db.batch([
+    db.prepare("INSERT INTO perf (at, ua, sample) VALUES (?, ?, ?)").bind(now, ua.slice(0, 300), sample),
+    db.prepare("DELETE FROM perf WHERE at < ?").bind(now - 30 * 86400_000),
+  ]);
+}
+
+// Elements from before tiers: rated once, all in one call (about 100 names).
+async function backfillTiers(env: Env, oracle: Oracle): Promise<{ rated: number; missing: string[] }> {
+  const rows = await env.DB.prepare("SELECT key, name, kind FROM elements WHERE tier IS NULL LIMIT 300").all<{ key: string; name: string; kind: ElementKind }>();
+  if (!rows.results.length) return { rated: 0, missing: [] };
+  await ensureBudget(env, oracle);
+  const tiers = await oracle.tiers(rows.results);
+  if (oracle.mock) return { rated: 0, missing: [] };
+  const updates = rows.results.filter((r) => tiers.has(r.name)).map((r) => env.DB.prepare("UPDATE elements SET tier = ? WHERE key = ?").bind(tiers.get(r.name)!, r.key));
+  if (updates.length) await env.DB.batch(updates);
+  return { rated: updates.length, missing: rows.results.filter((r) => !tiers.has(r.name)).map((r) => r.name) };
 }
 
 async function recordSpend(db: D1Database, oracle: Oracle): Promise<void> {
@@ -206,6 +295,9 @@ async function handleMerge(body: MergeRequest, env: Env, oracle: Oracle): Promis
   return { element, firstDiscovery, mock: false };
 }
 
+// Every element gets its tier in the merge answer; the ones from before tiers
+// were rated once by /api/admin/backfill-tiers. A row still without one falls
+// back to its depth, without a call.
 function tierOf(element: GameElement): Tier {
   return element.tier ?? tierFromDepth(element.depth);
 }
@@ -224,20 +316,20 @@ async function handleSpell(body: SpellRequest, env: Env, oracle: Oracle, admin: 
 
   if (!oracle.mock && !regenerate) {
     const cached = await storedProgram(env.DB, key);
-    if (cached) return { name: element.name, tier: await ensureTier(env, oracle, element), program: cached, mock: false };
+    if (cached) return { name: element.name, tier: tierOf(element), program: cached, mock: false };
   }
 
   // The spell is written from its grimoire entry, so that comes first.
   const description = await ensureDescription(env, oracle, element, false);
-  const tier = await ensureTier(env, oracle, element);
+  const tier = tierOf(element);
   await ensureBudget(env, oracle);
   const model = body.model && admin ? body.model : spellModelFor(env, tier);
-  const writer = model === env.SPELL_MODEL || oracle.mock ? oracle : oracleFor(env, model, body.effort);
+  const writer = model === env.SPELL_MODEL || oracle.mock ? oracle : oracleFor(env, { spellModel: model, spellEffort: body.effort });
   try {
     const answer = await writer.spell({ name: element.name, kind: element.kind, description, recipe: await firstRecipe(env.DB, key), tier });
     const program: SpellProgram = { version: PROGRAM_VERSION, summary: answer.summary, code: answer.code };
     if (!oracle.mock) await storeProgram(env, key, program, 0, model);
-    return { name: element.name, tier, program, mock: oracle.mock };
+    return { name: element.name, tier, program: { ...program, model }, mock: oracle.mock };
   } finally {
     if (writer !== oracle) await recordSpend(env.DB, writer);
   }
@@ -248,30 +340,41 @@ async function handleRepair(body: RepairRequest, env: Env, oracle: Oracle, admin
   const key = elementKey(element.name);
   const error = typeof body.error === "string" ? body.error.slice(0, 500) : "";
   if (!error) throw new HttpError(400, "A repair needs the error");
-  const row = await env.DB.prepare("SELECT spec, repairs FROM spells WHERE key = ? AND version = ?").bind(key, PROGRAM_VERSION).first<{ spec: string; repairs: number }>();
+  const row = await env.DB.prepare("SELECT spec, repairs FROM spells WHERE key = ? AND version >= ?")
+    .bind(key, FIRST_PROGRAM_VERSION)
+    .first<{ spec: string; repairs: number }>();
   if (!row) throw new HttpError(404, "There is no program to repair");
   if (row.repairs >= MAX_REPAIRS && !admin) throw new HttpError(429, `${element.name} has been mended too often; ask the admin for a new spell`);
-  const tier = await ensureTier(env, oracle, element);
+  const tier = tierOf(element);
   const stored = JSON.parse(row.spec) as SpellProgram;
   await ensureBudget(env, oracle);
-  const model = spellModelFor(env, tier);
-  const writer = model === env.SPELL_MODEL || oracle.mock ? oracle : oracleFor(env, model);
+  // Repairs always go to the small model: fixing one error in a program that
+  // exists is not where Opus earns its price.
+  const model = env.REPAIR_MODEL || "claude-haiku-5-5";
+  const writer = model === env.SPELL_MODEL || oracle.mock ? oracle : oracleFor(env, { spellModel: model });
   try {
     const answer = await writer.repair(element.name, tier, stored.code, error);
     const program: SpellProgram = { version: PROGRAM_VERSION, summary: answer.summary || stored.summary, code: answer.code };
     if (!oracle.mock) await storeProgram(env, key, program, row.repairs + 1, model);
-    return { name: element.name, tier, program, mock: oracle.mock };
+    return { name: element.name, tier, program: { ...program, model }, mock: oracle.mock };
   } finally {
     if (writer !== oracle) await recordSpend(env.DB, writer);
   }
 }
 
+// Whatever version a program was written for, it is served as it is: the
+// World API stays backward compatible, and a version bump must never rewrite
+// every spell again. Only version 1 rows (declarative specs, not code) are
+// written anew, once, on their next cast.
 async function storedProgram(db: D1Database, key: string): Promise<SpellProgram | null> {
-  const row = await db.prepare("SELECT spec FROM spells WHERE key = ? AND version = ?").bind(key, PROGRAM_VERSION).first<{ spec: string }>();
+  const row = await db
+    .prepare("SELECT spec, version, model FROM spells WHERE key = ? AND version >= ?")
+    .bind(key, FIRST_PROGRAM_VERSION)
+    .first<{ spec: string; version: number; model: string }>();
   if (!row) return null;
   try {
     const program = JSON.parse(row.spec) as SpellProgram;
-    return typeof program.code === "string" ? program : null;
+    return typeof program.code === "string" ? { ...program, version: row.version, model: row.model } : null;
   } catch {
     return null;
   }
@@ -296,16 +399,6 @@ function spellModelFor(env: Env, tier: Tier): string {
   return small && TIERS.indexOf(tier) <= TIERS.indexOf(upTo) ? small : env.SPELL_MODEL;
 }
 
-// Elements from before tiers get one the first time it matters, then keep it.
-async function ensureTier(env: Env, oracle: Oracle, element: GameElement): Promise<Tier> {
-  if (element.tier) return element.tier;
-  if (oracle.mock) return tierFromDepth(element.depth);
-  await ensureBudget(env, oracle);
-  const tier = await oracle.tier(element.name, element.kind);
-  element.tier = tier;
-  await env.DB.prepare("UPDATE elements SET tier = ? WHERE key = ?").bind(tier, elementKey(element.name)).run();
-  return tier;
-}
 
 function checkRegenerate(requested: unknown, admin: boolean): boolean {
   if (requested !== true) return false;

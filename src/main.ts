@@ -37,7 +37,13 @@ const world = new WorldHost(store, {
 });
 
 function showTab(view: string): void {
-  for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
+  $("#admin-badge").addEventListener("click", () => {
+  const badge = $("#admin-badge");
+  if (badge.title) window.alert(`This month, by call:\n${badge.title}`);
+  void showSpend(badge);
+});
+
+for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
     tab.setAttribute("aria-selected", String(tab.dataset.view === view));
   }
   for (const section of document.querySelectorAll<HTMLElement>(".view")) {
@@ -48,6 +54,12 @@ function showTab(view: string): void {
   else world.hide();
 }
 
+$("#admin-badge").addEventListener("click", () => {
+  const badge = $("#admin-badge");
+  if (badge.title) window.alert(`This month, by call:\n${badge.title}`);
+  void showSpend(badge);
+});
+
 for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
   tab.addEventListener("click", () => showTab(tab.dataset.view!));
 }
@@ -55,7 +67,6 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
 world.init();
 // New discoveries get their program written in the background (cheap tiers only).
 craft.onNewElement = (key) => world.ahead(key);
-
 
 setCardActions({
   cast: (key) => {
@@ -72,7 +83,17 @@ async function refreshSession(): Promise<void> {
   session.mock = status?.mock ?? false;
   session.admin = status?.admin ?? false;
   $("#mock-badge").hidden = !session.mock;
-  $("#admin-badge").hidden = !session.admin;
+  const badge = $("#admin-badge");
+  badge.hidden = !session.admin;
+  if (session.admin) void showSpend(badge);
+}
+
+// The admin badge shows what Claude cost this month, and the detail on tap.
+async function showSpend(badge: HTMLElement): Promise<void> {
+  const spend = await api.spend();
+  if (!spend) return;
+  badge.textContent = `admin · $${spend.month.toFixed(2)} of $${spend.budget}`;
+  badge.title = spend.calls.map((c) => `${c.call} ${c.model.replace("claude-", "")}: ${c.n} calls, $${c.usd.toFixed(3)}`).join("\n");
 }
 void refreshSession();
 

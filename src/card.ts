@@ -1,4 +1,5 @@
-import { TIER_LABEL, tierFromDepth } from "../shared/tiers";
+import { PROGRAM_VERSION } from "../shared/version";
+import { TIERS, TIER_LABEL, tierFromDepth, type Tier } from "../shared/tiers";
 import * as api from "./api";
 import { session } from "./session";
 import type { Store } from "./store";
@@ -11,7 +12,7 @@ let openSerial = 0;
 export interface CardActions {
   // Switches to the World tab with this spell ready to cast.
   cast(key: string): void;
-  // Admin only: designs the spell again from scratch.
+  // Admin only: writes this one spell again from scratch.
   regenerateSpell(key: string): Promise<void>;
 }
 
@@ -80,27 +81,48 @@ export function openCard(store: Store, key: string, first = false): void {
 
   const admin = d.querySelector<HTMLElement>(".card-admin")!;
   admin.hidden = !session.admin;
+  const written = d.querySelector<HTMLElement>(".card-written")!;
+  written.textContent = writtenText(program);
   d.querySelector<HTMLButtonElement>(".card-new-description")!.onclick = () => showDescription(true);
+  // The only way a stored spell is ever written again: one at a time, by the
+  // admin, after seeing what it costs. A version bump never does it.
+  const label = isSpell ? "Rewrite this spell" : "Rewrite this artifact";
   const newSpell = d.querySelector<HTMLButtonElement>(".card-new-spell")!;
-  newSpell.textContent = isSpell ? "New spell" : "New artifact";
+  newSpell.textContent = label;
   newSpell.onclick = async () => {
+    const elementTier = element.tier ?? tierFromDepth(element.depth);
+    if (!window.confirm(`Write ${element.name} again? ${costHint(elementTier)} The current program is replaced.`)) return;
     newSpell.disabled = true;
-    newSpell.textContent = "Designing…";
+    newSpell.textContent = "Writing…";
     try {
       await actions?.regenerateSpell(key);
       const fresh = store.spell(key);
       if (serial === openSerial && fresh) {
         summary.hidden = false;
         summary.textContent = fresh.summary;
+        written.textContent = writtenText(fresh);
       }
-      toast(`${element.name} was redesigned`);
+      toast(`${element.name} was rewritten`);
     } finally {
       newSpell.disabled = false;
-      newSpell.textContent = isSpell ? "New spell" : "New artifact";
+      newSpell.textContent = label;
     }
   };
 
   d.showModal();
+}
+
+// "Written for API v3 by Haiku": tells the admin whether a rewrite could help.
+function writtenText(program: { version: number; model?: string } | undefined): string {
+  if (!program) return "No program yet";
+  const by = program.model ? ` by ${program.model.replace(/^claude-/, "").replace(/-\d.*$/, "").replace(/^./, (c) => c.toUpperCase())}` : "";
+  const age = program.version < PROGRAM_VERSION ? ` (current API is v${PROGRAM_VERSION})` : "";
+  return `Written for API v${program.version}${by}${age}`;
+}
+
+// Measured in November 2026: Haiku spells cost about $0.002, Opus ones $0.06.
+function costHint(tier: Tier): string {
+  return TIERS.indexOf(tier) > TIERS.indexOf("grand") ? "Opus writes it, about 6 cents." : "Haiku writes it, a fraction of a cent.";
 }
 
 function ensureDialog(): HTMLDialogElement {
@@ -123,8 +145,9 @@ function ensureDialog(): HTMLDialogElement {
     <button class="card-cast">Cast in the World</button>
     <div class="card-admin">
       <span class="card-admin-label">Admin</span>
+      <span class="card-written"></span>
       <button class="card-new-description">New description</button>
-      <button class="card-new-spell">New spell</button>
+      <button class="card-new-spell">Rewrite this spell</button>
     </div>
   `;
   dialog.querySelector(".card-close")!.addEventListener("click", () => dialog!.close());

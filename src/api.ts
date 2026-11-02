@@ -1,4 +1,4 @@
-import type { ApiError, DescribeResponse, HealthResponse, MergeResponse, SpellResponse } from "../shared/types";
+import type { ApiError, DescribeResponse, HealthResponse, MergeResponse, PerfSample, SpellResponse, SpendResponse } from "../shared/types";
 
 const TOKEN_KEY = "magic-merger.token";
 
@@ -19,6 +19,26 @@ export function spell(name: string, regenerate = false): Promise<SpellResponse> 
 // The program crashed: Claude gets the error and writes a fixed version.
 export function repairSpell(name: string, error: string): Promise<SpellResponse> {
   return post<SpellResponse>("/api/spell/repair", { name, error });
+}
+
+// Admin only: this month's Claude calls.
+export async function spend(): Promise<SpendResponse | null> {
+  try {
+    const res = await fetch("/api/spend", { headers: authHeaders() });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+// A frame time summary from the HUD, so a session on a real phone can be read
+// back as numbers. Failures are ignored: it is only a measurement.
+export function sendPerf(sample: PerfSample): void {
+  void fetch("/api/perf", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify(sample),
+  }).catch(() => undefined);
 }
 
 export function setToken(token: string): void {

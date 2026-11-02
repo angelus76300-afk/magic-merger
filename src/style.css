@@ -392,6 +392,7 @@ input {
 }
 
 .card-admin {
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -864,4 +865,14 @@ input {
 
 .chip-castable[data-ready="0"] {
   opacity: 0.6;
+}
+
+.card-written {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--muted, #9a93b8);
+}
+
+#admin-badge {
+  cursor: pointer;
 }

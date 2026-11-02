@@ -63,6 +63,27 @@ export interface RepairRequest {
   error: string;
 }
 
+// Admin only: what another merge model would answer. Nothing is stored.
+export interface MergeTrialRequest {
+  a: string;
+  b: string;
+  model?: string;
+  effort?: string;
+}
+
+// This month's Claude calls, grouped by call and model.
+export interface SpendResponse {
+  month: number;
+  today: number;
+  budget: number;
+  calls: { call: string; model: string; n: number; usd: number; avg: number; today: number }[];
+}
+
+// One summary of frame times sent by the HUD, from a real device.
+export interface PerfSample {
+  [key: string]: unknown;
+}
+
 export interface HealthResponse {
   ok: boolean;
   mock: boolean;
