@@ -1,6 +1,10 @@
 import { elementKey } from "../shared/elements";
+import type { SpellProgram } from "../shared/spellcode";
 import { TIERS, tierFromDepth, type Tier } from "../shared/tiers";
+import type { SpellResponse } from "../shared/types";
+import { DOWN_REASONS, REASON_LABEL, type DownReason } from "../shared/votes";
 import * as api from "./api";
+import { Checker } from "./checker";
 import { chipElement } from "./craft";
 import { FilterBar, applyFilters, lastUsed, markUsed } from "./filters";
 import { MAX_SAVE_CHARS, readFromWorld } from "./sim/protocol";
@@ -62,6 +66,11 @@ export class WorldHost {
     () => this.renderSpells(),
   );
   private expanded = readFlag(EXPAND_KEY);
+  private checker = new Checker();
+  private testing = new Set<string>();
+  private voteBar: HTMLElement | null = null;
+  private voteTimer = 0;
+  private synced = false;
 
   constructor(
     private store: Store,
@@ -139,6 +148,30 @@ export class WorldHost {
       .sort((a, b) => b.discoveredAt - a.discoveredAt)
       .slice(0, AHEAD_RECENT);
     for (const d of recent) this.ahead(elementKey(d.element.name));
+    if (!this.synced) {
+      this.synced = true;
+      void this.syncPrograms();
+    }
+  }
+
+  // Programs change on the server (votes, rewrites, rollbacks, the Batch
+  // API): once per page load, the ones this browser holds are compared with
+  // the ones it should have, and the others are fetched again in the background.
+  private async syncPrograms(): Promise<void> {
+    const held = this.store.discoveries().filter((d) => this.store.spell(elementKey(d.element.name)));
+    if (!held.length) return;
+    let live;
+    try {
+      live = await api.livePrograms(held.map((d) => d.element.name));
+    } catch {
+      return;
+    }
+    for (const d of held) {
+      const key = elementKey(d.element.name);
+      const now = live.programs[d.element.name];
+      if (now && now.id !== this.store.spell(key)?.id) await this.prepare(key, false, true, true);
+    }
+    this.renderSpells();
   }
 
   // Writes a program in the background if it is cheap and not written yet.
@@ -187,8 +220,8 @@ export class WorldHost {
 
   // Asks the Worker for the spell program, once. Admins can force a new one.
   // A quiet prepare runs in the background and keeps its errors to itself.
-  prepare(key: string, regenerate = false, quiet = false): Promise<CastRequest | null> {
-    if (!regenerate) {
+  prepare(key: string, regenerate = false, quiet = false, refresh = false): Promise<CastRequest | null> {
+    if (!regenerate && !refresh) {
       const known = this.request(key);
       if (known) return Promise.resolve(known);
     }
@@ -209,10 +242,11 @@ export class WorldHost {
     this.preparing.add(key);
     this.updateStatus();
     try {
-      const res = await api.spell(discovery.element.name, regenerate);
+      let res = await api.spell(discovery.element.name, regenerate);
       if (res.mock) this.sessionPrograms.set(key, { key, name: res.name, tier: res.tier, code: res.program.code });
       else {
-        this.store.setSpell(key, res.program);
+        res = await this.settle(key, res, quiet);
+        this.store.setSpell(key, withoutTrial(res.program));
         if (discovery.element.tier !== res.tier) this.store.discover({ ...discovery.element, tier: res.tier }, discovery.recipe ?? ["", ""]);
       }
       const req = this.request(key);
@@ -225,6 +259,29 @@ export class WorldHost {
       this.preparing.delete(key);
       this.updateStatus();
     }
+  }
+
+  // A program fresh from Claude is a trial: it gets its test run here, in the
+  // check frame, before anyone casts it. The Worker answers with the program
+  // to use: this one, now live, or a rewrite (once) that is tested in turn.
+  private async settle(key: string, res: SpellResponse, quiet = false): Promise<SpellResponse> {
+    this.testing.add(key);
+    this.updateStatus();
+    try {
+      for (let round = 0; round < 3 && res.program.trial && res.program.id; round++) {
+        const result = await this.checker.check({ key, name: res.name, tier: res.tier, code: res.program.code });
+        const id = res.program.id;
+        res = await api.checkSpell({ name: res.name, id, ...result });
+        if (res.program.id !== id && round === 0 && !result.ok && !quiet)
+          toast(`${res.name} failed its test run (${result.problem}); the grimoire wrote it again`);
+      }
+    } catch {
+      // The Worker could not be told: the program is cast as it is.
+    } finally {
+      this.testing.delete(key);
+      this.updateStatus();
+    }
+    return res;
   }
 
   private request(key: string): CastRequest | null {
@@ -289,6 +346,7 @@ export class WorldHost {
       case "cast":
         if (!this.store.get(msg.key)) break;
         markUsed(msg.key);
+        void this.afterCast(msg.key);
         // In a grid the bar covers the island: fold it once a spell is used.
         if (this.expanded && window.innerWidth < 700) {
           this.expanded = false;
@@ -416,14 +474,77 @@ export class WorldHost {
     this.repairs.set(key, done + 1);
     toast(`${name} fizzled. The grimoire is rewriting it…`);
     try {
-      const res = await api.repairSpell(name, error);
-      this.store.setSpell(key, res.program);
+      const res = await this.settle(key, await api.repairSpell(name, error));
+      this.store.setSpell(key, withoutTrial(res.program));
       const req = this.request(key);
       if (req) this.send({ type: "spell-updated", spell: req });
       toast(`${name} was mended, cast it again`);
     } catch (err) {
       toast(err instanceof Error ? err.message : "The spell could not be mended", "error");
     }
+  }
+
+  // The cast is recorded with the version that was cast; if this player may
+  // vote on it, the question comes once the spell has had time to play out.
+  private async afterCast(key: string): Promise<void> {
+    const program = this.store.spell(key);
+    const name = this.store.get(key)?.element.name;
+    if (!program?.id || !name || this.sessionPrograms.has(key)) return;
+    let canVote = false;
+    try {
+      canVote = (await api.recordCast(name, program.id)).canVote;
+    } catch {
+      return;
+    }
+    clearTimeout(this.voteTimer);
+    if (!canVote) return;
+    this.voteTimer = window.setTimeout(() => this.askVote(name, program.id!), 6000);
+  }
+
+  private askVote(name: string, id: number): void {
+    const bar = (this.voteBar ??= document.createElement("div"));
+    bar.className = "vote";
+    bar.setAttribute("role", "group");
+    bar.setAttribute("aria-label", `Vote on ${name}`);
+    const close = () => {
+      bar.remove();
+      clearTimeout(this.voteTimer);
+    };
+    const send = async (up: boolean, reason?: DownReason) => {
+      close();
+      try {
+        await api.vote({ name, id, up, reason });
+        toast(up ? `Noted: ${name} works` : `Noted: ${name} will get better`);
+      } catch (err) {
+        toast(err instanceof Error ? err.message : "The vote did not go through", "error");
+      }
+    };
+    const button = (label: string, cls: string, onClick: () => void) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = cls;
+      b.textContent = label;
+      b.addEventListener("click", onClick);
+      return b;
+    };
+    const text = document.createElement("span");
+    text.className = "vote-text";
+    text.textContent = `How was ${name}?`;
+    const dismiss = button("×", "vote-close", close);
+    dismiss.setAttribute("aria-label", "Not now");
+    const showReasons = () => {
+      text.textContent = "What was wrong?";
+      bar.replaceChildren(text, ...DOWN_REASONS.map((r) => button(REASON_LABEL[r], "vote-reason", () => void send(false, r))), dismiss);
+    };
+    bar.replaceChildren(
+      text,
+      button("Good", "vote-up", () => void send(true)),
+      button("Not good", "vote-down", showReasons),
+      dismiss,
+    );
+    if (!bar.isConnected) this.el.stage.append(bar);
+    // Unanswered, it goes away; the next cast asks again.
+    this.voteTimer = window.setTimeout(close, 30_000);
   }
 
   renderSpells(): void {
@@ -457,7 +578,8 @@ export class WorldHost {
     const name = key ? this.store.get(key)?.element.name : null;
     let text = "Pick a spell, then tap the island to cast it. Drag to turn, pinch to zoom, two fingers to pan.";
     if (key && name) {
-      if (this.preparing.has(key)) text = `Preparing ${name}… the first cast of a spell takes a moment.`;
+      if (this.testing.has(key)) text = `Testing ${name} on a practice island…`;
+      else if (this.preparing.has(key)) text = `Preparing ${name}… the first cast of a spell takes a moment.`;
       else if (this.request(key)) text = `Tap the island to ${this.store.get(key)?.element.kind === "artifact" ? "place" : "cast"} ${name}.`;
       else text = `${name} is not ready yet.`;
     }
@@ -466,6 +588,12 @@ export class WorldHost {
 }
 
 const EXPAND_KEY = "mm-spellbar-expanded";
+
+// What the browser keeps: the trial flag is only for the test run.
+function withoutTrial(program: SpellProgram): SpellProgram {
+  const { trial: _trial, ...rest } = program;
+  return rest;
+}
 
 function tierOf(tier: Tier | undefined, depth: number): Tier {
   return tier ?? tierFromDepth(depth);

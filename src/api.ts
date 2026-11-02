@@ -1,6 +1,21 @@
-import type { ApiError, DescribeResponse, HealthResponse, MergeResponse, PerfSample, SpellResponse, SpendResponse } from "../shared/types";
+import type {
+  ApiError,
+  CastResponse,
+  CheckRequest,
+  DescribeResponse,
+  HealthResponse,
+  LiveResponse,
+  MergeResponse,
+  PerfSample,
+  ProgramInfo,
+  SpellResponse,
+  SpendResponse,
+  VoteRequest,
+  VoteResponse,
+} from "../shared/types";
 
 const TOKEN_KEY = "magic-merger.token";
+const PLAYER_KEY = "magic-merger.player";
 
 export class ApiRequestError extends Error {}
 
@@ -19,6 +34,35 @@ export function spell(name: string, regenerate = false): Promise<SpellResponse> 
 // The program crashed: Claude gets the error and writes a fixed version.
 export function repairSpell(name: string, error: string): Promise<SpellResponse> {
   return post<SpellResponse>("/api/spell/repair", { name, error });
+}
+
+// What a new program's test run found. The answer is the program to use now:
+// the same one, now live, or a rewrite to test in turn.
+export function checkSpell(result: CheckRequest): Promise<SpellResponse> {
+  return post<SpellResponse>("/api/spell/check", result);
+}
+
+// Which program each of these elements has now (rewrites, rollbacks).
+export function livePrograms(names: string[]): Promise<LiveResponse> {
+  return post<LiveResponse>("/api/spells/live", { names });
+}
+
+export function recordCast(name: string, id: number): Promise<CastResponse> {
+  return post<CastResponse>("/api/cast", { name, id });
+}
+
+export function vote(body: VoteRequest): Promise<VoteResponse> {
+  return post<VoteResponse>("/api/vote", body);
+}
+
+// Admin only: every version of one element's program.
+export async function programInfo(name: string): Promise<ProgramInfo[] | null> {
+  try {
+    const res = await fetch(`/api/spell/info?name=${encodeURIComponent(name)}`, { headers: authHeaders() });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
 }
 
 // Admin only: this month's Claude calls.
@@ -87,6 +131,23 @@ async function post<T>(path: string, body: unknown, retried = false): Promise<T>
 }
 
 let sessionToken: string | null = null;
+let sessionPlayer: string | null = null;
+
+// An anonymous id for this browser, made up here: it says nothing about the
+// player, it only lets the Worker count players and allow one vote each.
+export function playerId(): string {
+  try {
+    let id = localStorage.getItem(PLAYER_KEY);
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem(PLAYER_KEY, id);
+    }
+    return id;
+  } catch {
+    sessionPlayer ??= crypto.randomUUID();
+    return sessionPlayer;
+  }
+}
 
 function authHeaders(): Record<string, string> {
   let token = sessionToken;
@@ -95,5 +156,7 @@ function authHeaders(): Record<string, string> {
   } catch {
     // Storage blocked: fall back to the in-memory token.
   }
-  return token ? { "x-access-token": token } : {};
+  const headers: Record<string, string> = { "x-player": playerId() };
+  if (token) headers["x-access-token"] = token;
+  return headers;
 }

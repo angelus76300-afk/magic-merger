@@ -400,6 +400,53 @@ input {
   cursor: pointer;
 }
 
+.card-view-source {
+  margin-top: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.card-view-source[hidden],
+.card-source[hidden] {
+  display: none;
+}
+
+.card-source-meta {
+  margin: 8px 0 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.card-source pre,
+.card-versions {
+  margin: 0;
+  max-height: 40vh;
+  overflow: auto;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre;
+  color: var(--text);
+}
+
+.card-versions {
+  width: 100%;
+  max-height: 20vh;
+  color: var(--muted);
+}
+
+.card-versions:empty {
+  display: none;
+}
+
 .card-admin {
   flex-wrap: wrap;
   display: flex;
@@ -884,4 +931,57 @@ input {
 
 #admin-badge {
   cursor: pointer;
+}
+
+/* The vote after a cast (3.3): small, at the bottom of the island, never in the way of a tap. */
+.vote {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 32px);
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  z-index: 5;
+  font-size: 13px;
+}
+
+.vote-text {
+  color: var(--text);
+  margin-right: 4px;
+}
+
+.vote button {
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  min-height: 32px;
+}
+
+.vote .vote-up {
+  border-color: #6fcf97;
+}
+
+.vote .vote-down {
+  border-color: var(--danger);
+}
+
+.vote .vote-close {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  padding: 4px 6px;
 }

@@ -32,6 +32,15 @@
     "REPAIR_MODEL": "claude-haiku-5-5",
     "SPELL_EFFORT": "medium",
     "BUDGET_USD": "20",
+    // 3.3. Looks at three Spell Lab frames and guesses the vote.
+    "JUDGE_MODEL": "claude-haiku-5-5",
+    // Dollars a day that votes, the judge and failed test runs may spend on rewrites.
+    "REWRITE_BUDGET_USD": "0.5",
+    // Legendary and cosmic spells: drafted by SPELL_MODEL_SMALL at once, written
+    // by SPELL_MODEL through the Batch API at half price. "0" asks SPELL_MODEL at once.
+    "BIG_SPELLS_BATCH": "1",
   },
+  // Collects the programs the Batch API has written.
+  "triggers": { "crons": ["*/10 * * * *"] },
   "observability": { "enabled": true },
 }
