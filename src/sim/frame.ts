@@ -1,3 +1,4 @@
+import { chronicleDigest } from "./chronicle";
 import { Engine, type WorldSize } from "./engine";
 import { kindOf, makeCreature, maxHp, type Creature } from "./creatures";
 import { artifactAt, creatureAt, inspect, inspectArtifact } from "./inspect";
@@ -218,6 +219,10 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
   if (e.source !== window.parent || !e.data || typeof e.data !== "object") return;
   const msg = e.data;
   switch (msg.type) {
+    case "chronicle":
+      // The sandbox's story, never a challenge's.
+      if (engine && !scenario) send({ type: "chronicle", digest: chronicleDigest(engine.world) });
+      break;
     case "library":
       library.push(...msg.spells);
       engine?.runtime.setLibrary(msg.spells);

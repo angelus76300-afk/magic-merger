@@ -289,3 +289,8 @@ export async function challenges(): Promise<{ challenges: ChallengeCard[] }> {
 export function challengeWin(id: string, merges: number, spell: string): Promise<{ stars: number; par: number | null; best: boolean }> {
   return post("/api/challenge/win", { id, merges, spell });
 }
+
+// 3.7: the island's chronicle, written once a session (about $0.002).
+export function chronicle(digest: unknown): Promise<{ text: string; mock: boolean }> {
+  return post("/api/chronicle", { digest });
+}

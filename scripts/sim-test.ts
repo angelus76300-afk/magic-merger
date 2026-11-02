@@ -7,10 +7,10 @@ import { join } from "node:path";
 import { availableParallelism } from "node:os";
 import { Worker } from "node:worker_threads";
 import { guardLoops } from "../shared/spellcode";
-import { KINDS, makeCreature, populate } from "../src/sim/creatures";
+import { KINDS, makeCreature, populate, resetCreatureIds } from "../src/sim/creatures";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
-import { logDeeds, mindOf } from "../src/sim/kin";
+import { logDeeds, mindOf, remember } from "../src/sim/kin";
 import { C, F } from "../src/sim/materials";
 import { Runtime } from "../src/sim/runtime";
 import { loadWorld, saveWorld } from "../src/sim/save";
@@ -20,6 +20,10 @@ import { VK, floats, voxelKind } from "../src/sim/voxels";
 import { keyCell } from "../src/sim/voxelkey";
 import { SOLUTIONS, replay, seed, step } from "./challenge-replay";
 import { CHALLENGES, fewestMerges, parOf, starsFor, strongEnough } from "../shared/challenges";
+import { chronicleDigest } from "../src/sim/chronicle";
+import { readDigest } from "../shared/chronicle";
+import { capByDepth } from "../shared/tiers";
+import { joinsBoth } from "../worker/prompts";
 import type { Job } from "./challenge-worker";
 import { runCheck, type SceneReport } from "../src/sim/check";
 import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../shared/votes";
@@ -345,10 +349,66 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   );
 }
 
+// 3.7 part D: the island's story. What happens is told in lines (the same
+// line counted again), everyday work counted, villagers' memories gathered;
+// the digest is what the chronicle is written from, bounded on the way back.
+{
+  seed(21);
+  const world = generateWorld(112, 112, 8);
+  populate(world);
+  const rt = new Runtime(world, () => {});
+  rt.cast(
+    {
+      key: "imps",
+      name: "Imps",
+      tier: "minor",
+      code: `const spell = { creatures: [{ name: "imp", base: "beast", behavior: "hunt", prey: ["villager"], attack: 60, sense: 40, hp: 2000, speed: 6 }], *cast(w) { const v = w.creatures().filter((c) => c.kind === "villager")[0]; for (let k = 0; k < 3; k++) w.spawn("imp", v.x + 2, v.y + 2); } };`,
+    },
+    56,
+    56,
+  );
+  for (let k = 0; k < 30 * 60; k++) step(world, rt);
+  // What the survivors remember (that harm is remembered at all is a 3.6 check).
+  const alive = world.creatures.filter((c) => c.kind === "villager" && !c.dead).slice(0, 3);
+  for (const c of alive) remember(c, "imp", -2);
+  const d = chronicleDigest(world);
+  const killed = d.lines.find((l) => /a villager died, killed by the imp/.test(l));
+  check("the story tells who died and what killed them", !!killed, d.lines.slice(-4).join(" | "));
+  check("everyday work is counted, not told", d.work.length > 0 && !d.lines.some((l) => /grazed|harvested|picked/.test(l)), d.work.slice(0, 3).join(", "));
+  check(
+    "villagers' memories are gathered",
+    d.memories.some((m) => m === `${alive.length} villagers remember the imp hurt them`),
+    d.memories.join("; "),
+  );
+  const back = loadWorld(JSON.parse(JSON.stringify(saveWorld(world, new Map()))), () => {});
+  check("the story is saved with the world", back?.story.length === world.story.length && back.story.length <= 60);
+  const forged = readDigest({ days: 1e9, lines: ["x".repeat(500), 3, "ok"], work: "no", memories: [], now: [] });
+  check(
+    "a digest from the sandbox is bounded",
+    !!forged && forged.days === 10000 && forged.lines.length === 2 && forged.lines[0].length === 160 && forged.work.length === 0,
+  );
+  check(
+    "a tier is earned by depth: cosmic from seven merges, legendary from three",
+    capByDepth("cosmic", 2) === "grand" &&
+      capByDepth("cosmic", 3) === "legendary" &&
+      capByDepth("cosmic", 7) === "cosmic" &&
+      capByDepth("cantrip", 12) === "cantrip",
+  );
+  check(
+    "a name that only joins its two inputs is caught",
+    joinsBoth("Fire Water", "Fire", "Water") &&
+      joinsBoth("Super Fire Water", "Fire", "Water") &&
+      !joinsBoth("Steam", "Fire", "Water") &&
+      !joinsBoth("Fire Storm", "Fire", "Fire"),
+  );
+}
+
 // 6. Declared rules: a blight spreads and burns away, wolves hunt, the
-// undead burn by day.
+// undead burn by day. Creature ids start afresh, so what earlier sections
+// spawned does not change this one (3.7).
 {
   seed(3);
+  resetCreatureIds();
   const world = generateWorld(112, 112, 4);
   populate(world);
   const errors: string[] = [];

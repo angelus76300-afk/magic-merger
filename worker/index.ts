@@ -1,6 +1,6 @@
 import { PRIMITIVES, elementKey, pairKey } from "../shared/elements";
 import { FIRST_PROGRAM_VERSION, PROGRAM_VERSION, type SpellProgram } from "../shared/spellcode";
-import { TIERS, capTier, isTier, tierFromDepth, type Tier } from "../shared/tiers";
+import { TIERS, capByDepth, capTier, isTier, tierFromDepth, type Tier } from "../shared/tiers";
 import { REASON_PROMPT, isBig, isReason, votedDown, votedUp, votedWorse, votesNeeded, VOTE_WINDOW_MS } from "../shared/votes";
 import type {
   CastRecord,
@@ -53,6 +53,8 @@ import {
   type ProgramRow,
 } from "./programs";
 import type { LibraryExample, Rewrite } from "./prompts";
+import { joinsBoth } from "./prompts";
+import { readDigest } from "../shared/chronicle";
 import {
   ADMIN_PAYER,
   ESTIMATE,
@@ -194,6 +196,10 @@ export default {
       }
       if (request.method === "POST" && url.pathname === "/api/vote") {
         return json(await handleVote(await readBody<VoteRequest>(request), env, player, payer, ctx));
+      }
+      // 3.7: the island's chronicle, once a session, about $0.002.
+      if (request.method === "POST" && url.pathname === "/api/chronicle") {
+        return json(await handleChronicle(await readBody<{ digest?: unknown }>(request), env, oracle));
       }
       // 3.7: challenges from nothing. Free: merges go through /api/merge.
       if (request.method === "GET" && url.pathname === "/api/challenges") return json(await listChallenges(env.DB, payer));
@@ -464,13 +470,20 @@ async function handleMerge(body: MergeRequest, env: Env, oracle: Oracle): Promis
   }
 
   await ensureBudget(env, oracle, "merge", ESTIMATE.merge);
-  const answer = await oracle.merge(a.name, b.name);
+  let answer = await oracle.merge(a.name, b.name);
+  // An answer that only joins the two names is asked once more (3.7).
+  if (!oracle.mock && joinsBoth(answer.name, a.name, b.name)) {
+    await ensureBudget(env, oracle, "merge", ESTIMATE.merge);
+    const again = await oracle.merge(a.name, b.name, answer.name);
+    if (!joinsBoth(again.name, a.name, b.name)) answer = again;
+  }
   const candidate: GameElement = {
     name: cleanName(answer.name),
     emoji: cleanEmoji(answer.emoji),
     kind: answer.kind,
     depth: Math.max(a.depth, b.depth) + 1,
-    tier: capTier(answer.tier, [tierOf(a), tierOf(b)]),
+    // At most two tiers above its strongest input, and one above what its depth implies (3.7).
+    tier: capByDepth(capTier(answer.tier, [tierOf(a), tierOf(b)]), Math.max(a.depth, b.depth) + 1),
   };
 
   // Mock answers are never stored, so a real key later starts from a clean cache.
@@ -793,6 +806,23 @@ async function handleCheck(body: CheckRequest, env: Env, oracle: Oracle): Promis
     .bind(key, row.id, id, Date.now(), smallModel(env))
     .run();
   return { name: element.name, tier, program: { ...program, model: smallModel(env), id, trial: true }, mock: false };
+}
+
+// The chronicle (3.7): Haiku tells the island's story from what its World
+// recorded (src/sim/chronicle.ts). The page asks once a session; here, at
+// most one every 20 minutes per person, held and paid like any call.
+async function handleChronicle(body: { digest?: unknown }, env: Env, oracle: Oracle): Promise<{ text: string; mock: boolean }> {
+  const digest = readDigest(body.digest);
+  if (!digest) throw new HttpError(400, "There is nothing to tell yet");
+  if (!oracle.mock) {
+    const payer = ledgerOf(oracle).payer;
+    const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM spend WHERE call = 'chronicle' AND invite = ? AND at > ?")
+      .bind(payer.invite, Date.now() - 20 * 60_000)
+      .first<{ n: number }>();
+    if ((recent?.n ?? 0) > 0) throw new HttpError(429, "The chronicle was written a moment ago: come back later for the next chapter");
+    await ensureBudget(env, oracle, "chronicle", ESTIMATE.chronicle);
+  }
+  return { text: await oracle.chronicle(digest), mock: oracle.mock };
 }
 
 // Spells from the shared library by name (3.7), for creatures and artifacts

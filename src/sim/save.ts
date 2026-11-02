@@ -1,6 +1,6 @@
 import { loadedState } from "./artifacts";
 import { dressVillages, restoreCreature, saveMind, KINDS, type Creature, type SavedMind } from "./creatures";
-import { MARKS, MAX_MARKS, type Mark, type Village } from "./kin";
+import { MARKS, MAX_MARKS, MAX_STORY, type Mark, type StoryLine, type Village } from "./kin";
 import { BUILTIN, LAYERS, type Layer } from "./materials";
 import { World } from "./world";
 import type { Landmark } from "./social";
@@ -27,6 +27,9 @@ export interface SavedWorld {
   decor?: [number, number][];
   landmarks?: Landmark[];
   wealth?: number;
+  // The island's story (3.7).
+  story?: StoryLine[];
+  storyCounts?: Record<string, number>;
 }
 
 export function saveWorld(world: World, owners: Map<string, string>): SavedWorld {
@@ -74,6 +77,8 @@ export function saveWorld(world: World, owners: Map<string, string>): SavedWorld
       }),
     villages: world.villages.map(({ x, y, food, wood, gold }) => ({ x, y, food: Math.round(food * 10) / 10, wood, gold })),
     marks: world.marks,
+    story: world.story,
+    storyCounts: world.storyCounts,
   };
 }
 
@@ -151,6 +156,13 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
     .filter((v) => v && [v.x, v.y, v.food, v.wood, v.gold].every(finite))
     .slice(0, 16)
     .map((v): Village => ({ x: v.x, y: v.y, food: Math.max(0, v.food), wood: Math.max(0, v.wood), gold: Math.max(0, v.gold), people: 0, houses: 0 }));
+  world.story = (Array.isArray(data.story) ? data.story : [])
+    .filter((l) => l && typeof l.text === "string" && finite(l.t) && finite(l.n))
+    .slice(-MAX_STORY)
+    .map((l) => ({ t: l.t, text: l.text.slice(0, 120), n: l.n }));
+  world.storyCounts = {};
+  for (const [k, v] of Object.entries(data.storyCounts && typeof data.storyCounts === "object" ? data.storyCounts : {}).slice(0, 60))
+    if (typeof v === "number" && Number.isFinite(v)) world.storyCounts[k.slice(0, 60)] = v;
   world.marks = (Array.isArray(data.marks) ? data.marks : [])
     .filter((m) => m && (MARKS as readonly string[]).includes(m.kind) && finite(m.x) && finite(m.y) && finite(m.size))
     .slice(0, MAX_MARKS)

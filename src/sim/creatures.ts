@@ -10,7 +10,7 @@ import { packLook, randomLook, shirtOf, sizeOf, unpackLook } from "./villagers";
 import { denDown, goalOfCreature, hasNeeds, kindGoal, needsTick, pursue, stepGoals } from "./goals";
 import { abilitiesFromName, useAbilities } from "./abilities";
 import { stepArtifacts } from "./artifacts";
-import { LOADS, deed, harmed, life, newMind, noteDeath, reborn, villageOf, type AbilitySpec, type Goal, type Mind } from "./kin";
+import { LOADS, deed, harmed, life, newMind, noteDeath, reborn, storyOn, tell, villageOf, type AbilitySpec, type Goal, type Mind } from "./kin";
 
 // What a spell-made creature does, declared rather than coded, so even a
 // short program gets a creature with a life of its own.
@@ -389,6 +389,7 @@ function blocked(world: World, x: number, y: number, c: Creature, k: CreatureKin
 export function updateCreature(world: World, c: Creature, dt: number): void {
   const k = kindOf(c);
   freeWorld = world;
+  storyOn(world);
   if (c.dead) {
     if (c.deadFor === 0) {
       noteDeath(world, c);
@@ -1123,6 +1124,7 @@ export function lifeCycle(world: World, dt: number): void {
     c.hp = maxHp(c);
     c.color = shirtOf(look);
     world.creatures.push(c);
+    tell(world, "a child was born in the village");
     return;
   }
 }

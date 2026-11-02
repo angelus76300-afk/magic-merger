@@ -41,3 +41,21 @@ export function tierFromDepth(depth: number): Tier {
   if (depth <= 6) return "legendary";
   return "legendary";
 }
+
+// How strong a result can be for how deep it is in the recipe tree (3.7):
+// one tier above what its depth implies, so power is built up over merges
+// (a cosmic spell needs seven merges or more, a legendary one three) and a
+// new player cannot make a world-ending spell in two. Only upward: a deep
+// result may still be humble (a Candle stays a cantrip at depth twelve).
+// Measured on 2026-11-02: 14 cosmic elements sat at depth 6 or less, three
+// at depth 2.
+export function depthTier(depth: number): Tier {
+  if (depth <= 0) return "minor";
+  if (depth <= 2) return "major";
+  if (depth <= 6) return "grand";
+  return "legendary";
+}
+
+export function capByDepth(tier: Tier, depth: number): Tier {
+  return TIERS[Math.min(TIERS.indexOf(tier), TIERS.indexOf(depthTier(depth)) + 1)];
+}

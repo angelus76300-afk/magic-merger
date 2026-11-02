@@ -28,6 +28,8 @@ import {
   type LibraryDoc,
   type LibraryExample,
   type Rewrite,
+  CHRONICLE_SYSTEM,
+  chronicleUserMessage,
 } from "./prompts";
 
 export interface MergeAnswer {
@@ -130,8 +132,11 @@ export interface Oracle {
   readonly mock: boolean;
   // Every call made so far and its cost, for the budget ledger.
   readonly spent: Spent[];
-  merge(a: string, b: string): Promise<MergeAnswer>;
+  // avoid: a name already refused for this pair (3.7: it only joined the two).
+  merge(a: string, b: string, avoid?: string): Promise<MergeAnswer>;
   describe(name: string, kind: ElementKind, recipe: [string, string] | null): Promise<string>;
+  // The island's chronicle (3.7), from what its World recorded.
+  chronicle(digest: { days: number; lines: string[]; work: string[]; memories: string[]; now: string[] }): Promise<string>;
   // Tiers for elements from before tiers existed, all in one call. New
   // elements get theirs in the merge answer.
   tiers(items: { name: string; kind: ElementKind }[]): Promise<Map<string, Tier>>;
@@ -215,13 +220,13 @@ export class ClaudeOracle implements Oracle {
     return readText(response);
   }
 
-  async merge(a: string, b: string): Promise<MergeAnswer> {
+  async merge(a: string, b: string, avoid?: string): Promise<MergeAnswer> {
     const text = await this.ask(
       "merge",
       this.models.merge,
       this.models.mergeEffort,
       MERGE_SYSTEM,
-      [{ role: "user", content: mergeUserMessage(a, b) }],
+      [{ role: "user", content: mergeUserMessage(a, b, avoid) }],
       MERGE_SCHEMA,
       4000,
     );
@@ -243,6 +248,19 @@ export class ClaudeOracle implements Oracle {
       2000,
     );
     return text.trim();
+  }
+
+  async chronicle(digest: { days: number; lines: string[]; work: string[]; memories: string[]; now: string[] }): Promise<string> {
+    const text = await this.ask(
+      "chronicle",
+      this.models.describe,
+      "low",
+      CHRONICLE_SYSTEM,
+      [{ role: "user", content: chronicleUserMessage(digest) }],
+      null,
+      2000,
+    );
+    return text.trim().slice(0, 2000);
   }
 
   async tiers(items: { name: string; kind: ElementKind }[]): Promise<Map<string, Tier>> {
@@ -490,6 +508,10 @@ export class MockOracle implements Oracle {
     const kind: ElementKind = h % 3 === 0 ? "artifact" : "spell";
     const suffix = kind === "artifact" ? MOCK_ARTIFACTS[h % MOCK_ARTIFACTS.length] : MOCK_SPELLS[h % MOCK_SPELLS.length];
     return { name: `${firstWord(x)} ${firstWord(y)} ${suffix}`.split(" ").slice(-3).join(" "), emoji, kind, tier: "major" };
+  }
+
+  async chronicle(digest: { days: number; lines: string[] }): Promise<string> {
+    return `Mock chronicle of ${digest.days} days: ${digest.lines.slice(0, 3).join("; ") || "nothing happened yet"}. Set ANTHROPIC_API_KEY on the Worker for a real one.`;
   }
 
   async describe(name: string, kind: ElementKind, recipe: [string, string] | null): Promise<string> {

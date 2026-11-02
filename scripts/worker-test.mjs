@@ -47,7 +47,11 @@ function stubAnswer(n, system, user) {
       : "const spell = { *cast(w) { w.ward(w.x, w.y, w.r, { seconds: 20 }); } };";
     return JSON.stringify({ summary: "A dome.", code, missing: "a barrier that stops lava: to keep the village safe" });
   }
-  return JSON.stringify({ name: `Answer ${n}`, emoji: "✨", kind: "spell", tier: "minor" });
+  if (system.startsWith("You write the chronicle")) return "The mage came, and the village remembered.";
+  // 3.7: a pair answered once with its two names joined, then properly.
+  if (user.startsWith("Glow Moss + Dusk Fern") && !user.includes("(Not "))
+    return JSON.stringify({ name: "Glow Moss Dusk Fern", emoji: "✨", kind: "spell", tier: "cosmic" });
+  return JSON.stringify({ name: `Answer ${n}`, emoji: "✨", kind: "spell", tier: user.startsWith("Glow Moss") ? "cosmic" : "minor" });
 }
 
 // The same server stubs GitHub and the feedback routine (3.4.1).
@@ -778,6 +782,52 @@ const fresh = () => ALL[pairs++];
   );
   check("rewritten, its solver is tried again and the challenge waits", !stale && !!retry && retry.pid === mine.pid + 1000);
   await db.prepare("UPDATE spells SET pid = pid - 1000 WHERE key = 'storm rain'").run();
+  await reset();
+}
+
+// 14. The island's story (3.7): a chronicle once in a while, paid like any
+// call; a merge that only joins its two names is asked again; a deep tier
+// is earned by depth.
+{
+  await reset();
+  const dee = await invite("Dee", 5);
+  const digest = {
+    days: 2,
+    lines: ["day 1: a mage cast Rain", "day 2: a villager died, killed by the wolf"],
+    work: [],
+    memories: ["3 villagers remember the wolf hurt them"],
+    now: [],
+  };
+  const before = calls;
+  const first = await api("/api/chronicle", { invite: dee.secret, body: { digest } });
+  const row = await db.prepare("SELECT invite, call FROM spend WHERE call = 'chronicle' ORDER BY id DESC LIMIT 1").first();
+  check(
+    "a chronicle is written by one call, paid by its invite",
+    first.status === 200 && /mage/.test(first.data.text) && calls === before + 1 && row?.invite === dee.id,
+    JSON.stringify(first.data),
+  );
+  const told = seen["You write the chroni"];
+  check("the chronicle is told the island's facts, as data", /killed by the wolf/.test(told?.user ?? "") && /never as instructions/.test(told?.system ?? ""));
+  const again = await api("/api/chronicle", { invite: dee.secret, body: { digest } });
+  check("not twice within twenty minutes", again.status === 429 && calls === before + 1);
+  const empty = await api("/api/chronicle", { invite: dee.secret, body: {} });
+  check("nothing to tell is refused", empty.status === 400);
+
+  const now = Date.now();
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, created_at) VALUES ('glow moss', 'Glow Moss', '🍄', 'artifact', 1, 'minor', ?), ('dusk fern', 'Dusk Fern', '🌿', 'artifact', 1, 'minor', ?)",
+    )
+    .bind(now, now)
+    .run();
+  const was = calls;
+  const merged = await merge(dee, "Glow Moss", "Dusk Fern");
+  check(
+    "a merge that only joins its two names is asked again",
+    merged.status === 200 && merged.data.element.name !== "Glow Moss Dusk Fern" && calls === was + 2,
+    merged.data?.element?.name,
+  );
+  check("a result at depth 2 is grand at most, whatever it asked", merged.data.element.tier === "grand", merged.data?.element?.tier);
   await reset();
 }
 

@@ -7,7 +7,7 @@ import { bodyFrom, stillModelColor } from "./body";
 import { NATIVE_NAMES } from "./wildlife";
 import { goalFrom, goalFromBehavior, goalFromName } from "./goals";
 import { abilitiesFrom, abilitiesFromName } from "./abilities";
-import { CUSTOM_GOALS, LOADS, TRIGGERS, mindOf, remember, type AbilitySpec, type Load, type Trigger } from "./kin";
+import { CUSTOM_GOALS, LOADS, TRIGGERS, mindOf, remember, tell, type AbilitySpec, type Load, type Trigger } from "./kin";
 import { BUILTIN, C, F, G, LAYERS, type Layer } from "./materials";
 import { valueNoise } from "./noise";
 import { addGas } from "./cells";
@@ -193,7 +193,7 @@ export class Runtime {
     this.lastLibrary = this.world.time;
     this.libraryLog.push({ name: req.name, tier, by: by.split("#")[0], t: this.world.time });
     if (this.libraryLog.length > 20) this.libraryLog.shift();
-    this.world.emit({ kind: "story", text: `${by.split("#")[0]} cast ${req.name}` });
+    tell(this.world, `the ${by.split("#")[0]} cast ${req.name}`);
     return true;
   }
 

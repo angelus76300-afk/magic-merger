@@ -1,3 +1,4 @@
+import type { ChronicleDigest } from "../shared/chronicle";
 import { elementKey } from "../shared/elements";
 import type { SpellProgram } from "../shared/spellcode";
 import { TIERS, tierFromDepth, type Tier } from "../shared/tiers";
@@ -31,6 +32,7 @@ export interface WorldElements {
   stage: HTMLElement;
   banner: HTMLElement;
   challenges: HTMLButtonElement;
+  chronicle: HTMLButtonElement;
   status: HTMLElement;
   list: HTMLElement;
   bar: HTMLElement;
@@ -106,6 +108,7 @@ export class WorldHost {
       else if (window.confirm("Reset the world? Everything in it will be lost.")) this.send({ type: "reset", size: this.el.size.value as WorldSize });
     });
     this.el.challenges.addEventListener("click", () => this.onChallenges());
+    this.el.chronicle.addEventListener("click", () => void this.openChronicle());
     this.el.banner.querySelector(".world-banner-retry")!.addEventListener("click", () => {
       if (this.challenge) this.startChallenge(this.challenge);
     });
@@ -398,6 +401,10 @@ export class WorldHost {
       case "error":
         if (this.store.get(msg.key)) void this.repair(msg.key, msg.name, msg.message);
         break;
+      case "chronicle":
+        this.digestWaiter?.(msg.digest);
+        this.digestWaiter = null;
+        break;
       case "need":
         // Library spells a creature or an artifact casts (3.7): stored
         // programs only, free; one that does not exist stays unknown.
@@ -503,6 +510,68 @@ export class WorldHost {
     this.castInAttempt = [];
     this.startChallenge(a.scenario, ahead);
     this.selectSpell(key);
+  }
+
+  // The island's chronicle (3.7): written by Haiku from what the World
+  // recorded, once a session; the last ten chapters are kept by this browser.
+  private digestWaiter: ((d: ChronicleDigest) => void) | null = null;
+  private chronicleDialog: HTMLDialogElement | null = null;
+  private async openChronicle(): Promise<void> {
+    if (this.challenge) {
+      toast("The chronicle tells your own island: leave the challenge first");
+      return;
+    }
+    const kept = readChronicles();
+    let fresh = "";
+    if (!sessionChapter()) {
+      const digest = await new Promise<ChronicleDigest | null>((resolve) => {
+        this.digestWaiter = resolve;
+        this.send({ type: "chronicle" });
+        window.setTimeout(() => resolve(null), 4000);
+      });
+      if (!digest || (!digest.lines.length && !digest.memories.length)) {
+        toast("Nothing has happened on your island yet: cast something, or wait a little");
+        return;
+      }
+      toast("The village elder is thinking…");
+      try {
+        fresh = (await api.chronicle(digest)).text;
+        kept.unshift({ at: Date.now(), text: fresh });
+        writeChronicles(kept.slice(0, 10));
+        markSessionChapter();
+      } catch (err) {
+        toast(err instanceof Error ? err.message : "The chronicle could not be written", "error");
+        if (!kept.length) return;
+      }
+    }
+    if (!this.chronicleDialog) {
+      const d = document.createElement("dialog");
+      d.className = "chronicle";
+      d.addEventListener("click", (e) => {
+        if (e.target === d) d.close();
+      });
+      document.body.append(d);
+      this.chronicleDialog = d;
+    }
+    const d = this.chronicleDialog;
+    const title = document.createElement("h2");
+    title.textContent = "The island's chronicle";
+    const list = document.createElement("div");
+    for (const c of readChronicles()) {
+      const when = document.createElement("h3");
+      when.textContent = new Date(c.at).toLocaleString();
+      const p = document.createElement("p");
+      p.textContent = c.text;
+      list.append(when, p);
+    }
+    const note = document.createElement("p");
+    note.className = "chronicle-note";
+    note.textContent = "A new chapter is written once a session.";
+    const close = document.createElement("button");
+    close.textContent = "Close";
+    close.addEventListener("click", () => d.close());
+    d.replaceChildren(title, list, note, close);
+    d.showModal();
   }
 
   // The World's Challenges button opens the Challenges tab (main.ts).
@@ -711,5 +780,39 @@ function writeFlag(key: string, value: boolean): void {
     localStorage.setItem(key, value ? "1" : "0");
   } catch {
     // Storage blocked: the choice lasts for this page.
+  }
+}
+
+// The chronicle's chapters, kept by this browser (3.7).
+const CHRONICLES = "mm-chronicles";
+function readChronicles(): { at: number; text: string }[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(CHRONICLES) ?? "[]") as { at: number; text: string }[];
+    return Array.isArray(v) ? v.filter((c) => typeof c.text === "string" && typeof c.at === "number") : [];
+  } catch {
+    return [];
+  }
+}
+function writeChronicles(list: { at: number; text: string }[]): void {
+  try {
+    localStorage.setItem(CHRONICLES, JSON.stringify(list));
+  } catch {
+    // kept for this page only
+  }
+}
+let chapterThisSession = false;
+function sessionChapter(): boolean {
+  try {
+    return chapterThisSession || sessionStorage.getItem("mm-chronicle-session") === "1";
+  } catch {
+    return chapterThisSession;
+  }
+}
+function markSessionChapter(): void {
+  chapterThisSession = true;
+  try {
+    sessionStorage.setItem("mm-chronicle-session", "1");
+  } catch {
+    // this page only
   }
 }

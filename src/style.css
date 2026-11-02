@@ -1534,3 +1534,89 @@ input {
   color: var(--muted);
   margin-top: 10px;
 }
+
+/* 3.7: the island's chronicle. */
+.chronicle {
+  width: min(92vw, 520px);
+  max-height: 80vh;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 16px;
+}
+.chronicle::backdrop {
+  background: rgba(5, 3, 12, 0.6);
+}
+.chronicle h3 {
+  font-size: 0.85em;
+  color: var(--muted);
+  margin: 14px 0 4px;
+}
+.chronicle p {
+  line-height: 1.5;
+  margin: 0;
+}
+.chronicle .chronicle-note {
+  color: var(--muted);
+  font-size: 0.85em;
+  margin: 14px 0 10px;
+}
+.chronicle button {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 6px 14px;
+  font: inherit;
+}
+
+/* 3.7: the recipe book. */
+.book-open {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 4px 10px;
+  font: inherit;
+}
+.book {
+  width: min(94vw, 560px);
+  max-height: 82vh;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 16px;
+}
+.book::backdrop {
+  background: rgba(5, 3, 12, 0.6);
+}
+.book-intro {
+  color: var(--muted);
+}
+.book-list {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 14px;
+}
+.book-entry {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.book-entry p {
+  margin: 0 0 2px;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+.book button {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 6px 14px;
+  font: inherit;
+}

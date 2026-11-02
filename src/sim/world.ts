@@ -1,4 +1,5 @@
 import type { ArtHooks } from "./artifacts";
+import type { StoryLine } from "./kin";
 import type { Creature } from "./creatures";
 import { C, F, G, MaterialTable, type Layer } from "./materials";
 import { Rng, fbm, valueNoise } from "./noise";
@@ -21,9 +22,7 @@ export type WorldEvent =
   | { kind: "shake"; amount: number; seconds: number }
   | { kind: "flash"; color: number; strength: number }
   | { kind: "error"; spell: string; message: string }
-  | { kind: "cast-done"; spell: string }
-  // Something worth a line in the island's story (3.7): a creature or an artifact casting, an artifact acting.
-  | { kind: "story"; text: string };
+  | { kind: "cast-done"; spell: string };
 
 // The whole simulated land, seen from above. One cell is roughly a few meters;
 // heights are in the same unit, so a slope of 1 per cell is steep.
@@ -65,6 +64,9 @@ export class World {
   // What the runtime does for artifacts and creatures (3.7): an artifact's
   // own code, and spells from the shared library cast by name.
   magic: ArtHooks | null = null;
+  // The island's story (3.7, kin.ts): lines worth telling, and everyday work counted.
+  story: StoryLine[] = [];
+  storyCounts: Record<string, number> = {};
   // Places spells keep safe for a while (wards.ts), and what each cell is
   // protected against, as bits.
   wards: Ward[] = [];

@@ -10,6 +10,7 @@ import {
   reborn,
   LOAD_COLORS,
   deed,
+  storyOn,
   feeling,
   findVillages,
   harmed,
@@ -239,6 +240,7 @@ export function countOf(world: World, kind: string): number {
 
 // Once a tick from lifeCycle: villages and counts every three seconds.
 export function stepGoals(world: World): void {
+  storyOn(world);
   if (world.tick % 90 !== 1 && (world.villages.length || world.tick % 15 !== 1)) return;
   findVillages(world);
   const counts = new Map<string, number>();

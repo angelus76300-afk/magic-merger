@@ -226,6 +226,47 @@ export function deed(c: Creature, what: string): void {
   m.deeds++;
   m.did = what;
   if (deedLog) deedLog.set(what, (deedLog.get(what) ?? 0) + 1);
+  if (storyWorld) storyDeed(storyWorld, c, what);
+}
+
+// The island's story (3.7): what happened worth telling, for the chronicle
+// Haiku writes once a session. Notable deeds are lines (the dragon hoarded
+// gold, a villager was tamed), the same line within two minutes counted
+// again rather than repeated; everyday work is only counted (grazing,
+// harvesting, carrying food home). Saved with the world, sixty lines at most.
+export interface StoryLine {
+  t: number;
+  text: string;
+  n: number;
+}
+export const MAX_STORY = 60;
+const ROUTINE =
+  /^(grazed|picked|brought|ate |sowed|harvested|felled|planted|caught|gathered|spread|dug|rooted|drew water|prayed|cut a path|kept|carried|herded|fed )/;
+let storyWorld: World | null = null;
+export function storyOn(world: World | null): void {
+  storyWorld = world;
+}
+
+export function tell(world: World, text: string): void {
+  const clean = text.replace(/\s+/g, " ").trim().slice(0, 120);
+  if (!clean) return;
+  const last = world.story.find((l) => l.text === clean && world.time - l.t < 120);
+  if (last) {
+    last.n++;
+    last.t = world.time;
+    return;
+  }
+  world.story.push({ t: world.time, text: clean, n: 1 });
+  if (world.story.length > MAX_STORY) world.story.shift();
+}
+
+function storyDeed(world: World, c: Creature, what: string): void {
+  const kind = c.kind.split("#")[0];
+  if (ROUTINE.test(what)) {
+    world.storyCounts[what] = (world.storyCounts[what] ?? 0) + 1;
+    return;
+  }
+  tell(world, `${kind === "villager" ? "a villager" : `the ${kind}`} ${what}`);
 }
 
 // Tests count what was done, by words; off (null) in the game.
@@ -408,5 +449,9 @@ export interface Death {
 
 export function noteDeath(world: World, c: Creature): void {
   world.deaths.push({ kind: c.kind, x: c.x, y: c.y, t: world.time });
+  // Who killed it, as far as it remembers.
+  const by = c.mind?.memory.filter((e) => e.feel < 0).sort((a, b) => a.feel - b.feel)[0]?.kind;
+  const kind = c.kind.split("#")[0];
+  if (kind !== "fish" && kind !== "bird") tell(world, `${kind === "villager" ? "a villager" : `a ${kind}`} died${by ? `, killed by the ${by}` : ""}`);
   if (world.deaths.length > 48) world.deaths.splice(0, world.deaths.length - 48);
 }

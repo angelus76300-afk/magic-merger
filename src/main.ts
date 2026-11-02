@@ -9,6 +9,7 @@ import { WorldHost } from "./worldhost";
 import { openPeople } from "./people";
 import { showFeedback } from "./feedback";
 import { Challenges } from "./challenges";
+import { openBook } from "./book";
 import { hideGate, showGate, showWelcome, welcomedBefore } from "./welcome";
 
 // An invite link (/#invite=...) is kept by this browser before anything else.
@@ -21,11 +22,13 @@ const store = new Store();
 const craft = new Craft(store, $("#board"), $("#inventory"), $("#inventory-list"), $<HTMLInputElement>("#search"), $("#count"), $("#inventory-filters"));
 craft.init();
 $("#clear").addEventListener("click", () => craft.clearBoard());
+$("#book").addEventListener("click", () => openBook(store));
 
 const world = new WorldHost(store, {
   stage: $("#world-stage"),
   banner: $("#world-banner"),
   challenges: $<HTMLButtonElement>("#world-challenges"),
+  chronicle: $<HTMLButtonElement>("#world-chronicle"),
   status: $("#world-status"),
   list: $("#spell-list"),
   bar: $(".spellbar"),

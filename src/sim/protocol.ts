@@ -1,3 +1,4 @@
+import { readDigest, type ChronicleDigest } from "../../shared/chronicle";
 import type { CastRequest } from "./runtime";
 import type { SavedWorld } from "./save";
 import type { WorldSize } from "./engine";
@@ -19,7 +20,9 @@ export type ToWorld =
   | { type: "sandbox" }
   | { type: "hud"; on: boolean }
   // Spells from the shared library the world asked for by name (3.7).
-  | { type: "library"; spells: CastRequest[] };
+  | { type: "library"; spells: CastRequest[] }
+  // What the island's chronicle is written from (3.7).
+  | { type: "chronicle" };
 
 // The iframe runs code nobody reviewed, so whatever it sends is checked for
 // shape and size before the page acts on it. Returns null for anything else.
@@ -43,6 +46,10 @@ export function readFromWorld(data: unknown): FromWorld | null {
       return m.sample && typeof m.sample === "object" && JSON.stringify(m.sample).length < 2000
         ? { type: "perf", sample: m.sample as Record<string, number> }
         : null;
+    case "chronicle": {
+      const digest = readDigest(m.digest);
+      return digest ? { type: "chronicle", digest } : null;
+    }
     case "need":
       return Array.isArray(m.names) && m.names.length <= 20 && m.names.every((n) => str(n, 120)) ? { type: "need", names: m.names as string[] } : null;
     case "objective":
@@ -65,4 +72,5 @@ export type FromWorld =
   | { type: "objective"; id: string; text: string; status: "playing" | "won" | "lost" }
   | { type: "perf"; sample: Record<string, number> }
   // Names of library spells creatures or artifacts want to cast (3.7).
-  | { type: "need"; names: string[] };
+  | { type: "need"; names: string[] }
+  | { type: "chronicle"; digest: ChronicleDigest };

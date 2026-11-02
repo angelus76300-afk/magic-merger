@@ -4,7 +4,7 @@ import { C, F, G } from "./materials";
 import { names, type Landmark } from "./social";
 import { packLook, unpackLook } from "./villagers";
 import { WARD, addWard, warded } from "./wards";
-import { deed, life, markAt, mindOf, reborn, remember, villageOf } from "./kin";
+import { deed, life, markAt, mindOf, reborn, remember, tell, villageOf } from "./kin";
 import type { Creature } from "./creatures";
 import type { World } from "./world";
 
@@ -146,6 +146,7 @@ const ARRIVAL = 15;
 
 export function artDeed(world: World, a: Artifact, what: string): void {
   a.art.deeds++;
+  tell(world, `the ${a.name} ${what}`);
   if (world.time - a.art.placed > ARRIVAL) a.art.later++;
   a.art.did = [what, ...a.art.did.filter((d) => d !== what)].slice(0, 3);
 }
