@@ -7,6 +7,9 @@ import type { World } from "./world";
 import { body, type BodySpec } from "./body";
 import { SPECIES, habitatCell, targetOf } from "./wildlife";
 import { packLook, randomLook, shirtOf, sizeOf, unpackLook } from "./villagers";
+import { denDown, goalOfCreature, hasNeeds, kindGoal, needsTick, pursue, stepGoals } from "./goals";
+import { abilitiesFromName, useAbilities } from "./abilities";
+import { LOADS, deed, harmed, life, newMind, noteDeath, reborn, villageOf, type AbilitySpec, type Goal, type Mind } from "./kin";
 
 // What a spell-made creature does, declared rather than coded, so even a
 // short program gets a creature with a life of its own.
@@ -74,6 +77,12 @@ export interface CreatureKind {
   tick?: (self: Creature, dt: number) => void;
   fallback?: string;
   ai?: Behavior;
+  // What it wants (3.6, goals.ts) and its own magic (abilities.ts). Kinds
+  // that declare a goal have needs; older ones get one from their behavior,
+  // name or base kind and keep doing what they did.
+  goal?: Goal;
+  abilities?: AbilitySpec[];
+  needs?: boolean;
 }
 
 export const KINDS = new Map<string, CreatureKind>();
@@ -100,7 +109,38 @@ for (const k of [
   kind({ name: "spirit", speed: 2.5, hp: 60, radius: 0.6, color: 0xc9f6ff, flying: true, fireproof: true, glow: true, body: body("spirit") }),
   kind({ name: "golem", speed: 1.8, hp: 300, radius: 1, color: 0x8d8d96, fireproof: true, body: body("golem", [], { color2: 0x9dfcff }) }),
   ...SPECIES.map((s) => kind(s.kind)),
+  // The dead a necromancer raises (3.6): weak, short lived, burnt by day.
+  kind({
+    name: "risen",
+    speed: 2.2,
+    hp: 50,
+    radius: 0.55,
+    color: 0xd8d4c8,
+    body: body("two legs"),
+    goal: "spread",
+    ai: {
+      mode: "hunt",
+      prey: ["villager"],
+      leader: [],
+      attack: 6,
+      sense: 10,
+      aura: null,
+      auraRadius: 4,
+      auraPower: 1,
+      leaves: null,
+      weak: ["light"],
+      immune: [],
+      lifespan: 90,
+      onDeath: null,
+      lures: [],
+      scares: [],
+      converts: false,
+      active: "always",
+    },
+  }),
 ]) {
+  k.goal ??= kindGoal(k, undefined);
+  k.abilities ??= abilitiesFromName(k.name);
   KINDS.set(k.name, k);
   if (k.tags.length) TAGS.set(k.name, k.tags);
 }
@@ -144,6 +184,8 @@ export interface Creature {
   look: number;
   // Free data for spell defined behavior.
   data: Record<string, unknown>;
+  // Its goal, needs, task, memory and abilities (3.6, kin.ts), made on first use.
+  mind?: Mind;
 }
 
 let nextId = 1;
@@ -161,6 +203,13 @@ export function kindOf(c: Creature): CreatureKind {
 export function maxHp(c: Creature): number {
   return kindOf(c).hp * c.size;
 }
+
+// What goals.ts and abilities.ts borrow from here without importing it.
+life.kindOf = kindOf;
+life.maxHp = maxHp;
+life.make = (kind, x, y) => makeCreature(kind, x, y);
+life.goalOf = (c) => goalOfCreature(c, kindOf(c));
+life.free = (c, x, y) => free(c, x, y);
 
 export function makeCreature(kindName: string, x: number, y: number): Creature {
   const k = KINDS.get(kindName) ?? KINDS.get("villager")!;
@@ -240,11 +289,67 @@ export function dressVillages(world: World, who: Creature[]): void {
   }
 }
 
-export function restoreCreature(raw: Partial<Creature>): Creature | null {
+export function restoreCreature(raw: Partial<Creature> & { m?: SavedMind }): Creature | null {
   if (typeof raw.x !== "number" || typeof raw.y !== "number" || typeof raw.kind !== "string") return null;
   const c = makeCreature(raw.kind, raw.x, raw.y);
   const look = typeof raw.look === "number" && Number.isFinite(raw.look) ? raw.look >>> 0 : c.look;
-  return { ...c, ...raw, look, id: c.id, data: {} };
+  const { m, ...rest } = raw;
+  const back: Creature = { ...c, ...rest, look, id: c.id, data: {}, mind: undefined };
+  if (m && typeof m === "object") restoreMind(back, m);
+  return back;
+}
+
+// What a mind keeps across a save: needs, its lair, what it carries, whether
+// it is tame, its deeds and memories. The task is chosen again.
+export interface SavedMind {
+  h?: number;
+  t?: number;
+  lair?: number;
+  carry?: string | null;
+  tame?: number;
+  fed?: number;
+  deeds?: number;
+  did?: string;
+  goal?: string;
+  mem?: [string, number][];
+}
+
+export function saveMind(c: Creature): SavedMind | undefined {
+  const m = c.mind;
+  if (!m) return undefined;
+  const r = (v: number) => Math.round(v * 100) / 100;
+  return {
+    h: r(m.hunger),
+    t: r(m.tired),
+    lair: m.lair,
+    carry: m.carry,
+    tame: m.tame,
+    fed: m.fed,
+    deeds: m.deeds,
+    did: m.did,
+    goal: m.goal,
+    mem: m.memory.map((e) => [e.kind, r(e.feel)]),
+  };
+}
+
+function restoreMind(c: Creature, s: SavedMind): void {
+  const m: Mind = newMind(life.goalOf(c));
+  const num = (v: unknown, lo: number, hi: number, d: number) => (typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d);
+  m.hunger = num(s.h, 0, 1, m.hunger);
+  m.tired = num(s.t, 0, 1, m.tired);
+  m.lair = Math.round(num(s.lair, -1, 1e7, -1));
+  m.carry = (LOADS as readonly string[]).includes(s.carry as string) ? (s.carry as Mind["carry"]) : null;
+  m.tame = Math.round(num(s.tame, 0, 64, 0));
+  m.fed = Math.round(num(s.fed, 0, 10, 0));
+  m.deeds = Math.round(num(s.deeds, 0, 1e9, 0));
+  m.did = typeof s.did === "string" ? s.did.slice(0, 80) : "";
+  if (s.goal === "worship") m.goal = "worship";
+  if (Array.isArray(s.mem))
+    m.memory = s.mem
+      .filter((e) => Array.isArray(e) && typeof e[0] === "string" && typeof e[1] === "number" && Number.isFinite(e[1]))
+      .slice(0, 4)
+      .map(([kind, feel]) => ({ kind: kind.slice(0, 40), feel: Math.max(-5, Math.min(5, feel)) }));
+  c.mind = m;
 }
 
 // Water a fish can live in (ice above it is fine).
@@ -277,8 +382,12 @@ function blocked(world: World, x: number, y: number, c: Creature, k: CreatureKin
 
 export function updateCreature(world: World, c: Creature, dt: number): void {
   const k = kindOf(c);
+  freeWorld = world;
   if (c.dead) {
-    if (c.deadFor === 0 && k.ai?.onDeath) deathOf(world, c, k.ai.onDeath);
+    if (c.deadFor === 0) {
+      noteDeath(world, c);
+      if (k.ai?.onDeath) deathOf(world, c, k.ai.onDeath);
+    }
     c.deadFor += dt;
     c.z = Math.max(0, c.z + c.vz * dt);
     // On the ground a body stops: its speed used to keep growing, and a
@@ -303,7 +412,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     if (weak("cold") && world.temp[i] < 2) c.hp -= 25 * dt;
     if (weak("fire") && (c.burning > 0 || world.temp[i] > 80)) c.hp -= 30 * dt;
     if (weak("acid") && world.fluid[i] === F.ACID) c.hp -= 60 * dt;
-    if (weak("light") && world.tick % 15 === 0 && daylight(world.time).night < 0.3) {
+    if (weak("light") && world.tick % 15 === 0 && daylight(world.time).night < 0.3 && !(ai.active === "night" && shaded(world, i))) {
       c.hp -= 12 * 0.5;
       if (Math.random() < 0.3) world.particles.add({ x: c.x, y: c.y, z: 1, vz: 2, life: 0.6, color: 0xfff0c0, size: 1, glow: true });
     }
@@ -353,15 +462,21 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     return;
   }
 
-  // Decide where to go.
+  // Decide where to go: survival, then needs and goals (goals.ts), then the
+  // declared behavior of older spell creatures, then wandering.
   const busy = c.frozen > 0 || c.sleep > 0 || c.stun > 0;
+  const needs = hasNeeds(c, k);
+  if (needs) needsTick(c, k, dt);
   let wantX = 0;
   let wantY = 0;
   let pace = 1;
   let mood: Mood = null;
   let plan2: ReturnType<typeof social> = null;
   if (!busy) {
-    const dangerDir = senseDanger(world, c);
+    // Danger is probed every third tick and remembered in between (3.6: goals
+    // keep creatures on the move, and this was the dearest part of a tick).
+    let dangerDir = c.data.danger as { x: number; y: number } | null | undefined;
+    if (dangerDir === undefined || (world.tick + c.id) % 3 === 0) c.data.danger = dangerDir = senseDanger(world, c);
     if (c.fear > 0) {
       const dx = c.x - c.fearX;
       const dy = c.y - c.fearY;
@@ -387,20 +502,52 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     } else if (c.calm > 0) {
       pace = 0;
     } else if (ai && ai.active !== "always" && daylight(world.time).night > 0.5 !== (ai.active === "night")) {
-      // Out of its hours it rests where it is.
+      // Out of its hours it rests where it is; a creature of the night that
+      // daylight burns first looks for the shade of the woods (3.6).
       pace = 0;
       mood = "asleep";
+      const shade = ai.active === "night" && weak("light") && !shaded(world, i) ? shadeNear(world, c) : null;
+      if (shade) {
+        wantX = shade.x - c.x;
+        wantY = shade.y - c.y;
+        pace = 1.4;
+        mood = null;
+      }
+      if (c.mind) {
+        c.mind.action = shade ? "hiding from the sun" : `asleep until ${ai.active === "night" ? "night" : "day"}`;
+        c.mind.task = "none";
+        if (!shade && needs && !k.flying) denDown(world, c);
+      }
     } else if ((plan2 = social(world, c, k, kindOf, dt))) {
       wantX = plan2.x - c.x;
       wantY = plan2.y - c.y;
       pace = plan2.pace;
       mood = plan2.mood;
-    } else if (ai && ai.mode !== "wander" && behave(world, c, k, ai, dt)) {
+      if (c.mind) c.mind.action = plan2.mood === "fear" ? "running for its life" : plan2.mood === "angry" ? "fighting back" : c.mind.action;
+    } else if (ai?.mode === "flee" && !c.mind?.tame && c.mind?.task !== "beg" && (c.mind?.hunger ?? 0) < 0.7 && behave(world, c, k, ai, dt)) {
+      // Survival first: a deer runs from people and wolves before it eats.
       wantX = c.tx - c.x;
       wantY = c.ty - c.y;
-      pace = ai.mode === "flee" || ai.mode === "hunt" ? 1.3 : 1;
+      pace = 1.3;
+      if (c.mind) c.mind.action = "running away";
+    } else if (needs && (plan2 = pursue(world, c, k, dt))) {
+      wantX = plan2.x - c.x;
+      wantY = plan2.y - c.y;
+      pace = plan2.pace;
+      mood = plan2.mood;
+    } else if (ai && ai.mode !== "wander" && ai.mode !== "flee" && behave(world, c, k, ai, dt)) {
+      wantX = c.tx - c.x;
+      wantY = c.ty - c.y;
+      pace = ai.mode === "hunt" ? 1.3 : 1;
       if (Math.hypot(wantX, wantY) < 0.4) pace = 0;
       if (ai.mode === "hunt" && c.data.target) mood = "hunt";
+      if (c.mind) c.mind.action = ai.mode === "hunt" ? (c.data.target ? "hunting" : "prowling") : ai.mode === "guard" ? "on guard" : "following";
+    } else if (!needs && (plan2 = pursue(world, c, k, dt))) {
+      // Older spell creatures take up their goal when their behavior leaves them idle.
+      wantX = plan2.x - c.x;
+      wantY = plan2.y - c.y;
+      pace = plan2.pace;
+      mood = plan2.mood;
     } else {
       plan(world, c, k, dt);
       wantX = c.tx - c.x;
@@ -434,7 +581,17 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       // Step around the obstacle.
       c.x -= sy;
       c.y += sx;
-    } else c.goal = 0;
+    } else {
+      c.goal = 0;
+      // Boxed in (born between trees and houses): after a while, out to the
+      // nearest open cell, so it is not stuck for good (3.6).
+      const stuck = ((c.data.stuck as number | undefined) ?? 0) + dt;
+      c.data.stuck = stuck;
+      if (stuck > 3 && !k.aquatic) {
+        c.data.stuck = 0;
+        unstick(world, c, k);
+      }
+    }
   }
 
   // Being thrown, lifted or knocked around.
@@ -459,11 +616,69 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   c.x = Math.max(0.5, Math.min(world.w - 1.5, c.x));
   c.y = Math.max(0.5, Math.min(world.h - 1.5, c.y));
   if (ai && !busy) sideEffects(world, c, ai, i, onGround, dt);
+  if (!busy && (k.abilities?.length || c.kind === "villager")) useAbilities(world, c, k);
   if (c.fear > 0 || c.burning > 0) mood = "fear";
   c.data.mood = busy ? (c.sleep > 0 ? "asleep" : null) : mood;
   if (c.hp <= 0) c.dead = true;
 
   if (k.tick) k.tick(c, dt);
+}
+
+// A step of up to three cells toward (x, y) onto land it could stand on,
+// over a cliff edge if need be: out of a hollow it cannot walk out of.
+let freeWorld: World | null = null;
+function free(c: Creature, x: number, y: number): void {
+  const world = freeWorld;
+  const k = kindOf(c);
+  if (!world || k.aquatic || k.flying) return;
+  const d = Math.hypot(x - c.x, y - c.y) || 1;
+  for (let s = 3; s >= 1; s--) {
+    const nx = c.x + ((x - c.x) / d) * s;
+    const ny = c.y + ((y - c.y) / d) * s;
+    if (!world.inside(nx, ny)) continue;
+    const i = world.idx(nx, ny);
+    if (world.depth[i] > 0.5 || world.materials.get("cover", world.cover[i]).solid || danger(world, i)) continue;
+    c.x = nx;
+    c.y = ny;
+    return;
+  }
+  // Hemmed in by trees: a villager cuts a way through (the stump can be walked over).
+  if (c.kind !== "villager") return;
+  const i = world.idx(Math.max(0, Math.min(world.w - 1, c.x + (x - c.x) / d)), Math.max(0, Math.min(world.h - 1, c.y + (y - c.y) / d)));
+  if (world.cover[i] === C.TREE) {
+    world.setCover(i, C.STUMP);
+    deed(c, "cut a path through the trees");
+  }
+}
+
+function unstick(world: World, c: Creature, k: CreatureKind): void {
+  for (let r = 1; r <= 4; r++)
+    for (let a = 0; a < 8; a++) {
+      const x = c.x + Math.cos((a / 8) * Math.PI * 2) * r;
+      const y = c.y + Math.sin((a / 8) * Math.PI * 2) * r;
+      if (!blocked(world, x, y, c, k) && !blocked(world, x + 1, y, c, k) && !blocked(world, x, y + 1, c, k)) {
+        c.x = x;
+        c.y = y;
+        return;
+      }
+    }
+}
+
+// Out of the sun: under or beside a tree, or by a house.
+function shaded(world: World, i: number): boolean {
+  for (const d of [0, 1, -1, world.w, -world.w]) {
+    const j = i + d;
+    if (j >= 0 && j < world.n && (world.cover[j] === C.TREE || world.cover[j] === C.HOUSE)) return true;
+  }
+  return false;
+}
+
+function shadeNear(world: World, c: Creature): { x: number; y: number } | null {
+  const known = c.data.shade as { x: number; y: number } | undefined;
+  if (known && world.cover[world.idx(known.x, known.y)] === C.TREE) return known;
+  const found = nearest(world, c.x, c.y, 24, (j) => world.cover[j] === C.TREE);
+  c.data.shade = found ?? undefined;
+  return found;
 }
 
 function others(world: World, c: Creature, r: number, kinds: string[]): Creature | null {
@@ -511,7 +726,13 @@ function behave(world: World, c: Creature, k: CreatureKind, ai: Behavior, dt: nu
       c.tx = target.x;
       c.ty = target.y;
       if (Math.hypot(target.x - c.x, target.y - c.y) < kindOf(c).radius * c.size + kindOf(target).radius * target.size + 0.6) {
-        target.hp -= ai.attack * dt * (shieldedCreature(world, target) ? 0.15 : 1);
+        const blow = ai.attack * dt * (shieldedCreature(world, target) ? 0.15 : 1);
+        target.hp -= blow;
+        harmed(world, target, c, blow);
+        if (c.data.struck !== target.id) {
+          c.data.struck = target.id;
+          deed(c, `attacked a ${target.kind.split("#")[0]}`);
+        }
         if (target.hp <= 0 && ai.converts && world.creatures.length < 600) {
           // The victim rises as one of them.
           const ratio = 0.6;
@@ -521,9 +742,14 @@ function behave(world: World, c: Creature, k: CreatureKind, ai: Behavior, dt: nu
           target.dead = false;
           target.fear = 0;
           target.data = {};
+          reborn(target);
           world.particles.add({ x: target.x, y: target.y, z: 1, vz: 2, life: 1, color: kindOf(c).color, size: 2, glow: true });
           c.data.target = undefined;
-        } else if (target.hp <= 0) target.dead = true;
+          deed(c, "turned its victim into one of its own");
+        } else if (target.hp <= 0) {
+          target.dead = true;
+          deed(c, `killed a ${target.kind.split("#")[0]}`);
+        }
         if (target.kind === "villager" && target.fear <= 0) {
           target.fear = 3;
           target.fearX = c.x;
@@ -561,19 +787,26 @@ function sideEffects(world: World, c: Creature, ai: Behavior, i: number, onGroun
       if (world.cover[i] === C.NONE && Math.random() < 0.5) world.setCover(i, Math.random() < 0.7 ? C.FLOWER : C.BUSH);
     } else world.place(i, ai.leaves, 0.3);
     if (ai.leaves === "ice") world.temp[i] = Math.min(world.temp[i], -8);
+    deed(c, `left ${ai.leaves} where it walked`);
   }
   if (!ai.aura || world.tick % 8 !== c.id % 8) return;
   const r = ai.auraRadius;
   const p = ai.auraPower;
+  let touched = 0;
   for (const o of world.crowd.near(world, c.x, c.y, r)) {
     if (o === c || o.dead || Math.abs(o.x - c.x) > r || Math.abs(o.y - c.y) > r || Math.hypot(o.x - c.x, o.y - c.y) > r) continue;
+    if (o.kind !== c.kind) touched++;
     switch (ai.aura) {
       case "heal":
+        if (o.hp < maxHp(o) && o.kind === "villager") harmed(world, o, c, -1);
         o.hp = Math.min(maxHp(o), o.hp + 10 * p * 0.27);
         o.burning = 0;
         break;
       case "hurt":
-        if (o.kind !== c.kind && !shieldedCreature(world, o)) o.hp -= 10 * p * 0.27;
+        if (o.kind !== c.kind && !shieldedCreature(world, o)) {
+          o.hp -= 10 * p * 0.27;
+          harmed(world, o, c, 10 * p * 0.27);
+        }
         break;
       case "fear":
         if (o.kind !== c.kind) {
@@ -598,6 +831,7 @@ function sideEffects(world: World, c: Creature, ai: Behavior, i: number, onGroun
     }
     if (o.hp <= 0) o.dead = true;
   }
+  if (touched && world.tick % 120 === c.id % 120) deed(c, `its ${ai.aura} aura touched ${touched} around it`);
   if (ai.aura === "freeze")
     forDisc(world, c.x, c.y, r, (j) => {
       world.temp[j] = Math.min(world.temp[j], -5);
@@ -777,6 +1011,8 @@ function keepWild(world: World): void {
   let worstShare = 1;
   for (const s of SPECIES) {
     if (!KINDS.get(s.kind.name)?.native || (world.wild && !world.wild.includes(s.kind.name))) continue;
+    // Fish breed on their own (goals.ts, migrate): restocked only once gone.
+    if (s.kind.aquatic && (alive.get(s.kind.name) ?? 0) > 0) continue;
     const share = (alive.get(s.kind.name) ?? 0) / targetOf(world, s);
     if (share < worstShare) {
       worstShare = share;
@@ -850,6 +1086,7 @@ function keepOut(world: World): void {
 }
 
 export function lifeCycle(world: World, dt: number): void {
+  stepGoals(world);
   if (world.wards.length) keepOut(world);
   stepLandmarks(world, maxHp, (c) => kindOf(c).fireproof);
   for (let k = world.creatures.length - 1; k >= 0; k--) {
@@ -865,6 +1102,12 @@ export function lifeCycle(world: World, dt: number): void {
   for (let tries = 0; tries < 50; tries++) {
     const i = (Math.random() * world.n) | 0;
     if (world.cover[i] !== C.HOUSE) continue;
+    // A child is born where there is food to spare (3.6).
+    const village = villageOf(world, i % world.w, Math.floor(i / world.w));
+    if (village) {
+      if (village.food < 4) return;
+      village.food -= 3;
+    }
     const c = makeCreature("villager", (i % world.w) + 0.5, Math.floor(i / world.w) + 2.5);
     // Born here: a child, in this village's clothes.
     const look = randomLook(styleNear(world, c.x, c.y), Math.random, Math.random() < 0.6 ? "child" : undefined);

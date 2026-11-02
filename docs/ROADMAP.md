@@ -1,6 +1,6 @@
 # Where the game stands, and what comes next
 
-Updated on 2026-11-02, during 3.5 (after 3.4.2).
+Updated on 2026-11-02, during 3.6 (after 3.5).
 
 ## Done since the first review
 
@@ -127,6 +127,21 @@ Asked for: every creature was the same two blocks in a different color. DESIGN.m
 8. **The bestiary** (`lab/bestiary.html`, screenshots by `scripts/bestiary.mjs`) draws every plan, feature, animal, villager look and four sample models, walking, flying, dead or frozen.
 9. **Checked**: `npm test` builds every plan with every feature and every villager look, reads names, bounds models, finds every species in its habitat on two island sizes, brings deer back after they are all killed, chokes a fish on land, keeps a spell's wolves apart and saves looks. Two things it caught: wolves born inside solid trees never moved, and the test run passed a spell that did nothing once animals drew random numbers (creatures now have their own stream there). The imp mob check was one seed that happened to pass (about 3 in 4 imps die in 20 s, before and after 3.5, over 52 seeds); it now asks for 5 of 6 seeds where the mob kills it or leaves it under half health.
 
+## Done in 3.6: a living island (creatures)
+
+Asked for: nothing on the island just stands there; if the player does nothing for five minutes, every creature must have changed something. This is the creatures half; artifacts that act and creatures casting library spells are 3.6.1. DESIGN.md, "A living island", has the rules and the numbers.
+
+1. **A goal for every kind** from twelve (hunt, gather, hoard, build, tend, guard, steal, spread, convert, worship, explore, migrate), **needs before goals** (survive, rest, eat) and **marks**: a dragon's heap of gold, dams, goblin camps with loot, graveyards, dens, flowers and candles at shrines, cairns.
+2. **Villagers' jobs are goals**, with a village's food, wood and gold: farmers sow and harvest, woodcutters fell trees, builders (a new job) build houses with that wood, fishers fish, guards patrol and fight, priests pray, heal and bury the dead, merchants carry food to poorer villages; children are born where there is food.
+3. **Abilities** with a trigger and a cooldown from twelve engine actions (breathe fire, heal, summon, teleport, freeze, lightning, grow, raise the dead, shield, dig, flood, steal).
+4. **Food web, taming, herds, memory**: wolves and bears hunt when hungry, grazers eat crops, birds sow, fish breed; begging animals fed three times are tame; villagers remember harm and help, magic included.
+5. **Inspect**: tap a creature with no spell in hand.
+6. **The five minute scene** in `npm test`, on the 3.4.2 probe island: ten minutes, three streams, 72 of 72 creatures changed something, no kind vanished or exploded. Challenges still balanced (it found an offering that knocked a house down and lost the lava challenge).
+7. **The prompt** teaches `goal` and `abilities` in one paragraph (about 250 tokens); older creatures get both from their behavior, name and base kind. `PROGRAM_VERSION` 6 only labels.
+8. **Performance** on the large island: whole tick unchanged within noise; creatures 0.07 to 0.15 ms p50 dearer in Node, paid for by probing danger every third tick and a lure scan without strings.
+
+Not done: the judge does not run the scene yet; abilities have no probe in the test run; no real phone session since goals (watch `/api/perf`).
+
 ## Decisions taken
 
 1. **Cosmic spells may ruin the island.** Consequences are part of the fun; the land regrows on its own (ash turns to soil, grass and forests come back) and Reset is one tap away. Revisit if it feels punishing in play.
@@ -182,7 +197,7 @@ Today every creature is the same two blocks in a different color. Give each kind
 7. **A bestiary page** in the Spell Lab drawing every plan and feature.
 8. Teach `body`, `features` and models in the spell prompt **without rewriting existing spells in bulk**; old creatures get a body chosen from their base kind.
 
-### 3.6 Goals, actions and a living island (next)
+### 3.6 Goals, actions and a living island (creatures done, see above; artifacts in 3.6.1)
 
 Nothing on the island just stands there. Every creature wants something and acts to get it, some with magic of their own; every artifact does something, on its own or when something happens. The test for anything new: if the player does nothing for five minutes, what has it changed? Builds on `src/sim/social.ts` and the species from 3.5.
 

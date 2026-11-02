@@ -839,6 +839,7 @@ const JOB_FEATURES: Record<string, Feature[]> = {
   guard: ["armor", "spear"],
   priest: ["hood", "book"],
   merchant: ["cap", "basket"],
+  builder: ["cap", "hammer"],
 };
 
 export function buildRig(spec: BodySpec, look = 0): Rig {

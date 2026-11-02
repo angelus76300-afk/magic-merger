@@ -26,12 +26,89 @@
       #overlay {
         pointer-events: none;
       }
+      /* What a tapped creature is doing (3.6). */
+      #inspect {
+        position: absolute;
+        left: 10px;
+        top: 10px;
+        width: min(300px, calc(100% - 20px));
+        box-sizing: border-box;
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: rgba(18, 14, 34, 0.88);
+        color: #f2eefc;
+        font:
+          13px/1.35 system-ui,
+          sans-serif;
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+      }
+      #inspect[hidden] {
+        display: none;
+      }
+      #inspect .head {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+      #inspect .title {
+        font-size: 15px;
+      }
+      #inspect .sub {
+        flex: 1;
+        color: #b9b0d6;
+        font-size: 12px;
+      }
+      #inspect .close {
+        border: 0;
+        background: none;
+        color: #f2eefc;
+        font-size: 20px;
+        line-height: 1;
+        padding: 0 2px;
+        cursor: pointer;
+      }
+      #inspect .bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 3px 0;
+      }
+      #inspect .bar .label {
+        width: 52px;
+        color: #b9b0d6;
+        font-size: 12px;
+      }
+      #inspect .track {
+        flex: 1;
+        height: 6px;
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.12);
+        overflow: hidden;
+      }
+      #inspect .track i {
+        display: block;
+        height: 100%;
+      }
+      #inspect .rows {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 2px 10px;
+        margin: 8px 0 0;
+      }
+      #inspect dt {
+        color: #b9b0d6;
+      }
+      #inspect dd {
+        margin: 0;
+      }
     </style>
   </head>
   <body>
     <!-- Runs Claude's spell code. Loaded in a sandboxed iframe with no origin and no network. -->
     <canvas id="world" aria-label="The world: tap to cast the selected spell, drag to turn, pinch to zoom, two fingers to pan"></canvas>
     <canvas id="overlay"></canvas>
+    <div id="inspect" hidden aria-live="polite"></div>
     <script type="module" src="/src/sim/frame.ts"></script>
   </body>
 </html>

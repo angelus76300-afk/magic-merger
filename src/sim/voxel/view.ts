@@ -56,7 +56,7 @@ ColorManagement.enabled = false;
 const SKY_TOP = "#5fa8e8";
 const SKY_LOW = "#cfe8f7";
 const DECAL_SCALE = 4; // decal pixels per cell
-const MOOD_COLORS: Record<string, number> = { fear: 0xffe066, lured: 0xffc23d, angry: 0xff4d4d, hunt: 0xb3123b, asleep: 0xa9c8ff };
+const MOOD_COLORS: Record<string, number> = { inspected: 0xffffff, fear: 0xffe066, lured: 0xffc23d, angry: 0xff4d4d, hunt: 0xb3123b, asleep: 0xa9c8ff };
 
 // Draws the world as a floating voxel island. Built for phones: unlit
 // materials with lighting baked into colors, terrain rebuilt only where it
@@ -573,7 +573,8 @@ export class VoxelView {
       }
 
       // The mark over its head, then the figure, when the camera sees it.
-      const mood = c.dead ? null : (c.data.mood as string | null | undefined);
+      // The creature the player inspects wears a white mark (3.6).
+      const mood = c.dead ? null : c.data.inspected ? "inspected" : (c.data.mood as string | null | undefined);
       if (mood && marks < 900 && seen) {
         const color = mood === "carry" ? ((c.data.carry as number | undefined) ?? 0xffd36a) : (MOOD_COLORS[mood] ?? 0xffffff);
         const s = Math.max(0.22, size * 0.28) * (mood === "lured" || mood === "angry" ? 0.9 + 0.2 * Math.sin(time * 8 + c.id) : 1);

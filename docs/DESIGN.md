@@ -262,7 +262,7 @@ Challenges keep only birds and fish. In the lava challenge a rabbit set alight n
 
 ### Villagers
 
-One number per villager, saved with it: age, job, village, skin, hair. A fifth are children (smaller, so weaker and slower), some are elders (gray hair, a beard or long hair, a stoop and a cane). Adults have a job that shows: farmers in straw hats with a hoe, woodcutters with an axe, fishers in caps with a rod, smiths with an apron and hammer, guards in armor with a spear, priests in a hood with a book, merchants in caps with a basket. Jobs are only looks until 3.6 gives them work. Each village has its own clothes (shirts, trousers, hats), from six styles; a villager born later is usually a child and wears the clothes of the nearest villager's village. Villagers from saves before 3.5 are dressed by village from where their homes are.
+One number per villager, saved with it: age, job, village, skin, hair. A fifth are children (smaller, so weaker and slower), some are elders (gray hair, a beard or long hair, a stoop and a cane). Adults have a job that shows: farmers in straw hats with a hoe, woodcutters with an axe, fishers in caps with a rod, smiths with an apron and hammer, guards in armor with a spear, priests in a hood with a book, merchants in caps with a basket. Since 3.6 jobs are goals (below), and builders, in caps with a hammer, joined them. Each village has its own clothes (shirts, trousers, hats), from six styles; a villager born later is usually a child and wears the clothes of the nearest villager's village. Villagers from saves before 3.5 are dressed by village from where their homes are.
 
 ### The test run and wildlife
 
@@ -281,6 +281,77 @@ Headless Chromium with software WebGL on the medium Spell Lab island (`scripts/p
 
 The first version spent 1.9 ms p50 on the crowd; flat arrays, shared matrices per pivot, culling and details by distance brought it to 1.0. The HUD shows how many boxes creatures cost (`parts`), and sends it with every `/api/perf` sample.
 
+## A living island (3.6)
+
+The rule: nothing on the island just stands there. If the player does nothing for five minutes, every creature has changed something. Everything is in `src/sim/kin.ts` (what creatures share: minds, villages, marks, memory), `src/sim/goals.ts` (deciding and acting), `src/sim/abilities.ts` and `src/sim/inspect.ts`. Artifacts that act and creatures casting library spells are 3.6.1.
+
+### Goals and needs
+
+Every kind has one goal from a fixed vocabulary: hunt, gather, hoard, build, tend, guard, steal, spread, convert, worship, explore, migrate. Needs come first, in this order:
+
+1. **Survive**, where it already was: fire, danger probes, hunters and what scares (`creatures.ts`, `social.ts`). Fleeing animals (deer, rabbits) run before they eat, unless starving.
+2. **Rest** when badly hurt (back to its home or lair, healing slowly); villagers sleep at home at night, except guards; creatures of the night that daylight burns walk to the shade of the woods at dawn, and those that sleep out of their hours dig a den where they first lie down.
+3. **Eat**: hunger rises every tick, asleep or awake; past half (a third for night hunters, whose night is short) it looks for food in its diet. Starving costs health.
+4. **The goal**, then wandering.
+
+A creature decides about twice a second (two to three while it hunts or fights), staggered, never every tick, and asks the crowd grid who is near; between decisions it walks to its task and, once there, works at it until done. A task it cannot reach is dropped after 30 seconds, or after 5 seconds without getting closer (then it steps out of the hollow it is in; a villager hemmed in by trees cuts a way through).
+
+### Goals leave marks
+
+| Goal    | Who                                                                   | What it does                                                                                                                                                                     | Mark                                                                   |
+| ------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| hunt    | wolves (by night), bears (by day), spell hunters                      | chase prey when hungry, the pack joins in, eat the kill                                                                                                                          | the kill fades sooner                                                  |
+| gather  | deer, rabbits, boars, children, plain villagers, woodcutters, fishers | graze crops, flowers, bushes; boars root grass up; berries, wood and fish brought home                                                                                           | eaten crops, bare patches, stumps                                      |
+| hoard   | dragons                                                               | take gold from the land or raid a village's gold, carry it to its lair                                                                                                           | a heap of gold voxels                                                  |
+| build   | builders, smiths, beavers                                             | builders build houses with the village's wood (5 a house, at most 12 houses a village, more with gold); a spell's builder fells trees into a den, or a dam where water runs near | houses, a dam (earth raised to the water's surface, with a log), a den |
+| tend    | farmers, elders, dryads                                               | sow fields and harvest them, till new fields when the old ones burnt; plant flowers; grow stumps back into trees; heal the wounded                                               | fields, flowers, trees                                                 |
+| guard   | guards, golems, tamed wolves                                          | patrol, fight what threatens the village, chase grazers out of the fields                                                                                                        |                                                                        |
+| steal   | goblins, thieves                                                      | steal crops and stores, run them to a camp                                                                                                                                       | a tent and a pile of loot                                              |
+| spread  | birds, the undead, kinds that leave a material                        | sow seeds; dig graves by the dead and the graveyard; spread their material                                                                                                       | bushes and saplings, a graveyard                                       |
+| convert | vampires (by hunting), cultists (by preaching)                        | turn victims, or win villagers over to worship them                                                                                                                              |                                                                        |
+| worship | priests, those won over                                               | pray at a shrine that does not scare them, at what they revere, or the village square; priests bury the dead                                                                     | flowers laid around, candles at a shrine, graves                       |
+| explore | merchants, spirits, beasts                                            | roam far; merchants carry food from the richest village to the poorest                                                                                                           | cairns                                                                 |
+| migrate | fish                                                                  | swim in schools between two places and spawn where few of them live                                                                                                              | young                                                                  |
+
+A kind's goal comes from what it declares (`goal`), then its declared behavior (hunt, converts, guard or follow, leaves, a healing aura, flee), then its name (the last word that names one, like bodies: a Fire Dragon hoards, a Wolf Spirit explores), then its base kind. Only kinds that declare a goal get needs: older spell creatures keep doing what their behavior says and take up their goal when that leaves them idle, so no stored program behaves differently in its first seconds.
+
+### Villages
+
+Villagers whose homes are close make a village (found again every three seconds) with stores of food, wood and gold, saved with the world. Farmers and fishers bring food, woodcutters wood, gifts gold. Villagers eat at home from the stores, and a child is born only where there is food to spare (three of it). Jobs are goals: farmer, woodcutter, fisher, builder (new, a fifteenth of adults, in a cap with a hammer), smith (builds too), guard, priest, merchant. Children pick berries and flowers, elders plant flowers. A villager with nothing to do for its job forages or, one time in four, plants flowers, so nobody idles for long.
+
+### Food web, taming, herds, memory
+
+Wolves eat deer and rabbits, bears deer, boars and fish, dragons what their spell names; grazers eat crops, flowers and bushes; birds sow; fishers and bears eat fish; fish breed. Numbers are still kept up by births where the habitat lasts (3.5), now on top of the food web. Fish breed by themselves (restocked only once none is left): every fish spawns once in its life and dies of age after five to eight minutes, so each one replaces itself, and spawns again only where few of its kind live; fishers and bears keep them down. Wolves share a kill with their pack. A starving creature only runs from a threat within five cells instead of nine: it has to eat.
+
+A hungry deer, rabbit, boar or wolf near a village with food may come to beg by day; a villager beside it feeds it from the stores, and the third meal tames it: it stays by that village, villagers do not hunt or chase it, and a tamed wolf guards the village. Deer, boars, wolves and fish keep with their herd, pack or school.
+
+Everyone remembers up to four kinds that hurt or helped them, and villagers remember magic: a spell's `hurt` on a villager is harm, its `heal` help. A villager keeps away from a kind it remembers for harm, a guard goes for it; those that saw a villager hurt remember a little too. A threat that only scares and never attacks is got used to after 20 seconds (a dragon on its hoard does not keep a village in panic for ever), and a hunter asleep out of its hours is given a berth of four cells instead of nine.
+
+### Abilities
+
+Up to three per kind, each `{do, when, every}`: breathe fire, heal, summon, teleport, freeze, lightning, grow, raise the dead, shield, dig, flood, steal; when an enemy is near, when hurt, at night, when a friend dies, or every so often; `every` is the cooldown (3 to 120 s). Checked about three times a second whatever the creature is doing, so a hunted witch freezes her hunter while she runs. Nothing to act on costs a 3 second wait, not the cooldown. Each goes through the same rules as spells: fire and frost stop at wards, lightning ends on a dome, a shield is a small ward of six seconds, a flood never fills a house. Priests heal every 15 seconds, guards raise a shield when an enemy comes; older creatures get abilities from their name (a dragon breathes fire, a necromancer raises the dead at night, a rabbit digs a burrow when hurt). The dead a necromancer raises are a built-in kind, `risen`: weak, burnt by day, gone in 90 seconds.
+
+### Inspect
+
+With no spell in hand, a tap on a creature opens a card in the World frame: who it is, what it wants, what it is doing, health, fed and rested bars, what it last did, what it carries, what it remembers, its abilities and when they are ready, its village's stores, its hoard or den, how many things it has done. A second tap on the selected spell puts it away. The inspected creature wears a white mark. The card is built from text nodes only, since kind names come from spells.
+
+### The five minute scene
+
+`sceneRun` in `src/sim/check.ts` uses the island, the seeded streams and the spell-as-a-threat approach of the 3.4.2 probes: the scene is a spell cast through the World API (a dragon that hoards, a vampire, three more wolves, gold and a shrine) next to the villages, forest and wildlife the practice island already has. `npm test` runs it for ten simulated minutes on three streams of life in its worker threads and asks: every creature that lived five minutes changed something (a counted deed: something on the land, in a store, or to another creature), no kind of three or more fell under a third of its number or grew past two and a half times, and the hoard, dens and offerings exist. All three streams pass with 72 of 72 creatures having changed something, and so do three more streams run by hand (`STREAMS=3` to `5` with `scripts/scene-run.ts`). Early versions failed it on real gaps, each fixed in the design rather than by tuning numbers: wolves slept all day and missed their prey in one short night (now they dig a den and share the pack's kill), fish in a crowded lake never spawned (now once in every life), deer stayed terrified of a dragon overhead until they starved, and villagers whose task was out of reach kept trying. It caught two real bugs before they shipped: offerings stacked on a house knocked it down (lost the lava challenge with the right spell), and villagers born in a pocket between trees and cliffs never moved at all, since 3.5.
+
+`scripts/scene-run.ts` prints the scene in full (`WATCH=dragon,vampire` follows creatures); `scripts/prof-life.ts` measures a large island.
+
+### Measured
+
+`scripts/prof-life.ts`, large island (208 cells), 120 simulated seconds from morning, Node on the same machine, median of three interleaved runs of main and this branch, ms per tick p50 / p95:
+
+| Scene                                                | Creatures, main | Creatures, 3.6 | Whole tick, main | Whole tick, 3.6 |
+| ---------------------------------------------------- | --------------- | -------------- | ---------------- | --------------- |
+| As generated (130 creatures; 138 in 3.6, fish breed) | 0.24 / 0.72     | 0.31 / 0.78    | 3.11 / 6.35      | 3.09 / 5.76     |
+| With a dragon, vampires, gold, a shrine              | 0.30 / 0.72     | 0.45 / 1.08    | 3.16 / 6.80      | 3.35 / 6.56     |
+
+Goals cost 0.07 to 0.15 ms p50 more for creatures. Two savings pay for most of it: danger probes are made every third tick instead of every tick (they were the dearest part of a creature's tick), and the scan for lures reads three tables instead of building three strings per cell (it was 3.3 ms p95 of a tick whenever a lure existed, now 0.27). The whole tick's p95 is unchanged within noise: it is physics, as in 3.2. Phones measured 13 to 17.5 ms p95 against about 6.5 in Node for the same island, so the creatures' extra p95 is about 0.9 ms on a phone at worst, out of 33.
+
 ## Challenges
 
 Hand-made islands with a hazard and a goal (`src/sim/scenarios.ts`, titles in `scenario-list.ts` so the game page does not load the engine to list them). A challenge builds its own world, runs a `tick` every frame (a volcano vent, a rising sea, the sun drying fields) and a `check` twice a second that returns progress text and playing, won or lost. It never touches the player's island: the iframe keeps the sandbox save in memory and restores it on leaving.
@@ -291,7 +362,7 @@ Balance is measured, not guessed: `npm test` plays each challenge with nothing o
 
 1. **Simulation** (`src/sim`): a grid of columns, each with a height, a ground, a fluid and its depth, a cover (tree, house...), fire, temperature and a gas. 30 ticks per second.
 2. **Rules of the land** (`physics.ts`): water runs downhill, freezes below 0 and boils above 100; lava flows slowly, burns and hardens into basalt, and makes steam with water; acid eats covers and soil; oil burns fast; mud dries; snow melts; fire spreads through forests, fields and houses with the wind and leaves ash and stumps; steam rains back down; powder explodes; grass and forests grow back.
-3. **People** (`creatures.ts`): villagers live near their houses, rebuild rubble, flee fire, panic and run for water when burning, drown in deep water; a new villager appears now and then while houses stand. Spirits fly and glow, golems are strong and fireproof. Since 3.5, deer, rabbits, wolves, boars, bears, birds and fish live in their own habitats (above).
+3. **People** (`creatures.ts`): villagers live near their houses, rebuild rubble, flee fire, panic and run for water when burning, drown in deep water; a new villager appears now and then while houses stand and the village has food. Spirits fly and glow, golems are strong and fireproof. Since 3.5, deer, rabbits, wolves, boars, bears, birds and fish live in their own habitats; since 3.6 everyone has a goal, needs and a job (above).
 4. **Generation** (`world.ts`): fractal hills rescaled from their own distribution so every map gets about a fifth of water and a few snowy peaks, a river, forests, and villages on the flattest dry land.
 5. **View** (`voxel/`): a floating voxel island in three.js, with layered cut sides and water spilling off the edges. No two faces share a plane (3.4, `docs/visual-checks`): a waterfall hangs 0.06 cells in front of the cut side, a water wall starts on its own floor, spell blocks are never placed inside the land and take the place of a cover they are put on, and spell drawings are projected only on dry land tops and fluid tops, never on walls or on land under water. Built for phones: lighting is baked into vertex colors and every material is unlit, terrain chunks are rebuilt only where a column changed, each kind of object is one instanced draw call, and the pixel density drops when frames are slow. A medium island is about 60 draw calls and 140k triangles. Chunks are built with a reusable typed array writer under a 3 ms per frame budget.
 6. **Day and night** (`voxel/daylight.ts`): a six minute cycle that tints every unlit material and the sky; fire, lava and spell light are untouched, house windows light up at night and chimneys smoke.
