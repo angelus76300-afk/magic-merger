@@ -7,6 +7,7 @@ import { keyX, keyY, voxelKey } from "./voxelkey";
 import { DecorStore } from "./decor";
 import { CreatureGrid } from "./crowd";
 import type { Landmark, Presence } from "./social";
+import type { Ward } from "./wards";
 
 export const TICK = 1 / 30;
 export const AMBIENT = 15;
@@ -57,6 +58,10 @@ export class World {
   readonly lureMaterials = new Map<string, { lures: string[]; scares: string[]; taken: boolean }>();
   // Places spells left behind that lure, scare or carry an aura.
   landmarks: Landmark[] = [];
+  // Places spells keep safe for a while (wards.ts), and what each cell is
+  // protected against, as bits.
+  wards: Ward[] = [];
+  readonly wardMask: Uint8Array;
   // Gifts villagers have brought home; every few build a house.
   wealth = 0;
   time = 0;
@@ -80,6 +85,7 @@ export class World {
     this.gas = new Uint8Array(this.n);
     this.gasAmt = new Float32Array(this.n);
     this.shade = new Uint8Array(this.n);
+    this.wardMask = new Uint8Array(this.n);
     this.rng = new Rng(seed);
     // Color variation: broad patches with a little per cell grain.
     for (let i = 0; i < this.n; i++) {

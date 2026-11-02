@@ -430,6 +430,44 @@ for (const scenario of SCENARIOS) {
   check("no block inside the land; a block on a house replaces it", buried === 0 && world.decor.size === before + 1 && world.cover[house] === C.NONE);
 }
 
+// 9d. Wards and promises (3.5): a protection spell has to protect. Aegis
+// raises a ward and passes the protection probe; Glass Shell builds the
+// opaque shell of magic blocks protection spells used to be, and fails it.
+// A ward keeps lava out and lightning off what it covers.
+{
+  const promise = (file: string, tier: "major" | "minor" | "grand") =>
+    runCheck({ key: file, name: file, tier, code: readFileSync(join("lab/promises", file), "utf8"), intents: ["protect"] });
+  for (const tier of ["minor", "major", "grand"] as const) {
+    const aegis = promise("aegis.js", tier);
+    check(`a ward keeps its promise (${tier})`, aegis.ok && (aegis.stats.saved ?? 0) >= 0.5, aegis.detail);
+  }
+  const shell = promise("glass-shell.js", "major");
+  check("a shell of blocks breaks the promise", !shell.ok && shell.problem === "promise", `saved ${shell.stats.saved}`);
+  const plain = runCheck({ key: "aegis", name: "Aegis", tier: "minor", code: readFileSync("lab/promises/aegis.js", "utf8") });
+  check("a ward alone counts as something visible", plain.ok, plain.detail);
+
+  const world = generateWorld(112, 112, 5);
+  populate(world);
+  const errors: string[] = [];
+  const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
+  const [x, y] = [56, 56];
+  rt.cast({ key: "ward", name: "Ward", tier: "major", code: "const spell = { *cast(w) { w.ward(w.x, w.y, 8, { seconds: 20 }); } };" }, x, y);
+  step(world, rt);
+  const code = `const spell = { *cast(w) { w.ring(${x}, ${y}, 9, 13, (cx, cy) => w.set(cx, cy, "lava", 2)); w.flood(${x}, ${y}, 6, "lava", 2); w.lightning(${x}, ${y}, { power: 3 }); yield 1; } };`;
+  rt.cast({ key: "attack", name: "Attack", tier: "major", code }, x, y);
+  for (let k = 0; k < 30 * 5; k++) step(world, rt);
+  let inside = 0;
+  let burning = 0;
+  for (let dy = -6; dy <= 6; dy++)
+    for (let dx = -6; dx <= 6; dx++) {
+      if (dx * dx + dy * dy > 36) continue;
+      const i = (y + dy) * world.w + x + dx;
+      if (world.fluid[i] === world.materials.find("lava")!.id && world.depth[i] > 0.05) inside++;
+      if (world.fire[i] > 0) burning++;
+    }
+  check("a ward keeps lava out and lightning off", inside === 0 && burning === 0 && !errors.length, `${inside} lava cells, ${burning} burning inside`);
+}
+
 // 10. Votes: how many are needed, when they rewrite, roll back or reach the library.
 {
   check("one player: one vote is enough", votesNeeded(1) === 1 && votesNeeded(0) === 1 && votesNeeded(0.3) === 1);

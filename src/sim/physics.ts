@@ -2,6 +2,7 @@ import { C, F, G, S } from "./materials";
 import type { World } from "./world";
 import { addGas } from "./cells";
 import { igniteVoxels, stepVoxels } from "./voxels";
+import { WARD, stepWards, wardHit, warded } from "./wards";
 
 // The rules of the land. Spells set them in motion; these keep them going:
 // water runs downhill and freezes, fire spreads with the wind and leaves ash,
@@ -30,6 +31,7 @@ export function stepPhysics(world: World, dt: number): void {
     gasTypeNext = new Uint8Array(world.n);
     tempNext = new Float32Array(world.n);
   }
+  stepWards(world);
   stepFluids(world, dt);
   stepFire(world, dt);
   // Every other tick each, on alternate ticks: together on the same tick they
@@ -41,7 +43,7 @@ export function stepPhysics(world: World, dt: number): void {
 }
 
 function stepFluids(world: World, dt: number): void {
-  const { w, h, height, depth, fluid, materials } = world;
+  const { w, h, height, depth, fluid, materials, rng } = world;
   flowDelta.fill(0);
   flowType.fill(0);
   const diffs = [0, 0, 0, 0];
@@ -64,6 +66,11 @@ function stepFluids(world: World, dt: number): void {
         const g = fluid[j];
         if (g !== F.NONE && g !== f && depth[j] > 0.0005) {
           react(world, i, j);
+          continue;
+        }
+        // A ward against fluids is a wall: nothing flows in from outside.
+        if (warded(world, j, WARD.fluids) && !warded(world, i, WARD.fluids)) {
+          if (rng.next() < 0.01) wardHit(world, j);
           continue;
         }
         const d = level - (height[j] + depth[j]);
@@ -118,7 +125,8 @@ function fluidSurface(world: World, i: number, f: number, x: number, y: number, 
       const [dx, dy] = N8[(rng.next() * 8) | 0];
       if (world.inside(x + dx, y + dy)) {
         const j = (y + dy) * world.w + x + dx;
-        if (world.materials.get("cover", world.cover[j]).flammable > 0 || world.ground[j] === G.GRASS) world.fire[j] = Math.max(world.fire[j], 0.5);
+        if (!warded(world, j, WARD.fire) && (world.materials.get("cover", world.cover[j]).flammable > 0 || world.ground[j] === G.GRASS))
+          world.fire[j] = Math.max(world.fire[j], 0.5);
       }
     }
     const thin = depth[i] < 0.25 ? 0.5 : 0;
@@ -185,6 +193,10 @@ function stepFire(world: World, dt: number): void {
   for (let i = 0; i < world.n; i++) {
     const f = fire[i];
     if (f <= 0) continue;
+    if (warded(world, i, WARD.fire)) {
+      fire[i] = 0;
+      continue;
+    }
     const fl = world.fluid[i];
     if ((fl === F.WATER || fl === F.ICE || fl === F.MUD) && world.depth[i] > 0.05) {
       fire[i] = 0;
@@ -243,6 +255,10 @@ function stepFire(world: World, dt: number): void {
       if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
       const j = ny * w + nx;
       if (fire[j] > 0) continue;
+      if (warded(world, j, WARD.fire)) {
+        if (rng.next() < 0.02) wardHit(world, j);
+        continue;
+      }
       const flam = Math.max(
         cover[j] !== C.NONE ? materials.get("cover", cover[j]).flammable : 0,
         materials.get("ground", world.ground[j]).flammable,
@@ -299,7 +315,11 @@ function stepTemperature(world: World, dt: number): void {
         target = Math.max(target, 500 * world.fire[i]);
         pull = 0.2;
       }
-      tempNext[i] = t + (avg - t) * 0.3 + (target - t) * pull * dt * 10;
+      let next = t + (avg - t) * 0.3 + (target - t) * pull * dt * 10;
+      const ward = world.wardMask[i];
+      if (ward & WARD.fire) next = Math.min(next, 60);
+      if (ward & WARD.cold) next = Math.max(next, 4);
+      tempNext[i] = next;
     }
   }
   temp.set(tempNext);
@@ -323,7 +343,7 @@ function stepTemperature(world: World, dt: number): void {
     } else if ((g === G.GRASS || g === G.DIRT || g === G.FIELD) && t < -6 && world.depth[i] === 0 && rng.next() < dt * 0.4) {
       world.ground[i] = G.SNOW;
     }
-    if (t > 280 && world.fire[i] === 0) {
+    if (t > 280 && world.fire[i] === 0 && !warded(world, i, WARD.fire)) {
       const flam = Math.max(materials.get("cover", world.cover[i]).flammable, materials.get("ground", world.ground[i]).flammable);
       if (flam > 0) world.fire[i] = 0.4;
     }
@@ -361,6 +381,8 @@ function stepGas(world: World, dt: number): void {
         }
       }
       const i = y * w + x;
+      // Poison does not drift into a ward against harm.
+      if (type === S.POISON && warded(world, i, WARD.harm) && !warded(world, s, WARD.harm)) continue;
       const decay = type === S.SMOKE ? 0.985 : type === S.STEAM ? 0.99 : 0.992;
       gasNext[i] = Math.min(1, amount * decay);
       gasTypeNext[i] = type;
@@ -411,7 +433,13 @@ function neighbor(world: World, i: number): number {
 // power around 1 is a big bomb; more digs deeper and throws further.
 export function explode(world: World, x: number, y: number, r: number, power: number): void {
   const { w, rng } = world;
+  let blocked = false;
   forDisc(world, x, y, r, (i, k) => {
+    // A ward against harm shrugs off the blast: the land and houses inside stay.
+    if (warded(world, i, WARD.harm)) {
+      blocked = true;
+      return;
+    }
     world.height[i] -= power * 2.2 * k * k;
     if (k > 0.25) {
       const c = world.cover[i];
@@ -436,6 +464,7 @@ export function explode(world: World, x: number, y: number, r: number, power: nu
     const d = Math.hypot(dx, dy);
     const reach = r * 1.4;
     if (d > reach) continue;
+    if (shielded(world, c.x, c.y)) continue;
     const f = 1 - d / reach;
     c.hp -= 140 * power * f;
     c.vx += (dx / (d || 1)) * 30 * f * power;
@@ -468,11 +497,12 @@ export function explode(world: World, x: number, y: number, r: number, power: nu
   }
   // Blasts blow away what spells built close by and set fire to wood further out;
   // whatever loses its support then falls.
-  if (world.landmarks.length) world.landmarks = world.landmarks.filter((l) => Math.hypot(l.x - x, l.y - y) > r * 0.6);
+  if (world.landmarks.length) world.landmarks = world.landmarks.filter((l) => Math.hypot(l.x - x, l.y - y) > r * 0.6 || shielded(world, l.x, l.y));
   if (world.decor.size) {
-    world.clearVoxels(x, y, r * 0.6);
+    if (!blocked) world.clearVoxels(x, y, r * 0.6);
     igniteVoxels(world, x, y, r * (0.6 + 0.4 * Math.min(1, power)));
   }
+  if (blocked) wardHit(world, Math.round(y) * world.w + Math.round(x));
   world.emit({ kind: "sound", name: "boom", size: Math.min(1, r / 30) });
   world.emit({ kind: "shake", amount: Math.min(14, 2 + r * 0.4 * power), seconds: 0.6 });
   world.emit({ kind: "flash", color: 0xfff0c0, strength: Math.min(0.8, 0.2 + r / 60) });
@@ -483,18 +513,26 @@ export function explode(world: World, x: number, y: number, r: number, power: nu
 export function quake(world: World, x: number, y: number, r: number, strength: number): void {
   const { rng } = world;
   forDisc(world, x, y, r, (i, k) => {
+    if (warded(world, i, WARD.harm)) return;
     if (rng.next() < 0.3) world.height[i] += (rng.next() - 0.5) * strength * 0.8 * k;
     const c = world.cover[i];
     if (c === C.HOUSE && rng.next() < strength * k * 0.08) world.setCover(i, C.RUBBLE);
     else if (c === C.TREE && rng.next() < strength * k * 0.03) world.setCover(i, C.STUMP);
   });
   for (const c of world.creatures) {
-    if (c.dead || Math.hypot(c.x - x, c.y - y) > r) continue;
+    if (c.dead || Math.hypot(c.x - x, c.y - y) > r || shielded(world, c.x, c.y)) continue;
     if (rng.next() < strength * 0.3) {
       c.stun = Math.max(c.stun, 0.4);
       c.vz += 3 + rng.next() * 4 * strength;
     }
   }
+}
+
+// A creature standing under a ward against harm.
+function shielded(world: World, x: number, y: number): boolean {
+  const cx = Math.max(0, Math.min(world.w - 1, Math.round(x)));
+  const cy = Math.max(0, Math.min(world.h - 1, Math.round(y)));
+  return warded(world, cy * world.w + cx, WARD.harm);
 }
 
 // Visits every cell in a disc. k is 1 at the center and 0 at the rim.
