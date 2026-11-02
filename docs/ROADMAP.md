@@ -17,6 +17,17 @@ Updated on 2026-11-02, after V2: challenges, placeable artifacts, the First Disc
 3. **First Discovery moment.** The card of an element no one had made before opens by itself with a glow and a ribbon.
 4. **Automated checks.** `npm test` runs the simulation in Node in about 15 seconds; GitHub Actions runs it with the build on every pull request.
 
+## Done in 2.5
+
+Found by playing as a newcomer at phone size, profiling frames, and breaking a spell on purpose:
+
+1. **Spells ready ahead of time.** The first cast used to wait 10 to 15 seconds. Programs up to grand (Haiku, $0.002) are now written in the background for each discovery and for the ten newest items when the World opens; a newcomer's first spell was ready in 0.6 s instead of 13 s.
+2. **Faster terrain.** Chunk rebuilds went from 7.5 to 3.2 ms per frame during a fire, with a 3 ms budget; water is no longer rebuilt when only covers change.
+3. **Chips never overlap** when tapped onto the board (two out of three merges failed in the playthrough because of it).
+4. **Tier dots** on every chip.
+5. **Day and night**: a six minute cycle with dusk, lit windows, dawn and chimney smoke.
+6. **Repair loop verified** on the live site with a deliberately broken spell.
+
 ## Decisions taken
 
 1. **Cosmic spells may ruin the island.** Consequences are part of the fun; the land regrows on its own (ash turns to soil, grass and forests come back) and Reset is one tap away. Revisit if it feels punishing in play.
