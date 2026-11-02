@@ -577,6 +577,11 @@ input {
   color: var(--text);
 }
 
+/* display: flex above would otherwise beat the hidden attribute. */
+.world-banner[hidden] {
+  display: none;
+}
+
 .world-banner[data-status="won"] {
   border-color: #6fd08c;
 }
