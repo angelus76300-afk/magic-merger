@@ -36,7 +36,7 @@ for (const file of files) {
   const tier = json?.tier ?? process.env.LAB_TIER ?? "major";
   const shots = process.env.LAB_SHOTS ? process.env.LAB_SHOTS.split(",").map(Number) : undefined;
   const name = basename(file, extname(file));
-  const result = await page.evaluate(([c, o]) => window.runSpell(c, o), [code, { tier, shots, size: process.env.LAB_SIZE, dist: Number(process.env.LAB_DIST) || undefined }]);
+  const result = await page.evaluate(([c, o]) => window.runSpell(c, o), [code, { tier, shots, size: process.env.LAB_SIZE, dist: Number(process.env.LAB_DIST) || undefined, time: process.env.LAB_TIME ? Number(process.env.LAB_TIME) : undefined }]);
   const saved = result.frames.map((frame, i) => {
     const path = join(outDir, `${name}.${i}.png`);
     writeFileSync(path, Buffer.from(frame.png.split(",")[1], "base64"));

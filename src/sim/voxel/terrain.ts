@@ -64,9 +64,9 @@ export class Terrain {
       if (land !== this.landSig[i]) {
         if ((land & 0xffff) !== (this.landSig[i] & 0xffff)) this.markAround(this.dirtyLand, i % w, Math.floor(i / w));
         if (land >>> 16 !== this.landSig[i] >>> 16 || (land & 0xff) !== (this.landSig[i] & 0xff)) this.coversChanged = true;
+        // Water sits on the land: only a new floor height moves its walls.
+        if ((land & 0xff) !== (this.landSig[i] & 0xff)) this.markAround(this.dirtyFluid, i % w, Math.floor(i / w));
         this.landSig[i] = land;
-        // Water sits on the land: a new floor height moves its walls too.
-        this.markAround(this.dirtyFluid, i % w, Math.floor(i / w));
       }
       if (fluid !== this.fluidSig[i]) {
         this.fluidSig[i] = fluid;
@@ -88,18 +88,22 @@ export class Terrain {
     if (ly === CHUNK - 1 && cy < this.rows - 1) set.add((cy + 1) * this.cols + cx);
   }
 
-  // Rebuilds a few chunks per frame; everything when `all` (first frame).
+  // Rebuilds dirty chunks for up to a few milliseconds per frame (at least
+  // one of each kind), so a big fire never stalls a frame; everything when
+  // `all` (first frame).
   rebuild(all = false): void {
-    const budget = all ? Infinity : 3;
-    let done = 0;
+    const until = all ? Infinity : performance.now() + 3;
+    let first = true;
     for (const c of this.dirtyLand) {
-      if (done++ >= budget) break;
+      if (!first && performance.now() > until) break;
+      first = false;
       this.dirtyLand.delete(c);
       this.swap(c, "land", this.buildLand(c));
     }
-    done = 0;
+    first = true;
     for (const c of this.dirtyFluid) {
-      if (done++ >= budget * 2) break;
+      if (!first && performance.now() > until) break;
+      first = false;
       this.dirtyFluid.delete(c);
       this.swap(c, "fluid", this.buildFluid(c));
     }
@@ -127,94 +131,75 @@ export class Terrain {
     return { x0: cx * CHUNK, y0: cy * CHUNK, x1: Math.min(this.world.w, (cx + 1) * CHUNK), y1: Math.min(this.world.h, (cy + 1) * CHUNK) };
   }
 
+  // Column tops of a chunk and a one cell border, read once per build.
+  private tops(x0: number, y0: number, x1: number, y1: number): { top: (x: number, y: number) => number } {
+    const { world } = this;
+    const bw = x1 - x0 + 2;
+    const arr = (this.topsBuf = this.topsBuf.length >= bw * (y1 - y0 + 2) ? this.topsBuf : new Int16Array(bw * (y1 - y0 + 2)));
+    for (let y = y0 - 1; y <= y1; y++) {
+      for (let x = x0 - 1; x <= x1; x++) {
+        const inside = x >= 0 && y >= 0 && x < world.w && y < world.h;
+        arr[(y - y0 + 1) * bw + (x - x0 + 1)] = inside ? columnTop(world, y * world.w + x) : BOTTOM;
+      }
+    }
+    return { top: (x, y) => arr[(y - y0 + 1) * bw + (x - x0 + 1)] };
+  }
+  private topsBuf = new Int16Array(0);
+
   private buildLand(c: number): BufferGeometry | null {
     const { world } = this;
     const { w, h } = world;
     const { x0, y0, x1, y1 } = this.bounds(c);
-    const pos: number[] = [];
-    const col: number[] = [];
+    const { top: topAt } = this.tops(x0, y0, x1, y1);
+    const out = LAND;
+    out.reset();
     const ox = -w / 2;
     const oz = -h / 2;
-    const quad = (p: number[][], color: number, light: number) => {
-      const r = ((color >> 16) & 255) / 255;
-      const g = ((color >> 8) & 255) / 255;
-      const b = (color & 255) / 255;
-      for (const k of [0, 1, 2, 0, 2, 3]) {
-        pos.push(p[k][0], p[k][1], p[k][2]);
-        col.push(r * light, g * light, b * light);
-      }
-    };
     for (let y = y0; y < y1; y++) {
       for (let x = x0; x < x1; x++) {
         const i = y * w + x;
-        const top = columnTop(world, i);
+        const top = topAt(x, y);
         const X = x + ox;
         const Z = y + oz;
         const surface = this.topColor(i);
         // A little ambient occlusion: a top next to a taller column is darker.
         let ao = 1;
-        for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1]) {
-          if (j >= 0 && columnTop(world, j) > top) ao -= 0.07;
-        }
-        quad([[X, top, Z], [X, top, Z + 1], [X + 1, top, Z + 1], [X + 1, top, Z]], surface, FACE_LIGHT.top * ao);
+        if (topAt(x - 1, y) > top && x > 0) ao -= 0.07;
+        if (topAt(x + 1, y) > top && x < w - 1) ao -= 0.07;
+        if (topAt(x, y - 1) > top && y > 0) ao -= 0.07;
+        if (topAt(x, y + 1) > top && y < h - 1) ao -= 0.07;
+        out.face(TOP, X, Z, top, top, surface, FACE_LIGHT.top * ao, 1);
         // Walls toward lower neighbors; outside the island counts as the bottom.
-        const walls: [number, number, number, number[][]][] = [
-          [x + 1, y, FACE_LIGHT.east, [[X + 1, 0, Z], [X + 1, 1, Z], [X + 1, 1, Z + 1], [X + 1, 0, Z + 1]]],
-          [x, y + 1, FACE_LIGHT.south, [[X, 0, Z + 1], [X + 1, 0, Z + 1], [X + 1, 1, Z + 1], [X, 1, Z + 1]]],
-          [x - 1, y, FACE_LIGHT.west, [[X, 0, Z], [X, 0, Z + 1], [X, 1, Z + 1], [X, 1, Z]]],
-          [x, y - 1, FACE_LIGHT.north, [[X, 0, Z], [X, 1, Z], [X + 1, 1, Z], [X + 1, 0, Z]]],
-        ];
-        for (const [nx, ny, light, shape] of walls) {
-          const edge = nx < 0 || ny < 0 || nx >= w || ny >= h;
-          const low = edge ? BOTTOM : columnTop(world, ny * w + nx);
+        for (let d = 0; d < 4; d++) {
+          const low = topAt(x + DX[d], y + DY[d]);
           if (low >= top) continue;
-          // Layers from the top: the surface color for one voxel, then soil, then stone.
-          const bands: [number, number, number][] = [];
+          const light = WALL_LIGHT[d];
           const built = this.builtColor(i);
           if (built !== null) {
             // A built column (a trunk, a tower, a crystal spire) is its material all the way down.
-            bands.push([low, top, built]);
-          } else {
-            const soil = this.soilColor(i);
-            bands.push([Math.max(low, top - 1), top, this.sideTopColor(i, surface)]);
-            if (top - 1 > low) bands.push([Math.max(low, top - 3), top - 1, soil]);
-            if (top - 3 > low) bands.push([Math.max(low, BOTTOM + 2), top - 3, STRATA.stone]);
-            if (BOTTOM + 2 > low) bands.push([low, Math.min(top - 3, BOTTOM + 2), STRATA.deep]);
+            out.face(d, X, Z, low, top, built, light * (1 - Math.min(0.25, 0)), 1);
+            continue;
           }
-          for (const [a, b, color] of bands) {
-            if (b <= a) continue;
-            // Deeper walls are a bit darker.
-            const depthShade = 1 - Math.min(0.25, (top - b) * 0.03);
-            quad(shape.map(([px, py, pz]) => [px, py === 0 ? a : b, pz]), color, light * depthShade);
-          }
+          // Layers from the top: the surface color for one voxel, then soil, then stone.
+          const soil = this.soilColor(i);
+          band(out, d, X, Z, Math.max(low, top - 1), top, top, this.sideTopColor(i, surface), light);
+          if (top - 1 > low) band(out, d, X, Z, Math.max(low, top - 3), top - 1, top, soil, light);
+          if (top - 3 > low) band(out, d, X, Z, Math.max(low, BOTTOM + 2), top - 3, top, STRATA.stone, light);
+          if (BOTTOM + 2 > low) band(out, d, X, Z, low, Math.min(top - 3, BOTTOM + 2), top, STRATA.deep, light);
         }
       }
     }
-    if (!pos.length) return null;
-    const g = new BufferGeometry();
-    g.setAttribute("position", new BufferAttribute(new Float32Array(pos), 3));
-    g.setAttribute("color", new BufferAttribute(new Float32Array(col), 3));
-    g.computeBoundingSphere();
-    return g;
+    return out.geometry(3);
   }
 
   private buildFluid(c: number): BufferGeometry | null {
     const { world } = this;
     const { w, h } = world;
     const { x0, y0, x1, y1 } = this.bounds(c);
-    const pos: number[] = [];
-    const col: number[] = [];
+    const out = FLUID;
+    out.reset();
     const ox = -w / 2;
     const oz = -h / 2;
-    const quad = (p: number[][], color: number, alpha: number, light: number) => {
-      const r = ((color >> 16) & 255) / 255;
-      const g = ((color >> 8) & 255) / 255;
-      const b = (color & 255) / 255;
-      for (const k of [0, 1, 2, 0, 2, 3]) {
-        pos.push(p[k][0], p[k][1], p[k][2]);
-        col.push(r * light, g * light, b * light, alpha);
-      }
-    };
     for (let y = y0; y < y1; y++) {
       for (let x = x0; x < x1; x++) {
         const i = y * w + x;
@@ -224,28 +209,20 @@ export class Terrain {
         const { color, alpha } = this.fluidColor(i);
         const X = x + ox;
         const Z = y + oz;
-        quad([[X, top, Z], [X, top, Z + 1], [X + 1, top, Z + 1], [X + 1, top, Z]], color, alpha, 1);
-        const walls: [number, number, number, number[][]][] = [
-          [x + 1, y, FACE_LIGHT.east, [[X + 1, 0, Z], [X + 1, 1, Z], [X + 1, 1, Z + 1], [X + 1, 0, Z + 1]]],
-          [x, y + 1, FACE_LIGHT.south, [[X, 0, Z + 1], [X + 1, 0, Z + 1], [X + 1, 1, Z + 1], [X, 1, Z + 1]]],
-          [x - 1, y, FACE_LIGHT.west, [[X, 0, Z], [X, 0, Z + 1], [X, 1, Z + 1], [X, 1, Z]]],
-          [x, y - 1, FACE_LIGHT.north, [[X, 0, Z], [X, 1, Z], [X + 1, 1, Z], [X + 1, 0, Z]]],
-        ];
-        for (const [nx, ny, light, shape] of walls) {
+        out.face(TOP, X, Z, top, top, color, 1, alpha);
+        for (let d = 0; d < 4; d++) {
+          const nx = x + DX[d];
+          const ny = y + DY[d];
           const edge = nx < 0 || ny < 0 || nx >= w || ny >= h;
           // At the island's edge the water spills over: a waterfall to the bottom.
-          const low = edge ? BOTTOM - 4 : Math.max(columnTop(world, ny * w + nx), surfaceY(world, ny * w + nx));
+          const j = ny * w + nx;
+          const low = edge ? BOTTOM - 4 : Math.max(columnTop(world, j), surfaceY(world, j));
           if (low >= top - 0.01) continue;
-          quad(shape.map(([px, py, pz]) => [px, py === 0 ? low : top, pz]), color, edge ? alpha * 0.8 : alpha, light);
+          out.face(d, X, Z, low, top, color, WALL_LIGHT[d], edge ? alpha * 0.8 : alpha);
         }
       }
     }
-    if (!pos.length) return null;
-    const g = new BufferGeometry();
-    g.setAttribute("position", new BufferAttribute(new Float32Array(pos), 3));
-    g.setAttribute("color", new BufferAttribute(new Float32Array(col), 4));
-    g.computeBoundingSphere();
-    return g;
+    return out.geometry(4);
   }
 
   private topColor(i: number): number {
@@ -307,4 +284,102 @@ export function mixColor(a: number, b: number, k: number): number {
   const g = ((a >> 8) & 255) * (1 - k) + ((b >> 8) & 255) * k;
   const bl = (a & 255) * (1 - k) + (b & 255) * k;
   return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(bl);
+}
+
+// Face directions: the four walls, then the top.
+const EAST = 0;
+const SOUTH = 1;
+const WEST = 2;
+const NORTH = 3;
+const TOP = 4;
+const DX = [1, 0, -1, 0];
+const DY = [0, 1, 0, -1];
+const WALL_LIGHT = [FACE_LIGHT.east, FACE_LIGHT.south, FACE_LIGHT.west, FACE_LIGHT.north];
+
+// A reusable vertex writer: typed arrays that grow when needed, so building a
+// chunk allocates nothing per vertex.
+class Writer {
+  private pos = new Float32Array(3 * 6 * 4096);
+  private col = new Float32Array(4 * 6 * 4096);
+  private n = 0;
+
+  reset(): void {
+    this.n = 0;
+  }
+
+  private grow(): void {
+    const pos = new Float32Array(this.pos.length * 2);
+    pos.set(this.pos);
+    this.pos = pos;
+    const col = new Float32Array(this.col.length * 2);
+    col.set(this.col);
+    this.col = col;
+  }
+
+  private vertex(x: number, y: number, z: number, r: number, g: number, b: number, a: number): void {
+    const n = this.n++;
+    this.pos[n * 3] = x;
+    this.pos[n * 3 + 1] = y;
+    this.pos[n * 3 + 2] = z;
+    this.col[n * 4] = r;
+    this.col[n * 4 + 1] = g;
+    this.col[n * 4 + 2] = b;
+    this.col[n * 4 + 3] = a;
+  }
+
+  // One square face of the cell at (X, Z): a wall from height lo to hi, or the
+  // top at height hi. Two triangles, wound to face outward.
+  face(dir: number, X: number, Z: number, lo: number, hi: number, color: number, light: number, alpha: number): void {
+    if ((this.n + 6) * 4 > this.col.length) this.grow();
+    const r = (((color >> 16) & 255) / 255) * light;
+    const g = (((color >> 8) & 255) / 255) * light;
+    const b = ((color & 255) / 255) * light;
+    const v = (x: number, y: number, z: number) => this.vertex(x, y, z, r, g, b, alpha);
+    // Corners a, b, c, d; triangles a b c and a c d.
+    switch (dir) {
+      case EAST:
+        v(X + 1, lo, Z), v(X + 1, hi, Z), v(X + 1, hi, Z + 1), v(X + 1, lo, Z), v(X + 1, hi, Z + 1), v(X + 1, lo, Z + 1);
+        break;
+      case SOUTH:
+        v(X, lo, Z + 1), v(X + 1, lo, Z + 1), v(X + 1, hi, Z + 1), v(X, lo, Z + 1), v(X + 1, hi, Z + 1), v(X, hi, Z + 1);
+        break;
+      case WEST:
+        v(X, lo, Z), v(X, lo, Z + 1), v(X, hi, Z + 1), v(X, lo, Z), v(X, hi, Z + 1), v(X, hi, Z);
+        break;
+      case NORTH:
+        v(X, lo, Z), v(X, hi, Z), v(X + 1, hi, Z), v(X, lo, Z), v(X + 1, hi, Z), v(X + 1, lo, Z);
+        break;
+      default:
+        v(X, hi, Z), v(X, hi, Z + 1), v(X + 1, hi, Z + 1), v(X, hi, Z), v(X + 1, hi, Z + 1), v(X + 1, hi, Z);
+    }
+  }
+
+  // A geometry with copies of what was written (the writer is reused).
+  geometry(colorSize: 3 | 4): BufferGeometry | null {
+    if (this.n === 0) return null;
+    const g = new BufferGeometry();
+    g.setAttribute("position", new BufferAttribute(this.pos.slice(0, this.n * 3), 3));
+    let col: Float32Array;
+    if (colorSize === 4) col = this.col.slice(0, this.n * 4);
+    else {
+      col = new Float32Array(this.n * 3);
+      for (let k = 0; k < this.n; k++) {
+        col[k * 3] = this.col[k * 4];
+        col[k * 3 + 1] = this.col[k * 4 + 1];
+        col[k * 3 + 2] = this.col[k * 4 + 2];
+      }
+    }
+    g.setAttribute("color", new BufferAttribute(col, colorSize));
+    g.computeBoundingSphere();
+    return g;
+  }
+}
+
+const LAND = new Writer();
+const FLUID = new Writer();
+
+// One layer of a wall, a bit darker the deeper it is below the top.
+function band(out: Writer, dir: number, X: number, Z: number, lo: number, hi: number, top: number, color: number, light: number): void {
+  if (hi <= lo) return;
+  out.face(dir, X, Z, lo, hi, color, light * (1 - Math.min(0.25, (top - hi) * 0.03)), 1);
 }

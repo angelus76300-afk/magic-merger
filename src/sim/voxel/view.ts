@@ -32,6 +32,7 @@ import { kindOf } from "../creatures";
 import { BUILTIN, C, F, S } from "../materials";
 import { envelope, type Body, type Visuals } from "../visuals";
 import type { World } from "../world";
+import { daylight } from "./daylight";
 import { MODELS, geometryOf } from "./models";
 import { OrbitCamera } from "./orbit";
 import { CHUNK, Terrain, columnTop, surfaceY } from "./terrain";
@@ -66,6 +67,12 @@ export class VoxelView {
   private rings: Mesh[] = [];
   private lights: Sprite[] = [];
   private clouds: InstancedMesh;
+  // Materials tinted by the time of day (fire and glows are not).
+  private lit: MeshBasicMaterial[] = [];
+  private windows!: InstancedMesh;
+  private houseCells: number[] = [];
+  private sky = "";
+  private skyCanvas = document.createElement("canvas");
   private decorMesh: InstancedMesh;
   private decorVersion = -1;
   private decal: HTMLCanvasElement;
@@ -128,6 +135,8 @@ export class VoxelView {
     this.scene.add(this.glowPoints, this.dullPoints);
     this.clouds = this.makeClouds();
     this.decorMesh = this.instanced("puff", basic, 20000);
+    this.windows = this.instanced("flame", new MeshBasicMaterial({ vertexColors: true }), 4096);
+    this.lit = [land, fluid, basic, this.puffs.material as MeshBasicMaterial, this.clouds.material as MeshBasicMaterial];
   }
 
   private instanced(model: string, material: Material, capacity: number): InstancedMesh {
@@ -200,6 +209,7 @@ export class VoxelView {
     this.placeRingsAndLights(visuals);
     this.paintDecal(visuals);
     this.moveClouds(time);
+    this.applyDaylight(time);
     this.renderer.render(this.scene, this.orbit.camera);
     this.drawOverlay(visuals);
     this.adapt(performance.now() - started, dt);
@@ -240,6 +250,7 @@ export class VoxelView {
       else key = world.materials.get("cover", c).name;
       lists.get(key)?.push(i);
     }
+    this.houseCells = lists.get("house") ?? [];
     for (const [key, cells] of lists) {
       let mesh = this.covers.get(key)!;
       if (cells.length > mesh.instanceMatrix.count) {
@@ -296,6 +307,46 @@ export class VoxelView {
     this.decorMesh.count = n;
     this.decorMesh.instanceMatrix.needsUpdate = true;
     if (this.decorMesh.instanceColor) this.decorMesh.instanceColor.needsUpdate = true;
+  }
+
+  // Tints the land, the sky and the fog for the time of day; lights the
+  // windows at night and lets chimneys smoke.
+  private applyDaylight(time: number): void {
+    const day = daylight(time);
+    for (const m of this.lit) m.color.setRGB(day.r, day.g, day.b);
+    const key = day.skyTop + day.skyLow;
+    if (key !== this.sky) {
+      this.sky = key;
+      paintSky(this.skyCanvas, day.skyTop, day.skyLow);
+      (this.scene.background as CanvasTexture).image = this.skyCanvas;
+      (this.scene.background as CanvasTexture).needsUpdate = true;
+      (this.scene.fog as Fog).color.set(day.skyLow);
+    }
+    let n = 0;
+    if (day.night > 0.15) {
+      const glow = 0.4 + 0.6 * day.night;
+      for (const i of this.houseCells) {
+        if (n >= 4096) break;
+        // One lit window on the south wall of each house cell, flickering a little.
+        const x = i % this.world.w;
+        const y = Math.floor(i / this.world.w);
+        const flicker = 0.85 + 0.15 * Math.sin(time * 3 + i);
+        this.m.makeScale(0.24, 0.22, 0.06);
+        const p = this.toScene(x + 0.5, y + 0.94, columnTop(this.world, i) + 0.28);
+        this.m.setPosition(p.x, p.y, p.z);
+        this.windows.setMatrixAt(n, this.m);
+        this.windows.setColorAt(n, this.col.setRGB(glow * flicker, glow * 0.78 * flicker, glow * 0.35));
+        n++;
+      }
+    }
+    this.windows.count = n;
+    this.windows.instanceMatrix.needsUpdate = true;
+    if (this.windows.instanceColor) this.windows.instanceColor.needsUpdate = true;
+    // Chimney smoke: a puff now and then from a random house.
+    if (this.houseCells.length && Math.random() < Math.min(0.6, this.houseCells.length / 60)) {
+      const i = this.houseCells[(Math.random() * this.houseCells.length) | 0];
+      this.world.particles.add({ x: (i % this.world.w) + 0.5, y: Math.floor(i / this.world.w) + 0.5, z: 1.4, vz: 1.2, vx: this.world.wind.x * 0.6, vy: this.world.wind.y * 0.6, life: 2.5, color: 0xd8d4cc, size: 1.6, drag: 0.4, gravity: -0.3 });
+    }
   }
 
   private placeCreatures(time: number): void {
@@ -661,6 +712,17 @@ function withDecal<T extends MeshBasicMaterial>(material: T, texture: CanvasText
       );
   };
   return material;
+}
+
+function paintSky(c: HTMLCanvasElement, top: string, low: string): void {
+  c.width = 4;
+  c.height = 256;
+  const ctx = c.getContext("2d")!;
+  const g = ctx.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0, top);
+  g.addColorStop(1, low);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 4, 256);
 }
 
 function skyTexture(): CanvasTexture {

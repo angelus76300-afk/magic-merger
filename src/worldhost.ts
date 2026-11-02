@@ -1,5 +1,5 @@
 import { elementKey } from "../shared/elements";
-import { tierFromDepth, type Tier } from "../shared/tiers";
+import { TIERS, tierFromDepth, type Tier } from "../shared/tiers";
 import * as api from "./api";
 import { chipElement } from "./craft";
 import type { FromWorld, ToWorld } from "./sim/protocol";
@@ -14,6 +14,11 @@ const WORLD_KEY = "magic-merger.world2";
 const MUTE_KEY = "magic-merger.muted";
 // A crashing spell is sent back to Claude at most this often per session.
 const MAX_REPAIRS = 2;
+// Programs up to this tier are written by the cheap model (see worker/index.ts),
+// so they are written ahead of time, in the background, to skip the wait.
+const AHEAD_UP_TO: Tier = "grand";
+// How many of the newest items get written ahead when the World opens.
+const AHEAD_RECENT = 10;
 
 export interface WorldElements {
   stage: HTMLElement;
@@ -90,6 +95,37 @@ export class WorldHost {
     }
     this.send({ type: "visible", visible: true });
     this.renderSpells();
+    // Newest first, one at a time: the bar fills with ready spells.
+    const recent = this.store
+      .discoveries()
+      .sort((a, b) => b.discoveredAt - a.discoveredAt)
+      .slice(0, AHEAD_RECENT);
+    for (const d of recent) this.ahead(elementKey(d.element.name));
+  }
+
+  // Writes a program in the background if it is cheap and not written yet.
+  // Each program is written once for everyone, so this costs about $0.002
+  // per item, once.
+  ahead(key: string): void {
+    const element = this.store.get(key)?.element;
+    if (!element || !element.tier || this.request(key)) return;
+    if (TIERS.indexOf(element.tier) > TIERS.indexOf(AHEAD_UP_TO)) return;
+    if (this.aheadQueue.includes(key)) return;
+    this.aheadQueue.push(key);
+    if (!this.aheadRunning) void this.runAhead();
+  }
+
+  private aheadQueue: string[] = [];
+  private aheadRunning = false;
+
+  private async runAhead(): Promise<void> {
+    this.aheadRunning = true;
+    while (this.aheadQueue.length) {
+      const key = this.aheadQueue.shift()!;
+      if (!this.request(key)) await this.prepare(key, false, true);
+      this.renderSpells();
+    }
+    this.aheadRunning = false;
   }
 
   hide(): void {
@@ -312,6 +348,8 @@ export class WorldHost {
       const chip = chipElement(element, "button");
       chip.classList.add("chip-castable");
       chip.setAttribute("aria-pressed", String(key === this.selected));
+      // Dimmed until its program is written.
+      chip.dataset.ready = this.request(key) ? "1" : "0";
       chip.addEventListener("click", () => this.selectSpell(key));
       fragment.append(chip);
     }

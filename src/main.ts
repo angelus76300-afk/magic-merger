@@ -50,6 +50,8 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
 }
 
 world.init();
+// New discoveries get their program written in the background (cheap tiers only).
+craft.onNewElement = (key) => world.ahead(key);
 
 
 setCardActions({

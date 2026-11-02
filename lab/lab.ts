@@ -19,6 +19,8 @@ interface LabOptions {
   settle?: number;
   // Camera distance; large values show the whole island.
   dist?: number;
+  // Seconds into the day cycle (see voxel/daylight.ts).
+  time?: number;
 }
 
 function seedRandom(seed: number): void {
@@ -96,6 +98,7 @@ async function runSpell(code: string, options: LabOptions = {}) {
   current?.dispose();
   const engine = Engine.create(canvas, overlay, options.size ?? "medium", { onError: (_k, _n, m) => errors.push(m), onTap: () => {} }, seed, { preserveDrawingBuffer: true });
   current = engine;
+  (window as unknown as { labEngine: Engine }).labEngine = engine;
   const world = engine.world;
   // Let rivers settle before casting.
   for (let k = 0; k < 90; k++) engine.step();
@@ -111,6 +114,7 @@ async function runSpell(code: string, options: LabOptions = {}) {
   engine.view.orbit.tx = target.x;
   engine.view.orbit.ty = target.y;
   if (options.dist) engine.view.orbit.dist = options.dist;
+  if (options.time !== undefined) world.time = options.time;
   const tier = isTier(options.tier) ? options.tier : TIERS[2];
   const before = census(world);
   const creaturesBefore = creatures(world);
@@ -154,6 +158,7 @@ async function runScenario(id: string, options: { seconds?: number; casts?: { t:
   const { world, run, focus } = def.build();
   const engine = new Engine(canvas, overlay, world, { onError: (_k, _n, m) => errors.push(m), onTap: () => {} }, undefined, { preserveDrawingBuffer: true });
   current = engine;
+  (window as unknown as { labEngine: Engine }).labEngine = engine;
   engine.view.orbit.tx = focus.x;
   engine.view.orbit.ty = focus.y;
   engine.view.orbit.dist = focus.dist;

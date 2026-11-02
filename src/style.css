@@ -721,3 +721,37 @@ input {
     animation: none;
   }
 }
+
+/* Tier dots: grey cantrip, green minor, blue major, violet grand, orange legendary, glowing gold cosmic. */
+.chip-tier {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-left: 2px;
+  background: #8a8698;
+}
+
+.chip[data-tier="minor"] .chip-tier {
+  background: #6fd08c;
+}
+
+.chip[data-tier="major"] .chip-tier {
+  background: #5aa9f0;
+}
+
+.chip[data-tier="grand"] .chip-tier {
+  background: #b48cff;
+}
+
+.chip[data-tier="legendary"] .chip-tier {
+  background: #ff9a3c;
+}
+
+.chip[data-tier="cosmic"] .chip-tier {
+  background: #ffe28a;
+  box-shadow: 0 0 6px 2px rgba(255, 226, 138, 0.7);
+}
+
+.chip-castable[data-ready="0"] {
+  opacity: 0.6;
+}
