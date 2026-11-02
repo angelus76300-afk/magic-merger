@@ -1,5 +1,6 @@
 import { PRIMITIVES, elementKey } from "../shared/elements";
-import { PROGRAM_VERSION, type SpellProgram } from "../shared/spellcode";
+import type { SpellProgram } from "../shared/spellcode";
+import { PROGRAM_VERSION } from "../shared/version";
 import type { GameElement } from "../shared/types";
 
 export interface Discovery {

@@ -733,7 +733,30 @@ export class VoxelView {
     if (this.clouds.instanceColor) this.clouds.instanceColor.needsUpdate = true;
   }
 
+  // Frees every geometry, material and texture, not only the renderer: the
+  // next engine reuses the same canvas and so the same WebGL context.
   dispose(): void {
+    const seen = new Set<object>();
+    const free = (thing: { dispose(): void } | null | undefined) => {
+      if (thing && !seen.has(thing)) {
+        seen.add(thing);
+        thing.dispose();
+      }
+    };
+    this.scene.traverse((o) => {
+      const m = o as Mesh;
+      if (m.geometry) free(m.geometry);
+      const mats = Array.isArray(m.material) ? m.material : m.material ? [m.material] : [];
+      for (const mat of mats) {
+        free((mat as MeshBasicMaterial).map);
+        free(mat);
+      }
+      if (o instanceof InstancedMesh) o.dispose();
+    });
+    free(this.decalTexture);
+    free(this.glowTexture);
+    free(this.scene.background as CanvasTexture);
+    this.renderer.renderLists.dispose();
     this.renderer.dispose();
   }
 

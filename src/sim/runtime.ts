@@ -61,6 +61,8 @@ export interface CameraControl {
 }
 
 const LOOP_LIMIT = 4_000_000;
+export const WRAPPER_LINES = 3;
+const MAX_JOBS = 24;
 const SLOW_MS = 40;
 
 export class Runtime {
@@ -269,6 +271,7 @@ export class Runtime {
       return;
     }
     const order = b.growOrder();
+    if (this.jobs.length >= MAX_JOBS) this.jobs.shift();
     this.jobs.push({ order, at: 0, perTick: Math.max(1, Math.ceil(order.length / (seconds / TICK))) });
   }
 
@@ -462,9 +465,10 @@ const bodyHooks = new WeakMap<Body, BodyHooks>();
 
 function message(err: unknown): string {
   if (err instanceof Error) {
-    // The line inside the spell code, if the stack has one (two wrapper lines come first).
+    // The line inside the spell code, if the stack has one. new Function adds
+    // two lines of its own and the wrapper one more ("use strict").
     const line = /<anonymous>:(\d+):(\d+)/.exec(err.stack ?? "");
-    return line ? `${err.name}: ${err.message} (line ${Number(line[1]) - 2})` : `${err.name}: ${err.message}`;
+    return line ? `${err.name}: ${err.message} (line ${Number(line[1]) - WRAPPER_LINES})` : `${err.name}: ${err.message}`;
   }
   return String(err);
 }
@@ -587,11 +591,11 @@ export class CreatureHandle {
     return this.raw.data;
   }
   hurt(n: number) {
-    this.raw.hp -= Math.max(0, n);
+    this.raw.hp -= num(n, 0, 1e6, 0);
     if (this.raw.hp <= 0) this.raw.dead = true;
   }
   heal(n: number) {
-    this.raw.hp = Math.min(maxHp(this.raw), this.raw.hp + Math.max(0, n));
+    this.raw.hp = Math.min(maxHp(this.raw), this.raw.hp + num(n, 0, 1e6, 0));
     this.raw.burning = 0;
     this.raw.frozen = 0;
   }
@@ -912,7 +916,7 @@ export class SpellApi {
     const w = this.rt.world;
     const name = String(material).toLowerCase();
     forDisc(w, x, y, num(r, 0, 400, 3), (i, k) => {
-      if (Math.random() < density * (0.4 + 0.6 * k)) w.place(i, name, amount);
+      if (Math.random() < density * (0.4 + 0.6 * k)) w.place(i, name, num(amount, 0, 50, 1));
     });
   }
   // Changes temperature in a disc: negative freezes water and puts out fire,

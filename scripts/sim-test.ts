@@ -82,6 +82,11 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   step(world, rt);
   check("endless loop is stopped", errors.some((e) => e.includes("too long")), errors[0] ?? "no error");
   check("loop guard covers bodiless loops", guardLoops("for(;;) x++;").includes("__g()"));
+  const lines: string[] = [];
+  const rt2 = new Runtime(world, (_k, _n, m) => lines.push(m));
+  rt2.cast({ key: "line", name: "Line", tier: "minor", code: "const spell = {\n  *cast(w) {\n    w.nothing();\n  },\n};" }, 50, 50);
+  step(world, rt2);
+  check("errors name the right line", lines.some((m) => m.includes("(line 3)")), lines[0] ?? "no error");
 }
 
 // 4. Saving and loading keeps the land.

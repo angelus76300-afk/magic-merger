@@ -79,6 +79,8 @@ export interface Drawing {
   owner: number;
 }
 
+export const MAX_EFFECTS = 200;
+
 export class Visuals {
   bodies: Body[] = [];
   shockwaves: Shockwave[] = [];
@@ -92,9 +94,12 @@ export class Visuals {
   flashColor = 0xffffff;
 
   update(dt: number): void {
+    // Spells may ask for any number of effects; the oldest go first past a cap,
+    // so a loop of shockwaves cannot pile up meshes.
     const age = <T extends { t: number; dur: number }>(list: T[]) => {
       for (const v of list) v.t += dt;
-      return list.filter((v) => v.t < v.dur);
+      const alive = list.filter((v) => v.t < v.dur);
+      return alive.length > MAX_EFFECTS ? alive.slice(alive.length - MAX_EFFECTS) : alive;
     };
     this.shockwaves = age(this.shockwaves);
     this.lights = age(this.lights);

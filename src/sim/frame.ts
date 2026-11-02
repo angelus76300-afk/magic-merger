@@ -73,7 +73,14 @@ function loadRules(rules: CastRequest[]) {
 
 function openSandbox(): void {
   scenario = null;
-  const restored = sandbox.save ? Engine.restore(canvas, overlay, sandbox.save, hooks, loadRules(sandbox.rules)) : null;
+  let restored: Engine | null = null;
+  try {
+    restored = sandbox.save ? Engine.restore(canvas, overlay, sandbox.save, hooks, loadRules(sandbox.rules)) : null;
+  } catch (err) {
+    // A save the game can no longer read starts a fresh island instead of a blank page.
+    console.error("The saved world could not be restored", err);
+    sandbox.save = null;
+  }
   mount(restored ?? Engine.create(canvas, overlay, sandbox.size, hooks));
 }
 
