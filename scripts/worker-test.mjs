@@ -605,6 +605,67 @@ const fresh = () => ALL[pairs++];
   await reset();
 }
 
+// 11. Old spells and new promises (3.6): elements from before 3.4.2 get
+// their intents on the cron, and a live program that never faced its
+// promise's probe is tested again by the next browser that holds it.
+{
+  await reset();
+  const now = Date.now();
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES ('old shield', 'Old Shield', '🛡️', 'spell', 3, 'minor', 'A shield over the village', ?)",
+    )
+    .bind(now)
+    .run();
+  const filled = await api("/api/admin/intents", { admin: true, body: {} });
+  const row = await db.prepare("SELECT intents FROM elements WHERE key = 'old shield'").first();
+  check("elements without intents get them", filled.data?.done >= 1 && filled.data?.left === 0 && row?.intents === "protect", JSON.stringify(filled.data));
+
+  // A program that went live before its promise was probed.
+  const first = await api("/api/spell", { admin: true, body: { name: "Old Shield" } });
+  await api("/api/spell/check", { admin: true, body: { name: "Old Shield", id: first.data.program.id, ok: true, problem: null, detail: "3 cells changed." } });
+  const live = await api("/api/spells/live", { admin: true, body: { names: ["Old Shield"] } });
+  const entry = live.data.programs["Old Shield"];
+  check(
+    "a live program never tested on its promise is to be tested again",
+    entry?.id === first.data.program.id && entry.recheck?.[0] === "protect",
+    JSON.stringify(entry),
+  );
+
+  const before = calls;
+  const rechecked = await api("/api/spell/check", {
+    admin: true,
+    body: {
+      name: "Old Shield",
+      id: first.data.program.id,
+      ok: false,
+      problem: "promise",
+      detail: "It promises protection, but the village burned.",
+      recheck: true,
+    },
+  });
+  const liveRow = await db.prepare("SELECT status FROM programs WHERE id = ?").bind(first.data.program.id).first();
+  check(
+    "one that breaks it is written again as a trial, the live one stays",
+    rechecked.status === 200 &&
+      rechecked.data.program.trial === true &&
+      rechecked.data.program.id !== first.data.program.id &&
+      liveRow?.status === "live" &&
+      calls === before + 1,
+    JSON.stringify(rechecked.data?.program?.id),
+  );
+  const origin = await db.prepare("SELECT origin, parent FROM programs WHERE id = ?").bind(rechecked.data.program.id).first();
+  check("its parent is the live program", origin?.origin === "promise" && origin.parent === first.data.program.id);
+  const after = (await api("/api/spells/live", { admin: true, body: { names: ["Old Shield"] } })).data.programs["Old Shield"];
+  check("the trial is served next, and nothing is tested twice", after.trial === true && after.id === rechecked.data.program.id && !after.recheck);
+  const twice = await api("/api/spell/check", {
+    admin: true,
+    body: { name: "Old Shield", id: first.data.program.id, ok: false, problem: "promise", detail: "again", recheck: true },
+  });
+  check("a second recheck writes nothing", twice.status === 200 && calls === before + 1);
+  await reset();
+}
+
 console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at stub prices`);
 stop();
 if (failed) {

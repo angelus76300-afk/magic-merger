@@ -331,6 +331,27 @@ Everyone remembers up to four kinds that hurt or helped them, and villagers reme
 
 Up to three per kind, each `{do, when, every}`: breathe fire, heal, summon, teleport, freeze, lightning, grow, raise the dead, shield, dig, flood, steal; when an enemy is near, when hurt, at night, when a friend dies, or every so often; `every` is the cooldown (3 to 120 s). Checked about three times a second whatever the creature is doing, so a hunted witch freezes her hunter while she runs. Nothing to act on costs a 3 second wait, not the cooldown. Each goes through the same rules as spells: fire and frost stop at wards, lightning ends on a dome, a shield is a small ward of six seconds, a flood never fills a house. Priests heal every 15 seconds, guards raise a shield when an enemy comes; older creatures get abilities from their name (a dragon breathes fire, a necromancer raises the dead at night, a rabbit digs a burrow when hurt). The dead a necromancer raises are a built-in kind, `risen`: weak, burnt by day, gone in 90 seconds.
 
+### Goals, jobs and abilities a merge invents
+
+The twelve goals and twelve abilities are a floor, not a ceiling. A program can define its own:
+
+1. **Goals**: `spell.goals: [{name, seek, near, work, act(self, w, x, y, target), carry, like}]`. The engine does the walking: it looks near home for what `seek` names (a material on any layer, a creature kind, or landmark, home, village, anywhere), walks there, works `work` seconds, then runs `act` through the World API and counts a deed; `carry` brings a load home (villagers add it to their village's stores); `like` is a built-in goal to fall back on when nothing is found. A creature takes one with `goal: "its name"`.
+2. **Jobs**: `w.hire(name, x, y, count)` gives up to six adult villagers near a place one of those goals as their job (a forge hires smiths, an orchard pickers). The job is saved by name and works again once the spell's rules are loaded; until then the villager does its usual job.
+3. **Abilities**: `{name, when, every, act(self, w, target)}` beside the built-in ones, at most three in all, `act` returning false when there was nothing to do.
+
+The code runs in the sandbox like a creature's tick, with the loop guard; a goal or ability whose code throws is reported like any spell error and switched off, never the world. Goals are registered when the program is compiled, like its materials and creatures. Inspect shows their names. This is how the vocabulary grows from merges: a Forge or an Apiary brings its own work, without an engine change, and what several programs reach for and cannot write goes through the API that grows (3.4.2), which can turn it into a helper or an engine proposal.
+
+### Old spells and new promises
+
+Asked after 3.6: the protection spell in play had not changed. Two causes, both found in the live database. First, 257 of 258 elements had no intents: intents are decided only before a new element's first program, so no older element was ever tested on its promise. Second, programs are never rewritten in bulk, so the Protection Spell kept the program written before wards existed. Run through the probe in Node, all nine live protection programs failed it (the Protection Spell prevented none of the harm, a shell of 554 magic blocks); the only one that passed was an admin rewrite of Divine Shield, still a trial because no browser had tested it yet.
+
+Now:
+
+1. **Intents for every element**, 25 per cron run on the small model, from the stored entry (about $0.0001 each; `POST /api/admin/intents` does 80 at once).
+2. **A live program that never faced the probe of its promise** is flagged in `/api/spells/live`; the next browser that holds it tests it in the check frame. A pass is recorded. A broken promise is written once more by the small model, with what the probe found, as a trial whose parent is the live program (origin `promise`); the live one stays until the trial passes its own test run. Never twice for the same program, and within the rewrite budget. One player's page load at a time, so never in bulk, and only for spells someone plays.
+
+`npm run test:worker` checks the backfill, the flag, the rewrite as a trial with the live program kept, and that nothing is rewritten twice.
+
 ### Inspect
 
 With no spell in hand, a tap on a creature opens a card in the World frame: who it is, what it wants, what it is doing, health, fed and rested bars, what it last did, what it carries, what it remembers, its abilities and when they are ready, its village's stores, its hoard or den, how many things it has done. A second tap on the selected spell puts it away. The inspected creature wears a white mark. The card is built from text nodes only, since kind names come from spells.

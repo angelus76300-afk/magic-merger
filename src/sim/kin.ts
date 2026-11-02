@@ -31,11 +31,33 @@ export const TRIGGERS = ["enemy near", "hurt", "night", "friend dies", "every so
 export type Trigger = (typeof TRIGGERS)[number];
 
 export interface AbilitySpec {
-  do: AbilityName;
+  // One of ABILITIES, or the name of a spell's own ability (3.6: the
+  // vocabulary grows with what merges invent).
+  do: AbilityName | string;
   when: Trigger;
   // Seconds between two uses.
   every: number;
+  // A spell's own ability: its code, run through the World API. True when it did something.
+  run?: (self: Creature, target: Creature | null) => boolean;
 }
+
+// A goal a spell invents (3.6), beyond the twelve: where to go, how long to
+// work there, what its code then changes, what it carries home. Given to a
+// spell's creature (goal: "brew potions") or to villagers as a job
+// (w.hire("brew potions", x, y, 2)). Registered when the spell's program is
+// compiled, so a reloaded world gets it back with the spell's other rules.
+export interface CustomGoal {
+  name: string;
+  // A material (any layer), a creature kind, or landmark, home, village, anywhere.
+  seek: string;
+  near: number;
+  work: number;
+  carry: Load | null;
+  // A built-in goal to fall back on when there is nothing to seek.
+  like: Goal | null;
+  run: ((self: Creature, x: number, y: number, target: Creature | null) => boolean) | null;
+}
+export const CUSTOM_GOALS = new Map<string, CustomGoal>();
 
 // What it carries: shown over its head and in the inspect card.
 export const LOADS = ["wood", "food", "gold", "fish", "loot", "stone", "seeds"] as const;
@@ -58,7 +80,12 @@ export interface Memory {
 }
 
 export interface Mind {
-  goal: Goal;
+  // One of GOALS, or a spell's own (CUSTOM_GOALS).
+  goal: Goal | string;
+  // A villager hired to a spell's own goal (w.hire), saved by name.
+  job: string | null;
+  // The spell's own goal the current task serves.
+  custom: string;
   // What it is doing right now, in a few words, for the inspect card.
   action: string;
   // 0 fed, 1 starving; 0 rested, 1 exhausted.
@@ -127,9 +154,10 @@ export type Task =
   | "forage"
   | "preach"
   | "heal"
-  | "avoid";
+  | "avoid"
+  | "custom";
 
-export function newMind(goal: Goal): Mind {
+export function newMind(goal: Goal | string): Mind {
   return {
     goal,
     action: "looking around",
@@ -155,6 +183,8 @@ export function newMind(goal: Goal): Mind {
     fed: 0,
     ready: [],
     away: -1,
+    job: null,
+    custom: "",
   };
 }
 
@@ -164,7 +194,7 @@ export interface LifeHooks {
   kindOf(c: Creature): CreatureKind;
   maxHp(c: Creature): number;
   make(kind: string, x: number, y: number): Creature;
-  goalOf(c: Creature): Goal;
+  goalOf(c: Creature): Goal | string;
   // Out of a place it cannot walk out of (a hollow among cliffs), a step toward (x, y).
   free(c: Creature, x: number, y: number): void;
 }

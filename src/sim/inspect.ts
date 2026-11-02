@@ -51,7 +51,8 @@ export function inspect(world: World, c: Creature, kindOf: (c: Creature) => Crea
   if (m?.tame) subtitle = `tamed by a village`;
   const rows: [string, string][] = [];
   const goal = m?.goal ?? k.goal ?? "explore";
-  const job = c.kind === "villager" && goal !== "worship" ? JOB_WORDS[jobOf(c)] : undefined;
+  // A job a spell hired it for, by its own name; then its usual job.
+  const job = c.kind === "villager" && goal !== "worship" ? (m?.job ?? JOB_WORDS[jobOf(c)]) : undefined;
   const age = c.kind === "villager" ? unpackLook(c.look).age : "adult";
   rows.push(["Wants to", age === "child" ? "play and pick berries" : age === "elder" && goal === "tend" ? "plant flowers" : (job ?? GOAL_WORDS[goal] ?? goal)]);
   rows.push(["Doing", c.dead ? "nothing any more" : (moodWords(c) ?? m?.action ?? TASK_WORDS.none)]);

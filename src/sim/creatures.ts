@@ -80,7 +80,7 @@ export interface CreatureKind {
   // What it wants (3.6, goals.ts) and its own magic (abilities.ts). Kinds
   // that declare a goal have needs; older ones get one from their behavior,
   // name or base kind and keep doing what they did.
-  goal?: Goal;
+  goal?: Goal | string;
   abilities?: AbilitySpec[];
   needs?: boolean;
 }
@@ -311,6 +311,7 @@ export interface SavedMind {
   deeds?: number;
   did?: string;
   goal?: string;
+  job?: string | null;
   mem?: [string, number][];
 }
 
@@ -328,6 +329,7 @@ export function saveMind(c: Creature): SavedMind | undefined {
     deeds: m.deeds,
     did: m.did,
     goal: m.goal,
+    job: m.job,
     mem: m.memory.map((e) => [e.kind, r(e.feel)]),
   };
 }
@@ -344,6 +346,8 @@ function restoreMind(c: Creature, s: SavedMind): void {
   m.deeds = Math.round(num(s.deeds, 0, 1e9, 0));
   m.did = typeof s.did === "string" ? s.did.slice(0, 80) : "";
   if (s.goal === "worship") m.goal = "worship";
+  // A spell's own job, kept by name: it works again once that spell's rules are loaded.
+  if (typeof s.job === "string" && s.job) m.job = s.job.slice(0, 40);
   if (Array.isArray(s.mem))
     m.memory = s.mem
       .filter((e) => Array.isArray(e) && typeof e[0] === "string" && typeof e[1] === "number" && Number.isFinite(e[1]))

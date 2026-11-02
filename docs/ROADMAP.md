@@ -140,6 +140,9 @@ Asked for: nothing on the island just stands there; if the player does nothing f
 7. **The prompt** teaches `goal` and `abilities` in one paragraph (about 250 tokens); older creatures get both from their behavior, name and base kind. `PROGRAM_VERSION` 6 only labels.
 8. **Performance** on the large island: whole tick unchanged within noise; creatures 0.07 to 0.15 ms p50 dearer in Node, paid for by probing danger every third tick and a lure scan without strings.
 
+9. **Merges invent their own goals, jobs and abilities** (`spell.goals`, `w.hire`, abilities with code), so the twelve are a floor; the prompt teaches it in one paragraph.
+10. **Old spells face new promises**: every element gets its intents on the cron, and a live program that never faced its promise's probe is tested by the next browser that holds it and, if it breaks it, written once more as a trial. Found because all nine live protection programs, the Protection Spell included, failed the probe.
+
 Not done: the judge does not run the scene yet; abilities have no probe in the test run; no real phone session since goals (watch `/api/perf`).
 
 ## Decisions taken

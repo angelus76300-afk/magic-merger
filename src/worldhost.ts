@@ -173,6 +173,29 @@ export class WorldHost {
       if (now && now.id !== this.store.spell(key)?.id) await this.prepare(key, false, true, true);
     }
     this.renderSpells();
+    // Live programs written before their element had a promise, tested on it
+    // now (3.6): one that breaks it is written again, and goes through its
+    // own test run here before it replaces the old one.
+    for (const d of held) {
+      const key = elementKey(d.element.name);
+      const now = live.programs[d.element.name];
+      const program = this.store.spell(key);
+      const tier = d.element.tier;
+      if (!now?.recheck?.length || !program || program.id !== now.id || !tier) continue;
+      try {
+        const result = await this.checker.check({ key, name: d.element.name, tier, code: program.code, intents: now.recheck });
+        let res = await api.checkSpell({ name: d.element.name, id: now.id, ...result, recheck: true });
+        if (res.program.trial) {
+          res = await this.settle(key, res, true);
+          this.store.setSpell(key, withoutTrial(res.program));
+          const req = this.request(key);
+          if (req) this.send({ type: "spell-updated", spell: req });
+        }
+      } catch {
+        // Tried again on the next visit.
+      }
+    }
+    this.renderSpells();
   }
 
   // Writes a program in the background if it is cheap and not written yet.

@@ -881,6 +881,71 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
   logDeeds(false);
 }
 
+// 9h. Goals, jobs and abilities a spell invents (3.6), beyond the twelve: an
+// alchemist that turns flowers into crystal, villagers hired as moss
+// gatherers who bring food home, an ability written as code, a job kept by a
+// save, and an act that throws is switched off, not the world.
+{
+  seed(12);
+  const world = generateWorld(112, 112, 4);
+  populate(world);
+  const errors: string[] = [];
+  const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
+  const v = world.creatures.find((c) => c.kind === "villager" && (c.look & 3) === 0)!;
+  const code = `const spell = {
+    goals: [
+      { name: "brew potions", seek: "flower", near: 30, work: 1, act(self, w, x, y) { w.set(x, y, "crystal"); w.clear(x, y, "cover"); } },
+      { name: "gather moss", seek: "grass", near: 12, work: 1, carry: "food", act(self, w, x, y) { w.set(x, y, "dirt"); } },
+      { name: "break things", seek: "anywhere", work: 0.5, act() { throw new Error("broken on purpose"); } },
+    ],
+    creatures: [
+      { name: "alchemist", base: "villager", goal: "brew potions",
+        abilities: [{ name: "moonbeam", when: "every so often", every: 4, act(self, w) { w.set(self.x, self.y, "snow"); } }] },
+      { name: "breaker", base: "beast", goal: "break things" },
+    ],
+    *cast(w) {
+      w.spawn("alchemist", w.x, w.y);
+      w.spawn("breaker", w.x + 2, w.y);
+      w.hire("gather moss", w.x, w.y, 3);
+    },
+  };`;
+  const crystal = () => world.ground.reduce((n, g, i) => n + (world.layerName("ground", g) === "crystal" && world.cover[i] === C.NONE ? 1 : 0), 0);
+  const before = crystal();
+  for (let i = 0; i < world.n; i += 37) if (world.ground[i] === 0 && world.cover[i] === C.NONE && world.depth[i] === 0) world.setCover(i, C.FLOWER);
+  const village = () => world.villages.reduce((n, x) => n + x.food, 0);
+  rt.cast({ key: "alchemy", name: "Alchemy", tier: "minor", code }, v.x, v.y);
+  step(world, rt);
+  const food0 = village();
+  const hired = world.creatures.filter((c) => c.mind?.job === "gather moss");
+  for (let t = 0; t < 30 * 40; t++) step(world, rt);
+  const alchemist = world.creatures.find((c) => c.kind === "alchemist")!;
+  const kind = KINDS.get("alchemist")!;
+  check(
+    "a spell's own goal: sought, worked, and its code changes the land",
+    kind.goal === "brew potions" && kind.needs === true && crystal() > before && (alchemist.mind?.deeds ?? 0) > 0,
+    `${crystal() - before} flowers turned to crystal, did ${alchemist.mind?.did}`,
+  );
+  check(
+    "its own ability, written as code, fires on its trigger",
+    kind.abilities?.[0]?.do === "moonbeam" && world.ground.some((g) => world.layerName("ground", g) === "snow"),
+    JSON.stringify(kind.abilities?.map((a) => a.do)),
+  );
+  check(
+    "villagers hired for a spell's job do it and bring food home",
+    hired.length === 3 && hired.some((c) => (c.mind?.deeds ?? 0) > 0 && c.mind?.did.length) && village() > food0 - 20,
+    `${hired.length} hired, last did ${hired.map((c) => c.mind?.did).join("; ")}`,
+  );
+  check(
+    "a goal whose code throws is switched off, not the world",
+    errors.some((e) => e.includes("broken on purpose")) && errors.length === 1,
+    errors.join(" | "),
+  );
+  const back = loadWorld(JSON.parse(JSON.stringify(saveWorld(world, rt.owners))), (w) =>
+    new Runtime(w, () => {}).compile({ key: "alchemy", name: "Alchemy", tier: "minor", code }),
+  )!;
+  check("a hired job is saved by its name", back.creatures.filter((c) => c.mind?.job === "gather moss").length === 3);
+}
+
 // 10. Votes: how many are needed, when they rewrite, roll back or reach the library.
 {
   check("one player: one vote is enough", votesNeeded(1) === 1 && votesNeeded(0) === 1 && votesNeeded(0.3) === 1);

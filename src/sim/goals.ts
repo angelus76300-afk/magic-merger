@@ -5,6 +5,7 @@ import { names, type Plan } from "./social";
 import { unpackLook, type Job } from "./villagers";
 import { WARD, warded } from "./wards";
 import {
+  CUSTOM_GOALS,
   GOALS,
   reborn,
   LOAD_COLORS,
@@ -18,6 +19,7 @@ import {
   pile,
   remember,
   villageOf,
+  type CustomGoal,
   type Goal,
   type Load,
   type Mind,
@@ -94,7 +96,7 @@ export function goalFrom(v: unknown): Goal | null {
 const BASE_GOALS: Record<string, Goal> = { villager: "gather", beast: "explore", spirit: "explore", golem: "guard" };
 
 // A kind's goal: declared, behavior, name, base. Computed once per kind.
-export function kindGoal(k: CreatureKind, base: CreatureKind | undefined, written = k.name): Goal {
+export function kindGoal(k: CreatureKind, base: CreatureKind | undefined, written = k.name): Goal | string {
   return k.goal ?? goalFromBehavior(k.ai) ?? goalFromName(written) ?? (base ? (base.goal ?? BASE_GOALS[base.name]) : null) ?? BASE_GOALS[k.name] ?? "explore";
 }
 
@@ -115,7 +117,7 @@ export function jobOf(c: Creature): Job {
 }
 
 // A villager's goal is its job; children gather, elders tend.
-export function goalOfCreature(c: Creature, k: CreatureKind): Goal {
+export function goalOfCreature(c: Creature, k: CreatureKind): Goal | string {
   if (c.kind !== "villager") return k.goal ?? "explore";
   const look = unpackLook(c.look);
   if (look.age === "child") return "gather";
@@ -209,6 +211,7 @@ export const TASK_WORDS: Record<Task, string> = {
   preach: "preaching",
   heal: "tending the wounded",
   avoid: "keeping away",
+  custom: "at work",
 };
 
 const OUT: Plan = { x: 0, y: 0, pace: 0, mood: null };
@@ -382,7 +385,8 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
     return OUT;
   }
   m.work += dt;
-  if (m.work >= (DURATION[m.task] ?? 2)) finish(world, c, k, m);
+  const duration = m.task === "custom" ? (CUSTOM_GOALS.get(m.custom)?.work ?? 2) : (DURATION[m.task] ?? 2);
+  if (m.work >= duration) finish(world, c, k, m);
   OUT.x = c.x;
   OUT.y = c.y;
   OUT.pace = 0;
@@ -645,6 +649,9 @@ function work(world: World, c: Creature, m: Mind): void {
     if (!plantFlowers(world, c, m)) forage(world, c, m);
     return;
   }
+  // A job a spell invented and hired it for (w.hire), when its spell's rules are loaded.
+  const hired = m.job ? CUSTOM_GOALS.get(m.job) : undefined;
+  if (hired && customTask(world, c, m, hired)) return;
   job2(world, c, m, v, job);
   // Nothing for its job right now: a chore, so nobody just stands there.
   if (m.task === "none" && !forage(world, c, m) && Math.random() < 0.25) plantFlowers(world, c, m, true);
@@ -846,7 +853,13 @@ function plantFlowers(world: World, c: Creature, m: Mind, surely = false): boole
 // ---- Everyone else: the goal of its kind ------------------------------------
 
 function goalTask(world: World, c: Creature, k: CreatureKind, m: Mind, needs: boolean): void {
-  const g = m.tame && c.kind === "wolf" ? "guard" : m.goal;
+  let g = m.tame && c.kind === "wolf" ? "guard" : m.goal;
+  // A spell's own goal: what it seeks, else the built-in goal it is like.
+  const custom = CUSTOM_GOALS.get(g);
+  if (custom) {
+    if (customTask(world, c, m, custom)) return;
+    g = custom.like ?? "explore";
+  }
   // A fed hunter does not hunt; its goal fills its day.
   switch (g) {
     case "hunt":
@@ -1183,6 +1196,83 @@ function migrate(world: World, c: Creature, k: CreatureKind, m: Mind): void {
   m.action = k.aquatic ? "swimming to its spawning ground" : "on its way";
 }
 
+// ---- A spell's own goals (3.6) --------------------------------------------------
+
+// Finds what a spell's goal seeks near home and sets off to it; false when
+// there is nothing of it around.
+function customTask(world: World, c: Creature, m: Mind, g: CustomGoal): boolean {
+  const hx = c.homeX;
+  const hy = c.homeY;
+  const r = g.near;
+  let x = NaN;
+  let y = NaN;
+  let cell = -1;
+  let target: Creature | null = null;
+  switch (g.seek) {
+    case "home":
+      x = hx;
+      y = hy;
+      break;
+    case "village": {
+      const v = villageOf(world, hx, hy) ?? villageOf(world, c.x, c.y);
+      if (v) {
+        x = v.x + (Math.random() - 0.5) * 4;
+        y = v.y + (Math.random() - 0.5) * 4;
+      }
+      break;
+    }
+    case "landmark": {
+      let best = r * 2;
+      for (const l of world.landmarks) {
+        const d = Math.hypot(l.x - hx, l.y - hy);
+        if (d < best) {
+          best = d;
+          x = l.x + 0.5 + (Math.random() - 0.5) * 2;
+          y = l.y + 0.5 + (Math.random() - 0.5) * 2;
+        }
+      }
+      break;
+    }
+    case "anywhere": {
+      const i = findCell(world, hx, hy, r, 8, (j) => world.depth[j] < 0.3);
+      if (i >= 0) cell = i;
+      break;
+    }
+    default: {
+      const found = world.materials.find(g.seek);
+      if (found && found.layer !== "gas") {
+        const layer = found.layer === "ground" ? world.ground : found.layer === "cover" ? world.cover : world.fluid;
+        const i = findCell(world, hx, hy, r, 24, (j) => layer[j] === found.id && world.fire[j] < 0.1);
+        if (i >= 0) cell = i;
+      } else {
+        // A kind of creature.
+        let best = r;
+        for (const o of world.crowd.near(world, hx, hy, r)) {
+          if (o === c || !names([g.seek], o.kind)) continue;
+          const d = Math.hypot(o.x - c.x, o.y - c.y);
+          if (d < best) {
+            best = d;
+            target = o;
+          }
+        }
+      }
+    }
+  }
+  if (cell >= 0) {
+    x = cell % world.w;
+    y = Math.floor(cell / world.w);
+  }
+  if (target) {
+    x = target.x;
+    y = target.y;
+  }
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  setTask(m, "custom", x, y, 1, cell, target);
+  m.custom = g.name;
+  m.action = g.name;
+  return true;
+}
+
 // ---- Finishing a task: the change it makes ---------------------------------
 
 function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
@@ -1192,6 +1282,18 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
   const task = m.task;
   drop(m);
   switch (task) {
+    case "custom": {
+      const g = CUSTOM_GOALS.get(m.custom);
+      if (!g) return;
+      // Its own code makes the change; a goal with no code just carries what it found.
+      if (g.run && !g.run(c, m.tx, m.ty, t && !t.dead ? t : null)) return;
+      deed(c, g.name);
+      if (g.carry) {
+        m.carry = g.carry;
+        if (c.kind === "villager") setTask(m, "carry", c.homeX, c.homeY);
+      }
+      return;
+    }
     case "eat":
       if (v && v.food >= 1) {
         v.food -= 1;

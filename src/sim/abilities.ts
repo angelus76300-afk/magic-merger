@@ -88,7 +88,8 @@ export function abilitiesFrom(v: unknown): AbilitySpec[] | null {
   const out: AbilitySpec[] = [];
   for (const raw of v) {
     const r = typeof raw === "string" ? { do: raw } : raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
-    if (!r) continue;
+    // One with its own code is the spell's own ability (runtime.ts reads it).
+    if (!r || typeof r.act === "function") continue;
     const name = String(r.do ?? r.name ?? r.ability ?? "")
       .trim()
       .toLowerCase();
@@ -166,7 +167,9 @@ export function useAbilities(world: World, c: Creature, k: CreatureKind): void {
         break;
     }
     if (!fire) continue;
-    const done = perform(world, c, k, m, a.do, enemy ?? null);
+    // A spell's own ability runs its code; the twelve run here.
+    const done = a.run ? a.run(c, enemy ?? null) : perform(world, c, k, m, a.do as AbilityName, enemy ?? null);
+    if (done && a.run) deed(c, a.do);
     // Nothing to do it on: look again in a few seconds instead of a full cooldown.
     m.ready[n] = world.time + (done ? a.every : 3);
   }
