@@ -32,10 +32,10 @@ export function stepPhysics(world: World, dt: number): void {
   }
   stepFluids(world, dt);
   stepFire(world, dt);
-  if (world.tick % 2 === 0) {
-    stepTemperature(world, dt * 2);
-    stepGas(world, dt * 2);
-  }
+  // Every other tick each, on alternate ticks: together on the same tick they
+  // made every second tick three times as long as the others (seen on a phone).
+  if (world.tick % 2 === 0) stepTemperature(world, dt * 2);
+  else stepGas(world, dt * 2);
   stepGrowth(world);
   stepVoxels(world, dt);
 }
