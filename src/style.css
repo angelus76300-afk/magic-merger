@@ -1168,3 +1168,268 @@ input {
   font-size: 13px;
   padding: 4px 0;
 }
+
+/* 3.4.1: the Feedback tab (labelled Ideas). */
+
+.feedback {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.feedback-inner {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 16px 16px max(24px, env(safe-area-inset-bottom));
+}
+
+.feedback-new {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.feedback-new h2 {
+  margin: 0 0 2px;
+  font-size: 17px;
+  color: var(--accent);
+}
+
+.feedback-new input,
+.feedback-new textarea,
+.idea-brief {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+.feedback-new-foot {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.feedback-hint,
+.idea-dialog-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.feedback button,
+.idea-dialog button:not(.card-close) {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.feedback button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.feedback-new button[type="submit"] {
+  border-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.feedback-admin {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--accent);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.feedback-admin[hidden] {
+  display: none;
+}
+
+.feedback-admin p {
+  margin: 0;
+  flex: 1 1 260px;
+}
+
+.feedback-empty {
+  margin-top: 24px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.feedback-group {
+  margin-top: 20px;
+}
+
+.feedback-group h3,
+.feedback-group summary {
+  margin: 0 0 6px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  cursor: default;
+}
+
+.feedback-group summary {
+  cursor: pointer;
+}
+
+.idea {
+  display: flex;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.feedback .idea-vote {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 48px;
+  min-height: 52px;
+  padding: 4px;
+  align-self: flex-start;
+}
+
+.feedback .idea-vote[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.idea-arrow {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.idea-count {
+  font-weight: 700;
+}
+
+.idea-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.idea-main h4 {
+  margin: 0;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.idea-body {
+  margin: 4px 0 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+
+.idea-meta {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.idea-meta a {
+  color: var(--accent);
+}
+
+.idea-status {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.idea-sent .idea-status,
+.idea-review .idea-status {
+  color: var(--spell);
+}
+
+.idea-shipped .idea-status {
+  color: #6fcf97;
+}
+
+.idea-declined {
+  opacity: 0.7;
+}
+
+.idea-note {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-style: italic;
+  color: var(--muted);
+}
+
+.idea-admin {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.feedback .idea-send {
+  border-color: var(--accent);
+}
+
+.idea-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.idea-dialog-hint {
+  margin: 12px 0 8px;
+}
+
+.idea-brief {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
+.idea-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.idea-dialog .card-cast {
+  width: auto;
+  margin: 0;
+}
+
+/* Three tabs and two badges (admin in mock mode) do not fit on a phone: the
+   tabs go to their own line instead of pushing the page sideways. */
+.topbar {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 420px) {
+  .tab {
+    padding: 6px 11px;
+  }
+}
+
+@media (max-width: 520px) {
+  .feedback-new-foot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

@@ -7,6 +7,7 @@ import { Store } from "./store";
 import { toast } from "./toast";
 import { WorldHost } from "./worldhost";
 import { openPeople } from "./people";
+import { showFeedback } from "./feedback";
 import { hideGate, showGate, showWelcome, welcomedBefore } from "./welcome";
 
 // An invite link (/#invite=...) is kept by this browser before anything else.
@@ -44,6 +45,7 @@ function showTab(view: string): void {
   // The world only runs while it is on screen, to spare phone batteries.
   if (view === "world-view") world.show();
   else world.hide();
+  if (view === "feedback-view") showFeedback();
 }
 
 // The admin badge opens the people view: invites, spend per person, the month.

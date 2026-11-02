@@ -6,14 +6,15 @@ Every spell can then be cast in the World tab: a falling sand pixel world with t
 
 1. Setup, API credit and deployment: [docs/SETUP.md](docs/SETUP.md)
 2. Design decisions, the spell format and the world rules: [docs/DESIGN.md](docs/DESIGN.md)
+3. How ideas from the Ideas tab become pull requests: [docs/FEEDBACK.md](docs/FEEDBACK.md)
 
 ## Layout
 
-| Path          | What                                                                                                                               |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `src/`        | Browser game: board, inventory, spell card                                                                                         |
-| `src/world/`  | World tab: terrain physics, creatures, spell casting, renderer                                                                     |
-| `worker/`     | Cloudflare Worker: merges, descriptions, spell programs and their versions, votes, the judge, invites and the ledger, Claude calls |
-| `scripts/`    | `npm test`, `npm run test:worker`, the Spell Lab, the judge runner, measurements                                                   |
-| `shared/`     | Types and primitives used by both                                                                                                  |
-| `migrations/` | D1 schema                                                                                                                          |
+| Path          | What                                                                                                                                         |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/`        | Browser game: board, inventory, spell card                                                                                                   |
+| `src/world/`  | World tab: terrain physics, creatures, spell casting, renderer                                                                               |
+| `worker/`     | Cloudflare Worker: merges, descriptions, spell programs and their versions, votes, the judge, invites and the ledger, feedback, Claude calls |
+| `scripts/`    | `npm test`, `npm run test:worker`, the Spell Lab, the judge runner, measurements                                                             |
+| `shared/`     | Types and primitives used by both                                                                                                            |
+| `migrations/` | D1 schema                                                                                                                                    |
