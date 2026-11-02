@@ -6,6 +6,7 @@ import { shines, voxelColor, voxelKind } from "../voxels";
 const FLAME = [0xffd36a, 0xffa43a, 0xff6a1a, 0xe8420f];
 const LOOK = 0; // plain voxels, tinted by the time of day
 const GLOW = 1; // burning or shining voxels, never darkened
+const REBUILD_AT = 2000;
 
 // Keeps the two decor meshes in step with the world's voxels by touching only
 // the instances whose voxel changed. A burning forest used to rewrite all its
@@ -41,7 +42,11 @@ export class DecorInstances {
     const taken = decor.takeChanges();
     const changes = this.fresh ? "all" : taken;
     this.fresh = false;
-    if (changes === "all") this.rebuild(decor, burning, time);
+    // Moving voxels one by one costs more than redoing them all once many
+    // change at the same time (a forest set alight at once).
+    let moves = changes === "all" ? 0 : changes.size;
+    if (changes !== "all") for (const key of burning.keys()) if (moves <= REBUILD_AT && (this.where.get(key) ?? 0) >>> 16 !== GLOW) moves++;
+    if (changes === "all" || moves > REBUILD_AT) this.rebuild(decor, burning, time);
     else {
       for (const key of changes) this.refresh(decor, burning, key, time);
       // Voxels that stopped burning go back to their own color and mesh.
