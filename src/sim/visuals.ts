@@ -2,7 +2,8 @@
 // cloud, the vortex), shockwave rings, lights in the dark, screen tints, and
 // free drawing functions. The renderer reads these; the runtime fills them.
 
-export type BodyLook = "orb" | "flame" | "cloud" | "ring" | "shard" | "vortex" | "star" | "none";
+export const BODY_LOOKS = ["orb", "flame", "cloud", "ring", "shard", "vortex", "star", "meteor", "swarm", "none"] as const;
+export type BodyLook = (typeof BODY_LOOKS)[number];
 
 export interface Body {
   id: number;
@@ -28,6 +29,18 @@ export interface Body {
   // Free data for the spell.
   data: Record<string, unknown>;
   owner: number;
+  // Color of the particles it leaves behind, or null.
+  trail: number | null;
+}
+
+// A bolt of lightning or a beam: a path of points in cells (x, y) and
+// voxel levels (l), drawn as a line of glowing voxels.
+export interface Bolt {
+  points: { x: number; y: number; l: number }[];
+  color: number;
+  width: number;
+  t: number;
+  dur: number;
 }
 
 export interface Shockwave {
@@ -74,6 +87,7 @@ export class Visuals {
   darkness: Fade[] = [];
   tints: Fade[] = [];
   drawings: Drawing[] = [];
+  bolts: Bolt[] = [];
   flash = 0;
   flashColor = 0xffffff;
 
@@ -87,6 +101,7 @@ export class Visuals {
     this.darkness = age(this.darkness);
     this.tints = age(this.tints);
     this.drawings = age(this.drawings);
+    this.bolts = age(this.bolts);
     this.bodies = this.bodies.filter((b) => b.alive);
     this.flash = Math.max(0, this.flash - dt * 2.5);
   }
@@ -110,6 +125,7 @@ export class Visuals {
     this.darkness = [];
     this.tints = [];
     this.drawings = [];
+    this.bolts = [];
     this.flash = 0;
   }
 }

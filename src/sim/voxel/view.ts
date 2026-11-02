@@ -1,6 +1,7 @@
 import {
   AdditiveBlending,
   BufferAttribute,
+  BoxGeometry,
   BufferGeometry,
   CanvasTexture,
   Color,
@@ -8,14 +9,12 @@ import {
   DoubleSide,
   Fog,
   Group,
-  IcosahedronGeometry,
   InstancedMesh,
   Matrix4,
   Mesh,
   MeshBasicMaterial,
   NearestFilter,
   Object3D,
-  OctahedronGeometry,
   Points,
   RingGeometry,
   Scene,
@@ -23,7 +22,6 @@ import {
   LinearSRGBColorSpace,
   Sprite,
   SpriteMaterial,
-  TorusGeometry,
   Vector3,
   WebGLRenderer,
   type Material,
@@ -33,6 +31,7 @@ import { BUILTIN, C, F, S } from "../materials";
 import { envelope, type Body, type Visuals } from "../visuals";
 import type { World } from "../world";
 import { keyCell, shines, voxelColor, voxelKind } from "../voxels";
+import { bodyGeometry } from "./bodies";
 import { daylight } from "./daylight";
 import { MODELS, geometryOf } from "./models";
 import { OrbitCamera } from "./orbit";
@@ -65,6 +64,8 @@ export class VoxelView {
   private glowPoints: Points;
   private dullPoints: Points;
   private bodies = new Map<number, Object3D>();
+  private boltCore: InstancedMesh;
+  private boltHalo: InstancedMesh;
   private rings: Mesh[] = [];
   private lights: Sprite[] = [];
   private clouds: InstancedMesh;
@@ -141,6 +142,8 @@ export class VoxelView {
     this.decorMesh = this.instanced("puff", basic, 20000);
     this.decorGlow = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true }), 20000);
     this.windows = this.instanced("flame", new MeshBasicMaterial({ vertexColors: true }), 4096);
+    this.boltCore = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true }), 3000);
+    this.boltHalo = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.35, blending: AdditiveBlending, depthWrite: false }), 3000);
     this.lit = [land, fluid, basic, this.puffs.material as MeshBasicMaterial, this.clouds.material as MeshBasicMaterial];
   }
 
@@ -211,6 +214,7 @@ export class VoxelView {
     this.placeFireAndGas(time);
     this.placeParticles();
     this.placeBodies(visuals, time);
+    this.placeBolts(visuals);
     this.placeRingsAndLights(visuals);
     this.paintDecal(visuals);
     this.moveClouds(time);
@@ -477,6 +481,8 @@ export class VoxelView {
 
   private placeBodies(visuals: Visuals, time: number): void {
     const alive = new Set<number>();
+    // Even a cosmic body should not hide the whole island.
+    const maxScale = Math.max(this.world.w, this.world.h) * 0.2;
     for (const b of visuals.bodies) {
       if (!b.alive || b.look === "none") continue;
       alive.add(b.id);
@@ -487,17 +493,31 @@ export class VoxelView {
         this.scene.add(obj);
       }
       const ground = this.groundAt(b.x, b.y);
-      const p = this.toScene(b.x, b.y, ground + b.z + b.r);
+      const scale = Math.max(0.2, Math.min(maxScale, b.r));
+      const p = this.toScene(b.x, b.y, ground + b.z + scale);
       obj.position.copy(p);
-      obj.scale.setScalar(Math.max(0.2, b.r));
+      obj.scale.setScalar(scale);
       if (b.look === "vortex" || b.look === "ring" || b.look === "star") obj.rotation.y = time * 3;
-      if (b.look === "flame") obj.scale.multiplyScalar(0.9 + Math.random() * 0.2);
+      if (b.look === "meteor") obj.rotation.set(time * 2, time * 1.3, 0);
+      if (b.look === "flame") {
+        obj.scale.multiplyScalar(0.9 + Math.random() * 0.2);
+        obj.rotation.y = time * 1.5;
+      }
+      if (b.look === "swarm") {
+        // Motes wandering around the body's center.
+        obj.children.forEach((m, k) => {
+          if (m instanceof Sprite) return;
+          const a = time * (1.5 + (k % 5) * 0.4) + k * 2.1;
+          m.position.set(Math.cos(a) * (0.4 + (k % 3) * 0.3), Math.sin(a * 1.7 + k) * 0.5, Math.sin(a) * (0.4 + (k % 4) * 0.25));
+        });
+      }
     }
     for (const [id, obj] of this.bodies) {
       if (alive.has(id)) continue;
       this.scene.remove(obj);
       obj.traverse((o) => {
-        if (o instanceof Mesh) o.geometry.dispose();
+        // Body geometries are shared through a cache; only materials are per body.
+        if (o instanceof Mesh || o instanceof Sprite) (o.material as Material).dispose();
       });
       this.bodies.delete(id);
     }
@@ -506,46 +526,59 @@ export class VoxelView {
   private makeBody(b: Body): Object3D {
     const group = new Group();
     const color = new Color(b.color);
-    const color2 = new Color(b.color2);
-    const mat = new MeshBasicMaterial({ color });
-    switch (b.look) {
-      case "cloud":
-        for (let k = 0; k < 7; k++) {
-          const m = new Mesh(new IcosahedronGeometry(0.55, 0), new MeshBasicMaterial({ color: k % 2 ? color : color2, transparent: true, opacity: 0.85 }));
-          m.position.set(Math.cos(k) * 0.6, (k % 3) * 0.15, Math.sin(k * 1.3) * 0.5);
-          group.add(m);
-        }
-        break;
-      case "ring":
-        group.add(new Mesh(new TorusGeometry(1, 0.12, 6, 24), mat));
-        group.children[0].rotation.x = Math.PI / 2;
-        break;
-      case "vortex":
-        // A funnel: rings widening as they rise.
-        for (let k = 0; k < 9; k++) {
-          const t = new Mesh(new TorusGeometry(0.2 + k * 0.17, 0.07, 4, 16), new MeshBasicMaterial({ color: k % 2 ? color : color2, transparent: true, opacity: 0.55 + (k % 3) * 0.12 }));
-          t.rotation.x = Math.PI / 2;
-          t.position.set(Math.sin(k * 0.9) * 0.12, k * 0.38 - 1, Math.cos(k * 0.9) * 0.12);
-          group.add(t);
-        }
-        break;
-      case "shard":
-        group.add(new Mesh(new OctahedronGeometry(1, 0), mat));
-        group.children[0].scale.set(0.5, 1.2, 0.5);
-        break;
-      case "star":
-        group.add(new Mesh(new OctahedronGeometry(1, 0), new MeshBasicMaterial({ color: color2 })));
-        break;
-      default:
-        group.add(new Mesh(new IcosahedronGeometry(1, 1), mat));
-        group.add(new Mesh(new IcosahedronGeometry(0.6, 1), new MeshBasicMaterial({ color: color2 })));
+    if (b.look === "swarm") {
+      const mote = new BoxGeometry(0.16, 0.16, 0.16);
+      for (let k = 0; k < 16; k++) group.add(new Mesh(mote, new MeshBasicMaterial({ color: k % 3 ? b.color : b.color2 })));
+    } else {
+      const mat = new MeshBasicMaterial({ vertexColors: true, transparent: b.look === "cloud" || b.look === "vortex", opacity: b.look === "cloud" ? 0.88 : b.look === "vortex" ? 0.8 : 1 });
+      group.add(new Mesh(bodyGeometry(b.look, b.color, b.color2), mat));
     }
     if (b.glow) {
-      const glow = new Sprite(new SpriteMaterial({ map: this.glowTexture, color, blending: AdditiveBlending, depthWrite: false, transparent: true }));
-      glow.scale.setScalar(5);
+      const glow = new Sprite(new SpriteMaterial({ map: this.glowTexture, color, blending: AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.7 }));
+      glow.scale.setScalar(b.look === "cloud" ? 2.5 : 3.2);
       group.add(glow);
     }
     return group;
+  }
+
+  // Lightning and beams: lines of glowing cubes with a soft halo.
+  private placeBolts(visuals: Visuals): void {
+    let n = 0;
+    const { world } = this;
+    for (const bolt of visuals.bolts) {
+      const fade = Math.max(0, 1 - bolt.t / bolt.dur);
+      // Lightning flickers; it is brightest when it hits.
+      const flicker = bolt.dur < 1 ? (Math.random() < 0.25 ? 0.4 : 1) : 0.85 + 0.15 * Math.sin(bolt.t * 30);
+      const k = fade * flicker;
+      for (let s = 1; s < bolt.points.length; s++) {
+        const a = bolt.points[s - 1];
+        const b = bolt.points[s];
+        const len = Math.hypot(b.x - a.x, b.y - a.y, b.l - a.l);
+        const steps = Math.max(1, Math.ceil(len / 0.45));
+        for (let q = 0; q < steps && n < 3000; q++) {
+          const t = q / steps;
+          const x = a.x + (b.x - a.x) * t - world.w / 2;
+          const z = a.y + (b.y - a.y) * t - world.h / 2;
+          const y = a.l + (b.l - a.l) * t;
+          const w = bolt.width * 0.35;
+          this.m.makeScale(w, w, w);
+          this.m.setPosition(x, y, z);
+          this.boltCore.setMatrixAt(n, this.m);
+          this.boltCore.setColorAt(n, this.col.setRGB(0.85 + 0.15 * k, 0.85 + 0.15 * k, 1).lerp(new Color(bolt.color), 0.35));
+          const h = bolt.width * 1.3;
+          this.m.makeScale(h, h, h);
+          this.m.setPosition(x, y, z);
+          this.boltHalo.setMatrixAt(n, this.m);
+          this.boltHalo.setColorAt(n, this.col.setHex(bolt.color).multiplyScalar(k));
+          n++;
+        }
+      }
+    }
+    for (const mesh of [this.boltCore, this.boltHalo]) {
+      mesh.count = n;
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
   }
 
   private placeRingsAndLights(visuals: Visuals): void {

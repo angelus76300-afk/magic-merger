@@ -5,7 +5,7 @@ import { BUILTIN, C, F, G, LAYERS, type Layer } from "./materials";
 import { valueNoise } from "./noise";
 import { addGas, explode, forDisc, quake } from "./physics";
 import type { ParticleOptions } from "./particles";
-import { Visuals, type Body, type BodyLook, type DrawFn } from "./visuals";
+import { BODY_LOOKS, Visuals, type Body, type BodyLook, type DrawFn } from "./visuals";
 import { TICK, World } from "./world";
 import { Builder, arch, island, spire, tower, tree, treeDefaults, wall } from "./structures";
 import { VK, igniteVoxels, kindId } from "./voxels";
@@ -293,7 +293,13 @@ export class Runtime {
         if (hooks?.end) this.run(hooks.key, hooks.name, () => hooks.end!(hooks.handle, hooks.api));
         b.alive = false;
       }
-      if (b.x < -50 || b.y < -50 || b.x > this.world.w + 50 || b.y > this.world.h + 50) b.alive = false;
+      // Off the island, a body near the ground has nothing under it: it is gone.
+      // High in the sky it may still be on its way in.
+      const out = b.x < -1 || b.y < -1 || b.x > this.world.w + 1 || b.y > this.world.h + 1;
+      if ((out && b.z < 24) || b.x < -80 || b.y < -80 || b.x > this.world.w + 80 || b.y > this.world.h + 80) b.alive = false;
+      if (b.alive && b.trail !== null && b.look !== "none") {
+        this.world.particles.add({ x: b.x + (Math.random() - 0.5) * b.r, y: b.y + (Math.random() - 0.5) * b.r, z: b.z + b.r, vx: -b.vx * 0.1, vy: -b.vy * 0.1, vz: -b.vz * 0.1 + 0.5, life: 0.5 + Math.random() * 0.5, color: b.trail, size: Math.max(0.8, Math.min(4, b.r * 0.9)), glow: true, gravity: -0.5, drag: 1.5 });
+      }
     }
   }
 
@@ -942,7 +948,7 @@ export class SpellApi {
       color: colorOr(o.color, 0xffffff),
       color2: colorOr(o.color2, colorOr(o.color, 0xffffff)),
       glow: o.glow !== false,
-      look: (["orb", "flame", "cloud", "ring", "shard", "vortex", "star", "none"] as const).includes(o.look as BodyLook) ? (o.look as BodyLook) : "orb",
+      look: (BODY_LOOKS as readonly string[]).includes(o.look as string) ? (o.look as BodyLook) : "orb",
       age: 0,
       life: num(o.life, 0, 120, 0),
       alive: true,
@@ -950,6 +956,7 @@ export class SpellApi {
       drag: num(o.drag, 0, 20, 0),
       data: {},
       owner: this.castId,
+      trail: o.trail === false ? null : o.trail === undefined ? (o.look === "meteor" ? 0xff8a2a : null) : colorOr(o.trail, colorOr(o.color, 0xffffff)),
     };
     const handle = new BodyHandle(b);
     bodyHooks.set(b, {
@@ -1006,6 +1013,74 @@ export class SpellApi {
         drag: num(o.drag, 0, 20, 1),
       });
     }
+  }
+
+  // Lightning from the sky to a cell: strikes the highest thing there (a
+  // tree top, a tower), burns, hurts, sets wood alight, and shocks every
+  // creature in the water it hits. Sand it strikes turns to glass.
+  lightning(x: number, y: number, o: Record<string, unknown> = {}) {
+    if (!this.inside(x, y)) return;
+    const w = this.rt.world;
+    const i = this.i(x, y);
+    const power = num(o.power, 0, 5, 1);
+    const color = colorOr(o.color, 0xd8ecff);
+    // The highest voxel standing on this cell, or the land.
+    let target = Math.round(w.height[i] * 0.5);
+    const cx = Math.round(x);
+    const cy = Math.round(y);
+    for (let l = target + 1; l < target + 140; l++) if (w.decor.has(w.decorKey(cx, cy, l))) target = l + 1;
+    if (w.depth[i] > 0.05) target = Math.max(target, (w.height[i] + w.depth[i]) * 0.5);
+    const path = (x0: number, y0: number, l0: number, x1: number, y1: number, l1: number, jag: number) => {
+      const pts = [{ x: x0, y: y0, l: l0 }];
+      const n = 10;
+      for (let k = 1; k < n; k++) {
+        const t = k / n;
+        pts.push({ x: x0 + (x1 - x0) * t + (Math.random() - 0.5) * jag, y: y0 + (y1 - y0) * t + (Math.random() - 0.5) * jag, l: l0 + (l1 - l0) * t });
+      }
+      pts.push({ x: x1, y: y1, l: l1 });
+      return pts;
+    };
+    const fromX = num((o.from as { x?: number } | undefined)?.x, -100, 5000, x + (Math.random() - 0.5) * 10);
+    const fromY = num((o.from as { y?: number } | undefined)?.y, -100, 5000, y + (Math.random() - 0.5) * 10);
+    const main = path(fromX, fromY, target + 70, x, y, target, 5);
+    const vis = this.rt.visuals;
+    vis.bolts.push({ points: main, color, width: num(o.width, 0.3, 4, 1) * Math.max(0.6, Math.sqrt(power)), t: 0, dur: 0.35 });
+    for (let k = 0; k < 2; k++) {
+      const from = main[3 + k * 3];
+      vis.bolts.push({ points: path(from.x, from.y, from.l, from.x + (Math.random() - 0.5) * 16, from.y + (Math.random() - 0.5) * 16, from.l - 15 - Math.random() * 15, 3), color, width: 0.6, t: 0, dur: 0.25 });
+    }
+    vis.lights.push({ x, y, r: 10 * Math.max(0.6, power), color, t: 0, dur: 0.5 });
+    this.flash(color, 0.3);
+    this.sound("zap", Math.min(1, 0.4 + power * 0.2));
+    // Effects on the land.
+    const g = w.ground[i];
+    if (g === G.SAND && Math.random() < 0.6) w.ground[i] = G.CRYSTAL;
+    if (w.depth[i] < 0.05 && (w.materials.get("cover", w.cover[i]).flammable > 0 || w.materials.get("ground", g).flammable > 0)) w.fire[i] = Math.max(w.fire[i], 0.9);
+    if (w.cover[i] === C.POWDER) explode(w, x, y, 4, 1);
+    if (w.fluid[i] === F.OIL) w.fire[i] = 1;
+    igniteVoxels(w, x, y, 1.5);
+    w.temp[i] += 300 * power;
+    // Creatures: struck ones, and everyone in the same water.
+    const wet = w.fluid[i] === F.WATER && w.depth[i] > 0.05;
+    for (const c of w.creatures) {
+      if (c.dead) continue;
+      const d = Math.hypot(c.x - x, c.y - y);
+      const ci = this.i(c.x, c.y);
+      const shocked = d < 1.8 || (wet && d < 14 * Math.max(0.5, power) && w.fluid[ci] === F.WATER && w.depth[ci] > 0.05);
+      if (!shocked) continue;
+      c.hp -= (d < 1.8 ? 70 : 35) * power;
+      c.stun = Math.max(c.stun, 1.5);
+      if (d < 1.8 && !kindOf(c).fireproof) c.burning = Math.max(c.burning, 2);
+      if (c.hp <= 0) c.dead = true;
+    }
+  }
+  // A straight beam between two points, z in voxels above the land at each
+  // end. It only shows; the spell decides what the beam does.
+  beam(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, o: Record<string, unknown> = {}) {
+    const w = this.rt.world;
+    const l0 = w.height[this.i(x0, y0)] * 0.5 + num(z0, -40, 400, 0);
+    const l1 = w.height[this.i(x1, y1)] * 0.5 + num(z1, -40, 400, 0);
+    this.rt.visuals.bolts.push({ points: [{ x: x0, y: y0, l: l0 }, { x: x1, y: y1, l: l1 }], color: colorOr(o.color, 0xfff3b0), width: num(o.width, 0.2, 6, 1), t: 0, dur: num(o.seconds, 0.05, 30, 0.5) });
   }
 
   // Screen and camera.
