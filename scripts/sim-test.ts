@@ -19,6 +19,7 @@ import { SOLUTIONS, replay, seed, step, type Replay } from "./challenge-replay";
 import { runCheck } from "../src/sim/check";
 import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../shared/votes";
 import { pickExamples, words } from "../worker/programs";
+import { verdict, type LinkedPull } from "../worker/feedback";
 import { helperProblem, withLibrary } from "../worker/evolve";
 
 // Challenges with nothing cast, over several seeds: one seed can pass by
@@ -431,7 +432,7 @@ for (const scenario of SCENARIOS) {
   check("no block inside the land; a block on a house replaces it", buried === 0 && world.decor.size === before + 1 && world.cover[house] === C.NONE);
 }
 
-// 9d. Wards and promises (3.4.1): a protection spell has to protect. Aegis
+// 9d. Wards and promises (3.4.2): a protection spell has to protect. Aegis
 // raises a ward and passes the protection probe; Glass Shell builds the
 // opaque shell of magic blocks protection spells used to be, and fails it.
 // A ward keeps lava out and lightning off what it covers.
@@ -469,7 +470,7 @@ for (const scenario of SCENARIOS) {
   check("a ward keeps lava out and lightning off", inside === 0 && burning === 0 && !errors.length, `${inside} lava cells, ${burning} burning inside`);
 }
 
-// 9e. The API that grows (3.4.1): a helper is appended to the programs that
+// 9e. The API that grows (3.4.2): a helper is appended to the programs that
 // call it, runs inside them like any spell code, and is refused when it
 // yields, reaches outside the sandbox or is never called by its example.
 {
@@ -509,6 +510,27 @@ for (const scenario of SCENARIOS) {
   );
   check("the library finds the closest program", picked[0]?.name === "Inferno", picked.map((p) => p.name).join(","));
   check("words are stemmed", words("Burning forests").has("burn") && words("Burning forests").has("forest"));
+}
+
+// The Feedback tab (3.4.1): what an idea sent to Claude has become, from its
+// GitHub issue and the pull requests that mention it.
+{
+  const pr = (number: number, at: number, state: "open" | "merged" | "closed"): LinkedPull => ({
+    number,
+    url: `https://github.com/o/r/pull/${number}`,
+    open: state === "open",
+    merged: state === "merged",
+    at,
+  });
+  const open = { open: true, reason: null };
+  check("feedback: no pull request yet, still sent", verdict(100, open, []).status === "sent");
+  check("feedback: an open pull request is in review", verdict(100, open, [pr(7, 150, "open")]).pr?.number === 7);
+  check("feedback: a merged one wins over a newer open one", verdict(100, open, [pr(7, 150, "merged"), pr(9, 160, "open")]).status === "shipped");
+  const dropped = verdict(100, open, [pr(7, 150, "closed")]);
+  check("feedback: closed unmerged after the send, declined", dropped.status === "declined" && !!dropped.note);
+  check("feedback: closed unmerged before a new send, still sent", verdict(200, open, [pr(7, 150, "closed")]).status === "sent");
+  check("feedback: the issue closed as not planned, declined", verdict(100, { open: false, reason: "not_planned" }, []).status === "declined");
+  check("feedback: the issue closed as done, shipped", verdict(100, { open: false, reason: "completed" }, []).status === "shipped");
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");

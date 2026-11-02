@@ -25,6 +25,9 @@ import type {
   VoteRequest,
   VoteResponse,
 } from "../shared/types";
+import { changeFeedback, listFeedback, postFeedback, syncFeedback, voteFeedback } from "./feedback";
+import type { FeedbackAction } from "../shared/feedback";
+import { HttpError } from "./http";
 import { ClaudeOracle, MockOracle, OracleError, parseEffort, type Oracle, type ProgramAnswer, type SpellRequest as OracleSpellRequest } from "./oracle";
 import { parseIntents, type Intent } from "../shared/promises";
 import { designDue, evolution, liveLibrary, openGaps, recordGap, settleHelper, storeDesign, trialHelpers, withLibrary, type Library } from "./evolve";
@@ -108,7 +111,16 @@ export interface Env {
   // "0" writes big spells with the big model at once, as in 3.2. Otherwise the
   // small model drafts them now and the big one writes them through the Batch API.
   BIG_SPELLS_BATCH?: string;
-  // 3.4.1. Who decides how the API grows (worker/evolve.ts); SPELL_MODEL by default.
+  // 3.4.1, the Feedback tab (worker/feedback.ts, docs/FEEDBACK.md): the
+  // repository (owner/name), and three secrets: a GitHub token for that
+  // repository only, the routine's fire URL and its bearer token.
+  GITHUB_REPO?: string;
+  GITHUB_TOKEN?: string;
+  ROUTINE_URL?: string;
+  ROUTINE_TOKEN?: string;
+  // Tests point this at a stub.
+  GITHUB_API_URL?: string;
+  // 3.4.2. Who decides how the API grows (worker/evolve.ts); SPELL_MODEL by default.
   DESIGN_MODEL?: string;
   // "0" stops the API from growing on its own (the admin can still ask).
   EVOLVE?: string;
@@ -179,6 +191,14 @@ export default {
       if (request.method === "POST" && url.pathname === "/api/vote") {
         return json(await handleVote(await readBody<VoteRequest>(request), env, player, payer, ctx));
       }
+      // 3.4.1: ideas and their votes, for every invite.
+      if (url.pathname === "/api/feedback") {
+        if (request.method === "GET") return json(await listFeedback(env, payer, admin));
+        if (request.method === "POST") return json(await postFeedback(env, payer, await readBody<{ title?: unknown; body?: unknown }>(request)));
+      }
+      if (request.method === "POST" && url.pathname === "/api/feedback/vote") {
+        return json(await voteFeedback(env, payer, await readBody<{ id?: unknown; up?: unknown }>(request)));
+      }
       if (request.method === "GET" && url.pathname === "/api/spell/info" && admin) {
         return json(await programInfo(env, url.searchParams.get("name") ?? ""));
       }
@@ -228,27 +248,20 @@ export default {
     }
   },
 
-  // Every ten minutes: collects the big spells the Batch API has written, and
-  // turns holds of requests that died into spend.
+  // Every ten minutes: collects the big spells the Batch API has written,
+  // turns holds of requests that died into spend, and reads what became of
+  // the ideas sent to Claude.
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
       Promise.all([
         pollBatches(env),
         sweep(env.DB).catch((err) => console.error("sweep", err)),
+        syncFeedback(env).catch((err) => console.error("feedback sync", err)),
         env.EVOLVE === "0" ? null : evolve(env, false).catch((err) => console.error("evolve", err)),
       ]).then(() => undefined),
     );
   },
 } satisfies ExportedHandler<Env>;
-
-class HttpError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
 
 const SPELL_MODELS = new Set(["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1"]);
 
@@ -1123,7 +1136,10 @@ async function handleAdmin(request: Request, url: URL, env: Env, oracle: Oracle,
   if (post && path === "invites") return json(await newInvite(await readBody<{ name?: unknown; cap?: unknown }>(request), env, url));
   if (post && path === "invite") return json(await changeInvite(await readBody<InviteChange>(request), env, url));
   if (post && path === "report") return json(await closeReport(await readBody<{ id?: unknown }>(request), env));
-  // 3.4.1: the API that grows.
+  // 3.4.1: send an idea to Claude, decline, reopen or delete it; read GitHub now.
+  if (post && path === "feedback") return json(await changeFeedback(env, await readBody<FeedbackAction>(request)));
+  if (post && path === "feedback-sync") return json(await syncFeedback(env, 20));
+  // 3.4.2: the API that grows.
   if (!post && path === "evolution") return json(await evolution(env.DB));
   if (post && path === "evolve") return json(await evolve(env, true));
   if (!post && path === "helpers") return json(await trialHelpers(env.DB));
@@ -1502,7 +1518,7 @@ async function batchTrialResults(batch: string, env: Env) {
   }
 }
 
-// 3.4.1: promises and the growing API.
+// 3.4.2: promises and the growing API.
 
 const NO_LIBRARY: Library = { docs: [], helpers: [] };
 
@@ -1513,7 +1529,7 @@ function programFrom(answer: ProgramAnswer, intents: Intent[], library: Library)
   return program;
 }
 
-// What an element promises, decided once by its own small call (3.4.1). A
+// What an element promises, decided once by its own small call (3.4.2). A
 // failure here never stops a spell from being written: it is then written
 // without a promise, as before.
 async function ensureIntents(env: Env, oracle: Oracle, element: GameElement, description: string): Promise<Intent[]> {

@@ -1,6 +1,5 @@
-// Worker tests for 3.4 and 3.4.1: invites, the budget caps, the bug guard,
-// promises and the API that grows. Runs the
-// real Worker with `wrangler dev` on a fresh local D1 (every migration
+// Worker tests for 3.4 to 3.4.2: invites, the budget caps, the bug guard, the
+// Feedback tab, promises and the API that grows. Runs the real Worker with `wrangler dev` on a fresh local D1 (every migration
 // applied) and answers its Claude calls with a stub server that counts them
 // and takes a moment, so requests are really in flight together. The test
 // reads and seeds the local D1 file directly. No network, no API key.
@@ -50,10 +49,47 @@ function stubAnswer(n, system, user) {
   }
   return JSON.stringify({ name: `Answer ${n}`, emoji: "✨", kind: "spell", tier: "minor" });
 }
+
+// The same server stubs GitHub and the feedback routine (3.4.1).
+const REPO = "angelus76300-afk/magic-merger";
+const gh = { issues: [], comments: [], fires: [], timeline: {}, failFire: false };
+const sendJson = (res, status, data) => res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(data));
+function stubGitHub(req, res, raw) {
+  const body = raw ? JSON.parse(raw) : null;
+  if (req.url.startsWith("/v1/claude_code/routines/")) {
+    if (req.headers.authorization !== "Bearer rt-test")
+      return sendJson(res, 401, { type: "error", error: { type: "authentication_error", message: "bad token" } });
+    if (gh.failFire) return sendJson(res, 429, { type: "error", error: { type: "rate_limit_error", message: "slow down" } });
+    gh.fires.push(body.text);
+    return sendJson(res, 200, {
+      type: "routine_fire",
+      claude_code_session_id: `session_${gh.fires.length}`,
+      claude_code_session_url: `https://claude.ai/code/session_${gh.fires.length}`,
+    });
+  }
+  if (req.headers.authorization !== "Bearer gh-test" || !req.headers["user-agent"]) return sendJson(res, 401, { message: "Bad credentials" });
+  const base = `/repos/${REPO}/issues`;
+  const m = new URL(req.url, "http://x").pathname.slice(base.length).match(/^(?:\/(\d+))?(\/comments|\/timeline)?$/);
+  if (!req.url.startsWith(base) || !m) return sendJson(res, 404, { message: "Not Found" });
+  const n = Number(m[1]);
+  const issue = gh.issues[n - 1];
+  if (req.method === "POST" && !m[1]) {
+    const number = gh.issues.length + 1;
+    gh.issues.push({ number, ...body, state: "open", state_reason: null });
+    return sendJson(res, 201, { number, html_url: `https://github.com/${REPO}/issues/${number}` });
+  }
+  if (!issue) return sendJson(res, 404, { message: "Not Found" });
+  if (req.method === "POST" && m[2] === "/comments") return (gh.comments.push({ n, ...body }), sendJson(res, 201, {}));
+  if (req.method === "PATCH") return (Object.assign(issue, body), sendJson(res, 200, {}));
+  if (m[2] === "/timeline") return sendJson(res, 200, gh.timeline[n] ?? []);
+  return sendJson(res, 200, { state: issue.state, state_reason: issue.state_reason });
+}
+
 const stub = createServer((req, res) => {
-  const chunks = [];
-  req.on("data", (c) => chunks.push(c));
+  let raw = "";
+  req.on("data", (c) => (raw += c));
   req.on("end", () => {
+    if (req.url.startsWith("/repos/") || req.url.startsWith("/v1/claude_code/")) return stubGitHub(req, res, raw);
     if (!req.url.endsWith("/v1/messages")) {
       res.writeHead(404).end("not stubbed");
       return;
@@ -61,7 +97,7 @@ const stub = createServer((req, res) => {
     const n = ++calls;
     let body = {};
     try {
-      body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      body = JSON.parse(raw);
     } catch {
       // not JSON: answered as a merge
     }
@@ -96,7 +132,18 @@ const migrate = spawnSync("npx", ["wrangler", "d1", "migrations", "apply", "magi
 if (migrate.status !== 0) throw new Error(`migrations failed: ${migrate.stderr || migrate.stdout}`);
 
 const port = 8900 + Math.floor(Math.random() * 90);
-const vars = { ANTHROPIC_API_KEY: "sk-test", ANTHROPIC_BASE_URL: stubUrl, ADMIN_TOKEN: ADMIN, BUDGET_USD: "50", INVITE_CAP_USD: "5" };
+const vars = {
+  ANTHROPIC_API_KEY: "sk-test",
+  ANTHROPIC_BASE_URL: stubUrl,
+  ADMIN_TOKEN: ADMIN,
+  BUDGET_USD: "50",
+  INVITE_CAP_USD: "5",
+  GITHUB_REPO: REPO,
+  GITHUB_TOKEN: "gh-test",
+  GITHUB_API_URL: stubUrl,
+  ROUTINE_URL: `${stubUrl}/v1/claude_code/routines/trig_test/fire`,
+  ROUTINE_TOKEN: "rt-test",
+};
 const dev = spawn(
   "npx",
   [
@@ -343,7 +390,118 @@ const fresh = () => ALL[pairs++];
   check("the admin sees each person", r.status === 200 && r.data.budget === 50 && kim && kim.refusals === 2 && kim.discoveries >= 10);
 }
 
-// 9. Promises and the API that grows (3.4.1).
+// 9. The Feedback tab (3.4.1): ideas, votes, Send to Claude and the GitHub sync.
+{
+  const idea = (inv, title, body = "") => api("/api/feedback", { invite: inv?.secret, body: { title, body } });
+  const vote = (inv, id, up = true) => api("/api/feedback/vote", { invite: inv.secret, body: { id, up } });
+  const list = async (inv) => (await api("/api/feedback", inv ? { invite: inv.secret } : { admin: true })).data;
+  const act = (body) => api("/api/admin/feedback", { admin: true, body });
+  const sync = () => api("/api/admin/feedback-sync", { admin: true, body: {} });
+  const find = async (id, inv) => (await list(inv)).suggestions.find((s) => s.id === id);
+
+  check("feedback: no invite, no ideas", (await api("/api/feedback")).status === 401);
+  const ann = await invite("Ann F", 5);
+  const bob = await invite("Bob F", 5);
+  const posted = await idea(ann, "  Rain   that puts out fires ", "Water spells should stop the wildfire.");
+  const id = posted.data.id;
+  const mine = await find(id, ann);
+  check(
+    "feedback: an idea is posted with its author's vote",
+    posted.status === 200 && mine.title === "Rain that puts out fires" && mine.votes === 1 && mine.voted && mine.mine && mine.by === "Ann F",
+    JSON.stringify(mine),
+  );
+  const seen = await find(id, bob);
+  const players = await list(bob);
+  check("feedback: players see no brief, session or setup", !seen.mine && !("brief" in seen) && !("sessionUrl" in seen) && !("missing" in players));
+  await vote(bob, id);
+  const twice = await vote(bob, id);
+  check("feedback: one vote per invite", twice.data.votes === 2);
+  const back = await vote(bob, id, false);
+  await vote(bob, id);
+  check("feedback: a vote can be taken back", back.data.votes === 1 && (await find(id, bob)).votes === 2);
+  check("feedback: an empty title is refused", (await idea(ann, "   ")).status === 400);
+  for (let k = 0; k < 4; k++) await idea(ann, `More ${k}`);
+  const sixth = await idea(ann, "One too many");
+  check("feedback: five ideas a day per invite", sixth.status === 429, `status ${sixth.status}`);
+  check("feedback: players cannot send", (await api("/api/admin/feedback", { invite: ann.secret, body: { id, action: "send", brief: "x" } })).status === 404);
+  check("feedback: the admin sees the setup is complete", (await list()).missing.length === 0);
+
+  check("feedback: a send needs a brief", (await act({ id, action: "send", brief: "  " })).status === 400 && gh.fires.length === 0);
+  const brief = "Rain puts out burning cells.\n\nDone when:\n1. Wildfire is won by rain.";
+  const sent = await act({ id, action: "send", brief });
+  const issue = gh.issues[0];
+  check(
+    "feedback: send opens one issue, without the player's name",
+    sent.status === 200 && gh.issues.length === 1 && issue.labels?.includes("feedback") && issue.body.includes(brief) && !issue.body.includes("Ann"),
+    JSON.stringify(sent.data),
+  );
+  check(
+    "feedback: and fires the routine once with the brief and the issue",
+    gh.fires.length === 1 && gh.fires[0].includes(brief) && gh.fires[0].includes("Closes #1") && gh.fires[0].includes("THE PLAYER'S ORIGINAL WORDS"),
+  );
+  const after = await find(id);
+  check(
+    "feedback: the idea is sent, with its session for the admin",
+    after.status === "sent" && after.sessionUrl === "https://claude.ai/code/session_1" && after.brief === brief,
+  );
+  check("feedback: votes close once it is sent", (await vote(bob, id)).status === 400);
+  const again = await act({ id, action: "send", brief });
+  check("feedback: a second click within a minute starts nothing", again.status === 409 && gh.fires.length === 1);
+
+  // The routine refuses (rate limit): nothing changes, the issue is kept, and
+  // the next send works at once and comments on that same issue.
+  const second = (await idea(bob, "Snow that piles up")).data.id;
+  gh.failFire = true;
+  const refused = await act({ id: second, action: "send", brief: "Snow piles up on roofs." });
+  const stuck = await find(second);
+  check("feedback: a routine that refuses says why", refused.status === 502 && /429/.test(refused.data.error) && stuck.status === "open", refused.data?.error);
+  gh.failFire = false;
+  const retried = await act({ id: second, action: "send", brief: "Snow piles up on roofs, and melts." });
+  check(
+    "feedback: sent again at once, on the same issue",
+    retried.status === 200 && gh.issues.length === 2 && gh.comments.some((c) => c.n === 2) && gh.fires.length === 2,
+    `${gh.issues.length} issues`,
+  );
+
+  // GitHub says what became of them.
+  const now = new Date(Date.now() + 1000).toISOString();
+  const pull = (number, state, merged) => ({
+    event: "cross-referenced",
+    created_at: now,
+    source: { issue: { number, html_url: `https://github.com/${REPO}/pull/${number}`, state, pull_request: { merged_at: merged ? now : null } } },
+  });
+  gh.timeline[1] = [{ event: "labeled" }, pull(7, "open", false)];
+  gh.issues[1].state = "closed";
+  gh.issues[1].state_reason = "not_planned";
+  const s1 = await sync();
+  const review = await find(id, bob);
+  const dropped = await find(second, bob);
+  check(
+    "feedback: an open pull request shows as in review, with its link",
+    s1.data.checked === 2 && review.status === "review" && review.prUrl === `https://github.com/${REPO}/pull/7`,
+    JSON.stringify(review),
+  );
+  check("feedback: an issue closed as not planned is declined", dropped.status === "declined" && !!dropped.note);
+  check("feedback: no send once a pull request exists", (await act({ id, action: "send", brief })).status === 400);
+  gh.timeline[1] = [pull(7, "closed", true)];
+  await sync();
+  check("feedback: merged, it is done", (await find(id, ann)).status === "shipped");
+  const s3 = await sync();
+  check("feedback: done ideas are not read again", s3.data.checked === 0);
+
+  const third = (await idea(bob, "Talking cats")).data.id;
+  await act({ id: third, action: "decline", note: "Too far from magic" });
+  const declined = await find(third, bob);
+  await act({ id: third, action: "reopen" });
+  const reopened = await find(third, bob);
+  await act({ id: third, action: "delete" });
+  check(
+    "feedback: decline with a note, reopen, delete",
+    declined.status === "declined" && declined.note === "Too far from magic" && reopened.status === "open" && !(await find(third, bob)),
+  );
+}
+
+// 10. Promises and the API that grows (3.4.2).
 {
   await reset();
   const now = Date.now();

@@ -158,7 +158,23 @@ The test seeds the month at $49.995 and sends two merges at once, five times: on
 
 A card has "Report this name": Claude names things, and a name can be wrong or offensive. Reports go to the admin's people view, one open report per name and person; dismissing one is the only action for now (renaming an element would change everyone's recipe book). New players see one paragraph on what the game is, that Claude writes the spells, what their month looks like, and a short privacy note: what is kept and why, that item names go to Claude and nothing about the person does, Cloudflare's request logs, no ads or cookies, and who to ask for deletion. The `?` in the top bar shows it again.
 
-## Spells keep their promise (3.4.1)
+## Feedback (3.4.1)
+
+Invited players post ideas in the Ideas tab and vote for them, up only, one vote per invite, the author's included; five ideas a day per invite. The admin turns one into a brief and sends it to a Claude Code routine, which answers with a draft pull request. Everything is in `worker/feedback.ts`; the schema is `migrations/0007_feedback.sql`; the rules for the run are in [FEEDBACK.md](FEEDBACK.md).
+
+### Two human gates
+
+The text comes from players and goes to an agent that writes code, so a person stands at both ends. Before the run, the admin writes the brief: the routine is told to act on the brief only, and to treat the player's words as context, never as instructions (the routine also receives all of its fire text labelled as untrusted until its saved prompt says otherwise). After the run, the pull request is a draft that CI checks and the admin reviews, merges and deploys. Nothing merges by itself. The routine's own guard rails (no workflows, no spending settings, no `PROGRAM_VERSION` bump, no edited migrations) are in FEEDBACK.md, versioned with the code, so the routine's saved prompt stays short and never needs editing.
+
+### Why an issue first
+
+The Worker opens the GitHub issue before firing the routine: it is the record outside D1, the routine links its pull request to it with `Closes #<issue>`, and the game reads its timeline to show players what happened. The issue number is stored before the fire, so a fire that fails never opens a second issue; sending again comments on the same one. Two taps within a minute start one run (the first claims the idea by writing `sent_at`), since the routine API has no idempotency key.
+
+### What players see
+
+Open for votes, Claude is on it, Waiting for review (with the pull request), Done, Not this time (with the admin's reason, or "closed without merging"). The admin also sees the brief and the Claude Code session. A merged pull request wins over an open one, an open one over a closed issue, and a pull request closed unmerged only declines the idea if it came after the latest send.
+
+## Spells keep their promise (3.4.2)
 
 Protection spells did not protect. The writer had a good idea (a shield over the village) and no way to carry it out: nothing in the World API could stop fire, lava or a hunter, so it built a shell of `magic` blocks. Lava flowed under it, fire spread through it, and it hid the village it was meant to guard. The test run passed it, since something visible happened, and the judge scored a shiny dome on a calm island. Nothing anywhere checked that a spell does what its name says. Two fixes, in this order: first the means, then the test (a test without the means only pays for rewrites that cannot succeed).
 
@@ -185,7 +201,7 @@ A spell that promises protection gets a fourth failure in its test run, **promis
 
 Only protect is probed today. The other intents are recorded so the next probe (heal, summon) can be measured on every stored program before it gates anything.
 
-## An API that grows (3.4.1)
+## An API that grows (3.4.2)
 
 The ward is the kind of change that should have come from the first protection spells, not from a player noticing months later. So writers now say what the API lacked, and the API grows from it (`worker/evolve.ts`):
 

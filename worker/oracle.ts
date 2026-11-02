@@ -136,9 +136,9 @@ export interface Oracle {
   spell(request: SpellRequest): Promise<ProgramAnswer>;
   repair(name: string, tier: Tier, code: string, error: string): Promise<ProgramAnswer>;
   judge(request: JudgeRequest): Promise<JudgeAnswer>;
-  // What an element promises, from its name and grimoire entry (3.4.1).
+  // What an element promises, from its name and grimoire entry (3.4.2).
   intents(name: string, kind: ElementKind, description: string): Promise<Intent[]>;
-  // How the API grows to give spells what they lacked (3.4.1).
+  // How the API grows to give spells what they lacked (3.4.2).
   design(request: DesignRequest): Promise<DesignAnswer>;
   // Big spells are written through the Batch API, at half price, within a
   // day (usually minutes). Returns the batch id.

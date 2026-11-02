@@ -11,7 +11,7 @@ import { TICK, generateWorld, type World } from "./world";
 // second by second, with the same island left alone (the control). A river
 // that flows or a villager who walks is in both, so only what the spell did
 // shows up. Three outcomes fail: a crash, nothing visible in the world, and
-// an island wiped out by a spell that is not cosmic. A fourth since 3.4.1: a
+// an island wiped out by a spell that is not cosmic. A fourth since 3.4.2: a
 // spell that breaks its promise (shared/promises.ts), such as a protection
 // that does not protect.
 //
@@ -336,7 +336,7 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
   return { ok: true, problem: null, detail, stats };
 }
 
-// The protection probe (3.4.1). The spell is cast on the village; three seconds
+// The protection probe (3.4.2). The spell is cast on the village; three seconds
 // later a threat hits the same spot. What its reach covered at the cast (the
 // houses, and the villagers by their health) is counted nine seconds later,
 // against the same threat with no spell and against no threat at all. Each

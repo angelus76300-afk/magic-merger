@@ -1,4 +1,4 @@
--- 3.4.1: what each element promises, and an API that grows from what spells lacked.
+-- 3.4.2: what each element promises, and an API that grows from what spells lacked.
 
 -- One or two intents, as "protect" or "protect,harm" (shared/promises.ts).
 -- Decided once, from the name and grimoire entry, before a program is written.

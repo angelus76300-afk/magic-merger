@@ -1,4 +1,4 @@
-// The API's growth, the part the Worker cannot do (3.4.1, worker/evolve.ts).
+// The API's growth, the part the Worker cannot do (3.4.2, worker/evolve.ts).
 //
 // 1. Helpers the designer wrote are trials until their example program passes
 //    the test run (src/sim/check.ts, with the promise of the spells that

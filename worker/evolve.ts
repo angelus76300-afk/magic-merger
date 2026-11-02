@@ -3,7 +3,7 @@ import { syntaxError } from "../shared/spellcode";
 import type { DesignAnswer } from "./oracle";
 import type { LibraryDoc } from "./prompts";
 
-// An API that grows from what spells lacked (3.4.1).
+// An API that grows from what spells lacked (3.4.2).
 //
 // 1. Every program's writer says, in one line, what the World API lacked for
 //    it (`missing` in the spell answer). Each such line is a gap.

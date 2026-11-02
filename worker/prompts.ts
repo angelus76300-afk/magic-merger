@@ -285,7 +285,7 @@ export const SPELL_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-// What a spell promises (3.4.1), asked of the small model from the name and
+// What a spell promises (3.4.2), asked of the small model from the name and
 // grimoire entry alone, before any program exists: the writer of the program
 // never chooses what it is tested on.
 export const INTENT_SYSTEM = `Magic Merger is a crafting game about magic. Items are cast or placed on a small island of villages, forests, lakes and hills. Say what this item promises to do, from its name and grimoire entry: one main intent, and a second only if it truly does both.
@@ -312,7 +312,7 @@ export function intentUserMessage(name: string, kind: string, description: strin
   return `${kind === "artifact" ? "Artifact" : "Spell"}: ${name}\nGrimoire entry: ${description}`;
 }
 
-// The API designer (3.4.1). Writers report what the API lacked; when several
+// The API designer (3.4.2). Writers report what the API lacked; when several
 // spells lack the same thing, the big model decides how the API grows.
 export const DESIGN_SYSTEM = `You maintain the World API of Magic Merger, a crafting game about magic in which every spell is a short JavaScript program written by a model from the API below. Writers report the abilities they lacked, one spell a line with its number. Find the one ability that the most spells lacked, at least three different spells, list in answers the numbers of the lines it answers, and decide how the API grows, one of three ways (or none, with empty answers, when no ability is shared by three spells):
 

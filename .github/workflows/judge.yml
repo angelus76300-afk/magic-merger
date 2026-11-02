@@ -4,7 +4,7 @@
 # secrets: MM_URL (the game's address) and MM_TOKEN (its ADMIN_TOKEN).
 # Without them the job does nothing.
 #
-# First, the API's growth (3.4.1, scripts/evolve-runner.ts): helpers the
+# First, the API's growth (3.4.2, scripts/evolve-runner.ts): helpers the
 # designer wrote are tested in Node, and engine proposals become issues
 # labelled api-gap. No Claude call.
 name: Judge
