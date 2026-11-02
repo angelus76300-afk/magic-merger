@@ -1,4 +1,5 @@
-import { addGas } from "./physics";
+import { addGas } from "./cells";
+import { FACE_STEPS, keyCell, keyLevel, keyOffset, keyX, keyY } from "./voxelkey";
 import { C, F, S } from "./materials";
 import type { World } from "./world";
 
@@ -49,13 +50,6 @@ function burnable(kind: number): boolean {
   return kind === VK.WOOD || kind === VK.LEAF;
 }
 
-// Decor keys: ((y * 1024 + x) * 512 + level + 128). Level is in voxels, the
-// same unit as the terrain's column tops (half a height unit each).
-export function keyCell(key: number): { x: number; y: number; level: number } {
-  const cell = Math.floor(key / 512);
-  return { x: cell % 1024, y: Math.floor(cell / 1024), level: (key % 512) - 128 };
-}
-
 function top(world: World, x: number, y: number): number {
   return Math.round(world.height[y * world.w + x] * 0.5);
 }
@@ -89,7 +83,7 @@ const N6 = [
 ] as const;
 
 // Key offsets for the six neighbors.
-const D = (dx: number, dy: number, dl: number) => (dy * 1024 + dx) * 512 + dl;
+const D = keyOffset;
 
 export function stepVoxels(world: World, dt: number): void {
   const s = world.voxels;
@@ -127,16 +121,15 @@ function findUnsupported(world: World): void {
   const held = new Set<number>();
   const stack: number[] = [];
   for (const [key, v] of decor) {
-    const cell = Math.floor(key / 512);
-    const level = (key % 512) - 128;
-    const x = cell % 1024;
-    const y = (cell - x) / 1024;
+    const level = keyLevel(key);
+    const x = keyX(key);
+    const y = keyY(key);
     if (floats(voxelKind(v)) || level <= Math.round(height[y * w + x] * 0.5)) {
       held.add(key);
       stack.push(key);
     }
   }
-  const steps = [1, -1, 512, -512, 512 * 1024, -512 * 1024];
+  const steps = FACE_STEPS;
   while (stack.length) {
     const key = stack.pop()!;
     for (let d = 0; d < 6; d++) {

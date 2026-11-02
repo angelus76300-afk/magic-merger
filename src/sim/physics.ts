@@ -1,5 +1,6 @@
 import { C, F, G, S } from "./materials";
 import type { World } from "./world";
+import { addGas } from "./cells";
 import { igniteVoxels, stepVoxels } from "./voxels";
 
 // The rules of the land. Spells set them in motion; these keep them going:
@@ -374,12 +375,6 @@ function stepGas(world: World, dt: number): void {
       world.place(i, "water", 0.08);
     }
   }
-}
-
-export function addGas(world: World, i: number, type: number, amount: number): void {
-  if (world.gas[i] !== type && world.gasAmt[i] > amount) return;
-  world.gas[i] = type;
-  world.gasAmt[i] = Math.min(1, world.gasAmt[i] + amount);
 }
 
 // Life comes back slowly: grass creeps over bare dirt, forests reseed, ash

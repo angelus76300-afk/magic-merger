@@ -1,7 +1,7 @@
 import { C, F, G, S } from "./materials";
 import { explode, forDisc } from "./physics";
 import { lull, social, stepLandmarks, type Mood } from "./social";
-import { daylight } from "./voxel/daylight";
+import { daylight } from "./daylight";
 import type { World } from "./world";
 
 // What a spell-made creature does, declared rather than coded, so even a

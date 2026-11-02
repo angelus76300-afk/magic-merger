@@ -1,7 +1,8 @@
 import { makeCreature, populate } from "./creatures";
 import { C, F, G, S } from "./materials";
 import { Rng } from "./noise";
-import { addGas, forDisc } from "./physics";
+import { addGas } from "./cells";
+import { forDisc } from "./physics";
 import { TICK, buildVillage, plainWorld, plantForest, type World } from "./world";
 
 // Challenges: hand-made islands with one problem and a way to win. They run

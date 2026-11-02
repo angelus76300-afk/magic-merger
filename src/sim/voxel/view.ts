@@ -30,12 +30,14 @@ import { kindOf } from "../creatures";
 import { BUILTIN, C, F, S } from "../materials";
 import { envelope, type Body, type Visuals } from "../visuals";
 import type { World } from "../world";
-import { keyCell, shines, voxelColor, voxelKind } from "../voxels";
+import { shines, voxelColor, voxelKind } from "../voxels";
+import { keyCell } from "../voxelkey";
 import { bodyGeometry } from "./bodies";
-import { daylight } from "./daylight";
+import { daylight } from "../daylight";
 import { MODELS, geometryOf } from "./models";
 import { OrbitCamera } from "./orbit";
 import { CHUNK, Terrain, columnTop, surfaceY } from "./terrain";
+import { hexColor, scaleColor } from "../colors";
 
 // Colors are authored as they should look, with lighting baked in: no color
 // management, no conversion, what is written is what is shown.
@@ -434,7 +436,7 @@ export class VoxelView {
       this.m.makeScale(head, head, head);
       this.m.setPosition(p.x + (c.dead ? size * 0.6 : 0), p.y + bob + (c.dead ? 0 : size * tall), p.z);
       this.headMesh.setMatrixAt(n, this.m);
-      const headColor = c.kind === "villager" ? (c.dead ? 0x777070 : 0xf1c27d) : c.kind === "golem" ? 0x9dfcff : scaleHex(color, 1.1);
+      const headColor = c.kind === "villager" ? (c.dead ? 0x777070 : 0xf1c27d) : c.kind === "golem" ? 0x9dfcff : scaleColor(color, 1.1);
       this.headMesh.setColorAt(n, this.col.setHex(c.fear > 0 && Math.floor(time * 4) % 2 === 0 ? 0xffe066 : c.sleep > 0 ? 0xa9c8ff : headColor));
       const mood = c.dead ? null : (c.data.mood as string | null | undefined);
       if (mood && marks < 900) {
@@ -740,12 +742,12 @@ export class VoxelView {
     }
     for (const t of visuals.tints) {
       ctx.globalAlpha = t.alpha * envelope(t.t, t.dur);
-      ctx.fillStyle = `#${t.color.toString(16).padStart(6, "0")}`;
+      ctx.fillStyle = hexColor(t.color);
       ctx.fillRect(0, 0, this.cssW, this.cssH);
     }
     if (visuals.flash > 0) {
       ctx.globalAlpha = Math.min(1, visuals.flash);
-      ctx.fillStyle = `#${visuals.flashColor.toString(16).padStart(6, "0")}`;
+      ctx.fillStyle = hexColor(visuals.flashColor);
       ctx.fillRect(0, 0, this.cssW, this.cssH);
     }
     ctx.globalAlpha = 1;
@@ -915,10 +917,4 @@ function pointCloud(capacity: number, glow: boolean, texture: CanvasTexture): Po
 function withColors(mesh: InstancedMesh): void {
   const white = new Color(0xffffff);
   for (let k = 0; k < mesh.instanceMatrix.count; k++) mesh.setColorAt(k, white);
-}
-
-function scaleHex(c: number, k: number): number {
-  return (
-    (Math.min(255, Math.round(((c >> 16) & 255) * k)) << 16) | (Math.min(255, Math.round(((c >> 8) & 255) * k)) << 8) | Math.min(255, Math.round((c & 255) * k))
-  );
 }

@@ -3,6 +3,7 @@ import { C, F, G, MaterialTable, type Layer } from "./materials";
 import { Rng, fbm, valueNoise } from "./noise";
 import { Particles } from "./particles";
 import { VoxelState, packVoxel, VK } from "./voxels";
+import { keyX, keyY, voxelKey } from "./voxelkey";
 import type { Landmark, Presence } from "./social";
 
 export const TICK = 1 / 30;
@@ -132,13 +133,9 @@ export class World {
 
   static readonly MAX_DECOR = 20000;
 
-  decorKey(x: number, y: number, level: number): number {
-    return ((Math.round(y) * 1024 + Math.round(x)) * 512 + (Math.round(level) + 128)) >>> 0;
-  }
-
   setVoxel(x: number, y: number, level: number, color: number | null, kind: number = VK.STONE): void {
     if (!this.inside(Math.round(x), Math.round(y)) || level < -60 || level > 380) return;
-    const key = this.decorKey(x, y, level);
+    const key = voxelKey(x, y, level);
     if (color === null) {
       if (this.decor.delete(key)) {
         this.decorVersion++;
@@ -154,9 +151,8 @@ export class World {
   // Removes free standing voxels whose cell lies within r of (x, y).
   clearVoxels(x: number, y: number, r: number): void {
     for (const key of this.decor.keys()) {
-      const cell = Math.floor(key / 512);
-      const cx = cell % 1024;
-      const cy = Math.floor(cell / 1024);
+      const cx = keyX(key);
+      const cy = keyY(key);
       if ((cx - x) ** 2 + (cy - y) ** 2 <= r * r) this.decor.delete(key);
     }
     this.decorVersion++;
@@ -267,7 +263,7 @@ export function generateWorld(w: number, h: number, seed: number): World {
 }
 
 function carveRiver(world: World, rng: Rng): void {
-  const { w, h, height } = world;
+  const { w, height } = world;
   let best = 0;
   for (let k = 0; k < 200; k++) {
     const i = rng.int(0, world.n - 1);

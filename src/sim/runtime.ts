@@ -3,13 +3,16 @@ import { TIER_REACH, type Tier } from "../../shared/tiers";
 import { KINDS, kindOf, makeCreature, maxHp, type Behavior, type Creature, type CreatureKind } from "./creatures";
 import { BUILTIN, C, F, G, LAYERS, type Layer } from "./materials";
 import { valueNoise } from "./noise";
-import { addGas, explode, forDisc, quake } from "./physics";
+import { addGas } from "./cells";
+import { explode, forDisc, quake } from "./physics";
 import type { ParticleOptions } from "./particles";
 import { BODY_LOOKS, Visuals, type Body, type BodyLook, type DrawFn } from "./visuals";
 import { TICK, World } from "./world";
 import { Builder, arch, island, spire, tower, tree, treeDefaults, wall } from "./structures";
 import { VK, igniteVoxels, kindId } from "./voxels";
+import { voxelKey } from "./voxelkey";
 import { type Landmark, type Presence } from "./social";
+import { hexColor, toColor } from "./colors";
 
 // Runs spell programs. A program is JavaScript that defines `spell`:
 //
@@ -612,16 +615,6 @@ function behaviorOf(k: Record<string, unknown>): Behavior | undefined {
 
 function num(v: unknown, min: number, max: number, fallback: number): number {
   return typeof v === "number" && Number.isFinite(v) ? Math.max(min, Math.min(max, v)) : fallback;
-}
-
-// Accepts "#ff8800", "#f80", 0xff8800 or "orange"-free hex only, by design.
-export function toColor(v: unknown): number | null {
-  if (typeof v === "number" && Number.isFinite(v)) return v & 0xffffff;
-  if (typeof v !== "string") return null;
-  const s = v.trim();
-  if (/^#[0-9a-f]{6}$/i.test(s)) return parseInt(s.slice(1), 16);
-  if (/^#[0-9a-f]{3}$/i.test(s)) return parseInt([...s.slice(1)].map((c) => c + c).join(""), 16);
-  return null;
 }
 
 function colorOr(v: unknown, fallback: number): number {
@@ -1319,7 +1312,7 @@ export class SpellApi {
     let target = Math.round(w.height[i] * 0.5);
     const cx = Math.round(x);
     const cy = Math.round(y);
-    for (let l = target + 1; l < target + 140; l++) if (w.decor.has(w.decorKey(cx, cy, l))) target = l + 1;
+    for (let l = target + 1; l < target + 140; l++) if (w.decor.has(voxelKey(cx, cy, l))) target = l + 1;
     if (w.depth[i] > 0.05) target = Math.max(target, (w.height[i] + w.depth[i]) * 0.5);
     const path = (x0: number, y0: number, l0: number, x1: number, y1: number, l1: number, jag: number) => {
       const pts = [{ x: x0, y: y0, l: l0 }];
@@ -1431,8 +1424,8 @@ export class SpellApi {
   }
   // A rotating magic circle on the ground.
   circle(x: number, y: number, r: number, color: string | number = "#b48cff", color2: string | number = "#f4d58d", seconds = 1.5) {
-    const c1 = `#${colorOr(color, 0xb48cff).toString(16).padStart(6, "0")}`;
-    const c2 = `#${colorOr(color2, 0xf4d58d).toString(16).padStart(6, "0")}`;
+    const c1 = hexColor(colorOr(color, 0xb48cff));
+    const c2 = hexColor(colorOr(color2, 0xf4d58d));
     const dur = num(seconds, 0.1, 30, 1.5);
     this.draw(
       (ctx, t) => {

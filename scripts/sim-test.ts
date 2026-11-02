@@ -12,7 +12,8 @@ import { Runtime } from "../src/sim/runtime";
 import { loadWorld, saveWorld } from "../src/sim/save";
 import { SCENARIOS } from "../src/sim/scenarios";
 import { TICK, generateWorld, type World } from "../src/sim/world";
-import { VK, floats, keyCell, voxelKind } from "../src/sim/voxels";
+import { VK, floats, voxelKind } from "../src/sim/voxels";
+import { keyCell } from "../src/sim/voxelkey";
 
 // Seeded randomness, so a check gives the same answer on every run.
 function seed(n: number): void {

@@ -1,3 +1,5 @@
+import { hexColor, mixColor } from "./colors";
+
 // The island's day: a six minute cycle, mostly day, with a warm dusk, a
 // blue night and a pink dawn. Returns how to tint the unlit materials and the
 // sky; fire, lava, glowing things and spell effects keep their own light.
@@ -41,18 +43,7 @@ export function daylight(time: number): Daylight {
     g: lerp(a.tint[1], b.tint[1]),
     b: lerp(a.tint[2], b.tint[2]),
     night: lerp(a.night, b.night),
-    skyTop: hex(mix(a.top, b.top, s)),
-    skyLow: hex(mix(a.low, b.low, s)),
+    skyTop: hexColor(mixColor(a.top, b.top, s)),
+    skyLow: hexColor(mixColor(a.low, b.low, s)),
   };
-}
-
-function mix(a: number, b: number, k: number): number {
-  const r = ((a >> 16) & 255) * (1 - k) + ((b >> 16) & 255) * k;
-  const g = ((a >> 8) & 255) * (1 - k) + ((b >> 8) & 255) * k;
-  const bl = (a & 255) * (1 - k) + (b & 255) * k;
-  return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(bl);
-}
-
-function hex(c: number): string {
-  return `#${c.toString(16).padStart(6, "0")}`;
 }

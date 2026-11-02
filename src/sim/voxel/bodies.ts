@@ -1,6 +1,7 @@
 import type { BufferGeometry } from "three";
 import type { BodyLook } from "../visuals";
 import { geometryOf, type Box } from "./models";
+import { mixColor } from "../colors";
 
 // Spell bodies built from small cubes, so a fireball or a vortex belongs to
 // the same voxel world as the land. Each look is a set of boxes around the
@@ -26,11 +27,6 @@ export function bodyGeometry(look: BodyLook, c1: number, c2: number): BufferGeom
 }
 
 const cube = (x: number, y: number, z: number, s: number, color: number): Box => ({ x: x - s / 2, y: y - s / 2, z: z - s / 2, w: s, h: s, d: s, color });
-
-function mix(a: number, b: number, t: number): number {
-  const ch = (s: number) => Math.round(((a >> s) & 255) * (1 - t) + ((b >> s) & 255) * t);
-  return (ch(16) << 16) | (ch(8) << 8) | ch(0);
-}
 
 // Deterministic jitter, so a look is the same shape every time.
 function hash(n: number): number {
@@ -65,7 +61,7 @@ export function bodyBoxes(look: BodyLook, c1: number, c2: number): Box[] {
         for (let x = -r; x <= r; x += 0.3)
           for (let z = -r; z <= r; z += 0.3)
             if (x * x + z * z <= r * r && hash(l * 31 + x * 7 + z * 13) > 0.15)
-              boxes.push(cube(x, y, z, 0.3, mix(c2, c1, Math.min(1, l / 5 + Math.hypot(x, z) * 0.4))));
+              boxes.push(cube(x, y, z, 0.3, mixColor(c2, c1, Math.min(1, l / 5 + Math.hypot(x, z) * 0.4))));
       }
       break;
     }
@@ -91,7 +87,7 @@ export function bodyBoxes(look: BodyLook, c1: number, c2: number): Box[] {
         const t = k / 70;
         const a = t * Math.PI * 9;
         const r = 0.15 + t * 0.95;
-        boxes.push(cube(Math.cos(a) * r, -1 + t * 2, Math.sin(a) * r, 0.14 + t * 0.14, mix(c2, c1, t)));
+        boxes.push(cube(Math.cos(a) * r, -1 + t * 2, Math.sin(a) * r, 0.14 + t * 0.14, mixColor(c2, c1, t)));
       }
       break;
     }
@@ -127,7 +123,7 @@ export function bodyBoxes(look: BodyLook, c1: number, c2: number): Box[] {
       break;
     default: {
       // Orb: a voxel ball, its color deepening toward the edge, with sparks.
-      ball(boxes, 1, 0.25, (x, y, z, d) => (hash(x * 13 + y * 7 + z * 3) < 0.08 ? 0xffffff : mix(c2, c1, Math.min(1, d * 1.1))));
+      ball(boxes, 1, 0.25, (x, y, z, d) => (hash(x * 13 + y * 7 + z * 3) < 0.08 ? 0xffffff : mixColor(c2, c1, Math.min(1, d * 1.1))));
     }
   }
   return boxes;
