@@ -375,7 +375,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
 function others(world: World, c: Creature, r: number, kinds: string[]): Creature | null {
   let best: Creature | null = null;
   let bestD = r;
-  for (const o of world.creatures) {
+  for (const o of world.crowd.near(world, c.x, c.y, r)) {
     if (o === c || o.dead) continue;
     if (kinds.length ? !kinds.includes(o.kind) : o.kind === c.kind) continue;
     const d = Math.hypot(o.x - c.x, o.y - c.y);
@@ -471,7 +471,7 @@ function sideEffects(world: World, c: Creature, ai: Behavior, i: number, onGroun
   if (!ai.aura || world.tick % 8 !== c.id % 8) return;
   const r = ai.auraRadius;
   const p = ai.auraPower;
-  for (const o of world.creatures) {
+  for (const o of world.crowd.near(world, c.x, c.y, r)) {
     if (o === c || o.dead || Math.abs(o.x - c.x) > r || Math.abs(o.y - c.y) > r || Math.hypot(o.x - c.x, o.y - c.y) > r) continue;
     switch (ai.aura) {
       case "heal":
@@ -544,21 +544,27 @@ function deathOf(world: World, c: Creature, what: string): void {
   } else forDisc(world, c.x, c.y, 2, (j) => world.place(j, what, 0.6));
 }
 
+// Where a creature looks for danger: eight directions, at 1.5 and 3 cells.
+// Each entry is the offset, then the push away from it (closer pushes harder).
+const DANGER_PROBES: readonly (readonly [number, number, number, number])[] = [1.5, 3].flatMap((r) =>
+  Array.from({ length: 8 }, (_, a) => {
+    const ang = (a / 8) * Math.PI * 2;
+    return [Math.cos(ang) * r, Math.sin(ang) * r, -Math.cos(ang) / r, -Math.sin(ang) / r] as const;
+  }),
+);
+
 function senseDanger(world: World, c: Creature): { x: number; y: number } | null {
   let dx = 0;
   let dy = 0;
   let found = false;
-  for (let a = 0; a < 8; a++) {
-    const ang = (a / 8) * Math.PI * 2;
-    for (const r of [1.5, 3]) {
-      const x = Math.round(c.x + Math.cos(ang) * r);
-      const y = Math.round(c.y + Math.sin(ang) * r);
-      if (!world.inside(x, y)) continue;
-      if (danger(world, y * world.w + x)) {
-        dx -= Math.cos(ang) / r;
-        dy -= Math.sin(ang) / r;
-        found = true;
-      }
+  for (const [ox, oy, px, py] of DANGER_PROBES) {
+    const x = Math.round(c.x + ox);
+    const y = Math.round(c.y + oy);
+    if (!world.inside(x, y)) continue;
+    if (danger(world, y * world.w + x)) {
+      dx += px;
+      dy += py;
+      found = true;
     }
   }
   return found ? { x: dx, y: dy } : null;

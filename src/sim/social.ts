@@ -182,7 +182,7 @@ function see(world: World, c: Creature, k: CreatureKind, kindOf: (c: Creature) =
   let lureD = sense;
   let allies = 0;
   // Creatures: hunters, scary ones, lures, and how many friends stand close.
-  for (const o of world.creatures) {
+  for (const o of world.crowd.near(world, c.x, c.y, Math.max(sense, 12))) {
     if (o === c || o.dead) continue;
     const dx = o.x - c.x;
     const dy = o.y - c.y;
@@ -292,7 +292,7 @@ export function stepLandmarks(world: World, maxHp: (c: Creature) => number, fire
   if (!world.landmarks.length || world.tick % 8 !== 0) return;
   for (const l of world.landmarks) {
     if (!l.aura) continue;
-    for (const o of world.creatures) {
+    for (const o of world.crowd.near(world, l.x, l.y, l.radius)) {
       if (o.dead || Math.abs(o.x - l.x) > l.radius || Math.abs(o.y - l.y) > l.radius) continue;
       if (Math.hypot(o.x - l.x, o.y - l.y) > l.radius) continue;
       // A landmark that names whom it scares aims its aura: harmful ones touch

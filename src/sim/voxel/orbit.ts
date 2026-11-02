@@ -66,6 +66,12 @@ export class OrbitCamera implements CameraControl {
     this.returnAt = 0;
   }
 
+  // True while the camera moves on its own: flying to a spell, coming back,
+  // shaking. The engine keeps drawing frames for it.
+  animating(): boolean {
+    return this.goal !== null || (this.shakeTime > 0 && this.shake > 0.001);
+  }
+
   addShake(amount: number, seconds: number): void {
     this.shake = Math.max(this.shake, amount * 0.15);
     this.shakeTime = Math.max(this.shakeTime, seconds);

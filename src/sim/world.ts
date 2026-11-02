@@ -4,6 +4,8 @@ import { Rng, fbm, valueNoise } from "./noise";
 import { Particles } from "./particles";
 import { VoxelState, packVoxel, VK } from "./voxels";
 import { keyX, keyY, voxelKey } from "./voxelkey";
+import { DecorStore } from "./decor";
+import { CreatureGrid } from "./crowd";
 import type { Landmark, Presence } from "./social";
 
 export const TICK = 1 / 30;
@@ -44,7 +46,9 @@ export class World {
   readonly rng: Rng;
   // Free standing voxels placed by spells (a tree's crown, a floating rock),
   // keyed by cell and absolute voxel height, valued by color and kind (see voxels.ts).
-  readonly decor = new Map<number, number>();
+  readonly decor = new DecorStore();
+  // Who stands where, for creatures looking around (crowd.ts).
+  readonly crowd = new CreatureGrid();
   readonly voxels = new VoxelState();
   decorVersion = 0;
   // Cells of spell materials that lure or scare, refreshed a few times a
@@ -131,7 +135,7 @@ export class World {
     return true;
   }
 
-  static readonly MAX_DECOR = 20000;
+  static readonly MAX_DECOR = DecorStore.MAX;
 
   setVoxel(x: number, y: number, level: number, color: number | null, kind: number = VK.STONE): void {
     if (!this.inside(Math.round(x), Math.round(y)) || level < -60 || level > 380) return;

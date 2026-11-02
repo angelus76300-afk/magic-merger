@@ -1,5 +1,6 @@
 import { addGas } from "./cells";
 import { FACE_STEPS, keyCell, keyLevel, keyOffset, keyX, keyY } from "./voxelkey";
+import { DecorStore } from "./decor";
 import { C, F, S } from "./materials";
 import type { World } from "./world";
 
@@ -115,34 +116,42 @@ export function stepVoxels(world: World, dt: number): void {
 }
 
 // Flood fill from every held voxel; what is not reached starts to fall.
-// Plain arithmetic on keys, no objects: this runs on up to 20000 voxels.
+// Marks and the queue are flat arrays over the store's slots, kept between
+// calls: no Set, no garbage, on up to 20000 voxels.
+let held = new Uint8Array(0);
+const queue = new Int32Array(new DecorStore().slots);
 function findUnsupported(world: World): void {
   const { decor, height, w } = world;
-  const held = new Set<number>();
-  const stack: number[] = [];
-  for (const [key, v] of decor) {
-    const level = keyLevel(key);
-    const x = keyX(key);
-    const y = keyY(key);
-    if (floats(voxelKind(v)) || level <= Math.round(height[y * w + x] * 0.5)) {
-      held.add(key);
-      stack.push(key);
+  const slots = decor.slots;
+  if (held.length !== slots) held = new Uint8Array(slots);
+  else held.fill(0);
+  // Slots to visit; each is pushed at most once.
+  let top = 0;
+  let count = 0;
+  for (let s = 0; s < slots; s++) {
+    if (!decor.isLive(s)) continue;
+    const key = decor.keyOf(s);
+    if (floats(voxelKind(decor.valueOf(s))) || keyLevel(key) <= Math.round(height[keyY(key) * w + keyX(key)] * 0.5)) {
+      held[s] = 1;
+      queue[top++] = s;
+      count++;
     }
   }
   const steps = FACE_STEPS;
-  while (stack.length) {
-    const key = stack.pop()!;
+  while (top > 0) {
+    const key = decor.keyOf(queue[--top]);
     for (let d = 0; d < 6; d++) {
-      const k = key + steps[d];
-      if (!held.has(k) && decor.has(k)) {
-        held.add(k);
-        stack.push(k);
+      const n = decor.slot(key + steps[d]);
+      if (n >= 0 && !held[n]) {
+        held[n] = 1;
+        queue[top++] = n;
+        count++;
       }
     }
   }
-  if (held.size === decor.size) return;
+  if (count === decor.size) return;
   const s = world.voxels;
-  for (const key of decor.keys()) if (!held.has(key)) s.falling.add(key);
+  for (let slot = 0; slot < slots; slot++) if (decor.isLive(slot) && !held[slot]) s.falling.add(decor.keyOf(slot));
   s.fell = 0;
   s.sinceFall = 0;
 }
@@ -250,11 +259,15 @@ function fireAndHeat(world: World, dt: number): void {
   // Sampled, so very large builds stay cheap (about 3000 looked at per pass).
   const stride = Math.max(1, Math.ceil(decor.size / 3000));
   let k = 0;
-  for (const [key, v] of decor) {
+  for (let slot = 0; slot < decor.slots; slot++) {
+    if (!decor.isLive(slot)) continue;
     if (stride > 1 && k++ % stride !== world.tick % stride) continue;
-    const kind = voxelKind(v);
+    const key = decor.keyOf(slot);
+    const kind = voxelKind(decor.valueOf(slot));
     if (kind !== VK.WOOD && kind !== VK.LEAF && kind !== VK.ICE) continue;
-    const { x, y, level } = keyCell(key);
+    const x = keyX(key);
+    const y = keyY(key);
+    const level = keyLevel(key);
     const i = y * world.w + x;
     const near = level - top(world, x, y) <= 2;
     const hot = world.temp[i] > 200 || (near && (world.fire[i] > 0.25 || (world.fluid[i] === F.LAVA && world.depth[i] > 0.05)));
@@ -360,9 +373,12 @@ function burnTime(kind: number): number {
 // Sets fire to burnable voxels near a point (lightning, fireballs, explosions).
 export function igniteVoxels(world: World, x: number, y: number, r: number): void {
   const s = world.voxels;
-  for (const [key, v] of world.decor) {
+  const decor = world.decor;
+  for (let slot = 0; slot < decor.slots; slot++) {
+    if (!decor.isLive(slot)) continue;
+    const key = decor.keyOf(slot);
+    const v = decor.valueOf(slot);
     if (!burnable(voxelKind(v)) || s.burning.has(key)) continue;
-    const c = keyCell(key);
-    if ((c.x - x) ** 2 + (c.y - y) ** 2 <= r * r) s.burning.set(key, burnTime(voxelKind(v)));
+    if ((keyX(key) - x) ** 2 + (keyY(key) - y) ** 2 <= r * r) s.burning.set(key, burnTime(voxelKind(v)));
   }
 }

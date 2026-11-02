@@ -98,6 +98,7 @@ export class Engine {
   resize(): void {
     const rect = this.canvas.getBoundingClientRect();
     this.view.resize(rect.width, rect.height);
+    this.cameraMoved = true;
   }
 
   start(): void {
@@ -135,9 +136,15 @@ export class Engine {
     this.view.render(this.runtime.visuals, this.world.time, dt, this.reducedMotion);
   }
 
+  // A frame is drawn only when there is something new to show: the
+  // simulation advanced (30 times a second) or the camera moved. A 60 Hz
+  // screen used to draw the same world twice per tick, a 120 Hz one four
+  // times. On touch screens drawing is also capped at 30 a second, even while
+  // a finger turns the view.
   private frame(now: number): void {
     this.rafId = 0;
     if (!this.running) return;
+    this.rafId = requestAnimationFrame((t) => this.frame(t));
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     this.acc += dt;
@@ -150,12 +157,28 @@ export class Engine {
     }
     if (this.acc > TICK * 3) this.acc = 0;
     const t1 = performance.now();
-    this.render(dt);
+    this.simMs += t1 - t0;
+    const since = now - this.lastDraw;
+    const changed = steps > 0 || this.cameraMoved || this.view.orbit.animating();
+    if (!changed || since < this.minDrawMs) {
+      this.stats.idle++;
+      return;
+    }
+    this.cameraMoved = false;
+    this.lastDraw = now;
+    this.render(Math.min(0.1, since / 1000));
     const t2 = performance.now();
-    this.stats.push({ frame: dt * 1000, sim: t1 - t0, render: t2 - t1 });
+    this.stats.push({ frame: since, sim: this.simMs, render: t2 - t1 });
+    this.simMs = 0;
     this.stats.counts = { ...this.view.counts(), voxels: this.world.decor.size, creatures: this.world.creatures.length, size: this.world.w };
-    this.rafId = requestAnimationFrame((t) => this.frame(t));
   }
+
+  private lastDraw = 0;
+  private simMs = 0;
+  private cameraMoved = true;
+  // 30 frames a second on touch screens; a few ms of slack so a 60 Hz display
+  // draws every other frame instead of missing one now and then.
+  private minDrawMs = window.matchMedia?.("(pointer: coarse)").matches ? 1000 / 30 - 4 : 0;
 
   private handleEvents(): void {
     for (const e of this.world.events.splice(0)) {
@@ -207,10 +230,12 @@ export class Engine {
           // Right button or shift pans; otherwise the view turns.
           if (p.button === 2 || p.shift) orbit.pan(dx, dy, c.clientHeight);
           else orbit.orbit(dx, dy);
+          this.cameraMoved = true;
         } else if (this.pointers.size === 2 && this.pinch) {
           const now = this.pinchState();
           orbit.zoom(now.d / this.pinch.d);
           orbit.pan(now.mx - this.pinch.mx, now.my - this.pinch.my, c.clientHeight);
+          this.cameraMoved = true;
           this.pinch = now;
           for (const q of this.pointers.values()) q.moved = true;
         }
@@ -234,6 +259,7 @@ export class Engine {
       (e) => {
         e.preventDefault();
         orbit.zoom(Math.exp(-e.deltaY * 0.0015));
+        this.cameraMoved = true;
       },
       { passive: false, signal: abort.signal },
     );
