@@ -197,25 +197,46 @@ Nothing on the island just stands there. Every creature wants something and acts
 9. **Inspect** any creature or artifact with a tap: goal, current action, needs, charges, what it carries.
 10. **The five minute test** in `npm test` and in the judge: a village, a forest, wolves, a dragon, a vampire, gold, a well and a shrine for ten simulated minutes; populations neither explode nor vanish, and every placed thing changed something.
 
-### 3.7 A reason to cast
+### 3.6.1 Creatures that look alive
 
-Village mana from fed villagers in standing houses (a sandbox switch keeps it infinite), par scores and "three ways" stars on challenges, free play after a challenge, a recipe book with hints, opposites and depth based tiers in the merge prompt, a chronicle written from the event log and villagers' memories, discoveries made in the World.
+Found in play after 3.5, to fix before 4.0, right after 3.6 since it touches the same code.
 
-### 4.0 Things worth sharing
+1. **Sizes**: some animals are far too big (bears above all). Every species and body plan gets a size checked against a villager and a house, in the bestiary and in `npm test`.
+2. **Smooth movement over terrain**: creatures jump from one terrain level to the next. They should walk up and down steps, ease their height between cells, and only climb what they can climb.
+3. **Overlapping faces on models**: some animal and villager models show parts drawn in the same plane, which flicker (the old villager look was the one noticed). Find every case in the bestiary, fix it, and add a check that no two parts of a model share a face.
+4. **Merged creatures are alive**: creatures created by merging must look and move like the native ones. A model Claude designs gets motion on its parts (legs, wings, tails, heads); a model without motion falls back to the nearest body plan with its colors and features; the spell judge asks "does it look alive?".
 
-A deterministic simulation first, then clips, replays as links, a daily island, a feed of first discoveries, pass the island.
+### 3.6.2 Artifacts that act
 
-### 4.2 Accounts: your progress everywhere
+Items 5 and 7 of 3.6, split off so each part stays reviewable: creatures cast real spells from the shared library (capped tier and rate), and artifacts that act (effects over time and on triggers, state, `grants` and `uses`, declared pairs). The five minute test extends to every placed artifact.
 
-Today an invite link is kept by one browser, and progress (discoveries, the board, the island) lives in that browser only. Later, the link creates an account and is used up. Until then, invites keep working as they do.
+### 3.7 Your island's story
 
-1. **An invite is used once**: opening it creates an account (a passkey first, no password; an email link as a fallback), and the link then stops working for anyone else. The admin can issue a new one if a friend loses theirs.
-2. **Nobody loses progress**: on creating an account, the browser's local progress is uploaded and attached to it, and everything the server already holds for that invite (spend, votes, casts, First Discoveries) moves to the account. Existing friends get a one time "save your progress" prompt; until they answer, nothing changes for them.
-3. **The same progress on every device**: discoveries are the union of what each device found; the island is saved per account with "last saved wins" and a warning before replacing a newer one.
-4. **The account replaces the invite as the identity** for the $5 a month, votes and First Discoveries.
+Decided: no village mana, no hints, no discoveries made in the World, no par scores. The challenge islands are replaced by events on the player's own island.
+
+1. **Events on your island** instead of challenge mode: a drought, a lightning wildfire, a rising sea, a harsh winter, a dragon moving into the mountain, a wolf pack, a plague in a village, a volcano waking, a trader bringing gold. Each is announced a little before it starts, grows with the island (a bigger village draws bigger trouble), and is answered with whatever the player has discovered. No win or lose screen: the island keeps what happened. A setting chooses how often (off, calm, lively). Events use the engine and creatures already in the library, so they cost no API.
+2. **The chronicle of the island**: Haiku writes a short story from the event log and villagers' memories (the fire that took the mill, the golem that held the bridge), once a session, about $0.002.
+3. **The recipe book**: everything the player found, how they made it and when, and what it was used for. Memory only: no hints, no suggestions, nothing the player has not found.
+4. **Opposites and depth in the merge prompt**: Fire and Water give Steam, never "Super Fire Water"; a result's tier follows its depth in the recipe tree, plus or minus one.
+5. **Challenge islands retired** once events work: their balance tests become event tests (an event with no answer hurts the island, the right answer saves it).
+
+### 4.0 Accounts: your progress everywhere
+
+Today an invite link is kept by one browser, and progress lives in that browser only. The link becomes a one use account creation. Until 4.0 lands, invites keep working as they do.
+
+1. **An invite is used once**: opening it creates an account (a passkey first, no password; an email link as a fallback), and the link stops working for anyone else. The admin can issue a new one if a friend loses theirs.
+2. **Nobody loses progress**: on creating an account, the browser's local progress (discoveries, the board, the island) is uploaded and attached to it, and everything the server holds for that invite (spend, votes, casts, ideas, First Discoveries) moves to the account. Existing friends get a one time "save your progress" prompt; until they answer, nothing changes for them.
+3. **The same progress on every device**: discoveries are the union of what each device found; the island is saved per account, last saved wins, with a warning before replacing a newer one.
+4. **The account replaces the invite as the identity** for the $5 a month, votes, ideas and First Discoveries.
 5. **Privacy**: an account page to export or delete everything; the privacy note says what an account stores.
-6. **Tested**: an invite used twice, a friend with months of local progress creating an account, two devices merging their discoveries, and a deleted account leaving the shared library intact.
+6. **Tested**: an invite opened twice, a friend with weeks of local progress creating an account, two devices merging their discoveries, a deleted account leaving the shared library intact.
+
+### 4.1 Bigger and richer worlds
+
+1. **Bigger islands for those who can run them**: a huge size and beyond, offered when the device's own HUD numbers show the headroom (simulation and frame p95 on the current size), never by default on phones. Saved on the account (4.0), since a big island outgrows the browser's storage.
+2. **More varied terrain**: biomes (temperate forest, desert, tundra, jungle, swamp, volcanic, mesa), island shapes (archipelagos, plateaus, ridges, inland lakes, deltas), better rivers and coasts, chosen by a seed and a few sliders at reset.
+3. **Visual improvements**: baked ambient occlusion in the voxel lighting, better water (shore foam, depth color, gentle waves), weather you can see (rain, snow, fog), sun, moon and stars in the sky. Each measured with the HUD on a phone before it ships.
 
 ### 4.5 Ready for strangers
 
-AI Gateway spend caps, Turnstile, name checks, AI labels, small legal pages. Accounts (4.2) come first, so strangers can keep their progress. Quotas, the report button and invite links instead of a shared token came early, in 3.4, for friends. Nothing public before this.
+AI Gateway spend caps, Turnstile, name checks, AI labels, small legal pages. Accounts (4.0) come first, so strangers can keep their progress. Quotas, the report button and invite links instead of a shared token came early, in 3.4, for friends. Nothing public before this.
