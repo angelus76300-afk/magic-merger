@@ -1,6 +1,6 @@
 import { PRIMITIVES, elementKey, pairKey } from "../shared/elements";
 import type { SpellProgram } from "../shared/spellcode";
-import { capTier, isTier, tierFromDepth, type Tier } from "../shared/tiers";
+import { TIERS, capTier, isTier, tierFromDepth, type Tier } from "../shared/tiers";
 import type {
   DescribeRequest,
   DescribeResponse,
@@ -20,7 +20,11 @@ export interface Env {
   ASSETS: Fetcher;
   MERGE_MODEL: string;
   DESCRIBE_MODEL: string;
+  // Spells up to SPELL_SMALL_UP_TO are written by SPELL_MODEL_SMALL, the rest
+  // by SPELL_MODEL: small spells are simple and frequent, big ones rare and ambitious.
   SPELL_MODEL: string;
+  SPELL_MODEL_SMALL?: string;
+  SPELL_SMALL_UP_TO?: string;
   // low, medium, high, xhigh or max. How long the spell designer thinks.
   SPELL_EFFORT?: string;
   // Dollars of Claude calls allowed per calendar month (UTC). Past it, the
@@ -228,10 +232,16 @@ async function handleSpell(body: SpellRequest, env: Env, oracle: Oracle, admin: 
   const description = await ensureDescription(env, oracle, element, false);
   const tier = await ensureTier(env, oracle, element);
   await ensureBudget(env, oracle);
-  const answer = await oracle.spell({ name: element.name, description, recipe: await firstRecipe(env.DB, key), tier });
-  const program: SpellProgram = { version: 2, summary: answer.summary, code: answer.code };
-  if (!oracle.mock) await storeProgram(env, key, program, 0, body.model);
-  return { name: element.name, tier, program, mock: oracle.mock };
+  const model = body.model && admin ? body.model : spellModelFor(env, tier);
+  const writer = model === env.SPELL_MODEL || oracle.mock ? oracle : oracleFor(env, model, body.effort);
+  try {
+    const answer = await writer.spell({ name: element.name, description, recipe: await firstRecipe(env.DB, key), tier });
+    const program: SpellProgram = { version: 2, summary: answer.summary, code: answer.code };
+    if (!oracle.mock) await storeProgram(env, key, program, 0, model);
+    return { name: element.name, tier, program, mock: oracle.mock };
+  } finally {
+    if (writer !== oracle) await recordSpend(env.DB, writer);
+  }
 }
 
 async function handleRepair(body: RepairRequest, env: Env, oracle: Oracle, admin: boolean): Promise<SpellResponse> {
@@ -246,10 +256,16 @@ async function handleRepair(body: RepairRequest, env: Env, oracle: Oracle, admin
   const tier = await ensureTier(env, oracle, element);
   const stored = JSON.parse(row.spec) as SpellProgram;
   await ensureBudget(env, oracle);
-  const answer = await oracle.repair(element.name, tier, stored.code, error);
-  const program: SpellProgram = { version: 2, summary: answer.summary || stored.summary, code: answer.code };
-  if (!oracle.mock) await storeProgram(env, key, program, row.repairs + 1);
-  return { name: element.name, tier, program, mock: oracle.mock };
+  const model = spellModelFor(env, tier);
+  const writer = model === env.SPELL_MODEL || oracle.mock ? oracle : oracleFor(env, model);
+  try {
+    const answer = await writer.repair(element.name, tier, stored.code, error);
+    const program: SpellProgram = { version: 2, summary: answer.summary || stored.summary, code: answer.code };
+    if (!oracle.mock) await storeProgram(env, key, program, row.repairs + 1, model);
+    return { name: element.name, tier, program, mock: oracle.mock };
+  } finally {
+    if (writer !== oracle) await recordSpend(env.DB, writer);
+  }
 }
 
 async function storedProgram(db: D1Database, key: string): Promise<SpellProgram | null> {
@@ -271,6 +287,15 @@ async function storeProgram(env: Env, key: string, program: SpellProgram, repair
   )
     .bind(key, JSON.stringify(program), model ?? env.SPELL_MODEL, repairs, Date.now())
     .run();
+}
+
+// Measured in November 2026 on six spells: Haiku wrote small and mid spells as
+// well as Opus for a thirtieth of the price, but only Opus made a World Tree
+// that looks like one. Big spells are rare, so the average stays near 3 cents.
+function spellModelFor(env: Env, tier: Tier): string {
+  const small = env.SPELL_MODEL_SMALL;
+  const upTo = isTier(env.SPELL_SMALL_UP_TO) ? env.SPELL_SMALL_UP_TO : "grand";
+  return small && TIERS.indexOf(tier) <= TIERS.indexOf(upTo) ? small : env.SPELL_MODEL;
 }
 
 // Elements from before tiers get one the first time it matters, then keep it.

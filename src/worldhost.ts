@@ -230,7 +230,7 @@ export class WorldHost {
   private updateStatus(): void {
     const key = this.selected;
     const name = key ? this.store.get(key)?.element.name : null;
-    let text = "Pick a spell, then tap the world to cast it. Drag to look around, pinch to zoom.";
+    let text = "Pick a spell, then tap the island to cast it. Drag to turn, pinch to zoom, two fingers to pan.";
     if (key && name) {
       if (this.preparing.has(key)) text = `Preparing ${name}… the first cast of a spell takes a moment.`;
       else if (this.request(key)) text = `Tap the world to cast ${name}.`;

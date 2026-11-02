@@ -1,64 +1,40 @@
 # Where the game stands, and what comes next
 
-Written on 2026-11-01 after the first real session with Claude behind the game: 157 merges, 99 spell designs, every stored spell cast in the Spell Lab, and the deployed site played on a phone sized browser.
+Updated on 2026-11-02, after the World was rebuilt as a voxel island and spells became programs.
 
-## What works
+## Done since the first review
 
-1. **The merge loop.** Answers are fast (about 3 s), cheap (a tenth of a cent) and coherent. The 36 pairs of primal forces gave Firestorm, Phoenix, Golem, Eclipse, Tidal Wave, Mana Crystal, Undead: names a player recognises at once. Chains stay grounded even at depth 9 (Black Hole, Shadowflame, Dawn). The stateless design from DESIGN.md holds.
-2. **Fire, lava and water spells are a show.** Fireball, Inferno, Meteor, Volcanic Eruption and Armageddon set the world on fire, carve craters and kill villagers, and the fire keeps spreading on its own after the spell ends. This is where the falling sand engine pays off: the physics, not the spell, makes the drama.
-3. **Opus judges size well.** Given a high cap, it still keeps Black Hole medium and Fog large, and saves huge for Armageddon and Meteor Storm.
-4. **The cost is a non issue.** About 3 cents per new spell and a tenth of a cent per merge. $100 a month covers thousands of discoveries.
+1. **Spells are programs.** Claude writes each spell as code against a World API, and can add new materials and creatures with their own rules. A World Tree now grows an actual giant tree; a Great Flood is a wall of water that drowns the island; a Big Bang darkens everything, swallows the camera in a point of light and scorches the world.
+2. **A floating voxel island** replaces the side view: layered cut sides, waterfalls off the edges, orbit and zoom from a doorstep to the whole island in the sky. It runs on phones (about 60 draw calls on a medium island).
+3. **A richer land**: water, lava, oil, acid, mud, ice and snow with temperature; fire that spreads with the wind; powder that explodes; houses that burn and collapse and that villagers rebuild; forests that grow back.
+4. **Power tiers chosen at merge time** instead of chain depth.
+5. **Cost under control**: small spells cost $0.002, big ones $0.08, every call is recorded, and a monthly cap stops Claude calls past `BUDGET_USD`.
 
-## What does not work yet
+## What to watch
 
-1. **The World has no purpose.** Crafting feeds the World, but the World feeds nothing back. Once a player has burned the village twice, there is no reason to cast again. This is the biggest gap, and it is a design gap, not a technical one.
-2. **Depth is not power.** Depth counts the steps of the chain, so Fog and Dawn are depth 9 and allowed cataclysmic size, while Armageddon is depth 6. Opus covers for it at the top end, but at the bottom it hurts: a depth 1 Tidal Wave is capped at small, and on a 200 cell world it makes a puddle the size of four villagers.
-3. **Status spells look weak next to physics spells.** Eclipse, Illusion, Shadowflame and Eternal Night only make villagers flee or sleep. That reads, but it is not a show. Opus has learned to spawn smoke as a visual filler: smoke is the most spawned material across the 34 spells.
-4. **The verb palette is narrow in practice.** Over 34 spells: spawn 26 times, push and damage 14, fear 10. Shrink, enlarge, transform and erase were never chosen. Spells start to look alike after an hour.
-5. **Artifacts are dead ends.** Phoenix, Golem, Kraken, Volcano and Mana Crystal can be merged and read, nothing more. Half of the discoveries do nothing in the World tab.
+1. **Phones.** Measured in a headless browser, not on a real device. If a mid-range phone stutters, the first levers are the small world size and lower pixel density.
+2. **Spells that scorch the whole world.** Cosmic spells tend to leave the island ruined (Big Bang turns it to ash and embers). That is fair for a cosmic spell, but the player needs a way back: the Reset button for now, maybe a "Rewind" later.
+3. **Sounds** were checked for errors, not listened to.
 
 ## Next steps, in order
 
 ### 1. Give the World a reason: small scenarios
 
-A scenario is a hand made world with one problem and a measurable win condition:
-
-1. "The forest is on fire. Save the village." Win: no fire left and at least 5 villagers alive.
-2. "Cross the river." Win: a villager reaches the far bank (freeze the water, raise stone, levitate them).
-3. "The lava flow is coming." Win: the lava stops before the houses.
-4. "Wake the sleeping giant" or "Bring back the dead": use the verbs nobody picks.
-
-This is what turns discovery into a hunt: the player is not merging at random any more, they are looking for a spell that does something. The engine already measures everything a win condition needs (the Spell Lab counts fire cells, water cells, deaths and statuses), so a scenario is mostly data: a terrain seed, a few hand placed cells and creatures, a goal check. It also gives a natural place for "objectives later" from DESIGN.md.
-
-Start with three scenarios and a "solved" badge. If players come back for them, make more.
+A scenario is a seeded island with one problem and a measurable win condition: "The forest is on fire, save the village" (no fire left, at least 5 villagers alive), "Cross the river", "The lava flow is coming", "Bring back the dead". The engine already measures everything a win condition needs. This turns discovery into a hunt for the right spell.
 
 ### 2. Make artifacts placeable
 
-Spells are cast, artifacts are placed. Golem places a golem, Phoenix a phoenix that revives once, Volcano a vent that leaks lava, Mana Crystal a crystal that powers nearby spells, Kraken a beast in the nearest water. It doubles what the World can do with discoveries players already have. It needs a second kind of spec ("artifact spec": what it places and how it behaves), designed once by Opus like spells.
+Spells are cast, artifacts are placed: Golem places a golem, Phoenix a phoenix that revives once, Volcano a vent that leaks lava. The program format already supports it: an artifact would get a program too, with a `place(w)` instead of `cast(w)`.
 
-### 3. Replace depth with a power tier chosen at merge time
+### 3. A "First discovery" moment
 
-Ask the merge model for a tier (minor, major, legendary, mythic) alongside the name and emoji, frozen with the element like the emoji is. Keep a guard so a tier can rise by at most one step above its strongest input, which stops inflation. The tier sets the scale cap and shows on the card, which also tells the player something the depth number does not. It costs nothing: one more field in an answer Opus already gives.
+The card opens with a little ceremony, and the first cast of a brand new spell gets the camera's attention.
 
-### 4. Game feel
+### 4. Quality net
 
-Done in this session: a flash and a short screen shake on release scaled by the spell's size, a buzz on phones for large spells, and procedural Web Audio sounds chosen by the spell's verbs (crackle, rumble, chime, ping, whoosh), with a mute button. Still to do:
-
-1. A "First discovery" moment that is more than a toast: the card opens with a little ceremony.
-2. Tune the sounds by ear on a real phone. They were checked for errors, not listened to.
-
-### 5. Widen the palette, carefully
-
-Two or three new materials with their own physics would multiply combinations more than new verbs: snow (powder that melts into water), mud (slow liquid that dries into dirt), and poison (a liquid that hurts creatures and kills grass). Each one needs a line in `shared/spell.ts` and a few rules in the grid, and the prompt picks them up automatically.
-
-### 6. Quality and safety net
-
-1. Run the Spell Lab on `lab/specs` in CI and fail when a spell suddenly does nothing or the world explodes. Engine changes are the most likely source of regressions now.
-2. Add a handful of unit tests for the sanitizer and the merge name cleaning.
-3. Give friends an access token and watch them play for ten minutes without explaining anything. Every point above is a guess until then.
+Run the Spell Lab on `lab/spells` in CI and fail when a program throws or a tick gets slow.
 
 ## Open questions for you
 
 1. Is the World meant to stay a toy box, or is it where the game happens? Scenarios assume the second.
-2. One player or a small shared world? First Discovery is already global, so a feed of "who found what today" would be cheap and would make the global recipe book feel alive.
-3. Should a few hand written "named" spells exist (a tutorial Fireball), or must everything come from merges?
+2. Should a cosmic spell be allowed to ruin the island for good, or should the island heal over a few minutes?

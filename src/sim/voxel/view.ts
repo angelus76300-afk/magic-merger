@@ -454,10 +454,11 @@ export class VoxelView {
         group.children[0].rotation.x = Math.PI / 2;
         break;
       case "vortex":
-        for (let k = 0; k < 4; k++) {
-          const t = new Mesh(new TorusGeometry(0.4 + k * 0.25, 0.06, 4, 18), new MeshBasicMaterial({ color: k % 2 ? color : color2, transparent: true, opacity: 0.8 }));
+        // A funnel: rings widening as they rise.
+        for (let k = 0; k < 9; k++) {
+          const t = new Mesh(new TorusGeometry(0.2 + k * 0.17, 0.07, 4, 16), new MeshBasicMaterial({ color: k % 2 ? color : color2, transparent: true, opacity: 0.55 + (k % 3) * 0.12 }));
           t.rotation.x = Math.PI / 2;
-          t.position.y = k * 0.5 - 0.8;
+          t.position.set(Math.sin(k * 0.9) * 0.12, k * 0.38 - 1, Math.cos(k * 0.9) * 0.12);
           group.add(t);
         }
         break;

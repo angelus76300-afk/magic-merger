@@ -53,40 +53,45 @@ Tap the "Magic Merger" title five times quickly and enter your `ADMIN_TOKEN`. An
 
 Set in `wrangler.jsonc`:
 
-| Variable | Default | Used for | Called |
-| --- | --- | --- | --- |
-| `MERGE_MODEL` | `claude-opus-5-5`, low effort | deciding what two items make | once per new pair, ever |
-| `DESCRIBE_MODEL` | `claude-haiku-5-5`, low effort | the grimoire text on a card | once per element, ever |
-| `SPELL_MODEL` | `claude-opus-5-5` | designing how a spell looks and acts | once per spell, ever |
-| `SPELL_EFFORT` | `high` | how long the spell designer thinks | |
+| Variable | Default | Used for |
+| --- | --- | --- |
+| `MERGE_MODEL` | `claude-opus-5-5`, low effort | what two items make, and their power tier; once per new pair, ever |
+| `DESCRIBE_MODEL` | `claude-haiku-5-5`, low effort | the grimoire text on a card; once per element, ever |
+| `SPELL_MODEL_SMALL` | `claude-haiku-5-5` | writing spells up to `SPELL_SMALL_UP_TO` (grand) |
+| `SPELL_MODEL` | `claude-opus-5-5` | writing legendary and cosmic spells |
+| `SPELL_EFFORT` | `medium` | how long the spell writer thinks |
+| `BUDGET_USD` | `20` | Claude spend allowed per calendar month |
 
-Measured on the live Worker in November 2026 (157 merges, 29 descriptions, 99 spell designs):
+Measured on the live Worker in November 2026:
 
-| Call | Average | Worst | Time |
-| --- | --- | --- | --- |
-| Merge | $0.0011 | $0.0055 (cold cache) | about 3 s |
-| Description | $0.0001 | $0.0001 | about 2 s |
-| Spell design, high effort | $0.027 | $0.042 | 11 to 14 s |
-| Spell design, medium effort | $0.022 | $0.028 | 7 to 11 s |
+| Call | Average | Time |
+| --- | --- | --- |
+| Merge (Opus) | $0.001 | about 3 s |
+| Description (Haiku) | $0.0001 | about 2 s |
+| Spell up to grand (Haiku) | $0.002 | about 6 s |
+| Legendary or cosmic spell (Opus) | $0.076 | 20 to 40 s |
+| Sonnet, for reference | $0.021 | |
 
-A spell is designed as soon as a player discovers it, in the background, so it is usually ready when they open the World tab. Each new spell therefore costs about 3 cents once, for everyone. With $100 of credit a month that is roughly 3,000 new spells, or 90,000 new merges.
+A spell is written once, for everyone, the first time a player picks it in the World tab.
 
-The merge and spell system prompts are cached. The description prompt is too short to be cached, which does not matter at Haiku prices. Opus is $4 / $20 per million tokens, Haiku 5.5 is $0.10 / $0.50. Track real spend on https://platform.claude.com/cost.
+**Budget:** every call is written to the `spend` table in D1. When this month's total reaches `BUDGET_USD`, the Worker stops calling Claude and says so in the game; known recipes, descriptions and spells keep working. The admin can read the month's total at `/api/spend`. Also set a spend limit on the Console workspace: it is the safety net that does not depend on this code.
 
-Every Claude call also logs one JSON line with its token counts and cost in dollars. Watch them live with `npx wrangler tail --search usage`, or later in the Cloudflare dashboard under Workers Logs.
+Every Claude call also logs one JSON line with its token counts and cost. Watch them live with `npx wrangler tail --search usage`, or later in the Cloudflare dashboard under Workers Logs.
 
 Haiku 5.5 has no server side refusal fallback, so the Worker only sends that option to models that support it.
 
 ## 5. Spell Lab
 
-A dev tool to see what spell specs actually do, without playing by hand. It casts each spec on the same seeded world in a headless browser, then saves frames as PNG and a JSON report of the terrain that changed and the creatures that burned, froze, slept, fled or died.
+A dev tool to see what spell programs actually do, without playing by hand. It casts each program near a village on the same seeded island in a headless browser, then saves frames as PNG and a JSON report: terrain changes, deaths, statuses, errors, the slowest tick, and draw calls and triangles.
 
 ```bash
 npx vite --port 5174
 ```
 
 ```bash
-node scripts/spell-lab.mjs lab-out lab/specs/*.json
+node scripts/spell-lab.mjs lab-out lab/spells/*.js
 ```
 
-`lab/specs` holds the 34 spells designed with the current prompt, as a fixed reference set. A spec file can be a bare spec or a saved `/api/spell` response. `LAB_WIDTH` and `LAB_HEIGHT` set the world size (default 200 by 120). Use it after any change to the spell prompt or to `src/world`, on a fixed set of specs, and compare the reports.
+`lab/spells` holds hand written reference spells. A `.json` file can also be a saved `/api/spell` response. Environment variables: `LAB_TIER` (default major), `LAB_SHOTS` (seconds, comma separated), `LAB_SIZE` (small, medium, large), `LAB_DIST` (camera distance; 400 shows the whole island).
+
+To compare models, the admin can pass `model` and `effort` in an `/api/spell` request with `regenerate: true`.
