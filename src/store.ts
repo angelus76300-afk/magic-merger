@@ -1,5 +1,5 @@
 import { PRIMITIVES, elementKey } from "../shared/elements";
-import type { SpellSpec } from "../shared/spell";
+import type { SpellProgram } from "../shared/spellcode";
 import type { GameElement } from "../shared/types";
 
 export interface Discovery {
@@ -20,10 +20,13 @@ interface SaveData {
   version: 1;
   discoveries: Record<string, Discovery>;
   descriptions: Record<string, string>;
-  // Added after v0, so older saves do not have it.
-  spells?: Record<string, SpellSpec>;
+  // Spell programs by element key. Older saves hold v1 specs here: they are
+  // ignored (see spell()) and replaced the first time the spell is cast.
+  spells?: Record<string, SpellProgram>;
   board: BoardChip[];
   nextChipId: number;
+  // Challenges won, by id.
+  solved?: string[];
 }
 
 const STORAGE_KEY = "magic-merger.save";
@@ -73,12 +76,23 @@ export class Store {
     this.save();
   }
 
-  spell(key: string): SpellSpec | undefined {
-    return this.data.spells?.[key];
+  spell(key: string): SpellProgram | undefined {
+    const program = this.data.spells?.[key];
+    return program?.version === 2 && typeof program.code === "string" ? program : undefined;
   }
 
-  setSpell(key: string, spec: SpellSpec): void {
-    (this.data.spells ??= {})[key] = spec;
+  setSpell(key: string, program: SpellProgram): void {
+    (this.data.spells ??= {})[key] = program;
+    this.save();
+  }
+
+  isSolved(id: string): boolean {
+    return this.data.solved?.includes(id) ?? false;
+  }
+
+  markSolved(id: string): void {
+    if (this.isSolved(id)) return;
+    (this.data.solved ??= []).push(id);
     this.save();
   }
 

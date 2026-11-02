@@ -5,7 +5,7 @@ import { Craft } from "./craft";
 import { session } from "./session";
 import { Store } from "./store";
 import { toast } from "./toast";
-import { WorldView } from "./world/view";
+import { WorldHost } from "./worldhost";
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
@@ -21,14 +21,16 @@ const craft = new Craft(
 craft.init();
 $("#clear").addEventListener("click", () => craft.clearBoard());
 
-const world = new WorldView(store, {
+const world = new WorldHost(store, {
   stage: $("#world-stage"),
-  canvas: $<HTMLCanvasElement>("#world-canvas"),
+  banner: $("#world-banner"),
+  challenges: $<HTMLButtonElement>("#world-challenges"),
   status: $("#world-status"),
   list: $("#spell-list"),
   add: $<HTMLButtonElement>("#world-add"),
   reset: $<HTMLButtonElement>("#world-reset"),
   size: $<HTMLSelectElement>("#world-size"),
+  sound: $<HTMLButtonElement>("#world-sound"),
 });
 
 function showTab(view: string): void {
@@ -48,6 +50,9 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
 }
 
 world.init();
+// New discoveries get their program written in the background (cheap tiers only).
+craft.onNewElement = (key) => world.ahead(key);
+
 
 setCardActions({
   cast: (key) => {

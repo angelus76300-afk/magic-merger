@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { Delivery, Effect, Emitter, Scale, SpellSpec, Verb } from "../shared/spell";
-import { SCALES } from "../shared/spell";
+import { syntaxError } from "../shared/spellcode";
+import { isTier, type Tier } from "../shared/tiers";
 import type { ElementKind } from "../shared/types";
 import {
   DESCRIBE_SYSTEM,
@@ -8,8 +8,11 @@ import {
   MERGE_SYSTEM,
   SPELL_SCHEMA,
   SPELL_SYSTEM,
+  TIER_SCHEMA,
+  TIER_SYSTEM,
   describeUserMessage,
   mergeUserMessage,
+  repairUserMessage,
   spellUserMessage,
 } from "./prompts";
 
@@ -17,28 +20,54 @@ export interface MergeAnswer {
   name: string;
   emoji: string;
   kind: ElementKind;
+  tier: Tier;
 }
 
 export interface SpellRequest {
   name: string;
+  // Artifacts get programs too: they are placed, not cast.
+  kind: ElementKind;
   description: string;
   recipe: [string, string] | null;
-  maxScale: Scale;
+  tier: Tier;
 }
 
-// Whatever decides what two items make, how an item is described, and how a
-// spell looks and acts. The spell answer is raw: the caller sanitizes it.
+export interface ProgramAnswer {
+  summary: string;
+  code: string;
+}
+
+export interface Spent {
+  call: string;
+  model: string;
+  usd: number;
+}
+
+// Whatever decides what two items make, how an item is described, how strong
+// it is, and writes the program of a spell.
 export interface Oracle {
   readonly mock: boolean;
+  // Every call made so far and its cost, for the budget ledger.
+  readonly spent: Spent[];
   merge(a: string, b: string): Promise<MergeAnswer>;
   describe(name: string, kind: ElementKind, recipe: [string, string] | null): Promise<string>;
-  spell(request: SpellRequest): Promise<unknown>;
+  tier(name: string, kind: ElementKind): Promise<Tier>;
+  spell(request: SpellRequest): Promise<ProgramAnswer>;
+  repair(name: string, tier: Tier, code: string, error: string): Promise<ProgramAnswer>;
 }
 
 export interface OracleModels {
   merge: string;
   describe: string;
   spell: string;
+  spellEffort: Effort;
+}
+
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+const EFFORTS: readonly Effort[] = ["low", "medium", "high", "xhigh", "max"];
+
+export function parseEffort(raw: string | undefined, fallback: Effort): Effort {
+  return EFFORTS.includes(raw as Effort) ? (raw as Effort) : fallback;
 }
 
 export class OracleError extends Error {}
@@ -55,6 +84,7 @@ function fallbackFor(model: string) {
 
 export class ClaudeOracle implements Oracle {
   readonly mock = false;
+  readonly spent: Spent[] = [];
   private client: Anthropic;
 
   constructor(
@@ -65,52 +95,105 @@ export class ClaudeOracle implements Oracle {
     this.client = new Anthropic({ apiKey, baseURL, maxRetries: 2 });
   }
 
-  async merge(a: string, b: string): Promise<MergeAnswer> {
+  private async ask(
+    call: string,
+    model: string,
+    effort: Effort,
+    system: string,
+    messages: Anthropic.Beta.BetaMessageParam[],
+    schema: Record<string, unknown> | null,
+    maxTokens: number,
+  ): Promise<string> {
     const response = await this.client.beta.messages.create({
-      model: this.models.merge,
-      max_tokens: 4000,
-      ...fallbackFor(this.models.merge),
-      output_config: { effort: "low", format: { type: "json_schema", schema: MERGE_SCHEMA } },
-      // The system prompt never changes, so it is cached across merges.
-      system: [{ type: "text", text: MERGE_SYSTEM, cache_control: { type: "ephemeral" } }],
-      messages: [{ role: "user", content: mergeUserMessage(a, b) }],
+      model,
+      max_tokens: maxTokens,
+      ...fallbackFor(model),
+      output_config: schema ? { effort, format: { type: "json_schema", schema } } : { effort },
+      // The system prompts never change, so they are cached across calls.
+      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+      messages,
     });
-    const { name, emoji, kind } = parseJson(readText(response)) as Partial<MergeAnswer>;
+    this.spent.push(logUsage(call, response));
+    return readText(response);
+  }
+
+  async merge(a: string, b: string): Promise<MergeAnswer> {
+    const text = await this.ask("merge", this.models.merge, "low", MERGE_SYSTEM, [{ role: "user", content: mergeUserMessage(a, b) }], MERGE_SCHEMA, 4000);
+    const { name, emoji, kind, tier } = parseJson(text) as Partial<MergeAnswer>;
     if (typeof name !== "string" || typeof emoji !== "string" || (kind !== "spell" && kind !== "artifact")) {
       throw new OracleError("The merge answer did not match the schema");
     }
-    return { name, emoji, kind };
+    return { name, emoji, kind, tier: isTier(tier) ? tier : "minor" };
   }
 
   async describe(name: string, kind: ElementKind, recipe: [string, string] | null): Promise<string> {
-    const response = await this.client.beta.messages.create({
-      model: this.models.describe,
-      max_tokens: 4000,
-      ...fallbackFor(this.models.describe),
-      output_config: { effort: "low" },
-      system: [{ type: "text", text: DESCRIBE_SYSTEM, cache_control: { type: "ephemeral" } }],
-      messages: [{ role: "user", content: describeUserMessage(name, kind, recipe) }],
-    });
-    return readText(response).trim();
+    const text = await this.ask("describe", this.models.describe, "low", DESCRIBE_SYSTEM, [{ role: "user", content: describeUserMessage(name, kind, recipe) }], null, 2000);
+    return text.trim();
   }
 
-  async spell(request: SpellRequest): Promise<unknown> {
-    // Spells are generated once and kept forever, so this call gets more thought.
-    const response = await this.client.beta.messages.create({
-      model: this.models.spell,
-      max_tokens: 16000,
-      ...fallbackFor(this.models.spell),
-      output_config: { effort: "medium", format: { type: "json_schema", schema: SPELL_SCHEMA } },
-      system: [{ type: "text", text: SPELL_SYSTEM, cache_control: { type: "ephemeral" } }],
-      messages: [
-        {
-          role: "user",
-          content: spellUserMessage(request.name, request.description, request.recipe, request.maxScale),
-        },
-      ],
-    });
-    return parseJson(readText(response));
+  async tier(name: string, kind: ElementKind): Promise<Tier> {
+    const text = await this.ask("tier", this.models.merge, "low", TIER_SYSTEM, [{ role: "user", content: `${name} (${kind})` }], TIER_SCHEMA, 2000);
+    const { tier } = parseJson(text) as { tier?: unknown };
+    return isTier(tier) ? tier : "minor";
   }
+
+  async spell(request: SpellRequest): Promise<ProgramAnswer> {
+    const message = spellUserMessage(request.name, request.kind, request.description, request.recipe, request.tier);
+    return this.program("spell", [{ role: "user", content: message }]);
+  }
+
+  async repair(name: string, tier: Tier, code: string, error: string): Promise<ProgramAnswer> {
+    return this.program("repair", [{ role: "user", content: repairUserMessage(name, tier, code, error) }]);
+  }
+
+  // Asks for a program; if it does not even parse, shows the model the
+  // parser's complaint once and takes the second answer.
+  private async program(call: string, messages: Anthropic.Beta.BetaMessageParam[]): Promise<ProgramAnswer> {
+    const { spell: model, spellEffort } = this.models;
+    let answer = toProgram(await this.ask(call, model, spellEffort, SPELL_SYSTEM, messages, SPELL_SCHEMA, 20000));
+    const error = syntaxError(answer.code);
+    if (error) {
+      const retry: Anthropic.Beta.BetaMessageParam[] = [
+        ...messages,
+        { role: "assistant", content: JSON.stringify(answer) },
+        { role: "user", content: `That program does not parse: ${error}. Send the corrected program.` },
+      ];
+      answer = toProgram(await this.ask(`${call}-retry`, model, spellEffort, SPELL_SYSTEM, retry, SPELL_SCHEMA, 20000));
+      if (syntaxError(answer.code)) throw new OracleError("The spell's program could not be written");
+    }
+    return answer;
+  }
+}
+
+function toProgram(text: string): ProgramAnswer {
+  const { summary, code } = parseJson(text) as Partial<ProgramAnswer>;
+  if (typeof summary !== "string" || typeof code !== "string" || !code.includes("spell")) {
+    throw new OracleError("The spell answer did not match the schema");
+  }
+  return { summary: summary.slice(0, 240), code: code.slice(0, 40000) };
+}
+
+// Dollars per million tokens: input, output, cache read, cache write (5 minute TTL).
+// Thinking is billed as output. Check https://platform.claude.com/docs/en/about-claude/pricing
+const PRICES: Record<string, [number, number, number, number]> = {
+  "claude-fable-5-1": [10, 50, 0.25, 12.5],
+  "claude-opus-5-5": [4, 20, 0.2, 5],
+  "claude-sonnet-5-5": [2, 10, 0.2, 2.5],
+  "claude-haiku-5-5": [0.1, 0.5, 0.01, 0.125],
+};
+
+// One JSON line per call, visible with `wrangler tail` and in Workers Logs.
+function logUsage(call: string, response: Anthropic.Beta.BetaMessage): Spent {
+  const u = response.usage;
+  const input = u.input_tokens ?? 0;
+  const output = u.output_tokens ?? 0;
+  const cacheRead = u.cache_read_input_tokens ?? 0;
+  const cacheWrite = u.cache_creation_input_tokens ?? 0;
+  // Unknown models are priced like the most expensive one, so the budget errs on the safe side.
+  const price = PRICES[response.model] ?? PRICES["claude-fable-5-1"];
+  const usd = (input * price[0] + output * price[1] + cacheRead * price[2] + cacheWrite * price[3]) / 1e6;
+  console.log(JSON.stringify({ usage: call, model: response.model, stop: response.stop_reason, input, output, cacheRead, cacheWrite, usd }));
+  return { call, model: response.model, usd };
 }
 
 function parseJson(text: string): unknown {
@@ -140,15 +223,16 @@ function readText(response: Anthropic.Beta.BetaMessage): string {
 // Deterministic, obviously fake, never calls the network.
 export class MockOracle implements Oracle {
   readonly mock = true;
+  readonly spent: Spent[] = [];
 
   async merge(a: string, b: string): Promise<MergeAnswer> {
     const [x, y] = [a, b].sort();
-    if (x === y) return { name: `Greater ${lastWord(x)}`, emoji: "✨", kind: "spell" };
+    if (x === y) return { name: `Greater ${lastWord(x)}`, emoji: "✨", kind: "spell", tier: "major" };
     const h = hash(`${x}+${y}`);
     const emoji = MOCK_EMOJI[h % MOCK_EMOJI.length];
     const kind: ElementKind = h % 3 === 0 ? "artifact" : "spell";
     const suffix = kind === "artifact" ? MOCK_ARTIFACTS[h % MOCK_ARTIFACTS.length] : MOCK_SPELLS[h % MOCK_SPELLS.length];
-    return { name: `${firstWord(x)} ${firstWord(y)} ${suffix}`.split(" ").slice(-3).join(" "), emoji, kind };
+    return { name: `${firstWord(x)} ${firstWord(y)} ${suffix}`.split(" ").slice(-3).join(" "), emoji, kind, tier: "major" };
   }
 
   async describe(name: string, kind: ElementKind, recipe: [string, string] | null): Promise<string> {
@@ -156,79 +240,41 @@ export class MockOracle implements Oracle {
     return `${origin} This is a placeholder ${kind} description for ${name}. Set ANTHROPIC_API_KEY on the Worker to get real ones.`;
   }
 
-  // Builds a plausible spell from keywords in the name, so every verb and
-  // delivery of the engine can be exercised without an API key.
-  async spell(request: SpellRequest): Promise<SpellSpec> {
+  async tier(): Promise<Tier> {
+    return "major";
+  }
+
+  // A small program built from keywords in the name, so the World tab can be
+  // played offline.
+  async spell(request: SpellRequest): Promise<ProgramAnswer> {
     const words = request.name.toLowerCase();
-    const themes = MOCK_THEMES.filter((t) => t.words.some((w) => words.includes(w)));
-    if (!themes.length) themes.push(MOCK_THEMES[MOCK_THEMES.length - 1]);
-    const colors = themes.flatMap((t) => t.colors).slice(0, 4);
-    const effects = themes.flatMap((t) => t.effects).slice(0, 5);
-    const delivery: Delivery =
-      MOCK_DELIVERIES.find(([w]) => words.includes(w))?.[1] ?? themes.find((t) => t.delivery)?.delivery ?? "burst";
-    const scale = SCALES[Math.min(SCALES.indexOf(request.maxScale), 2 + (hash(words) % 3))];
-    const emitter = (pattern: Emitter["pattern"], count: number, speed: number, gravity: number): Emitter => ({
-      pattern,
-      colors,
-      count,
-      speed,
-      gravity,
-      lifetime: 0.9,
-      size: 1,
-      glow: true,
-    });
-    return {
-      summary: `Mock spell built from the words in "${request.name}".`,
-      scale,
-      delivery,
-      incantation: { rings: 1 + (hash(words) % 3), symmetry: 3 + (hash(words) % 8), runes: 8, primary: colors[0], secondary: colors[1] ?? "#ffffff", spin: 1 },
-      phases: {
-        charge: { duration: 0.8, emitters: [emitter("spiral", 50, 8, -4)] },
-        travel: { duration: 0.6, emitters: [emitter("trail", 80, 4, 0)] },
-        release: { duration: 0.3, emitters: [emitter("burst", 120, 30, 5)] },
-        linger: { duration: 2.5, emitters: [emitter(delivery === "rain" ? "rain" : "sparkle", 150, 6, -2)] },
-      },
-      effects,
-    };
+    const theme = MOCK_THEMES.find((t) => t.words.some((w) => words.includes(w))) ?? MOCK_THEMES[MOCK_THEMES.length - 1];
+    const code = `const spell = {
+  *cast(w) {
+    w.circle(w.x, w.y, w.r * 0.5, "${theme.colors[0]}", "${theme.colors[1]}", 0.8);
+    w.sound("rise", 0.3);
+    yield 0.8;
+    w.burst(w.x, w.y, { count: 120, colors: ["${theme.colors[0]}", "${theme.colors[1]}"], speed: w.r, up: 6, life: 1.2 });
+    ${theme.impact}
+  },
+};`;
+    return { summary: `Mock spell built from the words in "${request.name}".`, code };
+  }
+
+  async repair(name: string): Promise<ProgramAnswer> {
+    return this.spell({ name, kind: "spell", description: "", recipe: null, tier: "major" });
   }
 }
 
-const effect = (verb: Verb, strength: number, duration = 0, extra: Partial<Effect> = {}): Effect => ({
-  verb,
-  strength,
-  duration,
-  shape: "circle",
-  material: "none",
-  creature: "none",
-  ...extra,
-});
-
-const MOCK_THEMES: { words: string[]; colors: string[]; effects: Effect[]; delivery?: Delivery }[] = [
-  { words: ["fire", "flame", "inferno", "burn", "ember", "blaze"], colors: ["#ff7a1a", "#ffd166"], effects: [effect("ignite", 0.8, 3)] },
-  { words: ["lava", "magma", "volcan"], colors: ["#ff4d00", "#7a1f00"], effects: [effect("spawn", 0.6, 0, { material: "lava" })], delivery: "rain" },
-  { words: ["water", "rain", "tide", "flood", "wave"], colors: ["#4cc9f0", "#a9def9"], effects: [effect("spawn", 0.5, 2, { material: "water" })], delivery: "rain" },
-  { words: ["ice", "frost", "snow", "freeze", "cold"], colors: ["#bde0fe", "#ffffff"], effects: [effect("freeze", 0.8, 4), effect("cool", 0.9)] },
-  { words: ["steam", "mist", "fog"], colors: ["#e5e5e5", "#bde0fe"], effects: [effect("spawn", 0.4, 1, { material: "steam" })] },
-  { words: ["earth", "stone", "rock", "golem"], colors: ["#8d6e63", "#bcaaa4"], effects: [effect("spawn", 0.5, 0, { material: "stone", shape: "ground" }), effect("summon", 0.2, 0, { creature: "golem" })] },
-  { words: ["quake", "tremor"], colors: ["#795548", "#d7ccc8"], effects: [effect("quake", 0.7, 2, { shape: "ground" })], delivery: "wave" },
-  { words: ["air", "wind", "storm", "gust", "tornado"], colors: ["#caf0f8", "#90e0ef"], effects: [effect("push", 0.8), effect("levitate", 0.5, 2)] },
-  { words: ["light", "sun", "holy", "heal", "radian"], colors: ["#fff3b0", "#ffd166"], effects: [effect("heal", 0.8, 2), effect("revive", 0.5)], delivery: "beam" },
-  { words: ["shadow", "dark", "night", "void", "eclipse"], colors: ["#3c096c", "#9d4edd"], effects: [effect("fear", 0.8, 5), effect("erase", 0.3)] },
-  { words: ["life", "grow", "nature", "forest", "bloom"], colors: ["#80ed99", "#38b000"], effects: [effect("grow_plants", 0.8, 2), effect("summon", 0.3, 0, { creature: "beast" })] },
-  { words: ["sleep", "dream", "calm"], colors: ["#cdb4db", "#ffc8dd"], effects: [effect("sleep", 0.9, 6), effect("calm", 0.8)] },
-  { words: ["spirit", "ghost", "soul"], colors: ["#e0fbfc", "#98c1d9"], effects: [effect("summon", 0.4, 0, { creature: "spirit" })] },
-  { words: ["crystal", "mana", "arcane", "magic"], colors: ["#b48cff", "#f4d58d"], effects: [effect("convert", 0.4, 0, { material: "crystal" }), effect("teleport", 0.5)] },
-  { words: [], colors: ["#b48cff", "#ffffff"], effects: [effect("levitate", 0.6, 3), effect("damage", 0.2)] },
-];
-
-const MOCK_DELIVERIES: [string, Delivery][] = [
-  ["bolt", "projectile"],
-  ["ball", "projectile"],
-  ["beam", "beam"],
-  ["ray", "beam"],
-  ["rain", "rain"],
-  ["wave", "wave"],
-  ["storm", "zone"],
+const MOCK_THEMES: { words: string[]; colors: [string, string]; impact: string }[] = [
+  { words: ["fire", "flame", "inferno", "burn", "blaze"], colors: ["#ff7a1a", "#ffd166"], impact: "w.explode(w.x, w.y, w.r * 0.4, 0.6); w.ignite(w.x, w.y, w.r, 0.4);" },
+  { words: ["lava", "magma", "volcan"], colors: ["#ff4d00", "#ffb03a"], impact: 'w.terraform(w.x, w.y, w.r * 0.5, 4); w.flood(w.x, w.y, w.r * 0.3, "lava", 1.5);' },
+  { words: ["water", "rain", "tide", "flood", "wave"], colors: ["#4cc9f0", "#a9def9"], impact: 'w.flood(w.x, w.y, w.r * 0.6, "water", 2);' },
+  { words: ["ice", "frost", "snow", "freeze", "cold"], colors: ["#bde0fe", "#ffffff"], impact: 'w.temperature(w.x, w.y, w.r, -80); w.paint(w.x, w.y, w.r, "snow", 0.6);' },
+  { words: ["earth", "stone", "rock", "quake"], colors: ["#8d6e63", "#d7ccc8"], impact: "for (let k = 0; k < 20; k++) { w.quake(w.x, w.y, w.r, 1); yield 0.1; }" },
+  { words: ["life", "grow", "nature", "forest", "heal"], colors: ["#80ed99", "#38b000"], impact: "w.grow(w.x, w.y, w.r, 0.8); for (const c of w.creatures(w.x, w.y, w.r)) c.heal(100);" },
+  { words: ["shadow", "dark", "night", "void"], colors: ["#3c096c", "#9d4edd"], impact: "w.darken(0.8, 5); for (const c of w.creatures(w.x, w.y, w.r)) c.status('fear', 5, w.x, w.y);" },
+  { words: [], colors: ["#b48cff", "#ffffff"], impact: "for (const c of w.creatures(w.x, w.y, w.r)) c.status('levitate', 4); w.shockwave(w.x, w.y, w.r, '#b48cff', 1, 1);" },
 ];
 
 const MOCK_EMOJI = ["🌀", "⚡", "🌟", "❄️", "🌊", "🔥", "🌿", "💀", "🪄", "💎"];

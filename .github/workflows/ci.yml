@@ -1,0 +1,21 @@
+# Typecheck and build everything, then run the simulation checks:
+# map generation, reference spells, the loop guard, saving, and every
+# challenge both ways (doing nothing must not win, the right magic must win).
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test

@@ -1,14 +1,14 @@
 import type { GameElement } from "./types";
 
 export const PRIMITIVES: readonly GameElement[] = [
-  { name: "Fire", emoji: "🔥", kind: "spell", depth: 0 },
-  { name: "Water", emoji: "💧", kind: "spell", depth: 0 },
-  { name: "Earth", emoji: "🪨", kind: "spell", depth: 0 },
-  { name: "Air", emoji: "💨", kind: "spell", depth: 0 },
-  { name: "Light", emoji: "☀️", kind: "spell", depth: 0 },
-  { name: "Shadow", emoji: "🌑", kind: "spell", depth: 0 },
-  { name: "Life", emoji: "🌱", kind: "spell", depth: 0 },
-  { name: "Arcane", emoji: "🔮", kind: "spell", depth: 0 },
+  { name: "Fire", emoji: "🔥", kind: "spell", depth: 0, tier: "minor" },
+  { name: "Water", emoji: "💧", kind: "spell", depth: 0, tier: "minor" },
+  { name: "Earth", emoji: "🪨", kind: "spell", depth: 0, tier: "minor" },
+  { name: "Air", emoji: "💨", kind: "spell", depth: 0, tier: "minor" },
+  { name: "Light", emoji: "☀️", kind: "spell", depth: 0, tier: "minor" },
+  { name: "Shadow", emoji: "🌑", kind: "spell", depth: 0, tier: "minor" },
+  { name: "Life", emoji: "🌱", kind: "spell", depth: 0, tier: "minor" },
+  { name: "Arcane", emoji: "🔮", kind: "spell", depth: 0, tier: "minor" },
 ];
 
 // One identity per name: "fire ball", "Fire  Ball" and "Fire Ball" are the same element.

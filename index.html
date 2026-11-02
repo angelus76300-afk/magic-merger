@@ -34,8 +34,17 @@
 
     <main id="world-view" class="view world" hidden>
       <div id="world-stage" class="world-stage">
-        <canvas id="world-canvas" aria-label="The world: tap to cast the selected spell"></canvas>
+        <div id="world-banner" class="world-banner" hidden>
+          <strong class="world-banner-title"></strong>
+          <span class="world-banner-text"></span>
+          <span class="world-banner-hint"></span>
+          <span class="world-banner-actions">
+            <button class="world-banner-retry">Retry</button>
+            <button class="world-banner-leave">Back to my island</button>
+          </span>
+        </div>
         <div class="world-tools">
+          <button id="world-challenges">Challenges</button>
           <button id="world-add">+ Villager</button>
           <select id="world-size" aria-label="World size for the next reset">
             <option value="small">Small</option>
@@ -43,6 +52,7 @@
             <option value="large">Large</option>
           </select>
           <button id="world-reset">Reset</button>
+          <button id="world-sound" aria-pressed="true">Sound on</button>
         </div>
       </div>
       <section class="spellbar" aria-label="Your spells">

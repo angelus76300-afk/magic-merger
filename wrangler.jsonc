@@ -15,8 +15,8 @@
     {
       "binding": "DB",
       "database_name": "magic-merger",
-      // Replace with the id printed by `npx wrangler d1 create magic-merger`.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // Created on 2026-11-01. A fork needs its own id from `npx wrangler d1 create magic-merger`.
+      "database_id": "2faca013-6f31-4c46-8bf1-08d5691d89ff",
       "migrations_dir": "migrations"
     }
   ],
@@ -24,7 +24,11 @@
     // See docs/SETUP.md for what each call costs.
     "MERGE_MODEL": "claude-opus-5-5",
     "DESCRIBE_MODEL": "claude-haiku-5-5",
-    "SPELL_MODEL": "claude-opus-5-5"
+    "SPELL_MODEL": "claude-opus-5-5",
+    "SPELL_MODEL_SMALL": "claude-haiku-5-5",
+    "SPELL_SMALL_UP_TO": "grand",
+    "SPELL_EFFORT": "medium",
+    "BUDGET_USD": "20"
   },
   "observability": { "enabled": true }
 }

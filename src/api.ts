@@ -16,6 +16,11 @@ export function spell(name: string, regenerate = false): Promise<SpellResponse> 
   return post<SpellResponse>("/api/spell", { name, regenerate });
 }
 
+// The program crashed: Claude gets the error and writes a fixed version.
+export function repairSpell(name: string, error: string): Promise<SpellResponse> {
+  return post<SpellResponse>("/api/spell/repair", { name, error });
+}
+
 export function setToken(token: string): void {
   try {
     localStorage.setItem(TOKEN_KEY, token.trim());

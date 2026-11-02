@@ -53,12 +53,55 @@ Tap the "Magic Merger" title five times quickly and enter your `ADMIN_TOKEN`. An
 
 Set in `wrangler.jsonc`:
 
-| Variable | Default | Used for | Called |
-| --- | --- | --- | --- |
-| `MERGE_MODEL` | `claude-opus-5-5`, low effort | deciding what two items make | once per new pair, ever |
-| `DESCRIBE_MODEL` | `claude-haiku-5-5`, low effort | the grimoire text on a card | once per element, ever |
-| `SPELL_MODEL` | `claude-opus-5-5`, medium effort | designing how a spell looks and acts | once per spell, ever |
+| Variable | Default | Used for |
+| --- | --- | --- |
+| `MERGE_MODEL` | `claude-opus-5-5`, low effort | what two items make, and their power tier; once per new pair, ever |
+| `DESCRIBE_MODEL` | `claude-haiku-5-5`, low effort | the grimoire text on a card; once per element, ever |
+| `SPELL_MODEL_SMALL` | `claude-haiku-5-5` | writing spells up to `SPELL_SMALL_UP_TO` (grand) |
+| `SPELL_MODEL` | `claude-opus-5-5` | writing legendary and cosmic spells |
+| `SPELL_EFFORT` | `medium` | how long the spell writer thinks |
+| `BUDGET_USD` | `20` | Claude spend allowed per calendar month |
 
-Rough costs, mostly thinking tokens: a new merge is about one cent at most, a description a small fraction of a cent, a spell design a few cents. Opus is $4 / $20 per million tokens, Haiku 5.5 is $0.10 / $0.50. Track real spend on https://platform.claude.com/cost.
+Measured on the live Worker in November 2026:
+
+| Call | Average | Time |
+| --- | --- | --- |
+| Merge (Opus) | $0.001 | about 3 s |
+| Description (Haiku) | $0.0001 | about 2 s |
+| Spell up to grand (Haiku) | $0.002 | about 6 s |
+| Legendary or cosmic spell (Opus) | $0.076 | 20 to 40 s |
+| Sonnet, for reference | $0.021 | |
+
+A spell is written once, for everyone, the first time a player picks it in the World tab.
+
+**Budget:** every call is written to the `spend` table in D1. When this month's total reaches `BUDGET_USD`, the Worker stops calling Claude and says so in the game; known recipes, descriptions and spells keep working. The admin can read the month's total at `/api/spend`. Also set a spend limit on the Console workspace: it is the safety net that does not depend on this code.
+
+Every Claude call also logs one JSON line with its token counts and cost. Watch them live with `npx wrangler tail --search usage`, or later in the Cloudflare dashboard under Workers Logs.
 
 Haiku 5.5 has no server side refusal fallback, so the Worker only sends that option to models that support it.
+
+## 5. Spell Lab
+
+A dev tool to see what spell programs actually do, without playing by hand. It casts each program near a village on the same seeded island in a headless browser, then saves frames as PNG and a JSON report: terrain changes, deaths, statuses, errors, the slowest tick, and draw calls and triangles.
+
+```bash
+npx vite --port 5174
+```
+
+```bash
+node scripts/spell-lab.mjs lab-out lab/spells/*.js
+```
+
+`lab/spells` holds hand written reference spells. A `.json` file can also be a saved `/api/spell` response. Environment variables: `LAB_TIER` (default major), `LAB_SHOTS` (seconds, comma separated), `LAB_SIZE` (small, medium, large), `LAB_DIST` (camera distance; 400 shows the whole island).
+
+To compare models, the admin can pass `model` and `effort` in an `/api/spell` request with `regenerate: true`.
+
+`node scripts/scenario-lab.mjs out plan.json` plays challenges with spells cast at given times and saves frames and the objective's timeline (see the comment at the top of the script for the plan format).
+
+## 6. Tests
+
+```bash
+npm test
+```
+
+Runs the simulation in Node, without a browser, in about 15 seconds: map generation, the reference spells, the loop guard, a save round trip, and every challenge with nothing and with its solution. GitHub Actions runs `npm run build` and `npm test` on every pull request.

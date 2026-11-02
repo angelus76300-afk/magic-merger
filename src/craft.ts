@@ -15,6 +15,10 @@ interface Point {
 export function chipElement(element: GameElement, tag: "div" | "button" = "div"): HTMLElement {
   const node = document.createElement(tag);
   node.className = `chip chip-${element.kind}`;
+  if (element.tier) {
+    node.dataset.tier = element.tier;
+    node.title = `${element.tier[0].toUpperCase()}${element.tier.slice(1)}`;
+  }
   const emoji = document.createElement("span");
   emoji.className = "chip-emoji";
   emoji.textContent = element.emoji;
@@ -22,6 +26,13 @@ export function chipElement(element: GameElement, tag: "div" | "button" = "div")
   name.className = "chip-name";
   name.textContent = element.name;
   node.append(emoji, name);
+  if (element.tier) {
+    // A small dot of the tier's color: how much power the item carries.
+    const dot = document.createElement("span");
+    dot.className = "chip-tier";
+    dot.setAttribute("aria-hidden", "true");
+    node.append(dot);
+  }
   return node;
 }
 
@@ -33,6 +44,8 @@ export class Craft {
   private busy = new Set<number>();
   private hovered: HTMLElement | null = null;
   private tappedChip: number | null = null;
+  // Called when this player finds something they did not have yet.
+  onNewElement: (key: string) => void = () => {};
 
   constructor(
     private store: Store,
@@ -142,9 +155,31 @@ export class Craft {
     const rect = this.board.getBoundingClientRect();
     const chip = this.store.addChip(key, 0, 0);
     const node = this.mountChip(chip);
-    const jitter = () => (Math.random() - 0.5) * 80;
-    const x = rect.width / 2 - node.offsetWidth / 2 + jitter();
-    const y = rect.height / 2 - node.offsetHeight / 2 + jitter();
+    // The first free spot on a spiral from the center: two tapped items never
+    // land on top of each other, so the one underneath can still be grabbed.
+    const w = node.offsetWidth;
+    const h = node.offsetHeight;
+    const cx = rect.width / 2 - w / 2;
+    const cy = rect.height / 2 - h / 2;
+    const others = this.store
+      .board()
+      .filter((c) => c.id !== chip.id)
+      .map((c) => ({ x: c.x, y: c.y, w: this.nodes.get(c.id)?.offsetWidth ?? w, h: this.nodes.get(c.id)?.offsetHeight ?? h }));
+    const free = (x: number, y: number) => others.every((o) => x + w + 8 < o.x || o.x + o.w + 8 < x || y + h + 8 < o.y || o.y + o.h + 8 < y);
+    let x = cx;
+    let y = cy;
+    for (let k = 0; k < 120; k++) {
+      const a = k * 0.9;
+      const r = 6 * k;
+      const tx = cx + Math.cos(a) * r * 1.4;
+      const ty = cy + Math.sin(a) * r * 0.8;
+      if (tx < 0 || ty < 0 || tx + w > rect.width || ty + h > rect.height) continue;
+      if (free(tx, ty)) {
+        x = tx;
+        y = ty;
+        break;
+      }
+    }
     this.settle(chip, node, x, y);
     node.classList.add("pop");
   }
@@ -220,9 +255,14 @@ export class Craft {
       node.classList.add("pop");
 
       const label = `${result.element.emoji} ${result.element.name}`;
-      if (result.firstDiscovery) toast(`First discovery: ${label}`, "special");
+      if (result.firstDiscovery) {
+        toast(`First discovery: ${label}`, "special");
+        // Let the chip pop first, then celebrate with its card.
+        window.setTimeout(() => openCard(this.store, chip.key, true), 700);
+      }
       else if (newForMe) toast(`New: ${label}`);
       if (newForMe) this.renderInventory();
+      if (newForMe) this.onNewElement(chip.key);
     } catch (err) {
       draggedNode.classList.remove("merging");
       targetNode.classList.remove("merging");

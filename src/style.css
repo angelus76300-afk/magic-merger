@@ -438,6 +438,13 @@ input {
   background: #16112b;
 }
 
+.world-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
 .world-stage canvas {
   display: block;
   width: 100%;
@@ -452,9 +459,17 @@ input {
 .world-tools {
   position: absolute;
   top: 10px;
+  left: 10px;
   right: 10px;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
+  pointer-events: none;
+}
+
+.world-tools > * {
+  pointer-events: auto;
 }
 
 .world-tools button,
@@ -543,4 +558,200 @@ input {
     opacity: 0;
     transform: translateY(-6px);
   }
+}
+
+.world-banner {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* display: flex above would otherwise beat the hidden attribute. */
+.world-banner[hidden] {
+  display: none;
+}
+
+.world-banner[data-status="won"] {
+  border-color: #6fd08c;
+}
+
+.world-banner[data-status="lost"] {
+  border-color: #e06c6c;
+}
+
+.world-banner-text {
+  color: var(--muted);
+}
+
+.world-banner-hint {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.world-banner-hint:empty {
+  display: none;
+}
+
+.world-banner-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.world-banner button,
+.challenge-list button {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.challenges {
+  width: min(92vw, 440px);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 16px;
+}
+
+.challenges::backdrop {
+  background: rgba(5, 3, 12, 0.6);
+}
+
+.challenges h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.challenges > p {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.challenge-list {
+  display: grid;
+  gap: 10px;
+}
+
+.challenge {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.challenge h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.challenge h3 .solved {
+  margin-left: 6px;
+  font-size: 12px;
+  color: #6fd08c;
+}
+
+.challenge p {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.card-ribbon {
+  display: none;
+  margin: -6px 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #f4d58d;
+  letter-spacing: 0.02em;
+}
+
+.card-first .card-ribbon {
+  display: block;
+}
+
+.card-first {
+  animation: card-glow 2.4s ease-out 1;
+  border-color: #f4d58d;
+}
+
+.card-first .card-emoji {
+  animation: card-emoji-pop 0.9s cubic-bezier(0.2, 1.6, 0.4, 1) 1;
+}
+
+@keyframes card-glow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(244, 213, 141, 0.9);
+  }
+  40% {
+    box-shadow: 0 0 60px 18px rgba(244, 213, 141, 0.45);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(244, 213, 141, 0);
+  }
+}
+
+@keyframes card-emoji-pop {
+  0% {
+    transform: scale(0.2) rotate(-30deg);
+  }
+  100% {
+    transform: scale(1) rotate(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-first,
+  .card-first .card-emoji {
+    animation: none;
+  }
+}
+
+/* Tier dots: grey cantrip, green minor, blue major, violet grand, orange legendary, glowing gold cosmic. */
+.chip-tier {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-left: 2px;
+  background: #8a8698;
+}
+
+.chip[data-tier="minor"] .chip-tier {
+  background: #6fd08c;
+}
+
+.chip[data-tier="major"] .chip-tier {
+  background: #5aa9f0;
+}
+
+.chip[data-tier="grand"] .chip-tier {
+  background: #b48cff;
+}
+
+.chip[data-tier="legendary"] .chip-tier {
+  background: #ff9a3c;
+}
+
+.chip[data-tier="cosmic"] .chip-tier {
+  background: #ffe28a;
+  box-shadow: 0 0 6px 2px rgba(255, 226, 138, 0.7);
+}
+
+.chip-castable[data-ready="0"] {
+  opacity: 0.6;
 }
