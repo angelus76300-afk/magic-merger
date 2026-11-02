@@ -15,7 +15,7 @@ Updated on 2026-11-02, during 3.3.
 1. **Challenges.** Five hand-made islands with a hazard and a goal: a wildfire, an erupting volcano, a river crossing, a drought and a rising sea. They run in their own world (the player's island comes back untouched), show progress in a banner, give a hint after a loss, and remember wins. Each one is checked by `npm test` both ways, over random replays: doing nothing loses, a plausible spell wins.
 2. **Placeable artifacts.** Golem, Phoenix, Volcano and the rest get programs too and are placed where the player taps.
 3. **First Discovery moment.** The card of an element no one had made before opens by itself with a glow and a ribbon.
-4. **Automated checks.** `npm test` runs the simulation in Node in about 15 seconds; GitHub Actions runs it with the build on every pull request.
+4. **Automated checks.** `npm test` runs the simulation in Node in about 20 seconds on four cores, with the seeded challenge replays in worker threads; GitHub Actions runs it with the build on every pull request.
 
 ## Done in 2.5
 
@@ -86,7 +86,7 @@ DESIGN.md, "Spells that get better", has the rules; `docs/measurements/spell-qua
 1. **The judge and the votes.** No vote exists yet, so the judge is uncalibrated and only advises; the library is empty until players vote programs up. Watch `GET /api/admin/judge-stats` after a week of play, and how often a vote leads to a rewrite and a rewrite to a rollback (`rewrites` table).
 2. **Phones.** Still measured only in Node and a headless browser. The HUD sends real numbers to `/api/perf` as soon as someone plays with it on. In steady state the simulation's cost is temperature and fluids (about 40% of a tick in every scene), not voxels or creatures: that is the next lever if phones run hot.
 3. **Sounds** were checked for errors, not listened to.
-4. **Challenge balance with real spells.** The checks use simple hand-written solutions; Claude's spells may be stronger or weaker. Doing nothing wins Wildfire 3 times in 16 seeded replays; the test passes on its one seed. Needs retuning and a multi-seed check.
+4. **Challenge balance with real spells.** The checks use simple hand-written solutions; Claude's spells may be stronger or weaker. Wildfire used to be won by doing nothing 1 time in 5: villagers rebuilt the burnt houses while the fire died down, and the end check counted them. It is now lost the moment a second house burns, and `npm test` replays every challenge with nothing over 8 seeds (0 wins in 64 for Wildfire, rain still wins 64 in 64).
 
 ## What the money taught us
 

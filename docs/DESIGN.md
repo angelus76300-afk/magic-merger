@@ -131,7 +131,7 @@ Artifacts use the same program format and the same endpoint, with one paragraph 
 
 Hand-made islands with a hazard and a goal (`src/sim/scenarios.ts`, titles in `scenario-list.ts` so the game page does not load the engine to list them). A challenge builds its own world, runs a `tick` every frame (a volcano vent, a rising sea, the sun drying fields) and a `check` twice a second that returns progress text and playing, won or lost. It never touches the player's island: the iframe keeps the sandbox save in memory and restores it on leaving.
 
-Balance is measured, not guessed: `npm test` plays each challenge with nothing and with a plain solution spell from `lab/solutions`, and the parameters were tuned until eight random replays agree.
+Balance is measured, not guessed: `npm test` plays each challenge with nothing over eight seeds and with a plain solution spell from `lab/solutions`, and the parameters were tuned until the replays agree. A loss is decided the moment it happens, not at the end: villagers rebuild ruins, so a village that burned and was rebuilt would otherwise count as saved.
 
 ## World
 

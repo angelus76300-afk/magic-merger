@@ -66,12 +66,14 @@ export const SCENARIOS: Scenario[] = [
             const v = villagers(w);
             const h = houses(w);
             calm = fire === 0 ? calm + 0.5 : 0;
-            const text = `Burning: ${fire} · villagers ${v}/${v0} · houses ${Math.round(h / 4)}/${Math.round(h0 / 4)}`;
-            if (v < v0 * 0.4 || h < h0 * 0.35) return { text: "The village burned down.", status: "lost" };
-            if (calm >= 3)
-              return v >= v0 * 0.6 && h >= h0 * 0.5
-                ? { text: "The fire is out and the village stands!", status: "won" }
-                : { text: "The fire is out, but too much was lost.", status: "lost" };
+            // A house is 4 cells; one partly burnt still stands.
+            const text = `Burning: ${fire} · villagers ${v}/${v0} · houses ${Math.ceil(h / 4)}/${Math.ceil(h0 / 4)}, lose 2 and it falls`;
+            // Decided the moment it happens. Villagers rebuild ruins, so a
+            // village that burned and was rebuilt while the fire died down
+            // used to count as saved: doing nothing won 1 time in 5.
+            if (h <= h0 - 8) return { text: "The fire took the village.", status: "lost" };
+            if (v < v0 * 0.6) return { text: "The fire took too many villagers.", status: "lost" };
+            if (calm >= 3) return { text: "The fire is out and the village stands!", status: "won" };
             return { text, status: "playing" };
           },
         },

@@ -12,7 +12,8 @@ export const SCENARIO_LIST: ScenarioInfo[] = [
   {
     id: "wildfire",
     title: "The forest is burning",
-    brief: "A wildfire is racing through the forest toward the village, pushed by the wind. Put it out before the village burns.",
+    brief:
+      "A wildfire is racing through the forest toward the village, pushed by the wind. Put it out before it reaches the houses: if two burn, the village is lost.",
     hint: "Water, ice, rain, a firebreak, or turning the wind.",
   },
   {

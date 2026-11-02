@@ -127,4 +127,4 @@ To compare models, the admin can pass `model` and `effort` in an `/api/spell` re
 npm test
 ```
 
-Runs the simulation in Node, without a browser, in about 35 seconds: map generation, the reference spells, the loop guard, a save round trip, every challenge with nothing and with its solution, the test run on good and bad programs, and the vote rules. GitHub Actions runs `npm run build` and `npm test` on every pull request.
+Runs the simulation in Node, without a browser, in about 20 seconds on four cores (35 on two): map generation, the reference spells, the loop guard, a save round trip, every challenge with its solution and, over eight seeds in worker threads, with nothing, the test run on good and bad programs, and the vote rules. GitHub Actions runs `npm run build` and `npm test` on every pull request.

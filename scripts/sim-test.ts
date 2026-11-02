@@ -4,31 +4,41 @@
 // Bundled with esbuild and run by Node; the voxel view is not involved.
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { availableParallelism } from "node:os";
+import { Worker } from "node:worker_threads";
 import { guardLoops } from "../shared/spellcode";
-import { lifeCycle, populate, resetCreatureIds, updateCreature } from "../src/sim/creatures";
+import { populate } from "../src/sim/creatures";
 import { C } from "../src/sim/materials";
-import { stepPhysics } from "../src/sim/physics";
 import { Runtime } from "../src/sim/runtime";
 import { loadWorld, saveWorld } from "../src/sim/save";
 import { SCENARIOS } from "../src/sim/scenarios";
-import { TICK, generateWorld, type World } from "../src/sim/world";
+import { generateWorld, type World } from "../src/sim/world";
 import { VK, floats, voxelKind } from "../src/sim/voxels";
 import { keyCell } from "../src/sim/voxelkey";
+import { SOLUTIONS, replay, seed, step, type Replay } from "./challenge-replay";
 import { runCheck } from "../src/sim/check";
 import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../shared/votes";
 import { pickExamples, words } from "../worker/programs";
 
-// Seeded randomness, so a check gives the same answer on every run.
-function seed(n: number): void {
-  let a = n >>> 0;
-  Math.random = () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+// Challenges with nothing cast, over several seeds: one seed can pass by
+// luck (Wildfire did, at 3 wins in 16). These replays run in worker threads
+// while the checks below run here; their results are read in section 8.
+const SEEDS = 8;
+const idle: Replay[] = SCENARIOS.flatMap((s) => Array.from({ length: SEEDS }, (_, n) => ({ id: s.id, seed: (n + 1) * 7919, magic: false })));
+const idleResults = new Map<string, { status: string; errors: string[] }[]>();
+const nextIdle = new Int32Array(new SharedArrayBuffer(4));
+const idleDone = Promise.all(
+  Array.from({ length: Math.min(4, Math.max(2, availableParallelism() - 1)) }, () => {
+    const worker = new Worker(new URL("./challenge-worker.mjs", import.meta.url), { workerData: { jobs: idle, next: nextIdle } });
+    worker.on("message", ({ job, status, errors }: { job: Replay; status: string; errors: string[] }) => {
+      idleResults.set(job.id, [...(idleResults.get(job.id) ?? []), { status, errors }]);
+    });
+    return new Promise<void>((resolve, reject) => {
+      worker.on("error", reject);
+      worker.on("exit", () => resolve());
+    });
+  }),
+);
 
 // Everything below is seeded, so a run gives the same answers every time.
 seed(1);
@@ -37,19 +47,6 @@ let failures = 0;
 function check(name: string, ok: boolean, detail = ""): void {
   console.log(`${ok ? "ok  " : "FAIL"} ${name}${detail ? `: ${detail}` : ""}`);
   if (!ok) failures++;
-}
-
-function step(world: World, rt: Runtime): number {
-  const t0 = performance.now();
-  world.time += TICK;
-  world.tick++;
-  stepPhysics(world, TICK);
-  for (const c of world.creatures) updateCreature(world, c, TICK);
-  lifeCycle(world, TICK);
-  rt.step(TICK);
-  world.particles.update(TICK);
-  world.events.length = 0;
-  return performance.now() - t0;
 }
 
 // 1. Generation: water, peaks and villages on every size.
@@ -351,39 +348,22 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   }
 }
 
-// 8. Challenges: nothing does not win; the solution wins.
-const solutions: Record<string, { file: string; tier: "major" | "grand" | "legendary"; at: [number, number][] }> = {
-  wildfire: { file: "rain.js", tier: "grand", at: [[16, 56]] },
-  lava: { file: "wall.js", tier: "grand", at: [[58, 58]] },
-  river: { file: "frost.js", tier: "major", at: [[56, 54]] },
-  drought: { file: "bloom.js", tier: "legendary", at: [[56, 56]] },
-  flood: { file: "dike.js", tier: "grand", at: [[56, 50]] },
-};
+// 8. Challenges: nothing does not win on any seed; the solution wins.
 for (const scenario of SCENARIOS) {
-  for (const withMagic of [false, true]) {
-    seed(17);
-    resetCreatureIds();
-    const { world, run } = scenario.build();
-    const errors: string[] = [];
-    const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
-    const plan = solutions[scenario.id];
-    let status = "playing";
-    for (let k = 0; k < 30 * 85 && status === "playing"; k++) {
-      if (withMagic && k === 150) {
-        const code = readFileSync(join("lab/solutions", plan.file), "utf8");
-        plan.at.forEach(([x, y], n) => rt.cast({ key: `${plan.file}${n}`, name: plan.file, tier: plan.tier, code }, x, y));
-      }
-      step(world, rt);
-      run.tick(world);
-      if (k % 15 === 0) status = run.check(world).status;
-    }
-    const want = withMagic ? status === "won" : status !== "won";
-    check(
-      `challenge ${scenario.id} ${withMagic ? "with " + plan.file : "with nothing"}`,
-      want && errors.length === 0,
-      `${status}${errors[0] ? ", " + errors[0] : ""}`,
-    );
-  }
+  const plan = SOLUTIONS[scenario.id];
+  const { status, errors } = replay({ id: scenario.id, seed: 17, magic: true });
+  check(`challenge ${scenario.id} with ${plan.file}`, status === "won" && errors.length === 0, `${status}${errors[0] ? ", " + errors[0] : ""}`);
+}
+await idleDone;
+for (const scenario of SCENARIOS) {
+  const runs = idleResults.get(scenario.id) ?? [];
+  const tally = (s: string) => runs.filter((r) => r.status === s).length;
+  const error = runs.flatMap((r) => r.errors)[0];
+  check(
+    `challenge ${scenario.id} with nothing, ${SEEDS} seeds`,
+    runs.length === SEEDS && tally("won") === 0 && !error,
+    `won ${tally("won")}, lost ${tally("lost")}, playing ${tally("playing")}${error ? ", " + error : ""}`,
+  );
 }
 
 // 9. The test run before a program is stored (3.3): reference spells pass;
