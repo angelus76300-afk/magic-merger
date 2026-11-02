@@ -158,6 +158,71 @@ The test seeds the month at $49.995 and sends two merges at once, five times: on
 
 A card has "Report this name": Claude names things, and a name can be wrong or offensive. Reports go to the admin's people view, one open report per name and person; dismissing one is the only action for now (renaming an element would change everyone's recipe book). New players see one paragraph on what the game is, that Claude writes the spells, what their month looks like, and a short privacy note: what is kept and why, that item names go to Claude and nothing about the person does, Cloudflare's request logs, no ads or cookies, and who to ask for deletion. The `?` in the top bar shows it again.
 
+## Many kinds of life (3.5)
+
+Every creature used to be the same two blocks in a different color. Now each kind has a body you recognize at a glance, and the island has animals of its own. Everything is in `src/sim/body.ts` (what a body is, as data), `src/sim/voxel/rigs.ts` (bodies as boxes), `src/sim/voxel/figures.ts` (drawing them), `src/sim/wildlife.ts` and `src/sim/villagers.ts`. The bestiary page of the Spell Lab (`lab/bestiary.html`) draws every plan, feature, animal and villager look; `docs/visual-checks/bestiary.png`, `bestiary-dead.png` and `creatures-before-after.png` are its screenshots and the same village before and after.
+
+### Bodies
+
+Twelve plans: two legs, four legs, bird, fish, serpent, insect, spider, slime, spirit, golem, dragon, tree folk. A plan is a function that lays out boxes in units of the creature's size, standing on the ground and facing forward, and says where features go: the head, the face, the torso, the back, the rear and two hands (a four legged animal carries in its mouth).
+
+Each box turns about a pivot with one motion, and that is all the animation there is: legs swing in opposite pairs, arms against their legs, an arm that carries something is held forward and barely swings, wings flap (faster for insects, slower for dragons, folded on the ground), tails sway, heads nod, a serpent's segments follow each other sideways, insect and spider legs sweep, a slime squashes, motes circle a spirit. Proportions come from a build (longer legs and neck for deer, long ears for rabbits, bulk for bears), so wolves, deer, boars and bears share one plan.
+
+A creature falls on its side when it dies (a fish turns belly up and floats), lying on the ground, then sinks into it over the 40 seconds before it is removed. Frozen, stunned or dead, nothing moves; asleep, the head drops. Elders stoop. Status colors (dead, frozen, burning) tint the whole figure.
+
+Features go on any body: horn, horns, antlers, wings, tail, mane, hat, hood, crown, glowing eyes, armor, and one carried item (sword, axe, spear, staff, torch, hammer, shield, lantern, book, basket; hoe and rod for villagers). A feature the plan already has is not added twice (a dragon has wings). Wings do not make a creature fly. `color2` colors the belly, wings, mane, hood, leaves and glowing eyes.
+
+A model is for the creature no plan fits: at most 16 boxes `[x, y, z, w, h, d, color, part]` in any units, scaled to 1.3 across and 1.7 tall at most, so it stays the size of the others. `part` (leg, leg2, arm, arm2, wing, tail, head, glow) picks the motion; the pivot follows from where the box is (a leg turns at its top, a wing at the edge nearest the middle). Numbers are bounded, a box without a size is dropped, extra boxes are ignored.
+
+### Drawn as one cube
+
+Every part of every creature is one instance of the same unit cube, in two draw calls whatever the mix: one for what the day and spell darkness dim, one for what shines (glowing eyes, spirits, torches, a staff's gem). The cube's faces are shaded in the shader from the instance's own normal, with the same light per side as the baked models, so a deer that turns keeps the sun on the right side. A rig is turned into flat arrays once; parts that share a pivot and a motion (a head, its hair, eyes and hat) share a matrix made once per figure, so each part costs one 3 by 4 multiply. Creatures outside the camera are not posed, details (eyes, ears, hooves, buckles) are left out where a creature is a few pixels tall, and only the instances written are uploaded.
+
+### Old spells are not written again
+
+The creatures of every stored spell get a body without a rewrite, from, in order: what the spell declares (`body`, `features`, `color2`, `model`), its name, its base kind. The name is read word by word and the last word that names a body decides it (a Spirit Wolf walks on four legs, a Wolf Spirit floats), whole words only (a Dragonfly is an insect, not a dragon); features add up (a Lich King gets a hood, a staff and a crown). The prompt teaches the new fields in one paragraph; `PROGRAM_VERSION` is 5 and, as always, only labels what a program was written for.
+
+A spell that defines a creature named like an island animal ("wolf") gets its own kind, `wolf#<spell>`, so summoning wolves that hunt villagers does not turn the island's wolves against them. The spell's own `spawn`, `transform` and `onDeath: "spawn:wolf"` mean its wolf; every list (prey, lures, scares) and `c.kind` still say "wolf" for both.
+
+### Wildlife
+
+| Kind   | Habitat                                       | Per 10,000 cells | Does                                                                    |
+| ------ | --------------------------------------------- | ---------------- | ----------------------------------------------------------------------- |
+| deer   | grass or fields by a forest, away from houses | 2.6              | flees people, wolves and bears; stags have antlers                      |
+| rabbit | grass, fields, flowers                        | 3                | flees people and hunters                                                |
+| wolf   | forest floor, far from houses                 | 1.3              | hunts deer and rabbits by night, sleeps by day                          |
+| boar   | forest and bushes                             | 1.3              | stays in its patch of forest                                            |
+| bear   | forest, far from villages                     | 0.45             | hunts deer and boars by day, scares people (a mob of four can kill one) |
+| bird   | trees                                         | 3                | flies 7 voxels up                                                       |
+| fish   | water deeper than 1.2                         | 3.5              | swims only in water, chokes on land                                     |
+
+Numbers are kept by births, not by a food web: every few seconds the species furthest below its number gets one animal born in its habitat. Burn the forest and the deer, wolves and boars stop coming back; drain the lake and its fish die. On a medium island over ten minutes, wolves killed 8 deer and 2 rabbits and every species stayed at its number. The real food web, with hunger and herds, is 3.6.
+
+In a list, `beast` (and "animals") also names every wild animal, so a scarecrow or honey written before 3.5 works on deer and bears. Animals are born in a cell they can walk out of: the first version put wolves inside trees, which are solid, and they never moved.
+
+Challenges keep only birds and fish. In the lava challenge a rabbit set alight near the volcano ran into the village and burned it before the lava came, with the right spell cast; no spell could have prevented it. Birds fly over fire and fish stay in water, so they cannot change an outcome.
+
+### Villagers
+
+One number per villager, saved with it: age, job, village, skin, hair. A fifth are children (smaller, so weaker and slower), some are elders (gray hair, a beard or long hair, a stoop and a cane). Adults have a job that shows: farmers in straw hats with a hoe, woodcutters with an axe, fishers in caps with a rod, smiths with an apron and hammer, guards in armor with a spear, priests in a hood with a book, merchants in caps with a basket. Jobs are only looks until 3.6 gives them work. Each village has its own clothes (shirts, trousers, hats), from six styles; a villager born later is usually a child and wears the clothes of the nearest villager's village. Villagers from saves before 3.5 are dressed by village from where their homes are.
+
+### The test run and wildlife
+
+With animals on the practice island, a spell that only threw particles passed the test run: drawing random numbers for particles shifted the stream the creatures used, so one deer wandered differently from the control. Creatures in the test run now draw from their own seeded stream, the same in both runs, so only what a spell does to them counts.
+
+### Measured
+
+Headless Chromium with software WebGL on the medium Spell Lab island (`scripts/prof-view.mjs`, CPU time per frame, p50 / p95), and the simulation in Node:
+
+| Scene                                       | Before 3.5                                      | After                                            |
+| ------------------------------------------- | ----------------------------------------------- | ------------------------------------------------ |
+| Island, nothing cast                        | 25 draw calls, 86k triangles                    | 26 draw calls, 88k triangles                     |
+| 375 creatures of every kind near the camera | 25 calls, 92k triangles, creatures 0.1 / 0.4 ms | 26 calls, 125k triangles, creatures 1.0 / 5.1 ms |
+| Bestiary, 99 figures                        |                                                 | 1,534 boxes, 3 draw calls, 1.1 to 1.7 ms to pose |
+| Creatures per tick, 112 / 152 / 208 cells   | 52 / 36 / 78 creatures, 0.11 / 0.08 / 0.20 ms   | 68 / 63 / 129 creatures, 0.19 / 0.18 / 0.39 ms   |
+
+The first version spent 1.9 ms p50 on the crowd; flat arrays, shared matrices per pivot, culling and details by distance brought it to 1.0. The HUD shows how many boxes creatures cost (`parts`), and sends it with every `/api/perf` sample.
+
 ## Challenges
 
 Hand-made islands with a hazard and a goal (`src/sim/scenarios.ts`, titles in `scenario-list.ts` so the game page does not load the engine to list them). A challenge builds its own world, runs a `tick` every frame (a volcano vent, a rising sea, the sun drying fields) and a `check` twice a second that returns progress text and playing, won or lost. It never touches the player's island: the iframe keeps the sandbox save in memory and restores it on leaving.
@@ -168,7 +233,7 @@ Balance is measured, not guessed: `npm test` plays each challenge with nothing o
 
 1. **Simulation** (`src/sim`): a grid of columns, each with a height, a ground, a fluid and its depth, a cover (tree, house...), fire, temperature and a gas. 30 ticks per second.
 2. **Rules of the land** (`physics.ts`): water runs downhill, freezes below 0 and boils above 100; lava flows slowly, burns and hardens into basalt, and makes steam with water; acid eats covers and soil; oil burns fast; mud dries; snow melts; fire spreads through forests, fields and houses with the wind and leaves ash and stumps; steam rains back down; powder explodes; grass and forests grow back.
-3. **People** (`creatures.ts`): villagers live near their houses, rebuild rubble, flee fire, panic and run for water when burning, drown in deep water; a new villager appears now and then while houses stand. Beasts roam, spirits fly and glow, golems are strong and fireproof.
+3. **People** (`creatures.ts`): villagers live near their houses, rebuild rubble, flee fire, panic and run for water when burning, drown in deep water; a new villager appears now and then while houses stand. Spirits fly and glow, golems are strong and fireproof. Since 3.5, deer, rabbits, wolves, boars, bears, birds and fish live in their own habitats (above).
 4. **Generation** (`world.ts`): fractal hills rescaled from their own distribution so every map gets about a fifth of water and a few snowy peaks, a river, forests, and villages on the flattest dry land.
 5. **View** (`voxel/`): a floating voxel island in three.js, with layered cut sides and water spilling off the edges. No two faces share a plane (3.4, `docs/visual-checks`): a waterfall hangs 0.06 cells in front of the cut side, a water wall starts on its own floor, spell blocks are never placed inside the land and take the place of a cover they are put on, and spell drawings are projected only on dry land tops and fluid tops, never on walls or on land under water. Built for phones: lighting is baked into vertex colors and every material is unlit, terrain chunks are rebuilt only where a column changed, each kind of object is one instanced draw call, and the pixel density drops when frames are slow. A medium island is about 60 draw calls and 140k triangles. Chunks are built with a reusable typed array writer under a 3 ms per frame budget.
 6. **Day and night** (`voxel/daylight.ts`): a six minute cycle that tints every unlit material and the sky; fire, lava and spell light are untouched, house windows light up at night and chimneys smoke.

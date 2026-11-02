@@ -1,8 +1,11 @@
 import { C, F, G, S } from "./materials";
 import { explode, forDisc } from "./physics";
-import { lull, social, stepLandmarks, type Mood } from "./social";
+import { lull, names, social, stepLandmarks, TAGS, type Mood } from "./social";
 import { daylight } from "./daylight";
 import type { World } from "./world";
+import { body, type BodySpec } from "./body";
+import { SPECIES, habitatCell, targetOf } from "./wildlife";
+import { packLook, randomLook, shirtOf, sizeOf, unpackLook } from "./villagers";
 
 // What a spell-made creature does, declared rather than coded, so even a
 // short program gets a creature with a life of its own.
@@ -57,6 +60,16 @@ export interface CreatureKind {
   glow: boolean;
   // Wanders around its home (villagers) or freely (everything else).
   homebody: boolean;
+  // What it looks like (3.5): a body plan with features, or a model.
+  body: BodySpec;
+  // Flying height in voxels.
+  altitude: number;
+  // Lives in water only: land is a wall and air chokes it (fish).
+  aquatic: boolean;
+  // One of the island's own animals, born again in its habitat.
+  native: boolean;
+  // Words that also name it in lures, scares and prey lists ("beast").
+  tags: string[];
   tick?: (self: Creature, dt: number) => void;
   fallback?: string;
   ai?: Behavior;
@@ -73,16 +86,25 @@ const kind = (k: Partial<CreatureKind> & { name: string }): CreatureKind => ({
   swims: false,
   glow: false,
   homebody: false,
+  body: body("four legs"),
+  altitude: 2,
+  aquatic: false,
+  native: false,
+  tags: [],
   ...k,
 });
 for (const k of [
-  kind({ name: "villager", speed: 3.2, hp: 100, radius: 0.55, color: 0xd64545, homebody: true }),
-  kind({ name: "beast", speed: 4.5, hp: 80, radius: 0.75, color: 0xe8e2d0 }),
-  kind({ name: "spirit", speed: 2.5, hp: 60, radius: 0.6, color: 0xc9f6ff, flying: true, fireproof: true, glow: true }),
-  kind({ name: "golem", speed: 1.8, hp: 300, radius: 1, color: 0x8d8d96, fireproof: true }),
+  kind({ name: "villager", speed: 3.2, hp: 100, radius: 0.55, color: 0xd64545, homebody: true, body: body("two legs", [], { villager: true }) }),
+  kind({ name: "beast", speed: 4.5, hp: 80, radius: 0.75, color: 0xe8e2d0, body: body("four legs", ["tail"]) }),
+  kind({ name: "spirit", speed: 2.5, hp: 60, radius: 0.6, color: 0xc9f6ff, flying: true, fireproof: true, glow: true, body: body("spirit") }),
+  kind({ name: "golem", speed: 1.8, hp: 300, radius: 1, color: 0x8d8d96, fireproof: true, body: body("golem", [], { color2: 0x9dfcff }) }),
+  ...SPECIES.map((s) => kind(s.kind)),
 ]) {
   KINDS.set(k.name, k);
+  if (k.tags.length) TAGS.set(k.name, k.tags);
 }
+
+export const BUILTIN_KINDS = new Set(KINDS.keys());
 
 export interface Creature {
   id: number;
@@ -116,6 +138,9 @@ export interface Creature {
   levitate: number;
   stun: number;
   drowning: number;
+  // Who this one is among its kind (villagers.ts for villagers; a bit for
+  // antlers on wild animals). Saved.
+  look: number;
   // Free data for spell defined behavior.
   data: Record<string, unknown>;
 }
@@ -136,22 +161,23 @@ export function maxHp(c: Creature): number {
   return kindOf(c).hp * c.size;
 }
 
-const SHIRTS = [0xd64545, 0x3f7fd9, 0xe0a030, 0x5aa65a, 0x9b59b6, 0xe67e22, 0x16a085, 0xc0c0c0];
-
 export function makeCreature(kindName: string, x: number, y: number): Creature {
   const k = KINDS.get(kindName) ?? KINDS.get("villager")!;
+  const villager = k.name === "villager";
+  const look = villager ? randomLook((Math.random() * 6) | 0) : null;
+  const species = k.native ? SPECIES.find((s) => s.kind.name === k.name) : undefined;
   return {
     id: nextId++,
     kind: k.name,
     x,
     y,
-    z: k.flying ? 2 : 0,
+    z: k.flying ? k.altitude : 0,
     vx: 0,
     vy: 0,
     vz: 0,
-    hp: k.hp,
-    size: 1,
-    color: k.name === "villager" ? SHIRTS[(Math.random() * SHIRTS.length) | 0] : k.color,
+    hp: k.hp * (look ? sizeOf(look) : 1),
+    size: look ? sizeOf(look) : 1,
+    color: look ? shirtOf(look) : species ? species.colors[(Math.random() * species.colors.length) | 0] : k.color,
     dead: false,
     deadFor: 0,
     homeX: x,
@@ -169,14 +195,60 @@ export function makeCreature(kindName: string, x: number, y: number): Creature {
     levitate: 0,
     stun: 0,
     drowning: 0,
+    look: look ? packLook(look) : (Math.random() * 256) | 0,
     data: {},
   };
+}
+
+// Puts a villager in its village's clothes, keeping its age and job.
+export function dress(c: Creature, style: number): void {
+  const look = unpackLook(c.look);
+  look.style = style;
+  c.look = packLook(look);
+  c.color = shirtOf(look);
+}
+
+// Which village's clothes a point belongs to: the nearest villager's.
+function styleNear(world: World, x: number, y: number): number {
+  let best = -1;
+  let bestD = 30;
+  for (const o of world.creatures) {
+    if (o.kind !== "villager" || o.dead) continue;
+    const d = Math.hypot(o.homeX - x, o.homeY - y);
+    if (d < bestD) {
+      bestD = d;
+      best = unpackLook(o.look).style;
+    }
+  }
+  return best >= 0 ? best : (Math.random() * 6) | 0;
+}
+
+// Villages by their houses: villagers whose homes are close share clothes,
+// each village its own. For a fresh island and for saves from before 3.5.
+export function dressVillages(world: World, who: Creature[]): void {
+  const centers: { x: number; y: number }[] = [];
+  for (const c of who) {
+    if (c.kind !== "villager") continue;
+    let n = centers.findIndex((p) => Math.hypot(p.x - c.homeX, p.y - c.homeY) < 22);
+    if (n < 0) {
+      n = centers.length;
+      centers.push({ x: c.homeX, y: c.homeY });
+    }
+    // Islands are seeded, so the first village of one island is not always red.
+    dress(c, (n + world.seed) % 6);
+  }
 }
 
 export function restoreCreature(raw: Partial<Creature>): Creature | null {
   if (typeof raw.x !== "number" || typeof raw.y !== "number" || typeof raw.kind !== "string") return null;
   const c = makeCreature(raw.kind, raw.x, raw.y);
-  return { ...c, ...raw, id: c.id, data: {} };
+  const look = typeof raw.look === "number" && Number.isFinite(raw.look) ? raw.look >>> 0 : c.look;
+  return { ...c, ...raw, look, id: c.id, data: {} };
+}
+
+// Water a fish can live in (ice above it is fine).
+function wet(world: World, i: number, depth: number): boolean {
+  return (world.fluid[i] === F.WATER || world.fluid[i] === F.ICE) && world.depth[i] > depth;
 }
 
 // Is the cell dangerous to stand on or next to?
@@ -188,6 +260,7 @@ function blocked(world: World, x: number, y: number, c: Creature, k: CreatureKin
   if (!world.inside(x, y)) return true;
   if (k.flying || c.levitate > 0 || c.z > 1.5) return false;
   const i = world.idx(x, y);
+  if (k.aquatic) return !wet(world, i, 0.6);
   const cover = world.materials.get("cover", world.cover[i]);
   if (cover.solid) return true;
   // Deep water and any lava are walls for those who would die in them.
@@ -236,6 +309,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     if (immune("cold")) c.frozen = 0;
     if (immune("fire")) c.burning = 0;
   }
+  // A fish out of water chokes.
+  if (k.aquatic && !wet(world, i, 0.25)) c.hp -= 15 * dt;
 
   // The land hurts.
   if (onGround) {
@@ -352,7 +427,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   c.vx -= c.vx * Math.min(1, friction * dt);
   c.vy -= c.vy * Math.min(1, friction * dt);
   if (k.flying || c.levitate > 0) {
-    const target = c.levitate > 0 ? 4 + Math.sin(world.time * 2 + c.id) * 0.8 : 2;
+    const target = c.levitate > 0 ? 4 + Math.sin(world.time * 2 + c.id) * 0.8 : k.altitude + (k.altitude > 3 ? Math.sin(world.time * 0.7 + c.id) * 1.5 : 0);
     c.vz += (target - c.z) * 4 * dt - c.vz * 2 * dt;
     c.z += c.vz * dt;
   } else {
@@ -379,7 +454,7 @@ function others(world: World, c: Creature, r: number, kinds: string[]): Creature
   let bestD = r;
   for (const o of world.crowd.near(world, c.x, c.y, r)) {
     if (o === c || o.dead) continue;
-    if (kinds.length ? !kinds.includes(o.kind) : o.kind === c.kind) continue;
+    if (kinds.length ? !names(kinds, o.kind) : o.kind === c.kind) continue;
     const d = Math.hypot(o.x - c.x, o.y - c.y);
     if (d < bestD) {
       bestD = d;
@@ -623,7 +698,7 @@ function plan(world: World, c: Creature, k: CreatureKind, dt: number): void {
   }
   if (c.goal > 0) return;
   c.goal = 2 + Math.random() * 5;
-  const range = k.homebody ? 9 : 25;
+  const range = k.homebody ? 9 : k.aquatic ? 10 : 25;
   const cx = k.homebody ? c.homeX : c.x;
   const cy = k.homebody ? c.homeY : c.y;
   for (let tries = 0; tries < 6; tries++) {
@@ -631,15 +706,18 @@ function plan(world: World, c: Creature, k: CreatureKind, dt: number): void {
     const ty = cy + (Math.random() - 0.5) * 2 * range;
     if (!world.inside(tx, ty)) continue;
     const j = world.idx(tx, ty);
-    if (!k.flying && (world.depth[j] > 0.3 || danger(world, j))) continue;
+    if (k.aquatic ? !wet(world, j, 0.8) : !k.flying && (world.depth[j] > 0.3 || danger(world, j))) continue;
     c.tx = tx;
     c.ty = ty;
     return;
   }
 }
 
-// Fills a fresh world with people near their houses and animals in the wild.
-export function populate(world: World): void {
+// Fills a fresh world with people near their houses and animals in the wild:
+// every species, or only those named (challenges keep to birds and fish: a
+// rabbit set alight by a volcano ran into the village and burned it, which
+// no spell could have prevented).
+export function populate(world: World, wild: readonly string[] | null = null): void {
   const houses: number[] = [];
   for (let i = 0; i < world.n; i++) if (world.cover[i] === C.HOUSE) houses.push(i);
   for (let k = 0; k < houses.length; k += 3) {
@@ -651,14 +729,44 @@ export function populate(world: World): void {
       world.creatures.push(c);
     }
   }
-  const beasts = Math.round(world.n / 3000);
-  for (let k = 0; k < beasts * 10 && world.creatures.filter((c) => c.kind === "beast").length < beasts; k++) {
-    const x = Math.random() * world.w;
-    const y = Math.random() * world.h;
-    const i = world.idx(x, y);
-    if (world.depth[i] > 0 || world.materials.get("cover", world.cover[i]).solid) continue;
-    world.creatures.push(makeCreature("beast", x, y));
+  dressVillages(world, world.creatures);
+  // The island's animals, each in its habitat. The generic beast of 2.x is
+  // left to spells.
+  for (const s of SPECIES) if (!wild || wild.includes(s.kind.name)) for (let n = targetOf(world, s); n > 0; n--) birth(world, s.kind.name);
+  world.wild = wild;
+}
+
+// One wild animal born in its habitat, if there is any left.
+function birth(world: World, name: string): boolean {
+  const s = SPECIES.find((sp) => sp.kind.name === name);
+  if (!s) return false;
+  const i = habitatCell(world, s);
+  if (i < 0) return false;
+  // world.idx rounds: a creature at x stands in cell round(x).
+  const c = makeCreature(name, (i % world.w) + (Math.random() - 0.5) * 0.6, Math.floor(i / world.w) + (Math.random() - 0.5) * 0.6);
+  c.homeX = c.x;
+  c.homeY = c.y;
+  world.creatures.push(c);
+  return true;
+}
+
+// Wild animals come back, slowly, while their habitat lasts: one at a time,
+// for the species furthest below its number. Only the island's own kinds
+// (a spell's wolves are its own business).
+function keepWild(world: World): void {
+  const alive = new Map<string, number>();
+  for (const c of world.creatures) if (!c.dead) alive.set(c.kind, (alive.get(c.kind) ?? 0) + 1);
+  let worst: string | null = null;
+  let worstShare = 1;
+  for (const s of SPECIES) {
+    if (!KINDS.get(s.kind.name)?.native || (world.wild && !world.wild.includes(s.kind.name))) continue;
+    const share = (alive.get(s.kind.name) ?? 0) / targetOf(world, s);
+    if (share < worstShare) {
+      worstShare = share;
+      worst = s.kind.name;
+    }
   }
+  if (worst && world.creatures.length < 500) birth(world, worst);
 }
 
 // Slow life: a new villager now and then while houses stand, the dead fade away.
@@ -667,6 +775,7 @@ export function lifeCycle(world: World, dt: number): void {
   for (let k = world.creatures.length - 1; k >= 0; k--) {
     if (world.creatures[k].dead && world.creatures[k].deadFor > 40) world.creatures.splice(k, 1);
   }
+  if (Math.random() < dt * 0.2) keepWild(world);
   if (Math.random() > dt * 0.15) return;
   let houses = 0;
   for (let i = 0; i < world.n; i++) if (world.cover[i] === C.HOUSE) houses++;
@@ -677,6 +786,12 @@ export function lifeCycle(world: World, dt: number): void {
     const i = (Math.random() * world.n) | 0;
     if (world.cover[i] !== C.HOUSE) continue;
     const c = makeCreature("villager", (i % world.w) + 0.5, Math.floor(i / world.w) + 2.5);
+    // Born here: a child, in this village's clothes.
+    const look = randomLook(styleNear(world, c.x, c.y), Math.random, Math.random() < 0.6 ? "child" : undefined);
+    c.look = packLook(look);
+    c.size = sizeOf(look);
+    c.hp = maxHp(c);
+    c.color = shirtOf(look);
     world.creatures.push(c);
     return;
   }

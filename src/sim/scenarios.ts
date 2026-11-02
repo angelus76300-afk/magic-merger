@@ -25,6 +25,9 @@ export interface Scenario {
 }
 
 const SIZE = 112;
+// Animals that cannot change a challenge's outcome: birds fly over fire and
+// fish stay in the water. Deer, boars and the rest would carry fire.
+const CHALLENGE_WILD = ["bird", "fish"];
 
 function villagers(world: World, test: (c: World["creatures"][number]) => boolean = () => true): number {
   return world.creatures.filter((c) => !c.dead && c.kind === "villager" && test(c)).length;
@@ -48,7 +51,7 @@ export const SCENARIOS: Scenario[] = [
       plantForest(world, 6, 12, 72, 104, 0.82);
       // Orchards and hedges reach the houses, so the fire has a road to the village.
       plantForest(world, 72, 46, 84, 96, 0.72);
-      populate(world);
+      populate(world, CHALLENGE_WILD);
       world.wind.x = 1.3;
       world.wind.y = 0.2;
       // It starts small, deep in the forest: there is time to act.
@@ -94,7 +97,7 @@ export const SCENARIOS: Scenario[] = [
       forDisc(world, 24, 24, 3, (i) => (world.height[i] -= 3));
       buildVillage(world, 78, 78, rng);
       plantForest(world, 40, 50, 64, 70, 0.4);
-      populate(world);
+      populate(world, CHALLENGE_WILD);
       for (let i = 0; i < world.n; i++) world.temp[i] = world.ambient(i);
       const h0 = houses(world);
       const ERUPTION = 70;
@@ -155,7 +158,7 @@ export const SCENARIOS: Scenario[] = [
       buildVillage(world, 56, 90, rng);
       plantForest(world, 4, 4, 40, 30, 0.45);
       plantForest(world, 76, 4, 108, 30, 0.45);
-      populate(world);
+      populate(world, CHALLENGE_WILD);
       for (let k = 0; k < 8; k++) {
         const c = makeCreature("villager", 44 + k * 3, 30 + (k % 3));
         c.homeX = 56;
@@ -186,7 +189,7 @@ export const SCENARIOS: Scenario[] = [
       const world = plainWorld(SIZE, SIZE, 404, 12, 1.5);
       const rng = new Rng(404);
       buildVillage(world, 56, 56, rng);
-      populate(world);
+      populate(world, CHALLENGE_WILD);
       const farm: number[] = [];
       forDisc(world, 56, 56, 34, (i, k) => {
         const d = (1 - k) * 34;
@@ -245,7 +248,7 @@ export const SCENARIOS: Scenario[] = [
       for (let i = 0; i < world.n; i++) if (world.height[i] < world.seaLevel) world.setFluid(i, F.WATER, world.seaLevel - world.height[i]);
       buildVillage(world, 56, 50, rng);
       plantForest(world, 4, 70, 108, 108, 0.35);
-      populate(world);
+      populate(world, CHALLENGE_WILD);
       const v0 = villagers(world);
       const RISE = 50;
       return {

@@ -17,6 +17,8 @@ export interface SceneCounts {
   triangles: number;
   voxels: number;
   creatures: number;
+  // Boxes drawn for creatures (3.5): what bodies cost.
+  parts: number;
   pixelRatio: number;
   size: number;
 }
@@ -35,6 +37,7 @@ export interface PerfSummary {
   triangles: number;
   voxels: number;
   creatures: number;
+  parts: number;
   pixelRatio: number;
   size: number;
 }
@@ -47,7 +50,7 @@ export class FrameStats {
   private next = 0;
   // Frames skipped because nothing moved (see Engine.frame).
   idle = 0;
-  counts: SceneCounts = { calls: 0, triangles: 0, voxels: 0, creatures: 0, pixelRatio: 1, size: 0 };
+  counts: SceneCounts = { calls: 0, triangles: 0, voxels: 0, creatures: 0, parts: 0, pixelRatio: 1, size: 0 };
 
   push(s: FrameSample): void {
     this.frame[this.next] = s.frame;
@@ -121,7 +124,7 @@ export class Hud {
       `frame ${s.frameP50} / ${s.frameP95} ms (p50/p95) · ${s.fps} fps`,
       `sim ${s.simP50} / ${s.simP95} ms · draw ${s.renderP50} / ${s.renderP95} ms`,
       `calls ${s.calls} · tris ${k(s.triangles)} · dpr ${s.pixelRatio}`,
-      `voxels ${k(s.voxels)} · creatures ${s.creatures} · idle ${s.idle}`,
+      `voxels ${k(s.voxels)} · creatures ${s.creatures} (${k(s.parts)} parts) · idle ${s.idle}`,
     ].join("\n");
   }
 }

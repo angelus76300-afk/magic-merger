@@ -1,6 +1,6 @@
 # Where the game stands, and what comes next
 
-Updated on 2026-11-02, during 3.4.
+Updated on 2026-11-02, during 3.5.
 
 ## Done since the first review
 
@@ -92,6 +92,20 @@ Asked for: send the link to friends and coworkers, $50 of API a month in total w
 
 This takes part of 4.5 "Ready for strangers" early, for a closed circle: quotas, a report button, a privacy note, no shared token. Still missing before anything public: Turnstile, name checks before a name is stored, AI labels on generated content, legal pages, AI Gateway caps.
 
+## Done in 3.5: many kinds of life
+
+Asked for: every creature was the same two blocks in a different color. DESIGN.md, "Many kinds of life", has the rules and the numbers.
+
+1. **Twelve body plans** (two legs, four legs, bird, fish, serpent, insect, spider, slime, spirit, golem, dragon, tree folk), each a few boxes that turn about pivots: legs swing, an arm holding something stays steady, wings flap, tails sway, heads nod, a serpent undulates, a slime squashes. The dead fall on their side and sink; a dead fish floats belly up.
+2. **Features on any body**: horn, horns, antlers, wings, tail, mane, hat, hood, crown, glowing eyes, armor and one carried item from ten.
+3. **Models Claude designs**: up to 16 boxes with a motion each, scaled to the creature's size.
+4. **Two draw calls for all creatures**, whatever the mix: every part is one instanced cube shaded from its own normal. A crowd of 375 creatures costs 26 draw calls where it cost 25, and 1.0 ms of CPU per frame (0.1 before) after making the first version twice as fast; creatures outside the camera are skipped and details dropped from far away. The HUD shows the boxes drawn.
+5. **Wildlife with habitats**: deer, rabbits, wolves (hunt by night), boars, bears (hunt by day, scare people), birds and fish, kept at their numbers by births where their habitat lasts. Challenges keep only birds and fish (a burning rabbit lost the lava challenge with the right spell cast).
+6. **Villagers who differ**: children, elders, clothes per village, a look per job, saved; old saves dressed by village.
+7. **Old spells untouched**: their creatures get a body from what they declare, then their name (a Lich King gets a crown, a Dragonfly is not a dragon), then their base kind. A spell's own "wolf" stays apart from the island's wolves. The prompt teaches `body`, `features`, `color2` and `model` in one paragraph (about 280 tokens, 1.5 to 3% of a big spell's cost); `PROGRAM_VERSION` 5 only labels.
+8. **The bestiary** (`lab/bestiary.html`, screenshots by `scripts/bestiary.mjs`) draws every plan, feature, animal, villager look and four sample models, walking, flying, dead or frozen.
+9. **Checked**: `npm test` builds every plan with every feature and every villager look, reads names, bounds models, finds every species in its habitat on two island sizes, brings deer back after they are all killed, chokes a fish on land, keeps a spell's wolves apart and saves looks. Two things it caught: wolves born inside solid trees never moved, and the test run passed a spell that did nothing once animals drew random numbers (creatures now have their own stream there). The imp mob check was one seed that happened to pass (about 3 in 4 imps die in 20 s, before and after 3.5, over 52 seeds); it now asks for 5 of 6 seeds where the mob kills it or leaves it under half health.
+
 ## Decisions taken
 
 1. **Cosmic spells may ruin the island.** Consequences are part of the fun; the land regrows on its own (ash turns to soil, grass and forests come back) and Reset is one tap away. Revisit if it feels punishing in play.
@@ -102,7 +116,9 @@ This takes part of 4.5 "Ready for strangers" early, for a closed circle: quotas,
 1. **The judge and the votes.** No vote exists yet, so the judge is uncalibrated and only advises; the library is empty until players vote programs up. Watch `GET /api/admin/judge-stats` after a week of play, and how often a vote leads to a rewrite and a rewrite to a rollback (`rewrites` table).
 2. **Phones.** Still measured only in Node and a headless browser. The HUD sends real numbers to `/api/perf` as soon as someone plays with it on. In steady state the simulation's cost is temperature and fluids (about 40% of a tick in every scene), not voxels or creatures: that is the next lever if phones run hot.
 3. **Sounds** were checked for errors, not listened to.
-4. **Challenge balance with real spells.** The checks use simple hand-written solutions; Claude's spells may be stronger or weaker. Wildfire used to be won by doing nothing 1 time in 5: villagers rebuilt the burnt houses while the fire died down, and the end check counted them. It is now lost the moment a second house burns, and `npm test` replays every challenge with nothing over 8 seeds (0 wins in 64 for Wildfire, rain still wins 64 in 64).
+4. **Whether Claude uses bodies.** New spells should declare `body` and `features`; models should stay rare. Look at a week of new programs (`programs` table) for how often each appears, and at the bestiary when one looks wrong.
+5. **Creatures on phones.** 375 creatures cost 1.0 ms p50 but 5.1 ms p95 of CPU in the headless browser; the HUD's `parts` count in `/api/perf` will say what a real island costs.
+6. **Challenge balance with real spells.** The checks use simple hand-written solutions; Claude's spells may be stronger or weaker. Wildfire used to be won by doing nothing 1 time in 5: villagers rebuilt the burnt houses while the fire died down, and the end check counted them. It is now lost the moment a second house burns, and `npm test` replays every challenge with nothing over 8 seeds (0 wins in 64 for Wildfire, rain still wins 64 in 64).
 
 ## What the money taught us
 
@@ -129,7 +145,7 @@ Sizes are per Claude Code session: S a few hours, M a full session, L two or mor
 
 ### 3.4 Share with friends (done, see above)
 
-### 3.5 Many kinds of life (next)
+### 3.5 Many kinds of life (done, see above)
 
 Today every creature is the same two blocks in a different color. Give each kind a body you recognize at a glance, and the island wildlife worth a food web.
 
@@ -142,7 +158,7 @@ Today every creature is the same two blocks in a different color. Give each kind
 7. **A bestiary page** in the Spell Lab drawing every plan and feature.
 8. Teach `body`, `features` and models in the spell prompt **without rewriting existing spells in bulk**; old creatures get a body chosen from their base kind.
 
-### 3.6 Goals, actions and a living island
+### 3.6 Goals, actions and a living island (next)
 
 Nothing on the island just stands there. Every creature wants something and acts to get it, some with magic of their own; every artifact does something, on its own or when something happens. The test for anything new: if the player does nothing for five minutes, what has it changed? Builds on `src/sim/social.ts` and the species from 3.5.
 

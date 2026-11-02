@@ -72,7 +72,7 @@ Or let GitHub do it every night: add the repository secrets `MM_URL` and `MM_TOK
 
 ### Frame HUD
 
-A long press on the title shows a small panel in the World: frame time p50 and p95, simulation and draw milliseconds, draw calls, triangles, pixel density, voxels, creatures and frames skipped because nothing changed. While it is on, a summary is sent every 30 seconds to `/api/perf` (kept 30 days); the admin reads them back with `GET /api/perf`. A long press again hides it.
+A long press on the title shows a small panel in the World: frame time p50 and p95, simulation and draw milliseconds, draw calls, triangles, pixel density, voxels, creatures and the boxes drawn for them (3.5), and frames skipped because nothing changed. While it is on, a summary is sent every 30 seconds to `/api/perf` (kept 30 days); the admin reads them back with `GET /api/perf`. A long press again hides it.
 
 ## 4. Models and cost
 
@@ -126,6 +126,8 @@ node scripts/spell-lab.mjs lab-out lab/spells/*.js
 `lab/spells` holds hand written reference spells. A `.json` file can also be a saved `/api/spell` response. Environment variables: `LAB_TIER` (default major), `LAB_SHOTS` (seconds, comma separated), `LAB_SIZE` (small, medium, large), `LAB_DIST` (camera distance; 400 shows the whole island).
 
 To compare models, the admin can pass `model` and `effort` in an `/api/spell` request with `regenerate: true`, or, without storing anything, call `/api/admin/spell-trial` (`name`, `model`, `effort`, `examples`, `rewrite`), `/api/admin/batch-trial` and `/api/admin/judge-trial`. `scripts/eval-spells.ts` uses them to measure a fixed set of 20 spells (see its header and `docs/measurements/spell-quality-2026-11.md`); point it at a version uploaded with `npx wrangler versions upload`, which gets its own preview URL and leaves production alone.
+
+The bestiary (3.5) draws every body plan, feature, wild animal, villager look and sample model with the game's own figure code: open `http://localhost:5174/lab/bestiary.html` while Vite runs (`?pose=walk|idle|fly|dead|frozen`, `&only=<section>`, `&cols=4` for close-ups, `&t=<seconds>` to stop the clock). `node scripts/bestiary.mjs` saves its screenshots in `docs/visual-checks`. `node scripts/prof-view.mjs crowd` measures 375 creatures.
 
 `node scripts/scenario-lab.mjs out plan.json` plays challenges with spells cast at given times and saves frames and the objective's timeline (see the comment at the top of the script for the plan format).
 

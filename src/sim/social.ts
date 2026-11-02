@@ -37,13 +37,31 @@ export interface Landmark extends Presence {
 
 export type Mood = "fear" | "lured" | "carry" | "angry" | "hunt" | "asleep" | null;
 
+// Extra words that name a kind: the island's animals are all "beast" (3.5),
+// so a scarecrow or honey written before them still works on deer and bears.
+export const TAGS = new Map<string, string[]>();
+
+// A spell's own creature named like one of the island's animals is kept
+// apart as "wolf#<spell>" (runtime.ts); lists still call it a wolf.
+export function baseName(kind: string): string {
+  const i = kind.indexOf("#");
+  return i < 0 ? kind : kind.slice(0, i);
+}
+
 // Kinds a list names, with a few plain words players and Claude use.
 export function names(list: string[], kind: string): boolean {
   if (!list.length) return false;
-  if (list.includes(kind) || list.includes("all") || list.includes("everyone")) return true;
-  if (kind === "villager" && (list.includes("humans") || list.includes("people") || list.includes("villagers"))) return true;
-  if (kind === "beast" && (list.includes("animals") || list.includes("beasts"))) return true;
-  return false;
+  if (list.includes("all") || list.includes("everyone")) return true;
+  const k = baseName(kind);
+  if (list.includes(k) || list.includes(kind)) return true;
+  if (k === "villager" && (list.includes("humans") || list.includes("people") || list.includes("villagers"))) return true;
+  const tags = TAGS.get(k);
+  if (k === "beast" || tags?.includes("beast")) {
+    if (list.includes("animals") || list.includes("beasts") || list.includes("beast") || list.includes("animal")) return true;
+  }
+  if (tags) for (const t of tags) if (list.includes(t)) return true;
+  // Plurals: "wolves", "deer", "rabbits".
+  return list.some((w) => w === `${k}s` || (k === "wolf" && w === "wolves"));
 }
 
 // Does o hunt creatures of c's kind?

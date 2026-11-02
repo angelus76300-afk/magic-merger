@@ -59,6 +59,8 @@ export class World {
   landmarks: Landmark[] = [];
   // Gifts villagers have brought home; every few build a house.
   wealth = 0;
+  // Which wild species live here and come back; null for all (3.5).
+  wild: readonly string[] | null = null;
   time = 0;
   tick = 0;
   seaLevel = 8;

@@ -125,8 +125,8 @@ const EXAMPLE_GROVE = `const spell = {
       spreads: { into: ["grass"], rate: 0.05 }, reacts: { fire: "ash", water: "grass" } },
   ],
   creatures: [
-    { name: "wisp", base: "spirit", color: "#b8a0ff", behavior: "follow", leader: ["villager"],
-      aura: "sleep", auraRadius: 3, weak: ["fire"], onDeath: "seeds" },
+    { name: "wisp", base: "spirit", color: "#b8a0ff", color2: "#fff2b0", features: ["glowing eyes"],
+      behavior: "follow", leader: ["villager"], aura: "sleep", auraRadius: 3, weak: ["fire"], onDeath: "seeds" },
   ],
   *cast(w) {
     w.flash("#b8a0ff", 0.3);
@@ -157,7 +157,7 @@ ground: grass, dirt, sand, rock, snow, ash, basalt, crystal (glows), field
 fluid: water, ice, lava, oil, acid, mud
 cover: tree, bush, crop, house, rubble, powder, stump, flower, boulder
 gas: smoke, steam, poison
-Creatures: villager, beast, spirit (flies, glows), golem (strong, fireproof). Statuses: burn, freeze, fear, sleep, calm, levitate, stun.
+Creatures: villager, beast, spirit (flies, glows), golem (strong, fireproof), and the island's wild animals: deer, rabbit, wolf (hunts deer and rabbits by night), boar, bear, bird, fish (lives in water). In a list, beast also names every wild animal. Statuses: burn, freeze, fear, sleep, calm, levitate, stun.
 
 API (w)
 w.x, w.y target; w.r reach; w.tier; w.width, w.height; w.time.
@@ -177,7 +177,8 @@ Effects: w.particle({x, y, z, vx, vy, vz, life, color, size, glow, gravity, drag
 NEW RULES
 When the built-in world cannot express the spell, add to it; new rules stay in the world after the spell ends. spell.materials and spell.creatures are plain data written with literal values: w does not exist there.
 spell.materials: [{name, layer, colors, flammable 0 to 1, fuel, flow (fluids), hurts, heat (temperature it pulls toward), glow, solid (cover), becomes, reacts, decays, spreads, lures, scares, taken}]. reacts maps fire, water, lava, acid, cold or heat to what the material turns into when that touches it: any material, or none, fire, explode, steam, smoke. decays: seconds before it turns into becomes. spreads: {into: [materials it takes over, or "any"], rate} with rate 0.02 (creeping) to 0.3 (fast). Prefer these declared rules over tick(cell, w), which costs a call per cell per frame.
-spell.creatures: [{name, base (a built-in kind), color, speed, hp, radius, flying, fireproof, swims, glow, behavior, prey, leader, attack, sense, aura, auraRadius, auraPower, leaves, weak, immune, lifespan, onDeath, lures, scares, converts, active}]. behavior: wander, hunt (chases prey and attacks), guard (stays where it was spawned and attacks prey that comes close), follow (walks with a leader kind), flee. aura: heal, fear, calm, sleep, burn, freeze or hurt on everyone around it. leaves: fire, ice, flowers or a material, on the cells it walks over. weak and immune: water, fire, cold, light (daylight), lightning, acid. lifespan in seconds for summons. onDeath: explode, fire, seeds, ice, spawn:<kind> or a material. converts: true makes its victims rise as its own kind. active: day or night, when it is awake.
+spell.creatures: [{name, base (a built-in kind), color, color2, body, features, model, speed, hp, radius, flying, fireproof, swims, glow, behavior, prey, leader, attack, sense, aura, auraRadius, auraPower, leaves, weak, immune, lifespan, onDeath, lures, scares, converts, active}]. behavior: wander, hunt (chases prey and attacks), guard (stays where it was spawned and attacks prey that comes close), follow (walks with a leader kind), flee. aura: heal, fear, calm, sleep, burn, freeze or hurt on everyone around it. leaves: fire, ice, flowers or a material, on the cells it walks over. weak and immune: water, fire, cold, light (daylight), lightning, acid. lifespan in seconds for summons. onDeath: explode, fire, seeds, ice, spawn:<kind> or a material. converts: true makes its victims rise as its own kind. active: day or night, when it is awake.
+Every creature is drawn as a small voxel figure that walks, flaps, sways and falls. body: two legs, four legs, bird, fish, serpent, insect, spider, slime, spirit, golem, dragon or tree folk (left out: chosen from its name, then its base). features, any of: horn, horns, antlers, wings, tail, mane, hat, hood, crown, glowing eyes, armor, plus one carried item: sword, axe, spear, staff, torch, hammer, shield, lantern, book or basket. color2 colors the belly, wings, mane, hood, leaves and glowing eyes. Wings do not make it fly: set flying. Only for a creature no body fits (a walking eye, a mimic chest, a living cloud): model, at most 16 boxes [x, y, z, width, height, depth, color, part] in whole numbers, standing on y 0 and facing +z, scaled to its radius; part (optional) is leg, leg2, arm, arm2, wing, tail or head for how it moves, or glow; a model replaces body and features. Prefer a body with features: it is shorter.
 w.landmark(x, y, {name, lures, scares, aura, radius, power}) leaves a lasting presence at a place, for things that are not creatures or materials: a shrine, a relic, a scarecrow, a cursed stone. Build its look with the structures or voxels; the landmark is what it does. When a landmark names whom it scares, its harmful aura (hurt, burn, freeze, sleep, fear) touches only those kinds and a kind aura (heal, calm) spares them. Lured creatures visit for a few seconds and come back later; they do not stay for ever.
 
 RELATIONSHIPS
