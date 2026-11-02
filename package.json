@@ -11,7 +11,7 @@
     "db:migrate:local": "wrangler d1 migrations apply magic-merger --local",
     "db:migrate:remote": "wrangler d1 migrations apply magic-merger --remote",
     "deploy": "npm run build && wrangler d1 migrations apply magic-merger --remote && wrangler deploy",
-    "test": "esbuild scripts/sim-test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/sim-test.mjs --log-level=warning && node node_modules/.cache/sim-test.mjs",
+    "test": "esbuild scripts/sim-test.ts scripts/challenge-worker.ts --bundle --platform=node --format=esm --outdir=node_modules/.cache --out-extension:.js=.mjs --log-level=warning && node node_modules/.cache/sim-test.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
