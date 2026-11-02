@@ -191,7 +191,7 @@ export async function hold(db: D1Database, ledger: Ledger, call: string, usd: nu
       "Your magic is spent for now. Everything already discovered still works: merge known recipes and cast any spell in the library.",
     );
   }
-  throw new LedgerError(402, "budget", "The magic is spent for this month: the Claude budget is used up. Known recipes still work.");
+  throw new LedgerError(402, "budget", "The magic is spent for this month, for everyone. Known recipes and every spell in the library still work.");
 }
 
 // Records what calls really cost and settles this request's holds, at once.

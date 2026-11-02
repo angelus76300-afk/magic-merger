@@ -1,3 +1,4 @@
+import { credits } from "../shared/credits";
 import type { PeopleResponse, PersonInfo } from "../shared/types";
 import * as api from "./api";
 import { toast } from "./toast";
@@ -45,7 +46,7 @@ function ensureDialog(): HTMLDialogElement {
       .createInvite(name)
       .then((r) => {
         input.value = "";
-        showLink(`Invite for ${r.name} ($${r.cap} a month). Send it to them only: whoever opens it plays as ${r.name}.`, r.link);
+        showLink(`Invite for ${r.name} (${credits(r.cap)} credits, $${r.cap}, a month). Send it to them only: whoever opens it plays as ${r.name}.`, r.link);
         void refresh();
       })
       .catch((err: unknown) => toast(err instanceof Error ? err.message : "Could not create the invite", "error"));
@@ -126,7 +127,7 @@ function row(p: PersonInfo): HTMLElement {
   const status = p.status === "active" ? "" : ` · ${p.status}`;
   const refused = p.refusals ? ` · ${p.refusals} refused by the bug guard` : "";
   const found = `${p.discoveries} ${p.discoveries === 1 ? "discovery" : "discoveries"}`;
-  facts.textContent = `${usd(p.spent)} of ${usd(allowance)} · ${found} · ${p.lastSeen ? `seen ${ago(p.lastSeen)}` : "never came"}${status}${refused}`;
+  facts.textContent = `${usd(p.spent)} of ${usd(allowance)} (${credits(p.spent)} of ${credits(allowance)} credits) · ${found} · ${p.lastSeen ? `seen ${ago(p.lastSeen)}` : "never came"}${status}${refused}`;
   const bar = document.createElement("span");
   bar.className = "people-bar";
   bar.style.setProperty("--used", `${Math.min(100, (p.spent / Math.max(0.01, allowance)) * 100)}%`);
@@ -150,7 +151,7 @@ function row(p: PersonInfo): HTMLElement {
   };
   act(p.status === "paused" ? "Resume" : "Pause", () => api.changeInvite(p.id, p.status === "paused" ? "resume" : "pause"));
   act("Top up", async () => {
-    const usd = Number(window.prompt(`Dollars to add to ${p.name}'s magic for this month:`, "5"));
+    const usd = Number(window.prompt(`Credits to add to ${p.name}'s magic for this month (100 credits = $1):`, "500")) / 100;
     if (usd > 0) await api.changeInvite(p.id, "topup", usd);
   });
   act("New link", async () => {

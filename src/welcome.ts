@@ -1,3 +1,4 @@
+import { credits } from "../shared/credits";
 import type { HealthResponse } from "../shared/types";
 
 // 3.4: what a friend sees first. One paragraph on the game, a short privacy
@@ -7,7 +8,7 @@ const WELCOMED_KEY = "magic-merger.welcomed";
 
 const WELCOME = `Magic Merger is a game about combining magic. You start with eight primal forces: drop one onto another and something new appears. Claude, an AI by Anthropic, decides what each pair makes the first time anyone tries it, and that answer is then kept for everyone, so the recipe book is shared with the friends who play too. Every spell can be cast on a floating island in the World tab, where tiny villagers live: Claude writes each spell there as a small program the first time someone picks it, so nobody hand-made what you will see. After a cast you can say whether it was good; spells voted down get written again.`;
 
-const PRIVACY = `Privacy: everyone plays with their own link, which the game knows by the name the person who invited them gave it. It keeps what you discover, cast and vote, when you last played and what your magic cost, to share discoveries and stay within the monthly budget. The names of the items you merge are sent to Claude through Anthropic's API; nothing about you is. Cloudflare, which hosts the game, keeps ordinary request logs for a few days. No ads, no tracking, no cookies: your browser only keeps your link and your progress. To have your data deleted, ask the person who invited you.`;
+const PRIVACY = `Privacy: everyone plays with their own link, which the game knows by the name the person who invited them gave it. It keeps what you discover, cast and vote, when you last played and how many credits your magic used, to share discoveries and keep the game within its monthly limit. The names of the items you merge are sent to Claude through Anthropic's API; nothing about you is. Cloudflare, which hosts the game, keeps ordinary request logs for a few days. No ads, no tracking, no cookies: your browser only keeps your link and your progress. To have your data deleted, ask the person who invited you.`;
 
 let dialog: HTMLDialogElement | null = null;
 
@@ -54,7 +55,7 @@ export function showWelcome(status: HealthResponse | null): void {
     month.textContent =
       invite.status === "paused"
         ? `Hello ${invite.name}. Your invite is paused for now: everything already discovered still works.`
-        : `Hello ${invite.name}. Your magic this month: $${left.toFixed(2)} left of $${invite.cap.toFixed(2)}. New merges and new spells use it; anything already in the shared library is free.`;
+        : `Hello ${invite.name}. Your magic this month: ${credits(left)} credits left of ${credits(invite.cap)}. Only new discoveries and new spells use credits; anything already in the shared library is free.`;
   }
   if (!d.open) d.showModal();
 }

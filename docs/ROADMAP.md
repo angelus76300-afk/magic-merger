@@ -1,6 +1,6 @@
 # Where the game stands, and what comes next
 
-Updated on 2026-11-02, during 3.3.
+Updated on 2026-11-02, during 3.4.
 
 ## Done since the first review
 
@@ -78,6 +78,20 @@ DESIGN.md, "Spells that get better", has the rules; `docs/measurements/spell-qua
 9. **A bug found by the test run**: creatures raised from the dead died again at once (their fall speed kept growing while they lay dead). Resurrection never worked; fixed, with a check in `npm test`.
 10. **Checked**: `npm test` casts good and bad programs through the test run and checks the vote rules; a local end to end run (wrangler dev, local D1, a stub Claude API) went through trial, failed test, rewrite, live, casts, votes, rewrite with reasons, rollback, cooldown, a legacy row, a batch rewrite, a draft then its batch upgrade, the library and the judge; a headless browser went through the World, the test run frame, a cast, the vote bar and View source.
 
+## Done in 3.4: share with friends
+
+Asked for: send the link to friends and coworkers, $50 of API a month in total with my own plays, at most $5 per person. DESIGN.md, "Sharing with friends", has the rules.
+
+1. **Overlapping faces fixed first**, each reproduced in the Spell Lab (`scripts/overlap-lab.mjs`) with before and after in `docs/visual-checks`: waterfalls drawn in the same plane as the island's cut side showed its sand and soil bands as streaks (now 0.06 cells in front); water walls on terraces did the same with the land's walls (now they start on the water's own floor); spell blocks placed in the land flickered through its top and walls (now refused), and a wall built through a village cut through houses and trees (a block now takes the cover's place); spell drawings were projected down the cliffs and twice over water (now only on dry tops and fluid tops).
+2. **One invite link per person** instead of the shared `ACCESS_TOKEN`: created from the admin badge with a name, stored hashed in D1, kept by the browser, pausable, top-uppable for the month, relinkable and revocable. The admin token stays separate.
+3. **Every Claude call paid by an invite** in the ledger, batches and vote rewrites included. Past $5 in the month, new merges and spells say "Your magic is spent for now"; the shared library stays free.
+4. **`BUDGET_USD` from $20 to $50**, checked by a hold inserted in one statement, so two calls at the last dollar cannot both pass. A bug guard: identical requests in flight ask Claude once; more than 10 paid requests from one person in 5 seconds are refused and logged. No hourly cap.
+5. **The admin's People view**: spend, discoveries and last visit per person, refusals, what is left of the $50, reported names.
+6. **A welcome** (what the game is, that Claude writes the spells, the player's month), **a report button** on names and **a privacy note**.
+7. **Checked**: `npm run test:worker` runs the Worker under `wrangler dev` with a stub Claude, in CI (DESIGN.md has what it covers, and the mutation that proves the concurrency test can fail); a phone sized browser went through no link, the admin creating an invite, the friend's welcome, a merge, the cap, the People view and a revoked link.
+
+This takes part of 4.5 "Ready for strangers" early, for a closed circle: quotas, a report button, a privacy note, no shared token. Still missing before anything public: Turnstile, name checks before a name is stored, AI labels on generated content, legal pages, AI Gateway caps.
+
 ## Decisions taken
 
 1. **Cosmic spells may ruin the island.** Consequences are part of the fun; the land regrows on its own (ash turns to soil, grass and forests come back) and Reset is one tap away. Revisit if it feels punishing in play.
@@ -113,7 +127,9 @@ Sizes are per Claude Code session: S a few hours, M a full session, L two or mor
 3. **Up votes** mark programs for the library of examples Haiku sees.
 4. **Machine checks.** A test run before storing (crash, no visible change, island wiped: rewrite once), a Haiku judge on three Spell Lab frames calibrated on votes, Haiku drafts of big spells now and Opus versions through the Batch API later, and view source on the spell card.
 
-### 3.4 A living island
+### 3.4 Share with friends (done, see above)
+
+### 3.5 A living island
 
 Villagers, creatures, animals and artifacts that deal with each other, not only with the player. Builds on `src/sim/social.ts`.
 
@@ -125,7 +141,7 @@ Villagers, creatures, animals and artifacts that deal with each other, not only 
 6. **Inspect** a creature with a tap: kind, mood, target, needs, what it carries.
 7. **Scene test.** A village, a forest, wolves, a vampire, gold and a shrine for ten simulated minutes in `npm test`; populations neither explode nor vanish.
 
-### 3.5 A reason to cast
+### 3.6 A reason to cast
 
 Village mana from fed villagers in standing houses (a sandbox switch keeps it infinite), par scores and "three ways" stars on challenges, free play after a challenge, a recipe book with hints, opposites and depth based tiers in the merge prompt, a chronicle written from the event log and villagers' memories, discoveries made in the World.
 
@@ -135,4 +151,4 @@ A deterministic simulation first, then clips, replays as links, a daily island, 
 
 ### 4.5 Ready for strangers
 
-AI Gateway spend caps, quotas, Turnstile, name checks and a report button, AI labels, small legal pages, no player token. Nothing public before this.
+AI Gateway spend caps, Turnstile, name checks, AI labels, small legal pages. Quotas, the report button and invite links instead of a shared token came early, in 3.4, for friends. Nothing public before this.
