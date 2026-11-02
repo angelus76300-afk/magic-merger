@@ -67,7 +67,7 @@ export class WorldHost {
     expand.className = "spellbar-expand";
     const showExpand = () => {
       this.el.bar.classList.toggle("expanded", this.expanded);
-      expand.textContent = this.expanded ? "Fewer" : "All";
+      expand.textContent = this.expanded ? "Row" : "Grid";
       expand.setAttribute("aria-expanded", String(this.expanded));
       expand.title = this.expanded ? "Show one row" : "Show every spell";
     };
@@ -251,7 +251,7 @@ export class WorldHost {
         if (this.expanded && window.innerWidth < 700) {
           this.expanded = false;
           this.el.bar.classList.remove("expanded");
-          (this.el.tools.querySelector(".spellbar-expand") as HTMLButtonElement).textContent = "All";
+          (this.el.tools.querySelector(".spellbar-expand") as HTMLButtonElement).textContent = "Grid";
         }
         break;
       case "error":
