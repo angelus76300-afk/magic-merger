@@ -106,7 +106,7 @@ This takes part of 4.5 "Ready for strangers" early, for a closed circle: quotas,
 
 ## What the money taught us
 
-The ledger holds $6.64 (plus about $3.32 before it existed): about $10 of the $25 budget. Opus spells are 88% of it. Opus spell calls went from 43 to 96 in one day because the program version bump to 4 rewrote every big spell on its next cast. **Never rewrite spells in bulk again**: new API features stay backward compatible, and spells are rewritten one at a time (an admin button in 3.2, player votes in 3.3).
+The ledger holds $6.64 (plus about $3.32 before it existed): about $10 of the first $25 budget (since 3.4 the cap is $50 a month; November so far: $7.26). Opus spells are 88% of it. Opus spell calls went from 43 to 96 in one day because the program version bump to 4 rewrote every big spell on its next cast. **Never rewrite spells in bulk again**: new API features stay backward compatible, and spells are rewritten one at a time (an admin button in 3.2, player votes in 3.3).
 
 ## Next versions
 
@@ -129,19 +129,35 @@ Sizes are per Claude Code session: S a few hours, M a full session, L two or mor
 
 ### 3.4 Share with friends (done, see above)
 
-### 3.5 A living island
+### 3.5 Many kinds of life (next)
 
-Villagers, creatures, animals and artifacts that deal with each other, not only with the player. Builds on `src/sim/social.ts`.
+Today every creature is the same two blocks in a different color. Give each kind a body you recognize at a glance, and the island wildlife worth a food web.
 
-1. **Food web.** Villagers eat from fields, beasts graze, predators eat beasts, births need food.
-2. **Jobs.** Farmers, woodcutters who fell trees for houses, fishers, builders.
-3. **Artifacts in hand.** A `grants` field: a sword fights, a staff makes a hedge mage who casts small spells, a lantern keeps vampires away.
-4. **Allies and enemies** between kinds, taming, herds and packs.
-5. **Memory.** Villagers remember harm (avoid the place) and help (follow or thank).
-6. **Inspect** a creature with a tap: kind, mood, target, needs, what it carries.
-7. **Scene test.** A village, a forest, wolves, a vampire, gold and a shrine for ten simulated minutes in `npm test`; populations neither explode nor vanish.
+1. **Body plans** as small voxel models, each drawn as a few instanced parts so a hundred creatures stay a handful of draw calls: two legs (people, knights, goblins), four legs (deer, wolf, boar, bear, horse), bird, fish and serpent, insect and spider, slime, floating spirit, golem, dragon, tree folk.
+2. **Simple animation per plan**: legs swing, wings flap, tails sway, bodies tilt, the dead sink. A scale and a rotation per part, no skeletons.
+3. **Features** on any body: horns, antlers, wings, tail, mane, hat, hood, crown, glowing eyes, armor, a carried item. Spells declare `body` and `features`.
+4. **A model Claude designs**: up to 16 boxes of its own for a truly strange creature, bounded so it stays cheap.
+5. **Native wildlife** with habitats: deer, rabbits, wolves, boars, birds, fish, bears.
+6. **Villagers who differ**: children, elders, clothes per village, a look per job.
+7. **A bestiary page** in the Spell Lab drawing every plan and feature.
+8. Teach `body`, `features` and models in the spell prompt **without rewriting existing spells in bulk**; old creatures get a body chosen from their base kind.
 
-### 3.6 A reason to cast
+### 3.6 Goals, actions and a living island
+
+Nothing on the island just stands there. Every creature wants something and acts to get it, some with magic of their own; every artifact does something, on its own or when something happens. The test for anything new: if the player does nothing for five minutes, what has it changed? Builds on `src/sim/social.ts` and the species from 3.5.
+
+1. **A goal for every kind**, from a small vocabulary: hunt, gather, hoard, build, tend, guard, steal, spread, convert, worship, explore, migrate.
+2. **Needs before goals**: survive, then eat and rest, then the goal, then wander.
+3. **Goals leave marks**: a dragon's hoard, a beaver dam, a goblin camp, a spreading graveyard.
+4. **Abilities** with a trigger (enemy near, hurt, night, a friend dies, every so often) and a cooldown, from a fixed vocabulary of engine actions: breathe fire, heal, summon, teleport, freeze, lightning, grow, raise the dead, shield, dig, flood, steal.
+5. **Creatures cast real spells** from the shared library by name, at a capped tier and rate.
+6. **Villagers' jobs are goals**: farmers, woodcutters who fell trees for houses, fishers, builders.
+7. **Artifacts that act**: effects over time and on triggers (a Well waters fields each morning, a Totem calls rain in a drought), state (charges, fuel, health), `grants` and `uses` (villagers draw water, arm themselves at a forge, pray; creatures steal, guard or destroy), and declared pairs between artifacts (a Phoenix Feather near a corpse revives it).
+8. **Food web** with the 3.5 species, allies and enemies, taming, herds, villagers' memory of harm and help.
+9. **Inspect** any creature or artifact with a tap: goal, current action, needs, charges, what it carries.
+10. **The five minute test** in `npm test` and in the judge: a village, a forest, wolves, a dragon, a vampire, gold, a well and a shrine for ten simulated minutes; populations neither explode nor vanish, and every placed thing changed something.
+
+### 3.7 A reason to cast
 
 Village mana from fed villagers in standing houses (a sandbox switch keeps it infinite), par scores and "three ways" stars on challenges, free play after a challenge, a recipe book with hints, opposites and depth based tiers in the merge prompt, a chronicle written from the event log and villagers' memories, discoveries made in the World.
 
@@ -149,6 +165,17 @@ Village mana from fed villagers in standing houses (a sandbox switch keeps it in
 
 A deterministic simulation first, then clips, replays as links, a daily island, a feed of first discoveries, pass the island.
 
+### 4.2 Accounts: your progress everywhere
+
+Today an invite link is kept by one browser, and progress (discoveries, the board, the island) lives in that browser only. Later, the link creates an account and is used up. Until then, invites keep working as they do.
+
+1. **An invite is used once**: opening it creates an account (a passkey first, no password; an email link as a fallback), and the link then stops working for anyone else. The admin can issue a new one if a friend loses theirs.
+2. **Nobody loses progress**: on creating an account, the browser's local progress is uploaded and attached to it, and everything the server already holds for that invite (spend, votes, casts, First Discoveries) moves to the account. Existing friends get a one time "save your progress" prompt; until they answer, nothing changes for them.
+3. **The same progress on every device**: discoveries are the union of what each device found; the island is saved per account with "last saved wins" and a warning before replacing a newer one.
+4. **The account replaces the invite as the identity** for the $5 a month, votes and First Discoveries.
+5. **Privacy**: an account page to export or delete everything; the privacy note says what an account stores.
+6. **Tested**: an invite used twice, a friend with months of local progress creating an account, two devices merging their discoveries, and a deleted account leaving the shared library intact.
+
 ### 4.5 Ready for strangers
 
-AI Gateway spend caps, Turnstile, name checks, AI labels, small legal pages. Quotas, the report button and invite links instead of a shared token came early, in 3.4, for friends. Nothing public before this.
+AI Gateway spend caps, Turnstile, name checks, AI labels, small legal pages. Accounts (4.2) come first, so strangers can keep their progress. Quotas, the report button and invite links instead of a shared token came early, in 3.4, for friends. Nothing public before this.
