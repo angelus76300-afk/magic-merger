@@ -233,7 +233,7 @@ export class WorldHost {
     let text = "Pick a spell, then tap the island to cast it. Drag to turn, pinch to zoom, two fingers to pan.";
     if (key && name) {
       if (this.preparing.has(key)) text = `Preparing ${name}… the first cast of a spell takes a moment.`;
-      else if (this.request(key)) text = `Tap the world to cast ${name}.`;
+      else if (this.request(key)) text = `Tap the island to cast ${name}.`;
       else text = `${name} is not ready yet.`;
     }
     this.el.status.textContent = text;
