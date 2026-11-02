@@ -244,7 +244,17 @@ Everything left before 4.0, in one session and one pull request, built in four p
 12. **The recipe book**: what the player found, how and when, and what it was used for. Memory only, no hints.
 13. **Opposites and depth in the merge prompt**: Fire and Water give Steam, never "Super Fire Water"; a tier follows its depth in the recipe tree, plus or minus one.
 
-**Budget for the session**: keep the simulation p95 on a large island within the HUD numbers from 3.6, and API spend for the whole session under about $3.
+**Part E. Refresh the legacy library** (last, once A to D exist, right before 4.0)
+
+The one planned exception to "never rewrite in bulk": every stored program was written before bodies, goals, abilities, acting artifacts and wards existed, so old items look and behave poorer than new ones. On 2026-11-02 the library held 258 items (171 with a stored program, about a third legendary or cosmic) and 433 recipes.
+
+14. **Rewrite programs, not items**: names, emojis, tiers and recipes stay; every stored program is written again with today's prompt and engine, from the item's own intent (3.4.2), through the Batch API at half price.
+15. **A new version must earn its place**: it replaces the old one only if it passes the test run, the item's promise probe, the judge ("does it look alive?", "did it change anything after five minutes?") and is not voted below the old one; otherwise the old version stays. Old versions are kept for rollback, as with vote rewrites.
+16. **Budget**: estimated $3 to $5 for the whole library (about 60 Opus programs at about $0.04 in batch, about 110 Haiku ones at under $0.002, plus checks), capped at $8 and started early in a month; a dry run on 20 items first, with before and after frames for the owner to approve.
+17. **Trim duplicates without breaking anyone**: a cheap pass lists near duplicates and merges that make no sense (for example World Tree, World Tree Awakening and Yggdrasil; Ley Line and Ley Lines). Nothing is deleted: the owner approves each pair, and a duplicate becomes an alias of the kept item, so players' inventories, recipes and First Discoveries keep working.
+18. **A report**: how many programs improved, stayed or rolled back, what it cost, and the frames of the ten biggest changes.
+
+**Budget for the session**: keep the simulation p95 on a large island within the HUD numbers from 3.6, and API spend for parts A to D under about $3 (part E has its own cap).
 
 ### 4.0 Accounts: your progress everywhere
 
