@@ -19,6 +19,20 @@ const SCENES = {
     yield 4;
     w.ignite(w.x, w.y, 30, 1);
   } };`,
+  // 3.5: three hundred creatures of every body, walking near the camera. The
+  // same program runs on code from before 3.5 (unknown kinds become beasts,
+  // bodies are ignored), so the two can be compared.
+  crowd: `const spell = {
+    creatures: [
+      { name: "imp", base: "beast", color: "#aa3333", features: ["horns", "wings", "spear"] },
+      { name: "eye", base: "spirit", color: "#ffffff", model: [[-3, 3, -3, 6, 6, 6, "#f2efe6"], [-2, 4, 3, 4, 4, 1, "#3a7fd0", "glow"], [-3, 0, -1, 1, 3, 1, "#c05050", "leg"], [2, 0, -1, 1, 3, 1, "#c05050", "leg2"]] },
+      { name: "drake", base: "beast", color: "#b03a2e", body: "dragon", radius: 1.2 },
+    ],
+    *cast(w) {
+      const kinds = ["villager", "villager", "villager", "beast", "spirit", "golem", "deer", "rabbit", "wolf", "boar", "bear", "bird", "imp", "eye", "drake"];
+      for (let k = 0; k < 300; k++) w.spawn(kinds[k % kinds.length], w.x + w.rand(-14, 14), w.y + w.rand(-14, 14));
+      yield 10;
+    } };`,
   darkness: `const spell = { *cast(w) {
     w.darken(0.85, 14);
     for (let k = 0; k < 6; k++) w.light(w.x + k * 4 - 10, w.y, 6, "#ffd166", 12);

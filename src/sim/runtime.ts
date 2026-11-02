@@ -1,6 +1,8 @@
 import { guardLoops } from "../../shared/spellcode";
 import { TIER_REACH, type Tier } from "../../shared/tiers";
-import { KINDS, hostile, kindOf, makeCreature, maxHp, shieldedCreature, type Behavior, type Creature, type CreatureKind } from "./creatures";
+import { BUILTIN_KINDS, KINDS, hostile, kindOf, makeCreature, maxHp, shieldedCreature, type Behavior, type Creature, type CreatureKind } from "./creatures";
+import { bodyFrom } from "./body";
+import { NATIVE_NAMES } from "./wildlife";
 import { BUILTIN, C, F, G, LAYERS, type Layer } from "./materials";
 import { valueNoise } from "./noise";
 import { addGas } from "./cells";
@@ -11,7 +13,7 @@ import { TICK, World } from "./world";
 import { Builder, arch, island, spire, tower, tree, treeDefaults, wall } from "./structures";
 import { VK, igniteVoxels, kindId } from "./voxels";
 import { keyLevel, keyX, keyY, voxelKey } from "./voxelkey";
-import { type Landmark, type Presence } from "./social";
+import { baseName, type Landmark, type Presence } from "./social";
 import { hexColor, toColor } from "./colors";
 import { DOME_SQUASH, WARD, addWard, ownWard, wardBits, wardHit, warded } from "./wards";
 
@@ -114,6 +116,17 @@ export class Runtime {
   }
   // Which spell defined each custom material and creature, for saving the world.
   readonly owners = new Map<string, string>();
+  // A spell's creature named like one of the island's animals ("wolf") is
+  // kept as its own kind ("wolf#<spell>"), so summoning wolves that hunt
+  // villagers does not turn the island's wolves against them. Per spell:
+  // the name it wrote, then the kind it means.
+  private aliases = new Map<string, Map<string, string>>();
+
+  // The kind a spell means by a name: its own creature first.
+  kindFor(spellKey: string, name: string): string {
+    const n = String(name).toLowerCase();
+    return this.aliases.get(spellKey)?.get(n) ?? n;
+  }
   camera: CameraControl | null = null;
 
   constructor(
@@ -177,12 +190,23 @@ export class Runtime {
       else this.ticks.delete(ruleKey);
       this.brokenRules.delete(ruleKey);
     }
-    for (const raw of Array.isArray(spell.creatures) ? spell.creatures : []) {
-      const k = raw as Record<string, unknown>;
-      if (!k || typeof k.name !== "string") continue;
-      const name = k.name.toLowerCase().slice(0, 30);
-      if (["villager", "beast", "spirit", "golem"].includes(name)) continue;
-      const base = KINDS.get(typeof k.base === "string" ? k.base : "beast") ?? KINDS.get("beast")!;
+    const creatures = (Array.isArray(spell.creatures) ? spell.creatures : []).filter(
+      (raw): raw is Record<string, unknown> => !!raw && typeof (raw as Record<string, unknown>).name === "string",
+    );
+    // Names first, so a creature can name another of the same spell (onDeath: "spawn:wolf").
+    const alias = new Map<string, string>();
+    for (const k of creatures) {
+      const name = (k.name as string).toLowerCase().slice(0, 30);
+      if (NATIVE_NAMES.has(name)) alias.set(name, `${name}#${shortHash(req.key)}`);
+    }
+    this.aliases.set(req.key, alias);
+    for (const k of creatures) {
+      const written = (k.name as string).toLowerCase().slice(0, 30);
+      if (BUILTIN_KINDS.has(written) && !NATIVE_NAMES.has(written)) continue;
+      const name = alias.get(written) ?? written;
+      const baseKey = typeof k.base === "string" ? k.base.toLowerCase() : "beast";
+      // "wolf" as a base is the island's wolf, even in a spell that has its own.
+      const base = KINDS.get(baseKey) ?? KINDS.get("beast")!;
       const userTick = typeof k.tick === "function" ? (k.tick as (c: CreatureHandle, w: SpellApi, dt: number) => void) : null;
       const kind: CreatureKind = {
         ...base,
@@ -196,8 +220,10 @@ export class Runtime {
         swims: typeof k.swims === "boolean" ? k.swims : base.swims,
         glow: typeof k.glow === "boolean" ? k.glow : base.glow,
         homebody: false,
+        native: false,
+        body: bodyFrom(k, written, base.body),
         fallback: base.name,
-        ai: behaviorOf(k),
+        ai: behaviorOf(k, alias),
         tick: userTick
           ? (self: Creature, dt: number) => {
               const ruleKey = `creature:${name}`;
@@ -205,7 +231,7 @@ export class Runtime {
               this.run(
                 req.key,
                 req.name,
-                () => userTick(new CreatureHandle(self, this), this.ruleApi(req), dt),
+                () => userTick(new CreatureHandle(self, this, req.key), this.ruleApi(req), dt),
                 () => this.brokenRules.add(ruleKey),
               );
             }
@@ -592,7 +618,7 @@ const MODES = ["wander", "hunt", "guard", "follow", "flee"] as const;
 const AURAS = ["heal", "fear", "calm", "sleep", "burn", "freeze", "hurt"];
 
 // Reads a creature's declared behavior; undefined when it declares none.
-function behaviorOf(k: Record<string, unknown>): Behavior | undefined {
+function behaviorOf(k: Record<string, unknown>, alias: Map<string, string>): Behavior | undefined {
   const keys = ["behavior", "prey", "leader", "attack", "aura", "leaves", "weak", "immune", "lifespan", "onDeath", "lures", "scares", "converts", "active"];
   if (!keys.some((key) => k[key] !== undefined)) return undefined;
   const mode = (MODES as readonly string[]).includes(k.behavior as string) ? (k.behavior as Behavior["mode"]) : "wander";
@@ -609,12 +635,25 @@ function behaviorOf(k: Record<string, unknown>): Behavior | undefined {
     weak: strings(k.weak),
     immune: strings(k.immune),
     lifespan: num(k.lifespan, 0, 3600, 0),
-    onDeath: typeof k.onDeath === "string" ? k.onDeath.toLowerCase().slice(0, 40) : null,
+    onDeath: typeof k.onDeath === "string" ? spawnAlias(k.onDeath.toLowerCase().slice(0, 40), alias) : null,
     lures: strings(k.lures),
     scares: strings(k.scares),
     converts: k.converts === true,
     active: k.active === "night" || k.active === "day" ? k.active : "always",
   };
+}
+
+function spawnAlias(onDeath: string, alias: Map<string, string>): string {
+  if (!onDeath.startsWith("spawn:")) return onDeath;
+  const kind = onDeath.slice(6).trim();
+  return `spawn:${alias.get(kind) ?? kind}`;
+}
+
+// A short stable tag for a spell key, for kind names.
+function shortHash(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
 }
 
 function num(v: unknown, min: number, max: number, fallback: number): number {
@@ -635,6 +674,8 @@ export class CreatureHandle {
   constructor(
     readonly raw: Creature,
     private rt: Runtime,
+    // The spell holding it: its own names win in transform.
+    private spellKey = "",
   ) {}
   get x() {
     return this.raw.x;
@@ -654,8 +695,9 @@ export class CreatureHandle {
   set z(v: number) {
     if (Number.isFinite(v)) this.raw.z = Math.max(0, Math.min(200, v));
   }
+  // A spell's own wolf is a wolf to every spell.
   get kind() {
-    return this.raw.kind;
+    return baseName(this.raw.kind);
   }
   get hp() {
     return this.raw.hp;
@@ -742,7 +784,8 @@ export class CreatureHandle {
         break;
     }
   }
-  transform(kind: string) {
+  transform(name: string) {
+    const kind = this.rt.kindFor(this.spellKey, name);
     if (!KINDS.has(kind)) return;
     const ratio = this.raw.hp / maxHp(this.raw);
     this.raw.kind = kind;
@@ -1230,17 +1273,18 @@ export class SpellApi {
   // Creatures.
   creatures(x?: number, y?: number, r?: number): CreatureHandle[] {
     const list = this.rt.world.creatures.filter((c) => !c.dead && (r === undefined || Math.hypot(c.x - (x ?? 0), c.y - (y ?? 0)) <= r));
-    return list.map((c) => new CreatureHandle(c, this.rt));
+    return list.map((c) => new CreatureHandle(c, this.rt, this.req.key));
   }
   corpses(x: number, y: number, r: number): CreatureHandle[] {
-    return this.rt.world.creatures.filter((c) => c.dead && Math.hypot(c.x - x, c.y - y) <= r).map((c) => new CreatureHandle(c, this.rt));
+    return this.rt.world.creatures.filter((c) => c.dead && Math.hypot(c.x - x, c.y - y) <= r).map((c) => new CreatureHandle(c, this.rt, this.req.key));
   }
   spawn(kind: string, x: number, y: number): CreatureHandle | null {
     const w = this.rt.world;
     if (w.creatures.length > 600 || !this.inside(x, y)) return null;
-    const c = makeCreature(KINDS.has(kind) ? kind : "beast", x, y);
+    const name = this.rt.kindFor(this.req.key, kind);
+    const c = makeCreature(KINDS.has(name) ? name : "beast", x, y);
     w.creatures.push(c);
-    return new CreatureHandle(c, this.rt);
+    return new CreatureHandle(c, this.rt, this.req.key);
   }
 
   // Bodies: things the spell is made of, moving through the world.

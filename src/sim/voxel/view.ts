@@ -8,6 +8,7 @@ import {
   ColorManagement,
   DoubleSide,
   Fog,
+  Frustum,
   Group,
   InstancedMesh,
   Matrix4,
@@ -20,13 +21,17 @@ import {
   Scene,
   ShaderMaterial,
   LinearSRGBColorSpace,
+  Sphere,
   Sprite,
   SpriteMaterial,
   Vector3,
   WebGLRenderer,
   type Material,
 } from "three";
-import { kindOf } from "../creatures";
+import { kindOf, type Creature, type CreatureKind } from "../creatures";
+import { F as FLUID } from "../materials";
+import { Figures, figureMaterials, type Pose } from "./figures";
+import { buildRig, paletteOf, ROLES, variantOf, type Rig } from "./rigs";
 import { BUILTIN, C, F, S } from "../materials";
 import { envelope, type Body, type Visuals } from "../visuals";
 import type { World } from "../world";
@@ -35,7 +40,7 @@ import { daylight } from "../daylight";
 import { MODELS, geometryOf } from "./models";
 import { OrbitCamera } from "./orbit";
 import { CHUNK, Terrain, columnTop, surfaceY } from "./terrain";
-import { hexColor, mixColor, scaleColor } from "../colors";
+import { hexColor, mixColor } from "../colors";
 import { DecorInstances } from "./decor-instances";
 import { Darkness } from "./darkness";
 import { Domes } from "./domes";
@@ -65,8 +70,36 @@ export class VoxelView {
   private covers = new Map<string, InstancedMesh>();
   private coverCounts = new Map<string, number>();
   private lastCovers = -1;
-  private bodyMesh: InstancedMesh;
-  private headMesh: InstancedMesh;
+  // Creatures as figures of boxes (3.5), and what each one was doing at the
+  // last frame: where it stood, its heading, its stride.
+  private figures: Figures;
+  private rigs = new WeakMap<CreatureKind, Map<number, Rig>>();
+  private gaits = new Map<number, { x: number; y: number; t: number; speed: number; phase: number; yaw: number; seen: number }>();
+  private palette: number[] = new Array(ROLES).fill(0);
+  private pose: Pose = {
+    x: 0,
+    y: 0,
+    z: 0,
+    yaw: 0,
+    pitch: 0,
+    roll: 0,
+    scale: 1,
+    phase: 0,
+    moving: 0,
+    time: 0,
+    flying: false,
+    still: false,
+    nod: 0,
+    detail: true,
+    glowAll: false,
+    tint: 0,
+    tintAmount: 0,
+    offset: 0,
+  };
+  private frameNo = 0;
+  private frustum = new Frustum();
+  private sphere = new Sphere();
+  private projScreen = new Matrix4();
   // A small block over a creature's head that shows why it acts: fear,
   // lured, carrying something home, angry, hunting, asleep.
   private markMesh: InstancedMesh;
@@ -157,8 +190,8 @@ export class VoxelView {
       this.covers.set(key, mesh);
       this.scene.add(mesh);
     }
-    this.bodyMesh = this.instanced("body", basic, 900);
-    this.headMesh = this.instanced("head", basic, 900);
+    const figureMats = figureMaterials();
+    this.figures = new Figures(this.scene, figureMats);
     this.markMesh = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true }), 900);
     this.flames = this.instanced("flame", new MeshBasicMaterial({ vertexColors: true }), 5000);
     this.puffs = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.22, depthWrite: false }), 4000);
@@ -177,7 +210,7 @@ export class VoxelView {
       new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.35, blending: AdditiveBlending, depthWrite: false }),
       3000,
     );
-    this.lit = [land, fluid, basic, this.puffs.material as MeshBasicMaterial, this.clouds.material as MeshBasicMaterial];
+    this.lit = [land, fluid, basic, this.puffs.material as MeshBasicMaterial, this.clouds.material as MeshBasicMaterial, figureMats.lit];
     for (const m of this.lit) this.darkness.apply(m);
   }
 
@@ -279,9 +312,9 @@ export class VoxelView {
   }
 
   // What the last frame drew, for the HUD.
-  counts(): { calls: number; triangles: number; pixelRatio: number } {
+  counts(): { calls: number; triangles: number; pixelRatio: number; parts: number } {
     const r = this.renderer.info.render;
-    return { calls: r.calls, triangles: r.triangles, pixelRatio: this.pixelRatio };
+    return { calls: r.calls, triangles: r.triangles, pixelRatio: this.pixelRatio, parts: this.figures.parts };
   }
 
   // The light points that stay bright in a spell's darkness, most important
@@ -462,56 +495,145 @@ export class VoxelView {
     }
   }
 
+  private rigFor(c: Creature, k: CreatureKind): Rig {
+    let byVariant = this.rigs.get(k);
+    if (!byVariant) {
+      byVariant = new Map();
+      this.rigs.set(k, byVariant);
+    }
+    const variant = variantOf(k.body, c.look);
+    let rig = byVariant.get(variant);
+    if (!rig) {
+      rig = buildRig(k.body, c.look);
+      byVariant.set(variant, rig);
+    }
+    return rig;
+  }
+
   private placeCreatures(time: number): void {
     const { world } = this;
-    let n = 0;
+    const frame = ++this.frameNo;
+    const pose = this.pose;
+    pose.time = time;
+    // What the camera sees: creatures outside it are not posed or drawn.
+    const cam = this.orbit.camera;
+    cam.updateMatrixWorld();
+    this.projScreen.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+    this.frustum.setFromProjectionMatrix(this.projScreen);
+    const camPos = cam.position;
+    // Small parts (eyes, ears, buckles) only where they are a pixel or more:
+    // closer than this many scene units for a creature of size 1.
+    const detailRange = 55;
+    this.figures.begin();
     let marks = 0;
+    let n = 0;
     for (const c of world.creatures) {
       if (n >= 900) break;
+      n++;
       const k = kindOf(c);
-      const size = k.radius * 1.6 * c.size;
+      const rig = this.rigFor(c, k);
+      // Figures are slimmer than the blocks they replace: drawn a little larger
+      // so a villager reads at a glance (the simulation's size is unchanged).
+      const size = k.radius * 1.85 * c.size;
+      const i = Math.max(0, Math.min(world.w - 1, Math.floor(c.x))) + Math.max(0, Math.min(world.h - 1, Math.floor(c.y))) * world.w;
       const ground = this.groundAt(c.x, c.y);
-      const p = this.toScene(c.x, c.y, ground + c.z);
-      let color = c.color;
-      if (c.dead) color = 0x5a5560;
-      else if (c.frozen > 0) color = 0xbfe6ff;
-      else if (c.burning > 0 && Math.sin(time * 30 + c.id) > 0) color = 0xff8c1a;
-      const tall = c.kind === "villager" ? 1.1 : c.kind === "golem" ? 1.4 : 0.8;
-      if (c.dead) this.m.makeScale(size * tall, size * 0.4, size);
-      else this.m.makeScale(size * 0.8, size * tall, size * 0.8);
-      // A little bob while walking.
-      const bob = c.dead ? 0 : Math.abs(Math.sin(time * 9 + c.id)) * 0.08 * size;
-      this.m.setPosition(p.x, p.y + bob, p.z);
-      this.bodyMesh.setMatrixAt(n, this.m);
-      this.bodyMesh.setColorAt(n, this.col.setHex(color));
-      // Head: skin for people, the body color for the rest.
-      const head = size * 0.55;
-      this.m.makeScale(head, head, head);
-      this.m.setPosition(p.x + (c.dead ? size * 0.6 : 0), p.y + bob + (c.dead ? 0 : size * tall), p.z);
-      this.headMesh.setMatrixAt(n, this.m);
-      const headColor = c.kind === "villager" ? (c.dead ? 0x777070 : 0xf1c27d) : c.kind === "golem" ? 0x9dfcff : scaleColor(color, 1.1);
-      this.headMesh.setColorAt(n, this.col.setHex(c.fear > 0 && Math.floor(time * 4) % 2 === 0 ? 0xffe066 : c.sleep > 0 ? 0xa9c8ff : headColor));
+      // Fish swim under the surface; a dead one floats.
+      const underwater = k.aquatic && !c.dead && world.depth[i] > 0.3 && world.fluid[i] === FLUID.WATER;
+      const y = underwater ? ground - Math.min(0.7, world.depth[i] * 0.5) - size * 0.15 : ground + c.z;
+      const p = this.toScene(c.x, c.y, y);
+      this.sphere.center.set(p.x, p.y + rig.height * size * 0.5, p.z);
+      this.sphere.radius = Math.max(rig.height, 1.4) * size;
+      const seen = this.frustum.intersectsSphere(this.sphere);
+
+      // The stride and heading come from how far it moved since the last tick.
+      let g = this.gaits.get(c.id);
+      if (!g) {
+        g = { x: c.x, y: c.y, t: time, speed: 0, phase: c.id, yaw: (c.id * 2.4) % (Math.PI * 2), seen: frame };
+        this.gaits.set(c.id, g);
+      }
+      g.seen = frame;
+      if (time > g.t) {
+        const dt = time - g.t;
+        const dx = c.x - g.x;
+        const dy = c.y - g.y;
+        const d = Math.hypot(dx, dy);
+        if (d > 3) g.speed = 0;
+        else {
+          g.speed += (d / dt - g.speed) * Math.min(1, dt * 8);
+          if (d > 0.004 && !c.dead) {
+            let turn = Math.atan2(dx, dy) - g.yaw;
+            turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+            g.yaw += turn * Math.min(1, dt * 10);
+          }
+          g.phase += Math.min(g.speed, 12) * dt * (3.6 / Math.max(0.3, size));
+        }
+        g.x = c.x;
+        g.y = c.y;
+        g.t = time;
+      }
+
+      // The mark over its head, then the figure, when the camera sees it.
       const mood = c.dead ? null : (c.data.mood as string | null | undefined);
-      if (mood && marks < 900) {
+      if (mood && marks < 900 && seen) {
         const color = mood === "carry" ? ((c.data.carry as number | undefined) ?? 0xffd36a) : (MOOD_COLORS[mood] ?? 0xffffff);
         const s = Math.max(0.22, size * 0.28) * (mood === "lured" || mood === "angry" ? 0.9 + 0.2 * Math.sin(time * 8 + c.id) : 1);
         this.m.makeScale(s, s, s);
-        this.m.setPosition(p.x, p.y + bob + size * tall + head + s * 1.2, p.z);
+        this.m.setPosition(p.x, p.y + rig.height * size + s * 1.4, p.z);
         this.markMesh.setMatrixAt(marks, this.m);
         this.markMesh.setColorAt(marks, this.col.setHex(color));
         marks++;
       }
-      n++;
+      if (!seen) continue;
+      const still = c.dead || c.frozen > 0 || c.stun > 0;
+      const asleep = c.sleep > 0 || c.data.mood === "asleep";
+      pose.x = p.x;
+      pose.y = p.y;
+      pose.z = p.z;
+      pose.yaw = g.yaw;
+      pose.scale = size;
+      pose.phase = g.phase;
+      pose.moving = still ? 0 : Math.min(1, g.speed / 1.4);
+      pose.still = still;
+      pose.flying = !c.dead && (k.flying || c.levitate > 0) && c.z > 0.5;
+      pose.nod = asleep ? 0.35 : 0;
+      pose.pitch = rig.lean + (still ? 0 : pose.moving * 0.05);
+      pose.roll = 0;
+      pose.offset = (c.id % 17) * 0.37;
+      pose.glowAll = k.glow;
+      pose.tintAmount = 0;
+      if (c.dead) {
+        // Falls on its side (a fish turns belly up), lying on the ground and
+        // not in it, then sinks into it over the 40 s before it is gone.
+        const fall = Math.min(1, c.deadFor * 3);
+        pose.roll = (k.aquatic ? Math.PI : Math.PI / 2) * fall;
+        pose.pitch = 0;
+        pose.y += (k.aquatic ? rig.height : rig.halfWidth) * size * Math.sin((fall * Math.PI) / 2);
+        if (!k.aquatic) pose.y -= Math.min(1, c.deadFor / 40) * (rig.halfWidth * 2 + 0.1) * size;
+        pose.tint = 0x5a5560;
+        pose.tintAmount = 0.55;
+        pose.glowAll = false;
+      } else if (c.frozen > 0) {
+        pose.tint = 0xbfe6ff;
+        pose.tintAmount = 0.6;
+      } else if (c.burning > 0 && Math.sin(time * 30 + c.id) > 0) {
+        pose.tint = 0xff8c1a;
+        pose.tintAmount = 0.65;
+      } else if (k.glow) pose.y += Math.sin(time * 2 + c.id) * 0.08 * size;
+      if (asleep && !c.dead && !pose.flying) pose.y -= size * 0.05;
+      pose.detail = camPos.distanceToSquared(this.sphere.center) < (detailRange * size) ** 2;
+      this.figures.add(rig, paletteOf(this.palette, rig, k.body, c.color, c.look), pose);
     }
-    this.bodyMesh.count = n;
-    this.headMesh.count = n;
+    this.figures.end();
     this.markMesh.count = marks;
     this.markMesh.instanceMatrix.needsUpdate = true;
     if (this.markMesh.instanceColor) this.markMesh.instanceColor.needsUpdate = true;
-    this.bodyMesh.instanceMatrix.needsUpdate = true;
-    this.headMesh.instanceMatrix.needsUpdate = true;
-    if (this.bodyMesh.instanceColor) this.bodyMesh.instanceColor.needsUpdate = true;
-    if (this.headMesh.instanceColor) this.headMesh.instanceColor.needsUpdate = true;
+    // Forget creatures that are gone, now and then.
+    if (frame % 120 === 0) for (const [id, g] of this.gaits) if (g.seen !== frame) this.gaits.delete(id);
+  }
+
+  // Creature parts drawn in the last frame, for the HUD.
+  get figureParts(): number {
+    return this.figures.parts;
   }
 
   private placeFireAndGas(time: number): void {

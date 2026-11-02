@@ -4,9 +4,10 @@
 // every stored program on the current runtime), and spells are rewritten one
 // at a time from the admin card. History: 3 brought typed voxels, the structure
 // kit, lightning and declared rules; 4 brought relationships (lures, scares,
-// landmarks). Kept apart from spellcode.ts so the game page does not pull in
-// the JavaScript parser just to read a number.
-export const PROGRAM_VERSION = 4;
+// landmarks); 5 brought bodies (body, features, color2, model) and the wild
+// animals. Kept apart from spellcode.ts so the game page does not pull in the
+// JavaScript parser just to read a number.
+export const PROGRAM_VERSION = 5;
 
 // Programs from version 2 on are code. Version 1 rows are old declarative
 // specs that nothing can run, so they are written once on their next cast.

@@ -157,6 +157,10 @@ interface Island {
   land: Uint8Array;
   // Each run draws from its own random stream, set before each of its ticks.
   random: () => number;
+  // Creatures draw from another one, the same in both runs: a spell that only
+  // throws particles must not change which way a deer wanders (3.5: with
+  // wildlife, that alone passed a spell that did nothing).
+  life: () => number;
 }
 
 // Creatures with a higher id were born after the cast.
@@ -170,7 +174,8 @@ function island(errors: string[]): Island {
   populate(world);
   baseId = Math.max(0, ...world.creatures.map((c) => c.id));
   const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
-  for (let k = 0; k < 60; k++) step(world, rt);
+  const life = seeded(SEED + 2);
+  for (let k = 0; k < 60; k++) step(world, rt, life);
   let target = { x: world.w / 2, y: world.h / 2 };
   for (let i = 0; i < world.n; i++) {
     if (world.cover[i] === C.HOUSE) {
@@ -189,15 +194,21 @@ function island(errors: string[]): Island {
   if (near[1]) Object.assign(near[1], { x: target.x - 1, y: target.y, hp: 35 });
   const land = new Uint8Array(world.n);
   for (let i = 0; i < world.n; i++) land[i] = world.depth[i] > 0.5 ? 0 : 1;
-  return { world, rt, target, land, random: seeded(SEED + 1) };
+  return { world, rt, target, land, random: seeded(SEED + 1), life };
 }
 
-function step(world: World, rt: Runtime): void {
+function step(world: World, rt: Runtime, life: () => number): void {
   world.time += TICK;
   world.tick++;
   stepPhysics(world, TICK);
-  for (const c of world.creatures) updateCreature(world, c, TICK);
-  lifeCycle(world, TICK);
+  const random = Math.random;
+  Math.random = life;
+  try {
+    for (const c of world.creatures) updateCreature(world, c, TICK);
+    lifeCycle(world, TICK);
+  } finally {
+    Math.random = random;
+  }
   rt.step(TICK);
   world.particles.update(TICK);
   world.events.length = 0;
@@ -217,7 +228,7 @@ function* controlUpTo(seconds: number): Generator<void, Snapshot[]> {
   while (c.snaps.length <= seconds) {
     for (let k = 0; k < 1 / TICK; k++) {
       Math.random = c.island.random;
-      step(c.island.world, c.island.rt);
+      step(c.island.world, c.island.rt, c.island.life);
       Math.random = outer;
       // A pause every few ticks, so the browser can draw in between.
       if (k % 5 === 4) yield;
@@ -265,7 +276,7 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
   while (started && !errors.length && seconds < cap) {
     for (let k = 0; k < 1 / TICK && !errors.length; k++) {
       const t0 = performance.now();
-      step(world, rt);
+      step(world, rt, isl.life);
       worst = Math.max(worst, performance.now() - t0);
       const visible = rt.visuals.bodies.filter((b) => b.alive && b.look !== "none").length;
       bodies = Math.max(bodies, visible);
@@ -411,7 +422,7 @@ function* probeRun(spell: CastRequest | null, threat: (typeof THREATS)[number] |
   for (let k = 0; k < PROBE_END / TICK; k++) {
     if (threat && k === Math.round(THREAT_AT / TICK))
       rt.cast({ key: `threat:${threat.name}`, name: threat.label, tier, code: threat.code }, target.x, target.y);
-    step(world, rt);
+    step(world, rt, isl.life);
     if (k % 5 === 4) {
       yield;
       Math.random = isl.random;

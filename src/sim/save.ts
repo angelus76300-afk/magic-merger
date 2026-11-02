@@ -1,7 +1,8 @@
-import { restoreCreature, KINDS, type Creature } from "./creatures";
+import { dressVillages, restoreCreature, KINDS, type Creature } from "./creatures";
 import { BUILTIN, LAYERS, type Layer } from "./materials";
 import { World } from "./world";
 import type { Landmark } from "./social";
+import { packLook, unpackLook } from "./villagers";
 
 // A saved world, compact enough for localStorage: each layer is quantized
 // into bytes and base64 encoded. Materials and creatures that spells defined
@@ -62,7 +63,7 @@ export function saveWorld(world: World, owners: Map<string, string>): SavedWorld
     creatures: world.creatures
       .filter((c) => !c.dead)
       .slice(0, 400)
-      .map(({ kind, x, y, hp, size, color, homeX, homeY }) => ({ kind, x, y, hp, size, color, homeX, homeY })),
+      .map(({ kind, x, y, hp, size, color, homeX, homeY, look }) => ({ kind, x, y, hp, size, color, homeX, homeY, look })),
   };
 }
 
@@ -126,11 +127,20 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
     ? data.landmarks.filter((l) => l && typeof l.x === "number" && typeof l.y === "number" && Array.isArray(l.lures) && Array.isArray(l.scares)).slice(0, 60)
     : [];
   world.wealth = typeof data.wealth === "number" && Number.isFinite(data.wealth) ? data.wealth : 0;
+  // Villagers saved before 3.5 have no look: they get one, in their village's clothes.
+  const undressed: Creature[] = [];
   for (const raw of data.creatures ?? []) {
     if (raw.kind && !KINDS.has(raw.kind)) raw.kind = "beast";
     const c = restoreCreature(raw);
-    if (c) world.creatures.push(c);
+    if (!c) continue;
+    world.creatures.push(c);
+    if (c.kind === "villager" && typeof raw.look !== "number") {
+      // Grown up already: their saved size is an adult's.
+      c.look = packLook({ ...unpackLook(c.look), age: "adult" });
+      undressed.push(c);
+    }
   }
+  dressVillages(world, undressed);
   return world;
 }
 
