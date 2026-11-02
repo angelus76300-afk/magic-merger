@@ -1,6 +1,6 @@
 # Where the game stands, and what comes next
 
-Updated on 2026-11-02, after 3.0: voxel physics, a structure kit, lightning, declared rules and filters.
+Updated on 2026-11-02, after 3.0 and 3.1 were merged (PR #3).
 
 ## Done since the first review
 
@@ -61,12 +61,49 @@ Asked for after 3.0: "a vampire will kill humans, gold will attract humans; we n
 2. **Sounds** were checked for errors, not listened to.
 3. **Challenge balance with real spells.** The checks use simple hand-written solutions; Claude's spells may be stronger or weaker. Wildfire still loses on its own only 7 times in 8.
 
-## Next steps
+## What the money taught us
 
-The full plan, with research sources, sizes and a ready prompt for each session, is in the roadmap page written after 3.0. In short:
+The ledger holds $6.64 (plus about $3.32 before it existed): about $10 of the $25 budget. Opus spells are 88% of it. Opus spell calls went from 43 to 96 in one day because the program version bump to 4 rewrote every big spell on its next cast. **Never rewrite spells in bulk again**: new API features stay backward compatible, and spells are rewritten one at a time (an admin button in 3.2, player votes in 3.3).
 
-1. **3.1 Measure and tighten**: a frame HUD and one real phone session first; then 30 fps on phones, voxels in a typed array, partial voxel mesh updates; merges on a cheaper model after a side by side test; lint and shared helpers.
-2. **3.2 Spells that are always good**: a test run before storing, a cheap judge that looks at Spell Lab frames, a library of good spells as examples, Opus through the Batch API with a Haiku draft meanwhile.
-3. **3.5 A reason to cast**: village mana, par scores and three ways to win, a recipe book with hints, a chronicle of the island, discoveries made in the World.
-4. **4.0 Things worth sharing**: a deterministic simulation, clips, replays as links, a daily island, a feed of first discoveries, pass the island.
-5. **4.5 Ready for strangers**: hard spend caps (AI Gateway), quotas, name checks, AI labels, small legal pages. Nothing public before this.
+## Next versions
+
+Sizes are per Claude Code session: S a few hours, M a full session, L two or more. The roadmap page written after 3.0 has the research behind each item and a ready prompt per version.
+
+### 3.2 Measure and protect the budget (next session)
+
+1. **Budget guard.** Programs of older versions stay castable; the version only records what a program was written for. An admin "rewrite this spell" button for one spell at a time. Repairs always on Haiku.
+2. **Cost quick wins.** Merges and tiers on Haiku or Sonnet at low effort after a side by side test on 30 pairs; no prompt cache write on lone Opus calls; tier folded into the merge answer; the Sonnet cache read price fixed in `worker/oracle.ts`; `/api/spend` grouped by call with the month's total, shown in the admin badge.
+3. **Frame HUD** (frame time p50 and p95, simulation ms, draw calls, triangles, voxels, creatures) behind a long press on the title, then one ten minute session on a real phone.
+4. **Performance.** 30 fps on phones and no redraw when idle; voxels in a dense typed array with a reusable flood fill queue; partial updates of the decor mesh; the night overlay as a tint; a spatial grid for creature lookups in `src/sim/social.ts`.
+5. **Hygiene.** Prettier and ESLint (the simulation never imports the view), one module for voxel keys and one for colors, no import cycle between physics and voxels.
+
+### 3.3 Spells that are always good, voted by players
+
+1. **Votes.** An anonymous player id per browser; casts recorded on the server; after a cast, up or down, with one reason on a down vote (nothing happened, too small, looked wrong, broke the island, boring). Only players who cast that spell version recently vote, once each.
+2. **Rewrite rule.** At least N votes and 60% down, with N = max(1, 10% of the average daily active players over seven days), capped at 25. With one player, one down vote is enough. Reasons go into the rewrite prompt; the old version is kept and comes back if the new one is voted worse; at most one rewrite per spell every three days, within a daily rewrite budget; big ones through the Batch API.
+3. **Up votes** mark programs for the library of examples Haiku sees.
+4. **Machine checks.** A test run before storing (crash, no visible change, island wiped: rewrite once), a Haiku judge on three Spell Lab frames calibrated on votes, Haiku drafts of big spells now and Opus versions through the Batch API later, and view source on the spell card.
+
+### 3.4 A living island
+
+Villagers, creatures, animals and artifacts that deal with each other, not only with the player. Builds on `src/sim/social.ts`.
+
+1. **Food web.** Villagers eat from fields, beasts graze, predators eat beasts, births need food.
+2. **Jobs.** Farmers, woodcutters who fell trees for houses, fishers, builders.
+3. **Artifacts in hand.** A `grants` field: a sword fights, a staff makes a hedge mage who casts small spells, a lantern keeps vampires away.
+4. **Allies and enemies** between kinds, taming, herds and packs.
+5. **Memory.** Villagers remember harm (avoid the place) and help (follow or thank).
+6. **Inspect** a creature with a tap: kind, mood, target, needs, what it carries.
+7. **Scene test.** A village, a forest, wolves, a vampire, gold and a shrine for ten simulated minutes in `npm test`; populations neither explode nor vanish.
+
+### 3.5 A reason to cast
+
+Village mana from fed villagers in standing houses (a sandbox switch keeps it infinite), par scores and "three ways" stars on challenges, free play after a challenge, a recipe book with hints, opposites and depth based tiers in the merge prompt, a chronicle written from the event log and villagers' memories, discoveries made in the World.
+
+### 4.0 Things worth sharing
+
+A deterministic simulation first, then clips, replays as links, a daily island, a feed of first discoveries, pass the island.
+
+### 4.5 Ready for strangers
+
+AI Gateway spend caps, quotas, Turnstile, name checks and a report button, AI labels, small legal pages, no player token. Nothing public before this.
