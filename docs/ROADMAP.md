@@ -1,6 +1,6 @@
 # Where the game stands, and what comes next
 
-Updated on 2026-11-02, after the World was rebuilt as a voxel island and spells became programs.
+Updated on 2026-11-02, after V2: challenges, placeable artifacts, the First Discovery moment, and automated checks.
 
 ## Done since the first review
 
@@ -8,33 +8,26 @@ Updated on 2026-11-02, after the World was rebuilt as a voxel island and spells 
 2. **A floating voxel island** replaces the side view: layered cut sides, waterfalls off the edges, orbit and zoom from a doorstep to the whole island in the sky. It runs on phones (about 60 draw calls on a medium island).
 3. **A richer land**: water, lava, oil, acid, mud, ice and snow with temperature; fire that spreads with the wind; powder that explodes; houses that burn and collapse and that villagers rebuild; forests that grow back.
 4. **Power tiers chosen at merge time** instead of chain depth.
-5. **Cost under control**: small spells cost $0.002, big ones $0.08, every call is recorded, and a monthly cap stops Claude calls past `BUDGET_USD`.
+5. **Cost under control**: small spells cost $0.002, big ones $0.08, every call is recorded, and a monthly cap stops Claude calls p## Done in V2
+
+1. **Challenges.** Five hand-made islands with a hazard and a goal: a wildfire, an erupting volcano, a river crossing, a drought and a rising sea. They run in their own world (the player's island comes back untouched), show progress in a banner, give a hint after a loss, and remember wins. Each one is checked by `npm test` both ways, over random replays: doing nothing loses, a plausible spell wins.
+2. **Placeable artifacts.** Golem, Phoenix, Volcano and the rest get programs too and are placed where the player taps.
+3. **First Discovery moment.** The card of an element no one had made before opens by itself with a glow and a ribbon.
+4. **Automated checks.** `npm test` runs the simulation in Node in about 15 seconds; GitHub Actions runs it with the build on every pull request.
+
+## Decisions taken
+
+1. **Cosmic spells may ruin the island.** Consequences are part of the fun; the land regrows on its own (ash turns to soil, grass and forests come back) and Reset is one tap away. Revisit if it feels punishing in play.
+2. **Haiku writes spells up to grand, Opus the legendary and cosmic ones** (see DESIGN.md for the measurement).
 
 ## What to watch
 
 1. **Phones.** Measured in a headless browser, not on a real device. If a mid-range phone stutters, the first levers are the small world size and lower pixel density.
-2. **Spells that scorch the whole world.** Cosmic spells tend to leave the island ruined (Big Bang turns it to ash and embers). That is fair for a cosmic spell, but the player needs a way back: the Reset button for now, maybe a "Rewind" later.
-3. **Sounds** were checked for errors, not listened to.
+2. **Sounds** were checked for errors, not listened to.
+3. **Challenge balance with real spells.** The checks use simple hand-written solutions; Claude's spells may be stronger or weaker. Wildfire still loses on its own only 7 times in 8.
 
-## Next steps, in order
+## Next steps
 
-### 1. Give the World a reason: small scenarios
-
-A scenario is a seeded island with one problem and a measurable win condition: "The forest is on fire, save the village" (no fire left, at least 5 villagers alive), "Cross the river", "The lava flow is coming", "Bring back the dead". The engine already measures everything a win condition needs. This turns discovery into a hunt for the right spell.
-
-### 2. Make artifacts placeable
-
-Spells are cast, artifacts are placed: Golem places a golem, Phoenix a phoenix that revives once, Volcano a vent that leaks lava. The program format already supports it: an artifact would get a program too, with a `place(w)` instead of `cast(w)`.
-
-### 3. A "First discovery" moment
-
-The card opens with a little ceremony, and the first cast of a brand new spell gets the camera's attention.
-
-### 4. Quality net
-
-Run the Spell Lab on `lab/spells` in CI and fail when a program throws or a tick gets slow.
-
-## Open questions for you
-
-1. Is the World meant to stay a toy box, or is it where the game happens? Scenarios assume the second.
-2. Should a cosmic spell be allowed to ruin the island for good, or should the island heal over a few minutes?
+1. **More challenges**, now that the format is cheap: "Wake the sleeping village", "Bring back the dead", "Night falls" (use the verbs nobody picks).
+2. **A shared feed** of first discoveries, since First Discovery is already global.
+3. **Artifact interactions**: a placed Phoenix reviving the dead, a Volcano artifact that can be calmed. The rules exist; the prompt could ask for them more often.

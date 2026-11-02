@@ -95,3 +95,13 @@ node scripts/spell-lab.mjs lab-out lab/spells/*.js
 `lab/spells` holds hand written reference spells. A `.json` file can also be a saved `/api/spell` response. Environment variables: `LAB_TIER` (default major), `LAB_SHOTS` (seconds, comma separated), `LAB_SIZE` (small, medium, large), `LAB_DIST` (camera distance; 400 shows the whole island).
 
 To compare models, the admin can pass `model` and `effort` in an `/api/spell` request with `regenerate: true`.
+
+`node scripts/scenario-lab.mjs out plan.json` plays challenges with spells cast at given times and saves frames and the objective's timeline (see the comment at the top of the script for the plan format).
+
+## 6. Tests
+
+```bash
+npm test
+```
+
+Runs the simulation in Node, without a browser, in about 15 seconds: map generation, the reference spells, the loop guard, a save round trip, and every challenge with nothing and with its solution. GitHub Actions runs `npm run build` and `npm test` on every pull request.
