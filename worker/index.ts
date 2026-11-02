@@ -60,7 +60,14 @@ export default {
         return json(await handleDescribe(await readBody<DescribeRequest>(request), env, oracle, admin));
       }
       if (request.method === "POST" && url.pathname === "/api/spell") {
-        return json(await handleSpell(await readBody<SpellRequest>(request), env, oracle, admin));
+        const body = await readBody<SpellRequest>(request);
+        // The admin can try another model or effort for one design.
+        const tried = admin && (body.model || body.effort) ? oracleFor(env, body.model, body.effort) : oracle;
+        try {
+          return json(await handleSpell(body, env, tried, admin));
+        } finally {
+          if (tried !== oracle) await recordSpend(env.DB, tried);
+        }
       }
       if (request.method === "POST" && url.pathname === "/api/spell/repair") {
         return json(await handleRepair(await readBody<RepairRequest>(request), env, oracle, admin));
@@ -93,13 +100,15 @@ class HttpError extends Error {
   }
 }
 
-function oracleFor(env: Env): Oracle {
+const SPELL_MODELS = new Set(["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1"]);
+
+function oracleFor(env: Env, spellModel?: string, spellEffort?: string): Oracle {
   if (!env.ANTHROPIC_API_KEY) return new MockOracle();
   const models = {
     merge: env.MERGE_MODEL,
     describe: env.DESCRIBE_MODEL,
-    spell: env.SPELL_MODEL,
-    spellEffort: parseEffort(env.SPELL_EFFORT, "medium"),
+    spell: spellModel && SPELL_MODELS.has(spellModel) ? spellModel : env.SPELL_MODEL,
+    spellEffort: parseEffort(spellEffort ?? env.SPELL_EFFORT, "medium"),
   };
   return new ClaudeOracle(env.ANTHROPIC_API_KEY, models, env.ANTHROPIC_BASE_URL);
 }
@@ -221,7 +230,7 @@ async function handleSpell(body: SpellRequest, env: Env, oracle: Oracle, admin: 
   await ensureBudget(env, oracle);
   const answer = await oracle.spell({ name: element.name, description, recipe: await firstRecipe(env.DB, key), tier });
   const program: SpellProgram = { version: 2, summary: answer.summary, code: answer.code };
-  if (!oracle.mock) await storeProgram(env, key, program, 0);
+  if (!oracle.mock) await storeProgram(env, key, program, 0, body.model);
   return { name: element.name, tier, program, mock: oracle.mock };
 }
 
@@ -254,13 +263,13 @@ async function storedProgram(db: D1Database, key: string): Promise<SpellProgram 
   }
 }
 
-async function storeProgram(env: Env, key: string, program: SpellProgram, repairs: number): Promise<void> {
+async function storeProgram(env: Env, key: string, program: SpellProgram, repairs: number, model?: string): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO spells (key, spec, model, version, repairs, created_at) VALUES (?, ?, ?, 2, ?, ?)
      ON CONFLICT (key) DO UPDATE SET spec = excluded.spec, model = excluded.model, version = 2,
        repairs = excluded.repairs, created_at = excluded.created_at`,
   )
-    .bind(key, JSON.stringify(program), env.SPELL_MODEL, repairs, Date.now())
+    .bind(key, JSON.stringify(program), model ?? env.SPELL_MODEL, repairs, Date.now())
     .run();
 }
 

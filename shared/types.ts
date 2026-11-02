@@ -43,8 +43,11 @@ export interface DescribeResponse {
 
 export interface SpellRequest {
   name: string;
-  // Admin only: throw away the stored spec and design the spell again.
+  // Admin only: throw away the stored program and write the spell again.
   regenerate?: boolean;
+  // Admin only, for comparing models: who writes it, and how hard it thinks.
+  model?: string;
+  effort?: string;
 }
 
 export interface SpellResponse {

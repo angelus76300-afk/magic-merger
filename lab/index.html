@@ -5,12 +5,13 @@
     <title>Spell Lab</title>
     <style>
       body { margin: 0; background: #111; }
-      canvas { width: 540px; height: 540px; display: block; }
+      .stage { position: relative; width: 540px; height: 540px; }
+      canvas { position: absolute; inset: 0; width: 540px; height: 540px; display: block; }
     </style>
   </head>
   <body>
     <!-- Dev only: not part of the build. Driven by scripts/spell-lab.mjs. -->
-    <canvas id="world"></canvas>
+    <div class="stage"><canvas id="world"></canvas><canvas id="overlay"></canvas></div>
     <script type="module" src="./lab.ts"></script>
   </body>
 </html>

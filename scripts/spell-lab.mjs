@@ -22,7 +22,8 @@ if (!outDir || !files.length) {
 const url = process.env.LAB_URL ?? "http://localhost:5174/lab/";
 mkdirSync(outDir, { recursive: true });
 
-const browser = await chromium.launch();
+// Software WebGL in headless Chromium: slow, but renders the real thing.
+const browser = await chromium.launch({ args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--ignore-gpu-blocklist"] });
 const page = await browser.newPage({ viewport: { width: 540, height: 540 } });
 page.on("pageerror", (err) => console.error("page error:", err.message));
 await page.goto(url);
@@ -35,7 +36,7 @@ for (const file of files) {
   const tier = json?.tier ?? process.env.LAB_TIER ?? "major";
   const shots = process.env.LAB_SHOTS ? process.env.LAB_SHOTS.split(",").map(Number) : undefined;
   const name = basename(file, extname(file));
-  const result = await page.evaluate(([c, o]) => window.runSpell(c, o), [code, { tier, shots, size: process.env.LAB_SIZE }]);
+  const result = await page.evaluate(([c, o]) => window.runSpell(c, o), [code, { tier, shots, size: process.env.LAB_SIZE, dist: Number(process.env.LAB_DIST) || undefined }]);
   const saved = result.frames.map((frame, i) => {
     const path = join(outDir, `${name}.${i}.png`);
     writeFileSync(path, Buffer.from(frame.png.split(",")[1], "base64"));

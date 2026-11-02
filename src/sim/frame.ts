@@ -7,6 +7,7 @@ import type { CastRequest } from "./runtime";
 // runs spell programs; the parent page owns the player's data and the API.
 
 const canvas = document.getElementById("world") as HTMLCanvasElement;
+const overlay = document.getElementById("overlay") as HTMLCanvasElement;
 let engine: Engine | null = null;
 let selected: CastRequest | null = null;
 let muted = false;
@@ -30,7 +31,7 @@ const hooks = {
 };
 
 function mount(next: Engine): void {
-  engine?.stop();
+  engine?.dispose();
   unbind?.();
   engine = next;
   engine.sound.muted = muted;
@@ -50,7 +51,7 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       muted = msg.muted;
       let restored: Engine | null = null;
       if (msg.save) {
-        restored = Engine.restore(canvas, msg.save, hooks, (rt) => {
+        restored = Engine.restore(canvas, overlay, msg.save, hooks, (rt) => {
           for (const spell of msg.rules) {
             try {
               rt.compile(spell);
@@ -60,7 +61,7 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
           }
         });
       }
-      mount(restored ?? Engine.create(canvas, msg.size, hooks));
+      mount(restored ?? Engine.create(canvas, overlay, msg.size, hooks));
       clearInterval(saveTimer);
       saveTimer = window.setInterval(save, 10_000);
       break;
@@ -80,13 +81,12 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       break;
     case "villager":
       if (engine) {
-        const c = makeCreature("villager", engine.camera.x, engine.camera.y);
+        const c = makeCreature("villager", engine.view.orbit.tx, engine.view.orbit.ty);
         engine.world.creatures.push(c);
       }
       break;
     case "reset":
-      if (engine) engine.stop();
-      mount(Engine.create(canvas, msg.size, hooks));
+      mount(Engine.create(canvas, overlay, msg.size, hooks));
       save();
       break;
     case "mute":

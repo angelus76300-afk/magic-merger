@@ -1,6 +1,5 @@
 import { guardLoops } from "../../shared/spellcode";
 import { TIER_REACH, type Tier } from "../../shared/tiers";
-import type { Camera } from "./camera";
 import { KINDS, kindOf, makeCreature, maxHp, type Creature, type CreatureKind } from "./creatures";
 import { BUILTIN, C, F, G, LAYERS, type Layer } from "./materials";
 import { valueNoise } from "./noise";
@@ -51,6 +50,14 @@ interface ActiveCast {
 
 export type ErrorReporter = (key: string, name: string, message: string) => void;
 
+// What spells may ask of the camera, whatever kind of view draws the world.
+export interface CameraControl {
+  focus(x: number, y: number, r: number, seconds: number, now: number): void;
+  restore(seconds: number): void;
+  // Radius in cells of what is on screen right now.
+  visibleRadius(): number;
+}
+
 const LOOP_LIMIT = 4_000_000;
 const SLOW_MS = 40;
 
@@ -66,7 +73,7 @@ export class Runtime {
   private brokenRules = new Set<string>();
   // Which spell defined each custom material and creature, for saving the world.
   readonly owners = new Map<string, string>();
-  camera: Camera | null = null;
+  camera: CameraControl | null = null;
 
   constructor(
     readonly world: World,
@@ -174,7 +181,7 @@ export class Runtime {
     }
     // Big spells get the camera pulled back to show them whole.
     const r = api.r;
-    if (this.camera && r * 2.4 > Math.min(this.camera.viewW, this.camera.viewH) / this.camera.scale) {
+    if (this.camera && r * 1.2 > this.camera.visibleRadius()) {
       this.camera.focus(x, y, r * 1.15, 0.8, this.world.time);
     }
     this.casts.push(active);

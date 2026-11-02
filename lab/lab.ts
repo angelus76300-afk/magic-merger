@@ -16,6 +16,8 @@ interface LabOptions {
   shots?: number[];
   // Seconds simulated after the last shot.
   settle?: number;
+  // Camera distance; large values show the whole island.
+  dist?: number;
 }
 
 function seedRandom(seed: number): void {
@@ -71,13 +73,28 @@ function diff(a: Record<string, number>, b: Record<string, number>): Record<stri
   return out;
 }
 
+let current: Engine | null = null;
+
+// The 3D canvas with the 2D overlay (night, flashes) on top.
+function composite(canvas: HTMLCanvasElement, overlay: HTMLCanvasElement): string {
+  const out = document.createElement("canvas");
+  out.width = canvas.width;
+  out.height = canvas.height;
+  const ctx = out.getContext("2d")!;
+  ctx.drawImage(canvas, 0, 0);
+  ctx.drawImage(overlay, 0, 0, out.width, out.height);
+  return out.toDataURL("image/png");
+}
+
 async function runSpell(code: string, options: LabOptions = {}) {
   const seed = options.seed ?? 11;
   seedRandom(seed);
   const canvas = document.getElementById("world") as HTMLCanvasElement;
+  const overlay = document.getElementById("overlay") as HTMLCanvasElement;
   const errors: string[] = [];
-  let engine!: Engine;
-  engine = Engine.create(canvas, options.size ?? "medium", { onError: (_k, _n, m) => errors.push(m), onTap: () => {} }, seed);
+  current?.dispose();
+  const engine = Engine.create(canvas, overlay, options.size ?? "medium", { onError: (_k, _n, m) => errors.push(m), onTap: () => {} }, seed, { preserveDrawingBuffer: true });
+  current = engine;
   const world = engine.world;
   // Let rivers settle before casting.
   for (let k = 0; k < 90; k++) engine.step();
@@ -90,8 +107,9 @@ async function runSpell(code: string, options: LabOptions = {}) {
       break;
     }
   }
-  engine.camera.x = target.x;
-  engine.camera.y = target.y;
+  engine.view.orbit.tx = target.x;
+  engine.view.orbit.ty = target.y;
+  if (options.dist) engine.view.orbit.dist = options.dist;
   const tier = isTier(options.tier) ? options.tier : TIERS[2];
   const before = census(world);
   const creaturesBefore = creatures(world);
@@ -106,7 +124,7 @@ async function runSpell(code: string, options: LabOptions = {}) {
     engine.step();
     worst = Math.max(worst, performance.now() - t0);
     engine.render(TICK);
-    if (shots.includes(tick)) frames.push({ t: +(tick * TICK).toFixed(2), png: canvas.toDataURL("image/png") });
+    if (shots.includes(tick)) frames.push({ t: +(tick * TICK).toFixed(2), png: composite(canvas, overlay) });
   }
   return {
     ok,
@@ -115,6 +133,8 @@ async function runSpell(code: string, options: LabOptions = {}) {
     target,
     msTotal: Math.round(performance.now() - started),
     worstTickMs: +worst.toFixed(1),
+    // What a GPU has to draw in the last frame.
+    draw: { calls: engine.view.renderer.info.render.calls, triangles: engine.view.renderer.info.render.triangles },
     terrain: diff(before, census(world)),
     creatures: { before: creaturesBefore, after: creatures(world) },
     frames,
