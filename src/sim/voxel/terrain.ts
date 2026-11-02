@@ -59,12 +59,14 @@ export class Terrain {
     const { world } = this;
     const { w, n } = world;
     for (let i = 0; i < n; i++) {
-      const land = ((columnTop(world, i) + 64) & 0xff) | (world.ground[i] << 8) | (world.cover[i] << 16);
       const f = world.fluid[i];
-      const fluid = f === F.NONE || world.depth[i] <= 0.02 ? 0 : (f << 24) | (Math.round(surfaceY(world, i) * 8) & 0xffffff);
+      const wet = f !== F.NONE && world.depth[i] > 0.02;
+      // Bit 24: under fluid, where the land top takes no spell drawing (the fluid's top does).
+      const land = (((columnTop(world, i) + 64) & 0xff) | (world.ground[i] << 8) | (world.cover[i] << 16) | (wet ? 1 << 24 : 0)) >>> 0;
+      const fluid = !wet ? 0 : (f << 24) | (Math.round(surfaceY(world, i) * 8) & 0xffffff);
       if (land !== this.landSig[i]) {
-        if ((land & 0xffff) !== (this.landSig[i] & 0xffff)) this.markAround(this.dirtyLand, i % w, Math.floor(i / w));
-        if (land >>> 16 !== this.landSig[i] >>> 16 || (land & 0xff) !== (this.landSig[i] & 0xff)) this.coversChanged = true;
+        if ((land & LAND_LOOK) !== (this.landSig[i] & LAND_LOOK)) this.markAround(this.dirtyLand, i % w, Math.floor(i / w));
+        if (((land >>> 16) & 0xff) !== ((this.landSig[i] >>> 16) & 0xff) || (land & 0xff) !== (this.landSig[i] & 0xff)) this.coversChanged = true;
         // Water sits on the land: only a new floor height moves its walls.
         if ((land & 0xff) !== (this.landSig[i] & 0xff)) this.markAround(this.dirtyFluid, i % w, Math.floor(i / w));
         this.landSig[i] = land;
@@ -169,7 +171,7 @@ export class Terrain {
         if (topAt(x + 1, y) > top && x < w - 1) ao -= 0.07;
         if (topAt(x, y - 1) > top && y > 0) ao -= 0.07;
         if (topAt(x, y + 1) > top && y < h - 1) ao -= 0.07;
-        out.face(TOP, X, Z, top, top, surface, FACE_LIGHT.top * ao, 1);
+        out.face(TOP, X, Z, top, top, surface, FACE_LIGHT.top * ao, 1, world.fluid[i] === F.NONE || world.depth[i] <= 0.02 ? 1 : 0);
         // Walls toward lower neighbors; outside the island counts as the bottom.
         for (let d = 0; d < 4; d++) {
           const low = topAt(x + DX[d], y + DY[d]);
@@ -210,16 +212,25 @@ export class Terrain {
         const { color, alpha } = this.fluidColor(i);
         const X = x + ox;
         const Z = y + oz;
-        out.face(TOP, X, Z, top, top, color, 1, alpha);
+        out.face(TOP, X, Z, top, top, color, 1, alpha, 1);
+        const floor = columnTop(world, i);
         for (let d = 0; d < 4; d++) {
           const nx = x + DX[d];
           const ny = y + DY[d];
           const edge = nx < 0 || ny < 0 || nx >= w || ny >= h;
-          // At the island's edge the water spills over: a waterfall to the bottom.
+          if (edge) {
+            // At the island's edge the water spills over: a waterfall to the
+            // bottom, a little in front of the cut side so the two faces do
+            // not lie in the same plane and flicker through each other.
+            out.face(d, X + DX[d] * FALL_GAP, Z + DY[d] * FALL_GAP, BOTTOM - 4, top, color, WALL_LIGHT[d], alpha * 0.8, 0);
+            continue;
+          }
+          // Inside the island the water's wall starts on its own floor: below
+          // that, the land's wall is there already, in the same plane.
           const j = ny * w + nx;
-          const low = edge ? BOTTOM - 4 : Math.max(columnTop(world, j), surfaceY(world, j));
+          const low = Math.max(floor, columnTop(world, j), surfaceY(world, j));
           if (low >= top - 0.01) continue;
-          out.face(d, X, Z, low, top, color, WALL_LIGHT[d], edge ? alpha * 0.8 : alpha);
+          out.face(d, X, Z, low, top, color, WALL_LIGHT[d], alpha, 0);
         }
       }
     }
@@ -282,12 +293,18 @@ const TOP = 4;
 const DX = [1, 0, -1, 0];
 const DY = [0, 1, 0, -1];
 const WALL_LIGHT = [FACE_LIGHT.east, FACE_LIGHT.south, FACE_LIGHT.west, FACE_LIGHT.north];
+// Height, ground and the wet bit of a column's land signature: what its faces look like.
+const LAND_LOOK = 0x100ffff;
+// How far a waterfall hangs in front of the island's cut side, in cells.
+const FALL_GAP = 0.06;
 
 // A reusable vertex writer: typed arrays that grow when needed, so building a
 // chunk allocates nothing per vertex.
 class Writer {
   private pos = new Float32Array(3 * 6 * 4096);
   private col = new Float32Array(4 * 6 * 4096);
+  // 1 where spell drawings may show (dry land tops, fluid tops), 0 on walls.
+  private mask = new Float32Array(6 * 4096);
   private n = 0;
 
   reset(): void {
@@ -301,10 +318,14 @@ class Writer {
     const col = new Float32Array(this.col.length * 2);
     col.set(this.col);
     this.col = col;
+    const mask = new Float32Array(this.mask.length * 2);
+    mask.set(this.mask);
+    this.mask = mask;
   }
 
-  private vertex(x: number, y: number, z: number, r: number, g: number, b: number, a: number): void {
+  private vertex(x: number, y: number, z: number, r: number, g: number, b: number, a: number, m: number): void {
     const n = this.n++;
+    this.mask[n] = m;
     this.pos[n * 3] = x;
     this.pos[n * 3 + 1] = y;
     this.pos[n * 3 + 2] = z;
@@ -316,12 +337,12 @@ class Writer {
 
   // One square face of the cell at (X, Z): a wall from height lo to hi, or the
   // top at height hi. Two triangles, wound to face outward.
-  face(dir: number, X: number, Z: number, lo: number, hi: number, color: number, light: number, alpha: number): void {
+  face(dir: number, X: number, Z: number, lo: number, hi: number, color: number, light: number, alpha: number, decal = 0): void {
     if ((this.n + 6) * 4 > this.col.length) this.grow();
     const r = (((color >> 16) & 255) / 255) * light;
     const g = (((color >> 8) & 255) / 255) * light;
     const b = ((color & 255) / 255) * light;
-    const v = (x: number, y: number, z: number) => this.vertex(x, y, z, r, g, b, alpha);
+    const v = (x: number, y: number, z: number) => this.vertex(x, y, z, r, g, b, alpha, decal);
     // Corners a, b, c, d; triangles a b c and a c d.
     switch (dir) {
       case EAST:
@@ -382,6 +403,7 @@ class Writer {
       }
     }
     g.setAttribute("color", new BufferAttribute(col, colorSize));
+    g.setAttribute("decalMask", new BufferAttribute(this.mask.slice(0, this.n), 1));
     g.computeBoundingSphere();
     return g;
   }

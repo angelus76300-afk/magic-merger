@@ -137,9 +137,23 @@ export class World {
 
   static readonly MAX_DECOR = DecorStore.MAX;
 
+  // Whether a spell may put a voxel here. Not inside the land: it would be
+  // hidden, except where its faces lie on the land's own top or cut side and
+  // the two flicker through each other. A voxel where a tree, a house or any
+  // cover stands takes its place (covers are under two voxels tall), so a
+  // wall built through a village knocks houses down instead of overlapping them.
+  voxelFits(x: number, y: number, level: number): boolean {
+    const i = Math.round(y) * this.w + Math.round(x);
+    const top = Math.round(this.height[i] * 0.5);
+    if (level < top) return false;
+    if (level < top + 2 && this.cover[i] !== C.NONE) this.setCover(i, C.NONE);
+    return true;
+  }
+
   setVoxel(x: number, y: number, level: number, color: number | null, kind: number = VK.STONE): void {
     if (!this.inside(Math.round(x), Math.round(y)) || level < -60 || level > 380) return;
     const key = voxelKey(x, y, level);
+    if (color !== null && !this.voxelFits(x, y, level)) return;
     if (color === null) {
       if (this.decor.delete(key)) {
         this.decorVersion++;
