@@ -2,6 +2,8 @@
 # formatting, typecheck and build everything, then run the simulation checks:
 # map generation, reference spells, the loop guard, saving, and every
 # challenge both ways (doing nothing must not win, the right magic must win).
+# Then the Worker itself under wrangler dev with a stub Claude: invites, the
+# budget caps and the bug guard.
 name: CI
 on:
   push:
@@ -22,3 +24,4 @@ jobs:
       - run: npm run format:check
       - run: npm run build
       - run: npm test
+      - run: npm run test:worker
