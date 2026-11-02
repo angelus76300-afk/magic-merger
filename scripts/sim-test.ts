@@ -695,15 +695,18 @@ for (const scenario of SCENARIOS) {
     merged: state === "merged",
     at,
   });
-  const open = { open: true, reason: null };
+  const open = { open: true, reason: null, labels: [] };
+  const asking = { open: true, reason: null, labels: ["feedback", "needs-info"] };
   check("feedback: no pull request yet, still sent", verdict(100, open, []).status === "sent");
   check("feedback: an open pull request is in review", verdict(100, open, [pr(7, 150, "open")]).pr?.number === 7);
   check("feedback: a merged one wins over a newer open one", verdict(100, open, [pr(7, 150, "merged"), pr(9, 160, "open")]).status === "shipped");
   const dropped = verdict(100, open, [pr(7, 150, "closed")]);
   check("feedback: closed unmerged after the send, declined", dropped.status === "declined" && !!dropped.note);
   check("feedback: closed unmerged before a new send, still sent", verdict(200, open, [pr(7, 150, "closed")]).status === "sent");
-  check("feedback: the issue closed as not planned, declined", verdict(100, { open: false, reason: "not_planned" }, []).status === "declined");
-  check("feedback: the issue closed as done, shipped", verdict(100, { open: false, reason: "completed" }, []).status === "shipped");
+  check("feedback: the issue closed as not planned, declined", verdict(100, { open: false, reason: "not_planned", labels: [] }, []).status === "declined");
+  check("feedback: Claude asked on the issue (needs-info), a question", verdict(100, asking, []).status === "question");
+  check("feedback: a pull request wins over an old question", verdict(100, asking, [pr(7, 150, "open")]).status === "review");
+  check("feedback: the issue closed as done, shipped", verdict(100, { open: false, reason: "completed", labels: [] }, []).status === "shipped");
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");

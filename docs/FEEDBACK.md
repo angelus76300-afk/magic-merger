@@ -8,7 +8,7 @@ How an idea from the Ideas tab becomes a pull request, and the rules Claude foll
 2. The admin picks one, edits it into a **brief** and taps **Send to Claude**.
 3. The Worker opens a GitHub issue (brief, the idea quoted, vote count, no player name) and fires the Claude Code routine with the brief and the issue number (`worker/feedback.ts`).
 4. The routine runs in a Claude Code cloud session: it builds the brief on a `claude/` branch, runs the checks and opens a **draft** pull request whose body says `Closes #<issue>`.
-5. Every ten minutes the Worker's cron reads the issue's timeline: an open pull request shows the idea as "Waiting for review" with its link, a merged one as "Done", one closed without merging (or the issue closed as not planned) as "Not this time".
+5. Every ten minutes the Worker's cron reads the issue's timeline: an open pull request shows the idea as "Waiting for review" with its link, a merged one as "Done", one closed without merging (or the issue closed as not planned) as "Not this time". When Claude stopped to ask (the `needs-info` label), the idea shows "Claude has a question" until the admin sends it again with a clearer brief, which takes the label off.
 6. The admin reviews, merges and deploys (`npm run deploy`). Nothing in this flow merges or deploys by itself.
 
 ## The routine's saved prompt
@@ -35,7 +35,7 @@ comment on that issue.
 
 1. Read `README.md`, the parts of `docs/DESIGN.md` and `docs/ROADMAP.md` the brief touches, and the code you will change.
 2. Build the brief and nothing else. No refactors, renames or cleanups it does not need.
-3. **Stop and ask instead of guessing** when the brief is unclear, would take more than one session, contradicts `docs/DESIGN.md`, or needs anything in the list below. Comment on the issue with what is unclear and two or three concrete options, then end the run without a pull request. The admin will send it again with a better brief.
+3. **Stop and ask instead of guessing** when the brief is unclear, would take more than one session, contradicts `docs/DESIGN.md`, or needs anything in the list below. Comment on the issue with what is unclear and two or three concrete options, **add the label `needs-info` to the issue** (this is how the game shows "Claude has a question"), then end the run without a pull request. The admin will send it again with a better brief.
 
 ### Never
 

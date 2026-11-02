@@ -168,7 +168,8 @@ export async function changeFeedback(env: FeedbackEnv, body: FeedbackAction): Pr
   }
 }
 
-// Opens the GitHub issue (or comments on it when sent again), then fires the
+// Opens the GitHub issue (or, sent again, reopens it, comments the new brief
+// and takes Claude's needs-info label off), then fires the
 // routine with the brief. Two clicks within a minute start one run: the
 // first one claims the idea by writing sent_at.
 async function sendToClaude(env: FeedbackEnv, row: SuggestionRow, brief: string) {
@@ -177,7 +178,9 @@ async function sendToClaude(env: FeedbackEnv, row: SuggestionRow, brief: string)
   if (!brief) throw new HttpError(400, "Write the brief Claude should build");
   if (row.status === "review" || row.status === "shipped") throw new HttpError(400, "A pull request already exists for this idea");
   const now = Date.now();
-  const claim = await env.DB.prepare("UPDATE suggestions SET sent_at = ? WHERE id = ? AND status IN ('open', 'sent', 'declined') AND COALESCE(sent_at, 0) < ?")
+  const claim = await env.DB.prepare(
+    "UPDATE suggestions SET sent_at = ? WHERE id = ? AND status IN ('open', 'sent', 'question', 'declined') AND COALESCE(sent_at, 0) < ?",
+  )
     .bind(now, row.id, now - 60_000)
     .run();
   if (!claim.meta.changes) throw new HttpError(409, "It was sent less than a minute ago");
@@ -187,6 +190,10 @@ async function sendToClaude(env: FeedbackEnv, row: SuggestionRow, brief: string)
     let issue = row.issue_number ? { number: row.issue_number, url: row.issue_url ?? "" } : null;
     if (issue) {
       await github(env, "PATCH", `/issues/${issue.number}`, { state: "open" });
+      // Claude's question is answered by the new brief.
+      await github(env, "DELETE", `/issues/${issue.number}/labels/${NEEDS_INFO}`).catch((err) => {
+        if (!(err instanceof HttpError) || !/ 404 /.test(err.message)) throw err;
+      });
       await github(env, "POST", `/issues/${issue.number}/comments`, { body: `Sent to Claude again with a new brief:\n\n${brief}` });
     } else {
       issue = await openIssue(env, row, brief, votes?.n ?? 0);
@@ -312,10 +319,15 @@ export interface LinkedPull {
   at: number;
 }
 
+// The label the routine puts on the issue when it stops to ask instead of
+// building (docs/FEEDBACK.md). Sending the idea again takes it off.
+export const NEEDS_INFO = "needs-info";
+
 export interface IssueState {
   open: boolean;
   // GitHub's state_reason: completed, not_planned, reopened or null.
   reason: string | null;
+  labels: string[];
 }
 
 export interface Verdict {
@@ -328,7 +340,8 @@ const newest = (prs: LinkedPull[]) => prs.reduce<LinkedPull | null>((a, p) => (!
 
 // What an idea that was sent has become, from its issue and the pull requests
 // that mention it. A merged pull request wins; then an open one; then the
-// issue closed by hand; then a pull request from this run closed unmerged.
+// issue closed by hand; then Claude asking a question (the needs-info label);
+// then a pull request from this run closed unmerged.
 export function verdict(sentAt: number, issue: IssueState, prs: LinkedPull[]): Verdict {
   const merged = newest(prs.filter((p) => p.merged));
   if (merged) return { status: "shipped", pr: merged, note: null };
@@ -337,6 +350,7 @@ export function verdict(sentAt: number, issue: IssueState, prs: LinkedPull[]): V
   if (!issue.open) {
     return issue.reason === "not_planned" ? { status: "declined", pr: null, note: "Closed on GitHub" } : { status: "shipped", pr: newest(prs), note: null };
   }
+  if (issue.labels.includes(NEEDS_INFO)) return { status: "question", pr: null, note: "Claude needs a clearer brief: its question is on the issue" };
   const dropped = newest(prs.filter((p) => !p.merged && p.at >= sentAt));
   if (dropped) return { status: "declined", pr: dropped, note: "The change was closed without merging" };
   return { status: "sent", pr: null, note: null };
@@ -350,7 +364,7 @@ interface TimelineEvent {
 
 async function readGitHub(env: FeedbackEnv, n: number): Promise<{ issue: IssueState; prs: LinkedPull[] }> {
   const [issue, events] = await Promise.all([
-    github<{ state?: string; state_reason?: string | null }>(env, "GET", `/issues/${n}`),
+    github<{ state?: string; state_reason?: string | null; labels?: ({ name?: string } | string)[] }>(env, "GET", `/issues/${n}`),
     github<TimelineEvent[]>(env, "GET", `/issues/${n}/timeline?per_page=100`),
   ]);
   const own = `/${env.GITHUB_REPO!.toLowerCase()}/pull/`;
@@ -367,7 +381,8 @@ async function readGitHub(env: FeedbackEnv, n: number): Promise<{ issue: IssueSt
       at: Date.parse(e.created_at ?? "") || 0,
     });
   }
-  return { issue: { open: issue.state !== "closed", reason: issue.state_reason ?? null }, prs: [...prs.values()] };
+  const labels = (issue.labels ?? []).map((l) => (typeof l === "string" ? l : (l.name ?? "")));
+  return { issue: { open: issue.state !== "closed", reason: issue.state_reason ?? null, labels }, prs: [...prs.values()] };
 }
 
 // From the cron, and the admin's "Check GitHub": the ideas Claude is on,
@@ -375,7 +390,7 @@ async function readGitHub(env: FeedbackEnv, n: number): Promise<{ issue: IssueSt
 export async function syncFeedback(env: FeedbackEnv, limit = 8): Promise<{ checked: number; changed: number }> {
   if (missingConfig(env).length) return { checked: 0, changed: 0 };
   const rows = await env.DB.prepare(
-    `SELECT * FROM suggestions WHERE status IN ('sent', 'review') AND issue_number IS NOT NULL
+    `SELECT * FROM suggestions WHERE status IN ('sent', 'question', 'review') AND issue_number IS NOT NULL
      ORDER BY COALESCE(checked_at, 0) LIMIT ?`,
   )
     .bind(limit)

@@ -2,13 +2,15 @@
 // became of each one once the admin sent it to Claude. Shared by the page and
 // the Worker.
 
-export const SUGGESTION_STATUSES = ["open", "sent", "review", "shipped", "declined"] as const;
+export const SUGGESTION_STATUSES = ["open", "sent", "question", "review", "shipped", "declined"] as const;
 export type SuggestionStatus = (typeof SUGGESTION_STATUSES)[number];
 
 // What players read on each idea.
 export const STATUS_LABEL: Record<SuggestionStatus, string> = {
   open: "Open for votes",
   sent: "Claude is on it",
+  // Claude stopped to ask instead of guessing; the admin sends a clearer brief.
+  question: "Claude has a question",
   review: "Waiting for review",
   shipped: "Done, in the next update",
   declined: "Not this time",
