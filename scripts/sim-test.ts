@@ -25,10 +25,14 @@ import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../share
 import { pickExamples, words } from "../worker/programs";
 import { verdict, type LinkedPull } from "../worker/feedback";
 import { helperProblem, withLibrary } from "../worker/evolve";
-import { body, bodyFrom, FEATURES, ITEMS, MAX_MODEL_BOXES, modelOf, PLANS } from "../src/sim/body";
+import { body, bodyFrom, BUILDS, EXTRA, FEATURES, ITEMS, MAX_MODEL_BOXES, modelOf, planOfModel, PLANS, stillModelColor } from "../src/sim/body";
+import type { BodySpec, Feature, ModelBox } from "../src/sim/body";
+import { sharedFaces } from "../src/sim/voxel/faces";
+import { MODELS } from "../src/sim/voxel/models";
+import { easeGround, walkGround, type Footing } from "../src/sim/voxel/walk";
 import { names } from "../src/sim/social";
 import { AGES, JOBS, packLook, unpackLook, type Job as Job3 } from "../src/sim/villagers";
-import { buildRig, type Rig } from "../src/sim/voxel/rigs";
+import { buildRig, drawScale, HOUSE_HEIGHT, MAX_HEIGHT, villagerUnits, type Rig } from "../src/sim/voxel/rigs";
 import { SPECIES } from "../src/sim/wildlife";
 
 // Challenges with nothing cast, over several seeds: one seed can pass by
@@ -616,6 +620,112 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
   );
   const modelRig = buildRig(body("two legs", [], { model: big }));
   check("a model is scaled to a creature's size", finite(modelRig) && modelRig.parts.length === 16 && modelRig.height <= 1.71);
+
+  // 3.7: sizes against a villager and a house, no two parts sharing a face,
+  // still models fall back to a plan.
+  const V = villagerUnits();
+  const drawn = (spec: BodySpec, radius: number, look = 0) => {
+    const r = buildRig(spec, look);
+    return (r.height * drawScale(spec, radius, r)) / V;
+  };
+  const houseTop = Math.max(...MODELS.house.map((b) => b.y + b.h));
+  check("the house the sizes are checked against is the island's house", Math.abs(houseTop - HOUSE_HEIGHT) < 1e-6, `${houseTop}`);
+  const heights = Object.fromEntries(SPECIES.map((sp) => [sp.kind.name, drawn(KINDS.get(sp.kind.name)!.body, KINDS.get(sp.kind.name)!.radius)]));
+  const villagerDrawn = drawn(KINDS.get("villager")!.body, 0.55);
+  check(
+    "wild animals are sized against a villager: none taller, a bear smaller than one",
+    Math.abs(villagerDrawn - 1) < 1e-6 &&
+      Object.values(heights).every((h) => h <= 0.95) &&
+      heights.bear < 0.8 &&
+      heights.bear > heights.wolf &&
+      heights.deer > heights.wolf &&
+      heights.wolf > heights.rabbit &&
+      heights.rabbit < 0.3,
+    Object.entries(heights)
+      .map(([k, h]) => `${k} ${h.toFixed(2)}`)
+      .join(", "),
+  );
+  const giantBear = drawn(bodyFrom({}, "giant bear", KINDS.get("beast")!.body), 1.9);
+  const vampire = drawn(bodyFrom({}, "vampire", KINDS.get("beast")!.body), 1.2);
+  const huge = drawn(body("golem"), 6);
+  check(
+    "a spell's creature grows with its radius, people hardly, nothing past the cap",
+    giantBear > heights.bear * 1.3 && vampire < 1.3 && vampire > 1 && huge <= MAX_HEIGHT + 1e-6,
+    `giant bear ${giantBear.toFixed(2)}, vampire of radius 1.2 ${vampire.toFixed(2)}, golem of radius 6 ${huge.toFixed(2)} villagers`,
+  );
+  const faces: string[] = [];
+  const noShared = (label: string, spec: BodySpec, look = 0) => {
+    const n = sharedFaces(buildRig(spec, look)).length;
+    if (n) faces.push(`${label} ${n}`);
+  };
+  for (const plan of PLANS) {
+    noShared(plan, body(plan));
+    for (const f of [...FEATURES, ...ITEMS, ...EXTRA] as Feature[]) noShared(`${plan}+${f}`, body(plan, [f]));
+    noShared(`${plan}+all`, body(plan, [...FEATURES, "sword"]));
+  }
+  for (const [name, k] of KINDS) for (const look of [0, 1, 2, 3]) noShared(name, k.body, look);
+  for (const age of AGES)
+    for (const job of JOBS)
+      for (const long of [false, true]) noShared(`${age} ${job}`, KINDS.get("villager")!.body, packLook({ age, job, style: 2, skin: 1, hair: 3, long }));
+  noShared("model", body("two legs", [], { model: big }));
+  const stored = JSON.parse(readFileSync("lab/stored-creatures.json", "utf8")) as {
+    name: string;
+    plan: string;
+    features: Feature[];
+    color2: number | null;
+    model: ModelBox[] | null;
+  }[];
+  for (const c of stored)
+    noShared(c.name, c.model ? body("two legs", [], { model: c.model }) : body(c.plan as (typeof PLANS)[number], c.features, { color2: c.color2 }));
+  check(
+    "no two parts of a figure share a face",
+    !faces.length,
+    faces.length ? faces.slice(0, 6).join(", ") : `every plan, feature, villager look, kind and ${stored.length} stored creatures`,
+  );
+  const stillBox = [
+    [-1, 0, -3, 2, 2, 6, "#8a5a2b"],
+    [-1, 2, 2, 2, 1, 1, "#e0c040"],
+  ];
+  const still = bodyFrom({ model: stillBox }, "box beast", KINDS.get("beast")!.body);
+  const named = bodyFrom({ model: stillBox }, "rock wolf", KINDS.get("beast")!.body);
+  const moving = bodyFrom({ model: [...stillBox, [0, 0, 0, 1, 1, 1, "#fff", "leg"]] }, "box beast", KINDS.get("beast")!.body);
+  check(
+    "a model that never moves falls back to the nearest plan, in its colors",
+    still.model === null &&
+      still.plan === "four legs" &&
+      still.color2 === 0xe0c040 &&
+      stillModelColor({ model: stillBox }) === 0x8a5a2b &&
+      named.plan === "four legs" &&
+      named.build === BUILDS.wolf &&
+      moving.model !== null &&
+      planOfModel(modelOf([[0, 0, 0, 2, 6, 2, "#fff"]])!, false) === "two legs" &&
+      planOfModel(modelOf([[0, 0, 0, 6, 2, 6, "#fff"]])!, false) === "slime" &&
+      planOfModel(modelOf([[0, 0, 0, 2, 2, 2, "#fff"]])!, true) === "spirit",
+    `${still.plan}, ${named.plan}, model kept: ${moving.model !== null}`,
+  );
+
+  // Walking up a step of one voxel: no jump; beside a cliff, no climbing its wall.
+  {
+    const world = generateWorld(32, 32, 3);
+    for (let i = 0; i < world.n; i++) {
+      const x = i % world.w;
+      world.height[i] = x < 14 ? 4 : x < 18 ? 6 : 14;
+      world.fluid[i] = F.NONE;
+      world.depth[i] = 0;
+    }
+    let jump = 0;
+    for (let x = 12; x < 17.9; x += 0.01) jump = Math.max(jump, Math.abs(walkGround(world, x + 0.01, 16.5) - walkGround(world, x, 16.5)));
+    const besideCliff = walkGround(world, 17.97, 16.5);
+    const foot: Footing = { gy: NaN, vy: 0, gt: 0 };
+    easeGround(foot, 7, 0);
+    let t = 0;
+    while (easeGround(foot, 3, t) > 3.001 && t < 2) t += 1 / 30;
+    check(
+      "creatures walk up a step instead of jumping, and fall off a cliff",
+      jump < 0.05 && Math.abs(besideCliff - 3) < 1e-6 && t > 0.2 && t < 1,
+      `largest change in a hundredth of a cell ${jump.toFixed(3)} voxel, ${besideCliff} beside the cliff, a fall of 4 voxels in ${t.toFixed(2)} s`,
+    );
+  }
 
   // Habitats: on every island size, each species where it belongs.
   for (const size of [112, 208]) {

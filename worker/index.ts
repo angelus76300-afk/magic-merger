@@ -1198,7 +1198,8 @@ function json(data: unknown, status = 200): Response {
 async function handleAdmin(request: Request, url: URL, env: Env, oracle: Oracle, ctx: ExecutionContext): Promise<Response | null> {
   const path = url.pathname.slice("/api/admin/".length);
   const post = request.method === "POST";
-  if (!post && path === "programs") return json(await programsToJudge(env, Number(url.searchParams.get("limit")) || 20));
+  if (!post && path === "programs")
+    return json(await programsToJudge(env, Number(url.searchParams.get("limit")) || 20, url.searchParams.get("creatures") === "1"));
   if (post && path === "judge") return json(await handleJudge(await readBody<JudgeBody>(request), env, oracle, ctx, true));
   if (post && path === "judge-trial") return json(await handleJudge(await readBody<JudgeBody>(request), env, oracle, ctx, false));
   if (!post && path === "judge-stats") return json(await calibration(env.DB));
@@ -1382,10 +1383,15 @@ interface SpellTrialBody {
 }
 
 // Live programs the judge has not looked at, newest first, for scripts/judge-runner.mjs.
-async function programsToJudge(env: Env, limit: number) {
+// With creatures (3.7), the live programs that bring creatures and whose
+// judgment has no answer to "does it look alive?" yet, judged or not.
+async function programsToJudge(env: Env, limit: number, creatures = false) {
+  const where = creatures
+    ? `p.status = 'live' AND p.spec LIKE '%creatures%' AND (p.judged IS NULL OR p.judged NOT LIKE '%"alive"%')`
+    : `p.status = 'live' AND p.judged IS NULL`;
   const rows = await env.DB.prepare(
     `SELECT p.id, p.key, p.spec, e.name, e.tier, e.kind, e.depth FROM programs p JOIN elements e ON e.key = p.key
-     WHERE p.status = 'live' AND p.judged IS NULL ORDER BY p.id DESC LIMIT ?`,
+     WHERE ${where} ORDER BY p.id DESC LIMIT ?`,
   )
     .bind(Math.min(100, Math.max(1, limit)))
     .all<ProgramRow & { name: string; tier: string | null; kind: string; depth: number }>();

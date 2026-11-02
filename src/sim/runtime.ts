@@ -1,7 +1,7 @@
 import { guardLoops } from "../../shared/spellcode";
 import { TIER_REACH, type Tier } from "../../shared/tiers";
 import { BUILTIN_KINDS, KINDS, hostile, kindOf, makeCreature, maxHp, shieldedCreature, type Behavior, type Creature, type CreatureKind } from "./creatures";
-import { bodyFrom } from "./body";
+import { bodyFrom, stillModelColor } from "./body";
 import { NATIVE_NAMES } from "./wildlife";
 import { goalFrom, goalFromBehavior, goalFromName } from "./goals";
 import { abilitiesFrom, abilitiesFromName } from "./abilities";
@@ -253,7 +253,7 @@ export class Runtime {
         speed: num(k.speed, 0, 20, base.speed),
         hp: num(k.hp, 1, 2000, base.hp),
         radius: num(k.radius, 0.3, 6, base.radius),
-        color: toColor(k.color) ?? base.color,
+        color: toColor(k.color) ?? stillModelColor(k) ?? base.color,
         flying: typeof k.flying === "boolean" ? k.flying : base.flying,
         fireproof: typeof k.fireproof === "boolean" ? k.fireproof : base.fireproof,
         swims: typeof k.swims === "boolean" ? k.swims : base.swims,

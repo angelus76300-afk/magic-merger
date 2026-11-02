@@ -11,12 +11,16 @@ import { body, bodyFrom, FEATURES, ITEMS, PLANS, type BodySpec, type Feature, ty
 import { KINDS } from "../src/sim/creatures";
 import { JOBS, packLook, STYLES, type Look } from "../src/sim/villagers";
 import { Figures, figureMaterials, type Pose } from "../src/sim/voxel/figures";
-import { buildRig, paletteOf, ROLES, type Rig } from "../src/sim/voxel/rigs";
+import { buildRig, drawScale, paletteOf, ROLES, type Rig } from "../src/sim/voxel/rigs";
+import { geometryOf, MODELS as COVERS } from "../src/sim/voxel/models";
+import storedCreatures from "./stored-creatures.json";
 
 ColorManagement.enabled = false;
 
 interface Entry {
   label: string;
+  // The island's house, drawn beside the creatures to size them (3.7).
+  house?: boolean;
   spec: BodySpec;
   color: number;
   look?: number;
@@ -108,7 +112,36 @@ const MODELS: { label: string; color: number; boxes: [number, number, number, nu
 const asModel = (m: (typeof MODELS)[number]): ModelBox[] =>
   m.boxes.map(([x, y, z, w, h, d, color, part]) => ({ x, y, z, w, h, d, color: parseInt(color.slice(1), 16), part: (part ?? null) as ModelBox["part"] }));
 
+// The creatures of every live program as the island draws them, from
+// scripts/stored-creatures.ts (3.7), tallest first.
+const STORED = storedCreatures as {
+  spell: string;
+  name: string;
+  plan: string;
+  features: Feature[];
+  color: number;
+  color2: number | null;
+  radius: number;
+  model: ModelBox[] | null;
+}[];
+
 const SECTIONS: { title: string; entries: Entry[] }[] = [
+  {
+    title: "Sizes: a villager, a house and the island's animals (3.7)",
+    entries: [
+      { label: "villager", spec: villager, color: shirt(0), look: look({ job: "farmer" }) },
+      { label: "house", house: true, spec: villager, color: 0 },
+      ...["deer", "bear", "wolf", "boar", "rabbit", "bird", "fish"].map((n) => ({
+        label: n,
+        spec: kind(n).body,
+        color: kind(n).color,
+        look: n === "deer" ? 1 : 0,
+        radius: kind(n).radius,
+      })),
+      { label: "child", spec: villager, color: shirt(1, 1), look: look({ age: "child", style: 1, skin: 4, hair: 3 }), radius: 0.55 * 0.68 },
+      { label: "golem (base)", spec: kind("golem").body, color: 0x8d8d96, radius: kind("golem").radius },
+    ],
+  },
   {
     title: "Body plans",
     entries: PLANS.map((plan) => {
@@ -200,6 +233,15 @@ const SECTIONS: { title: string; entries: Entry[] }[] = [
     ].map(([name, color]) => ({ label: String(name), spec: bodyFrom({}, String(name).toLowerCase(), kind("beast").body), color: color as number })),
   },
   {
+    title: "Stored creatures, as the island draws them (live programs, 3.7)",
+    entries: STORED.map((c) => ({
+      label: c.name,
+      spec: c.model ? body("two legs", [], { model: c.model }) : bodyFrom({ body: c.plan, features: c.features }, c.name, kind("beast").body),
+      color: c.color,
+      radius: c.radius,
+    })),
+  },
+  {
     title: "Models Claude designs (up to 16 boxes)",
     entries: MODELS.map((m) => ({ label: m.label, spec: body("two legs", [], { model: asModel(m) }), color: m.color, radius: 0.7 })),
   },
@@ -226,6 +268,7 @@ interface Placed {
 }
 const placed: Placed[] = [];
 const titles: { text: string; x: number; z: number }[] = [];
+const labelsAt: { text: string; x: number; z: number }[] = [];
 let row = 0;
 // ?only=2 draws one section, larger.
 const only = params.has("only") ? Number(params.get("only")) : null;
@@ -233,6 +276,14 @@ for (const section of SECTIONS.filter((_, n) => only === null || n === only)) {
   titles.push({ text: section.title, x: -STEP * 0.6, z: row * STEP - STEP * 0.62 });
   section.entries.forEach((e, n) => {
     if (n && n % COLS === 0) row++;
+    if (e.house) {
+      // The island's house, a cell wide, as the view draws it.
+      const house = new Mesh(geometryOf(COVERS.house), new MeshBasicMaterial({ vertexColors: true }));
+      house.position.set((n % COLS) * STEP - 0.5, 0, row * STEP - 0.5);
+      scene.add(house);
+      labelsAt.push({ text: e.label, x: (n % COLS) * STEP, z: row * STEP });
+      return;
+    }
     placed.push({ e, rig: buildRig(e.spec, e.look ?? 0), x: (n % COLS) * STEP, z: row * STEP, id: placed.length });
   });
   row += 1.45;
@@ -284,6 +335,14 @@ function placeLabels(): void {
     div.textContent = p.e.label;
     labels.append(div);
   }
+  for (const t of labelsAt) {
+    const div = document.createElement("div");
+    const { left, top } = at(t.x, t.z + 0.9);
+    div.style.left = `${left}px`;
+    div.style.top = `${top}px`;
+    div.textContent = t.text;
+    labels.append(div);
+  }
   for (const t of titles) {
     const div = document.createElement("div");
     div.className = "section";
@@ -332,7 +391,7 @@ function draw(): void {
   const t0 = performance.now();
   figures.begin();
   for (const p of placed) {
-    const size = (p.e.radius ?? 0.55) * 1.85;
+    const size = drawScale(p.e.spec, p.e.radius ?? 0.55, p.rig);
     const dead = mode === "dead";
     pose.x = p.x;
     pose.z = p.z;
@@ -373,4 +432,7 @@ window.addEventListener("resize", () => {
 for (const input of document.querySelectorAll("input")) input.addEventListener("change", () => fixedTime !== null && draw());
 frameCamera();
 draw();
+// The figures' buffers grow on the frame after they ran out: a frozen clock
+// draws once, so draw again with room for every part.
+if (fixedTime !== null) draw();
 (window as unknown as { bestiaryReady: boolean }).bestiaryReady = true;
