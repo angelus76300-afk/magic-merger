@@ -172,7 +172,7 @@ function usd(v: number): string {
   return v > 0 && v < 0.1 ? `$${v.toFixed(3)}` : `$${v.toFixed(2)}`;
 }
 
-function ago(at: number): string {
+export function ago(at: number): string {
   const s = (Date.now() - at) / 1000;
   if (s < 90) return "just now";
   if (s < 5400) return `${Math.round(s / 60)} min ago`;

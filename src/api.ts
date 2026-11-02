@@ -1,3 +1,4 @@
+import type { FeedbackAction, FeedbackResponse } from "../shared/feedback";
 import type {
   ApiError,
   CastResponse,
@@ -77,6 +78,34 @@ export function changeInvite(id: string, action: "pause" | "resume" | "revoke" |
 
 export function closeReport(id: number): Promise<{ ok: boolean }> {
   return post("/api/admin/report", { id });
+}
+
+// 3.4.1: the Feedback tab.
+export async function feedback(): Promise<FeedbackResponse | null> {
+  try {
+    const res = await fetch("/api/feedback", { headers: authHeaders() });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function postIdea(title: string, body: string): Promise<{ id: number }> {
+  return post("/api/feedback", { title, body });
+}
+
+export function voteIdea(id: number, up: boolean): Promise<{ votes: number; voted: boolean }> {
+  return post("/api/feedback/vote", { id, up });
+}
+
+// Admin: send an idea to Claude, decline, reopen or delete it.
+export function changeIdea(change: FeedbackAction): Promise<{ ok: boolean; sessionUrl?: string | null; issueUrl?: string | null }> {
+  return post("/api/admin/feedback", change);
+}
+
+// Admin: read GitHub now instead of waiting for the cron.
+export function syncIdeas(): Promise<{ checked: number; changed: number }> {
+  return post("/api/admin/feedback-sync", {});
 }
 
 export function merge(a: string, b: string): Promise<MergeResponse> {

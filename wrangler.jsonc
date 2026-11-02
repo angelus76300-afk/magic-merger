@@ -42,8 +42,13 @@
     // Legendary and cosmic spells: drafted by SPELL_MODEL_SMALL at once, written
     // by SPELL_MODEL through the Batch API at half price. "0" asks SPELL_MODEL at once.
     "BIG_SPELLS_BATCH": "1",
+    // 3.4.1. The repository the feedback routine works on. With the secrets
+    // GITHUB_TOKEN, ROUTINE_URL and ROUTINE_TOKEN, the admin can send an idea
+    // to Claude from the Feedback tab (docs/FEEDBACK.md). A fork sets its own.
+    "GITHUB_REPO": "angelus76300-afk/magic-merger",
   },
-  // Collects the programs the Batch API has written.
+  // Collects the programs the Batch API has written, and reads GitHub for the
+  // ideas sent to Claude (3.4.1).
   "triggers": { "crons": ["*/10 * * * *"] },
   "observability": { "enabled": true },
 }

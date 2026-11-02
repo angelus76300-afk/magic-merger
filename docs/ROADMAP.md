@@ -1,6 +1,6 @@
 # Where the game stands, and what comes next
 
-Updated on 2026-11-02, during 3.4.
+Updated on 2026-11-02, after 3.4.1.
 
 ## Done since the first review
 
@@ -91,6 +91,15 @@ Asked for: send the link to friends and coworkers, $50 of API a month in total w
 7. **Checked**: `npm run test:worker` runs the Worker under `wrangler dev` with a stub Claude, in CI (DESIGN.md has what it covers, and the mutation that proves the concurrency test can fail); a phone sized browser went through no link, the admin creating an invite, the friend's welcome, a merge, the cap, the People view and a revoked link.
 
 This takes part of 4.5 "Ready for strangers" early, for a closed circle: quotas, a report button, a privacy note, no shared token. Still missing before anything public: Turnstile, name checks before a name is stored, AI labels on generated content, legal pages, AI Gateway caps.
+
+## Done in 3.4.1: ideas from players, built by Claude
+
+Asked for: a tab where people put suggestions and vote, and a way for the admin to send one to Claude to implement without opening a session by hand. DESIGN.md, "Feedback", has the rules; SETUP.md, "Feedback", the setup; FEEDBACK.md, the routine's rules.
+
+1. **The Ideas tab**: post an idea or a bug, vote (up only, one per invite), see what became of it, with the pull request's link.
+2. **Send to Claude** for the admin: an editable brief, a GitHub issue without the player's name, then a Claude Code routine fired through its API, which opens a draft pull request with `Closes #<issue>`.
+3. **Statuses from GitHub** every ten minutes on the existing cron, or at once from the admin box.
+4. **Checked**: `npm run test:worker` runs the whole flow against a stub GitHub and a stub routine (one issue, one fire, a double tap, a refused fire then a retry on the same issue, review, merged, declined); `npm test` checks the status rules.
 
 ## Decisions taken
 
