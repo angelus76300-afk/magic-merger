@@ -2,7 +2,9 @@ import { elementKey } from "../shared/elements";
 import { TIERS, tierFromDepth, type Tier } from "../shared/tiers";
 import * as api from "./api";
 import { chipElement } from "./craft";
-import type { FromWorld, ToWorld } from "./sim/protocol";
+import { FilterBar, applyFilters, lastUsed, markUsed } from "./filters";
+import { MAX_SAVE_CHARS, readFromWorld } from "./sim/protocol";
+import type { ToWorld } from "./sim/protocol";
 import { SCENARIO_LIST } from "./sim/scenario-list";
 import type { CastRequest } from "./sim/runtime";
 import type { SavedWorld } from "./sim/save";
@@ -26,6 +28,8 @@ export interface WorldElements {
   challenges: HTMLButtonElement;
   status: HTMLElement;
   list: HTMLElement;
+  bar: HTMLElement;
+  tools: HTMLElement;
   add: HTMLButtonElement;
   reset: HTMLButtonElement;
   size: HTMLSelectElement;
@@ -48,6 +52,8 @@ export class WorldHost {
   // The challenge being played, if any.
   private challenge: string | null = null;
   private challengeDialog: HTMLDialogElement | null = null;
+  private filters = new FilterBar("mm-world-filters", { kind: "all", tier: "any", sort: "used", query: "" }, { search: true, sorts: ["used", "newest", "name", "power"] }, () => this.renderSpells());
+  private expanded = readFlag(EXPAND_KEY);
 
   constructor(
     private store: Store,
@@ -56,6 +62,23 @@ export class WorldHost {
 
   init(): void {
     window.addEventListener("message", (e) => this.onMessage(e));
+    // The spell bar: filters, and a button that opens it into a grid.
+    const expand = document.createElement("button");
+    expand.type = "button";
+    expand.className = "spellbar-expand";
+    const showExpand = () => {
+      this.el.bar.classList.toggle("expanded", this.expanded);
+      expand.textContent = this.expanded ? "Row" : "Grid";
+      expand.setAttribute("aria-expanded", String(this.expanded));
+      expand.title = this.expanded ? "Show one row" : "Show every spell";
+    };
+    expand.addEventListener("click", () => {
+      this.expanded = !this.expanded;
+      writeFlag(EXPAND_KEY, this.expanded);
+      showExpand();
+    });
+    this.el.tools.append(this.filters.el, expand);
+    showExpand();
     this.el.add.addEventListener("click", () => {
       this.send({ type: "villager" });
       toast("A villager wanders in");
@@ -91,6 +114,13 @@ export class WorldHost {
       // no forms, no popups. The page's CSP also blocks all network access.
       this.frame.setAttribute("sandbox", "allow-scripts");
       this.frame.src = import.meta.env.DEV ? "/world.html" : "/world";
+      // Spell code could send the frame to another page; any second load
+      // replaces the frame with a fresh one.
+      let loads = 0;
+      const frame = this.frame;
+      frame.addEventListener("load", () => {
+        if (++loads > 1 && this.frame === frame) this.replaceFrame();
+      });
       this.el.stage.prepend(this.frame);
     }
     this.send({ type: "visible", visible: true });
@@ -128,6 +158,13 @@ export class WorldHost {
     this.aheadRunning = false;
   }
 
+  private replaceFrame(): void {
+    this.frame?.remove();
+    this.frame = null;
+    this.ready = false;
+    this.show();
+  }
+
   hide(): void {
     this.send({ type: "visible", visible: false });
   }
@@ -142,13 +179,25 @@ export class WorldHost {
 
   // Asks the Worker for the spell program, once. Admins can force a new one.
   // A quiet prepare runs in the background and keeps its errors to itself.
-  async prepare(key: string, regenerate = false, quiet = false): Promise<CastRequest | null> {
+  prepare(key: string, regenerate = false, quiet = false): Promise<CastRequest | null> {
     if (!regenerate) {
       const known = this.request(key);
-      if (known) return known;
+      if (known) return Promise.resolve(known);
     }
+    // A request already on its way (often the background one) is shared, so
+    // picking a spell while it is being written still selects it when ready.
+    const pending = this.inflight.get(key);
+    if (pending) return pending;
+    const p = this.fetchProgram(key, regenerate, quiet).finally(() => this.inflight.delete(key));
+    this.inflight.set(key, p);
+    return p;
+  }
+
+  private inflight = new Map<string, Promise<CastRequest | null>>();
+
+  private async fetchProgram(key: string, regenerate: boolean, quiet: boolean): Promise<CastRequest | null> {
     const discovery = this.store.get(key);
-    if (!discovery || this.preparing.has(key)) return null;
+    if (!discovery) return null;
     this.preparing.add(key);
     this.updateStatus();
     try {
@@ -189,9 +238,11 @@ export class WorldHost {
     this.frame.contentWindow.postMessage(msg, "*");
   }
 
-  private onMessage(e: MessageEvent<FromWorld>): void {
-    if (!this.frame || e.source !== this.frame.contentWindow || !e.data || typeof e.data !== "object") return;
-    const msg = e.data;
+  private onMessage(e: MessageEvent<unknown>): void {
+    // The sandboxed frame has an opaque origin, which reads as "null".
+    if (!this.frame || e.source !== this.frame.contentWindow || e.origin !== "null") return;
+    const msg = readFromWorld(e.data);
+    if (!msg) return;
     switch (msg.type) {
       case "ready": {
         this.ready = true;
@@ -215,7 +266,10 @@ export class WorldHost {
       }
       case "save":
         try {
-          localStorage.setItem(WORLD_KEY, JSON.stringify(msg.data));
+          const json = JSON.stringify(msg.data);
+          // A save that would crowd out the player's discoveries is dropped.
+          if (json.length > MAX_SAVE_CHARS) break;
+          localStorage.setItem(WORLD_KEY, json);
         } catch {
           // Storage full: the world lives on until the page closes.
         }
@@ -224,12 +278,21 @@ export class WorldHost {
         toast(this.selected ? "Still preparing this spell…" : "Pick a spell below first");
         break;
       case "cast":
+        if (!this.store.get(msg.key)) break;
+        markUsed(msg.key);
+        // In a grid the bar covers the island: fold it once a spell is used.
+        if (this.expanded && window.innerWidth < 700) {
+          this.expanded = false;
+          this.el.bar.classList.remove("expanded");
+          (this.el.tools.querySelector(".spellbar-expand") as HTMLButtonElement).textContent = "Grid";
+        }
         break;
       case "error":
-        void this.repair(msg.key, msg.name, msg.message);
+        if (this.store.get(msg.key)) void this.repair(msg.key, msg.name, msg.message);
         break;
       case "objective":
-        this.showObjective(msg.id, msg.text, msg.status);
+        // Only the challenge this page started can report on itself.
+        if (msg.id === this.challenge) this.showObjective(msg.id, msg.text, msg.status);
         break;
     }
   }
@@ -338,12 +401,10 @@ export class WorldHost {
   }
 
   renderSpells(): void {
-    // Spells first, newest first, then artifacts: both can be used on the island.
-    const spells = this.store
-      .discoveries()
-      .sort((a, b) => (a.element.kind === b.element.kind ? b.discoveredAt - a.discoveredAt : a.element.kind === "spell" ? -1 : 1));
+    const all = this.store.discoveries();
+    const shown = applyFilters(all, this.filters.state, lastUsed, (d) => elementKey(d.element.name));
     const fragment = document.createDocumentFragment();
-    for (const { element } of spells) {
+    for (const { element } of shown) {
       const key = elementKey(element.name);
       const chip = chipElement(element, "button");
       chip.classList.add("chip-castable");
@@ -352,6 +413,14 @@ export class WorldHost {
       chip.dataset.ready = this.request(key) ? "1" : "0";
       chip.addEventListener("click", () => this.selectSpell(key));
       fragment.append(chip);
+    }
+    if (!shown.length) {
+      const empty = document.createElement("button");
+      empty.type = "button";
+      empty.className = "spell-empty";
+      empty.textContent = all.length ? "Nothing matches. Clear the filters" : "Discover spells in Craft first";
+      if (all.length) empty.addEventListener("click", () => this.filters.reset());
+      fragment.append(empty);
     }
     this.el.list.replaceChildren(fragment);
     this.updateStatus();
@@ -369,6 +438,8 @@ export class WorldHost {
     this.el.status.textContent = text;
   }
 }
+
+const EXPAND_KEY = "mm-spellbar-expanded";
 
 function tierOf(tier: Tier | undefined, depth: number): Tier {
   return tier ?? tierFromDepth(depth);

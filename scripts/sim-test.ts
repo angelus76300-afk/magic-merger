@@ -12,6 +12,22 @@ import { Runtime } from "../src/sim/runtime";
 import { loadWorld, saveWorld } from "../src/sim/save";
 import { SCENARIOS } from "../src/sim/scenarios";
 import { TICK, generateWorld, type World } from "../src/sim/world";
+import { VK, floats, keyCell, voxelKind } from "../src/sim/voxels";
+
+// Seeded randomness, so a check gives the same answer on every run.
+function seed(n: number): void {
+  let a = n >>> 0;
+  Math.random = () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Everything below is seeded, so a run gives the same answers every time.
+seed(1);
 
 let failures = 0;
 function check(name: string, ok: boolean, detail = ""): void {
@@ -69,6 +85,11 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   step(world, rt);
   check("endless loop is stopped", errors.some((e) => e.includes("too long")), errors[0] ?? "no error");
   check("loop guard covers bodiless loops", guardLoops("for(;;) x++;").includes("__g()"));
+  const lines: string[] = [];
+  const rt2 = new Runtime(world, (_k, _n, m) => lines.push(m));
+  rt2.cast({ key: "line", name: "Line", tier: "minor", code: "const spell = {\n  *cast(w) {\n    w.nothing();\n  },\n};" }, 50, 50);
+  step(world, rt2);
+  check("errors name the right line", lines.some((m) => m.includes("(line 3)")), lines[0] ?? "no error");
 }
 
 // 4. Saving and loading keeps the land.
@@ -82,7 +103,153 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   check("save and load", !!back && drift < 0.02 && back.creatures.length === world.creatures.filter((c) => !c.dead).length, `height drift ${drift.toFixed(3)}`);
 }
 
-// 5. Challenges: nothing does not win; the solution wins.
+// 5. Voxel physics: nothing floats unless it is magic; a burnt trunk drops
+// its crown; a grown tree stands; ice melts by fire.
+{
+  const lowest = (world: World) => {
+    // For each voxel, is anything below it to stand on? Count those that hang.
+    let hanging = 0;
+    for (const [key, v] of world.decor) {
+      const { x, y, level } = keyCell(key);
+      // A voxel on its way down is falling, not hanging.
+      if (floats(voxelKind(v)) || world.voxels.falling.has(key) || level <= Math.round(world.height[y * world.w + x] * 0.5)) continue;
+      const near = [1, -1, 512, -512, 512 * 1024, -512 * 1024].some((d) => world.decor.has(key + d));
+      if (!near) hanging++;
+    }
+    return hanging;
+  };
+  const world = generateWorld(112, 112, 9);
+  const errors: string[] = [];
+  const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
+  let x = 56;
+  let y = 56;
+  for (let k = 0; k < 400 && world.depth[y * 112 + x] > 0; k++) {
+    x = 20 + ((k * 37) % 72);
+    y = 20 + ((k * 53) % 72);
+  }
+  rt.cast({ key: "kit", name: "Kit", tier: "grand", code: `const spell = { *cast(w) { w.tree(w.x, w.y, { style: "oak", height: 24, grow: 1 }); w.voxel(w.x + 2, w.y, 60, "#ffffff"); w.voxel(w.x - 2, w.y, 60, "#b48cff", "magic"); } };` }, x, y);
+  for (let k = 0; k < 30 * 6; k++) step(world, rt);
+  const top = (w: World) => Math.max(...[...w.decor.entries()].filter(([, v]) => !floats(voxelKind(v))).map(([key]) => keyCell(key).level));
+  const grown = world.decor.size;
+  const height = top(world) - Math.round(world.height[y * 112 + x] * 0.5);
+  check("grown tree stands", errors.length === 0 && grown > 300 && height > 20 && lowest(world) === 0, `${grown} voxels, ${height} high, ${lowest(world)} hanging, ${errors[0] ?? "no errors"}`);
+  const magic = [...world.decor.values()].filter((v) => voxelKind(v) === VK.MAGIC).length;
+  check("stray voxel falls, magic floats", magic === 1 && lowest(world) === 0, `${magic} magic`);
+  // Burn the trunk at its base.
+  const crownBefore = [...world.decor.entries()].filter(([, v]) => voxelKind(v) === VK.LEAF).length;
+  world.fire[y * 112 + x] = 1;
+  for (let k = 0; k < 30 * 25; k++) {
+    world.fire[y * 112 + x] = Math.max(world.fire[y * 112 + x], 0.6);
+    step(world, rt);
+  }
+  const crownAfter = [...world.decor.entries()].filter(([, v]) => voxelKind(v) === VK.LEAF).length;
+  check("burnt tree loses its crown and nothing hangs", crownAfter < crownBefore * 0.3 && lowest(world) === 0 && top(world) - Math.round(world.height[y * 112 + x] * 0.5) < height * 0.6, `${crownBefore} leaves before, ${crownAfter} after, top now ${top(world) - Math.round(world.height[y * 112 + x] * 0.5)}`);
+}
+
+// 6. Declared rules: a blight spreads and burns away, wolves hunt, the
+// undead burn by day.
+{
+  seed(3);
+  const world = generateWorld(112, 112, 4);
+  populate(world);
+  const errors: string[] = [];
+  const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
+  const code = `const spell = {
+    materials: [{ name: "blight", layer: "ground", colors: ["#4a2a4a"], spreads: { into: ["grass", "dirt"], rate: 0.8 }, reacts: { fire: "ash" } }],
+    creatures: [
+      { name: "wolf", base: "beast", color: "#555555", behavior: "hunt", prey: ["villager"], attack: 60, sense: 60, speed: 7 },
+      { name: "ghoul", base: "beast", color: "#88aa88", weak: ["light"] },
+    ],
+    *cast(w) {
+      w.paint(w.x, w.y, 3, "blight", 1);
+      const v = w.creatures().filter((c) => c.kind === "villager")[0];
+      for (let k = 0; k < 3; k++) w.spawn("wolf", v.x + 4, v.y + 4);
+      for (let k = 0; k < 3; k++) w.spawn("ghoul", w.x, w.y);
+    },
+  };`;
+  const count = () => {
+    let n = 0;
+    for (let i = 0; i < world.n; i++) if (world.layerName("ground", world.ground[i]) === "blight") n++;
+    return n;
+  };
+  rt.cast({ key: "rules", name: "Rules", tier: "major", code }, 56, 56);
+  step(world, rt);
+  const start = count();
+  const villagers = () => world.creatures.filter((c) => !c.dead && c.kind === "villager").length;
+  const before = villagers();
+  world.time = 10; // morning
+  for (let k = 0; k < 30 * 8; k++) step(world, rt);
+  const spread = count();
+  check("blight spreads", errors.length === 0 && spread > start * 2, `${start} then ${spread} cells${errors[0] ? ", " + errors[0] : ""}`);
+  check("wolves hunt villagers", villagers() < before, `${before} then ${villagers()} villagers`);
+  check("ghouls burn by day", world.creatures.filter((c) => c.kind === "ghoul" && !c.dead).length === 0);
+  for (let i = 0; i < world.n; i++) if (world.layerName("ground", world.ground[i]) === "blight") world.fire[i] = 1;
+  for (let k = 0; k < 30 * 2; k++) step(world, rt);
+  check("blight burns away", count() < spread * 0.3, `${count()} left`);
+}
+
+// 7. Interactions: gold draws villagers who carry it home and the village
+// grows; vampires spread at night; a mob kills a weak monster; a landmark
+// keeps beasts away.
+{
+  const villageWorld = () => {
+    seed(8);
+    const world = generateWorld(112, 112, 4);
+    populate(world);
+    const errors: string[] = [];
+    const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
+    const v = world.creatures.find((c) => c.kind === "villager")!;
+    return { world, rt, errors, v };
+  };
+  const houses = (world: World) => {
+    let n = 0;
+    for (let i = 0; i < world.n; i++) if (world.cover[i] === C.HOUSE) n++;
+    return n;
+  };
+  {
+    const { world, rt, errors, v } = villageWorld();
+    const before = houses(world);
+    rt.cast({ key: "gold", name: "Gold", tier: "minor", code: `const spell = { materials: [{ name: "gold", layer: "ground", colors: ["#ffd23d"], lures: ["villager"], taken: true }], *cast(w) { w.paint(w.x, w.y, 3, "gold", 1); } };` }, v.x + 6, v.y + 6);
+    for (let k = 0; k < 30 * 60; k++) step(world, rt);
+    check("gold draws villagers and grows the village", errors.length === 0 && world.wealth >= 4 && houses(world) > before, `wealth ${world.wealth}, houses ${before / 4} then ${houses(world) / 4}${errors[0] ? ", " + errors[0] : ""}`);
+  }
+  {
+    const { world, rt, errors, v } = villageWorld();
+    world.time = 262; // the middle of the night
+    rt.cast({ key: "vamp", name: "Vampire", tier: "minor", code: `const spell = { creatures: [{ name: "vampire", base: "beast", color: "#3a0d1e", behavior: "hunt", prey: ["villager"], attack: 60, converts: true, active: "night", speed: 6, hp: 400 }], *cast(w) { w.spawn("vampire", w.x, w.y); w.spawn("vampire", w.x + 1, w.y); } };` }, v.x + 3, v.y + 3);
+    for (let k = 0; k < 30 * 15; k++) step(world, rt);
+    const vampires = world.creatures.filter((c) => !c.dead && c.kind === "vampire").length;
+    check("vampires turn villagers at night", errors.length === 0 && vampires > 2, `${vampires} vampires`);
+  }
+  {
+    const { world, rt, errors, v } = villageWorld();
+    rt.cast({ key: "imp", name: "Imp", tier: "minor", code: `const spell = { creatures: [{ name: "imp", base: "beast", color: "#aa3333", behavior: "hunt", prey: ["villager"], attack: 5, hp: 60, speed: 2 }], *cast(w) { w.spawn("imp", w.x, w.y); } };` }, v.x, v.y);
+    for (let k = 0; k < 30 * 20; k++) step(world, rt);
+    const imps = world.creatures.filter((c) => !c.dead && c.kind === "imp").length;
+    check("villagers mob a weak monster", errors.length === 0 && imps === 0, `${imps} imps left`);
+  }
+  {
+    const { world, rt, errors } = villageWorld();
+    // An inland spot with room to run: no water within 14 cells.
+    let at = { x: 56, y: 56 };
+    search: for (let y = 20; y < 92; y += 4) {
+      for (let x = 20; x < 92; x += 4) {
+        let dry = true;
+        for (let dy = -14; dy <= 14 && dry; dy += 2) for (let dx = -14; dx <= 14 && dry; dx += 2) if (world.depth[(y + dy) * world.w + x + dx] > 0.05) dry = false;
+        if (dry) {
+          at = { x, y };
+          break search;
+        }
+      }
+    }
+    rt.cast({ key: "scare", name: "Scarecrow", tier: "minor", code: `const spell = { *cast(w) { w.landmark(w.x, w.y, { scares: ["beast"], radius: 10 }); for (let k = 0; k < 4; k++) w.spawn("beast", w.x + k % 2, w.y + 1); } };` }, at.x, at.y);
+    for (let k = 0; k < 30 * 12; k++) step(world, rt);
+    const near = world.creatures.filter((c) => !c.dead && c.kind === "beast" && Math.hypot(c.x - at.x, c.y - at.y) < 8);
+    check("a landmark keeps beasts away", errors.length === 0 && near.length === 0, `${near.length} beasts still near: ${near.map((c) => `at ${c.x.toFixed(1)},${c.y.toFixed(1)} from ${at.x.toFixed(1)},${at.y.toFixed(1)}, ${Math.hypot(c.x - at.x, c.y - at.y).toFixed(1)} cells, mood ${c.data.mood}, frozen ${c.frozen.toFixed(1)}, depth ${world.depth[Math.floor(c.y) * world.w + Math.floor(c.x)].toFixed(2)}`).join("; ")}`);
+  }
+}
+
+// 8. Challenges: nothing does not win; the solution wins.
 const solutions: Record<string, { file: string; tier: "major" | "grand" | "legendary"; at: [number, number][] }> = {
   wildfire: { file: "rain.js", tier: "grand", at: [[16, 56]] },
   lava: { file: "wall.js", tier: "grand", at: [[58, 58]] },
@@ -92,6 +259,7 @@ const solutions: Record<string, { file: string; tier: "major" | "grand" | "legen
 };
 for (const scenario of SCENARIOS) {
   for (const withMagic of [false, true]) {
+    seed(17);
     const { world, run } = scenario.build();
     const errors: string[] = [];
     const rt = new Runtime(world, (_k, _n, m) => errors.push(m));

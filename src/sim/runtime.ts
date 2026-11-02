@@ -1,12 +1,15 @@
 import { guardLoops } from "../../shared/spellcode";
 import { TIER_REACH, type Tier } from "../../shared/tiers";
-import { KINDS, kindOf, makeCreature, maxHp, type Creature, type CreatureKind } from "./creatures";
+import { KINDS, kindOf, makeCreature, maxHp, type Behavior, type Creature, type CreatureKind } from "./creatures";
 import { BUILTIN, C, F, G, LAYERS, type Layer } from "./materials";
 import { valueNoise } from "./noise";
 import { addGas, explode, forDisc, quake } from "./physics";
 import type { ParticleOptions } from "./particles";
-import { Visuals, type Body, type BodyLook, type DrawFn } from "./visuals";
-import { TICK, type World } from "./world";
+import { BODY_LOOKS, Visuals, type Body, type BodyLook, type DrawFn } from "./visuals";
+import { TICK, World } from "./world";
+import { Builder, arch, island, spire, tower, tree, treeDefaults, wall } from "./structures";
+import { VK, igniteVoxels, kindId } from "./voxels";
+import { type Landmark, type Presence } from "./social";
 
 // Runs spell programs. A program is JavaScript that defines `spell`:
 //
@@ -59,6 +62,8 @@ export interface CameraControl {
 }
 
 const LOOP_LIMIT = 4_000_000;
+export const WRAPPER_LINES = 3;
+const MAX_JOBS = 24;
 const SLOW_MS = 40;
 
 export class Runtime {
@@ -68,9 +73,39 @@ export class Runtime {
   private nextCast = 1;
   private nextBody = 1;
   private loops = 0;
+  // Builds growing over time: voxels still to place, in order.
+  private jobs: { order: [number, number][]; at: number; perTick: number }[] = [];
   // Spell rules that run on their material's cells every tick, by layer and id.
   private ticks = new Map<string, { key: string; name: string; fn: (cell: CellHandle, w: SpellApi) => void }>();
   private brokenRules = new Set<string>();
+  // Declared reactions of spell-made materials, by layer and id.
+  private reactions = new Map<string, Reaction>();
+  private sinceReact = 0;
+  private sinceAppeal = 0;
+
+  // Finds the cells of materials that lure or scare, sampled so that a
+  // field of gold stays cheap: creatures only need a few points to walk to.
+  private collectLures(): void {
+    const w = this.world;
+    if (!w.lureMaterials.size) {
+      w.lures = [];
+      return;
+    }
+    const byId = new Map<string, { lures: string[]; scares: string[]; taken: boolean; color: number }>();
+    for (const layer of ["ground", "cover", "fluid"] as const) {
+      w.materials.list[layer].forEach((m, id) => {
+        const rule = w.lureMaterials.get(m.name);
+        if (rule) byId.set(`${layer}:${id}`, { ...rule, color: m.colors[0] });
+      });
+    }
+    const found: Presence[] = [];
+    for (let i = 0; i < w.n; i++) {
+      const rule = byId.get(`cover:${w.cover[i]}`) ?? byId.get(`ground:${w.ground[i]}`) ?? (w.fluid[i] ? byId.get(`fluid:${w.fluid[i]}`) : undefined);
+      if (rule) found.push({ x: i % w.w, y: Math.floor(i / w.w), lures: rule.lures, scares: rule.scares, taken: rule.taken, color: rule.color });
+    }
+    const max = 400;
+    w.lures = found.length > max ? found.filter(() => Math.random() < max / found.length) : found;
+  }
   // Which spell defined each custom material and creature, for saving the world.
   readonly owners = new Map<string, string>();
   camera: CameraControl | null = null;
@@ -104,6 +139,7 @@ export class Runtime {
   // Registers the materials and creatures a spell brings, so they exist even
   // before it is cast (a reloaded world may already contain them).
   defineRules(req: CastRequest, spell: SpellObject): void {
+    const w0 = this.world;
     for (const raw of Array.isArray(spell.materials) ? spell.materials : []) {
       const m = raw as Record<string, unknown>;
       if (!m || typeof m.name !== "string") continue;
@@ -124,6 +160,13 @@ export class Runtime {
       const id = this.world.materials.define(mat);
       this.owners.set(`${layer}:${name}`, req.key);
       const ruleKey = `${layer}:${id}`;
+      const lures = strings(m.lures);
+      const scares = strings(m.scares);
+      if (lures.length || scares.length) w0.lureMaterials.set(name, { lures, scares, taken: m.taken === true });
+      else w0.lureMaterials.delete(name);
+      const reaction = reactionOf(m, layer, name);
+      if (reaction) this.reactions.set(ruleKey, reaction);
+      else this.reactions.delete(ruleKey);
       if (typeof m.tick === "function") this.ticks.set(ruleKey, { key: req.key, name: req.name, fn: m.tick as (cell: CellHandle, w: SpellApi) => void });
       else this.ticks.delete(ruleKey);
       this.brokenRules.delete(ruleKey);
@@ -148,6 +191,7 @@ export class Runtime {
         glow: typeof k.glow === "boolean" ? k.glow : base.glow,
         homebody: false,
         fallback: base.name,
+        ai: behaviorOf(k),
         tick: userTick
           ? (self: Creature, dt: number) => {
               const ruleKey = `creature:${name}`;
@@ -221,9 +265,50 @@ export class Runtime {
       }
     }
     this.casts = this.casts.filter((c) => !c.done || this.visuals.bodies.some((b) => b.owner === c.id));
+    this.stepJobs();
     this.stepBodies(dt);
     this.stepRules(dt);
+    this.sinceAppeal += dt;
+    if (this.sinceAppeal >= 0.5) {
+      this.sinceAppeal = 0;
+      this.collectLures();
+    }
+    this.sinceReact += dt;
+    if (this.sinceReact >= 0.2) {
+      this.stepReactions(this.sinceReact);
+      this.sinceReact = 0;
+    }
     this.visuals.update(dt);
+  }
+
+  // Places the next voxels of every growing build.
+  private stepJobs(): void {
+    if (!this.jobs.length) return;
+    for (const job of this.jobs) {
+      const end = Math.min(job.order.length, job.at + job.perTick);
+      for (; job.at < end; job.at++) this.placeVoxel(job.order[job.at][0], job.order[job.at][1]);
+    }
+    this.jobs = this.jobs.filter((j) => j.at < j.order.length);
+    this.world.decorVersion++;
+  }
+
+  placeVoxel(key: number, value: number): void {
+    const { decor, voxels } = this.world;
+    if (!decor.has(key) && decor.size >= World.MAX_DECOR) return;
+    decor.set(key, value);
+    voxels.burning.delete(key);
+  }
+
+  // Places a build now, or grows it over `seconds` from its base outward.
+  commit(b: Builder, seconds: number): void {
+    if (seconds <= 0) {
+      for (const [k, v] of b.cells) this.placeVoxel(k, v);
+      this.world.decorVersion++;
+      return;
+    }
+    const order = b.growOrder();
+    if (this.jobs.length >= MAX_JOBS) this.jobs.shift();
+    this.jobs.push({ order, at: 0, perTick: Math.max(1, Math.ceil(order.length / (seconds / TICK))) });
   }
 
   private abort(c: ActiveCast): void {
@@ -259,7 +344,13 @@ export class Runtime {
         if (hooks?.end) this.run(hooks.key, hooks.name, () => hooks.end!(hooks.handle, hooks.api));
         b.alive = false;
       }
-      if (b.x < -50 || b.y < -50 || b.x > this.world.w + 50 || b.y > this.world.h + 50) b.alive = false;
+      // Off the island, a body near the ground has nothing under it: it is gone.
+      // High in the sky it may still be on its way in.
+      const out = b.x < -1 || b.y < -1 || b.x > this.world.w + 1 || b.y > this.world.h + 1;
+      if ((out && b.z < 24) || b.x < -80 || b.y < -80 || b.x > this.world.w + 80 || b.y > this.world.h + 80) b.alive = false;
+      if (b.alive && b.trail !== null && b.look !== "none") {
+        this.world.particles.add({ x: b.x + (Math.random() - 0.5) * b.r, y: b.y + (Math.random() - 0.5) * b.r, z: b.z + b.r, vx: -b.vx * 0.1, vy: -b.vy * 0.1, vz: -b.vz * 0.1 + 0.5, life: 0.5 + Math.random() * 0.5, color: b.trail, size: Math.max(0.8, Math.min(4, b.r * 0.9)), glow: true, gravity: -0.5, drag: 1.5 });
+      }
     }
   }
 
@@ -288,6 +379,93 @@ export class Runtime {
     }
   }
 
+  // Declared reactions: what touches a material changes it, it decays, it spreads.
+  private stepReactions(dt: number): void {
+    if (this.reactions.size === 0) return;
+    const w = this.world;
+    const arrays = { ground: w.ground, fluid: w.fluid, cover: w.cover, gas: w.gas };
+    const builtin = { ground: BUILTIN.ground.length, fluid: BUILTIN.fluid.length, cover: BUILTIN.cover.length, gas: BUILTIN.gas.length };
+    const near = (i: number, test: (j: number) => boolean) => {
+      if (test(i)) return true;
+      const x = i % w.w;
+      return (x > 0 && test(i - 1)) || (x < w.w - 1 && test(i + 1)) || (i >= w.w && test(i - w.w)) || (i + w.w < w.n && test(i + w.w));
+    };
+    const wet = (j: number) => w.fluid[j] === F.WATER && w.depth[j] > 0.05;
+    const fiery = (j: number) => w.fire[j] > 0.25;
+    const lava = (j: number) => w.fluid[j] === F.LAVA && w.depth[j] > 0.05;
+    const acid = (j: number) => w.fluid[j] === F.ACID && w.depth[j] > 0.05;
+    let spreads = 0;
+    for (const layer of LAYERS) {
+      const arr = arrays[layer];
+      const first = builtin[layer];
+      for (let i = 0; i < w.n; i++) {
+        if (arr[i] < first) continue;
+        const r = this.reactions.get(`${layer}:${arr[i]}`);
+        if (!r) continue;
+        const into =
+          (r.reacts.fire !== undefined && near(i, fiery) && r.reacts.fire) ||
+          (r.reacts.water !== undefined && near(i, wet) && r.reacts.water) ||
+          (r.reacts.lava !== undefined && near(i, lava) && r.reacts.lava) ||
+          (r.reacts.acid !== undefined && near(i, acid) && r.reacts.acid) ||
+          (r.reacts.cold !== undefined && w.temp[i] < -2 && r.reacts.cold) ||
+          (r.reacts.heat !== undefined && w.temp[i] > 120 && r.reacts.heat) ||
+          (r.decay > 0 && Math.random() < dt / r.decay && r.becomes) ||
+          null;
+        if (into && Math.random() < 0.6) {
+          this.transform(i, layer, into);
+          continue;
+        }
+        if (r.spreadRate > 0 && spreads < 600) {
+          const x = i % w.w;
+          for (const j of [x > 0 ? i - 1 : -1, x < w.w - 1 ? i + 1 : -1, i - w.w, i + w.w]) {
+            if (j < 0 || j >= w.n || arr[j] === arr[i] || Math.random() > r.spreadRate * dt) continue;
+            const target = w.materials.get(layer, arr[j]).name;
+            if (r.spreadInto && !r.spreadInto.includes(target)) continue;
+            if (!r.spreadInto && layer !== "ground" && arr[j] === 0) continue;
+            w.place(j, r.name, layer === "fluid" ? Math.max(0.2, w.depth[i] * 0.5) : 0.6);
+            spreads++;
+          }
+        }
+      }
+    }
+  }
+
+  // Turns a cell's material into something else, or into an event.
+  private transform(i: number, layer: Layer, into: string): void {
+    const w = this.world;
+    const x = i % w.w;
+    const y = Math.floor(i / w.w);
+    const clearOwn = () => {
+      if (layer === "ground") w.ground[i] = G.DIRT;
+      else if (layer === "fluid") w.setFluid(i, F.NONE, 0);
+      else if (layer === "cover") w.setCover(i, C.NONE);
+      else w.gasAmt[i] = 0;
+    };
+    switch (into) {
+      case "none":
+        clearOwn();
+        return;
+      case "explode":
+        clearOwn();
+        explode(w, x, y, 3, 0.8);
+        return;
+      case "fire":
+        clearOwn();
+        w.fire[i] = 1;
+        return;
+      case "steam":
+      case "smoke":
+        clearOwn();
+        addGas(w, i, into === "steam" ? 2 : 1, 0.7);
+        return;
+    }
+    const found = w.materials.find(into);
+    if (!found) return;
+    const depth = w.depth[i];
+    if (found.layer !== layer) clearOwn();
+    w.place(i, into, found.layer === "fluid" ? Math.max(0.3, depth) : 0.6);
+  }
+
   private ruleApis = new Map<string, SpellApi>();
   ruleApi(req: CastRequest): SpellApi {
     let api = this.ruleApis.get(req.key);
@@ -305,6 +483,7 @@ export class Runtime {
 
   clear(): void {
     this.casts = [];
+    this.jobs = [];
     this.visuals.clear();
   }
 }
@@ -322,11 +501,74 @@ const bodyHooks = new WeakMap<Body, BodyHooks>();
 
 function message(err: unknown): string {
   if (err instanceof Error) {
-    // The line inside the spell code, if the stack has one (two wrapper lines come first).
+    // The line inside the spell code, if the stack has one. new Function adds
+    // two lines of its own and the wrapper one more ("use strict").
     const line = /<anonymous>:(\d+):(\d+)/.exec(err.stack ?? "");
-    return line ? `${err.name}: ${err.message} (line ${Number(line[1]) - 2})` : `${err.name}: ${err.message}`;
+    return line ? `${err.name}: ${err.message} (line ${Number(line[1]) - WRAPPER_LINES})` : `${err.name}: ${err.message}`;
   }
   return String(err);
+}
+
+function strings(v: unknown, max = 12): string[] {
+  return (Array.isArray(v) ? v : typeof v === "string" ? [v] : []).filter((x): x is string => typeof x === "string").map((x) => x.toLowerCase().slice(0, 30)).slice(0, max);
+}
+
+interface Reaction {
+  name: string;
+  reacts: Partial<Record<"fire" | "water" | "lava" | "acid" | "cold" | "heat", string>>;
+  decay: number;
+  becomes: string;
+  spreadRate: number;
+  spreadInto: string[] | null;
+}
+
+// Reads a material's declared reactions; undefined when it declares none.
+function reactionOf(m: Record<string, unknown>, layer: Layer, name: string): Reaction | undefined {
+  const reacts: Reaction["reacts"] = {};
+  const raw = m.reacts && typeof m.reacts === "object" ? (m.reacts as Record<string, unknown>) : {};
+  for (const k of ["fire", "water", "lava", "acid", "cold", "heat"] as const) if (typeof raw[k] === "string") reacts[k] = (raw[k] as string).toLowerCase().slice(0, 30);
+  const spread = m.spreads && typeof m.spreads === "object" ? (m.spreads as Record<string, unknown>) : null;
+  const decay = num(m.decays, 0, 3600, 0);
+  void layer;
+  if (!Object.keys(reacts).length && !decay && !spread) return undefined;
+  const into = spread ? strings(spread.into) : [];
+  return {
+    name,
+    reacts,
+    decay,
+    becomes: typeof m.becomes === "string" ? m.becomes.toLowerCase() : "none",
+    spreadRate: spread ? num(spread.rate, 0, 5, 0.3) : 0,
+    spreadInto: into.length && !into.includes("any") ? into : null,
+  };
+}
+
+const MODES = ["wander", "hunt", "guard", "follow", "flee"] as const;
+const AURAS = ["heal", "fear", "calm", "sleep", "burn", "freeze", "hurt"];
+
+// Reads a creature's declared behavior; undefined when it declares none.
+function behaviorOf(k: Record<string, unknown>): Behavior | undefined {
+  const keys = ["behavior", "prey", "leader", "attack", "aura", "leaves", "weak", "immune", "lifespan", "onDeath", "lures", "scares", "converts", "active"];
+  if (!keys.some((key) => k[key] !== undefined)) return undefined;
+  const mode = (MODES as readonly string[]).includes(k.behavior as string) ? (k.behavior as Behavior["mode"]) : "wander";
+  return {
+    mode,
+    prey: strings(k.prey),
+    leader: strings(k.leader),
+    attack: num(k.attack, 0, 500, mode === "hunt" || mode === "guard" ? 20 : 0),
+    sense: num(k.sense, 2, 60, 18),
+    aura: AURAS.includes(k.aura as string) ? (k.aura as string) : null,
+    auraRadius: num(k.auraRadius, 1, 30, 4),
+    auraPower: num(k.auraPower, 0, 10, 1),
+    leaves: typeof k.leaves === "string" ? k.leaves.toLowerCase().slice(0, 30) : null,
+    weak: strings(k.weak),
+    immune: strings(k.immune),
+    lifespan: num(k.lifespan, 0, 3600, 0),
+    onDeath: typeof k.onDeath === "string" ? k.onDeath.toLowerCase().slice(0, 40) : null,
+    lures: strings(k.lures),
+    scares: strings(k.scares),
+    converts: k.converts === true,
+    active: k.active === "night" || k.active === "day" ? k.active : "always",
+  };
 }
 
 function num(v: unknown, min: number, max: number, fallback: number): number {
@@ -345,6 +587,11 @@ export function toColor(v: unknown): number | null {
 
 function colorOr(v: unknown, fallback: number): number {
   return toColor(v) ?? fallback;
+}
+
+function colorList(v: unknown, fallback: number[]): number[] {
+  const list = (Array.isArray(v) ? v : v === undefined ? [] : [v]).map(toColor).filter((c): c is number => c !== null);
+  return list.length ? list.slice(0, 12) : fallback;
 }
 
 // A creature as a spell sees it.
@@ -384,11 +631,11 @@ export class CreatureHandle {
     return this.raw.data;
   }
   hurt(n: number) {
-    this.raw.hp -= Math.max(0, n);
+    this.raw.hp -= num(n, 0, 1e6, 0);
     if (this.raw.hp <= 0) this.raw.dead = true;
   }
   heal(n: number) {
-    this.raw.hp = Math.min(maxHp(this.raw), this.raw.hp + Math.max(0, n));
+    this.raw.hp = Math.min(maxHp(this.raw), this.raw.hp + num(n, 0, 1e6, 0));
     this.raw.burning = 0;
     this.raw.frozen = 0;
   }
@@ -692,6 +939,7 @@ export class SpellApi {
     forDisc(w, x, y, num(r, 0, 400, 3), (i) => {
       if (Math.random() < chance) w.fire[i] = Math.max(w.fire[i], 0.8);
     });
+    if (w.decor.size) igniteVoxels(w, x, y, num(r, 0, 400, 3) * 0.8);
   }
   // Adds fluid in a disc, deepest at the center.
   flood(x: number, y: number, r: number, fluid = "water", depth = 1) {
@@ -708,7 +956,7 @@ export class SpellApi {
     const w = this.rt.world;
     const name = String(material).toLowerCase();
     forDisc(w, x, y, num(r, 0, 400, 3), (i, k) => {
-      if (Math.random() < density * (0.4 + 0.6 * k)) w.place(i, name, amount);
+      if (Math.random() < density * (0.4 + 0.6 * k)) w.place(i, name, num(amount, 0, 50, 1));
     });
   }
   // Changes temperature in a disc: negative freezes water and puts out fire,
@@ -757,38 +1005,92 @@ export class SpellApi {
     w.setCover(i, C.NONE);
   }
 
-  // Free standing voxels, for what floats or overhangs: a tree's crown, a
-  // floating rock, a statue, an arch. z is in voxels above the ground there.
-  voxel(x: number, y: number, z: number, color: string | number) {
+  // Free standing voxels, z in voxels above the land at that cell. `kind` gives
+  // them physics: stone, wood, leaf, ice, glow fall when nothing holds them;
+  // magic and float stay where they are put. Wood and leaves burn, ice melts.
+  voxel(x: number, y: number, z: number, color: string | number, kind: string = "stone") {
     if (!this.inside(x, y)) return;
     const w = this.rt.world;
     const ground = Math.round(w.height[this.i(x, y)] * 0.5);
-    w.setVoxel(x, y, ground + Math.round(num(z, -40, 300, 0)), colorOr(color, 0xffffff));
+    w.setVoxel(x, y, ground + Math.round(num(z, -40, 300, 0)), colorOr(color, 0xffffff), kindId(kind));
   }
-  sphere(x: number, y: number, z: number, r: number, colors: (string | number)[] | string | number, density = 1) {
-    const list = (Array.isArray(colors) ? colors : [colors]).map((c) => colorOr(c, 0xffffff));
+  sphere(x: number, y: number, z: number, r: number, colors: (string | number)[] | string | number, density = 1, kind: string = "stone") {
+    const list = colorList(colors, [0xffffff]);
     const rr = num(r, 0.5, 40, 3);
     const w = this.rt.world;
+    const k = kindId(kind);
     const base = Math.round(w.height[this.i(x, y)] * 0.5) + num(z, -40, 300, 0);
     for (let dy = -rr; dy <= rr; dy++) {
       for (let dx = -rr; dx <= rr; dx++) {
         for (let dz = -rr; dz <= rr; dz++) {
-          if (dx * dx + dy * dy + dz * dz > rr * rr || Math.random() > density) continue;
-          w.setVoxel(x + dx, y + dy, base + dz, list[(Math.random() * list.length) | 0]);
+          const d = (dx * dx + dy * dy + dz * dz) / (rr * rr);
+          // Density only thins the outer shell, so the inside stays whole.
+          if (d > 1 || (d > 0.6 && Math.random() > density)) continue;
+          w.setVoxel(x + dx, y + dy, base + dz, list[(Math.random() * list.length) | 0], k);
         }
       }
     }
   }
-  box(x: number, y: number, z: number, sx: number, sy: number, sz: number, colors: (string | number)[] | string | number) {
-    const list = (Array.isArray(colors) ? colors : [colors]).map((c) => colorOr(c, 0xffffff));
+  box(x: number, y: number, z: number, sx: number, sy: number, sz: number, colors: (string | number)[] | string | number, kind: string = "stone") {
+    const list = colorList(colors, [0xffffff]);
     const w = this.rt.world;
+    const k = kindId(kind);
     const base = Math.round(w.height[this.i(x, y)] * 0.5) + num(z, -40, 300, 0);
     for (let dy = 0; dy < num(sy, 1, 60, 1); dy++)
       for (let dx = 0; dx < num(sx, 1, 60, 1); dx++)
-        for (let dz = 0; dz < num(sz, 1, 80, 1); dz++) w.setVoxel(x + dx, y + dy, base + dz, list[(Math.random() * list.length) | 0]);
+        for (let dz = 0; dz < num(sz, 1, 80, 1); dz++) w.setVoxel(x + dx, y + dy, base + dz, list[(Math.random() * list.length) | 0], k);
   }
   unvoxel(x: number, y: number, r: number) {
     this.rt.world.clearVoxels(x, y, num(r, 0, 2000, 3));
+  }
+  // Sets fire to wood and leaves within r.
+  burnVoxels(x: number, y: number, r: number) {
+    igniteVoxels(this.rt.world, x, y, num(r, 0, 400, 3));
+  }
+
+  // The structure kit. Each takes an options object; `grow: seconds` raises
+  // the build over time from its base instead of all at once.
+  tree(x: number, y: number, o: Record<string, unknown> = {}) {
+    const styles = ["oak", "pine", "birch", "willow", "palm", "dead", "giant", "mushroom", "crystal"];
+    const style = typeof o.style === "string" && styles.includes(o.style) ? o.style : "oak";
+    const d = treeDefaults(style);
+    const b = new Builder(this.rt.world);
+    tree(b, x, y, num(o.z, 0, 200, 0), {
+      height: num(o.height, 4, 120, style === "giant" ? 40 : 12),
+      style,
+      trunk: colorList(o.trunk, d.trunk),
+      leaves: style === "dead" ? [] : colorList(o.leaves, d.leaves),
+      accent: colorList(o.accent, []),
+      accentShare: num(o.accentShare, 0, 1, 0.25),
+      leafKind: o.glow === true ? VK.GLOW : style === "crystal" ? VK.GLOW : VK.LEAF,
+    });
+    this.rt.commit(b, num(o.grow, 0, 30, 0));
+  }
+  spire(x: number, y: number, o: Record<string, unknown> = {}) {
+    const b = new Builder(this.rt.world);
+    const h = num(o.height, 2, 150, 14);
+    spire(b, x, y, h, num(o.radius, 0.5, 20, Math.max(1, h / 7)), colorList(o.colors, [0xb9a4ff, 0xd3c6ff, 0x9f88f5]), kindId(o.kind, VK.GLOW), num(o.lean, 0, 1, 0), num(o.angle, -10, 10, 0));
+    this.rt.commit(b, num(o.grow, 0, 30, 0));
+  }
+  tower(x: number, y: number, o: Record<string, unknown> = {}) {
+    const b = new Builder(this.rt.world);
+    tower(b, x, y, num(o.height, 3, 120, 16), num(o.radius, 1.5, 20, 3), colorList(o.colors, [0x9a9aa0, 0x8a8a90, 0xa8a8ae]), o.roof === undefined ? 0x7a3b5a : o.roof === null || o.roof === false ? null : colorOr(o.roof, 0x7a3b5a), o.windows === false ? null : colorOr(o.windows, 0xffd36a));
+    this.rt.commit(b, num(o.grow, 0, 30, 0));
+  }
+  wall(x0: number, y0: number, x1: number, y1: number, o: Record<string, unknown> = {}) {
+    const b = new Builder(this.rt.world);
+    wall(b, x0, y0, x1, y1, num(o.height, 1, 80, 4), num(o.thick, 1, 6, 1), colorList(o.colors, [0x9a9aa0, 0x8a8a90]), kindId(o.kind, VK.STONE));
+    this.rt.commit(b, num(o.grow, 0, 30, 0));
+  }
+  arch(x0: number, y0: number, x1: number, y1: number, o: Record<string, unknown> = {}) {
+    const b = new Builder(this.rt.world);
+    arch(b, x0, y0, x1, y1, num(o.height, 2, 100, Math.hypot(x1 - x0, y1 - y0) / 2), num(o.thick, 1, 6, 1), colorList(o.colors, [0x9a9aa0, 0x8a8a90]), kindId(o.kind, VK.STONE));
+    this.rt.commit(b, num(o.grow, 0, 30, 0));
+  }
+  island(x: number, y: number, o: Record<string, unknown> = {}) {
+    const b = new Builder(this.rt.world);
+    island(b, x, y, num(o.z, 4, 200, 20), num(o.r, 2, 30, 6), colorList(o.top, [0x5d9c3a, 0x67a842]), colorList(o.rock, [0x8a6a44, 0x8a8a8e, 0x7e7e84]));
+    this.rt.commit(b, num(o.grow, 0, 30, 0));
   }
 
   // Grass, then trees, bushes and flowers.
@@ -847,7 +1149,7 @@ export class SpellApi {
       color: colorOr(o.color, 0xffffff),
       color2: colorOr(o.color2, colorOr(o.color, 0xffffff)),
       glow: o.glow !== false,
-      look: (["orb", "flame", "cloud", "ring", "shard", "vortex", "star", "none"] as const).includes(o.look as BodyLook) ? (o.look as BodyLook) : "orb",
+      look: (BODY_LOOKS as readonly string[]).includes(o.look as string) ? (o.look as BodyLook) : "orb",
       age: 0,
       life: num(o.life, 0, 120, 0),
       alive: true,
@@ -855,6 +1157,7 @@ export class SpellApi {
       drag: num(o.drag, 0, 20, 0),
       data: {},
       owner: this.castId,
+      trail: o.trail === false ? null : o.trail === undefined ? (o.look === "meteor" ? 0xff8a2a : null) : colorOr(o.trail, colorOr(o.color, 0xffffff)),
     };
     const handle = new BodyHandle(b);
     bodyHooks.set(b, {
@@ -911,6 +1214,96 @@ export class SpellApi {
         drag: num(o.drag, 0, 20, 1),
       });
     }
+  }
+
+  // A lasting presence at a place: villagers and creatures it lures come to
+  // it, those it scares keep away, and its aura acts on whoever stands near.
+  // It has no look of its own: build one (a shrine, a totem, a cursed stone).
+  landmark(x: number, y: number, o: Record<string, unknown> = {}) {
+    const w = this.rt.world;
+    if (!this.inside(x, y) || w.landmarks.length >= 60) return;
+    const aura = ["heal", "fear", "calm", "sleep", "burn", "freeze", "hurt"].includes(o.aura as string) ? (o.aura as string) : null;
+    const l: Landmark = {
+      x: Math.round(x),
+      y: Math.round(y),
+      name: typeof o.name === "string" ? o.name.slice(0, 40) : this.req.name,
+      lures: strings(o.lures),
+      scares: strings(o.scares),
+      taken: false,
+      color: colorOr(o.color, 0xffd36a),
+      radius: num(o.radius, 1, 40, 8),
+      aura,
+      power: num(o.power, 0, 10, 1),
+    };
+    w.landmarks.push(l);
+  }
+
+  // Lightning from the sky to a cell: strikes the highest thing there (a
+  // tree top, a tower), burns, hurts, sets wood alight, and shocks every
+  // creature in the water it hits. Sand it strikes turns to glass.
+  lightning(x: number, y: number, o: Record<string, unknown> = {}) {
+    if (!this.inside(x, y)) return;
+    const w = this.rt.world;
+    const i = this.i(x, y);
+    const power = num(o.power, 0, 5, 1);
+    const color = colorOr(o.color, 0xd8ecff);
+    // The highest voxel standing on this cell, or the land.
+    let target = Math.round(w.height[i] * 0.5);
+    const cx = Math.round(x);
+    const cy = Math.round(y);
+    for (let l = target + 1; l < target + 140; l++) if (w.decor.has(w.decorKey(cx, cy, l))) target = l + 1;
+    if (w.depth[i] > 0.05) target = Math.max(target, (w.height[i] + w.depth[i]) * 0.5);
+    const path = (x0: number, y0: number, l0: number, x1: number, y1: number, l1: number, jag: number) => {
+      const pts = [{ x: x0, y: y0, l: l0 }];
+      const n = 10;
+      for (let k = 1; k < n; k++) {
+        const t = k / n;
+        pts.push({ x: x0 + (x1 - x0) * t + (Math.random() - 0.5) * jag, y: y0 + (y1 - y0) * t + (Math.random() - 0.5) * jag, l: l0 + (l1 - l0) * t });
+      }
+      pts.push({ x: x1, y: y1, l: l1 });
+      return pts;
+    };
+    const fromX = num((o.from as { x?: number } | undefined)?.x, -100, 5000, x + (Math.random() - 0.5) * 10);
+    const fromY = num((o.from as { y?: number } | undefined)?.y, -100, 5000, y + (Math.random() - 0.5) * 10);
+    const main = path(fromX, fromY, target + 70, x, y, target, 5);
+    const vis = this.rt.visuals;
+    vis.bolts.push({ points: main, color, width: num(o.width, 0.3, 4, 1) * Math.max(0.6, Math.sqrt(power)), t: 0, dur: 0.35 });
+    for (let k = 0; k < 2; k++) {
+      const from = main[3 + k * 3];
+      vis.bolts.push({ points: path(from.x, from.y, from.l, from.x + (Math.random() - 0.5) * 16, from.y + (Math.random() - 0.5) * 16, from.l - 15 - Math.random() * 15, 3), color, width: 0.6, t: 0, dur: 0.25 });
+    }
+    vis.lights.push({ x, y, r: 10 * Math.max(0.6, power), color, t: 0, dur: 0.5 });
+    this.flash(color, 0.3);
+    this.sound("zap", Math.min(1, 0.4 + power * 0.2));
+    // Effects on the land.
+    const g = w.ground[i];
+    if (g === G.SAND && Math.random() < 0.6) w.ground[i] = G.CRYSTAL;
+    if (w.depth[i] < 0.05 && (w.materials.get("cover", w.cover[i]).flammable > 0 || w.materials.get("ground", g).flammable > 0)) w.fire[i] = Math.max(w.fire[i], 0.9);
+    if (w.cover[i] === C.POWDER) explode(w, x, y, 4, 1);
+    if (w.fluid[i] === F.OIL) w.fire[i] = 1;
+    igniteVoxels(w, x, y, 1.5);
+    w.temp[i] += 300 * power;
+    // Creatures: struck ones, and everyone in the same water.
+    const wet = w.fluid[i] === F.WATER && w.depth[i] > 0.05;
+    for (const c of w.creatures) {
+      if (c.dead) continue;
+      const d = Math.hypot(c.x - x, c.y - y);
+      const ci = this.i(c.x, c.y);
+      const shocked = d < 1.8 || (wet && d < 14 * Math.max(0.5, power) && w.fluid[ci] === F.WATER && w.depth[ci] > 0.05);
+      if (!shocked) continue;
+      c.hp -= (d < 1.8 ? 70 : 35) * power * (kindOf(c).ai?.weak.includes("lightning") ? 3 : kindOf(c).ai?.immune.includes("lightning") ? 0 : 1);
+      c.stun = Math.max(c.stun, 1.5);
+      if (d < 1.8 && !kindOf(c).fireproof) c.burning = Math.max(c.burning, 2);
+      if (c.hp <= 0) c.dead = true;
+    }
+  }
+  // A straight beam between two points, z in voxels above the land at each
+  // end. It only shows; the spell decides what the beam does.
+  beam(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, o: Record<string, unknown> = {}) {
+    const w = this.rt.world;
+    const l0 = w.height[this.i(x0, y0)] * 0.5 + num(z0, -40, 400, 0);
+    const l1 = w.height[this.i(x1, y1)] * 0.5 + num(z1, -40, 400, 0);
+    this.rt.visuals.bolts.push({ points: [{ x: x0, y: y0, l: l0 }, { x: x1, y: y1, l: l1 }], color: colorOr(o.color, 0xfff3b0), width: num(o.width, 0.2, 6, 1), t: 0, dur: num(o.seconds, 0.05, 30, 0.5) });
   }
 
   // Screen and camera.

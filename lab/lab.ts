@@ -113,7 +113,11 @@ async function runSpell(code: string, options: LabOptions = {}) {
   }
   engine.view.orbit.tx = target.x;
   engine.view.orbit.ty = target.y;
-  if (options.dist) engine.view.orbit.dist = options.dist;
+  if (options.dist) {
+    // A fixed camera: spells do not move it, so big builds can be seen whole.
+    engine.view.orbit.dist = options.dist;
+    engine.runtime.camera = null;
+  }
   if (options.time !== undefined) world.time = options.time;
   const tier = isTier(options.tier) ? options.tier : TIERS[2];
   const before = census(world);

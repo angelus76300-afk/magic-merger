@@ -2,7 +2,8 @@
 // cloud, the vortex), shockwave rings, lights in the dark, screen tints, and
 // free drawing functions. The renderer reads these; the runtime fills them.
 
-export type BodyLook = "orb" | "flame" | "cloud" | "ring" | "shard" | "vortex" | "star" | "none";
+export const BODY_LOOKS = ["orb", "flame", "cloud", "ring", "shard", "vortex", "star", "meteor", "swarm", "none"] as const;
+export type BodyLook = (typeof BODY_LOOKS)[number];
 
 export interface Body {
   id: number;
@@ -28,6 +29,18 @@ export interface Body {
   // Free data for the spell.
   data: Record<string, unknown>;
   owner: number;
+  // Color of the particles it leaves behind, or null.
+  trail: number | null;
+}
+
+// A bolt of lightning or a beam: a path of points in cells (x, y) and
+// voxel levels (l), drawn as a line of glowing voxels.
+export interface Bolt {
+  points: { x: number; y: number; l: number }[];
+  color: number;
+  width: number;
+  t: number;
+  dur: number;
 }
 
 export interface Shockwave {
@@ -66,6 +79,8 @@ export interface Drawing {
   owner: number;
 }
 
+export const MAX_EFFECTS = 200;
+
 export class Visuals {
   bodies: Body[] = [];
   shockwaves: Shockwave[] = [];
@@ -74,19 +89,24 @@ export class Visuals {
   darkness: Fade[] = [];
   tints: Fade[] = [];
   drawings: Drawing[] = [];
+  bolts: Bolt[] = [];
   flash = 0;
   flashColor = 0xffffff;
 
   update(dt: number): void {
+    // Spells may ask for any number of effects; the oldest go first past a cap,
+    // so a loop of shockwaves cannot pile up meshes.
     const age = <T extends { t: number; dur: number }>(list: T[]) => {
       for (const v of list) v.t += dt;
-      return list.filter((v) => v.t < v.dur);
+      const alive = list.filter((v) => v.t < v.dur);
+      return alive.length > MAX_EFFECTS ? alive.slice(alive.length - MAX_EFFECTS) : alive;
     };
     this.shockwaves = age(this.shockwaves);
     this.lights = age(this.lights);
     this.darkness = age(this.darkness);
     this.tints = age(this.tints);
     this.drawings = age(this.drawings);
+    this.bolts = age(this.bolts);
     this.bodies = this.bodies.filter((b) => b.alive);
     this.flash = Math.max(0, this.flash - dt * 2.5);
   }
@@ -110,6 +130,7 @@ export class Visuals {
     this.darkness = [];
     this.tints = [];
     this.drawings = [];
+    this.bolts = [];
     this.flash = 0;
   }
 }

@@ -1,5 +1,6 @@
 import { C, F, G, S } from "./materials";
 import type { World } from "./world";
+import { igniteVoxels, stepVoxels } from "./voxels";
 
 // The rules of the land. Spells set them in motion; these keep them going:
 // water runs downhill and freezes, fire spreads with the wind and leaves ash,
@@ -35,6 +36,7 @@ export function stepPhysics(world: World, dt: number): void {
     stepGas(world, dt * 2);
   }
   stepGrowth(world);
+  stepVoxels(world, dt);
 }
 
 function stepFluids(world: World, dt: number): void {
@@ -458,8 +460,13 @@ export function explode(world: World, x: number, y: number, r: number, power: nu
       drag: hot ? 1.5 : 0.3,
     });
   }
-  // Blasts knock down anything spells built in the air nearby.
-  if (world.decor.size) world.clearVoxels(x, y, r * 0.8);
+  // Blasts blow away what spells built close by and set fire to wood further out;
+  // whatever loses its support then falls.
+  if (world.landmarks.length) world.landmarks = world.landmarks.filter((l) => Math.hypot(l.x - x, l.y - y) > r * 0.6);
+  if (world.decor.size) {
+    world.clearVoxels(x, y, r * 0.6);
+    igniteVoxels(world, x, y, r * (0.6 + 0.4 * Math.min(1, power)));
+  }
   world.emit({ kind: "sound", name: "boom", size: Math.min(1, r / 30) });
   world.emit({ kind: "shake", amount: Math.min(14, 2 + r * 0.4 * power), seconds: 0.6 });
   world.emit({ kind: "flash", color: 0xfff0c0, strength: Math.min(0.8, 0.2 + r / 60) });

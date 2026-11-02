@@ -2,6 +2,8 @@ import type { Creature } from "./creatures";
 import { C, F, G, MaterialTable, type Layer } from "./materials";
 import { Rng, fbm, valueNoise } from "./noise";
 import { Particles } from "./particles";
+import { VoxelState, packVoxel, VK } from "./voxels";
+import type { Landmark, Presence } from "./social";
 
 export const TICK = 1 / 30;
 export const AMBIENT = 15;
@@ -40,9 +42,18 @@ export class World {
   readonly wind = { x: 0.6, y: 0.2 };
   readonly rng: Rng;
   // Free standing voxels placed by spells (a tree's crown, a floating rock),
-  // keyed by cell and absolute voxel height, valued by color.
+  // keyed by cell and absolute voxel height, valued by color and kind (see voxels.ts).
   readonly decor = new Map<number, number>();
+  readonly voxels = new VoxelState();
   decorVersion = 0;
+  // Cells of spell materials that lure or scare, refreshed a few times a
+  // second, and the rules behind them by material name.
+  lures: Presence[] = [];
+  readonly lureMaterials = new Map<string, { lures: string[]; scares: string[]; taken: boolean }>();
+  // Places spells left behind that lure, scare or carry an aura.
+  landmarks: Landmark[] = [];
+  // Gifts villagers have brought home; every few build a house.
+  wealth = 0;
   time = 0;
   tick = 0;
   seaLevel = 8;
@@ -125,13 +136,17 @@ export class World {
     return ((Math.round(y) * 1024 + Math.round(x)) * 512 + (Math.round(level) + 128)) >>> 0;
   }
 
-  setVoxel(x: number, y: number, level: number, color: number | null): void {
+  setVoxel(x: number, y: number, level: number, color: number | null, kind: number = VK.STONE): void {
     if (!this.inside(Math.round(x), Math.round(y)) || level < -60 || level > 380) return;
     const key = this.decorKey(x, y, level);
     if (color === null) {
-      if (this.decor.delete(key)) this.decorVersion++;
+      if (this.decor.delete(key)) {
+        this.decorVersion++;
+        this.voxels.removals++;
+      }
     } else if (this.decor.has(key) || this.decor.size < World.MAX_DECOR) {
-      this.decor.set(key, color & 0xffffff);
+      this.decor.set(key, packVoxel(color, kind));
+      this.voxels.burning.delete(key);
       this.decorVersion++;
     }
   }
@@ -145,6 +160,7 @@ export class World {
       if ((cx - x) ** 2 + (cy - y) ** 2 <= r * r) this.decor.delete(key);
     }
     this.decorVersion++;
+    this.voxels.removals++;
   }
 
   layerName(layer: Layer, id: number): string {

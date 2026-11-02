@@ -94,12 +94,17 @@ export class Engine {
     if (this.running) return;
     this.running = true;
     this.last = performance.now();
-    requestAnimationFrame((t) => this.frame(t));
+    // A frame still pending from before a stop must not start a second loop.
+    if (this.rafId === 0) this.rafId = requestAnimationFrame((t) => this.frame(t));
   }
 
   stop(): void {
     this.running = false;
+    if (this.rafId) cancelAnimationFrame(this.rafId);
+    this.rafId = 0;
   }
+
+  private rafId = 0;
 
   // Advances the simulation by one tick. Public for the Spell Lab.
   step(): void {
@@ -121,6 +126,7 @@ export class Engine {
   }
 
   private frame(now: number): void {
+    this.rafId = 0;
     if (!this.running) return;
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
@@ -133,7 +139,7 @@ export class Engine {
     }
     if (this.acc > TICK * 3) this.acc = 0;
     this.render(dt);
-    requestAnimationFrame((t) => this.frame(t));
+    this.rafId = requestAnimationFrame((t) => this.frame(t));
   }
 
   private handleEvents(): void {

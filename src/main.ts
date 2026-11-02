@@ -17,6 +17,7 @@ const craft = new Craft(
   $("#inventory-list"),
   $<HTMLInputElement>("#search"),
   $("#count"),
+  $("#inventory-filters"),
 );
 craft.init();
 $("#clear").addEventListener("click", () => craft.clearBoard());
@@ -27,6 +28,8 @@ const world = new WorldHost(store, {
   challenges: $<HTMLButtonElement>("#world-challenges"),
   status: $("#world-status"),
   list: $("#spell-list"),
+  bar: $(".spellbar"),
+  tools: $("#spell-tools"),
   add: $<HTMLButtonElement>("#world-add"),
   reset: $<HTMLButtonElement>("#world-reset"),
   size: $<HTMLSelectElement>("#world-size"),

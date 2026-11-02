@@ -1,6 +1,7 @@
 import { restoreCreature, KINDS, type Creature } from "./creatures";
 import { BUILTIN, LAYERS, type Layer } from "./materials";
 import { World } from "./world";
+import type { Landmark } from "./social";
 
 // A saved world, compact enough for localStorage: each layer is quantized
 // into bytes and base64 encoded. Materials and creatures that spells defined
@@ -18,6 +19,8 @@ export interface SavedWorld {
   creatures: Partial<Creature>[];
   // Free standing voxels as [key, color] pairs.
   decor?: [number, number][];
+  landmarks?: Landmark[];
+  wealth?: number;
 }
 
 export function saveWorld(world: World, owners: Map<string, string>): SavedWorld {
@@ -54,6 +57,8 @@ export function saveWorld(world: World, owners: Map<string, string>): SavedWorld
     custom,
     owners: Object.fromEntries(owners),
     decor: [...world.decor.entries()],
+    landmarks: world.landmarks,
+    wealth: world.wealth,
     creatures: world.creatures
       .filter((c) => !c.dead)
       .slice(0, 400)
@@ -114,9 +119,11 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
   }
   for (const [key, color] of data.decor ?? []) {
     if (world.decor.size >= World.MAX_DECOR) break;
-    world.decor.set(key >>> 0, color & 0xffffff);
+    world.decor.set(key >>> 0, color % 0x8000000);
   }
   world.decorVersion++;
+  world.landmarks = Array.isArray(data.landmarks) ? data.landmarks.filter((l) => l && typeof l.x === "number" && typeof l.y === "number" && Array.isArray(l.lures) && Array.isArray(l.scares)).slice(0, 60) : [];
+  world.wealth = typeof data.wealth === "number" && Number.isFinite(data.wealth) ? data.wealth : 0;
   for (const raw of data.creatures ?? []) {
     if (raw.kind && !KINDS.has(raw.kind)) raw.kind = "beast";
     const c = restoreCreature(raw);

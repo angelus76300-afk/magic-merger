@@ -1,3 +1,4 @@
+import { FilterBar, applyFilters } from "./filters";
 import { elementKey } from "../shared/elements";
 import type { GameElement } from "../shared/types";
 import * as api from "./api";
@@ -47,6 +48,8 @@ export class Craft {
   // Called when this player finds something they did not have yet.
   onNewElement: (key: string) => void = () => {};
 
+  private filters = new FilterBar("mm-craft-filters", { kind: "all", tier: "any", sort: "oldest", query: "" }, { search: false, sorts: ["oldest", "newest", "name", "power"] }, () => this.renderInventory());
+
   constructor(
     private store: Store,
     private board: HTMLElement,
@@ -54,7 +57,10 @@ export class Craft {
     private list: HTMLElement,
     private search: HTMLInputElement,
     private count: HTMLElement,
-  ) {}
+    filterSlot: HTMLElement,
+  ) {
+    filterSlot.append(this.filters.el);
+  }
 
   init(): void {
     for (const chip of this.store.board()) {
@@ -78,10 +84,9 @@ export class Craft {
   // Inventory
 
   renderInventory(): void {
-    const query = this.search.value.trim().toLowerCase();
-    const all = this.store.discoveries().sort((a, b) => a.discoveredAt - b.discoveredAt);
-    const shown = query ? all.filter((d) => d.element.name.toLowerCase().includes(query)) : all;
-    this.count.textContent = `${all.length} discovered`;
+    const all = this.store.discoveries();
+    const shown = applyFilters(all, { ...this.filters.state, query: this.search.value }, () => 0, (d) => elementKey(d.element.name));
+    this.count.textContent = shown.length === all.length ? `${all.length} discovered` : `${shown.length} of ${all.length}`;
 
     const fragment = document.createDocumentFragment();
     for (const { element } of shown) {

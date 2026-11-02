@@ -4,8 +4,12 @@ import { parse } from "acorn";
 // loop gets a counter so a loop that never ends throws instead of freezing the
 // page. The Worker uses the same parser to reject code that does not parse.
 
+import { PROGRAM_VERSION } from "./version";
+
+export { PROGRAM_VERSION };
+
 export interface SpellProgram {
-  version: 2;
+  version: typeof PROGRAM_VERSION;
   summary: string;
   code: string;
 }
