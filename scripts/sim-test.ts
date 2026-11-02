@@ -225,6 +225,78 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   );
 }
 
+// 3.7 part B: artifacts that act, and creatures that cast library spells.
+{
+  const art = (f: string) => readFileSync(`lab/artifacts/${f}.js`, "utf8");
+  const t0 = performance.now();
+  const well = runCheck({ key: "well", name: "Well", tier: "minor", code: art("well"), kind: "artifact" });
+  check("a well passes its five minute test", well.ok && (well.stats.acted ?? 0) > 0, `${well.detail} (${Math.round(performance.now() - t0)} ms)`);
+  const statue = runCheck({ key: "statue", name: "Statue", tier: "minor", code: art("statue"), kind: "artifact" });
+  check("a statue that only stands there fails it", !statue.ok && statue.problem === "idle", statue.problem ?? "passed");
+  const spellCheck = runCheck({ key: "statue", name: "Statue", tier: "minor", code: art("statue") });
+  check("a spell does not face the artifact's test", spellCheck.ok && spellCheck.stats.acted === undefined, spellCheck.detail);
+  const forge = runCheck({ key: "forge", name: "Forge", tier: "major", code: art("forge"), kind: "artifact" });
+  check("villagers arm themselves at a forge", forge.ok && forge.detail.includes("armed"), forge.detail);
+  const feather = runCheck({ key: "feather", name: "Phoenix Feather", tier: "minor", code: art("phoenix-feather"), kind: "artifact" });
+  check("a phoenix feather near a corpse revives it, once", feather.ok && feather.detail.includes("brought the dead back to life"), feather.detail);
+
+  // A world of its own for the rest: a drought, library spells, saving.
+  seed(12);
+  const world = generateWorld(112, 112, 6);
+  populate(world);
+  const errors: string[] = [];
+  const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
+  const rain = readFileSync("lab/solutions/rain.js", "utf8");
+  const fireball = readFileSync("lab/spells/fireball.js", "utf8");
+  rt.setLibrary([
+    { key: "rain", name: "Rain", tier: "grand", code: rain },
+    { key: "fireball", name: "Fireball", tier: "major", code: fireball, intents: ["harm"] },
+  ]);
+  const v = world.creatures.find((c) => c.kind === "villager")!;
+  const tx = Math.round(v.homeX + 8);
+  const ty = Math.round(v.homeY + 8);
+  for (let dy = -14; dy <= 14; dy++)
+    for (let dx = -14; dx <= 14; dx++) {
+      const i = world.idx(Math.max(0, Math.min(111, tx + dx)), Math.max(0, Math.min(111, ty + dy)));
+      if (world.cover[i] === C.HOUSE || world.depth[i] > 0.3) continue;
+      world.ground[i] = 2; // sand: a drought
+      if (world.cover[i] !== C.NONE) world.setCover(i, C.NONE);
+    }
+  rt.cast({ key: "totem", name: "Rain Totem", tier: "major", code: art("rain-totem") }, tx, ty);
+  // Fire imps that cast Fireball on whatever comes near: a hunter set on them.
+  const imps = `const spell = {
+    creatures: [
+      { name: "fire imp", base: "beast", color: "#d0541a", hp: 2000, abilities: [{ do: "cast", spell: "Fireball", when: "enemy near", every: 20 }] },
+      { name: "imp hunter", base: "beast", color: "#303030", behavior: "hunt", prey: ["fire imp", "villager"], attack: 1, hp: 5000, sense: 40 },
+    ],
+    *cast(w) { for (let k = 0; k < 4; k++) w.spawn("fire imp", w.x + k, w.y); w.spawn("imp hunter", w.x, w.y + 3); },
+  };`;
+  rt.cast({ key: "imps", name: "Imps", tier: "minor", code: imps }, v.homeX - 12, v.homeY);
+  for (let k = 0; k < 30 * 40; k++) step(world, rt);
+  const totem = world.landmarks.find((l) => (l as { art?: { did: string[] } }).art && l.name === "Rain Totem") as
+    | { art: { did: string[]; deeds: number } }
+    | undefined;
+  const log = rt.libraryLog;
+  const byTotem = log.filter((e) => e.by === "Rain Totem");
+  const byImps = log.filter((e) => e.by === "fire imp");
+  check(
+    "a rain totem casts Rain from the library in a drought, at major at most",
+    !!totem && byTotem.length >= 1 && byTotem.every((e) => e.tier === "major") && totem.art.did.includes("cast a spell"),
+    `${byTotem.length} casts, tiers ${byTotem.map((e) => e.tier).join(",")}, did ${totem?.art.did.join("; ")}`,
+  );
+  const gaps = byImps.slice(1).map((e, n) => e.t - byImps[n].t);
+  check(
+    "creatures cast library spells by name, at minor and a capped rate",
+    byImps.length >= 2 && byImps.every((e) => e.tier === "minor") && gaps.every((g) => g >= 4 - 1e-6) && byImps.length <= 4 * 2 + 1 && !errors.length,
+    `${byImps.length} Fireballs in 40 s by 4 imps, at ${[...new Set(byImps.map((e) => e.tier))].join(",")}, gaps ${gaps.map((g) => g.toFixed(1)).join(",")}${errors[0] ? `, ${errors[0]}` : ""}`,
+  );
+  const unknown = rt.castLibrary("No Such Spell", tx, ty, "minor", "test");
+  check("an unknown library spell is asked for, not invented", !unknown && rt.wanted.has("No Such Spell"));
+  const back = loadWorld(JSON.parse(JSON.stringify(saveWorld(world, new Map()))), () => {});
+  const backTotem = back?.landmarks.find((l) => l.name === "Rain Totem") as { art?: { effects: unknown[]; deeds: number } } | undefined;
+  check("an artifact's state is saved with the world", !!backTotem?.art && backTotem.art.effects.length === 2 && backTotem.art.deeds === totem?.art.deeds);
+}
+
 // 6. Declared rules: a blight spreads and burns away, wolves hunt, the
 // undead burn by day.
 {
@@ -429,6 +501,11 @@ for (const { stream, report: r } of sceneReports.sort((a, b) => a.stream - b.str
     `five minute scene, stream ${stream}: goals leave marks`,
     (r.marks.hoard ?? 0) > 0 && (r.marks.den ?? 0) > 0 && (r.marks.offerings ?? 0) > 0,
     `${JSON.stringify(r.marks)}, tick ${r.meanTickMs} ms mean, ${r.worstTickMs} ms worst`,
+  );
+  check(
+    `five minute scene, stream ${stream}: every placed artifact changed something`,
+    r.artifacts.length >= 2 && r.artifacts.every((a) => a.deeds > 0),
+    r.artifacts.map((a) => `${a.name} ${a.deeds} (${a.did.join(", ")})`).join("; "),
   );
 }
 check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length === SCENE_STREAMS);

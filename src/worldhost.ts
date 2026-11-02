@@ -183,7 +183,7 @@ export class WorldHost {
       const tier = d.element.tier;
       if (!now?.recheck?.length || !program || program.id !== now.id || !tier) continue;
       try {
-        const result = await this.checker.check({ key, name: d.element.name, tier, code: program.code, intents: now.recheck });
+        const result = await this.checker.check({ key, name: d.element.name, tier, code: program.code, intents: now.recheck, kind: d.element.kind });
         let res = await api.checkSpell({ name: d.element.name, id: now.id, ...result, recheck: true });
         if (res.program.trial) {
           res = await this.settle(key, res, true);
@@ -302,7 +302,14 @@ export class WorldHost {
     this.updateStatus();
     try {
       for (let round = 0; round < 3 && res.program.trial && res.program.id; round++) {
-        const result = await this.checker.check({ key, name: res.name, tier: res.tier, code: res.program.code, intents: res.program.intents });
+        const result = await this.checker.check({
+          key,
+          name: res.name,
+          tier: res.tier,
+          code: res.program.code,
+          intents: res.program.intents,
+          kind: this.store.get(key)?.element.kind,
+        });
         const id = res.program.id;
         res = await api.checkSpell({ name: res.name, id, ...result });
         if (res.program.id !== id && round === 0 && !result.ok && !quiet)
@@ -389,6 +396,16 @@ export class WorldHost {
         break;
       case "error":
         if (this.store.get(msg.key)) void this.repair(msg.key, msg.name, msg.message);
+        break;
+      case "need":
+        // Library spells a creature or an artifact casts (3.7): stored
+        // programs only, free; one that does not exist stays unknown.
+        api
+          .libraryPrograms(msg.names)
+          .then((r) =>
+            this.send({ type: "library", spells: r.spells.map((s) => ({ key: s.key, name: s.name, tier: s.tier, code: s.code, intents: s.intents })) }),
+          )
+          .catch(() => {});
         break;
       case "perf": {
         // Spell code runs in the frame too, so it could send these: only

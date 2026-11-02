@@ -16,7 +16,9 @@ export type ToWorld =
   | { type: "visible"; visible: boolean }
   | { type: "scenario"; id: string }
   | { type: "sandbox" }
-  | { type: "hud"; on: boolean };
+  | { type: "hud"; on: boolean }
+  // Spells from the shared library the world asked for by name (3.7).
+  | { type: "library"; spells: CastRequest[] };
 
 // The iframe runs code nobody reviewed, so whatever it sends is checked for
 // shape and size before the page acts on it. Returns null for anything else.
@@ -40,6 +42,8 @@ export function readFromWorld(data: unknown): FromWorld | null {
       return m.sample && typeof m.sample === "object" && JSON.stringify(m.sample).length < 2000
         ? { type: "perf", sample: m.sample as Record<string, number> }
         : null;
+    case "need":
+      return Array.isArray(m.names) && m.names.length <= 20 && m.names.every((n) => str(n, 120)) ? { type: "need", names: m.names as string[] } : null;
     case "objective":
       return str(m.id, 40) && typeof m.text === "string" && (m.status === "playing" || m.status === "won" || m.status === "lost")
         ? { type: "objective", id: m.id as string, text: m.text.slice(0, 200), status: m.status }
@@ -58,4 +62,6 @@ export type FromWorld =
   | { type: "tap-without-spell" }
   | { type: "error"; key: string; name: string; message: string }
   | { type: "objective"; id: string; text: string; status: "playing" | "won" | "lost" }
-  | { type: "perf"; sample: Record<string, number> };
+  | { type: "perf"; sample: Record<string, number> }
+  // Names of library spells creatures or artifacts want to cast (3.7).
+  | { type: "need"; names: string[] };

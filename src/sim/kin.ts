@@ -39,6 +39,8 @@ export interface AbilitySpec {
   every: number;
   // A spell's own ability: its code, run through the World API. True when it did something.
   run?: (self: Creature, target: Creature | null) => boolean;
+  // do "cast" (3.7): a spell from the shared library, by name.
+  spell?: string;
 }
 
 // A goal a spell invents (3.6), beyond the twelve: where to go, how long to
@@ -155,6 +157,7 @@ export type Task =
   | "preach"
   | "heal"
   | "avoid"
+  | "use"
   | "custom";
 
 export function newMind(goal: Goal | string): Mind {
@@ -197,6 +200,8 @@ export interface LifeHooks {
   goalOf(c: Creature): Goal | string;
   // Out of a place it cannot walk out of (a hollow among cliffs), a step toward (x, y).
   free(c: Creature, x: number, y: number): void;
+  // Hunts people, converts them or carries a harmful aura (creatures.ts).
+  hostile(c: Creature): boolean;
 }
 export const life = {} as LifeHooks;
 

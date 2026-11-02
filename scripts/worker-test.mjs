@@ -666,6 +666,61 @@ const fresh = () => ALL[pairs++];
   await reset();
 }
 
+// 12. Artifacts that act and library spells (3.7): an artifact that never
+// faced its five minute test is tested again, and an idle one is recorded,
+// not written again (part E rewrites them); library spells are served by
+// name, stored programs only, with no Claude call.
+{
+  await reset();
+  const now = Date.now();
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('old well', 'Old Well', '🪣', 'artifact', 3, 'minor', 'A stone well', 'create', ?)",
+    )
+    .bind(now)
+    .run();
+  const first = await api("/api/spell", { admin: true, body: { name: "Old Well" } });
+  // Passed its test run before artifacts were tested on what they do.
+  await api("/api/spell/check", { admin: true, body: { name: "Old Well", id: first.data.program.id, ok: true, problem: null, detail: "3 cells changed." } });
+  const entry = (await api("/api/spells/live", { admin: true, body: { names: ["Old Well"] } })).data.programs["Old Well"];
+  check("an artifact that never faced its five minute test is to be tested", entry?.recheck?.includes("act"), JSON.stringify(entry));
+  const before = calls;
+  const idle = await api("/api/spell/check", {
+    admin: true,
+    body: {
+      name: "Old Well",
+      id: first.data.program.id,
+      ok: false,
+      problem: "idle",
+      detail: "It changed nothing after it arrived.",
+      stats: { acted: 0 },
+      recheck: true,
+    },
+  });
+  const after = (await api("/api/spells/live", { admin: true, body: { names: ["Old Well"] } })).data.programs["Old Well"];
+  check(
+    "an idle old artifact is recorded, not written again",
+    idle.status === 200 && idle.data.program.id === first.data.program.id && calls === before && !after.recheck,
+  );
+
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('rain', 'Rain', '🌧️', 'spell', 2, 'minor', 'Rain', 'weather', ?)",
+    )
+    .bind(now)
+    .run();
+  const rain = await api("/api/spell", { admin: true, body: { name: "Rain" } });
+  await api("/api/spell/check", { admin: true, body: { name: "Rain", id: rain.data.program.id, ok: true, problem: null, detail: "It rained." } });
+  const was = calls;
+  const lib = await api("/api/library", { admin: true, body: { names: ["Rain", "Old Well", "Never Made"] } });
+  check(
+    "library spells by name: stored spells only, no Claude call",
+    lib.status === 200 && lib.data.spells.length === 1 && lib.data.spells[0].name === "Rain" && typeof lib.data.spells[0].code === "string" && calls === was,
+    JSON.stringify(lib.data?.spells?.map((s) => s.name)),
+  );
+  await reset();
+}
+
 console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at stub prices`);
 stop();
 if (failed) {

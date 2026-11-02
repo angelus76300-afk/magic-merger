@@ -21,6 +21,11 @@ import {
   type Trigger,
 } from "./kin";
 import type { Creature, CreatureKind } from "./creatures";
+
+// Creatures cast library spells at most at minor (a house), at most once
+// every 20 seconds each (3.7); the runtime caps how many run island wide.
+export const CREATURE_CAST_CAP = "minor" as const;
+export const CAST_EVERY = 20;
 import type { World } from "./world";
 
 // Abilities (3.6): a creature's own magic, from a fixed vocabulary of engine
@@ -93,6 +98,18 @@ export function abilitiesFrom(v: unknown): AbilitySpec[] | null {
     const name = String(r.do ?? r.name ?? r.ability ?? "")
       .trim()
       .toLowerCase();
+    // A spell from the shared library, by name (3.7): "cast:Fireball" or {do: "cast", spell}.
+    const spell = name.startsWith("cast:") ? String(r.do).trim().slice(5).trim() : name === "cast" && typeof r.spell === "string" ? r.spell.trim() : "";
+    if (spell) {
+      if (out.some((o) => o.do === "cast")) continue;
+      const w = String(r.when ?? r.trigger ?? "")
+        .trim()
+        .toLowerCase();
+      const when = (TRIGGERS as readonly string[]).includes(w) ? (w as Trigger) : (WHEN[w] ?? "enemy near");
+      const every = typeof r.every === "number" && Number.isFinite(r.every) ? Math.max(CAST_EVERY, Math.min(300, r.every)) : 45;
+      out.push({ do: "cast", when, every, spell: spell.slice(0, 60) });
+      continue;
+    }
     const what = (ABILITIES as readonly string[]).includes(name) ? (name as AbilityName) : WORDS[name];
     if (!what || out.some((o) => o.do === what)) continue;
     const w = String(r.when ?? r.trigger ?? "")
@@ -167,9 +184,17 @@ export function useAbilities(world: World, c: Creature, k: CreatureKind): void {
         break;
     }
     if (!fire) continue;
-    // A spell's own ability runs its code; the twelve run here.
-    const done = a.run ? a.run(c, enemy ?? null) : perform(world, c, k, m, a.do as AbilityName, enemy ?? null);
-    if (done && a.run) deed(c, a.do);
+    if (a.do === "cast") enemy ??= enemyOf(world, c, k);
+    // A spell's own ability runs its code; a library spell goes through the
+    // runtime, at a creature's tier (minor at most); the twelve run here.
+    const at = enemy ?? c;
+    const done =
+      a.do === "cast" && a.spell
+        ? !!world.magic?.cast(a.spell, at.x, at.y, CREATURE_CAST_CAP, c.kind, !!enemy)
+        : a.run
+          ? a.run(c, enemy ?? null)
+          : perform(world, c, k, m, a.do as AbilityName, enemy ?? null);
+    if (done && (a.run || a.do === "cast")) deed(c, a.do === "cast" ? `cast ${a.spell}` : a.do);
     // Nothing to do it on: look again in a few seconds instead of a full cooldown.
     m.ready[n] = world.time + (done ? a.every : 3);
   }

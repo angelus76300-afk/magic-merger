@@ -1,3 +1,4 @@
+import type { Tier } from "../shared/tiers";
 import type { FeedbackAction, FeedbackResponse } from "../shared/feedback";
 import type {
   ApiError,
@@ -132,6 +133,11 @@ export function checkSpell(result: CheckRequest): Promise<SpellResponse> {
 }
 
 // Which program each of these elements has now (rewrites, rollbacks).
+// Spells from the shared library by name (3.7), for creatures and artifacts that cast them. Free.
+export function libraryPrograms(names: string[]): Promise<{ spells: { key: string; name: string; tier: Tier; code: string; intents: string[] }[] }> {
+  return post("/api/library", { names });
+}
+
 export function livePrograms(names: string[]): Promise<LiveResponse> {
   return post<LiveResponse>("/api/spells/live", { names });
 }

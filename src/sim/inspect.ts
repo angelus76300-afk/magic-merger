@@ -2,6 +2,7 @@ import { abilitiesOf } from "./abilities";
 import { jobOf, TASK_WORDS } from "./goals";
 import { villageOf } from "./kin";
 import { unpackLook } from "./villagers";
+import { isArtifact, type Artifact } from "./artifacts";
 import type { Creature, CreatureKind } from "./creatures";
 import type { World } from "./world";
 
@@ -127,3 +128,62 @@ const GOAL_WORDS: Record<string, string> = {
   explore: "explore",
   migrate: "travel and breed",
 };
+
+// The artifact nearest a tapped point (3.7), within reach.
+export function artifactAt(world: World, x: number, y: number, reach = 2): Artifact | null {
+  let best: Artifact | null = null;
+  let bestD = reach;
+  for (const l of world.landmarks) {
+    if (!isArtifact(l)) continue;
+    const d = Math.hypot(l.x - x, l.y - y);
+    if (d < bestD) {
+      bestD = d;
+      best = l;
+    }
+  }
+  return best;
+}
+
+const WHEN_WORDS: Record<string, string> = {
+  dawn: "each morning",
+  dusk: "each evening",
+  night: "by night",
+  day: "by day",
+  every: "every so often",
+  drought: "in a drought",
+  fire: "when fire comes near",
+  enemy: "when an enemy comes near",
+  death: "when someone dies nearby",
+  hurt: "when it is struck",
+};
+const GRANT_WORDS: Record<string, string> = {
+  water: "villagers draw water",
+  arms: "villagers arm themselves",
+  prayer: "villagers pray",
+  food: "villagers take food",
+  heal: "the wounded are healed",
+  gold: "villagers take gold",
+};
+
+// What a tap on an artifact shows (3.7): what it does and when, what it
+// grants and to whom, its charges, fuel and health, what it did last.
+export function inspectArtifact(world: World, a: Artifact): Inspection {
+  const s = a.art;
+  const rows: [string, string][] = [];
+  const does = s.effects.map(
+    (e) => `${e.do === "cast" ? `casts ${e.arg}` : e.do === "summon" ? `calls a ${e.arg}` : e.do === "code" ? "acts" : e.do} ${WHEN_WORDS[e.when] ?? e.when}`,
+  );
+  for (const p of s.pairs) does.push(`${p.do === "code" ? "acts" : p.do} near ${p.with}${p.once ? ", once" : ""}`);
+  if (does.length) rows.push(["Does", does.join("; ")]);
+  if (s.grants.length) rows.push(["Gives", s.grants.map((g) => GRANT_WORDS[g.what] ?? g.what).join("; ")]);
+  if (s.uses.length) rows.push(["Draws", s.uses.map((u) => `${u.by.join(", ")} who ${u.do === "worship" ? "worship" : u.do} it`).join("; ")]);
+  if (s.charges !== null) rows.push(["Charges", `${s.charges} of ${s.maxCharges}`]);
+  if (s.did.length) rows.push(["Last did", s.did.join("; ")]);
+  rows.push(["Things done", String(s.deeds)]);
+  const bars: Inspection["bars"] = [];
+  if (s.health !== null) bars.push({ label: "Health", value: s.maxHealth ? s.health / s.maxHealth : 0 });
+  if (s.fuel !== null) bars.push({ label: "Fuel", value: s.maxFuel ? s.fuel / s.maxFuel : 0 });
+  if (s.charges !== null && s.maxCharges) bars.push({ label: "Charges", value: s.charges / s.maxCharges });
+  void world;
+  return { id: -s.id, title: cap(a.name), subtitle: "an artifact", bars, rows, dead: s.health === 0 };
+}

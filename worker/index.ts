@@ -182,6 +182,9 @@ export default {
       if (request.method === "POST" && url.pathname === "/api/report") {
         return json(await handleReport(await readBody<{ name?: unknown; reason?: unknown }>(request), env, payer));
       }
+      if (request.method === "POST" && url.pathname === "/api/library") {
+        return json(await handleLibrary(await readBody<{ names?: unknown }>(request), env));
+      }
       if (request.method === "POST" && url.pathname === "/api/spells/live") {
         return json(await handleLive(await readBody<{ names?: unknown }>(request), env));
       }
@@ -630,6 +633,25 @@ function promiseTested(checked: string | null): boolean {
   }
 }
 
+// Did it face the five minute test of an artifact (3.7)? It records what it changed.
+function actsTested(checked: string | null): boolean {
+  if (!checked) return false;
+  try {
+    return typeof (JSON.parse(checked) as { stats?: { acted?: unknown } }).stats?.acted === "number";
+  } catch {
+    return false;
+  }
+}
+
+// Everything the test run asks of this element today, faced by this run?
+function faced(checked: string | null, kind: string | null | undefined, intents: Intent[]): boolean {
+  const promise = !intents.some((i) => PROBED.includes(i)) || promiseTested(checked);
+  return promise && (kind !== "artifact" || actsTested(checked));
+}
+
+const PROBLEMS = ["crash", "nothing", "wiped", "promise", "idle"] as const;
+const problemOf = (v: unknown): (typeof PROBLEMS)[number] | null => ((PROBLEMS as readonly unknown[]).includes(v) ? (v as (typeof PROBLEMS)[number]) : null);
+
 // A live program tested again by a browser against the promise its element
 // now has (3.6). Pass: the result is recorded and nothing else happens. Fail:
 // it is written once more by the small model with what the probe found, as a
@@ -640,12 +662,17 @@ async function handleRecheck(body: CheckRequest, env: Env, oracle: Oracle, eleme
   const tier = tierOf(element);
   const live = await liveProgram(env.DB, key);
   const servedLive = (): SpellResponse => ({ name: element.name, tier, program: programOf(live!.row)!, mock: false });
-  if (!live || live.row.id !== row.id || promiseTested(row.checked)) return servedLive();
+  const intentsNow = parseIntents((await env.DB.prepare("SELECT intents FROM elements WHERE key = ?").bind(key).first<{ intents: string | null }>())?.intents);
+  if (!live || live.row.id !== row.id || faced(row.checked, element.kind, intentsNow)) return servedLive();
   const detail = String(body.detail ?? "").slice(0, 400);
-  const problem = body.problem === "crash" || body.problem === "nothing" || body.problem === "wiped" || body.problem === "promise" ? body.problem : null;
+  const problem = problemOf(body.problem);
   const verdict = { ok: body.ok === true, problem, detail, stats: body.stats ?? {}, at: Date.now(), recheck: true };
   await env.DB.prepare("UPDATE programs SET checked = ? WHERE id = ?").bind(JSON.stringify(verdict).slice(0, 2000), row.id).run();
-  // Only a broken promise asks for a rewrite here; anything else is the old test's business.
+  // Only a broken promise asks for a rewrite here; anything else is the old
+  // test's business. An old artifact that does nothing in its five minute
+  // test (3.7) is recorded and not written again: the refresh of the legacy
+  // library (3.7 part E) writes every stored program again, so a rewrite here
+  // would pay twice for the same artifact.
   if (verdict.ok || problem !== "promise") return servedLive();
   const pending = await newerTrial(env.DB, key, row.id);
   if (pending) return { name: element.name, tier, program: programOf(pending)!, mock: false };
@@ -708,7 +735,7 @@ async function handleCheck(body: CheckRequest, env: Env, oracle: Oracle): Promis
   // Someone else's browser got there first.
   if (row.status !== "trial") return served();
   const detail = String(body.detail ?? "").slice(0, 400);
-  const problem = body.problem === "crash" || body.problem === "nothing" || body.problem === "wiped" || body.problem === "promise" ? body.problem : null;
+  const problem = problemOf(body.problem);
   const verdict = { ok: body.ok === true, problem, detail, stats: body.stats ?? {}, at: Date.now() };
   await env.DB.prepare("UPDATE programs SET checked = ? WHERE id = ?").bind(JSON.stringify(verdict).slice(0, 2000), row.id).run();
   if (verdict.ok || !problem) {
@@ -762,6 +789,36 @@ async function handleCheck(body: CheckRequest, env: Env, oracle: Oracle): Promis
   return { name: element.name, tier, program: { ...program, model: smallModel(env), id, trial: true }, mock: false };
 }
 
+// Spells from the shared library by name (3.7), for creatures and artifacts
+// that cast them: the stored live program of each, never written on demand,
+// so it costs nothing. Spells only: a creature does not cast a Golem.
+async function handleLibrary(
+  body: { names?: unknown },
+  env: Env,
+): Promise<{ spells: { key: string; name: string; tier: Tier; code: string; intents: Intent[] }[] }> {
+  const names = Array.isArray(body.names) ? body.names.filter((n): n is string => typeof n === "string" && n.length <= MAX_NAME_LENGTH).slice(0, 20) : [];
+  const keys = [...new Set(names.map(elementKey))];
+  if (!keys.length) return { spells: [] };
+  const rows = await env.DB.prepare(
+    `SELECT s.key, s.spec, e.name, e.tier, e.depth, e.intents FROM spells s JOIN elements e ON e.key = s.key
+     WHERE s.key IN (${keys.map(() => "?").join(", ")}) AND s.version >= ? AND e.kind = 'spell'`,
+  )
+    .bind(...keys, FIRST_PROGRAM_VERSION)
+    .all<{ key: string; spec: string; name: string; tier: string | null; depth: number; intents: string | null }>();
+  const spells: { key: string; name: string; tier: Tier; code: string; intents: Intent[] }[] = [];
+  for (const r of rows.results) {
+    let code: unknown;
+    try {
+      code = (JSON.parse(r.spec) as { code?: unknown }).code;
+    } catch {
+      continue;
+    }
+    if (typeof code === "string")
+      spells.push({ key: r.key, name: r.name, tier: isTier(r.tier) ? r.tier : tierFromDepth(r.depth), code, intents: parseIntents(r.intents) });
+  }
+  return { spells };
+}
+
 // The program each of these elements should have now.
 async function handleLive(body: { names?: unknown }, env: Env): Promise<LiveResponse> {
   const names = Array.isArray(body.names) ? body.names.filter((n): n is string => typeof n === "string" && n.length <= MAX_NAME_LENGTH).slice(0, 600) : [];
@@ -773,18 +830,19 @@ async function handleLive(body: { names?: unknown }, env: Env): Promise<LiveResp
     const marks = chunk.map(() => "?").join(", ");
     const rows = await env.DB.prepare(
       `SELECT s.key, s.pid, (SELECT MAX(p.id) FROM programs p WHERE p.key = s.key AND p.status = 'trial' AND p.id > COALESCE(s.pid, 0)) AS trial,
-         e.intents, (SELECT p.checked FROM programs p WHERE p.id = s.pid) AS checked
+         e.intents, e.kind, (SELECT p.checked FROM programs p WHERE p.id = s.pid) AS checked
        FROM spells s LEFT JOIN elements e ON e.key = s.key WHERE s.key IN (${marks}) AND s.version >= ?`,
     )
       .bind(...chunk, FIRST_PROGRAM_VERSION)
-      .all<{ key: string; pid: number | null; trial: number | null; intents: string | null; checked: string | null }>();
+      .all<{ key: string; pid: number | null; trial: number | null; intents: string | null; kind: string | null; checked: string | null }>();
     for (const r of rows.results) {
       const id = r.trial ?? r.pid;
       if (!id) continue;
       const entry: LiveResponse["programs"][string] = { id, trial: !!r.trial };
-      // A live program whose promise is probed but that never faced the probe.
-      const probed = parseIntents(r.intents).filter((i) => PROBED.includes(i));
-      if (!r.trial && probed.length && !promiseTested(r.checked)) entry.recheck = parseIntents(r.intents);
+      // A live program whose promise is probed but that never faced the
+      // probe, or an artifact that never faced its five minute test (3.7).
+      const intents = parseIntents(r.intents);
+      if (!r.trial && !faced(r.checked, r.kind, intents)) entry.recheck = r.kind === "artifact" ? [...intents, "act"] : intents;
       programs[byKey.get(r.key) ?? r.key] = entry;
     }
   }

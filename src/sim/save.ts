@@ -1,3 +1,4 @@
+import { loadedState } from "./artifacts";
 import { dressVillages, restoreCreature, saveMind, KINDS, type Creature, type SavedMind } from "./creatures";
 import { MARKS, MAX_MARKS, type Mark, type Village } from "./kin";
 import { BUILTIN, LAYERS, type Layer } from "./materials";
@@ -133,7 +134,16 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
   }
   world.decorVersion++;
   world.landmarks = Array.isArray(data.landmarks)
-    ? data.landmarks.filter((l) => l && typeof l.x === "number" && typeof l.y === "number" && Array.isArray(l.lures) && Array.isArray(l.scares)).slice(0, 60)
+    ? data.landmarks
+        .filter((l) => l && typeof l.x === "number" && typeof l.y === "number" && Array.isArray(l.lures) && Array.isArray(l.scares))
+        .slice(0, 60)
+        .map((l) => {
+          // An artifact's state (3.7), checked; one that does not read is a plain landmark.
+          const raw = (l as { art?: unknown }).art;
+          if (raw === undefined) return l;
+          const art = loadedState(raw);
+          return art ? { ...l, art } : { ...l, art: undefined };
+        })
     : [];
   world.wealth = typeof data.wealth === "number" && Number.isFinite(data.wealth) ? data.wealth : 0;
   const finite = (v: unknown) => typeof v === "number" && Number.isFinite(v);
