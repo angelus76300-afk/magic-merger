@@ -3,6 +3,7 @@ import { FACE_STEPS, keyCell, keyLevel, keyOffset, keyX, keyY } from "./voxelkey
 import { DecorStore } from "./decor";
 import { C, F, S } from "./materials";
 import type { World } from "./world";
+import { WARD, wardedAt } from "./wards";
 
 // Free standing voxels (decor) are what spells build above the land: tree
 // trunks and crowns, towers, spires, floating rocks. Each has a color and a
@@ -346,7 +347,11 @@ function fireAndHeat(world: World, dt: number): void {
         if (kind === VK.WOOD && Math.random() < 0.15) decor.set(key, packVoxel(0x2b2622, VK.STONE));
       } else s.burning.set(key, rest);
     }
-    for (const nk of spread) if (decor.has(nk) && !s.burning.has(nk)) s.burning.set(nk, burnTime(voxelKind(decor.get(nk)!)));
+    for (const nk of spread) {
+      if (!decor.has(nk) || s.burning.has(nk)) continue;
+      if (world.wards.length && wardedAt(world, keyX(nk), keyY(nk), WARD.fire)) continue;
+      s.burning.set(nk, burnTime(voxelKind(decor.get(nk)!)));
+    }
     // Burning voxels flicker: the view redraws them.
     changed = true;
   }
@@ -379,6 +384,8 @@ export function igniteVoxels(world: World, x: number, y: number, r: number): voi
     const key = decor.keyOf(slot);
     const v = decor.valueOf(slot);
     if (!burnable(voxelKind(v)) || s.burning.has(key)) continue;
-    if ((keyX(key) - x) ** 2 + (keyY(key) - y) ** 2 <= r * r) s.burning.set(key, burnTime(voxelKind(v)));
+    if ((keyX(key) - x) ** 2 + (keyY(key) - y) ** 2 > r * r) continue;
+    if (world.wards.length && wardedAt(world, keyX(key), keyY(key), WARD.fire)) continue;
+    s.burning.set(key, burnTime(voxelKind(v)));
   }
 }

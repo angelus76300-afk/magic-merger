@@ -49,6 +49,8 @@ export class Ledger {
 export const ESTIMATE = {
   merge: 0.004,
   describe: 0.001,
+  intent: 0.001,
+  design: 0.4,
   tier: 0.05,
   judge: 0.004,
   small: 0.008,

@@ -1,4 +1,5 @@
-import { TIERS, type Tier } from "../../shared/tiers";
+import { parseIntents } from "../../shared/promises";
+import { TIERS, TIER_REACH, type Tier } from "../../shared/tiers";
 import { lifeCycle, populate, resetCreatureIds, updateCreature } from "./creatures";
 import { C } from "./materials";
 import { stepPhysics } from "./physics";
@@ -10,13 +11,15 @@ import { TICK, generateWorld, type World } from "./world";
 // second by second, with the same island left alone (the control). A river
 // that flows or a villager who walks is in both, so only what the spell did
 // shows up. Three outcomes fail: a crash, nothing visible in the world, and
-// an island wiped out by a spell that is not cosmic.
+// an island wiped out by a spell that is not cosmic. A fourth since 3.4.2: a
+// spell that breaks its promise (shared/promises.ts), such as a protection
+// that does not protect.
 //
 // Runs where spell code may run: the sandboxed check frame in the browser
 // (src/sim/checkframe.ts), and Node for `npm test` and the measurement scripts.
 // The Worker cannot run it, since Cloudflare Workers forbid new Function.
 
-export type CheckProblem = "crash" | "nothing" | "wiped";
+export type CheckProblem = "crash" | "nothing" | "wiped" | "promise";
 
 export interface CheckResult {
   ok: boolean;
@@ -34,6 +37,9 @@ export interface CheckResult {
     villagersLeft: number;
     housesLeft: number;
     worstTickMs: number;
+    // The promise probe, when the spell has one: the share of the harm it
+    // prevented, averaged over the threats (1 all of it, 0 none).
+    saved?: number;
   };
 }
 
@@ -261,6 +267,8 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
   let creatures = 0;
   let bodies = 0;
   let bodySeconds = 0;
+  // A ward changes no cell but shows as a dome: it counts as something visible.
+  let wards = 0;
   let worst = 0;
   let seconds = 0;
   let quietFor = 0;
@@ -273,6 +281,7 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
       const visible = rt.visuals.bodies.filter((b) => b.alive && b.look !== "none").length;
       bodies = Math.max(bodies, visible);
       if (visible) bodySeconds += TICK;
+      wards = Math.max(wards, world.wards.length);
       if (k % 5 === 4) {
         yield;
         Math.random = isl.random;
@@ -287,7 +296,7 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
     voxels = Math.max(voxels, Math.abs(ref.decor - last.decor));
     creatures = Math.max(creatures, changedCreatures(ref, last) + Math.abs(ref.landmarks - last.landmarks));
     // Done two seconds after the cast and its bodies are over, after four at least.
-    quietFor = rt.busy() || rt.visuals.bodies.length ? 0 : quietFor + 1;
+    quietFor = rt.busy() || rt.visuals.bodies.length || world.wards.length ? 0 : quietFor + 1;
     if (seconds >= 4 && quietFor >= 2) break;
   }
   const ref = (yield* controlUpTo(seconds))[seconds];
@@ -307,7 +316,7 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
   if (!started || errors.length) {
     return { ok: false, problem: "crash", detail: `It crashed: ${errors[0] ?? "the cast did not start"}`, stats };
   }
-  const moved = cells >= MIN_CELLS || voxels >= MIN_VOXELS || creatures >= MIN_CREATURES || bodySeconds >= 0.5;
+  const moved = cells >= MIN_CELLS || voxels >= MIN_VOXELS || creatures >= MIN_CREATURES || bodySeconds >= 0.5 || wards > 0;
   if (!moved) {
     return {
       ok: false,
@@ -328,11 +337,133 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
       };
     }
   }
+  const detail = `${cells} cells, ${voxels} blocks and ${creatures} creatures changed${bodies ? `, ${bodies} bodies flew` : ""}.`;
+  if (parseIntents(req.intents).includes("protect")) {
+    const probe = yield* protectProbe(req);
+    const withSaved = { ...stats, saved: probe.saved };
+    if (!probe.ok) return { ok: false, problem: "promise", detail: probe.detail, stats: withSaved };
+    return { ok: true, problem: null, detail: `${detail} ${probe.detail}`, stats: withSaved };
+  }
+  return { ok: true, problem: null, detail, stats };
+}
+
+// The protection probe (3.4.2). The spell is cast on the village; three seconds
+// later a threat hits the same spot. What its reach covered at the cast (the
+// houses, and the villagers by their health) is counted nine seconds later,
+// against the same threat with no spell and against no threat at all. Each
+// threat is a small hostile spell going through the same World API, so a
+// ward has to stop what a player's Fireball would do, not a test double.
+// A threat that does no harm on its own is not counted.
+const THREAT_AT = 3;
+const PROBE_END = 12;
+const SAVED_ENOUGH = 0.5;
+const R_CODE = "const R = Math.max(4, Math.min(w.r, w.width * 0.25));";
+const THREATS: { name: string; label: string; code: string }[] = [
+  {
+    name: "fire",
+    label: "a rain of fire",
+    code: `const spell = { *cast(w) { ${R_CODE} for (let k = 0; k < 8; k++) { w.ignite(w.x, w.y, R, 0.3); for (const c of w.creatures(w.x, w.y, R)) if (c.kind === "villager") c.status("burn", 3); yield 0.5; } } };`,
+  },
+  {
+    name: "lava",
+    label: "a flood of lava",
+    code: `const spell = { *cast(w) { ${R_CODE} w.flood(w.x, w.y, R, "lava", 1.4); yield 1.5; w.flood(w.x, w.y, R * 0.7, "lava", 1); } };`,
+  },
+  {
+    name: "blast",
+    label: "a blast",
+    code: `const spell = { *cast(w) { ${R_CODE} w.explode(w.x, w.y, R * 0.8, 1.6); } };`,
+  },
+  {
+    name: "raiders",
+    label: "raiders hunting its people",
+    code: `const spell = {
+  creatures: [{ name: "probe raider", base: "beast", color: "#5a1020", speed: 6, hp: 400, behavior: "hunt", prey: ["villager"], attack: 45, sense: 60, lifespan: 30 }],
+  *cast(w) { ${R_CODE} for (let k = 0; k < 6; k++) { const a = k * 1.047; w.spawn("probe raider", w.x + Math.cos(a) * (R + 5), w.y + Math.sin(a) * (R + 5)); } } };`,
+  },
+];
+
+function probeRadius(tier: Tier): number {
+  return Math.max(4, Math.min(Math.max(2, Math.round(TIER_REACH[tier] * SIZE)), SIZE * 0.25));
+}
+
+interface Region {
+  houses: number[];
+  villagers: Set<number>;
+}
+
+function regionOf(world: World, target: { x: number; y: number }, r: number): Region {
+  const houses: number[] = [];
+  for (let i = 0; i < world.n; i++) {
+    if (world.cover[i] !== C.HOUSE) continue;
+    if (Math.hypot((i % world.w) - target.x, Math.floor(i / world.w) - target.y) <= r) houses.push(i);
+  }
+  const villagers = new Set(
+    world.creatures.filter((c) => c.kind === "villager" && !c.dead && Math.hypot(c.x - target.x, c.y - target.y) <= r).map((c) => c.id),
+  );
+  return { houses, villagers };
+}
+
+// A house standing counts one (a 2 by 2 house is four cells), a villager one at full health.
+function regionValue(world: World, region: Region): number {
+  let v = 0;
+  for (const i of region.houses) if (world.cover[i] === C.HOUSE) v += 0.25;
+  for (const c of world.creatures) if (region.villagers.has(c.id) && !c.dead && c.kind === "villager") v += Math.max(0, Math.min(1, c.hp / 100));
+  return v;
+}
+
+function* probeRun(spell: CastRequest | null, threat: (typeof THREATS)[number] | null, tier: Tier): Generator<void, { value: number; error?: string }> {
+  const errors: string[] = [];
+  const isl = island(errors);
+  const { world, rt, target } = isl;
+  Math.random = isl.random;
+  const region = regionOf(world, target, probeRadius(tier));
+  if (spell) rt.cast({ ...spell, key: `check:${spell.key}` }, target.x, target.y);
+  for (let k = 0; k < PROBE_END / TICK; k++) {
+    if (threat && k === Math.round(THREAT_AT / TICK))
+      rt.cast({ key: `threat:${threat.name}`, name: threat.label, tier, code: threat.code }, target.x, target.y);
+    step(world, rt, isl.life);
+    if (k % 5 === 4) {
+      yield;
+      Math.random = isl.random;
+    }
+  }
+  return { value: regionValue(world, region), error: errors[0] };
+}
+
+// Runs without the spell never change: kept between checks.
+const probeCache = new Map<string, number>();
+
+function* cachedRun(threat: (typeof THREATS)[number] | null, tier: Tier): Generator<void, number> {
+  const key = `${threat?.name ?? "none"}:${probeRadius(tier)}`;
+  const known = probeCache.get(key);
+  if (known !== undefined) return known;
+  const { value } = yield* probeRun(null, threat, tier);
+  probeCache.set(key, value);
+  return value;
+}
+
+function* protectProbe(req: CastRequest): Generator<void, { ok: boolean; saved: number; detail: string }> {
+  const base = yield* cachedRun(null, req.tier);
+  const lines: string[] = [];
+  const shares: number[] = [];
+  for (const threat of THREATS) {
+    const without = yield* cachedRun(threat, req.tier);
+    const harm = base - without;
+    if (harm < 0.75) continue;
+    const run = yield* probeRun(req, threat, req.tier);
+    if (run.error) return { ok: false, saved: 0, detail: `It crashed during its protection test: ${run.error}` };
+    const saved = Math.max(-1, Math.min(1.5, (run.value - without) / harm));
+    shares.push(saved);
+    lines.push(`${threat.label}: ${Math.round(Math.max(0, saved) * 100)}% of the harm prevented`);
+  }
+  if (!shares.length) return { ok: true, saved: 1, detail: "Its protection test found nothing to protect." };
+  const saved = Math.round((shares.reduce((a, b) => a + b, 0) / shares.length) * 100) / 100;
+  if (saved >= SAVED_ENOUGH) return { ok: true, saved, detail: `It protected what it covered (${lines.join("; ")}).` };
   return {
-    ok: true,
-    problem: null,
-    detail: `${cells} cells, ${voxels} blocks and ${creatures} creatures changed${bodies ? `, ${bodies} bodies flew` : ""}.`,
-    stats,
+    ok: false,
+    saved,
+    detail: `It promises protection, but the village it covers was barely safer with it than without it (${lines.join("; ")}). Raise w.ward over what it protects within two seconds of the cast, lasting at least 15 seconds, with no solid shell over people.`,
   };
 }
 

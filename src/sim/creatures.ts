@@ -1,6 +1,7 @@
 import { C, F, G, S } from "./materials";
 import { explode, forDisc } from "./physics";
 import { lull, names, social, stepLandmarks, TAGS, type Mood } from "./social";
+import { WARD, warded } from "./wards";
 import { daylight } from "./daylight";
 import type { World } from "./world";
 import { body, type BodySpec } from "./body";
@@ -312,6 +313,11 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   // A fish out of water chokes.
   if (k.aquatic && !wet(world, i, 0.25)) c.hp -= 15 * dt;
 
+  // Under a ward: no burning, no frost, no poison from outside.
+  const ward = world.wardMask[i];
+  if (ward & WARD.fire) c.burning = 0;
+  if (ward & WARD.cold) c.frozen = 0;
+
   // The land hurts.
   if (onGround) {
     if (world.fire[i] > 0.25 && !k.fireproof && !immune("fire")) c.burning = Math.max(c.burning, 3);
@@ -327,7 +333,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   }
   if (world.gas[i] !== S.NONE) {
     const gas = world.materials.get("gas", world.gas[i]);
-    if (gas.hurts > 0) c.hp -= gas.hurts * world.gasAmt[i] * dt;
+    if (gas.hurts > 0 && !(ward & WARD.harm)) c.hp -= gas.hurts * world.gasAmt[i] * dt;
   }
   if (c.burning > 0) {
     if (k.fireproof) c.burning = 0;
@@ -400,6 +406,17 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       wantX = c.tx - c.x;
       wantY = c.ty - c.y;
       if (Math.hypot(wantX, wantY) < 0.6) pace = 0;
+    }
+    // Frightened people run for the nearest ward instead of away into the open.
+    const scared = c.fear > 0 || c.burning > 0 || !!dangerDir || mood === "fear";
+    if (scared && world.wards.length && !hostile(c)) {
+      const shelter = shelterFor(world, c);
+      if (shelter) {
+        wantX = shelter.x - c.x;
+        wantY = shelter.y - c.y;
+        pace = Math.hypot(wantX, wantY) < shelter.r * 0.5 ? 0 : 1.6;
+        mood = "fear";
+      }
     }
   }
 
@@ -494,7 +511,7 @@ function behave(world: World, c: Creature, k: CreatureKind, ai: Behavior, dt: nu
       c.tx = target.x;
       c.ty = target.y;
       if (Math.hypot(target.x - c.x, target.y - c.y) < kindOf(c).radius * c.size + kindOf(target).radius * target.size + 0.6) {
-        target.hp -= ai.attack * dt;
+        target.hp -= ai.attack * dt * (shieldedCreature(world, target) ? 0.15 : 1);
         if (target.hp <= 0 && ai.converts && world.creatures.length < 600) {
           // The victim rises as one of them.
           const ratio = 0.6;
@@ -556,7 +573,7 @@ function sideEffects(world: World, c: Creature, ai: Behavior, i: number, onGroun
         o.burning = 0;
         break;
       case "hurt":
-        if (o.kind !== c.kind) o.hp -= 10 * p * 0.27;
+        if (o.kind !== c.kind && !shieldedCreature(world, o)) o.hp -= 10 * p * 0.27;
         break;
       case "fear":
         if (o.kind !== c.kind) {
@@ -770,7 +787,70 @@ function keepWild(world: World): void {
 }
 
 // Slow life: a new villager now and then while houses stand, the dead fade away.
+// A creature standing under a ward against harm.
+export function shieldedCreature(world: World, c: Creature): boolean {
+  if (!world.wards.length) return false;
+  const x = Math.max(0, Math.min(world.w - 1, Math.round(c.x)));
+  const y = Math.max(0, Math.min(world.h - 1, Math.round(c.y)));
+  return warded(world, y * world.w + x, WARD.harm);
+}
+
+// Does this creature threaten what a ward protects? Hunters and guards that
+// attack people (or anyone), creatures with a harmful aura, and those whose
+// victims rise as their own kind. A guard a spell set to fight only the
+// undead is no threat to the village it stands in.
+export function hostile(c: Creature): boolean {
+  const ai = kindOf(c).ai;
+  if (!ai) return false;
+  if ((ai.mode === "hunt" || ai.mode === "guard") && ai.attack > 0 && (!ai.prey.length || names(ai.prey, "villager"))) return true;
+  return ai.converts || ai.aura === "hurt" || ai.aura === "burn" || ai.aura === "freeze";
+}
+
+// The ward a frightened creature runs to: one that keeps out what hunts or
+// burns, close enough to reach.
+function shelterFor(world: World, c: Creature): { x: number; y: number; r: number } | null {
+  let best: { x: number; y: number; r: number } | null = null;
+  let bestD = Infinity;
+  for (const w of world.wards) {
+    if (!(w.against & (WARD.creatures | WARD.fire | WARD.harm))) continue;
+    const d = Math.hypot(w.x - c.x, w.y - c.y) - w.r;
+    if (d < 14 && d < bestD) {
+      bestD = d;
+      best = w;
+    }
+  }
+  return best;
+}
+
+// Wards against creatures push the hostile ones out to their edge.
+function keepOut(world: World): void {
+  for (const ward of world.wards) {
+    if (!(ward.against & WARD.creatures)) continue;
+    for (const c of world.creatures) {
+      if (c.dead) continue;
+      const dx = c.x - ward.x;
+      const dy = c.y - ward.y;
+      const d = Math.hypot(dx, dy);
+      if (d > ward.r + 0.8) continue;
+      const out = ward.keepOut.length ? names(ward.keepOut, c.kind) : false;
+      if (!out && (!hostile(c) || names(ward.allow, c.kind))) continue;
+      const ux = d > 0.01 ? dx / d : 1;
+      const uy = d > 0.01 ? dy / d : 0;
+      c.x = Math.max(0.5, Math.min(world.w - 1.5, ward.x + ux * (ward.r + 1.2)));
+      c.y = Math.max(0.5, Math.min(world.h - 1.5, ward.y + uy * (ward.r + 1.2)));
+      // Whatever speed carried it inward is gone.
+      const inward = c.vx * ux + c.vy * uy;
+      if (inward < 0) {
+        c.vx -= inward * ux;
+        c.vy -= inward * uy;
+      }
+      ward.hit = world.time;
+    }
+  }
+}
+
 export function lifeCycle(world: World, dt: number): void {
+  if (world.wards.length) keepOut(world);
   stepLandmarks(world, maxHp, (c) => kindOf(c).fireproof);
   for (let k = world.creatures.length - 1; k >= 0; k--) {
     if (world.creatures[k].dead && world.creatures[k].deadFor > 40) world.creatures.splice(k, 1);

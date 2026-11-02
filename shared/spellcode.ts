@@ -21,6 +21,8 @@ export interface SpellProgram {
   id?: number;
   // Written but not through its test run yet: the browser runs it first.
   trial?: boolean;
+  // What it was written to keep (shared/promises.ts): its test run checks it.
+  intents?: string[];
 }
 
 type Node = { type: string; start: number; end: number; body?: Node | Node[] } & Record<string, unknown>;

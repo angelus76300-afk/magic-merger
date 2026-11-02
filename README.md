@@ -10,11 +10,11 @@ Every spell can then be cast in the World tab: a falling sand pixel world with t
 
 ## Layout
 
-| Path          | What                                                                                                                                         |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/`        | Browser game: board, inventory, spell card                                                                                                   |
-| `src/world/`  | World tab: terrain physics, creatures, spell casting, renderer                                                                               |
-| `worker/`     | Cloudflare Worker: merges, descriptions, spell programs and their versions, votes, the judge, invites and the ledger, feedback, Claude calls |
-| `scripts/`    | `npm test`, `npm run test:worker`, the Spell Lab, the judge runner, measurements                                                             |
-| `shared/`     | Types and primitives used by both                                                                                                            |
-| `migrations/` | D1 schema                                                                                                                                    |
+| Path          | What                                                                                                                                                           |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/`        | Browser game: board, inventory, spell card                                                                                                                     |
+| `src/world/`  | World tab: terrain physics, creatures, spell casting, renderer                                                                                                 |
+| `worker/`     | Cloudflare Worker: merges, descriptions, spell programs and their versions, votes, the judge, invites and the ledger, feedback, the API's growth, Claude calls |
+| `scripts/`    | `npm test`, `npm run test:worker`, `npm run evolve`, the Spell Lab, the judge runner, measurements                                                             |
+| `shared/`     | Types and primitives used by both                                                                                                                              |
+| `migrations/` | D1 schema                                                                                                                                                      |

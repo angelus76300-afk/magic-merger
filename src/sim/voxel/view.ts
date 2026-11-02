@@ -43,6 +43,7 @@ import { CHUNK, Terrain, columnTop, surfaceY } from "./terrain";
 import { hexColor, mixColor } from "../colors";
 import { DecorInstances } from "./decor-instances";
 import { Darkness } from "./darkness";
+import { Domes } from "./domes";
 import { keyLevel, keyX, keyY } from "../voxelkey";
 
 // What a spell's darkness pulls the sky toward.
@@ -110,6 +111,7 @@ export class VoxelView {
   private boltCore: InstancedMesh;
   private boltHalo: InstancedMesh;
   private rings: Mesh[] = [];
+  private domes = new Domes(this.scene);
   private lights: Sprite[] = [];
   private clouds: InstancedMesh;
   // Materials tinted by the time of day (fire and glows are not).
@@ -286,6 +288,7 @@ export class VoxelView {
     this.placeBodies(visuals, time);
     this.placeBolts(visuals);
     this.placeRingsAndLights(visuals);
+    this.domes.update(world, world.time, (x, y, h) => this.toScene(x, y, h), this.groundAt);
     this.lap("effects");
     this.paintDecal(visuals);
     this.moveClouds(time);
@@ -940,6 +943,7 @@ export class VoxelView {
   // Frees every geometry, material and texture, not only the renderer: the
   // next engine reuses the same canvas and so the same WebGL context.
   dispose(): void {
+    this.domes.dispose();
     const seen = new Set<object>();
     const free = (thing: { dispose(): void } | null | undefined) => {
       if (thing && !seen.has(thing)) {
