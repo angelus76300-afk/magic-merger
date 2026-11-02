@@ -52,6 +52,10 @@ From a review of eleven phone screenshots: good ideas, weird execution (crowns f
 
 ## Next steps
 
-1. **More challenges**, now that the format is cheap: "Wake the sleeping village", "Bring back the dead", "Night falls" (use the verbs nobody picks).
-2. **A shared feed** of first discoveries, since First Discovery is already global.
-3. **Artifact interactions**: a placed Phoenix reviving the dead, a Volcano artifact that can be calmed. The rules exist; the prompt could ask for them more often.
+The full plan, with research sources, sizes and a ready prompt for each session, is in the roadmap page written after 3.0. In short:
+
+1. **3.1 Measure and tighten**: a frame HUD and one real phone session first; then 30 fps on phones, voxels in a typed array, partial voxel mesh updates; merges on a cheaper model after a side by side test; lint and shared helpers.
+2. **3.2 Spells that are always good**: a test run before storing, a cheap judge that looks at Spell Lab frames, a library of good spells as examples, Opus through the Batch API with a Haiku draft meanwhile.
+3. **3.5 A reason to cast**: village mana, par scores and three ways to win, a recipe book with hints, a chronicle of the island, discoveries made in the World.
+4. **4.0 Things worth sharing**: a deterministic simulation, clips, replays as links, a daily island, a feed of first discoveries, pass the island.
+5. **4.5 Ready for strangers**: hard spend caps (AI Gateway), quotas, name checks, AI labels, small legal pages. Nothing public before this.
