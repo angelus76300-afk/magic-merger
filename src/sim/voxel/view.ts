@@ -66,6 +66,8 @@ export class VoxelView {
   private rings: Mesh[] = [];
   private lights: Sprite[] = [];
   private clouds: InstancedMesh;
+  private decorMesh: InstancedMesh;
+  private decorVersion = -1;
   private decal: HTMLCanvasElement;
   private decalCtx: CanvasRenderingContext2D;
   private decalTexture: CanvasTexture;
@@ -125,6 +127,7 @@ export class VoxelView {
     this.dullPoints = pointCloud(world.particles.capacity, false, this.glowTexture);
     this.scene.add(this.glowPoints, this.dullPoints);
     this.clouds = this.makeClouds();
+    this.decorMesh = this.instanced("puff", basic, 20000);
   }
 
   private instanced(model: string, material: Material, capacity: number): InstancedMesh {
@@ -185,6 +188,10 @@ export class VoxelView {
       this.terrain.coversChanged = false;
       this.lastCovers = time;
       this.placeCovers();
+    }
+    if (world.decorVersion !== this.decorVersion) {
+      this.decorVersion = world.decorVersion;
+      this.placeDecor();
     }
     this.placeCreatures(time);
     this.placeFireAndGas(time);
@@ -270,6 +277,25 @@ export class VoxelView {
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       this.coverCounts.set(key, cells.length);
     }
+  }
+
+  private placeDecor(): void {
+    const { world } = this;
+    let n = 0;
+    for (const [key, color] of world.decor) {
+      if (n >= 20000) break;
+      const level = (key % 512) - 128;
+      const cell = Math.floor(key / 512);
+      const x = cell % 1024;
+      const y = Math.floor(cell / 1024);
+      this.m.makeTranslation(x - world.w / 2 + 0.5, level + 0.5, y - world.h / 2 + 0.5);
+      this.decorMesh.setMatrixAt(n, this.m);
+      this.decorMesh.setColorAt(n, this.col.setHex(color));
+      n++;
+    }
+    this.decorMesh.count = n;
+    this.decorMesh.instanceMatrix.needsUpdate = true;
+    if (this.decorMesh.instanceColor) this.decorMesh.instanceColor.needsUpdate = true;
   }
 
   private placeCreatures(time: number): void {

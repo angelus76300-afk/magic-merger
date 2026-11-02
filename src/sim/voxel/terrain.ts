@@ -170,11 +170,17 @@ export class Terrain {
           if (low >= top) continue;
           // Layers from the top: the surface color for one voxel, then soil, then stone.
           const bands: [number, number, number][] = [];
-          const soil = this.soilColor(i);
-          bands.push([Math.max(low, top - 1), top, this.sideTopColor(i, surface)]);
-          if (top - 1 > low) bands.push([Math.max(low, top - 3), top - 1, soil]);
-          if (top - 3 > low) bands.push([Math.max(low, BOTTOM + 2), top - 3, STRATA.stone]);
-          if (BOTTOM + 2 > low) bands.push([low, Math.min(top - 3, BOTTOM + 2), STRATA.deep]);
+          const built = this.builtColor(i);
+          if (built !== null) {
+            // A built column (a trunk, a tower, a crystal spire) is its material all the way down.
+            bands.push([low, top, built]);
+          } else {
+            const soil = this.soilColor(i);
+            bands.push([Math.max(low, top - 1), top, this.sideTopColor(i, surface)]);
+            if (top - 1 > low) bands.push([Math.max(low, top - 3), top - 1, soil]);
+            if (top - 3 > low) bands.push([Math.max(low, BOTTOM + 2), top - 3, STRATA.stone]);
+            if (BOTTOM + 2 > low) bands.push([low, Math.min(top - 3, BOTTOM + 2), STRATA.deep]);
+          }
           for (const [a, b, color] of bands) {
             if (b <= a) continue;
             // Deeper walls are a bit darker.
@@ -255,6 +261,14 @@ export class Terrain {
     const g = this.world.ground[i];
     if (g === G.GRASS || g === G.FIELD) return scale(surface, 0.9);
     return surface;
+  }
+
+  // Natural ground shows soil and stone in its walls; built materials do not.
+  private builtColor(i: number): number | null {
+    const g = this.world.ground[i];
+    if (g === G.GRASS || g === G.DIRT || g === G.SAND || g === G.SNOW || g === G.ASH || g === G.FIELD || g === G.ROCK) return null;
+    const m = this.world.materials.get("ground", g);
+    return scale(m.colors[(this.world.shade[i] >> 4) % m.colors.length], 0.92);
   }
 
   private soilColor(i: number): number {

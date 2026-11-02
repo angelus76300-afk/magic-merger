@@ -32,7 +32,7 @@ await page.waitForFunction(() => window.labReady === true);
 for (const file of files) {
   const text = readFileSync(file, "utf8");
   const json = extname(file) === ".json" ? JSON.parse(text) : null;
-  const code = json ? (json.spec?.code ?? json.code) : text;
+  const code = json ? (json.program?.code ?? json.spec?.code ?? json.code) : text;
   const tier = json?.tier ?? process.env.LAB_TIER ?? "major";
   const shots = process.env.LAB_SHOTS ? process.env.LAB_SHOTS.split(",").map(Number) : undefined;
   const name = basename(file, extname(file));

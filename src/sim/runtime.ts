@@ -744,6 +744,53 @@ export class SpellApi {
       if (h > 4 && s > 0.6 && w.cover[i] === C.HOUSE) w.setCover(i, C.RUBBLE);
     });
   }
+  // Builds a column `voxels` high at a cell, made of a ground material: trunks,
+  // towers, walls, crystal spires. The whole column shows that material.
+  build(x: number, y: number, voxels: number, material: string) {
+    if (!this.inside(x, y)) return;
+    const w = this.rt.world;
+    const i = this.i(x, y);
+    const found = w.materials.find(String(material).toLowerCase());
+    if (!found || found.layer !== "ground") return;
+    w.ground[i] = found.id;
+    w.height[i] += num(voxels, -60, 60, 1) * 2;
+    w.setCover(i, C.NONE);
+  }
+
+  // Free standing voxels, for what floats or overhangs: a tree's crown, a
+  // floating rock, a statue, an arch. z is in voxels above the ground there.
+  voxel(x: number, y: number, z: number, color: string | number) {
+    if (!this.inside(x, y)) return;
+    const w = this.rt.world;
+    const ground = Math.round(w.height[this.i(x, y)] * 0.5);
+    w.setVoxel(x, y, ground + Math.round(num(z, -40, 300, 0)), colorOr(color, 0xffffff));
+  }
+  sphere(x: number, y: number, z: number, r: number, colors: (string | number)[] | string | number, density = 1) {
+    const list = (Array.isArray(colors) ? colors : [colors]).map((c) => colorOr(c, 0xffffff));
+    const rr = num(r, 0.5, 40, 3);
+    const w = this.rt.world;
+    const base = Math.round(w.height[this.i(x, y)] * 0.5) + num(z, -40, 300, 0);
+    for (let dy = -rr; dy <= rr; dy++) {
+      for (let dx = -rr; dx <= rr; dx++) {
+        for (let dz = -rr; dz <= rr; dz++) {
+          if (dx * dx + dy * dy + dz * dz > rr * rr || Math.random() > density) continue;
+          w.setVoxel(x + dx, y + dy, base + dz, list[(Math.random() * list.length) | 0]);
+        }
+      }
+    }
+  }
+  box(x: number, y: number, z: number, sx: number, sy: number, sz: number, colors: (string | number)[] | string | number) {
+    const list = (Array.isArray(colors) ? colors : [colors]).map((c) => colorOr(c, 0xffffff));
+    const w = this.rt.world;
+    const base = Math.round(w.height[this.i(x, y)] * 0.5) + num(z, -40, 300, 0);
+    for (let dy = 0; dy < num(sy, 1, 60, 1); dy++)
+      for (let dx = 0; dx < num(sx, 1, 60, 1); dx++)
+        for (let dz = 0; dz < num(sz, 1, 80, 1); dz++) w.setVoxel(x + dx, y + dy, base + dz, list[(Math.random() * list.length) | 0]);
+  }
+  unvoxel(x: number, y: number, r: number) {
+    this.rt.world.clearVoxels(x, y, num(r, 0, 2000, 3));
+  }
+
   // Grass, then trees, bushes and flowers.
   grow(x: number, y: number, r: number, density = 1) {
     const w = this.rt.world;

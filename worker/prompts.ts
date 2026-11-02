@@ -113,21 +113,25 @@ const EXAMPLE_FIREBALL = `const spell = {
 };`;
 
 const EXAMPLE_TREE = `const spell = {
-  materials: [{
-    name: "worldwood", layer: "cover", colors: ["#6b4a2b", "#7a5532"], solid: true, fuel: 60, becomes: "tree",
-    tick(cell, w) { if (w.chance(0.01)) w.grow(cell.x + w.rand(-8, 8), cell.y + w.rand(-8, 8), 2, 0.3); },
-  }],
+  materials: [
+    { name: "worldwood", layer: "ground", colors: ["#6b4a2b", "#7a5532"], becomes: "dirt" },
+  ],
   *cast(w) {
     w.camera(w.x, w.y, w.r * 1.3, 1);
-    w.terraform(w.x, w.y, w.r * 0.6, 5);
     w.sound("rumble", 0.7);
-    for (let k = 1; k <= 8; k++) {
-      w.disc(w.x, w.y, w.r * 0.12 * k / 8, (x, y) => w.set(x, y, "worldwood"));
-      yield 0.15;
+    const trunk = Math.max(2, w.r * 0.1);
+    for (let k = 1; k <= 12; k++) {
+      w.disc(w.x, w.y, trunk, (x, y) => w.build(x, y, 2, "worldwood"));
+      yield 0.12;
+    }
+    // The crown: leaf spheres in a ring around the trunk (z counts from the ground under each).
+    const crown = w.r * 0.3;
+    for (let k = 0; k < 6; k++) {
+      const a = k * 1.05, d = trunk + crown * 0.5;
+      w.sphere(w.x + Math.cos(a) * d, w.y + Math.sin(a) * d, 22 + w.rand(0, 4), crown * 0.6, ["#2f7a2a", "#3f8f36", "#57a24a"], 0.85);
     }
     w.grow(w.x, w.y, w.r, 0.7);
     w.light(w.x, w.y, w.r, "#80ed99", 4);
-    for (let k = 0; k < 3; k++) w.spawn("spirit", w.x + w.rand(-9, 9), w.y + w.rand(-9, 9));
   },
 };`;
 
@@ -143,7 +147,7 @@ WHAT THE WORLD DOES ON ITS OWN
 Fire spreads through forests, fields, houses and oil (much less on grass), with the wind, and leaves ash and stumps; water or snow puts it out. Water flows downhill, freezes below 0 and boils above 100. Lava flows slowly, burns everything, hardens into basalt and turns water to steam. Acid eats trees, houses and soil. Oil burns fast. Mud flows slowly and dries into dirt. Snow melts above 2 degrees; very cold ground gets snow. Powder explodes when fire reaches it. Steam drifts and rains back down. Houses burn into rubble and villagers rebuild them; grass and trees grow back. Creatures flee fire, panic when burning, drown in deep water. Prefer setting this in motion over doing everything yourself.
 
 MATERIALS (by layer; w.set and w.paint find the layer from the name)
-ground: grass, dirt, sand, rock, snow, ash, basalt, crystal (glows), field
+ground: grass, dirt, sand, rock, snow, ash, basalt, crystal (glows), field (built columns show their material: basalt, crystal or your own)
 fluid: water, ice, lava, oil, acid, mud
 cover: tree, bush, crop, house, rubble, powder, stump, flower, boulder
 gas: smoke, steam, poison
@@ -154,13 +158,14 @@ w.x, w.y target; w.r reach; w.tier; w.width, w.height; w.time.
 w.rand(a, b), w.chance(p), w.pick(list), w.dist(x1, y1, x2, y2), w.angle(x1, y1, x2, y2), w.lerp(a, b, t), w.noise(x, y).
 Cells: w.cell(x, y) gives {height, ground, fluid, depth, cover, fire, temp, gas}; w.set(x, y, material, amount); w.clear(x, y, layer); w.fire(x, y, intensity); w.heat(x, y, degrees); w.raise(x, y, height).
 Areas, calling fn(x, y, k) with k from 1 at the center to 0 at the edge: w.disc(x, y, r, fn), w.ring(x, y, r0, r1, fn), w.line(x0, y0, x1, y1, width, fn).
-Big moves: w.explode(x, y, r, power 0 to 5), w.quake(x, y, r, strength) (one jolt: repeat it), w.ignite(x, y, r, chance), w.flood(x, y, r, fluid, depth), w.drain(x, y, r), w.paint(x, y, r, material, density, amount), w.temperature(x, y, r, delta) (minus 60 freezes, plus 300 burns), w.terraform(x, y, r, height) (hill or crater), w.grow(x, y, r, density), w.gas(x, y, r, type, amount), w.wind(dx, dy).
+Big moves: w.explode(x, y, r, power 0 to 5), w.quake(x, y, r, strength) (one jolt: repeat it), w.ignite(x, y, r, chance), w.flood(x, y, r, fluid, depth), w.drain(x, y, r), w.paint(x, y, r, material, density, amount), w.temperature(x, y, r, delta) (minus 60 freezes, plus 300 burns), w.terraform(x, y, r, height) (hill or crater), w.build(x, y, voxels, material) (a column that tall made of a ground material: trunks, towers, walls, spires; one voxel is 2 height units), w.grow(x, y, r, density), w.gas(x, y, r, type, amount), w.wind(dx, dy).
+Free voxels, for what floats or overhangs (a tree's crown, a floating rock, a statue, an arch; z is in voxels above the ground there, at most 20000 in the world): w.voxel(x, y, z, color), w.sphere(x, y, z, r, colors, density), w.box(x, y, z, sx, sy, sz, colors), w.unvoxel(x, y, r).
 Creatures: w.creatures(x, y, r), w.corpses(x, y, r), w.spawn(kind, x, y). Each has x, y, z, kind, hp, alive, data and hurt(n), heal(n), kill(), revive(), push(dx, dy, up), status(name, seconds, fromX, fromY), transform(kind), resize(factor), tint(color), teleport(x, y).
 Bodies, the moving parts of a spell: w.body({x, y, z, vx, vy, vz, r, look, color, color2, glow, life, gravity, drag, tick(b, w, dt), land(b, w), end(b, w)}). look: orb, flame, cloud, ring, shard, vortex, star, none. A body with z above 0 and gravity falls and calls land on touching the ground. A body has the same fields plus age, data, kill(), seek(x, y, speed).
 Effects: w.particle({x, y, z, vx, vy, vz, life, color, size, glow, gravity, drag}), w.burst(x, y, {count, colors, speed, up, life, size, gravity, drag}), w.shockwave(x, y, r, color, seconds, width), w.light(x, y, r, color, seconds), w.darken(amount, seconds) (night: lights, fire and glowing things show through), w.tint(color, alpha, seconds), w.flash(color, strength), w.circle(x, y, r, color, color2, seconds) (magic circle), w.draw((ctx, t) => {...}, seconds, "world" or "screen") (free canvas 2D drawing; in world space one unit is one cell), w.camera(x, y, r, seconds), w.cameraBack(seconds), w.shake(amount, seconds), w.sound(name, size 0 to 1) with boom, thump, crackle, hiss, whoosh, rumble, rise, fall, chime, ping, drone, zap.
 
 NEW RULES
-When the built-in world cannot express the spell, add to it. spell.materials: [{name, layer, colors, flammable 0 to 1, fuel, flow (fluids), hurts, heat (temperature it pulls toward), glow, solid (cover), becomes (built-in material to fall back to), tick(cell, w)}]; tick runs on every cell of that material each frame, cell has x, y, dt. spell.creatures: [{name, base (a built-in kind), color, speed, hp, radius, flying, fireproof, swims, glow, tick(c, w, dt)}]. New rules stay in the world after the spell ends, so keep their ticks cheap and rare.
+The world is drawn as a floating island of voxels seen in 3D, so height matters: build tall things (a giant tree's trunk with w.build and a canopy of leaves above it, a tower, an ice wall) and send things high into the sky. When the built-in world cannot express the spell, add to it. spell.materials: [{name, layer, colors, flammable 0 to 1, fuel, flow (fluids), hurts, heat (temperature it pulls toward), glow, solid (cover), becomes (built-in material to fall back to), tick(cell, w)}]; tick runs on every cell of that material each frame, cell has x, y, dt. spell.creatures: [{name, base (a built-in kind), color, speed, hp, radius, flying, fireproof, swims, glow, tick(c, w, dt)}]. New rules stay in the world after the spell ends, so keep their ticks cheap and rare.
 
 GOOD SPELLS
 Every spell has a moment of gathering (a circle, a sound, a light), a delivery (something moves: a falling star, a rolling wave, a drifting cloud), an impact the player cannot miss, and an aftermath the world carries on. Make it feel like its name: a Tidal Wave should be a wave that travels and floods, not a puddle. Use color, light, sound and camera for the big ones. Keep the code short and plain: about 20 to 60 lines.

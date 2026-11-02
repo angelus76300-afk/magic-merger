@@ -39,6 +39,10 @@ export class World {
   readonly events: WorldEvent[] = [];
   readonly wind = { x: 0.6, y: 0.2 };
   readonly rng: Rng;
+  // Free standing voxels placed by spells (a tree's crown, a floating rock),
+  // keyed by cell and absolute voxel height, valued by color.
+  readonly decor = new Map<number, number>();
+  decorVersion = 0;
   time = 0;
   tick = 0;
   seaLevel = 8;
@@ -113,6 +117,34 @@ export class World {
       this.gasAmt[i] = Math.min(1, this.gasAmt[i] + amount);
     }
     return true;
+  }
+
+  static readonly MAX_DECOR = 20000;
+
+  decorKey(x: number, y: number, level: number): number {
+    return ((Math.round(y) * 1024 + Math.round(x)) * 512 + (Math.round(level) + 128)) >>> 0;
+  }
+
+  setVoxel(x: number, y: number, level: number, color: number | null): void {
+    if (!this.inside(Math.round(x), Math.round(y)) || level < -60 || level > 380) return;
+    const key = this.decorKey(x, y, level);
+    if (color === null) {
+      if (this.decor.delete(key)) this.decorVersion++;
+    } else if (this.decor.has(key) || this.decor.size < World.MAX_DECOR) {
+      this.decor.set(key, color & 0xffffff);
+      this.decorVersion++;
+    }
+  }
+
+  // Removes free standing voxels whose cell lies within r of (x, y).
+  clearVoxels(x: number, y: number, r: number): void {
+    for (const key of this.decor.keys()) {
+      const cell = Math.floor(key / 512);
+      const cx = cell % 1024;
+      const cy = Math.floor(cell / 1024);
+      if ((cx - x) ** 2 + (cy - y) ** 2 <= r * r) this.decor.delete(key);
+    }
+    this.decorVersion++;
   }
 
   layerName(layer: Layer, id: number): string {

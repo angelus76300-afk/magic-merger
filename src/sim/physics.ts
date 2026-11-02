@@ -458,6 +458,8 @@ export function explode(world: World, x: number, y: number, r: number, power: nu
       drag: hot ? 1.5 : 0.3,
     });
   }
+  // Blasts knock down anything spells built in the air nearby.
+  if (world.decor.size) world.clearVoxels(x, y, r * 0.8);
   world.emit({ kind: "sound", name: "boom", size: Math.min(1, r / 30) });
   world.emit({ kind: "shake", amount: Math.min(14, 2 + r * 0.4 * power), seconds: 0.6 });
   world.emit({ kind: "flash", color: 0xfff0c0, strength: Math.min(0.8, 0.2 + r / 60) });

@@ -16,6 +16,8 @@ export interface SavedWorld {
   custom: Record<Layer, string[]>;
   owners: Record<string, string>;
   creatures: Partial<Creature>[];
+  // Free standing voxels as [key, color] pairs.
+  decor?: [number, number][];
 }
 
 export function saveWorld(world: World, owners: Map<string, string>): SavedWorld {
@@ -51,6 +53,7 @@ export function saveWorld(world: World, owners: Map<string, string>): SavedWorld
     },
     custom,
     owners: Object.fromEntries(owners),
+    decor: [...world.decor.entries()],
     creatures: world.creatures
       .filter((c) => !c.dead)
       .slice(0, 400)
@@ -109,6 +112,11 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
     if (gasAmt) world.gasAmt[i] = gasAmt[i] / 255;
     if (world.fluid[i] === 0) world.depth[i] = 0;
   }
+  for (const [key, color] of data.decor ?? []) {
+    if (world.decor.size >= World.MAX_DECOR) break;
+    world.decor.set(key >>> 0, color & 0xffffff);
+  }
+  world.decorVersion++;
   for (const raw of data.creatures ?? []) {
     if (raw.kind && !KINDS.has(raw.kind)) raw.kind = "beast";
     const c = restoreCreature(raw);
