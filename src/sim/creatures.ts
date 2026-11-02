@@ -207,7 +207,9 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     if (c.deadFor === 0 && k.ai?.onDeath) deathOf(world, c, k.ai.onDeath);
     c.deadFor += dt;
     c.z = Math.max(0, c.z + c.vz * dt);
-    c.vz -= 30 * dt;
+    // On the ground a body stops: its speed used to keep growing, and a
+    // creature raised from the dead hit the ground at it and died again.
+    c.vz = c.z > 0 ? c.vz - 30 * dt : 0;
     return;
   }
   for (const s of ["frozen", "fear", "sleep", "calm", "levitate", "stun"] as const) c[s] = Math.max(0, c[s] - dt);

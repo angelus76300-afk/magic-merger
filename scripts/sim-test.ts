@@ -398,6 +398,23 @@ for (const scenario of SCENARIOS) {
   check("a cosmic spell may wipe the island", cosmic.ok, cosmic.detail);
 }
 
+// 9b. A creature raised from the dead stays alive: its fall speed used to
+// keep growing while it lay dead, and it died again on landing.
+{
+  const world = generateWorld(112, 112, 4);
+  populate(world);
+  const v = world.creatures.find((c) => c.kind === "villager")!;
+  v.hp = 0;
+  v.dead = true;
+  const errors: string[] = [];
+  const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
+  for (let k = 0; k < 90; k++) step(world, rt);
+  const code = `const spell = { *cast(w) { for (const c of w.corpses(${v.x}, ${v.y}, 2)) c.revive(); yield 2; } };`;
+  rt.cast({ key: "raise", name: "Raise", tier: "minor", code }, v.x, v.y);
+  for (let k = 0; k < 90; k++) step(world, rt);
+  check("a revived creature stays alive", !v.dead && v.hp > 0 && !errors.length, `dead ${v.dead}, hp ${Math.round(v.hp)}`);
+}
+
 // 10. Votes: how many are needed, when they rewrite, roll back or reach the library.
 {
   check("one player: one vote is enough", votesNeeded(1) === 1 && votesNeeded(0) === 1 && votesNeeded(0.3) === 1);

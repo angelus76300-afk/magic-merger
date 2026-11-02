@@ -679,6 +679,7 @@ export class CreatureHandle {
     if (!this.raw.dead) return;
     this.raw.dead = false;
     this.raw.deadFor = 0;
+    this.raw.vz = 0;
     this.raw.hp = maxHp(this.raw) * 0.6;
   }
   push(dx: number, dy: number, up = 0) {

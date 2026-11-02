@@ -186,7 +186,9 @@ const library: LibraryEntry[] = pool
   .map((s) => ({ key: s.key, name: s.name, tier: s.tier, kind: s.kind, description: s.description, code: s.code }));
 console.log(`library: ${library.map((l) => `${l.name} ${poolScores[l.name]}`).join(", ")}`);
 
-let outcomes: { id: string; answer?: { code: string; summary: string }; error?: string; model: string; usd: number }[] | null = null;
+// Read once: every read of a finished batch is billed again in the spend ledger.
+let outcomes: { id: string; answer?: { code: string; summary: string }; error?: string; model: string; usd: number }[] | null =
+  (state.batchOutcomes as typeof outcomes) ?? null;
 for (let i = 0; !outcomes; i++) {
   const r = await api(`/api/admin/batch-trial?batch=${batch.batch}`);
   if (r.ended) outcomes = r.outcomes as typeof outcomes;

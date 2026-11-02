@@ -17,7 +17,9 @@ if (!url || !token) {
   process.exit(1);
 }
 const limit = Number(process.argv[2]) || 20;
-const SHOTS = [1, 3, 6];
+// Big spells build up longer: at 1, 3 and 6 s a legendary meteor was still a
+// glow in the sky (docs/measurements/spell-quality-2026-11.md).
+const shotsFor = (tier) => (tier === "legendary" || tier === "cosmic" ? [2, 6, 12] : [1, 3, 6]);
 
 async function api(path, body) {
   const res = await fetch(new URL(path, url), {
@@ -36,8 +38,9 @@ if (programs.length) {
   const lab = await openLab();
   try {
     for (const p of programs) {
-      const result = await lab.cast(p.code, { tier: p.tier, shots: SHOTS, jpeg: true });
-      const judged = await api("/api/admin/judge", { id: p.id, frames: result.frames.map((f) => f.png), shots: SHOTS, facts: factsOf(result) });
+      const shots = shotsFor(p.tier);
+      const result = await lab.cast(p.code, { tier: p.tier, shots, jpeg: true });
+      const judged = await api("/api/admin/judge", { id: p.id, frames: result.frames.map((f) => f.png), shots, facts: factsOf(result) });
       console.log(`${p.name} (#${p.id}, ${p.tier}): ${judged.score}/5 ${judged.reason}, ${judged.verdict}; ${judged.note} [${judged.action}]`);
     }
   } finally {

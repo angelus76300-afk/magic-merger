@@ -723,6 +723,8 @@ async function pollBatches(env: Env): Promise<{ done: number; failed: number; wa
       }
       for (const row of rows) {
         const o = outcomes.find((x) => x.id === batchItemId(row.cause, row.id));
+        // Billed once, when the item is taken: a later read of the same batch finds it done.
+        if (o?.usd) oracle.spent.push({ call: o.call, model: o.model, usd: o.usd });
         if (!o?.answer) {
           out.failed++;
           console.error("batch item failed", row.key, o?.error ?? "missing");
@@ -1111,6 +1113,7 @@ async function batchTrialResults(batch: string, env: Env) {
   const oracle = oracleFor(env);
   try {
     const outcomes = await oracle.batchResults(batch);
+    for (const o of outcomes ?? []) if (o.usd) oracle.spent.push({ call: o.call, model: o.model, usd: o.usd });
     return outcomes ? { ended: true, outcomes } : { ended: false };
   } finally {
     await recordSpend(env.DB, oracle);
