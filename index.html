@@ -34,7 +34,17 @@
 
     <main id="world-view" class="view world" hidden>
       <div id="world-stage" class="world-stage">
+        <div id="world-banner" class="world-banner" hidden>
+          <strong class="world-banner-title"></strong>
+          <span class="world-banner-text"></span>
+          <span class="world-banner-hint"></span>
+          <span class="world-banner-actions">
+            <button class="world-banner-retry">Retry</button>
+            <button class="world-banner-leave">Back to my island</button>
+          </span>
+        </div>
         <div class="world-tools">
+          <button id="world-challenges">Challenges</button>
           <button id="world-add">+ Villager</button>
           <select id="world-size" aria-label="World size for the next reset">
             <option value="small">Small</option>

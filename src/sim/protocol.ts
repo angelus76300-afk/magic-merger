@@ -13,11 +13,14 @@ export type ToWorld =
   | { type: "villager" }
   | { type: "reset"; size: WorldSize }
   | { type: "mute"; muted: boolean }
-  | { type: "visible"; visible: boolean };
+  | { type: "visible"; visible: boolean }
+  | { type: "scenario"; id: string }
+  | { type: "sandbox" };
 
 export type FromWorld =
   | { type: "ready" }
   | { type: "save"; data: SavedWorld }
   | { type: "cast"; key: string }
   | { type: "tap-without-spell" }
-  | { type: "error"; key: string; name: string; message: string };
+  | { type: "error"; key: string; name: string; message: string }
+  | { type: "objective"; id: string; text: string; status: "playing" | "won" | "lost" };

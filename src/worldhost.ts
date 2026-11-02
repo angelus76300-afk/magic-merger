@@ -3,6 +3,7 @@ import { tierFromDepth, type Tier } from "../shared/tiers";
 import * as api from "./api";
 import { chipElement } from "./craft";
 import type { FromWorld, ToWorld } from "./sim/protocol";
+import { SCENARIO_LIST } from "./sim/scenario-list";
 import type { CastRequest } from "./sim/runtime";
 import type { SavedWorld } from "./sim/save";
 import type { WorldSize } from "./sim/engine";
@@ -16,6 +17,8 @@ const MAX_REPAIRS = 2;
 
 export interface WorldElements {
   stage: HTMLElement;
+  banner: HTMLElement;
+  challenges: HTMLButtonElement;
   status: HTMLElement;
   list: HTMLElement;
   add: HTMLButtonElement;
@@ -37,6 +40,9 @@ export class WorldHost {
   private muted = readFlag(MUTE_KEY);
   // Mock programs are never saved, but are kept for the session.
   private sessionPrograms = new Map<string, CastRequest>();
+  // The challenge being played, if any.
+  private challenge: string | null = null;
+  private challengeDialog: HTMLDialogElement | null = null;
 
   constructor(
     private store: Store,
@@ -50,8 +56,14 @@ export class WorldHost {
       toast("A villager wanders in");
     });
     this.el.reset.addEventListener("click", () => {
-      if (window.confirm("Reset the world? Everything in it will be lost.")) this.send({ type: "reset", size: this.el.size.value as WorldSize });
+      if (this.challenge) this.send({ type: "reset", size: this.el.size.value as WorldSize });
+      else if (window.confirm("Reset the world? Everything in it will be lost.")) this.send({ type: "reset", size: this.el.size.value as WorldSize });
     });
+    this.el.challenges.addEventListener("click", () => this.openChallenges());
+    this.el.banner.querySelector(".world-banner-retry")!.addEventListener("click", () => {
+      if (this.challenge) this.startChallenge(this.challenge);
+    });
+    this.el.banner.querySelector(".world-banner-leave")!.addEventListener("click", () => this.leaveChallenge());
     const showSound = () => {
       this.el.sound.textContent = this.muted ? "Sound off" : "Sound on";
       this.el.sound.setAttribute("aria-pressed", String(!this.muted));
@@ -180,6 +192,86 @@ export class WorldHost {
       case "error":
         void this.repair(msg.key, msg.name, msg.message);
         break;
+      case "objective":
+        this.showObjective(msg.id, msg.text, msg.status);
+        break;
+    }
+  }
+
+  private openChallenges(): void {
+    if (!this.challengeDialog) {
+      const d = document.createElement("dialog");
+      d.className = "challenges";
+      d.addEventListener("click", (e) => {
+        if (e.target === d) d.close();
+      });
+      document.body.append(d);
+      this.challengeDialog = d;
+    }
+    const d = this.challengeDialog;
+    d.replaceChildren();
+    const title = document.createElement("h2");
+    title.textContent = "Challenges";
+    const intro = document.createElement("p");
+    intro.textContent = "Each challenge is an island with a problem. Find the spells that solve it. Your own island waits for you.";
+    const list = document.createElement("div");
+    list.className = "challenge-list";
+    for (const info of SCENARIO_LIST) {
+      const item = document.createElement("div");
+      item.className = "challenge";
+      const h = document.createElement("h3");
+      h.textContent = info.title;
+      if (this.store.isSolved(info.id)) {
+        const badge = document.createElement("span");
+        badge.className = "solved";
+        badge.textContent = "solved";
+        h.append(badge);
+      }
+      const p = document.createElement("p");
+      p.textContent = info.brief;
+      const go = document.createElement("button");
+      go.textContent = this.store.isSolved(info.id) ? "Play again" : "Play";
+      go.addEventListener("click", () => {
+        d.close();
+        this.startChallenge(info.id);
+      });
+      item.append(h, p, go);
+      list.append(item);
+    }
+    d.append(title, intro, list);
+    d.showModal();
+  }
+
+  private startChallenge(id: string): void {
+    const info = SCENARIO_LIST.find((s) => s.id === id);
+    if (!info) return;
+    this.challenge = id;
+    this.send({ type: "scenario", id });
+    this.showObjective(id, info.brief, "playing");
+    this.el.reset.textContent = "Restart";
+  }
+
+  private leaveChallenge(): void {
+    this.challenge = null;
+    this.el.banner.hidden = true;
+    this.el.reset.textContent = "Reset";
+    this.send({ type: "sandbox" });
+  }
+
+  private showObjective(id: string, text: string, status: "playing" | "won" | "lost"): void {
+    if (this.challenge !== id) return;
+    const info = SCENARIO_LIST.find((s) => s.id === id);
+    const b = this.el.banner;
+    b.hidden = false;
+    b.dataset.status = status;
+    b.querySelector(".world-banner-title")!.textContent = info?.title ?? "";
+    b.querySelector(".world-banner-text")!.textContent = text;
+    b.querySelector(".world-banner-hint")!.textContent = status === "lost" && info ? `Ideas: ${info.hint}` : "";
+    (b.querySelector(".world-banner-retry") as HTMLElement).hidden = status === "playing";
+    if (status === "won") {
+      const first = !this.store.isSolved(id);
+      this.store.markSolved(id);
+      toast(first ? `Challenge solved: ${info?.title}` : "Solved again!", "special");
     }
   }
 

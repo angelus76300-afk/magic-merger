@@ -142,9 +142,15 @@ function blocked(world: World, x: number, y: number, c: Creature, k: CreatureKin
   const i = world.idx(x, y);
   const cover = world.materials.get("cover", world.cover[i]);
   if (cover.solid) return true;
-  // Cliffs: too steep a step up.
-  const here = world.height[world.idx(c.x, c.y)];
-  return world.height[i] - here > 1.6;
+  // Deep water and any lava are walls for those who would die in them.
+  const f = world.fluid[i];
+  if (f !== F.NONE && f !== F.ICE && world.depth[i] > 0.05) {
+    if (f === F.LAVA && !k.fireproof) return true;
+    if (world.depth[i] > 1 && !k.swims) return true;
+  }
+  // Cliffs: too steep a step up (ice and fluids count as the surface you walk on).
+  const here = world.level(world.idx(c.x, c.y));
+  return world.level(i) - here > 1.6;
 }
 
 export function updateCreature(world: World, c: Creature, dt: number): void {

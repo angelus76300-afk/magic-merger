@@ -7,6 +7,7 @@ import { C } from "../src/sim/materials";
 import { Engine, type WorldSize } from "../src/sim/engine";
 import { LAYERS } from "../src/sim/materials";
 import { TICK, type World } from "../src/sim/world";
+import { SCENARIOS } from "../src/sim/scenarios";
 
 interface LabOptions {
   tier?: Tier;
@@ -141,5 +142,44 @@ async function runSpell(code: string, options: LabOptions = {}) {
   };
 }
 
+// Plays a challenge for some seconds, optionally casting spells at given
+// times and places, and reports how the objective evolved.
+async function runScenario(id: string, options: { seconds?: number; casts?: { t: number; x: number; y: number; code: string; tier: string }[]; shots?: number[] } = {}) {
+  seedRandom(5);
+  const def = SCENARIOS.find((s) => s.id === id)!;
+  const canvas = document.getElementById("world") as HTMLCanvasElement;
+  const overlay = document.getElementById("overlay") as HTMLCanvasElement;
+  current?.dispose();
+  const errors: string[] = [];
+  const { world, run, focus } = def.build();
+  const engine = new Engine(canvas, overlay, world, { onError: (_k, _n, m) => errors.push(m), onTap: () => {} }, undefined, { preserveDrawingBuffer: true });
+  current = engine;
+  engine.view.orbit.tx = focus.x;
+  engine.view.orbit.ty = focus.y;
+  engine.view.orbit.dist = focus.dist;
+  const timeline: { t: number; text: string; status: string }[] = [];
+  const frames: { t: number; png: string }[] = [];
+  const shots = (options.shots ?? []).map((s) => Math.round(s / TICK));
+  const ticks = Math.round((options.seconds ?? 60) / TICK);
+  let status = "playing";
+  for (let tick = 0; tick <= ticks; tick++) {
+    for (const c of options.casts ?? []) if (Math.round(c.t / TICK) === tick) engine.cast({ key: `lab${c.t}`, name: "Lab", tier: isTier(c.tier) ? c.tier : "major", code: c.code }, c.x, c.y);
+    engine.step();
+    run.tick(world);
+    if (tick % 30 === 0 || shots.includes(tick)) {
+      const r = run.check(world);
+      if (tick % 150 === 0 || r.status !== status) timeline.push({ t: +(tick * TICK).toFixed(1), text: r.text, status: r.status });
+      status = r.status;
+    }
+    if (shots.includes(tick)) {
+      engine.render(TICK);
+      frames.push({ t: +(tick * TICK).toFixed(2), png: composite(canvas, overlay) });
+    }
+    if (status !== "playing" && !shots.some((s) => s > tick)) break;
+  }
+  return { id, status, errors: [...new Set(errors)], timeline, frames };
+}
+
+(window as unknown as { runScenario: typeof runScenario }).runScenario = runScenario;
 (window as unknown as { runSpell: typeof runSpell }).runSpell = runSpell;
 (window as unknown as { labReady: boolean }).labReady = true;

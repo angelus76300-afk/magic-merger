@@ -319,7 +319,7 @@ function landScore(world: World, cx: number, cy: number, r: number): number {
 }
 
 // Houses are 2 by 2 blocks around a square, with fields on the outskirts.
-function buildVillage(world: World, cx: number, cy: number, rng: Rng): void {
+export function buildVillage(world: World, cx: number, cy: number, rng: Rng): void {
   const { w } = world;
   const base = world.height[world.idx(cx, cy)];
   const flatten = (x: number, y: number) => {
@@ -361,6 +361,32 @@ function buildVillage(world: World, cx: number, cy: number, rng: Rng): void {
         world.ground[i] = G.FIELD;
         world.setCover(i, (x + y) % 2 === 0 ? C.CROP : C.NONE);
       }
+    }
+  }
+}
+
+// A gentle land for hand-made challenge islands: low hills of grass at a
+// chosen height, no sea. Challenges then carve and plant what they need.
+export function plainWorld(w: number, h: number, seed: number, base = 12, hills = 3): World {
+  const world = new World(w, h, seed);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      world.height[i] = base + (fbm(x / 30, y / 30, seed, 3) - 0.5) * hills * 2;
+      world.ground[i] = G.GRASS;
+      world.temp[i] = world.ambient(i);
+    }
+  }
+  return world;
+}
+
+// Plants a forest over a rectangle, thick in the middle.
+export function plantForest(world: World, x0: number, y0: number, x1: number, y1: number, density = 0.6): void {
+  for (let y = Math.max(0, y0); y < Math.min(world.h, y1); y++) {
+    for (let x = Math.max(0, x0); x < Math.min(world.w, x1); x++) {
+      const i = y * world.w + x;
+      if (world.depth[i] > 0 || world.cover[i] !== C.NONE) continue;
+      if (world.rng.next() < density) world.setCover(i, world.rng.next() < 0.85 ? C.TREE : C.BUSH);
     }
   }
 }

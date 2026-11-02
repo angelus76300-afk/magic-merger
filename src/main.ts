@@ -23,6 +23,8 @@ $("#clear").addEventListener("click", () => craft.clearBoard());
 
 const world = new WorldHost(store, {
   stage: $("#world-stage"),
+  banner: $("#world-banner"),
+  challenges: $<HTMLButtonElement>("#world-challenges"),
   status: $("#world-status"),
   list: $("#spell-list"),
   add: $<HTMLButtonElement>("#world-add"),

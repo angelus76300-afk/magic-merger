@@ -32,6 +32,8 @@ export class Engine {
   private acc = 0;
   private pointers = new Map<number, { x: number; y: number; sx: number; sy: number; t: number; moved: boolean; button: number; shift: boolean }>();
   private pinch: { d: number; mx: number; my: number } | null = null;
+  // Runs after every tick: a challenge's hazard and its goal check.
+  onTick: (() => void) | null = null;
   private reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 
   constructor(
@@ -109,6 +111,7 @@ export class Engine {
     lifeCycle(world, TICK);
     this.runtime.step(TICK);
     world.particles.update(TICK);
+    this.onTick?.();
   }
 
   // Draws the current state. Public for the Spell Lab.

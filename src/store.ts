@@ -25,6 +25,8 @@ interface SaveData {
   spells?: Record<string, SpellProgram>;
   board: BoardChip[];
   nextChipId: number;
+  // Challenges won, by id.
+  solved?: string[];
 }
 
 const STORAGE_KEY = "magic-merger.save";
@@ -81,6 +83,16 @@ export class Store {
 
   setSpell(key: string, program: SpellProgram): void {
     (this.data.spells ??= {})[key] = program;
+    this.save();
+  }
+
+  isSolved(id: string): boolean {
+    return this.data.solved?.includes(id) ?? false;
+  }
+
+  markSolved(id: string): void {
+    if (this.isSolved(id)) return;
+    (this.data.solved ??= []).push(id);
     this.save();
   }
 
