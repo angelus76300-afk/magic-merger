@@ -8,6 +8,7 @@ import { toast } from "./toast";
 import { WorldHost } from "./worldhost";
 import { openPeople } from "./people";
 import { showFeedback } from "./feedback";
+import { Challenges } from "./challenges";
 import { hideGate, showGate, showWelcome, welcomedBefore } from "./welcome";
 
 // An invite link (/#invite=...) is kept by this browser before anything else.
@@ -35,6 +36,8 @@ const world = new WorldHost(store, {
   sound: $<HTMLButtonElement>("#world-sound"),
 });
 
+const challenges = new Challenges($("#challenges-view"), store, world);
+
 function showTab(view: string): void {
   for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
     tab.setAttribute("aria-selected", String(tab.dataset.view === view));
@@ -46,7 +49,11 @@ function showTab(view: string): void {
   if (view === "world-view") world.show();
   else world.hide();
   if (view === "feedback-view") showFeedback();
+  if (view === "challenges-view") void challenges.show();
 }
+
+world.onChallenges = () => showTab("challenges-view");
+challenges.showWorld = () => showTab("world-view");
 
 // The admin badge opens the people view: invites, spend per person, the month.
 $("#admin-badge").addEventListener("click", () => {
@@ -65,6 +72,11 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
 world.init();
 // New discoveries get their program written in the background (cheap tiers only).
 craft.onNewElement = (key) => world.ahead(key);
+// What a challenge's board finds joins the main inventory (3.7).
+challenges.onDiscovered = (key) => {
+  craft.refresh();
+  world.ahead(key);
+};
 
 setCardActions({
   cast: (key) => {

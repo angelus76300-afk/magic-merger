@@ -721,6 +721,66 @@ const fresh = () => ALL[pairs++];
   await reset();
 }
 
+// 13. Challenges from nothing (3.7): shown only once a solver is verified,
+// par from the recipe graph, wins and the fewest merges any friend needed,
+// hidden again when the solver's program is rewritten, until verified anew.
+{
+  await reset();
+  const now = Date.now();
+  const cara = await invite("Cara", 5);
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES ('mist', 'Mist', '🌫️', 'spell', 1, 'minor', 'Mist', ?), ('storm rain', 'Storm Rain', '🌧️', 'spell', 2, 'major', 'Rain', ?)",
+    )
+    .bind(now, now)
+    .run();
+  await db
+    .prepare(
+      "INSERT OR REPLACE INTO recipes (pair, a, b, result, created_at) VALUES ('air+water', 'air', 'water', 'mist', ?), ('mist+mist', 'mist', 'mist', 'storm rain', ?)",
+    )
+    .bind(now, now)
+    .run();
+  const made = await api("/api/spell", { admin: true, body: { name: "Storm Rain" } });
+  await api("/api/spell/check", { admin: true, body: { name: "Storm Rain", id: made.data.program.id, ok: true, problem: null, detail: "It rained." } });
+  const hidden = await api("/api/challenges", { invite: cara.secret });
+  check("a challenge with no verified solution is not shown", hidden.status === 200 && !hidden.data.challenges.some((c) => c.id === "first-fire"));
+  const cands = await api("/api/admin/challenge-candidates?limit=10", { admin: true });
+  const mine = cands.data.find((c) => c.challenge === "first-fire" && c.key === "storm rain");
+  check(
+    "the runner is given reachable spells to try, with their code",
+    !!mine && typeof mine.code === "string" && mine.spots.length > 0,
+    JSON.stringify(cands.data?.map?.((c) => `${c.challenge}:${c.key}`)),
+  );
+  await api("/api/admin/challenge-verify", { admin: true, body: { challenge: "first-fire", key: "storm rain", pid: mine.pid, ok: true, wins: 3, runs: 3 } });
+  const shown = (await api("/api/challenges", { invite: cara.secret })).data.challenges.find((c) => c.id === "first-fire");
+  check("verified, it is shown, with par from the recipe graph", shown?.par === 2 && shown.stars === 0 && shown.best === null, JSON.stringify(shown));
+  const again = (await api("/api/admin/challenge-candidates?limit=10", { admin: true })).data.find(
+    (c) => c.challenge === "first-fire" && c.key === "storm rain",
+  );
+  check("a verified spell is not tried again", !again);
+  const before = calls;
+  const won = await api("/api/challenge/win", { invite: cara.secret, body: { id: "first-fire", merges: 4, spell: "Storm Rain" } });
+  check("a win within two merges of par gets two stars", won.status === 200 && won.data.stars === 2 && calls === before, JSON.stringify(won.data));
+  const best = await api("/api/challenge/win", { invite: cara.secret, body: { id: "first-fire", merges: 1, spell: "Storm Rain" } });
+  const card = (await api("/api/challenges", { invite: cara.secret })).data.challenges.find((c) => c.id === "first-fire");
+  check(
+    "beating par lowers it for everyone, and names who",
+    best.data.stars === 3 && best.data.best && card.par === 1 && card.best?.merges === 1 && card.best?.name === "Cara" && card.mine === 1,
+    JSON.stringify(card),
+  );
+  const weak = await api("/api/challenge/win", { invite: cara.secret, body: { id: "great-eruption", merges: 2, spell: "Storm Rain" } });
+  check("a spell too weak for the challenge does not win it", weak.status === 400);
+  // Storm Rain is written again: its old verification no longer counts.
+  await db.prepare("UPDATE spells SET pid = pid + 1000 WHERE key = 'storm rain'").run();
+  const stale = (await api("/api/challenges", { invite: cara.secret })).data.challenges.find((c) => c.id === "first-fire");
+  const retry = (await api("/api/admin/challenge-candidates?limit=10", { admin: true })).data.find(
+    (c) => c.challenge === "first-fire" && c.key === "storm rain",
+  );
+  check("rewritten, its solver is tried again and the challenge waits", !stale && !!retry && retry.pid === mine.pid + 1000);
+  await db.prepare("UPDATE spells SET pid = pid - 1000 WHERE key = 'storm rain'").run();
+  await reset();
+}
+
 console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at stub prices`);
 stop();
 if (failed) {

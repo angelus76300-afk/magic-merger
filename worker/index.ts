@@ -27,6 +27,7 @@ import type {
 } from "../shared/types";
 import { changeFeedback, listFeedback, postFeedback, syncFeedback, voteFeedback } from "./feedback";
 import type { FeedbackAction } from "../shared/feedback";
+import { candidates, listChallenges, recordVerification, recordWin } from "./challenges";
 import { HttpError } from "./http";
 import { ClaudeOracle, MockOracle, OracleError, parseEffort, type Oracle, type ProgramAnswer, type SpellRequest as OracleSpellRequest } from "./oracle";
 import { PROBED, parseIntents, type Intent } from "../shared/promises";
@@ -193,6 +194,11 @@ export default {
       }
       if (request.method === "POST" && url.pathname === "/api/vote") {
         return json(await handleVote(await readBody<VoteRequest>(request), env, player, payer, ctx));
+      }
+      // 3.7: challenges from nothing. Free: merges go through /api/merge.
+      if (request.method === "GET" && url.pathname === "/api/challenges") return json(await listChallenges(env.DB, payer));
+      if (request.method === "POST" && url.pathname === "/api/challenge/win") {
+        return json(await recordWin(env.DB, payer, await readBody<{ id?: unknown; merges?: unknown; spell?: unknown }>(request)));
       }
       // 3.4.1: ideas and their votes, for every invite.
       if (url.pathname === "/api/feedback") {
@@ -1274,6 +1280,8 @@ async function handleAdmin(request: Request, url: URL, env: Env, oracle: Oracle,
   if (post && path === "feedback") return json(await changeFeedback(env, await readBody<FeedbackAction>(request)));
   if (post && path === "feedback-sync") return json(await syncFeedback(env, 20));
   // 3.4.2: the API that grows.
+  if (!post && path === "challenge-candidates") return json(await candidates(env.DB, Math.min(60, Number(url.searchParams.get("limit")) || 20)));
+  if (post && path === "challenge-verify") return json(await recordVerification(env.DB, await readBody(request)));
   if (!post && path === "evolution") return json(await evolution(env.DB));
   if (post && path === "evolve") return json(await evolve(env, true));
   if (!post && path === "helpers") return json(await trialHelpers(env.DB));

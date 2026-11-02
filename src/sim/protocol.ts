@@ -14,7 +14,8 @@ export type ToWorld =
   | { type: "reset"; size: WorldSize }
   | { type: "mute"; muted: boolean }
   | { type: "visible"; visible: boolean }
-  | { type: "scenario"; id: string }
+  // ahead: seconds of the hazard already played while the player merged (3.7).
+  | { type: "scenario"; id: string; ahead?: number }
   | { type: "sandbox" }
   | { type: "hud"; on: boolean }
   // Spells from the shared library the world asked for by name (3.7).

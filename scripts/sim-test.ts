@@ -19,6 +19,7 @@ import { generateWorld, type World } from "../src/sim/world";
 import { VK, floats, voxelKind } from "../src/sim/voxels";
 import { keyCell } from "../src/sim/voxelkey";
 import { SOLUTIONS, replay, seed, step } from "./challenge-replay";
+import { CHALLENGES, fewestMerges, parOf, starsFor, strongEnough } from "../shared/challenges";
 import type { Job } from "./challenge-worker";
 import { runCheck, type SceneReport } from "../src/sim/check";
 import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../shared/votes";
@@ -46,18 +47,37 @@ const SCENE_STREAMS = 3;
 const SCENE_SECONDS = 600;
 const idle: Job[] = [
   ...Array.from({ length: SCENE_STREAMS }, (_, n) => ({ scene: n, seconds: SCENE_SECONDS })),
+  // 3.7: every challenge solved in the simulation by the plain solution of its hazard.
+  ...CHALLENGES.map((c) => ({ challenge: c.id })),
   ...SCENARIOS.flatMap((s) => Array.from({ length: SEEDS }, (_, n) => ({ id: s.id, seed: (n + 1) * 7919, magic: false }))),
 ];
 const idleResults = new Map<string, { status: string; errors: string[] }[]>();
 const sceneReports: { stream: number; report: SceneReport }[] = [];
+const verifiedChallenges = new Map<string, { ok: boolean; wins: number; runs: number }>();
 const nextIdle = new Int32Array(new SharedArrayBuffer(4));
 const idleDone = Promise.all(
   Array.from({ length: Math.min(4, Math.max(2, availableParallelism() - 1)) }, () => {
     const worker = new Worker(new URL("./challenge-worker.mjs", import.meta.url), { workerData: { jobs: idle, next: nextIdle } });
-    worker.on("message", ({ job, status, errors, report }: { job: Job; status: string; errors: string[]; report?: SceneReport }) => {
-      if (report && "scene" in job) sceneReports.push({ stream: job.scene, report });
-      else if ("id" in job) idleResults.set(job.id, [...(idleResults.get(job.id) ?? []), { status, errors }]);
-    });
+    worker.on(
+      "message",
+      ({
+        job,
+        status,
+        errors,
+        report,
+        verified,
+      }: {
+        job: Job;
+        status: string;
+        errors: string[];
+        report?: SceneReport;
+        verified?: { ok: boolean; wins: number; runs: number };
+      }) => {
+        if (verified && "challenge" in job) verifiedChallenges.set(job.challenge, verified);
+        else if (report && "scene" in job) sceneReports.push({ stream: job.scene, report });
+        else if ("id" in job) idleResults.set(job.id, [...(idleResults.get(job.id) ?? []), { status, errors }]);
+      },
+    );
     return new Promise<void>((resolve, reject) => {
       worker.on("error", reject);
       worker.on("exit", () => resolve());
@@ -297,6 +317,34 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   check("an artifact's state is saved with the world", !!backTotem?.art && backTotem.art.effects.length === 2 && backTotem.art.deeds === totem?.art.deeds);
 }
 
+// 3.7 part C: challenges from nothing. Par counts distinct merges (one
+// made once serves every later use), stars follow par, and every challenge
+// is solved in the simulation by the plain solution of its hazard, cast at
+// one of its spots, on two seeds of three.
+{
+  const graph = [
+    { a: "a", b: "b", result: "c" },
+    { a: "a", b: "c", result: "d" },
+    { a: "b", b: "c", result: "e" },
+    { a: "d", b: "e", result: "f" },
+    { a: "a", b: "a", result: "g" },
+    { a: "g", b: "g", result: "f" },
+  ];
+  const best = fewestMerges(graph, ["a", "b"]);
+  check(
+    "par counts each merge once, however often its result is used",
+    best.get("f")?.size === 2 && best.get("e")?.size === 2,
+    `f in ${best.get("f")?.size}, e in ${best.get("e")?.size}`,
+  );
+  check("an item the start set cannot reach has no par", !fewestMerges(graph, ["b"]).has("f"));
+  check("beating par lowers it", parOf(graph, ["a", "b"], ["e"], 1).par === 1 && parOf(graph, ["a", "b"], ["e"], 5).par === 2);
+  check("three stars at par, two within two, one for any win", starsFor(4, 4) === 3 && starsFor(3, 4) === 3 && starsFor(6, 4) === 2 && starsFor(7, 4) === 1);
+  check(
+    "a challenge that asks for grand magic refuses a major spell",
+    !strongEnough(CHALLENGES.find((d) => d.minTier)!, "major") && strongEnough(CHALLENGES.find((d) => d.minTier)!, "grand"),
+  );
+}
+
 // 6. Declared rules: a blight spreads and burns away, wolves hunt, the
 // undead burn by day.
 {
@@ -509,6 +557,14 @@ for (const { stream, report: r } of sceneReports.sort((a, b) => a.stream - b.str
   );
 }
 check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length === SCENE_STREAMS);
+{
+  const unsolved = CHALLENGES.filter((c) => !verifiedChallenges.get(c.id)?.ok).map((c) => `${c.id} (${verifiedChallenges.get(c.id)?.wins ?? "?"} wins)`);
+  check(
+    `every challenge has a solution the simulation verifies (${CHALLENGES.length}, the hazard's plain solution, two seeds of three)`,
+    !unsolved.length,
+    unsolved.join(", "),
+  );
+}
 
 // 9. The test run before a program is stored (3.3): reference spells pass;
 // a program that crashes, does nothing visible or wipes the island fails.

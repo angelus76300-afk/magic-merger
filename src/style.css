@@ -1437,3 +1437,100 @@ input {
     align-items: stretch;
   }
 }
+
+/* 3.7: the Challenges tab. */
+.challenges-view {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 16px max(24px, env(safe-area-inset-bottom));
+}
+.challenges-view > * {
+  max-width: 760px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.challenges-head h2,
+.attempt-head h2 {
+  margin: 4px 0 6px;
+}
+.challenges-head p,
+.attempt-head p,
+.challenges-empty,
+.challenges-loading {
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+.challenge-cards {
+  display: grid;
+  gap: 12px;
+}
+.challenge-card {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.challenge-card[data-open="false"] {
+  opacity: 0.55;
+}
+.challenge-card h3 {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 6px;
+}
+.challenge-stars {
+  color: var(--accent);
+  letter-spacing: 2px;
+  white-space: nowrap;
+}
+.challenge-card p {
+  margin: 0 0 8px;
+}
+.challenge-start,
+.attempt-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+.challenge-facts {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+.challenge-go,
+.attempt-cast,
+.attempt-back {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 8px 14px;
+  font: inherit;
+}
+.challenge-go:disabled {
+  cursor: default;
+}
+.attempt-back {
+  padding: 4px 10px;
+}
+.attempt-count {
+  font-weight: 600;
+  color: var(--accent);
+  margin: 8px 0;
+}
+.attempt-items .chip {
+  cursor: pointer;
+}
+.attempt-items .chip.picked {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.attempt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  margin-top: 10px;
+}

@@ -265,3 +265,27 @@ function authHeaders(): Record<string, string> {
   if (invite) headers["x-invite"] = invite;
   return headers;
 }
+
+// 3.7: challenges from nothing.
+export interface ChallengeCard {
+  id: string;
+  title: string;
+  brief: string;
+  start: string[];
+  minTier: Tier | null;
+  live: boolean;
+  par: number | null;
+  best: { merges: number; name: string } | null;
+  mine: number | null;
+  stars: number;
+}
+
+export async function challenges(): Promise<{ challenges: ChallengeCard[] }> {
+  const res = await fetch("/api/challenges", { headers: authHeaders() }).catch(() => null);
+  if (!res?.ok) throw new ApiRequestError("The challenges could not be loaded");
+  return res.json();
+}
+
+export function challengeWin(id: string, merges: number, spell: string): Promise<{ stars: number; par: number | null; best: boolean }> {
+  return post("/api/challenge/win", { id, merges, spell });
+}

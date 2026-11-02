@@ -172,7 +172,7 @@ function openSandbox(): void {
   mount(restored ?? Engine.create(canvas, overlay, sandbox.size, hooks));
 }
 
-function openScenario(id: string): void {
+function openScenario(id: string, ahead = 0): void {
   const def = SCENARIOS.find((s) => s.id === id);
   if (!def) return;
   save();
@@ -194,6 +194,11 @@ function openScenario(id: string): void {
       send({ type: "objective", id, text, status });
     }
   };
+  // A live challenge (3.7): the hazard ran while the player merged. Played
+  // here before the island is shown, at most LIVE_MAX (8) seconds of it.
+  const ticks = Math.round(Math.max(0, Math.min(8, ahead)) * 30);
+  for (let k = 0; k < ticks && !over; k++) next.step();
+  world.events.length = 0;
   mount(next);
 }
 
@@ -255,7 +260,7 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       save();
       break;
     case "scenario":
-      openScenario(msg.id);
+      openScenario(msg.id, msg.ahead ?? 0);
       break;
     case "sandbox":
       if (scenario) openSandbox();

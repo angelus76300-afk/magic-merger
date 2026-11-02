@@ -105,7 +105,7 @@ export class WorldHost {
       if (this.challenge) this.send({ type: "reset", size: this.el.size.value as WorldSize });
       else if (window.confirm("Reset the world? Everything in it will be lost.")) this.send({ type: "reset", size: this.el.size.value as WorldSize });
     });
-    this.el.challenges.addEventListener("click", () => this.openChallenges());
+    this.el.challenges.addEventListener("click", () => this.onChallenges());
     this.el.banner.querySelector(".world-banner-retry")!.addEventListener("click", () => {
       if (this.challenge) this.startChallenge(this.challenge);
     });
@@ -385,6 +385,7 @@ export class WorldHost {
         break;
       case "cast":
         if (!this.store.get(msg.key)) break;
+        this.castInAttempt.push(msg.key);
         markUsed(msg.key);
         void this.afterCast(msg.key);
         // In a grid the bar covers the island: fold it once a spell is used.
@@ -475,17 +476,41 @@ export class WorldHost {
     d.showModal();
   }
 
-  private startChallenge(id: string): void {
+  private startChallenge(id: string, ahead = 0): void {
     const info = SCENARIO_LIST.find((s) => s.id === id);
     if (!info) return;
     this.challenge = id;
-    this.send({ type: "scenario", id });
-    this.showObjective(id, info.brief, "playing");
+    this.send({ type: "scenario", id, ahead });
+    this.showObjective(id, this.attempt?.brief ?? info.brief, "playing");
     this.el.reset.textContent = "Restart";
   }
 
+  // A challenge from nothing (3.7, challenges.ts): its hazard island with the
+  // spell made on its board in hand. A win is reported with the merges.
+  // Only what the player made on the challenge's board counts: a win after
+  // casting anything else from the spell bar is not recorded.
+  attempt: {
+    id: string;
+    title: string;
+    brief: string;
+    scenario: string;
+    items: Set<string>;
+    onEnd: (status: "won" | "lost", spell: string | null) => void;
+  } | null = null;
+  private castInAttempt: string[] = [];
+  playAttempt(a: NonNullable<WorldHost["attempt"]>, key: string, ahead: number): void {
+    this.attempt = a;
+    this.castInAttempt = [];
+    this.startChallenge(a.scenario, ahead);
+    this.selectSpell(key);
+  }
+
+  // The World's Challenges button opens the Challenges tab (main.ts).
+  onChallenges: () => void = () => this.openChallenges();
+
   private leaveChallenge(): void {
     this.challenge = null;
+    this.attempt = null;
     this.el.banner.hidden = true;
     this.el.reset.textContent = "Reset";
     this.send({ type: "sandbox" });
@@ -493,14 +518,25 @@ export class WorldHost {
 
   private showObjective(id: string, text: string, status: "playing" | "won" | "lost"): void {
     if (this.challenge !== id) return;
+    if (status === "playing" && text === this.attempt?.brief) this.castInAttempt = [];
     const info = SCENARIO_LIST.find((s) => s.id === id);
     const b = this.el.banner;
     b.hidden = false;
     b.dataset.status = status;
-    b.querySelector(".world-banner-title")!.textContent = info?.title ?? "";
+    b.querySelector(".world-banner-title")!.textContent = this.attempt?.title ?? info?.title ?? "";
     b.querySelector(".world-banner-text")!.textContent = text;
-    b.querySelector(".world-banner-hint")!.textContent = status === "lost" && info ? `Ideas: ${info.hint}` : "";
+    // No hints (3.7): finding the spell is the game.
+    b.querySelector(".world-banner-hint")!.textContent = "";
     (b.querySelector(".world-banner-retry") as HTMLElement).hidden = status === "playing";
+    if (this.attempt && status !== "playing") {
+      const a = this.attempt;
+      const cast = this.castInAttempt;
+      const fair = cast.length > 0 && cast.every((k) => a.items.has(k));
+      if (status === "won") this.attempt = null;
+      a.onEnd(status, fair ? cast[cast.length - 1] : null);
+      this.castInAttempt = [];
+      return;
+    }
     if (status === "won") {
       const first = !this.store.isSolved(id);
       this.store.markSolved(id);

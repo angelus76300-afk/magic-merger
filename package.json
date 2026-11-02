@@ -16,7 +16,8 @@
     "evolve": "esbuild scripts/evolve-runner.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/evolve.mjs --log-level=warning && node node_modules/.cache/evolve.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "challenges": "esbuild scripts/challenge-runner.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/challenge-runner.mjs --log-level=warning && node node_modules/.cache/challenge-runner.mjs"
   },
   "repository": {
     "type": "git",
