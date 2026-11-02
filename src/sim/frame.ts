@@ -3,6 +3,7 @@ import { makeCreature } from "./creatures";
 import type { FromWorld, ToWorld } from "./protocol";
 import type { CastRequest, Runtime } from "./runtime";
 import type { SavedWorld } from "./save";
+import { Hud } from "./hud";
 import { SCENARIOS } from "./scenarios";
 
 // Entry point of the World iframe (world.html). It owns the simulation and
@@ -18,6 +19,9 @@ let unbind: (() => void) | null = null;
 // The sandbox world while a challenge is played, to come back to it untouched.
 let sandbox: { save: SavedWorld | null; size: WorldSize; rules: CastRequest[] } = { save: null, size: "medium", rules: [] };
 let scenario: string | null = null;
+let hud: Hud | null = null;
+let hudOn = false;
+let perfTimer = 0;
 
 function send(msg: FromWorld): void {
   window.parent.postMessage(msg, "*");
@@ -41,6 +45,7 @@ function mount(next: Engine): void {
   engine = next;
   engine.sound.muted = muted;
   unbind = engine.bindInput();
+  showHud(hudOn);
   if (selected) {
     try {
       engine.runtime.compile(selected);
@@ -109,6 +114,18 @@ function openScenario(id: string): void {
   mount(next);
 }
 
+// The HUD follows the engine across resets and challenges; while it is on, a
+// summary leaves every 30 seconds for the page to send to /api/perf.
+function showHud(on: boolean): void {
+  hudOn = on;
+  if (!engine) return;
+  hud ??= new Hud(engine.stats);
+  hud.stats = engine.stats;
+  hud.show(on);
+  clearInterval(perfTimer);
+  if (on) perfTimer = window.setInterval(() => engine && send({ type: "perf", sample: { ...engine.stats.summary(), challenge: scenario ? 1 : 0 } }), 30_000);
+}
+
 window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
   if (e.source !== window.parent || !e.data || typeof e.data !== "object") return;
   const msg = e.data;
@@ -154,6 +171,9 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       break;
     case "sandbox":
       if (scenario) openSandbox();
+      break;
+    case "hud":
+      showHud(msg.on);
       break;
     case "mute":
       muted = msg.muted;

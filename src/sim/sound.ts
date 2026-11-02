@@ -232,7 +232,10 @@ function chime(notes: number[]): Voice {
 
 function ping(f: number): Voice {
   return (ctx, out, t) => {
-    for (const [ratio, level] of [[1, 0.12], [2.76, 0.05]] as const) {
+    for (const [ratio, level] of [
+      [1, 0.12],
+      [2.76, 0.05],
+    ] as const) {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = "sine";

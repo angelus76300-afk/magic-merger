@@ -53,6 +53,26 @@ The merge model gives every new element a tier from its meaning: cantrip (a spot
 
 Measured on six of the player's spells, same prompt, same effort: Haiku 5.5 wrote small and mid spells as well as Opus 5.5 for a thirtieth of the price ($0.002 against $0.076), but only Opus made a World Tree Awakening that grows an actual giant tree. Sonnet 5.5 cost ten times Haiku without doing better. So spells up to grand go to Haiku and legendary or cosmic ones to Opus (`SPELL_MODEL_SMALL`, `SPELL_SMALL_UP_TO`, `SPELL_MODEL`).
 
+### Which model decides merges
+
+Measured on 2026-11-02 on 30 pairs already in the recipe book, spread from depth 1 to 14, each asked once of Haiku 5.5, Sonnet 5.5 and Opus 5.5 at low effort through `/api/admin/merge-trial` (nothing stored). Graded blind (answers shuffled per pair, by a separate grader that only saw the merge prompt's rules): 2 for what a reader would expect with the right kind and tier, 1 for a generic or invented name or one input ignored, 0 for incoherent.
+
+| Model, low effort | Score of 60 | Answers graded 2 | Same name as the frozen answer | Same tier | Cost per merge | Median time |
+| ----------------- | ----------- | ---------------- | ------------------------------ | --------- | -------------- | ----------- |
+| Haiku 5.5         | 51          | 21               | 7 / 30                         | 14 / 24   | $0.00012       | 2.1 s       |
+| Sonnet 5.5        | 47          | 17               | 11 / 30                        | 16 / 24   | $0.00063       | 1.2 s       |
+| Opus 5.5          | 55          | 25               | 21 / 30                        | 20 / 24   | $0.00126       | 1.7 s       |
+
+Merges stay on Opus. A merge is answered once and frozen forever, so a weak answer is a permanent part of everyone's recipe book, while all the merges of the busiest day so far (184) cost $0.22. Haiku would save about a dollar in a month of heavy play and gave the only incoherent answer of the 90 (Elixir of Life + Eternal Night = Dawn, cosmic). Sonnet at low effort was the weakest of the three. Even Opus gives its own frozen answer again only 21 times in 30, which is why answers are frozen.
+
+### Repairs
+
+A crashing program is mended by `REPAIR_MODEL` (Haiku) whatever its tier: the repair sees the program and the error, and fixing one error is not where Opus earns forty times the price.
+
+### Program versions
+
+`PROGRAM_VERSION` records which World API a program was written for. It never triggers a rewrite: 3.1 bumped it to 4 and every big spell was written again on its next cast, which took Opus spell calls from 43 to 96 in a day. The API only grows, old programs keep running (`lab/legacy` holds fourteen v2 and v3 programs that `npm test` casts), and a spell is rewritten one at a time with the admin's "Rewrite this spell" button. Only version 1 rows, which are declarative specs and not code, are written again on their next cast.
+
 ### Artifacts
 
 Artifacts use the same program format and the same endpoint, with one paragraph of the prompt telling the model they are placed, not cast: a short arrival, the thing itself as the point, built in voxels or spawned as a creature, with a tick when it acts on its own.
@@ -70,5 +90,5 @@ Balance is measured, not guessed: `npm test` plays each challenge with nothing a
 3. **People** (`creatures.ts`): villagers live near their houses, rebuild rubble, flee fire, panic and run for water when burning, drown in deep water; a new villager appears now and then while houses stand. Beasts roam, spirits fly and glow, golems are strong and fireproof.
 4. **Generation** (`world.ts`): fractal hills rescaled from their own distribution so every map gets about a fifth of water and a few snowy peaks, a river, forests, and villages on the flattest dry land.
 5. **View** (`voxel/`): a floating voxel island in three.js, with layered cut sides and water spilling off the edges. Built for phones: lighting is baked into vertex colors and every material is unlit, terrain chunks are rebuilt only where a column changed, each kind of object is one instanced draw call, and the pixel density drops when frames are slow. A medium island is about 60 draw calls and 140k triangles. Chunks are built with a reusable typed array writer under a 3 ms per frame budget.
-7. **Day and night** (`voxel/daylight.ts`): a six minute cycle that tints every unlit material and the sky; fire, lava and spell light are untouched, house windows light up at night and chimneys smoke.
-6. **Saving**: the iframe sends a compact save (each layer quantized to bytes) every 10 seconds; the parent keeps it in localStorage. Materials and creatures that spells defined are saved by name with the spell that owns them, and that spell's rules are loaded again before the world.
+6. **Day and night** (`voxel/daylight.ts`): a six minute cycle that tints every unlit material and the sky; fire, lava and spell light are untouched, house windows light up at night and chimneys smoke.
+7. **Saving**: the iframe sends a compact save (each layer quantized to bytes) every 10 seconds; the parent keeps it in localStorage. Materials and creatures that spells defined are saved by name with the spell that owns them, and that spell's rules are loaded again before the world.

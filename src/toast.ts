@@ -7,8 +7,11 @@ export function toast(message: string, tone: "info" | "special" | "error" = "inf
   node.className = `toast toast-${tone}`;
   node.textContent = message;
   container.append(node);
-  window.setTimeout(() => {
-    node.classList.add("leaving");
-    node.addEventListener("animationend", () => node.remove(), { once: true });
-  }, tone === "error" ? 4000 : 2500);
+  window.setTimeout(
+    () => {
+      node.classList.add("leaving");
+      node.addEventListener("animationend", () => node.remove(), { once: true });
+    },
+    tone === "error" ? 4000 : 2500,
+  );
 }

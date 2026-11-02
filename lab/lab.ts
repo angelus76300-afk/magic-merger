@@ -19,8 +19,10 @@ interface LabOptions {
   settle?: number;
   // Camera distance; large values show the whole island.
   dist?: number;
-  // Seconds into the day cycle (see voxel/daylight.ts).
+  // Seconds into the day cycle (see daylight.ts).
   time?: number;
+  // Collect CPU time per frame and per render part instead of frames.
+  profile?: boolean;
 }
 
 function seedRandom(seed: number): void {
@@ -96,7 +98,9 @@ async function runSpell(code: string, options: LabOptions = {}) {
   const overlay = document.getElementById("overlay") as HTMLCanvasElement;
   const errors: string[] = [];
   current?.dispose();
-  const engine = Engine.create(canvas, overlay, options.size ?? "medium", { onError: (_k, _n, m) => errors.push(m), onTap: () => {} }, seed, { preserveDrawingBuffer: true });
+  const engine = Engine.create(canvas, overlay, options.size ?? "medium", { onError: (_k, _n, m) => errors.push(m), onTap: () => {} }, seed, {
+    preserveDrawingBuffer: true,
+  });
   current = engine;
   (window as unknown as { labEngine: Engine }).labEngine = engine;
   const world = engine.world;
@@ -128,13 +132,21 @@ async function runSpell(code: string, options: LabOptions = {}) {
   const last = Math.max(...shots) + Math.round((options.settle ?? 2) / TICK);
   const frames: { t: number; png: string }[] = [];
   let worst = 0;
+  const profile: Record<string, number[]> = {};
+  if (options.profile) engine.view.profile = profile;
+  const stepMs: number[] = [];
+  const renderMs: number[] = [];
   for (let tick = 0; tick <= last; tick++) {
     const t0 = performance.now();
     engine.step();
-    worst = Math.max(worst, performance.now() - t0);
+    const t1 = performance.now();
+    worst = Math.max(worst, t1 - t0);
     engine.render(TICK);
-    if (shots.includes(tick)) frames.push({ t: +(tick * TICK).toFixed(2), png: composite(canvas, overlay) });
+    stepMs.push(t1 - t0);
+    renderMs.push(performance.now() - t1);
+    if (shots.includes(tick) && !options.profile) frames.push({ t: +(tick * TICK).toFixed(2), png: composite(canvas, overlay) });
   }
+  engine.view.profile = null;
   return {
     ok,
     errors: [...new Set(errors)],
@@ -147,12 +159,26 @@ async function runSpell(code: string, options: LabOptions = {}) {
     terrain: diff(before, census(world)),
     creatures: { before: creaturesBefore, after: creatures(world) },
     frames,
+    // CPU time per frame, ms: p50, p95, max. Only with options.profile, for the
+    // render parts (the GPU's own time is not in it).
+    timing: options.profile
+      ? Object.fromEntries([["step", stepMs], ["render", renderMs], ...Object.entries(profile)].map(([k, v]) => [k, quantiles(v as number[])]))
+      : undefined,
   };
+}
+
+function quantiles(list: number[]): [number, number, number] {
+  const s = [...list].sort((a, b) => a - b);
+  const q = (p: number) => +(s[Math.min(s.length - 1, Math.floor(p * s.length))] ?? 0).toFixed(2);
+  return [q(0.5), q(0.95), +(s[s.length - 1] ?? 0).toFixed(1)];
 }
 
 // Plays a challenge for some seconds, optionally casting spells at given
 // times and places, and reports how the objective evolved.
-async function runScenario(id: string, options: { seconds?: number; casts?: { t: number; x: number; y: number; code: string; tier: string }[]; shots?: number[] } = {}) {
+async function runScenario(
+  id: string,
+  options: { seconds?: number; casts?: { t: number; x: number; y: number; code: string; tier: string }[]; shots?: number[] } = {},
+) {
   seedRandom(5);
   const def = SCENARIOS.find((s) => s.id === id)!;
   const canvas = document.getElementById("world") as HTMLCanvasElement;
@@ -172,7 +198,8 @@ async function runScenario(id: string, options: { seconds?: number; casts?: { t:
   const ticks = Math.round((options.seconds ?? 60) / TICK);
   let status = "playing";
   for (let tick = 0; tick <= ticks; tick++) {
-    for (const c of options.casts ?? []) if (Math.round(c.t / TICK) === tick) engine.cast({ key: `lab${c.t}`, name: "Lab", tier: isTier(c.tier) ? c.tier : "major", code: c.code }, c.x, c.y);
+    for (const c of options.casts ?? [])
+      if (Math.round(c.t / TICK) === tick) engine.cast({ key: `lab${c.t}`, name: "Lab", tier: isTier(c.tier) ? c.tier : "major", code: c.code }, c.x, c.y);
     engine.step();
     run.tick(world);
     if (tick % 30 === 0 || shots.includes(tick)) {

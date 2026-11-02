@@ -1,7 +1,8 @@
 import { makeCreature, populate } from "./creatures";
 import { C, F, G, S } from "./materials";
 import { Rng } from "./noise";
-import { addGas, forDisc } from "./physics";
+import { addGas } from "./cells";
+import { forDisc } from "./physics";
 import { TICK, buildVillage, plainWorld, plantForest, type World } from "./world";
 
 // Challenges: hand-made islands with one problem and a way to win. They run
@@ -67,7 +68,10 @@ export const SCENARIOS: Scenario[] = [
             calm = fire === 0 ? calm + 0.5 : 0;
             const text = `Burning: ${fire} · villagers ${v}/${v0} · houses ${Math.round(h / 4)}/${Math.round(h0 / 4)}`;
             if (v < v0 * 0.4 || h < h0 * 0.35) return { text: "The village burned down.", status: "lost" };
-            if (calm >= 3) return v >= v0 * 0.6 && h >= h0 * 0.5 ? { text: "The fire is out and the village stands!", status: "won" } : { text: "The fire is out, but too much was lost.", status: "lost" };
+            if (calm >= 3)
+              return v >= v0 * 0.6 && h >= h0 * 0.5
+                ? { text: "The fire is out and the village stands!", status: "won" }
+                : { text: "The fire is out, but too much was lost.", status: "lost" };
             return { text, status: "playing" };
           },
         },
@@ -101,7 +105,19 @@ export const SCENARIOS: Scenario[] = [
             forDisc(w, 24, 24, 3, (i) => w.place(i, "lava", 0.2));
             if (w.tick % 3 === 0) {
               addGas(w, 24 * SIZE + 24, S.SMOKE, 0.8);
-              w.particles.add({ x: 24 + w.rng.next() * 4 - 2, y: 24 + w.rng.next() * 4 - 2, z: 2, vz: 10 + w.rng.next() * 10, vx: w.rng.next() * 6 - 3, vy: w.rng.next() * 6 - 3, life: 1.6, color: 0xff8a2a, size: 1.4, glow: true, gravity: 12 });
+              w.particles.add({
+                x: 24 + w.rng.next() * 4 - 2,
+                y: 24 + w.rng.next() * 4 - 2,
+                z: 2,
+                vz: 10 + w.rng.next() * 10,
+                vx: w.rng.next() * 6 - 3,
+                vy: w.rng.next() * 6 - 3,
+                life: 1.6,
+                color: 0xff8a2a,
+                size: 1.4,
+                glow: true,
+                gravity: 12,
+              });
             }
             if (w.tick % 60 === 0) w.emit({ kind: "shake", amount: 2, seconds: 0.4 });
           },
@@ -181,7 +197,8 @@ export const SCENARIOS: Scenario[] = [
         if (world.ground[i] === G.GRASS && world.rng.next() < 0.5) world.ground[i] = G.DIRT;
       }
       const wet = new Float32Array(world.n);
-      const green = (w: World, i: number) => w.ground[i] === G.GRASS || w.ground[i] === G.FIELD || w.cover[i] === C.CROP || w.cover[i] === C.TREE || w.cover[i] === C.BUSH;
+      const green = (w: World, i: number) =>
+        w.ground[i] === G.GRASS || w.ground[i] === G.FIELD || w.cover[i] === C.CROP || w.cover[i] === C.TREE || w.cover[i] === C.BUSH;
       let held = 0;
       return {
         world,
@@ -243,7 +260,8 @@ export const SCENARIOS: Scenario[] = [
               for (let x = 0; x < SIZE; x++) {
                 const i = y * SIZE + x;
                 if (w.height[i] >= sea || (w.fluid[i] !== F.WATER && w.fluid[i] !== F.NONE)) continue;
-                const touches = y === 0 || wet(i) || (x > 0 && wet(i - 1)) || (x < SIZE - 1 && wet(i + 1)) || (y > 0 && wet(i - SIZE)) || (y < SIZE - 1 && wet(i + SIZE));
+                const touches =
+                  y === 0 || wet(i) || (x > 0 && wet(i - 1)) || (x < SIZE - 1 && wet(i + 1)) || (y > 0 && wet(i - SIZE)) || (y < SIZE - 1 && wet(i + SIZE));
                 if (touches && w.depth[i] < sea - w.height[i]) w.setFluid(i, F.WATER, sea - w.height[i]);
               }
             }

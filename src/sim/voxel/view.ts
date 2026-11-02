@@ -30,12 +30,18 @@ import { kindOf } from "../creatures";
 import { BUILTIN, C, F, S } from "../materials";
 import { envelope, type Body, type Visuals } from "../visuals";
 import type { World } from "../world";
-import { keyCell, shines, voxelColor, voxelKind } from "../voxels";
 import { bodyGeometry } from "./bodies";
-import { daylight } from "./daylight";
+import { daylight } from "../daylight";
 import { MODELS, geometryOf } from "./models";
 import { OrbitCamera } from "./orbit";
 import { CHUNK, Terrain, columnTop, surfaceY } from "./terrain";
+import { hexColor, mixColor, scaleColor } from "../colors";
+import { DecorInstances } from "./decor-instances";
+import { Darkness } from "./darkness";
+import { keyLevel, keyX, keyY } from "../voxelkey";
+
+// What a spell's darkness pulls the sky toward.
+const NIGHT_SKY = 0x04020f;
 
 // Colors are authored as they should look, with lighting baked in: no color
 // management, no conversion, what is written is what is shown.
@@ -83,7 +89,9 @@ export class VoxelView {
   // Voxels that shine (crystal, magic, fire) are not darkened at night.
   private decorGlow: InstancedMesh;
   private decorVersion = -1;
-  private shining: { x: number; y: number; level: number }[] = [];
+  private decorInstances: DecorInstances;
+  private darkness = new Darkness();
+  private glowKeys: number[] = [];
   private decal: HTMLCanvasElement;
   private decalCtx: CanvasRenderingContext2D;
   private decalTexture: CanvasTexture;
@@ -94,6 +102,8 @@ export class VoxelView {
   private v = new Vector3();
   private col = new Color();
   private frameTimes: number[] = [];
+  private drawTimes: number[] = [];
+  private droppedAt = -Infinity;
   private pixelRatio = 1;
   private cssW = 1;
   private cssH = 1;
@@ -105,7 +115,12 @@ export class VoxelView {
     private world: World,
     options: { preserveDrawingBuffer?: boolean } = {},
   ) {
-    this.renderer = new WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance", preserveDrawingBuffer: !!options.preserveDrawingBuffer });
+    this.renderer = new WebGLRenderer({
+      canvas,
+      antialias: false,
+      powerPreference: "high-performance",
+      preserveDrawingBuffer: !!options.preserveDrawingBuffer,
+    });
     this.renderer.outputColorSpace = LinearSRGBColorSpace;
     this.pixelRatio = Math.min(2, window.devicePixelRatio || 1);
     this.renderer.setPixelRatio(this.pixelRatio);
@@ -123,7 +138,13 @@ export class VoxelView {
     this.decalTexture = new CanvasTexture(this.decal);
     const land = withDecal(new MeshBasicMaterial({ vertexColors: true }), this.decalTexture, world);
     const fluid = withDecal(new MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false }), this.decalTexture, world);
-    this.terrain = new Terrain(world, land, fluid, (m) => this.scene.add(m), (m) => this.scene.remove(m));
+    this.terrain = new Terrain(
+      world,
+      land,
+      fluid,
+      (m) => this.scene.add(m),
+      (m) => this.scene.remove(m),
+    );
 
     const basic = new MeshBasicMaterial({ vertexColors: true });
     for (const key of ["tree", "pine", "bush", "crop", "house", "rubble", "powder", "stump", "flower", "boulder", "block", "slab"]) {
@@ -146,10 +167,16 @@ export class VoxelView {
     this.clouds = this.makeClouds();
     this.decorMesh = this.instanced("puff", basic, 20000);
     this.decorGlow = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true }), 20000);
+    this.decorInstances = new DecorInstances([this.decorMesh, this.decorGlow], 20000, world.w / 2, world.h / 2);
     this.windows = this.instanced("flame", new MeshBasicMaterial({ vertexColors: true }), 4096);
     this.boltCore = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true }), 3000);
-    this.boltHalo = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.35, blending: AdditiveBlending, depthWrite: false }), 3000);
+    this.boltHalo = this.instanced(
+      "puff",
+      new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.35, blending: AdditiveBlending, depthWrite: false }),
+      3000,
+    );
     this.lit = [land, fluid, basic, this.puffs.material as MeshBasicMaterial, this.clouds.material as MeshBasicMaterial];
+    for (const m of this.lit) this.darkness.apply(m);
   }
 
   private instanced(model: string, material: Material, capacity: number): InstancedMesh {
@@ -201,44 +228,107 @@ export class VoxelView {
 
   render(visuals: Visuals, time: number, dt: number, reducedMotion: boolean): void {
     const started = performance.now();
+    this.lapAt = started;
     const { world } = this;
     this.orbit.update(dt, time, this.groundAt, reducedMotion);
     this.terrain.scan();
     this.terrain.rebuild(this.firstBuild);
     this.firstBuild = false;
+    this.lap("terrain");
     if (this.terrain.coversChanged && time - this.lastCovers > 0.25) {
       this.terrain.coversChanged = false;
       this.lastCovers = time;
       this.placeCovers();
     }
+    this.lap("covers");
     if (world.decorVersion !== this.decorVersion) {
       this.decorVersion = world.decorVersion;
       this.placeDecor(time);
     }
+    this.lap("decor");
     this.placeCreatures(time);
+    this.lap("creatures");
     this.placeFireAndGas(time);
     this.placeParticles();
     this.placeBodies(visuals, time);
     this.placeBolts(visuals);
     this.placeRingsAndLights(visuals);
+    this.lap("effects");
     this.paintDecal(visuals);
     this.moveClouds(time);
-    this.applyDaylight(time);
+    this.applyDaylight(time, visuals.darknessLevel(), visuals);
+    this.lap("decal+day");
     this.renderer.render(this.scene, this.orbit.camera);
+    this.lap("draw");
     this.drawOverlay(visuals);
+    this.lap("overlay");
     this.adapt(performance.now() - started, dt);
+  }
+
+  // Spell Lab only: milliseconds per part of render(), one entry per frame.
+  profile: Record<string, number[]> | null = null;
+  private lapAt = 0;
+  private lap(part: string): void {
+    if (!this.profile) return;
+    const now = performance.now();
+    (this.profile[part] ??= []).push(now - this.lapAt);
+    this.lapAt = now;
+  }
+
+  // What the last frame drew, for the HUD.
+  counts(): { calls: number; triangles: number; pixelRatio: number } {
+    const r = this.renderer.info.render;
+    return { calls: r.calls, triangles: r.triangles, pixelRatio: this.pixelRatio };
+  }
+
+  // The light points that stay bright in a spell's darkness, most important
+  // first: spell lights, glowing bodies and creatures, fire and lava on the
+  // land, then glowing voxels. Positions in scene units.
+  private lightTheDark(dark: number, visuals: Visuals): void {
+    const d = this.darkness;
+    d.begin(dark > 0.01 ? dark : 0);
+    if (dark <= 0.01) return;
+    const { world } = this;
+    const at = (x: number, y: number, h: number, r: number, power: number) => {
+      const p = this.toScene(x, y, h);
+      return d.add(p.x, p.y, p.z, r, power);
+    };
+    for (const l of visuals.lights) at(l.x, l.y, this.groundAt(l.x, l.y) + 1, l.r * 1.3, envelope(l.t, l.dur) * 1.2);
+    for (const b of visuals.bodies) if (b.glow && b.look !== "none") at(b.x, b.y, this.groundAt(b.x, b.y) + b.z, Math.max(3, b.r * 4), 1);
+    for (const c of world.creatures) if (!d.full && !c.dead && kindOf(c).glow) at(c.x, c.y, this.groundAt(c.x, c.y) + 1, 5, 0.9);
+    // Fire and lava, looked for on a coarse grid, the brightest spots first.
+    for (let y = 2; y < world.h && !d.full; y += 6) {
+      for (let x = 2; x < world.w && !d.full; x += 6) {
+        const i = y * world.w + x;
+        if (world.fire[i] > 0.3 || world.fluid[i] === F.LAVA || world.materials.get("ground", world.ground[i]).glow)
+          at(x + 0.5, y + 0.5, columnTop(world, i) + 1, 8, 0.9);
+      }
+    }
+    for (const key of this.decorInstances.glowing(6, this.glowKeys)) {
+      if (!at(keyX(key) + 0.5, keyY(key) + 0.5, keyLevel(key) + 0.5, 5, 0.7)) break;
+    }
   }
 
   // Lower the pixel density when frames are slow, raise it back when they are fast.
   private adapt(ms: number, dt: number): void {
-    this.frameTimes.push(Math.max(ms, dt * 1000));
+    this.frameTimes.push(dt * 1000);
+    this.drawTimes.push(ms);
     if (this.frameTimes.length < 60) return;
     const avg = this.frameTimes.reduce((a, b) => a + b, 0) / this.frameTimes.length;
+    const draw = this.drawTimes.reduce((a, b) => a + b, 0) / this.drawTimes.length;
     this.frameTimes = [];
+    this.drawTimes = [];
     const max = Math.min(2, window.devicePixelRatio || 1);
+    // Frames come every 33 ms, one per simulation tick, unless a finger moves
+    // the view. Well past that, frames are being missed: draw fewer pixels.
+    // Back up only when both the cadence and the drawing have room, and not
+    // within 10 s of a drop, so it does not see-saw.
+    const now = performance.now();
     let next = this.pixelRatio;
-    if (avg > 26) next = Math.max(0.6, this.pixelRatio - 0.25);
-    else if (avg < 14) next = Math.min(max, this.pixelRatio + 0.25);
+    if (avg > 52 || draw > 30) {
+      next = Math.max(0.6, this.pixelRatio - 0.25);
+      this.droppedAt = now;
+    } else if (avg < 38 && draw < 12 && now - this.droppedAt > 10_000) next = Math.min(max, this.pixelRatio + 0.25);
     if (next !== this.pixelRatio) {
       this.pixelRatio = next;
       this.renderer.setPixelRatio(next);
@@ -305,47 +395,30 @@ export class VoxelView {
   }
 
   private placeDecor(time: number): void {
-    const { world } = this;
-    const burning = world.voxels.burning;
-    const flame = [0xffd36a, 0xffa43a, 0xff6a1a, 0xe8420f];
-    let n = 0;
-    let g = 0;
-    this.shining = [];
-    for (const [key, v] of world.decor) {
-      const { x, y, level } = keyCell(key);
-      const kind = voxelKind(v);
-      const fire = burning.get(key);
-      const glow = fire !== undefined || shines(kind);
-      const mesh = glow ? this.decorGlow : this.decorMesh;
-      const k = glow ? g++ : n++;
-      if (k >= 20000) continue;
-      this.m.makeTranslation(x - world.w / 2 + 0.5, level + 0.5, y - world.h / 2 + 0.5);
-      mesh.setMatrixAt(k, this.m);
-      mesh.setColorAt(k, this.col.setHex(fire !== undefined ? flame[(key + Math.floor(time * 10)) % 4] : voxelColor(v)));
-      if (glow && this.shining.length < 80 && (k % 7 === 0 || fire !== undefined)) this.shining.push({ x, y, level });
-    }
-    for (const [mesh, count] of [
-      [this.decorMesh, n],
-      [this.decorGlow, g],
-    ] as const) {
-      mesh.count = Math.min(20000, count);
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    }
+    this.decorInstances.update(this.world.decor, this.world.voxels.burning, time);
   }
 
   // Tints the land, the sky and the fog for the time of day; lights the
   // windows at night and lets chimneys smoke.
-  private applyDaylight(time: number): void {
+  // A spell's darkness (w.darken) is the same tint, deeper: everything lit by
+  // the sun dims, while fire, lava glow, shining voxels and spell lights keep
+  // their own light. It used to be a 2D canvas over the whole screen with a
+  // gradient hole cut for every light, redrawn every frame.
+  private applyDaylight(time: number, dark: number, visuals: Visuals): void {
     const day = daylight(time);
     for (const m of this.lit) m.color.setRGB(day.r, day.g, day.b);
-    const key = day.skyTop + day.skyLow;
+    this.lightTheDark(Math.min(0.95, dark), visuals);
+    // The sky is repainted only when it changes by a visible step.
+    const shade = Math.round(Math.min(0.95, dark) * 20) / 20;
+    const top = shade ? hexColor(mixColor(parseInt(day.skyTop.slice(1), 16), NIGHT_SKY, shade)) : day.skyTop;
+    const low = shade ? hexColor(mixColor(parseInt(day.skyLow.slice(1), 16), NIGHT_SKY, shade)) : day.skyLow;
+    const key = top + low;
     if (key !== this.sky) {
       this.sky = key;
-      paintSky(this.skyCanvas, day.skyTop, day.skyLow);
+      paintSky(this.skyCanvas, top, low);
       (this.scene.background as CanvasTexture).image = this.skyCanvas;
       (this.scene.background as CanvasTexture).needsUpdate = true;
-      (this.scene.fog as Fog).color.set(day.skyLow);
+      (this.scene.fog as Fog).color.set(low);
     }
     let n = 0;
     if (day.night > 0.15) {
@@ -370,7 +443,19 @@ export class VoxelView {
     // Chimney smoke: a puff now and then from a random house.
     if (this.houseCells.length && Math.random() < Math.min(0.6, this.houseCells.length / 60)) {
       const i = this.houseCells[(Math.random() * this.houseCells.length) | 0];
-      this.world.particles.add({ x: (i % this.world.w) + 0.5, y: Math.floor(i / this.world.w) + 0.5, z: 1.4, vz: 1.2, vx: this.world.wind.x * 0.6, vy: this.world.wind.y * 0.6, life: 2.5, color: 0xd8d4cc, size: 1.6, drag: 0.4, gravity: -0.3 });
+      this.world.particles.add({
+        x: (i % this.world.w) + 0.5,
+        y: Math.floor(i / this.world.w) + 0.5,
+        z: 1.4,
+        vz: 1.2,
+        vx: this.world.wind.x * 0.6,
+        vy: this.world.wind.y * 0.6,
+        life: 2.5,
+        color: 0xd8d4cc,
+        size: 1.6,
+        drag: 0.4,
+        gravity: -0.3,
+      });
     }
   }
 
@@ -401,11 +486,11 @@ export class VoxelView {
       this.m.makeScale(head, head, head);
       this.m.setPosition(p.x + (c.dead ? size * 0.6 : 0), p.y + bob + (c.dead ? 0 : size * tall), p.z);
       this.headMesh.setMatrixAt(n, this.m);
-      const headColor = c.kind === "villager" ? (c.dead ? 0x777070 : 0xf1c27d) : c.kind === "golem" ? 0x9dfcff : scaleHex(color, 1.1);
+      const headColor = c.kind === "villager" ? (c.dead ? 0x777070 : 0xf1c27d) : c.kind === "golem" ? 0x9dfcff : scaleColor(color, 1.1);
       this.headMesh.setColorAt(n, this.col.setHex(c.fear > 0 && Math.floor(time * 4) % 2 === 0 ? 0xffe066 : c.sleep > 0 ? 0xa9c8ff : headColor));
       const mood = c.dead ? null : (c.data.mood as string | null | undefined);
       if (mood && marks < 900) {
-        const color = mood === "carry" ? ((c.data.carry as number | undefined) ?? 0xffd36a) : MOOD_COLORS[mood] ?? 0xffffff;
+        const color = mood === "carry" ? ((c.data.carry as number | undefined) ?? 0xffd36a) : (MOOD_COLORS[mood] ?? 0xffffff);
         const s = Math.max(0.22, size * 0.28) * (mood === "lured" || mood === "angry" ? 0.9 + 0.2 * Math.sin(time * 8 + c.id) : 1);
         this.m.makeScale(s, s, s);
         this.m.setPosition(p.x, p.y + bob + size * tall + head + s * 1.2, p.z);
@@ -493,7 +578,7 @@ export class VoxelView {
     };
     fill(this.glowPoints, true);
     fill(this.dullPoints, false);
-    const scale = this.renderer.getPixelRatio() * this.cssH * 0.5 / Math.tan((this.orbit.camera.fov * Math.PI) / 360);
+    const scale = (this.renderer.getPixelRatio() * this.cssH * 0.5) / Math.tan((this.orbit.camera.fov * Math.PI) / 360);
     (this.glowPoints.material as ShaderMaterial).uniforms.scale.value = scale;
     (this.dullPoints.material as ShaderMaterial).uniforms.scale.value = scale;
   }
@@ -549,11 +634,17 @@ export class VoxelView {
       const mote = new BoxGeometry(0.16, 0.16, 0.16);
       for (let k = 0; k < 16; k++) group.add(new Mesh(mote, new MeshBasicMaterial({ color: k % 3 ? b.color : b.color2 })));
     } else {
-      const mat = new MeshBasicMaterial({ vertexColors: true, transparent: b.look === "cloud" || b.look === "vortex", opacity: b.look === "cloud" ? 0.88 : b.look === "vortex" ? 0.8 : 1 });
+      const mat = new MeshBasicMaterial({
+        vertexColors: true,
+        transparent: b.look === "cloud" || b.look === "vortex",
+        opacity: b.look === "cloud" ? 0.88 : b.look === "vortex" ? 0.8 : 1,
+      });
       group.add(new Mesh(bodyGeometry(b.look, b.color, b.color2), mat));
     }
     if (b.glow) {
-      const glow = new Sprite(new SpriteMaterial({ map: this.glowTexture, color, blending: AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.7 }));
+      const glow = new Sprite(
+        new SpriteMaterial({ map: this.glowTexture, color, blending: AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.7 }),
+      );
       glow.scale.setScalar(b.look === "cloud" ? 2.5 : 3.2);
       group.add(glow);
     }
@@ -602,7 +693,10 @@ export class VoxelView {
 
   private placeRingsAndLights(visuals: Visuals): void {
     while (this.rings.length < visuals.shockwaves.length) {
-      const ring = new Mesh(new RingGeometry(0.92, 1, 64), new MeshBasicMaterial({ transparent: true, blending: AdditiveBlending, side: DoubleSide, depthWrite: false }));
+      const ring = new Mesh(
+        new RingGeometry(0.92, 1, 64),
+        new MeshBasicMaterial({ transparent: true, blending: AdditiveBlending, side: DoubleSide, depthWrite: false }),
+      );
       ring.rotation.x = -Math.PI / 2;
       this.rings.push(ring);
       this.scene.add(ring);
@@ -665,45 +759,14 @@ export class VoxelView {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const dark = visuals.darknessLevel();
-    if (dark > 0.01) {
-      ctx.fillStyle = `rgba(4,2,16,${Math.min(0.95, dark)})`;
-      ctx.fillRect(0, 0, this.cssW, this.cssH);
-      ctx.globalCompositeOperation = "destination-out";
-      const hole = (x: number, y: number, h: number, r: number, a: number) => {
-        const p = this.toScene(x, y, h).project(this.orbit.camera);
-        if (p.z > 1) return;
-        const sx = ((p.x + 1) / 2) * this.cssW;
-        const sy = ((1 - p.y) / 2) * this.cssH;
-        const rr = (r / this.orbit.dist) * this.cssH * 1.4;
-        if (rr < 1) return;
-        const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, rr);
-        g.addColorStop(0, `rgba(0,0,0,${a})`);
-        g.addColorStop(1, "rgba(0,0,0,0)");
-        ctx.fillStyle = g;
-        ctx.fillRect(sx - rr, sy - rr, rr * 2, rr * 2);
-      };
-      for (const l of visuals.lights) hole(l.x, l.y, this.groundAt(l.x, l.y), l.r, envelope(l.t, l.dur));
-      for (const b of visuals.bodies) if (b.glow && b.look !== "none") hole(b.x, b.y, this.groundAt(b.x, b.y) + b.z, Math.max(3, b.r * 4), 0.9);
-      for (const c of this.world.creatures) if (!c.dead && kindOf(c).glow) hole(c.x, c.y, this.groundAt(c.x, c.y), 4, 0.8);
-      for (const v of this.shining) hole(v.x + 0.5, v.y + 0.5, v.level, 4, 0.5);
-      const { world } = this;
-      for (let y = 0; y < world.h; y += 3) {
-        for (let x = 0; x < world.w; x += 3) {
-          const i = y * world.w + x;
-          if (world.fire[i] > 0.3 || world.fluid[i] === F.LAVA || world.materials.get("ground", world.ground[i]).glow) hole(x, y, columnTop(world, i), 5, 0.6);
-        }
-      }
-      ctx.globalCompositeOperation = "source-over";
-    }
     for (const t of visuals.tints) {
       ctx.globalAlpha = t.alpha * envelope(t.t, t.dur);
-      ctx.fillStyle = `#${t.color.toString(16).padStart(6, "0")}`;
+      ctx.fillStyle = hexColor(t.color);
       ctx.fillRect(0, 0, this.cssW, this.cssH);
     }
     if (visuals.flash > 0) {
       ctx.globalAlpha = Math.min(1, visuals.flash);
-      ctx.fillStyle = `#${visuals.flashColor.toString(16).padStart(6, "0")}`;
+      ctx.fillStyle = hexColor(visuals.flashColor);
       ctx.fillRect(0, 0, this.cssW, this.cssH);
     }
     ctx.globalAlpha = 1;
@@ -873,8 +936,4 @@ function pointCloud(capacity: number, glow: boolean, texture: CanvasTexture): Po
 function withColors(mesh: InstancedMesh): void {
   const white = new Color(0xffffff);
   for (let k = 0; k < mesh.instanceMatrix.count; k++) mesh.setColorAt(k, white);
-}
-
-function scaleHex(c: number, k: number): number {
-  return (Math.min(255, Math.round(((c >> 16) & 255) * k)) << 16) | (Math.min(255, Math.round(((c >> 8) & 255) * k)) << 8) | Math.min(255, Math.round((c & 255) * k));
 }

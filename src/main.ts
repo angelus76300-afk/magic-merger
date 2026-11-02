@@ -10,15 +10,7 @@ import { WorldHost } from "./worldhost";
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
 const store = new Store();
-const craft = new Craft(
-  store,
-  $("#board"),
-  $("#inventory"),
-  $("#inventory-list"),
-  $<HTMLInputElement>("#search"),
-  $("#count"),
-  $("#inventory-filters"),
-);
+const craft = new Craft(store, $("#board"), $("#inventory"), $("#inventory-list"), $<HTMLInputElement>("#search"), $("#count"), $("#inventory-filters"));
 craft.init();
 $("#clear").addEventListener("click", () => craft.clearBoard());
 
@@ -37,6 +29,12 @@ const world = new WorldHost(store, {
 });
 
 function showTab(view: string): void {
+  $("#admin-badge").addEventListener("click", () => {
+    const badge = $("#admin-badge");
+    if (badge.title) window.alert(`This month, by call:\n${badge.title}`);
+    void showSpend(badge);
+  });
+
   for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
     tab.setAttribute("aria-selected", String(tab.dataset.view === view));
   }
@@ -48,6 +46,12 @@ function showTab(view: string): void {
   else world.hide();
 }
 
+$("#admin-badge").addEventListener("click", () => {
+  const badge = $("#admin-badge");
+  if (badge.title) window.alert(`This month, by call:\n${badge.title}`);
+  void showSpend(badge);
+});
+
 for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
   tab.addEventListener("click", () => showTab(tab.dataset.view!));
 }
@@ -55,7 +59,6 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
 world.init();
 // New discoveries get their program written in the background (cheap tiers only).
 craft.onNewElement = (key) => world.ahead(key);
-
 
 setCardActions({
   cast: (key) => {
@@ -72,13 +75,41 @@ async function refreshSession(): Promise<void> {
   session.mock = status?.mock ?? false;
   session.admin = status?.admin ?? false;
   $("#mock-badge").hidden = !session.mock;
-  $("#admin-badge").hidden = !session.admin;
+  const badge = $("#admin-badge");
+  badge.hidden = !session.admin;
+  if (session.admin) void showSpend(badge);
+}
+
+// The admin badge shows what Claude cost this month, and the detail on tap.
+async function showSpend(badge: HTMLElement): Promise<void> {
+  const spend = await api.spend();
+  if (!spend) return;
+  badge.textContent = `admin $${spend.month.toFixed(2)}`;
+  badge.title = spend.calls.map((c) => `${c.call} ${c.model.replace("claude-", "")}: ${c.n} calls, $${c.usd.toFixed(3)}`).join("\n");
 }
 void refreshSession();
 
+// A long press on the title shows the frame HUD in the World (and sends its
+// numbers to the Worker every 30 seconds while it is on).
+let pressTimer = 0;
+let longPressed = false;
+const title = $(".title");
+title.addEventListener("pointerdown", () => {
+  longPressed = false;
+  clearTimeout(pressTimer);
+  pressTimer = window.setTimeout(() => {
+    longPressed = true;
+    const on = world.toggleHud();
+    toast(on ? "Frame HUD on: open the World tab" : "Frame HUD off");
+  }, 700);
+});
+for (const type of ["pointerup", "pointercancel", "pointerleave"]) title.addEventListener(type, () => clearTimeout(pressTimer));
+title.addEventListener("contextmenu", (e) => e.preventDefault());
+
 // Five quick taps on the title ask for a token: the way in for the admin.
 let taps: number[] = [];
-$(".title").addEventListener("click", () => {
+title.addEventListener("click", () => {
+  if (longPressed) return;
   const now = Date.now();
   taps = [...taps.filter((t) => now - t < 3000), now];
   if (taps.length < 5) return;

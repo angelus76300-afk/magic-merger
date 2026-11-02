@@ -1,7 +1,7 @@
 import { C, F, G, S } from "./materials";
 import { explode, forDisc } from "./physics";
 import { lull, social, stepLandmarks, type Mood } from "./social";
-import { daylight } from "./voxel/daylight";
+import { daylight } from "./daylight";
 import type { World } from "./world";
 
 // What a spell-made creature does, declared rather than coded, so even a
@@ -122,6 +122,12 @@ export interface Creature {
 
 let nextId = 1;
 
+// Tests only: creature ids feed some choices, so a replay that must give the
+// same answer whatever ran before it starts from the same id.
+export function resetCreatureIds(): void {
+  nextId = 1;
+}
+
 export function kindOf(c: Creature): CreatureKind {
   return KINDS.get(c.kind) ?? KINDS.get("villager")!;
 }
@@ -233,7 +239,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   if (onGround) {
     if (world.fire[i] > 0.25 && !k.fireproof && !immune("fire")) c.burning = Math.max(c.burning, 3);
     const fluid = world.materials.get("fluid", world.fluid[i]);
-    if (world.depth[i] > 0.05 && fluid.hurts > 0 && !(k.fireproof && world.fluid[i] === F.LAVA) && !(immune("acid") && world.fluid[i] === F.ACID)) c.hp -= fluid.hurts * dt;
+    if (world.depth[i] > 0.05 && fluid.hurts > 0 && !(k.fireproof && world.fluid[i] === F.LAVA) && !(immune("acid") && world.fluid[i] === F.ACID))
+      c.hp -= fluid.hurts * dt;
     if (world.fluid[i] === F.WATER && world.depth[i] > 0.25) c.burning = 0;
     if (world.fluid[i] === F.WATER && world.depth[i] > 1.4 && !k.swims && !immune("water")) {
       c.drowning += dt;
@@ -296,7 +303,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       pace = 1.5;
     } else if (c.calm > 0) {
       pace = 0;
-    } else if (ai && ai.active !== "always" && (daylight(world.time).night > 0.5) !== (ai.active === "night")) {
+    } else if (ai && ai.active !== "always" && daylight(world.time).night > 0.5 !== (ai.active === "night")) {
       // Out of its hours it rests where it is.
       pace = 0;
       mood = "asleep";
@@ -368,7 +375,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
 function others(world: World, c: Creature, r: number, kinds: string[]): Creature | null {
   let best: Creature | null = null;
   let bestD = r;
-  for (const o of world.creatures) {
+  for (const o of world.crowd.near(world, c.x, c.y, r)) {
     if (o === c || o.dead) continue;
     if (kinds.length ? !kinds.includes(o.kind) : o.kind === c.kind) continue;
     const d = Math.hypot(o.x - c.x, o.y - c.y);
@@ -464,7 +471,7 @@ function sideEffects(world: World, c: Creature, ai: Behavior, i: number, onGroun
   if (!ai.aura || world.tick % 8 !== c.id % 8) return;
   const r = ai.auraRadius;
   const p = ai.auraPower;
-  for (const o of world.creatures) {
+  for (const o of world.crowd.near(world, c.x, c.y, r)) {
     if (o === c || o.dead || Math.abs(o.x - c.x) > r || Math.abs(o.y - c.y) > r || Math.hypot(o.x - c.x, o.y - c.y) > r) continue;
     switch (ai.aura) {
       case "heal":
@@ -497,47 +504,67 @@ function sideEffects(world: World, c: Creature, ai: Behavior, i: number, onGroun
     }
     if (o.hp <= 0) o.dead = true;
   }
-  if (ai.aura === "freeze") forDisc(world, c.x, c.y, r, (j) => {
-    world.temp[j] = Math.min(world.temp[j], -5);
-    world.fire[j] = 0;
-  });
-  if (ai.aura === "burn" || ai.aura === "heal") world.particles.add({ x: c.x + (Math.random() - 0.5) * r, y: c.y + (Math.random() - 0.5) * r, z: 0.5, vz: 1.5, life: 0.8, color: ai.aura === "heal" ? 0x9dffb0 : 0xff8a2a, size: 1, glow: true });
+  if (ai.aura === "freeze")
+    forDisc(world, c.x, c.y, r, (j) => {
+      world.temp[j] = Math.min(world.temp[j], -5);
+      world.fire[j] = 0;
+    });
+  if (ai.aura === "burn" || ai.aura === "heal")
+    world.particles.add({
+      x: c.x + (Math.random() - 0.5) * r,
+      y: c.y + (Math.random() - 0.5) * r,
+      z: 0.5,
+      vz: 1.5,
+      life: 0.8,
+      color: ai.aura === "heal" ? 0x9dffb0 : 0xff8a2a,
+      size: 1,
+      glow: true,
+    });
 }
 
 function deathOf(world: World, c: Creature, what: string): void {
   if (what === "explode") explode(world, c.x, c.y, 3 + c.size * 2, 1);
   else if (what === "fire") forDisc(world, c.x, c.y, 2.5, (j) => (world.fire[j] = Math.max(world.fire[j], 0.8)));
-  else if (what === "seeds") forDisc(world, c.x, c.y, 3, (j) => {
-    if (world.depth[j] < 0.1 && Math.random() < 0.4) {
-      world.ground[j] = G.GRASS;
-      world.setCover(j, Math.random() < 0.5 ? C.TREE : C.FLOWER);
-    }
-  });
-  else if (what === "ice") forDisc(world, c.x, c.y, 3, (j) => {
-    world.temp[j] = -20;
-    if (world.fluid[j] === F.WATER) world.fluid[j] = F.ICE;
-  });
+  else if (what === "seeds")
+    forDisc(world, c.x, c.y, 3, (j) => {
+      if (world.depth[j] < 0.1 && Math.random() < 0.4) {
+        world.ground[j] = G.GRASS;
+        world.setCover(j, Math.random() < 0.5 ? C.TREE : C.FLOWER);
+      }
+    });
+  else if (what === "ice")
+    forDisc(world, c.x, c.y, 3, (j) => {
+      world.temp[j] = -20;
+      if (world.fluid[j] === F.WATER) world.fluid[j] = F.ICE;
+    });
   else if (what.startsWith("spawn:")) {
     const kind = what.slice(6);
-    if (KINDS.has(kind) && world.creatures.length < 600) for (let n = 0; n < 2; n++) world.creatures.push(makeCreature(kind, c.x + Math.random() - 0.5, c.y + Math.random() - 0.5));
+    if (KINDS.has(kind) && world.creatures.length < 600)
+      for (let n = 0; n < 2; n++) world.creatures.push(makeCreature(kind, c.x + Math.random() - 0.5, c.y + Math.random() - 0.5));
   } else forDisc(world, c.x, c.y, 2, (j) => world.place(j, what, 0.6));
 }
+
+// Where a creature looks for danger: eight directions, at 1.5 and 3 cells.
+// Each entry is the offset, then the push away from it (closer pushes harder).
+const DANGER_PROBES: readonly (readonly [number, number, number, number])[] = [1.5, 3].flatMap((r) =>
+  Array.from({ length: 8 }, (_, a) => {
+    const ang = (a / 8) * Math.PI * 2;
+    return [Math.cos(ang) * r, Math.sin(ang) * r, -Math.cos(ang) / r, -Math.sin(ang) / r] as const;
+  }),
+);
 
 function senseDanger(world: World, c: Creature): { x: number; y: number } | null {
   let dx = 0;
   let dy = 0;
   let found = false;
-  for (let a = 0; a < 8; a++) {
-    const ang = (a / 8) * Math.PI * 2;
-    for (const r of [1.5, 3]) {
-      const x = Math.round(c.x + Math.cos(ang) * r);
-      const y = Math.round(c.y + Math.sin(ang) * r);
-      if (!world.inside(x, y)) continue;
-      if (danger(world, y * world.w + x)) {
-        dx -= Math.cos(ang) / r;
-        dy -= Math.sin(ang) / r;
-        found = true;
-      }
+  for (const [ox, oy, px, py] of DANGER_PROBES) {
+    const x = Math.round(c.x + ox);
+    const y = Math.round(c.y + oy);
+    if (!world.inside(x, y)) continue;
+    if (danger(world, y * world.w + x)) {
+      dx += px;
+      dy += py;
+      found = true;
     }
   }
   return found ? { x: dx, y: dy } : null;

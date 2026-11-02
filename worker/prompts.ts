@@ -65,30 +65,38 @@ For an artifact: say what it is, what it looks like and what mages use it for. D
 
 Write vivid plain prose. No lists, no headings, no quotation marks around the name, nothing unsuitable for all ages.`;
 
-export function describeUserMessage(
-  name: string,
-  kind: string,
-  recipe: [string, string] | null,
-): string {
+export function describeUserMessage(name: string, kind: string, recipe: [string, string] | null): string {
   const origin = recipe ? ` It is made from ${recipe[0]} and ${recipe[1]}.` : " It is one of the primal forces.";
   const article = kind === "artifact" ? "an" : "a";
   return `Write the entry for ${name}, ${article} ${kind}.${origin}`;
 }
 
-// A tier that was never chosen (elements from before tiers): asked once.
-export const TIER_SYSTEM = `Magic Merger is a crafting game about magic. Rate how far an item's power would really reach:
+// Tiers that were never chosen (elements from before tiers): asked once, for
+// all of them in one call.
+export const TIER_SYSTEM = `Magic Merger is a crafting game about magic. For each item in the list, one per line, rate how far its power would really reach:
 cantrip: one spot, a single person or tree.
 minor: a house, a small group.
 major: a village.
 grand: a valley, a lake, a forest.
 legendary: a whole region, a mountain range.
 cosmic: the entire world, the sky, creation itself.
-Judge the meaning: Spark is a cantrip, Earthquake is grand, Big Bang is cosmic.`;
+Judge the meaning: Spark is a cantrip, Earthquake is grand, Big Bang is cosmic.
+Answer with every item's name exactly as given, without the kind, and its tier.`;
 
-export const TIER_SCHEMA = {
+export const TIERS_SCHEMA = {
   type: "object",
-  properties: { tier: { type: "string", enum: [...TIERS] } },
-  required: ["tier"],
+  properties: {
+    tiers: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { name: { type: "string" }, tier: { type: "string", enum: [...TIERS] } },
+        required: ["name", "tier"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["tiers"],
   additionalProperties: false,
 } as const;
 

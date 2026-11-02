@@ -1,6 +1,6 @@
 # Where the game stands, and what comes next
 
-Updated on 2026-11-02, after 3.0 and 3.1 were merged (PR #3).
+Updated on 2026-11-02, during 3.2 (PR #5).
 
 ## Done since the first review
 
@@ -50,6 +50,19 @@ Asked for after 3.0: "a vampire will kill humans, gold will attract humans; we n
 5. **Visible intent.** A small block over each head shows fear, lure, carrying, anger, hunting or sleep.
 6. **The prompt asks every artifact for at least one relationship.** Regenerated Vampire, Gold, Stake, Sanctuary, Dryad, Mandrake and Holy Grail all declared one; a Stake planted in a village saves villagers from vampires by night.
 
+## Done in 3.2: measure and protect the budget
+
+1. **No more bulk rewrites.** Programs of any version from 2 on are served as they are. Replaying every stored program on today's runtime (`scripts/replay-stored.ts`): v2 4/4, v3 10/11 (Earth has its own bug, a repair case), v4 117/117; v1 rows are not code and are written once on their next cast. Fourteen old programs in `lab/legacy` are cast by `npm test`. The admin card says which API version and model wrote a spell and has a "Rewrite this spell" button that names the cost first. Repairs go to Haiku whatever the tier.
+2. **Cost.** Merges compared on 30 known pairs, graded blind (DESIGN.md, `docs/measurements/merge-models-2026-11.md`): Opus 55/60, Haiku 51, Sonnet 47 at low effort. Merges stay on Opus: they are frozen forever and cost $0.0013 each. Lone Opus and Sonnet spell calls no longer write the prompt cache (about $0.0035 a call); the Sonnet 5.5 cache read price is $0.10, not $0.20; `/api/spend` and the admin badge group the month by call and model. The tier was already in the merge answer; what remained were 47 separate tier calls ($0.09, six times the cost of all descriptions) for 92 elements from before tiers, now replaced by a one-off batched backfill endpoint and the depth as a fallback.
+3. **Frame HUD** behind a long press on the title, with samples sent to `/api/perf`. No phone session yet: the numbers below are from Node and a headless browser.
+4. **Performance**, measured with `scripts/prof-spell.ts` (Node) and `scripts/prof-view.mjs` (Spell Lab):
+   - Frames are drawn only after a simulation tick or a camera move, 30 a second at most on touch screens: 60 draws a second become 30 on a 60 Hz screen, 120 become 30 on a 120 Hz screen.
+   - Voxels in a fixed hash table of typed arrays with a reusable flood fill queue: in a 16,000 voxel forest fire the voxel code takes 15 to 20% less CPU and the garbage collector 20 to 30% less; worst tick 98 and 76 ms before, 55 and 65 ms after.
+   - Decor instances updated one by one: a fire spreading through a forest spends 537 ms updating them instead of 1,256 (p95 5.3 ms instead of 14.2), and uploads only the changed range. A whole forest lit at once is 23% cheaper in total but its worst update is 18 ms instead of 13.
+   - Darkness drawn by the materials (16 light points in the shader) instead of a full screen 2D canvas with a gradient per light; same look, checked side by side in the Spell Lab.
+   - A grid for creatures and precomputed danger probes: with 312 creatures, creature update p50 1.07 to 0.91 ms, worst 25 to 18 ms. The pairwise scan was not the main cost.
+5. **Hygiene.** Prettier and ESLint in CI; the simulation cannot import the view or three.js; `voxelkey.ts` and `colors.ts` replace copies in five files; physics and voxels no longer import each other; the day clock moved from the view into the simulation.
+
 ## Decisions taken
 
 1. **Cosmic spells may ruin the island.** Consequences are part of the fun; the land regrows on its own (ash turns to soil, grass and forests come back) and Reset is one tap away. Revisit if it feels punishing in play.
@@ -57,9 +70,9 @@ Asked for after 3.0: "a vampire will kill humans, gold will attract humans; we n
 
 ## What to watch
 
-1. **Phones.** Measured in a headless browser, not on a real device. If a mid-range phone stutters, the first levers are the small world size and lower pixel density.
+1. **Phones.** Still measured only in Node and a headless browser. The HUD sends real numbers to `/api/perf` as soon as someone plays with it on. In steady state the simulation's cost is temperature and fluids (about 40% of a tick in every scene), not voxels or creatures: that is the next lever if phones run hot.
 2. **Sounds** were checked for errors, not listened to.
-3. **Challenge balance with real spells.** The checks use simple hand-written solutions; Claude's spells may be stronger or weaker. Wildfire still loses on its own only 7 times in 8.
+3. **Challenge balance with real spells.** The checks use simple hand-written solutions; Claude's spells may be stronger or weaker. Doing nothing wins Wildfire 3 times in 16 seeded replays; the test passes on its one seed. Needs retuning and a multi-seed check.
 
 ## What the money taught us
 
@@ -69,7 +82,7 @@ The ledger holds $6.64 (plus about $3.32 before it existed): about $10 of the $2
 
 Sizes are per Claude Code session: S a few hours, M a full session, L two or more. The roadmap page written after 3.0 has the research behind each item and a ready prompt per version.
 
-### 3.2 Measure and protect the budget (next session)
+### 3.2 Measure and protect the budget (done, see above)
 
 1. **Budget guard.** Programs of older versions stay castable; the version only records what a program was written for. An admin "rewrite this spell" button for one spell at a time. Repairs always on Haiku.
 2. **Cost quick wins.** Merges and tiers on Haiku or Sonnet at low effort after a side by side test on 30 pairs; no prompt cache write on lone Opus calls; tier folded into the merge answer; the Sonnet cache read price fixed in `worker/oracle.ts`; `/api/spend` grouped by call with the month's total, shown in the admin badge.

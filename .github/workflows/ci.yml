@@ -1,4 +1,5 @@
-# Typecheck and build everything, then run the simulation checks:
+# Lint (the simulation never imports the view, no import cycles), check
+# formatting, typecheck and build everything, then run the simulation checks:
 # map generation, reference spells, the loop guard, saving, and every
 # challenge both ways (doing nothing must not win, the right magic must win).
 name: CI
@@ -17,5 +18,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
       - run: npm run build
       - run: npm test

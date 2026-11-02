@@ -48,7 +48,12 @@ export class Craft {
   // Called when this player finds something they did not have yet.
   onNewElement: (key: string) => void = () => {};
 
-  private filters = new FilterBar("mm-craft-filters", { kind: "all", tier: "any", sort: "oldest", query: "" }, { search: false, sorts: ["oldest", "newest", "name", "power"] }, () => this.renderInventory());
+  private filters = new FilterBar(
+    "mm-craft-filters",
+    { kind: "all", tier: "any", sort: "oldest", query: "" },
+    { search: false, sorts: ["oldest", "newest", "name", "power"] },
+    () => this.renderInventory(),
+  );
 
   constructor(
     private store: Store,
@@ -85,7 +90,12 @@ export class Craft {
 
   renderInventory(): void {
     const all = this.store.discoveries();
-    const shown = applyFilters(all, { ...this.filters.state, query: this.search.value }, () => 0, (d) => elementKey(d.element.name));
+    const shown = applyFilters(
+      all,
+      { ...this.filters.state, query: this.search.value },
+      () => 0,
+      (d) => elementKey(d.element.name),
+    );
     this.count.textContent = shown.length === all.length ? `${all.length} discovered` : `${shown.length} of ${all.length}`;
 
     const fragment = document.createDocumentFragment();
@@ -264,8 +274,7 @@ export class Craft {
         toast(`First discovery: ${label}`, "special");
         // Let the chip pop first, then celebrate with its card.
         window.setTimeout(() => openCard(this.store, chip.key, true), 700);
-      }
-      else if (newForMe) toast(`New: ${label}`);
+      } else if (newForMe) toast(`New: ${label}`);
       if (newForMe) this.renderInventory();
       if (newForMe) this.onNewElement(chip.key);
     } catch (err) {

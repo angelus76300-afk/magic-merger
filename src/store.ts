@@ -1,6 +1,6 @@
 import { PRIMITIVES, elementKey } from "../shared/elements";
 import type { SpellProgram } from "../shared/spellcode";
-import { PROGRAM_VERSION } from "../shared/version";
+import { FIRST_PROGRAM_VERSION } from "../shared/version";
 import type { GameElement } from "../shared/types";
 
 export interface Discovery {
@@ -23,6 +23,7 @@ interface SaveData {
   descriptions: Record<string, string>;
   // Spell programs by element key. Older saves hold v1 specs here: they are
   // ignored (see spell()) and replaced the first time the spell is cast.
+  // Programs of every later version are kept and cast as they are.
   spells?: Record<string, SpellProgram>;
   board: BoardChip[];
   nextChipId: number;
@@ -79,7 +80,9 @@ export class Store {
 
   spell(key: string): SpellProgram | undefined {
     const program = this.data.spells?.[key];
-    return program?.version === PROGRAM_VERSION && typeof program.code === "string" ? program : undefined;
+    // Any program is kept, whatever version it was written for: only the admin
+    // rewrites a spell, one at a time.
+    return program && program.version >= FIRST_PROGRAM_VERSION && typeof program.code === "string" ? program : undefined;
   }
 
   setSpell(key: string, program: SpellProgram): void {

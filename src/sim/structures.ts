@@ -1,4 +1,5 @@
 import { VK, packVoxel } from "./voxels";
+import { FACE_STEPS, keyLevel, keyX, keyY, voxelKey } from "./voxelkey";
 import type { World } from "./world";
 
 // Ready-made builds for spells: trees of many kinds, spires, towers, walls,
@@ -23,7 +24,7 @@ export class Builder {
     const ry = Math.round(y);
     const rl = Math.round(level);
     if (!this.world.inside(rx, ry) || rl < -60 || rl > 380) return;
-    this.cells.set(this.world.decorKey(rx, ry, rl), packVoxel(color, kind));
+    this.cells.set(voxelKey(rx, ry, rl), packVoxel(color, kind));
   }
 
   // A column from the land up to `level`, so nothing built on a slope hangs.
@@ -100,17 +101,16 @@ export class Builder {
     const seen = new Set<number>();
     const queue: number[] = [];
     for (const key of this.cells.keys()) {
-      const level = (key % 512) - 128;
-      const cell = Math.floor(key / 512);
-      const x = cell % 1024;
-      const y = Math.floor(cell / 1024);
+      const level = keyLevel(key);
+      const x = keyX(key);
+      const y = keyY(key);
       if (level <= this.top(x, y) || this.world.decor.has(key - 1)) {
         seen.add(key);
         queue.push(key);
       }
     }
     // Breadth first, but upward neighbors first so trunks rise before they spread.
-    const steps = [1, -1, 512, -512, 1024 * 512, -1024 * 512];
+    const steps = FACE_STEPS;
     for (let q = 0; q < queue.length; q++) {
       const key = queue[q];
       order.push([key, this.cells.get(key)!]);
@@ -162,7 +162,8 @@ export function tree(b: Builder, x: number, y: number, lift: number, o: TreeOpti
   const H = Math.max(4, Math.min(120, Math.round(o.height)));
   const base = b.top(x, y) + lift;
   const trunk = pickFrom(o.trunk);
-  const leafColor = () => (o.accent.length && Math.random() < o.accentShare ? o.accent[(Math.random() * o.accent.length) | 0] : o.leaves[(Math.random() * o.leaves.length) | 0]);
+  const leafColor = () =>
+    o.accent.length && Math.random() < o.accentShare ? o.accent[(Math.random() * o.accent.length) | 0] : o.leaves[(Math.random() * o.leaves.length) | 0];
   const t = H < 10 ? 1 : H < 22 ? 2 : H < 40 ? 3 : H < 70 ? 4 : 5;
   const half = (t - 1) / 2;
   const style = o.style;

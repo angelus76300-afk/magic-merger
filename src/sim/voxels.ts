@@ -1,4 +1,6 @@
-import { addGas } from "./physics";
+import { addGas } from "./cells";
+import { FACE_STEPS, keyCell, keyLevel, keyOffset, keyX, keyY } from "./voxelkey";
+import { DecorStore } from "./decor";
 import { C, F, S } from "./materials";
 import type { World } from "./world";
 
@@ -49,13 +51,6 @@ function burnable(kind: number): boolean {
   return kind === VK.WOOD || kind === VK.LEAF;
 }
 
-// Decor keys: ((y * 1024 + x) * 512 + level + 128). Level is in voxels, the
-// same unit as the terrain's column tops (half a height unit each).
-export function keyCell(key: number): { x: number; y: number; level: number } {
-  const cell = Math.floor(key / 512);
-  return { x: cell % 1024, y: Math.floor(cell / 1024), level: (key % 512) - 128 };
-}
-
 function top(world: World, x: number, y: number): number {
   return Math.round(world.height[y * world.w + x] * 0.5);
 }
@@ -89,7 +84,7 @@ const N6 = [
 ] as const;
 
 // Key offsets for the six neighbors.
-const D = (dx: number, dy: number, dl: number) => (dy * 1024 + dx) * 512 + dl;
+const D = keyOffset;
 
 export function stepVoxels(world: World, dt: number): void {
   const s = world.voxels;
@@ -121,35 +116,42 @@ export function stepVoxels(world: World, dt: number): void {
 }
 
 // Flood fill from every held voxel; what is not reached starts to fall.
-// Plain arithmetic on keys, no objects: this runs on up to 20000 voxels.
+// Marks and the queue are flat arrays over the store's slots, kept between
+// calls: no Set, no garbage, on up to 20000 voxels.
+let held = new Uint8Array(0);
+const queue = new Int32Array(new DecorStore().slots);
 function findUnsupported(world: World): void {
   const { decor, height, w } = world;
-  const held = new Set<number>();
-  const stack: number[] = [];
-  for (const [key, v] of decor) {
-    const cell = Math.floor(key / 512);
-    const level = (key % 512) - 128;
-    const x = cell % 1024;
-    const y = (cell - x) / 1024;
-    if (floats(voxelKind(v)) || level <= Math.round(height[y * w + x] * 0.5)) {
-      held.add(key);
-      stack.push(key);
+  const slots = decor.slots;
+  if (held.length !== slots) held = new Uint8Array(slots);
+  else held.fill(0);
+  // Slots to visit; each is pushed at most once.
+  let top = 0;
+  let count = 0;
+  for (let s = 0; s < slots; s++) {
+    if (!decor.isLive(s)) continue;
+    const key = decor.keyOf(s);
+    if (floats(voxelKind(decor.valueOf(s))) || keyLevel(key) <= Math.round(height[keyY(key) * w + keyX(key)] * 0.5)) {
+      held[s] = 1;
+      queue[top++] = s;
+      count++;
     }
   }
-  const steps = [1, -1, 512, -512, 512 * 1024, -512 * 1024];
-  while (stack.length) {
-    const key = stack.pop()!;
+  const steps = FACE_STEPS;
+  while (top > 0) {
+    const key = decor.keyOf(queue[--top]);
     for (let d = 0; d < 6; d++) {
-      const k = key + steps[d];
-      if (!held.has(k) && decor.has(k)) {
-        held.add(k);
-        stack.push(k);
+      const n = decor.slot(key + steps[d]);
+      if (n >= 0 && !held[n]) {
+        held[n] = 1;
+        queue[top++] = n;
+        count++;
       }
     }
   }
-  if (held.size === decor.size) return;
+  if (count === decor.size) return;
   const s = world.voxels;
-  for (const key of decor.keys()) if (!held.has(key)) s.falling.add(key);
+  for (let slot = 0; slot < slots; slot++) if (decor.isLive(slot) && !held[slot]) s.falling.add(decor.keyOf(slot));
   s.fell = 0;
   s.sinceFall = 0;
 }
@@ -216,7 +218,21 @@ function land(world: World): void {
       const y = Math.floor(i / world.w);
       if (world.cover[i] === C.HOUSE && n >= 2) world.setCover(i, C.RUBBLE);
       else if (world.cover[i] === C.TREE || world.cover[i] === C.BUSH || world.cover[i] === C.CROP) world.setCover(i, C.NONE);
-      if (Math.random() < 0.25) world.particles.add({ x: x + 0.5, y: y + 0.5, z: 0.5, vx: (Math.random() - 0.5) * 4, vy: (Math.random() - 0.5) * 4, vz: 3, life: 0.8, color: 0x9a8f80, size: 1.4, glow: false, gravity: 6, drag: 1 });
+      if (Math.random() < 0.25)
+        world.particles.add({
+          x: x + 0.5,
+          y: y + 0.5,
+          z: 0.5,
+          vx: (Math.random() - 0.5) * 4,
+          vy: (Math.random() - 0.5) * 4,
+          vz: 3,
+          life: 0.8,
+          color: 0x9a8f80,
+          size: 1.4,
+          glow: false,
+          gravity: 6,
+          drag: 1,
+        });
     }
     for (const c of world.creatures) {
       if (c.dead) continue;
@@ -243,11 +259,15 @@ function fireAndHeat(world: World, dt: number): void {
   // Sampled, so very large builds stay cheap (about 3000 looked at per pass).
   const stride = Math.max(1, Math.ceil(decor.size / 3000));
   let k = 0;
-  for (const [key, v] of decor) {
-    if (stride > 1 && k++ % stride !== (world.tick % stride)) continue;
-    const kind = voxelKind(v);
+  for (let slot = 0; slot < decor.slots; slot++) {
+    if (!decor.isLive(slot)) continue;
+    if (stride > 1 && k++ % stride !== world.tick % stride) continue;
+    const key = decor.keyOf(slot);
+    const kind = voxelKind(decor.valueOf(slot));
     if (kind !== VK.WOOD && kind !== VK.LEAF && kind !== VK.ICE) continue;
-    const { x, y, level } = keyCell(key);
+    const x = keyX(key);
+    const y = keyY(key);
+    const level = keyLevel(key);
     const i = y * world.w + x;
     const near = level - top(world, x, y) <= 2;
     const hot = world.temp[i] > 200 || (near && (world.fire[i] > 0.25 || (world.fluid[i] === F.LAVA && world.depth[i] > 0.05)));
@@ -298,7 +318,21 @@ function fireAndHeat(world: World, dt: number): void {
       }
       if (level - top(world, x, y) <= 3) world.fire[i] = Math.max(world.fire[i], 0.5);
       world.temp[i] = Math.max(world.temp[i], 120);
-      if (Math.random() < 0.3) world.particles.add({ x: x + Math.random(), y: y + Math.random(), z: level - top(world, x, y) + 1, vx: world.wind.x, vy: world.wind.y, vz: 2 + Math.random() * 2, life: 0.5 + Math.random() * 0.4, color: Math.random() < 0.5 ? 0xffb347 : 0xff6a1a, size: 1.1, glow: true, gravity: -1, drag: 0.5 });
+      if (Math.random() < 0.3)
+        world.particles.add({
+          x: x + Math.random(),
+          y: y + Math.random(),
+          z: level - top(world, x, y) + 1,
+          vx: world.wind.x,
+          vy: world.wind.y,
+          vz: 2 + Math.random() * 2,
+          life: 0.5 + Math.random() * 0.4,
+          color: Math.random() < 0.5 ? 0xffb347 : 0xff6a1a,
+          size: 1.1,
+          glow: true,
+          gravity: -1,
+          drag: 0.5,
+        });
       if (Math.random() < 0.08) addGas(world, i, S.SMOKE, 0.3);
       // Embers drop from high fires and can light the ground below.
       if (Math.random() < 0.02) world.fire[i] = Math.max(world.fire[i], 0.4);
@@ -339,9 +373,12 @@ function burnTime(kind: number): number {
 // Sets fire to burnable voxels near a point (lightning, fireballs, explosions).
 export function igniteVoxels(world: World, x: number, y: number, r: number): void {
   const s = world.voxels;
-  for (const [key, v] of world.decor) {
+  const decor = world.decor;
+  for (let slot = 0; slot < decor.slots; slot++) {
+    if (!decor.isLive(slot)) continue;
+    const key = decor.keyOf(slot);
+    const v = decor.valueOf(slot);
     if (!burnable(voxelKind(v)) || s.burning.has(key)) continue;
-    const c = keyCell(key);
-    if ((c.x - x) ** 2 + (c.y - y) ** 2 <= r * r) s.burning.set(key, burnTime(voxelKind(v)));
+    if ((keyX(key) - x) ** 2 + (keyY(key) - y) ** 2 <= r * r) s.burning.set(key, burnTime(voxelKind(v)));
   }
 }

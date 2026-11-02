@@ -9,10 +9,10 @@ Every spell can then be cast in the World tab: a falling sand pixel world with t
 
 ## Layout
 
-| Path | What |
-| --- | --- |
-| `src/` | Browser game: board, inventory, spell card |
-| `src/world/` | World tab: terrain physics, creatures, spell casting, renderer |
-| `worker/` | Cloudflare Worker: `/api/merge`, `/api/describe`, `/api/spell`, prompts, Claude calls |
-| `shared/` | Types and primitives used by both |
-| `migrations/` | D1 schema |
+| Path          | What                                                                                  |
+| ------------- | ------------------------------------------------------------------------------------- |
+| `src/`        | Browser game: board, inventory, spell card                                            |
+| `src/world/`  | World tab: terrain physics, creatures, spell casting, renderer                        |
+| `worker/`     | Cloudflare Worker: `/api/merge`, `/api/describe`, `/api/spell`, prompts, Claude calls |
+| `shared/`     | Types and primitives used by both                                                     |
+| `migrations/` | D1 schema                                                                             |

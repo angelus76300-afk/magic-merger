@@ -4,14 +4,18 @@ import { parse } from "acorn";
 // loop gets a counter so a loop that never ends throws instead of freezing the
 // page. The Worker uses the same parser to reject code that does not parse.
 
-import { PROGRAM_VERSION } from "./version";
+import { FIRST_PROGRAM_VERSION, PROGRAM_VERSION } from "./version";
 
-export { PROGRAM_VERSION };
+export { FIRST_PROGRAM_VERSION, PROGRAM_VERSION };
 
 export interface SpellProgram {
-  version: typeof PROGRAM_VERSION;
+  // The World API version the program was written for. Older programs stay
+  // castable: the API only grows, so a new version never rewrites old spells.
+  version: number;
   summary: string;
   code: string;
+  // Which model wrote it, for the admin card. Not stored in the spec itself.
+  model?: string;
 }
 
 type Node = { type: string; start: number; end: number; body?: Node | Node[] } & Record<string, unknown>;

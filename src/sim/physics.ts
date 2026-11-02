@@ -1,5 +1,6 @@
 import { C, F, G, S } from "./materials";
 import type { World } from "./world";
+import { addGas } from "./cells";
 import { igniteVoxels, stepVoxels } from "./voxels";
 
 // The rules of the land. Spells set them in motion; these keep them going:
@@ -31,10 +32,10 @@ export function stepPhysics(world: World, dt: number): void {
   }
   stepFluids(world, dt);
   stepFire(world, dt);
-  if (world.tick % 2 === 0) {
-    stepTemperature(world, dt * 2);
-    stepGas(world, dt * 2);
-  }
+  // Every other tick each, on alternate ticks: together on the same tick they
+  // made every second tick three times as long as the others (seen on a phone).
+  if (world.tick % 2 === 0) stepTemperature(world, dt * 2);
+  else stepGas(world, dt * 2);
   stepGrowth(world);
   stepVoxels(world, dt);
 }
@@ -219,7 +220,19 @@ function stepFire(world: World, dt: number): void {
     world.temp[i] = Math.max(world.temp[i], 350 * fire[i]);
     addGas(world, i, S.SMOKE, dt * 0.6);
     if (rng.next() < dt * 4) {
-      world.particles.add({ x: (i % w) + rng.next(), y: Math.floor(i / w) + rng.next(), z: 0.5, vz: 3 + rng.next() * 3, vx: wind.x * 2, vy: wind.y * 2, life: 0.8, color: rng.next() < 0.5 ? 0xffb03a : 0xff6a1a, size: 0.5, glow: true, gravity: -1 });
+      world.particles.add({
+        x: (i % w) + rng.next(),
+        y: Math.floor(i / w) + rng.next(),
+        z: 0.5,
+        vz: 3 + rng.next() * 3,
+        vx: wind.x * 2,
+        vy: wind.y * 2,
+        life: 0.8,
+        color: rng.next() < 0.5 ? 0xffb03a : 0xff6a1a,
+        size: 0.5,
+        glow: true,
+        gravity: -1,
+      });
     }
     // Catch the neighbors, more easily downwind.
     const x = i % w;
@@ -261,8 +274,7 @@ function stepTemperature(world: World, dt: number): void {
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
       const t = temp[i];
-      const avg =
-        (temp[x > 0 ? i - 1 : i] + temp[x < w - 1 ? i + 1 : i] + temp[y > 0 ? i - w : i] + temp[y < h - 1 ? i + w : i]) * 0.25;
+      const avg = (temp[x > 0 ? i - 1 : i] + temp[x < w - 1 ? i + 1 : i] + temp[y > 0 ? i - w : i] + temp[y < h - 1 ? i + w : i]) * 0.25;
       let target = world.ambient(i);
       let pull = 0.03;
       const fl = world.fluid[i];
@@ -363,12 +375,6 @@ function stepGas(world: World, dt: number): void {
       world.place(i, "water", 0.08);
     }
   }
-}
-
-export function addGas(world: World, i: number, type: number, amount: number): void {
-  if (world.gas[i] !== type && world.gasAmt[i] > amount) return;
-  world.gas[i] = type;
-  world.gasAmt[i] = Math.min(1, world.gasAmt[i] + amount);
 }
 
 // Life comes back slowly: grass creeps over bare dirt, forests reseed, ash

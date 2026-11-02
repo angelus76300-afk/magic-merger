@@ -66,6 +66,12 @@ export class OrbitCamera implements CameraControl {
     this.returnAt = 0;
   }
 
+  // True while the camera moves on its own: flying to a spell, coming back,
+  // shaking. The engine keeps drawing frames for it.
+  animating(): boolean {
+    return this.goal !== null || (this.shakeTime > 0 && this.shake > 0.001);
+  }
+
   addShake(amount: number, seconds: number): void {
     this.shake = Math.max(this.shake, amount * 0.15);
     this.shakeTime = Math.max(this.shakeTime, seconds);
@@ -117,7 +123,9 @@ export class OrbitCamera implements CameraControl {
     // Look at the ground under the target, eased so hills do not jerk the view.
     this.th += (groundAt(this.tx, this.ty) - this.th) * Math.min(1, dt * 3);
     const target = new Vector3(this.tx - this.worldW / 2, this.th, this.ty - this.worldH / 2);
-    const offset = new Vector3(Math.sin(this.phi) * Math.sin(this.theta), Math.cos(this.phi), Math.sin(this.phi) * Math.cos(this.theta)).multiplyScalar(this.dist);
+    const offset = new Vector3(Math.sin(this.phi) * Math.sin(this.theta), Math.cos(this.phi), Math.sin(this.phi) * Math.cos(this.theta)).multiplyScalar(
+      this.dist,
+    );
     this.camera.position.copy(target).add(offset);
     if (this.shakeTime > 0 && !reducedMotion) {
       this.shakeTime -= dt;

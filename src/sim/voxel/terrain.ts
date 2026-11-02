@@ -2,6 +2,7 @@ import { BufferAttribute, BufferGeometry, Mesh, type Material } from "three";
 import { F, G } from "../materials";
 import type { World } from "../world";
 import { FACE_LIGHT } from "./models";
+import { mixColor, scaleColor } from "../colors";
 
 // The island as voxel columns. Each cell is one column whose top sits at its
 // height (half a unit per height unit, rounded to whole voxels). Walls are
@@ -230,13 +231,13 @@ export class Terrain {
     const m = world.materials.get("ground", world.ground[i]);
     const base = m.colors[((world.shade[i] * m.colors.length) >> 8) % m.colors.length];
     // Higher land is a touch lighter, so hills read even from above.
-    return scale(base, 0.92 + Math.min(0.16, Math.max(0, world.height[i] - 8) * 0.006));
+    return scaleColor(base, 0.92 + Math.min(0.16, Math.max(0, world.height[i] - 8) * 0.006));
   }
 
   // The first voxel of a wall: green grass edge, white snow edge, or the surface itself.
   private sideTopColor(i: number, surface: number): number {
     const g = this.world.ground[i];
-    if (g === G.GRASS || g === G.FIELD) return scale(surface, 0.9);
+    if (g === G.GRASS || g === G.FIELD) return scaleColor(surface, 0.9);
     return surface;
   }
 
@@ -245,7 +246,7 @@ export class Terrain {
     const g = this.world.ground[i];
     if (g === G.GRASS || g === G.DIRT || g === G.SAND || g === G.SNOW || g === G.ASH || g === G.FIELD || g === G.ROCK) return null;
     const m = this.world.materials.get("ground", g);
-    return scale(m.colors[(this.world.shade[i] >> 4) % m.colors.length], 0.92);
+    return scaleColor(m.colors[(this.world.shade[i] >> 4) % m.colors.length], 0.92);
   }
 
   private soilColor(i: number): number {
@@ -270,20 +271,6 @@ export class Terrain {
     if (f === F.ACID) return { color, alpha: 0.85 };
     return { color, alpha: 0.95 };
   }
-}
-
-export function scale(c: number, k: number): number {
-  const r = Math.min(255, Math.round(((c >> 16) & 255) * k));
-  const g = Math.min(255, Math.round(((c >> 8) & 255) * k));
-  const b = Math.min(255, Math.round((c & 255) * k));
-  return (r << 16) | (g << 8) | b;
-}
-
-export function mixColor(a: number, b: number, k: number): number {
-  const r = ((a >> 16) & 255) * (1 - k) + ((b >> 16) & 255) * k;
-  const g = ((a >> 8) & 255) * (1 - k) + ((b >> 8) & 255) * k;
-  const bl = (a & 255) * (1 - k) + (b & 255) * k;
-  return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(bl);
 }
 
 // Face directions: the four walls, then the top.
@@ -338,19 +325,44 @@ class Writer {
     // Corners a, b, c, d; triangles a b c and a c d.
     switch (dir) {
       case EAST:
-        v(X + 1, lo, Z), v(X + 1, hi, Z), v(X + 1, hi, Z + 1), v(X + 1, lo, Z), v(X + 1, hi, Z + 1), v(X + 1, lo, Z + 1);
+        v(X + 1, lo, Z);
+        v(X + 1, hi, Z);
+        v(X + 1, hi, Z + 1);
+        v(X + 1, lo, Z);
+        v(X + 1, hi, Z + 1);
+        v(X + 1, lo, Z + 1);
         break;
       case SOUTH:
-        v(X, lo, Z + 1), v(X + 1, lo, Z + 1), v(X + 1, hi, Z + 1), v(X, lo, Z + 1), v(X + 1, hi, Z + 1), v(X, hi, Z + 1);
+        v(X, lo, Z + 1);
+        v(X + 1, lo, Z + 1);
+        v(X + 1, hi, Z + 1);
+        v(X, lo, Z + 1);
+        v(X + 1, hi, Z + 1);
+        v(X, hi, Z + 1);
         break;
       case WEST:
-        v(X, lo, Z), v(X, lo, Z + 1), v(X, hi, Z + 1), v(X, lo, Z), v(X, hi, Z + 1), v(X, hi, Z);
+        v(X, lo, Z);
+        v(X, lo, Z + 1);
+        v(X, hi, Z + 1);
+        v(X, lo, Z);
+        v(X, hi, Z + 1);
+        v(X, hi, Z);
         break;
       case NORTH:
-        v(X, lo, Z), v(X, hi, Z), v(X + 1, hi, Z), v(X, lo, Z), v(X + 1, hi, Z), v(X + 1, lo, Z);
+        v(X, lo, Z);
+        v(X, hi, Z);
+        v(X + 1, hi, Z);
+        v(X, lo, Z);
+        v(X + 1, hi, Z);
+        v(X + 1, lo, Z);
         break;
       default:
-        v(X, hi, Z), v(X, hi, Z + 1), v(X + 1, hi, Z + 1), v(X, hi, Z), v(X + 1, hi, Z + 1), v(X + 1, hi, Z);
+        v(X, hi, Z);
+        v(X, hi, Z + 1);
+        v(X + 1, hi, Z + 1);
+        v(X, hi, Z);
+        v(X + 1, hi, Z + 1);
+        v(X + 1, hi, Z);
     }
   }
 

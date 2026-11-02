@@ -47,34 +47,40 @@ The game is then at `https://magic-merger.<your-subdomain>.workers.dev`. It is a
 
 ### Admin mode
 
-Tap the "Magic Merger" title five times quickly and enter your `ADMIN_TOKEN`. An "admin" badge appears, and every card gets two extra buttons: **New description** and **New spell**. They throw away the stored text or spell design and ask Claude again. Everyone else gets the stored version forever. The admin token also works as an access token.
+Tap the "Magic Merger" title five times quickly and enter your `ADMIN_TOKEN`. An admin badge appears with this month's Claude spend; tap it for the detail by call and model. Every card gets an admin row: which API version and model wrote its program, **New description**, and **Rewrite this spell**, which says what it will cost before it spends. They throw away the stored text or program and ask Claude again. Everyone else gets the stored version forever. Spells are never rewritten in bulk: this button is the only way. The admin token also works as an access token.
+
+### Frame HUD
+
+A long press on the title shows a small panel in the World: frame time p50 and p95, simulation and draw milliseconds, draw calls, triangles, pixel density, voxels, creatures and frames skipped because nothing changed. While it is on, a summary is sent every 30 seconds to `/api/perf` (kept 30 days); the admin reads them back with `GET /api/perf`. A long press again hides it.
 
 ## 4. Models and cost
 
 Set in `wrangler.jsonc`:
 
-| Variable | Default | Used for |
-| --- | --- | --- |
-| `MERGE_MODEL` | `claude-opus-5-5`, low effort | what two items make, and their power tier; once per new pair, ever |
-| `DESCRIBE_MODEL` | `claude-haiku-5-5`, low effort | the grimoire text on a card; once per element, ever |
-| `SPELL_MODEL_SMALL` | `claude-haiku-5-5` | writing spells up to `SPELL_SMALL_UP_TO` (grand) |
-| `SPELL_MODEL` | `claude-opus-5-5` | writing legendary and cosmic spells |
-| `SPELL_EFFORT` | `medium` | how long the spell writer thinks |
-| `BUDGET_USD` | `20` | Claude spend allowed per calendar month |
+| Variable            | Default                        | Used for                                                                                                                |
+| ------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `MERGE_MODEL`       | `claude-opus-5-5`              | what two items make, and their power tier; once per new pair, ever (DESIGN.md has the comparison with Haiku and Sonnet) |
+| `MERGE_EFFORT`      | `low`                          | how long the merge model thinks                                                                                         |
+| `DESCRIBE_MODEL`    | `claude-haiku-5-5`, low effort | the grimoire text on a card; once per element, ever                                                                     |
+| `SPELL_MODEL_SMALL` | `claude-haiku-5-5`             | writing spells up to `SPELL_SMALL_UP_TO` (grand)                                                                        |
+| `SPELL_MODEL`       | `claude-opus-5-5`              | writing legendary and cosmic spells                                                                                     |
+| `REPAIR_MODEL`      | `claude-haiku-5-5`             | mending a program that crashed, whatever its tier                                                                       |
+| `SPELL_EFFORT`      | `medium`                       | how long the spell writer thinks                                                                                        |
+| `BUDGET_USD`        | `20`                           | Claude spend allowed per calendar month                                                                                 |
 
 Measured on the live Worker in November 2026:
 
-| Call | Average | Time |
-| --- | --- | --- |
-| Merge (Opus) | $0.001 | about 3 s |
-| Description (Haiku) | $0.0001 | about 2 s |
-| Spell up to grand (Haiku) | $0.002 | about 6 s |
-| Legendary or cosmic spell (Opus) | $0.076 | 20 to 40 s |
-| Sonnet, for reference | $0.021 | |
+| Call                             | Average | Time       |
+| -------------------------------- | ------- | ---------- |
+| Merge (Opus)                     | $0.001  | about 3 s  |
+| Description (Haiku)              | $0.0001 | about 2 s  |
+| Spell up to grand (Haiku)        | $0.002  | about 6 s  |
+| Legendary or cosmic spell (Opus) | $0.076  | 20 to 40 s |
+| Sonnet, for reference            | $0.021  |            |
 
 A spell is written once, for everyone, the first time a player picks it in the World tab.
 
-**Budget:** every call is written to the `spend` table in D1. When this month's total reaches `BUDGET_USD`, the Worker stops calling Claude and says so in the game; known recipes, descriptions and spells keep working. The admin can read the month's total at `/api/spend`. Also set a spend limit on the Console workspace: it is the safety net that does not depend on this code.
+**Budget:** every call is written to the `spend` table in D1. When this month's total reaches `BUDGET_USD`, the Worker stops calling Claude and says so in the game; known recipes, descriptions and spells keep working. The admin can read the month and today's totals, grouped by call and model, at `/api/spend`, and in the admin badge. Also set a spend limit on the Console workspace: it is the safety net that does not depend on this code.
 
 Every Claude call also logs one JSON line with its token counts and cost. Watch them live with `npx wrangler tail --search usage`, or later in the Cloudflare dashboard under Workers Logs.
 
