@@ -118,6 +118,19 @@ export async function recordWin(
   return { stars: starsFor(merges, par), par, best: before === null || merges < before };
 }
 
+// Words that name what may answer a hazard, to try those spells first. Only
+// the order of the search: the simulation decides.
+const FITS: Record<string, RegExp> = {
+  wildfire: /rain|water|wave|tide|flood|storm|ice|frost|snow|blizzard|mist|cloud|monsoon|deluge|douse|quench|winter|freez/i,
+  lava: /wall|stone|rock|earth|mountain|ice|frost|freez|cold|water|wave|tide|golem|bulwark|rampart|fortress|petrif|glacier|barrier|dike|levee/i,
+  flood: /wall|dike|levee|earth|mountain|stone|ice|frost|freez|glacier|ark|island|levitat|float|rampart|barrier|drain/i,
+  river: /ice|frost|freez|glacier|bridge|earth|stone|teleport|portal|lift|levitat|wind|float|winter|snow|ford/i,
+  drought: /rain|water|life|grow|bloom|garden|forest|monsoon|spring|oasis|flood|storm|harvest|verdant|nature/i,
+};
+function fits(scenario: string, name: string): number {
+  return FITS[scenario]?.test(name) ? 1 : 0;
+}
+
 // For scripts/challenge-runner.ts: spells worth trying on each challenge.
 // Every spell reachable from its start set through the recipe graph, strong
 // enough, with a live program, fewest merges first; never tried for its
@@ -140,7 +153,8 @@ export async function candidates(
       .map(([key, set]) => ({ key, n: set.size, r: byKey.get(key) }))
       .filter((c) => c.r && !done.has(`${def.id}|${c.key}|${c.r.pid}`))
       .filter((c) => strongEnough(def, isTier(c.r!.tier) ? c.r!.tier : tierFromDepth(c.r!.depth)))
-      .sort((a, b) => a.n - b.n)
+      // What fits the hazard first (a rain for a fire, a wall for lava), then fewest merges.
+      .sort((a, b) => fits(def.scenario, b.r!.name) - fits(def.scenario, a.r!.name) || a.n - b.n)
       .slice(0, limit);
     for (const c of list) {
       let code = "";
