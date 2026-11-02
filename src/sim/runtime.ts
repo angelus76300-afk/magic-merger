@@ -1,6 +1,6 @@
 import { guardLoops } from "../../shared/spellcode";
 import { TIER_REACH, type Tier } from "../../shared/tiers";
-import { KINDS, kindOf, makeCreature, maxHp, type Creature, type CreatureKind } from "./creatures";
+import { KINDS, kindOf, makeCreature, maxHp, type Behavior, type Creature, type CreatureKind } from "./creatures";
 import { BUILTIN, C, F, G, LAYERS, type Layer } from "./materials";
 import { valueNoise } from "./noise";
 import { addGas, explode, forDisc, quake } from "./physics";
@@ -75,6 +75,9 @@ export class Runtime {
   // Spell rules that run on their material's cells every tick, by layer and id.
   private ticks = new Map<string, { key: string; name: string; fn: (cell: CellHandle, w: SpellApi) => void }>();
   private brokenRules = new Set<string>();
+  // Declared reactions of spell-made materials, by layer and id.
+  private reactions = new Map<string, Reaction>();
+  private sinceReact = 0;
   // Which spell defined each custom material and creature, for saving the world.
   readonly owners = new Map<string, string>();
   camera: CameraControl | null = null;
@@ -128,6 +131,9 @@ export class Runtime {
       const id = this.world.materials.define(mat);
       this.owners.set(`${layer}:${name}`, req.key);
       const ruleKey = `${layer}:${id}`;
+      const reaction = reactionOf(m, layer, name);
+      if (reaction) this.reactions.set(ruleKey, reaction);
+      else this.reactions.delete(ruleKey);
       if (typeof m.tick === "function") this.ticks.set(ruleKey, { key: req.key, name: req.name, fn: m.tick as (cell: CellHandle, w: SpellApi) => void });
       else this.ticks.delete(ruleKey);
       this.brokenRules.delete(ruleKey);
@@ -152,6 +158,7 @@ export class Runtime {
         glow: typeof k.glow === "boolean" ? k.glow : base.glow,
         homebody: false,
         fallback: base.name,
+        ai: behaviorOf(k),
         tick: userTick
           ? (self: Creature, dt: number) => {
               const ruleKey = `creature:${name}`;
@@ -228,6 +235,11 @@ export class Runtime {
     this.stepJobs();
     this.stepBodies(dt);
     this.stepRules(dt);
+    this.sinceReact += dt;
+    if (this.sinceReact >= 0.2) {
+      this.stepReactions(this.sinceReact);
+      this.sinceReact = 0;
+    }
     this.visuals.update(dt);
   }
 
@@ -328,6 +340,93 @@ export class Runtime {
     }
   }
 
+  // Declared reactions: what touches a material changes it, it decays, it spreads.
+  private stepReactions(dt: number): void {
+    if (this.reactions.size === 0) return;
+    const w = this.world;
+    const arrays = { ground: w.ground, fluid: w.fluid, cover: w.cover, gas: w.gas };
+    const builtin = { ground: BUILTIN.ground.length, fluid: BUILTIN.fluid.length, cover: BUILTIN.cover.length, gas: BUILTIN.gas.length };
+    const near = (i: number, test: (j: number) => boolean) => {
+      if (test(i)) return true;
+      const x = i % w.w;
+      return (x > 0 && test(i - 1)) || (x < w.w - 1 && test(i + 1)) || (i >= w.w && test(i - w.w)) || (i + w.w < w.n && test(i + w.w));
+    };
+    const wet = (j: number) => w.fluid[j] === F.WATER && w.depth[j] > 0.05;
+    const fiery = (j: number) => w.fire[j] > 0.25;
+    const lava = (j: number) => w.fluid[j] === F.LAVA && w.depth[j] > 0.05;
+    const acid = (j: number) => w.fluid[j] === F.ACID && w.depth[j] > 0.05;
+    let spreads = 0;
+    for (const layer of LAYERS) {
+      const arr = arrays[layer];
+      const first = builtin[layer];
+      for (let i = 0; i < w.n; i++) {
+        if (arr[i] < first) continue;
+        const r = this.reactions.get(`${layer}:${arr[i]}`);
+        if (!r) continue;
+        const into =
+          (r.reacts.fire !== undefined && near(i, fiery) && r.reacts.fire) ||
+          (r.reacts.water !== undefined && near(i, wet) && r.reacts.water) ||
+          (r.reacts.lava !== undefined && near(i, lava) && r.reacts.lava) ||
+          (r.reacts.acid !== undefined && near(i, acid) && r.reacts.acid) ||
+          (r.reacts.cold !== undefined && w.temp[i] < -2 && r.reacts.cold) ||
+          (r.reacts.heat !== undefined && w.temp[i] > 120 && r.reacts.heat) ||
+          (r.decay > 0 && Math.random() < dt / r.decay && r.becomes) ||
+          null;
+        if (into && Math.random() < 0.6) {
+          this.transform(i, layer, into);
+          continue;
+        }
+        if (r.spreadRate > 0 && spreads < 600) {
+          const x = i % w.w;
+          for (const j of [x > 0 ? i - 1 : -1, x < w.w - 1 ? i + 1 : -1, i - w.w, i + w.w]) {
+            if (j < 0 || j >= w.n || arr[j] === arr[i] || Math.random() > r.spreadRate * dt) continue;
+            const target = w.materials.get(layer, arr[j]).name;
+            if (r.spreadInto && !r.spreadInto.includes(target)) continue;
+            if (!r.spreadInto && layer !== "ground" && arr[j] === 0) continue;
+            w.place(j, r.name, layer === "fluid" ? Math.max(0.2, w.depth[i] * 0.5) : 0.6);
+            spreads++;
+          }
+        }
+      }
+    }
+  }
+
+  // Turns a cell's material into something else, or into an event.
+  private transform(i: number, layer: Layer, into: string): void {
+    const w = this.world;
+    const x = i % w.w;
+    const y = Math.floor(i / w.w);
+    const clearOwn = () => {
+      if (layer === "ground") w.ground[i] = G.DIRT;
+      else if (layer === "fluid") w.setFluid(i, F.NONE, 0);
+      else if (layer === "cover") w.setCover(i, C.NONE);
+      else w.gasAmt[i] = 0;
+    };
+    switch (into) {
+      case "none":
+        clearOwn();
+        return;
+      case "explode":
+        clearOwn();
+        explode(w, x, y, 3, 0.8);
+        return;
+      case "fire":
+        clearOwn();
+        w.fire[i] = 1;
+        return;
+      case "steam":
+      case "smoke":
+        clearOwn();
+        addGas(w, i, into === "steam" ? 2 : 1, 0.7);
+        return;
+    }
+    const found = w.materials.find(into);
+    if (!found) return;
+    const depth = w.depth[i];
+    if (found.layer !== layer) clearOwn();
+    w.place(i, into, found.layer === "fluid" ? Math.max(0.3, depth) : 0.6);
+  }
+
   private ruleApis = new Map<string, SpellApi>();
   ruleApi(req: CastRequest): SpellApi {
     let api = this.ruleApis.get(req.key);
@@ -368,6 +467,64 @@ function message(err: unknown): string {
     return line ? `${err.name}: ${err.message} (line ${Number(line[1]) - 2})` : `${err.name}: ${err.message}`;
   }
   return String(err);
+}
+
+function strings(v: unknown, max = 12): string[] {
+  return (Array.isArray(v) ? v : typeof v === "string" ? [v] : []).filter((x): x is string => typeof x === "string").map((x) => x.toLowerCase().slice(0, 30)).slice(0, max);
+}
+
+interface Reaction {
+  name: string;
+  reacts: Partial<Record<"fire" | "water" | "lava" | "acid" | "cold" | "heat", string>>;
+  decay: number;
+  becomes: string;
+  spreadRate: number;
+  spreadInto: string[] | null;
+}
+
+// Reads a material's declared reactions; undefined when it declares none.
+function reactionOf(m: Record<string, unknown>, layer: Layer, name: string): Reaction | undefined {
+  const reacts: Reaction["reacts"] = {};
+  const raw = m.reacts && typeof m.reacts === "object" ? (m.reacts as Record<string, unknown>) : {};
+  for (const k of ["fire", "water", "lava", "acid", "cold", "heat"] as const) if (typeof raw[k] === "string") reacts[k] = (raw[k] as string).toLowerCase().slice(0, 30);
+  const spread = m.spreads && typeof m.spreads === "object" ? (m.spreads as Record<string, unknown>) : null;
+  const decay = num(m.decays, 0, 3600, 0);
+  void layer;
+  if (!Object.keys(reacts).length && !decay && !spread) return undefined;
+  const into = spread ? strings(spread.into) : [];
+  return {
+    name,
+    reacts,
+    decay,
+    becomes: typeof m.becomes === "string" ? m.becomes.toLowerCase() : "none",
+    spreadRate: spread ? num(spread.rate, 0, 5, 0.3) : 0,
+    spreadInto: into.length && !into.includes("any") ? into : null,
+  };
+}
+
+const MODES = ["wander", "hunt", "guard", "follow", "flee"] as const;
+const AURAS = ["heal", "fear", "calm", "sleep", "burn", "freeze", "hurt"];
+
+// Reads a creature's declared behavior; undefined when it declares none.
+function behaviorOf(k: Record<string, unknown>): Behavior | undefined {
+  const keys = ["behavior", "prey", "leader", "attack", "aura", "leaves", "weak", "immune", "lifespan", "onDeath"];
+  if (!keys.some((key) => k[key] !== undefined)) return undefined;
+  const mode = (MODES as readonly string[]).includes(k.behavior as string) ? (k.behavior as Behavior["mode"]) : "wander";
+  return {
+    mode,
+    prey: strings(k.prey),
+    leader: strings(k.leader),
+    attack: num(k.attack, 0, 500, mode === "hunt" || mode === "guard" ? 20 : 0),
+    sense: num(k.sense, 2, 60, 18),
+    aura: AURAS.includes(k.aura as string) ? (k.aura as string) : null,
+    auraRadius: num(k.auraRadius, 1, 30, 4),
+    auraPower: num(k.auraPower, 0, 10, 1),
+    leaves: typeof k.leaves === "string" ? k.leaves.toLowerCase().slice(0, 30) : null,
+    weak: strings(k.weak),
+    immune: strings(k.immune),
+    lifespan: num(k.lifespan, 0, 3600, 0),
+    onDeath: typeof k.onDeath === "string" ? k.onDeath.toLowerCase().slice(0, 40) : null,
+  };
 }
 
 function num(v: unknown, min: number, max: number, fallback: number): number {
@@ -1068,7 +1225,7 @@ export class SpellApi {
       const ci = this.i(c.x, c.y);
       const shocked = d < 1.8 || (wet && d < 14 * Math.max(0.5, power) && w.fluid[ci] === F.WATER && w.depth[ci] > 0.05);
       if (!shocked) continue;
-      c.hp -= (d < 1.8 ? 70 : 35) * power;
+      c.hp -= (d < 1.8 ? 70 : 35) * power * (kindOf(c).ai?.weak.includes("lightning") ? 3 : kindOf(c).ai?.immune.includes("lightning") ? 0 : 1);
       c.stun = Math.max(c.stun, 1.5);
       if (d < 1.8 && !kindOf(c).fireproof) c.burning = Math.max(c.burning, 2);
       if (c.hp <= 0) c.dead = true;

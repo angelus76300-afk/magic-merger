@@ -1,5 +1,38 @@
-import { C, F, S } from "./materials";
+import { C, F, G, S } from "./materials";
+import { explode, forDisc } from "./physics";
+import { daylight } from "./voxel/daylight";
 import type { World } from "./world";
+
+// What a spell-made creature does, declared rather than coded, so even a
+// short program gets a creature with a life of its own.
+export interface Behavior {
+  // wander (default), hunt (chases prey and attacks), guard (stays home and
+  // attacks foes who come close), follow (walks with the nearest leader),
+  // flee (keeps away from every other kind).
+  mode: "wander" | "hunt" | "guard" | "follow" | "flee";
+  // Kinds hunted or fought; empty means every other kind.
+  prey: string[];
+  // Kinds followed; empty means villagers.
+  leader: string[];
+  // Damage per second on contact.
+  attack: number;
+  // How far it notices others, in cells.
+  sense: number;
+  // An effect on everyone near it: heal, fear, calm, sleep, burn, freeze, hurt.
+  aura: string | null;
+  auraRadius: number;
+  auraPower: number;
+  // A material (or "fire") it leaves on the cells it walks over.
+  leaves: string | null;
+  // Elements that hurt it badly, and elements it ignores:
+  // water, fire, cold, light (daylight), lightning, acid.
+  weak: string[];
+  immune: string[];
+  // Seconds it lives, 0 for ever.
+  lifespan: number;
+  // What happens when it dies: explode, fire, seeds, ice, spawn:<kind>, or a material.
+  onDeath: string | null;
+}
 
 // What a kind of creature is. Spells can add kinds at run time, with a tick of
 // their own that runs after the built-in behavior.
@@ -18,6 +51,7 @@ export interface CreatureKind {
   homebody: boolean;
   tick?: (self: Creature, dt: number) => void;
   fallback?: string;
+  ai?: Behavior;
 }
 
 export const KINDS = new Map<string, CreatureKind>();
@@ -156,6 +190,7 @@ function blocked(world: World, x: number, y: number, c: Creature, k: CreatureKin
 export function updateCreature(world: World, c: Creature, dt: number): void {
   const k = kindOf(c);
   if (c.dead) {
+    if (c.deadFor === 0 && k.ai?.onDeath) deathOf(world, c, k.ai.onDeath);
     c.deadFor += dt;
     c.z = Math.max(0, c.z + c.vz * dt);
     c.vz -= 30 * dt;
@@ -166,17 +201,37 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   const i = world.idx(Math.max(0, Math.min(world.w - 1, c.x)), Math.max(0, Math.min(world.h - 1, c.y)));
   const onGround = c.z < 0.5 && !k.flying && c.levitate <= 0;
 
+  const ai = k.ai;
+  const weak = (e: string) => !!ai && ai.weak.includes(e);
+  const immune = (e: string) => !!ai && ai.immune.includes(e);
+  if (ai) {
+    const age = ((c.data.age as number) ?? 0) + dt;
+    c.data.age = age;
+    if (ai.lifespan > 0 && age > ai.lifespan) c.hp = 0;
+    if (weak("water") && world.fluid[i] === F.WATER && world.depth[i] > 0.05) c.hp -= 40 * dt;
+    if (weak("water") && world.gas[i] === S.STEAM) c.hp -= 10 * dt;
+    if (weak("cold") && world.temp[i] < 2) c.hp -= 25 * dt;
+    if (weak("fire") && (c.burning > 0 || world.temp[i] > 80)) c.hp -= 30 * dt;
+    if (weak("acid") && world.fluid[i] === F.ACID) c.hp -= 60 * dt;
+    if (weak("light") && world.tick % 15 === 0 && daylight(world.time).night < 0.3) {
+      c.hp -= 12 * 0.5;
+      if (Math.random() < 0.3) world.particles.add({ x: c.x, y: c.y, z: 1, vz: 2, life: 0.6, color: 0xfff0c0, size: 1, glow: true });
+    }
+    if (immune("cold")) c.frozen = 0;
+    if (immune("fire")) c.burning = 0;
+  }
+
   // The land hurts.
   if (onGround) {
-    if (world.fire[i] > 0.25 && !k.fireproof) c.burning = Math.max(c.burning, 3);
+    if (world.fire[i] > 0.25 && !k.fireproof && !immune("fire")) c.burning = Math.max(c.burning, 3);
     const fluid = world.materials.get("fluid", world.fluid[i]);
-    if (world.depth[i] > 0.05 && fluid.hurts > 0 && !(k.fireproof && world.fluid[i] === F.LAVA)) c.hp -= fluid.hurts * dt;
+    if (world.depth[i] > 0.05 && fluid.hurts > 0 && !(k.fireproof && world.fluid[i] === F.LAVA) && !(immune("acid") && world.fluid[i] === F.ACID)) c.hp -= fluid.hurts * dt;
     if (world.fluid[i] === F.WATER && world.depth[i] > 0.25) c.burning = 0;
-    if (world.fluid[i] === F.WATER && world.depth[i] > 1.4 && !k.swims) {
+    if (world.fluid[i] === F.WATER && world.depth[i] > 1.4 && !k.swims && !immune("water")) {
       c.drowning += dt;
       if (c.drowning > 4) c.hp -= 12 * dt;
     } else c.drowning = Math.max(0, c.drowning - dt);
-    if (world.temp[i] < -12 && !k.fireproof) c.frozen = Math.max(c.frozen, 0.5);
+    if (world.temp[i] < -12 && !k.fireproof && !immune("cold")) c.frozen = Math.max(c.frozen, 0.5);
   }
   if (world.gas[i] !== S.NONE) {
     const gas = world.materials.get("gas", world.gas[i]);
@@ -231,6 +286,11 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       pace = 1.5;
     } else if (c.calm > 0) {
       pace = 0;
+    } else if (ai && ai.mode !== "wander" && behave(world, c, k, ai, dt)) {
+      wantX = c.tx - c.x;
+      wantY = c.ty - c.y;
+      pace = ai.mode === "flee" || ai.mode === "hunt" ? 1.3 : 1;
+      if (Math.hypot(wantX, wantY) < 0.4) pace = 0;
     } else {
       plan(world, c, k, dt);
       wantX = c.tx - c.x;
@@ -277,9 +337,157 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   }
   c.x = Math.max(0.5, Math.min(world.w - 1.5, c.x));
   c.y = Math.max(0.5, Math.min(world.h - 1.5, c.y));
+  if (ai && !busy) sideEffects(world, c, ai, i, onGround, dt);
   if (c.hp <= 0) c.dead = true;
 
   if (k.tick) k.tick(c, dt);
+}
+
+function others(world: World, c: Creature, r: number, kinds: string[]): Creature | null {
+  let best: Creature | null = null;
+  let bestD = r;
+  for (const o of world.creatures) {
+    if (o === c || o.dead) continue;
+    if (kinds.length ? !kinds.includes(o.kind) : o.kind === c.kind) continue;
+    const d = Math.hypot(o.x - c.x, o.y - c.y);
+    if (d < bestD) {
+      bestD = d;
+      best = o;
+    }
+  }
+  return best;
+}
+
+// Sets c.tx, c.ty for the behavior; false when it has nothing to do and
+// should just wander.
+function behave(world: World, c: Creature, k: CreatureKind, ai: Behavior, dt: number): boolean {
+  // Looking around costs a scan of everyone: do it a few times a second.
+  const look = (c.data.look as number | undefined) ?? 0;
+  c.data.look = look - dt;
+  let target = c.data.target as Creature | undefined;
+  if (look <= 0) {
+    c.data.look = 0.3 + Math.random() * 0.2;
+    if (ai.mode === "follow") target = others(world, c, ai.sense, ai.leader.length ? ai.leader : ["villager"]) ?? undefined;
+    else if (ai.mode === "guard") target = others(world, c, ai.sense, ai.prey) ?? undefined;
+    else target = others(world, c, ai.sense, ai.prey) ?? undefined;
+    c.data.target = target;
+  }
+  if (target && (target.dead || Math.hypot(target.x - c.x, target.y - c.y) > ai.sense * 1.5)) target = undefined;
+  switch (ai.mode) {
+    case "hunt":
+    case "guard": {
+      if (ai.mode === "guard" && (!target || Math.hypot(target.x - c.homeX, target.y - c.homeY) > ai.sense)) {
+        if (Math.hypot(c.homeX - c.x, c.homeY - c.y) > 3) {
+          c.tx = c.homeX;
+          c.ty = c.homeY;
+          return true;
+        }
+        return false;
+      }
+      if (!target) return false;
+      c.tx = target.x;
+      c.ty = target.y;
+      if (Math.hypot(target.x - c.x, target.y - c.y) < kindOf(c).radius * c.size + kindOf(target).radius * target.size + 0.6) {
+        target.hp -= ai.attack * dt;
+        if (target.hp <= 0) target.dead = true;
+        if (target.kind === "villager" && target.fear <= 0) {
+          target.fear = 3;
+          target.fearX = c.x;
+          target.fearY = c.y;
+        }
+      }
+      return true;
+    }
+    case "follow": {
+      if (!target) return false;
+      const d = Math.hypot(target.x - c.x, target.y - c.y);
+      if (d < 2.5) return false;
+      c.tx = target.x;
+      c.ty = target.y;
+      return true;
+    }
+    case "flee": {
+      if (!target) return false;
+      c.tx = c.x + (c.x - target.x) * 2;
+      c.ty = c.y + (c.y - target.y) * 2;
+      return true;
+    }
+  }
+  void k;
+  return false;
+}
+
+// Auras and trails, a few times a second.
+function sideEffects(world: World, c: Creature, ai: Behavior, i: number, onGround: boolean, dt: number): void {
+  if (ai.leaves && onGround && Math.random() < dt * 3) {
+    if (ai.leaves === "fire") world.fire[i] = Math.max(world.fire[i], 0.6);
+    else if (ai.leaves === "ice" && world.fluid[i] === F.WATER) world.fluid[i] = F.ICE;
+    else if (ai.leaves === "flowers" || ai.leaves === "life") {
+      if (world.ground[i] === G.DIRT || world.ground[i] === G.ASH) world.ground[i] = G.GRASS;
+      if (world.cover[i] === C.NONE && Math.random() < 0.5) world.setCover(i, Math.random() < 0.7 ? C.FLOWER : C.BUSH);
+    } else world.place(i, ai.leaves, 0.3);
+    if (ai.leaves === "ice") world.temp[i] = Math.min(world.temp[i], -8);
+  }
+  if (!ai.aura || world.tick % 8 !== c.id % 8) return;
+  const r = ai.auraRadius;
+  const p = ai.auraPower;
+  for (const o of world.creatures) {
+    if (o === c || o.dead || Math.abs(o.x - c.x) > r || Math.abs(o.y - c.y) > r || Math.hypot(o.x - c.x, o.y - c.y) > r) continue;
+    switch (ai.aura) {
+      case "heal":
+        o.hp = Math.min(maxHp(o), o.hp + 10 * p * 0.27);
+        o.burning = 0;
+        break;
+      case "hurt":
+        if (o.kind !== c.kind) o.hp -= 10 * p * 0.27;
+        break;
+      case "fear":
+        if (o.kind !== c.kind) {
+          o.fear = Math.max(o.fear, 2);
+          o.fearX = c.x;
+          o.fearY = c.y;
+        }
+        break;
+      case "calm":
+        o.calm = Math.max(o.calm, 1.5);
+        o.fear = 0;
+        break;
+      case "sleep":
+        if (o.kind !== c.kind) o.sleep = Math.max(o.sleep, 2);
+        break;
+      case "burn":
+        if (o.kind !== c.kind && !kindOf(o).fireproof) o.burning = Math.max(o.burning, 1);
+        break;
+      case "freeze":
+        if (o.kind !== c.kind) o.frozen = Math.max(o.frozen, 1);
+        break;
+    }
+    if (o.hp <= 0) o.dead = true;
+  }
+  if (ai.aura === "freeze") forDisc(world, c.x, c.y, r, (j) => {
+    world.temp[j] = Math.min(world.temp[j], -5);
+    world.fire[j] = 0;
+  });
+  if (ai.aura === "burn" || ai.aura === "heal") world.particles.add({ x: c.x + (Math.random() - 0.5) * r, y: c.y + (Math.random() - 0.5) * r, z: 0.5, vz: 1.5, life: 0.8, color: ai.aura === "heal" ? 0x9dffb0 : 0xff8a2a, size: 1, glow: true });
+}
+
+function deathOf(world: World, c: Creature, what: string): void {
+  if (what === "explode") explode(world, c.x, c.y, 3 + c.size * 2, 1);
+  else if (what === "fire") forDisc(world, c.x, c.y, 2.5, (j) => (world.fire[j] = Math.max(world.fire[j], 0.8)));
+  else if (what === "seeds") forDisc(world, c.x, c.y, 3, (j) => {
+    if (world.depth[j] < 0.1 && Math.random() < 0.4) {
+      world.ground[j] = G.GRASS;
+      world.setCover(j, Math.random() < 0.5 ? C.TREE : C.FLOWER);
+    }
+  });
+  else if (what === "ice") forDisc(world, c.x, c.y, 3, (j) => {
+    world.temp[j] = -20;
+    if (world.fluid[j] === F.WATER) world.fluid[j] = F.ICE;
+  });
+  else if (what.startsWith("spawn:")) {
+    const kind = what.slice(6);
+    if (KINDS.has(kind) && world.creatures.length < 600) for (let n = 0; n < 2; n++) world.creatures.push(makeCreature(kind, c.x + Math.random() - 0.5, c.y + Math.random() - 0.5));
+  } else forDisc(world, c.x, c.y, 2, (j) => world.place(j, what, 0.6));
 }
 
 function senseDanger(world: World, c: Creature): { x: number; y: number } | null {

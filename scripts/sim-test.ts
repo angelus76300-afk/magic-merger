@@ -137,7 +137,49 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   check("burnt tree loses its crown and nothing hangs", crownAfter < crownBefore * 0.3 && lowest(world) === 0 && top(world) - Math.round(world.height[y * 112 + x] * 0.5) < height * 0.6, `${crownBefore} leaves before, ${crownAfter} after, top now ${top(world) - Math.round(world.height[y * 112 + x] * 0.5)}`);
 }
 
-// 6. Challenges: nothing does not win; the solution wins.
+// 6. Declared rules: a blight spreads and burns away, wolves hunt, the
+// undead burn by day.
+{
+  seed(3);
+  const world = generateWorld(112, 112, 4);
+  populate(world);
+  const errors: string[] = [];
+  const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
+  const code = `const spell = {
+    materials: [{ name: "blight", layer: "ground", colors: ["#4a2a4a"], spreads: { into: ["grass", "dirt"], rate: 0.8 }, reacts: { fire: "ash" } }],
+    creatures: [
+      { name: "wolf", base: "beast", color: "#555555", behavior: "hunt", prey: ["villager"], attack: 60, sense: 60, speed: 7 },
+      { name: "ghoul", base: "beast", color: "#88aa88", weak: ["light"] },
+    ],
+    *cast(w) {
+      w.paint(w.x, w.y, 3, "blight", 1);
+      const v = w.creatures().filter((c) => c.kind === "villager")[0];
+      for (let k = 0; k < 3; k++) w.spawn("wolf", v.x + 4, v.y + 4);
+      for (let k = 0; k < 3; k++) w.spawn("ghoul", w.x, w.y);
+    },
+  };`;
+  const count = () => {
+    let n = 0;
+    for (let i = 0; i < world.n; i++) if (world.layerName("ground", world.ground[i]) === "blight") n++;
+    return n;
+  };
+  rt.cast({ key: "rules", name: "Rules", tier: "major", code }, 56, 56);
+  step(world, rt);
+  const start = count();
+  const villagers = () => world.creatures.filter((c) => !c.dead && c.kind === "villager").length;
+  const before = villagers();
+  world.time = 10; // morning
+  for (let k = 0; k < 30 * 8; k++) step(world, rt);
+  const spread = count();
+  check("blight spreads", errors.length === 0 && spread > start * 2, `${start} then ${spread} cells${errors[0] ? ", " + errors[0] : ""}`);
+  check("wolves hunt villagers", villagers() < before, `${before} then ${villagers()} villagers`);
+  check("ghouls burn by day", world.creatures.filter((c) => c.kind === "ghoul" && !c.dead).length === 0);
+  for (let i = 0; i < world.n; i++) if (world.layerName("ground", world.ground[i]) === "blight") world.fire[i] = 1;
+  for (let k = 0; k < 30 * 2; k++) step(world, rt);
+  check("blight burns away", count() < spread * 0.3, `${count()} left`);
+}
+
+// 7. Challenges: nothing does not win; the solution wins.
 const solutions: Record<string, { file: string; tier: "major" | "grand" | "legendary"; at: [number, number][] }> = {
   wildfire: { file: "rain.js", tier: "grand", at: [[16, 56]] },
   lava: { file: "wall.js", tier: "grand", at: [[58, 58]] },
