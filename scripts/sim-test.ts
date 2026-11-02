@@ -111,7 +111,8 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
     let hanging = 0;
     for (const [key, v] of world.decor) {
       const { x, y, level } = keyCell(key);
-      if (floats(voxelKind(v)) || level <= Math.round(world.height[y * world.w + x] * 0.5)) continue;
+      // A voxel on its way down is falling, not hanging.
+      if (floats(voxelKind(v)) || world.voxels.falling.has(key) || level <= Math.round(world.height[y * world.w + x] * 0.5)) continue;
       const near = [1, -1, 512, -512, 512 * 1024, -512 * 1024].some((d) => world.decor.has(key + d));
       if (!near) hanging++;
     }
