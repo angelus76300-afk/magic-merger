@@ -851,19 +851,22 @@ export class VoxelView {
 }
 
 // Adds the decal texture to an unlit material: the land shows whatever spells
-// painted at that spot.
+// painted at that spot. The drawing is projected from above, so it only goes
+// on faces whose `decalMask` is 1 (dry land tops and fluid tops): on a cut
+// side it would smear into vertical streaks, and on land under water it would
+// show twice, once on the water and once through it.
 function withDecal<T extends MeshBasicMaterial>(material: T, texture: CanvasTexture, world: World): T {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.decalMap = { value: texture };
     shader.uniforms.worldSize = { value: [world.w, world.h] };
     shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vWorldPos;")
-      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;");
+      .replace("#include <common>", "#include <common>\nvarying vec3 vWorldPos;\nattribute float decalMask;\nvarying float vDecal;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;\nvDecal = decalMask;");
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vWorldPos;\nuniform sampler2D decalMap;\nuniform vec2 worldSize;")
+      .replace("#include <common>", "#include <common>\nvarying vec3 vWorldPos;\nvarying float vDecal;\nuniform sampler2D decalMap;\nuniform vec2 worldSize;")
       .replace(
         "#include <dithering_fragment>",
-        "#include <dithering_fragment>\nvec2 decalUv = (vWorldPos.xz + worldSize * 0.5) / worldSize;\nvec4 decal = texture2D(decalMap, vec2(decalUv.x, 1.0 - decalUv.y));\ngl_FragColor.rgb = mix(gl_FragColor.rgb, decal.rgb, decal.a);",
+        "#include <dithering_fragment>\nvec2 decalUv = (vWorldPos.xz + worldSize * 0.5) / worldSize;\nvec4 decal = texture2D(decalMap, vec2(decalUv.x, 1.0 - decalUv.y));\ngl_FragColor.rgb = mix(gl_FragColor.rgb, decal.rgb, decal.a * vDecal);",
       );
   };
   return material;

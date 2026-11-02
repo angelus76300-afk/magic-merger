@@ -10,7 +10,7 @@ import { BODY_LOOKS, Visuals, type Body, type BodyLook, type DrawFn } from "./vi
 import { TICK, World } from "./world";
 import { Builder, arch, island, spire, tower, tree, treeDefaults, wall } from "./structures";
 import { VK, igniteVoxels, kindId } from "./voxels";
-import { voxelKey } from "./voxelkey";
+import { keyLevel, keyX, keyY, voxelKey } from "./voxelkey";
 import { type Landmark, type Presence } from "./social";
 import { hexColor, toColor } from "./colors";
 
@@ -303,6 +303,7 @@ export class Runtime {
   placeVoxel(key: number, value: number): void {
     const { decor, voxels } = this.world;
     if (!decor.has(key) && decor.size >= World.MAX_DECOR) return;
+    if (!this.world.voxelFits(keyX(key), keyY(key), keyLevel(key))) return;
     decor.set(key, value);
     voxels.burning.delete(key);
   }

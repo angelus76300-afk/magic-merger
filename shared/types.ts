@@ -146,8 +146,43 @@ export interface HealthResponse {
   ok: boolean;
   mock: boolean;
   admin: boolean;
+  // 3.4: false when this browser has no valid invite link (or admin token).
+  invited: boolean;
+  // The invite's own month, for the player.
+  invite?: { name: string; status: "active" | "paused" | "revoked"; spent: number; cap: number };
 }
+
+// Why a request was refused, when the game should say it its own way:
+// invite (no link), revoked, paused, spent (the invite's allowance), budget
+// (everyone's month), burst (the bug guard).
+export type ErrorCode = "invite" | "revoked" | "paused" | "spent" | "budget" | "burst";
 
 export interface ApiError {
   error: string;
+  code?: ErrorCode;
+}
+
+// 3.4 admin: one row per invited person.
+export interface PersonInfo {
+  id: string;
+  name: string;
+  status: "active" | "paused" | "revoked";
+  cap: number;
+  topup: number;
+  spent: number;
+  discoveries: number;
+  refusals: number;
+  lastSeen: number | null;
+  createdAt: number;
+}
+
+export interface PeopleResponse {
+  budget: number;
+  spent: number;
+  held: number;
+  left: number;
+  people: PersonInfo[];
+  // Spend that is not an invite's: the admin, and calls from before 3.4.
+  others: { who: string; spent: number }[];
+  reports: { id: number; name: string; reason: string | null; by: string | null; at: number }[];
 }

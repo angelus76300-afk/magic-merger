@@ -25,6 +25,38 @@ interface LabOptions {
   profile?: boolean;
   // Frames as JPEG (smaller, for the judge) instead of PNG.
   jpeg?: boolean;
+  // Where to cast: next to a village (default), on a shore between water and
+  // higher land, or where a river spills off the island's edge.
+  aim?: "village" | "shore" | "edge";
+  // Camera angles around the target (orbit.ts), for visual checks.
+  theta?: number;
+  phi?: number;
+}
+
+// A water cell on the island's border, or one next to land at least two
+// voxels higher: where water walls meet cut sides.
+function findSpot(world: World, aim: "shore" | "edge"): { x: number; y: number } | null {
+  const { w, h } = world;
+  for (let i = 0; i < world.n; i++) {
+    if (world.fluid[i] === 0 || world.depth[i] < 0.2) continue;
+    const x = i % w;
+    const y = Math.floor(i / w);
+    if (aim === "edge") {
+      if (x === 0 || y === 0 || x === w - 1 || y === h - 1) return { x, y };
+      continue;
+    }
+    if (x < 8 || y < 8 || x > w - 8 || y > h - 8) continue;
+    for (const [dx, dy] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ]) {
+      const j = (y + dy) * w + x + dx;
+      if (world.fluid[j] === 0 && world.height[j] - world.height[i] - world.depth[i] > 3) return { x, y };
+    }
+  }
+  return null;
 }
 
 function seedRandom(seed: number): void {
@@ -117,8 +149,11 @@ async function runSpell(code: string, options: LabOptions = {}) {
       break;
     }
   }
+  if (options.aim === "shore" || options.aim === "edge") target = findSpot(world, options.aim) ?? target;
   engine.view.orbit.tx = target.x;
   engine.view.orbit.ty = target.y;
+  if (options.theta !== undefined) engine.view.orbit.theta = options.theta;
+  if (options.phi !== undefined) engine.view.orbit.phi = options.phi;
   if (options.dist) {
     // A fixed camera: spells do not move it, so big builds can be seen whole.
     engine.view.orbit.dist = options.dist;

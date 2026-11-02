@@ -6,6 +6,12 @@ import { session } from "./session";
 import { Store } from "./store";
 import { toast } from "./toast";
 import { WorldHost } from "./worldhost";
+import { openPeople } from "./people";
+import { hideGate, showGate, showWelcome, welcomedBefore } from "./welcome";
+
+// An invite link (/#invite=...) is kept by this browser before anything else.
+const fromLink = api.captureInvite();
+api.setLockedOut(showGate);
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
@@ -29,12 +35,6 @@ const world = new WorldHost(store, {
 });
 
 function showTab(view: string): void {
-  $("#admin-badge").addEventListener("click", () => {
-    const badge = $("#admin-badge");
-    if (badge.title) window.alert(`This month, by call:\n${badge.title}`);
-    void showSpend(badge);
-  });
-
   for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
     tab.setAttribute("aria-selected", String(tab.dataset.view === view));
   }
@@ -46,11 +46,15 @@ function showTab(view: string): void {
   else world.hide();
 }
 
+// The admin badge opens the people view: invites, spend per person, the month.
 $("#admin-badge").addEventListener("click", () => {
   const badge = $("#admin-badge");
-  if (badge.title) window.alert(`This month, by call:\n${badge.title}`);
+  openPeople(badge.title);
   void showSpend(badge);
 });
+
+// The ? button: the welcome again, with the privacy note and this month's magic.
+$("#help").addEventListener("click", () => void api.health().then(showWelcome));
 
 for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
   tab.addEventListener("click", () => showTab(tab.dataset.view!));
@@ -78,6 +82,17 @@ async function refreshSession(): Promise<void> {
   const badge = $("#admin-badge");
   badge.hidden = !session.admin;
   if (session.admin) void showSpend(badge);
+  if (!status) return;
+  if (!status.invited) {
+    showGate("invite", "");
+    return;
+  }
+  if (document.getElementById("gate") && !document.getElementById("gate")!.hidden) {
+    hideGate();
+    showTab("craft-view");
+  }
+  // A new player, or anyone opening a fresh link, reads what the game is first.
+  if (!session.admin && (fromLink || !welcomedBefore())) showWelcome(status);
 }
 
 // The admin badge shows what Claude cost this month, and the detail on tap.
@@ -114,8 +129,8 @@ title.addEventListener("click", () => {
   taps = [...taps.filter((t) => now - t < 3000), now];
   if (taps.length < 5) return;
   taps = [];
-  const token = window.prompt("Admin or access token:");
+  const token = window.prompt("Admin token:");
   if (!token) return;
   api.setToken(token);
-  void refreshSession().then(() => toast(session.admin ? "Admin mode on" : "Token saved"));
+  void refreshSession().then(() => toast(session.admin ? "Admin mode on" : "That is not the admin token"));
 });

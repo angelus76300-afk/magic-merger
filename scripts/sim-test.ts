@@ -415,6 +415,21 @@ for (const scenario of SCENARIOS) {
   check("a revived creature stays alive", !v.dead && v.hp > 0 && !errors.length, `dead ${v.dead}, hp ${Math.round(v.hp)}`);
 }
 
+// 9c. Spell blocks never sit inside the land, and a block where a house
+// stands knocks it down (3.4: they used to show through each other).
+{
+  const world = generateWorld(112, 112, 4);
+  const house = world.cover.indexOf(C.HOUSE);
+  const x = house % world.w;
+  const y = Math.floor(house / world.w);
+  const top = Math.round(world.height[house] * 0.5);
+  const before = world.decor.size;
+  world.setVoxel(x, y, top - 1, 0xff0000);
+  const buried = world.decor.size - before;
+  world.setVoxel(x, y, top, 0xff0000);
+  check("no block inside the land; a block on a house replaces it", buried === 0 && world.decor.size === before + 1 && world.cover[house] === C.NONE);
+}
+
 // 10. Votes: how many are needed, when they rewrite, roll back or reach the library.
 {
   check("one player: one vote is enough", votesNeeded(1) === 1 && votesNeeded(0) === 1 && votesNeeded(0.3) === 1);

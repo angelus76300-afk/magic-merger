@@ -2,7 +2,7 @@
 
 ## Decisions so far
 
-1. Audience: one player for now. Browser game, must work well on phones.
+1. Audience: one player, then (3.4) friends and coworkers by personal invite link. Not public: nothing about the game is listed or open without a link. Browser game, must work well on phones.
 2. Stack: TypeScript and Vite frontend, one Cloudflare Worker serving both the page and `/api`, D1 (SQLite) as the recipe book.
 3. Eight primal forces to start: Fire, Water, Earth, Air, Light, Shadow, Life, Arcane.
 4. Two kinds of items: spells (castable) and artifacts (magical, not castable).
@@ -131,6 +131,33 @@ The spell card has a "View source" link for everyone: the program, its version n
 
 Artifacts use the same program format and the same endpoint, with one paragraph of the prompt telling the model they are placed, not cast: a short arrival, the thing itself as the point, built in voxels or spawned as a creature, with a tick when it acts on its own.
 
+## Sharing with friends (3.4)
+
+$50 of API a month in total, the admin's own plays included, and at most $5 per person. Players never see dollars: they see credits, 100 to the dollar (`shared/credits.ts`), so the $5 reads as 500 credits and a merge as a fraction of one. The Worker and the admin's People view count in dollars, with credits beside them. Everything is in `worker/ledger.ts`; the schema is `migrations/0006_invites.sql`; `scripts/worker-test.mjs` checks it.
+
+### Invites
+
+One link per person, made from the admin badge with a name: `/#invite=<secret>`. The secret is 24 random bytes, after the `#` so it never reaches a server log or another site's Referer; the page stores it in localStorage and takes it out of the address bar, so copying the URL does not share it. The Worker keeps only its SHA-256, so a lost link is replaced (relink, same person, same history), never shown again. An invite is active, paused (the shared library only) or revoked (the link is dead, every request answers 403). The admin token stays separate and has no allowance. Without either, the API answers 401 "invite only"; in mock mode (no API key) it stays open, since it costs nothing.
+
+### Who pays
+
+Every row of `spend` carries the invite that triggered it: merges, descriptions, spells, repairs, test run rewrites, the rewrite a vote asks for (paid by the voter, who must have the allowance), and Batch API items, which are billed to whoever asked when the cron collects them. Elements remember who discovered them first. A request that cannot pay is refused only for what is new: a known recipe, a stored description and a stored program cost nothing and always work. A big spell is drafted by Haiku first; its Opus version through the Batch API is held only if the allowance can take it, otherwise the player keeps the draft.
+
+### The budget check is a hold, not a read
+
+3.2 read the month's total and then called Claude, so two requests near the cap could both pass. Now each call first inserts its expected cost (a merge $0.004, a small spell $0.008, a big one $0.15, a batch item $0.06: above the measured averages) into `reservations` with one `INSERT ... SELECT ... WHERE month spent + open holds + this one <= BUDGET_USD AND the same for the invite <= its allowance`. D1 runs one statement at a time, so the second request sees the first one's hold. When the request ends, the real costs go to `spend` and its holds are settled in one batch. A request that dies leaves its hold open; the cron turns holds older than an hour into spend at their estimate, which errs on the safe side. The worst overshoot is the difference between one call's estimate and its real cost.
+
+The test seeds the month at $49.995 and sends two merges at once, five times: one passes, one gets "the magic is spent for this month", and the month never passes $50. With the check written as a read then an insert, both pass every time (tried, then reverted).
+
+### A bug guard, not a play limit
+
+1. **Identical requests in flight are answered once.** Merges (by pair), descriptions, spells and repairs (by name) and test runs (by program) take a key in `inflight`; an identical request waits until the first is done and then finds what it stored. Two friends discovering the same pair at the same second make one Claude call. A repair waits and then serves the fix already waiting for its test run instead of mending again.
+2. **More than 10 paid requests from one person within 5 seconds are refused and logged** (`refusals`, shown per person in the admin view). Only requests that would call Claude count: merging known recipes as fast as one can never comes near it; a client stuck in a loop does at once. There is no hourly cap: the $5 is the limit. The admin is not guarded (measurement scripts).
+
+### Reports and privacy
+
+A card has "Report this name": Claude names things, and a name can be wrong or offensive. Reports go to the admin's people view, one open report per name and person; dismissing one is the only action for now (renaming an element would change everyone's recipe book). New players see one paragraph on what the game is, that Claude writes the spells, what their month looks like, and a short privacy note: what is kept and why, that item names go to Claude and nothing about the person does, Cloudflare's request logs, no ads or cookies, and who to ask for deletion. The `?` in the top bar shows it again.
+
 ## Challenges
 
 Hand-made islands with a hazard and a goal (`src/sim/scenarios.ts`, titles in `scenario-list.ts` so the game page does not load the engine to list them). A challenge builds its own world, runs a `tick` every frame (a volcano vent, a rising sea, the sun drying fields) and a `check` twice a second that returns progress text and playing, won or lost. It never touches the player's island: the iframe keeps the sandbox save in memory and restores it on leaving.
@@ -143,6 +170,6 @@ Balance is measured, not guessed: `npm test` plays each challenge with nothing o
 2. **Rules of the land** (`physics.ts`): water runs downhill, freezes below 0 and boils above 100; lava flows slowly, burns and hardens into basalt, and makes steam with water; acid eats covers and soil; oil burns fast; mud dries; snow melts; fire spreads through forests, fields and houses with the wind and leaves ash and stumps; steam rains back down; powder explodes; grass and forests grow back.
 3. **People** (`creatures.ts`): villagers live near their houses, rebuild rubble, flee fire, panic and run for water when burning, drown in deep water; a new villager appears now and then while houses stand. Beasts roam, spirits fly and glow, golems are strong and fireproof.
 4. **Generation** (`world.ts`): fractal hills rescaled from their own distribution so every map gets about a fifth of water and a few snowy peaks, a river, forests, and villages on the flattest dry land.
-5. **View** (`voxel/`): a floating voxel island in three.js, with layered cut sides and water spilling off the edges. Built for phones: lighting is baked into vertex colors and every material is unlit, terrain chunks are rebuilt only where a column changed, each kind of object is one instanced draw call, and the pixel density drops when frames are slow. A medium island is about 60 draw calls and 140k triangles. Chunks are built with a reusable typed array writer under a 3 ms per frame budget.
+5. **View** (`voxel/`): a floating voxel island in three.js, with layered cut sides and water spilling off the edges. No two faces share a plane (3.4, `docs/visual-checks`): a waterfall hangs 0.06 cells in front of the cut side, a water wall starts on its own floor, spell blocks are never placed inside the land and take the place of a cover they are put on, and spell drawings are projected only on dry land tops and fluid tops, never on walls or on land under water. Built for phones: lighting is baked into vertex colors and every material is unlit, terrain chunks are rebuilt only where a column changed, each kind of object is one instanced draw call, and the pixel density drops when frames are slow. A medium island is about 60 draw calls and 140k triangles. Chunks are built with a reusable typed array writer under a 3 ms per frame budget.
 6. **Day and night** (`voxel/daylight.ts`): a six minute cycle that tints every unlit material and the sky; fire, lava and spell light are untouched, house windows light up at night and chimneys smoke.
 7. **Saving**: the iframe sends a compact save (each layer quantized to bytes) every 10 seconds; the parent keeps it in localStorage. Materials and creatures that spells defined are saved by name with the spell that owns them, and that spell's rules are loaded again before the world.
