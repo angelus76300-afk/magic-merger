@@ -29,7 +29,7 @@ import { changeFeedback, listFeedback, postFeedback, syncFeedback, voteFeedback 
 import type { FeedbackAction } from "../shared/feedback";
 import { HttpError } from "./http";
 import { ClaudeOracle, MockOracle, OracleError, parseEffort, type Oracle, type ProgramAnswer, type SpellRequest as OracleSpellRequest } from "./oracle";
-import { parseIntents, type Intent } from "../shared/promises";
+import { PROBED, parseIntents, type Intent } from "../shared/promises";
 import { designDue, evolution, liveLibrary, openGaps, recordGap, settleHelper, storeDesign, trialHelpers, withLibrary, type Library } from "./evolve";
 import {
   averageDaily,
@@ -258,6 +258,7 @@ export default {
         sweep(env.DB).catch((err) => console.error("sweep", err)),
         syncFeedback(env).catch((err) => console.error("feedback sync", err)),
         env.EVOLVE === "0" ? null : evolve(env, false).catch((err) => console.error("evolve", err)),
+        backfillIntents(env).catch((err) => console.error("intents backfill", err)),
       ]).then(() => undefined),
     );
   },
@@ -618,6 +619,73 @@ async function examplesFor(env: Env, key: string, request: OracleSpellRequest): 
   return pickExamples(entries, { key, name: request.name, description: request.description, kind: request.kind, tier: request.tier });
 }
 
+// Did a stored test run face the promise probe? It records how much harm was prevented.
+function promiseTested(checked: string | null): boolean {
+  if (!checked) return false;
+  try {
+    const v = JSON.parse(checked) as { stats?: { saved?: unknown }; recheck?: boolean };
+    return typeof v.stats?.saved === "number" || v.recheck === true;
+  } catch {
+    return false;
+  }
+}
+
+// A live program tested again by a browser against the promise its element
+// now has (3.6). Pass: the result is recorded and nothing else happens. Fail:
+// it is written once more by the small model with what the probe found, as a
+// trial whose parent is the live program, which stays until the new one
+// passes its own test run. Never twice for the same program.
+async function handleRecheck(body: CheckRequest, env: Env, oracle: Oracle, element: GameElement, row: ProgramRow): Promise<SpellResponse> {
+  const key = elementKey(element.name);
+  const tier = tierOf(element);
+  const live = await liveProgram(env.DB, key);
+  const servedLive = (): SpellResponse => ({ name: element.name, tier, program: programOf(live!.row)!, mock: false });
+  if (!live || live.row.id !== row.id || promiseTested(row.checked)) return servedLive();
+  const detail = String(body.detail ?? "").slice(0, 400);
+  const problem = body.problem === "crash" || body.problem === "nothing" || body.problem === "wiped" || body.problem === "promise" ? body.problem : null;
+  const verdict = { ok: body.ok === true, problem, detail, stats: body.stats ?? {}, at: Date.now(), recheck: true };
+  await env.DB.prepare("UPDATE programs SET checked = ? WHERE id = ?").bind(JSON.stringify(verdict).slice(0, 2000), row.id).run();
+  // Only a broken promise asks for a rewrite here; anything else is the old test's business.
+  if (verdict.ok || problem !== "promise") return servedLive();
+  const pending = await newerTrial(env.DB, key, row.id);
+  if (pending) return { name: element.name, tier, program: programOf(pending)!, mock: false };
+  let description: string;
+  try {
+    await ensureBudget(env, oracle, "rewrite", ESTIMATE.small);
+    description = await ensureDescription(env, oracle, element, false);
+  } catch {
+    return servedLive();
+  }
+  const tested = programOf(row);
+  const intents = parseIntents((await env.DB.prepare("SELECT intents FROM elements WHERE key = ?").bind(key).first<{ intents: string | null }>())?.intents);
+  const library = await liveLibrary(env.DB);
+  const request: OracleSpellRequest = {
+    name: element.name,
+    kind: element.kind,
+    description,
+    recipe: await firstRecipe(env.DB, key),
+    tier,
+    intents,
+    library: library.docs,
+    rewrite: { reasons: [`it was written before its promise was tested, and its test found: ${detail}`], summary: tested?.summary, code: tested?.code },
+  };
+  let answer;
+  try {
+    answer = await writeWith(env, oracle, smallModel(env), undefined, (w) => w.spell(request));
+  } catch (err) {
+    console.error("recheck rewrite", err);
+    return servedLive();
+  }
+  const program = programFrom(answer, intents, library);
+  // A trial like any rewrite: if it fails its own test run it is written once more, and the live program stays.
+  const id = await insertProgram(env.DB, key, JSON.stringify(program), smallModel(env), PROGRAM_VERSION, "promise", "trial", row.id);
+  await recordGap(env.DB, key, id, answer.missing);
+  await env.DB.prepare("INSERT INTO rewrites (key, from_pid, to_pid, cause, at, status, model) VALUES (?, ?, ?, 'promise', ?, 'done', ?)")
+    .bind(key, row.id, id, Date.now(), smallModel(env))
+    .run();
+  return { name: element.name, tier, program: { ...program, model: smallModel(env), id, trial: true }, mock: false };
+}
+
 // The test run of a trial, done in the browser (src/sim/check.ts): pass, and
 // it becomes the live program; fail, and it is written once more with what the
 // test found, by the small model with the failing code in front of it. A
@@ -636,6 +704,7 @@ async function handleCheck(body: CheckRequest, env: Env, oracle: Oracle): Promis
     if (!program) throw new HttpError(404, "There is no program");
     return { name: element.name, tier, program, mock: false };
   };
+  if (body.recheck === true && row.status === "live") return handleRecheck(body, env, oracle, element, row);
   // Someone else's browser got there first.
   if (row.status !== "trial") return served();
   const detail = String(body.detail ?? "").slice(0, 400);
@@ -703,14 +772,20 @@ async function handleLive(body: { names?: unknown }, env: Env): Promise<LiveResp
     const chunk = keys.slice(i, i + 90);
     const marks = chunk.map(() => "?").join(", ");
     const rows = await env.DB.prepare(
-      `SELECT s.key, s.pid, (SELECT MAX(p.id) FROM programs p WHERE p.key = s.key AND p.status = 'trial' AND p.id > COALESCE(s.pid, 0)) AS trial
-       FROM spells s WHERE s.key IN (${marks}) AND s.version >= ?`,
+      `SELECT s.key, s.pid, (SELECT MAX(p.id) FROM programs p WHERE p.key = s.key AND p.status = 'trial' AND p.id > COALESCE(s.pid, 0)) AS trial,
+         e.intents, (SELECT p.checked FROM programs p WHERE p.id = s.pid) AS checked
+       FROM spells s LEFT JOIN elements e ON e.key = s.key WHERE s.key IN (${marks}) AND s.version >= ?`,
     )
       .bind(...chunk, FIRST_PROGRAM_VERSION)
-      .all<{ key: string; pid: number | null; trial: number | null }>();
+      .all<{ key: string; pid: number | null; trial: number | null; intents: string | null; checked: string | null }>();
     for (const r of rows.results) {
       const id = r.trial ?? r.pid;
-      if (id) programs[byKey.get(r.key) ?? r.key] = { id, trial: !!r.trial };
+      if (!id) continue;
+      const entry: LiveResponse["programs"][string] = { id, trial: !!r.trial };
+      // A live program whose promise is probed but that never faced the probe.
+      const probed = parseIntents(r.intents).filter((i) => PROBED.includes(i));
+      if (!r.trial && probed.length && !promiseTested(r.checked)) entry.recheck = parseIntents(r.intents);
+      programs[byKey.get(r.key) ?? r.key] = entry;
     }
   }
   return { programs };
@@ -1143,6 +1218,8 @@ async function handleAdmin(request: Request, url: URL, env: Env, oracle: Oracle,
   if (!post && path === "evolution") return json(await evolution(env.DB));
   if (post && path === "evolve") return json(await evolve(env, true));
   if (!post && path === "helpers") return json(await trialHelpers(env.DB));
+  // Intents for elements from before 3.4.2, now rather than 25 per cron run.
+  if (post && path === "intents") return json(await backfillIntents(env, 80));
   if (post && path === "helper-check") {
     const body = await readBody<{ id?: unknown; ok?: unknown; detail?: unknown }>(request);
     return json({ status: await settleHelper(env.DB, Number(body.id), body.ok === true, String(body.detail ?? "")) });
@@ -1549,6 +1626,41 @@ async function ensureIntents(env: Env, oracle: Oracle, element: GameElement, des
 
 // Asks the designer how the API should grow, when enough spells lacked
 // something (worker/evolve.ts). Daily from the cron; at once for the admin.
+// Elements made before 3.4.2 have no intents, so their programs never faced
+// the probe of their promise: a Protection Spell kept a shell of blocks that
+// prevented none of the harm (3.6, all nine stored protection programs failed
+// the probe). A few at a time on the cron, from the stored entry, never
+// writing a description: about $0.0001 each on the small model.
+const INTENTS_PER_RUN = 25;
+async function backfillIntents(env: Env, limit = INTENTS_PER_RUN): Promise<{ done: number; left: number }> {
+  if (!env.ANTHROPIC_API_KEY) return { done: 0, left: 0 };
+  const rows = await env.DB.prepare("SELECT key, name, kind, description FROM elements WHERE intents IS NULL ORDER BY created_at LIMIT ?")
+    .bind(limit)
+    .all<{ key: string; name: string; kind: ElementKind; description: string | null }>();
+  if (!rows.results.length) return { done: 0, left: 0 };
+  const oracle = oracleFor(env, {}, new Ledger(ADMIN_PAYER));
+  let done = 0;
+  try {
+    for (const r of rows.results) {
+      try {
+        await ensureBudget(env, oracle, "intent", ESTIMATE.intent);
+        const intents = await oracle.intents(r.name, r.kind, r.description ?? "");
+        await env.DB.prepare("UPDATE elements SET intents = ? WHERE key = ? AND intents IS NULL")
+          .bind(intents.join(",") || "other", r.key)
+          .run();
+        done++;
+      } catch (err) {
+        console.error("intents", r.key, err);
+        break;
+      }
+    }
+  } finally {
+    await closeLedger(env.DB, oracle);
+  }
+  const left = await env.DB.prepare("SELECT COUNT(*) AS n FROM elements WHERE intents IS NULL").first<{ n: number }>();
+  return { done, left: left?.n ?? 0 };
+}
+
 async function evolve(env: Env, force: boolean): Promise<Record<string, unknown>> {
   if (!env.ANTHROPIC_API_KEY) return { skipped: "no API key" };
   if (!force && !(await designDue(env.DB))) return { skipped: "not due" };

@@ -7,7 +7,10 @@ import { join } from "node:path";
 import { availableParallelism } from "node:os";
 import { Worker } from "node:worker_threads";
 import { guardLoops } from "../shared/spellcode";
-import { KINDS, populate } from "../src/sim/creatures";
+import { KINDS, makeCreature, populate } from "../src/sim/creatures";
+import { goalOfCreature } from "../src/sim/goals";
+import { abilitiesFrom } from "../src/sim/abilities";
+import { logDeeds, mindOf } from "../src/sim/kin";
 import { C, F } from "../src/sim/materials";
 import { Runtime } from "../src/sim/runtime";
 import { loadWorld, saveWorld } from "../src/sim/save";
@@ -15,15 +18,16 @@ import { SCENARIOS } from "../src/sim/scenarios";
 import { generateWorld, type World } from "../src/sim/world";
 import { VK, floats, voxelKind } from "../src/sim/voxels";
 import { keyCell } from "../src/sim/voxelkey";
-import { SOLUTIONS, replay, seed, step, type Replay } from "./challenge-replay";
-import { runCheck } from "../src/sim/check";
+import { SOLUTIONS, replay, seed, step } from "./challenge-replay";
+import type { Job } from "./challenge-worker";
+import { runCheck, type SceneReport } from "../src/sim/check";
 import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../shared/votes";
 import { pickExamples, words } from "../worker/programs";
 import { verdict, type LinkedPull } from "../worker/feedback";
 import { helperProblem, withLibrary } from "../worker/evolve";
 import { body, bodyFrom, FEATURES, ITEMS, MAX_MODEL_BOXES, modelOf, PLANS } from "../src/sim/body";
 import { names } from "../src/sim/social";
-import { AGES, JOBS, packLook, unpackLook } from "../src/sim/villagers";
+import { AGES, JOBS, packLook, unpackLook, type Job as Job3 } from "../src/sim/villagers";
 import { buildRig, type Rig } from "../src/sim/voxel/rigs";
 import { SPECIES } from "../src/sim/wildlife";
 
@@ -31,14 +35,24 @@ import { SPECIES } from "../src/sim/wildlife";
 // luck (Wildfire did, at 3 wins in 16). These replays run in worker threads
 // while the checks below run here; their results are read in section 8.
 const SEEDS = 8;
-const idle: Replay[] = SCENARIOS.flatMap((s) => Array.from({ length: SEEDS }, (_, n) => ({ id: s.id, seed: (n + 1) * 7919, magic: false })));
+// The five minute scene (3.6): ten simulated minutes, on three streams of
+// life for the same island, so one lucky run cannot pass it. First in the
+// queue: they are the longest jobs.
+const SCENE_STREAMS = 3;
+const SCENE_SECONDS = 600;
+const idle: Job[] = [
+  ...Array.from({ length: SCENE_STREAMS }, (_, n) => ({ scene: n, seconds: SCENE_SECONDS })),
+  ...SCENARIOS.flatMap((s) => Array.from({ length: SEEDS }, (_, n) => ({ id: s.id, seed: (n + 1) * 7919, magic: false }))),
+];
 const idleResults = new Map<string, { status: string; errors: string[] }[]>();
+const sceneReports: { stream: number; report: SceneReport }[] = [];
 const nextIdle = new Int32Array(new SharedArrayBuffer(4));
 const idleDone = Promise.all(
   Array.from({ length: Math.min(4, Math.max(2, availableParallelism() - 1)) }, () => {
     const worker = new Worker(new URL("./challenge-worker.mjs", import.meta.url), { workerData: { jobs: idle, next: nextIdle } });
-    worker.on("message", ({ job, status, errors }: { job: Replay; status: string; errors: string[] }) => {
-      idleResults.set(job.id, [...(idleResults.get(job.id) ?? []), { status, errors }]);
+    worker.on("message", ({ job, status, errors, report }: { job: Job; status: string; errors: string[]; report?: SceneReport }) => {
+      if (report && "scene" in job) sceneReports.push({ stream: job.scene, report });
+      else if ("id" in job) idleResults.set(job.id, [...(idleResults.get(job.id) ?? []), { status, errors }]);
     });
     return new Promise<void>((resolve, reject) => {
       worker.on("error", reject);
@@ -387,6 +401,34 @@ for (const scenario of SCENARIOS) {
   );
 }
 
+// 8b. The five minute scene (3.6, check.ts sceneRun): a village, a forest,
+// wolves, a dragon, a vampire, gold and a shrine, left alone for ten
+// simulated minutes on three streams of life. Every creature that lived five
+// minutes changed something; no kind of three or more vanished (fell under a
+// third of its number) and none exploded (past two and a half times it).
+for (const { stream, report: r } of sceneReports.sort((a, b) => a.stream - b.stream)) {
+  const kinds = Object.entries(r.kinds);
+  const vanished = kinds.filter(([, v]) => v.start >= 3 && v.min < Math.ceil(v.start / 3)).map(([k]) => k);
+  const exploded = kinds.filter(([, v]) => v.max > Math.max(v.start * 2.5, v.start + 3)).map(([k]) => `${k} ${v.start} to ${v.max}`);
+  const lively = Object.values(r.lively).reduce((a, [d, n]) => [a[0] + d, a[1] + n], [0, 0]);
+  check(
+    `five minute scene, stream ${stream}: every creature changed something`,
+    !r.errors.length && r.idle.length === 0,
+    `${lively[0]} of ${lively[1]} creatures changed something; idle after five minutes: ${r.idle.map((c) => `${c.kind} (${c.action})`).join(", ") || "none"}${r.errors[0] ? `; ${r.errors[0]}` : ""}`,
+  );
+  check(
+    `five minute scene, stream ${stream}: populations neither vanish nor explode`,
+    !vanished.length && !exploded.length,
+    kinds.map(([k, v]) => `${k} ${v.start}>${v.end} (${v.min}-${v.max})`).join(", "),
+  );
+  check(
+    `five minute scene, stream ${stream}: goals leave marks`,
+    (r.marks.hoard ?? 0) > 0 && (r.marks.den ?? 0) > 0 && (r.marks.offerings ?? 0) > 0,
+    `${JSON.stringify(r.marks)}, tick ${r.meanTickMs} ms mean, ${r.worstTickMs} ms worst`,
+  );
+}
+check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length === SCENE_STREAMS);
+
 // 9. The test run before a program is stored (3.3): reference spells pass;
 // a program that crashes, does nothing visible or wipes the island fails.
 // It keeps its own random stream (check.ts), so it shifts nothing above.
@@ -608,9 +650,10 @@ for (const scenario of SCENARIOS) {
     check("wild animals come back in their habitat", deer >= 1, `${deer} deer after a minute`);
     // A fish on dry land chokes.
     const fish = world.creatures.find((c) => c.kind === "fish" && !c.dead)!;
-    const land = world.creatures.find((c) => c.kind === "villager")!;
-    fish.x = land.x;
-    fish.y = land.y;
+    // Dry land (villagers since 3.6 go fishing, so not where one stands).
+    const dry = world.ground.findIndex((g, i) => g === 0 && world.depth[i] === 0 && world.cover[i] === C.NONE && i > world.n / 3);
+    fish.x = dry % world.w;
+    fish.y = Math.floor(dry / world.w);
     for (let k = 0; k < 30 * 3; k++) step(world, rt);
     check("a fish out of water dies", fish.dead);
   }
@@ -661,6 +704,246 @@ for (const scenario of SCENARIOS) {
       `${styles.size} village styles`,
     );
   }
+}
+
+// 9g. Goals and abilities (3.6): where a kind's goal comes from, jobs as
+// goals, an ability on its trigger and cooldown, healing, taming, the work of
+// a village, and minds kept by a save.
+{
+  seed(9);
+  const world = generateWorld(112, 112, 4);
+  populate(world);
+  const errors: string[] = [];
+  const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
+  rt.compile({
+    key: "goals",
+    name: "Goals",
+    tier: "minor",
+    code: `const spell = { creatures: [
+      { name: "fire dragon", base: "beast" },
+      { name: "goblin thief", base: "beast" },
+      { name: "wolf spirit", base: "spirit" },
+      { name: "night stalker", base: "beast", behavior: "hunt", prey: ["villager"] },
+      { name: "blorp", base: "golem" },
+      { name: "ice witch", base: "villager", goal: "tend", abilities: [{ do: "freeze", when: "enemy near", every: 5 }, "heal", { do: "nonsense" }] },
+    ], *cast(w) {} };`,
+  });
+  const k = (n: string) => KINDS.get(n)!;
+  check(
+    "a goal from what a kind declares, then its behavior, its name, its base",
+    k("ice witch").goal === "tend" &&
+      k("ice witch").needs === true &&
+      k("night stalker").goal === "hunt" &&
+      k("fire dragon").goal === "hoard" &&
+      k("goblin thief").goal === "steal" &&
+      k("wolf spirit").goal === "explore" &&
+      k("blorp").goal === "guard" &&
+      !k("fire dragon").needs &&
+      k("wolf").goal === "hunt" &&
+      k("fish").goal === "migrate" &&
+      k("bird").goal === "spread",
+    ["ice witch", "night stalker", "fire dragon", "goblin thief", "wolf spirit", "blorp"].map((n) => `${n} ${k(n).goal}`).join(", "),
+  );
+  check(
+    "abilities declared or read from the name, bounded",
+    k("ice witch")
+      .abilities!.map((a) => `${a.do}/${a.when}/${a.every}`)
+      .join() === "freeze/enemy near/5,heal/every so often/12" &&
+      k("fire dragon").abilities!.some((a) => a.do === "breathe fire") &&
+      k("goblin thief").abilities!.some((a) => a.do === "steal") &&
+      abilitiesFrom([{ do: "lightning", every: 0.1 }])![0].every === 3,
+    JSON.stringify(k("ice witch").abilities),
+  );
+  const villager = (job: Job3, age: "adult" | "child" | "elder" = "adult") => {
+    const c = makeCreature("villager", 10, 10);
+    c.look = packLook({ age, job, style: 0, skin: 0, hair: 0, long: false });
+    return goalOfCreature(c, KINDS.get("villager")!);
+  };
+  check(
+    "villagers' jobs are goals",
+    villager("farmer") === "tend" &&
+      villager("woodcutter") === "gather" &&
+      villager("builder") === "build" &&
+      villager("priest") === "worship" &&
+      villager("guard") === "guard" &&
+      villager("merchant") === "explore" &&
+      villager("none", "child") === "gather" &&
+      villager("fisher", "elder") === "tend",
+  );
+
+  // A witch freezes what hunts her, no more often than her cooldown.
+  const witch = makeCreature("ice witch", 56, 56);
+  const stalker = makeCreature("night stalker", 59, 56);
+  KINDS.get("night stalker")!.ai!.prey = ["ice witch"];
+  world.creatures.push(witch, stalker);
+  let frozen = 0;
+  for (let t = 0; t < 30 * 12; t++) {
+    step(world, rt);
+    if (stalker.frozen > 2.9) frozen++;
+    stalker.hp = 400;
+    witch.hp = 100;
+    // Kept close: the test is the trigger and the cooldown, not the chase.
+    stalker.x = witch.x + 3;
+    stalker.y = witch.y;
+  }
+  const freezes = witch.mind?.deeds ?? 0;
+  check(
+    "an ability fires on its trigger, within its cooldown",
+    frozen >= 1 && freezes >= 2 && freezes <= 4 && !errors.length,
+    `${freezes} freezes in 12 s, every 5 s`,
+  );
+
+  // A priest heals the wounded around them.
+  const v = world.creatures.find((c) => c.kind === "villager" && !c.dead)!;
+  const priest = makeCreature("villager", v.x + 1, v.y);
+  priest.look = packLook({ age: "adult", job: "priest", style: 0, skin: 0, hair: 0, long: false });
+  priest.homeX = v.homeX;
+  priest.homeY = v.homeY;
+  world.creatures.push(priest);
+  const full = v.hp;
+  v.hp = full * 0.5;
+  const log = logDeeds(true)!;
+  for (let t = 0; t < 30 * 4; t++) {
+    step(world, rt);
+    priest.x = v.x + 1;
+    priest.y = v.y;
+  }
+  check(
+    "a priest heals the wounded",
+    v.hp > full * 0.8 && [...log.keys()].some((d) => d.startsWith("healed")),
+    `hp ${Math.round(full / 2)} then ${Math.round(v.hp)} of ${Math.round(full)}, ${[...log.entries()].filter(([d]) => d.startsWith("heal")).map(([d, n]) => `${d} ${n}`)}, priest ${priest.dead ? "dead" : "alive"}`,
+  );
+
+  // A hungry deer that begs near the village is fed, and the third meal tames it.
+  const village = world.villages[0];
+  village.food = 20;
+  const deer = makeCreature("deer", village.x, village.y);
+  world.creatures.push(deer);
+  const dm = mindOf(deer);
+  dm.fed = 2;
+  dm.hunger = 0.9;
+  world.time = 30; // a morning
+  for (let t = 0; t < 30 * 30 && !dm.tame; t++) {
+    if (dm.task !== "beg") {
+      dm.task = "beg";
+      dm.tx = village.x;
+      dm.ty = village.y;
+    }
+    // Keep a villager by it.
+    const near = world.creatures.find((c) => c.kind === "villager" && !c.dead && c !== priest)!;
+    near.x = deer.x + 1;
+    near.y = deer.y;
+    near.fear = 0;
+    step(world, rt);
+  }
+  check("villagers feed a begging animal, and tame it", dm.tame > 0 && dm.fed >= 3, `fed ${dm.fed}, tame ${dm.tame}`);
+
+  // Minds, villages and marks survive a save.
+  dm.carry = "food";
+  dm.memory = [{ kind: "wolf", feel: -2 }];
+  world.marks.push({ kind: "hoard", x: 30, y: 30, size: 5, by: "dragon" });
+  const back = loadWorld(JSON.parse(JSON.stringify(saveWorld(world, rt.owners))), (w) => {
+    const rt2 = new Runtime(w, () => {});
+    rt2.compile({ key: "goals", name: "Goals", tier: "minor", code: "const spell = { creatures: [], *cast(w) {} };" });
+  })!;
+  const deer2 = back.creatures.find((c) => c.kind === "deer" && c.mind?.tame);
+  check(
+    "minds, villages and marks are saved",
+    !!deer2 &&
+      deer2.mind!.carry === "food" &&
+      deer2.mind!.memory[0]?.kind === "wolf" &&
+      back.villages.length === world.villages.length &&
+      back.marks.some((m) => m.kind === "hoard" && m.size === 5),
+    `${back.villages.length} villages, ${back.marks.length} marks`,
+  );
+  logDeeds(false);
+}
+{
+  // A village at work for two minutes: trees felled for wood, fields sown and
+  // harvested, food brought home. This island's one fisher lives in the
+  // woods, far from water, so fish are counted but not asked for.
+  seed(10);
+  const world = generateWorld(152, 152, 7);
+  populate(world);
+  const rt = new Runtime(world, () => {});
+  const log = logDeeds(true)!;
+  const stumps = () => world.cover.reduce((n, c) => n + (c === C.STUMP ? 1 : 0), 0);
+  const before = stumps();
+  for (let t = 0; t < 30 * 120; t++) step(world, rt);
+  const did = (w: string) => [...log.entries()].filter(([d]) => d.includes(w)).reduce((n, [, v]) => n + v, 0);
+  check(
+    "villagers work at their jobs",
+    did("felled a tree") > 0 && did("harvested") + did("sowed") > 0 && did("brought") > 0 && stumps() > before,
+    ["felled a tree", "sowed", "harvested", "caught a fish", "brought", "picked", "planted", "ate", "spread", "dug a den"]
+      .map((w) => `${w} ${did(w)}`)
+      .join(", "),
+  );
+  logDeeds(false);
+}
+
+// 9h. Goals, jobs and abilities a spell invents (3.6), beyond the twelve: an
+// alchemist that turns flowers into crystal, villagers hired as moss
+// gatherers who bring food home, an ability written as code, a job kept by a
+// save, and an act that throws is switched off, not the world.
+{
+  seed(12);
+  const world = generateWorld(112, 112, 4);
+  populate(world);
+  const errors: string[] = [];
+  const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
+  const v = world.creatures.find((c) => c.kind === "villager" && (c.look & 3) === 0)!;
+  const code = `const spell = {
+    goals: [
+      { name: "brew potions", seek: "flower", near: 30, work: 1, act(self, w, x, y) { w.set(x, y, "crystal"); w.clear(x, y, "cover"); } },
+      { name: "gather moss", seek: "grass", near: 12, work: 1, carry: "food", act(self, w, x, y) { w.set(x, y, "dirt"); } },
+      { name: "break things", seek: "anywhere", work: 0.5, act() { throw new Error("broken on purpose"); } },
+    ],
+    creatures: [
+      { name: "alchemist", base: "villager", goal: "brew potions",
+        abilities: [{ name: "moonbeam", when: "every so often", every: 4, act(self, w) { w.set(self.x, self.y, "snow"); } }] },
+      { name: "breaker", base: "beast", goal: "break things" },
+    ],
+    *cast(w) {
+      w.spawn("alchemist", w.x, w.y);
+      w.spawn("breaker", w.x + 2, w.y);
+      w.hire("gather moss", w.x, w.y, 3);
+    },
+  };`;
+  const crystal = () => world.ground.reduce((n, g, i) => n + (world.layerName("ground", g) === "crystal" && world.cover[i] === C.NONE ? 1 : 0), 0);
+  const before = crystal();
+  for (let i = 0; i < world.n; i += 37) if (world.ground[i] === 0 && world.cover[i] === C.NONE && world.depth[i] === 0) world.setCover(i, C.FLOWER);
+  const village = () => world.villages.reduce((n, x) => n + x.food, 0);
+  rt.cast({ key: "alchemy", name: "Alchemy", tier: "minor", code }, v.x, v.y);
+  step(world, rt);
+  const food0 = village();
+  const hired = world.creatures.filter((c) => c.mind?.job === "gather moss");
+  for (let t = 0; t < 30 * 40; t++) step(world, rt);
+  const alchemist = world.creatures.find((c) => c.kind === "alchemist")!;
+  const kind = KINDS.get("alchemist")!;
+  check(
+    "a spell's own goal: sought, worked, and its code changes the land",
+    kind.goal === "brew potions" && kind.needs === true && crystal() > before && (alchemist.mind?.deeds ?? 0) > 0,
+    `${crystal() - before} flowers turned to crystal, did ${alchemist.mind?.did}`,
+  );
+  check(
+    "its own ability, written as code, fires on its trigger",
+    kind.abilities?.[0]?.do === "moonbeam" && world.ground.some((g) => world.layerName("ground", g) === "snow"),
+    JSON.stringify(kind.abilities?.map((a) => a.do)),
+  );
+  check(
+    "villagers hired for a spell's job do it and bring food home",
+    hired.length === 3 && hired.some((c) => (c.mind?.deeds ?? 0) > 0 && c.mind?.did.length) && village() > food0 - 20,
+    `${hired.length} hired, last did ${hired.map((c) => c.mind?.did).join("; ")}`,
+  );
+  check(
+    "a goal whose code throws is switched off, not the world",
+    errors.some((e) => e.includes("broken on purpose")) && errors.length === 1,
+    errors.join(" | "),
+  );
+  const back = loadWorld(JSON.parse(JSON.stringify(saveWorld(world, rt.owners))), (w) =>
+    new Runtime(w, () => {}).compile({ key: "alchemy", name: "Alchemy", tier: "minor", code }),
+  )!;
+  check("a hired job is saved by its name", back.creatures.filter((c) => c.mind?.job === "gather moss").length === 3);
 }
 
 // 10. Votes: how many are needed, when they rewrite, roll back or reach the library.

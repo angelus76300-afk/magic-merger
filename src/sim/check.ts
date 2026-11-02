@@ -2,6 +2,7 @@ import { parseIntents } from "../../shared/promises";
 import { TIERS, TIER_REACH, type Tier } from "../../shared/tiers";
 import { lifeCycle, populate, resetCreatureIds, updateCreature } from "./creatures";
 import { C } from "./materials";
+import { unpackLook } from "./villagers";
 import { stepPhysics } from "./physics";
 import { Runtime, type CastRequest } from "./runtime";
 import { TICK, generateWorld, type World } from "./world";
@@ -167,14 +168,15 @@ interface Island {
 let baseId = 0;
 
 // The island both runs start from: rivers settled, aim at the edge of a village.
-function island(errors: string[]): Island {
+function island(errors: string[], streams = 0): Island {
   Math.random = seeded(SEED);
   resetCreatureIds();
   const world = generateWorld(SIZE, SIZE, SEED);
   populate(world);
   baseId = Math.max(0, ...world.creatures.map((c) => c.id));
   const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
-  const life = seeded(SEED + 2);
+  // Other streams give the same island a different life (the five minute scene runs a few).
+  const life = seeded(SEED + 2 + streams * 101);
   for (let k = 0; k < 60; k++) step(world, rt, life);
   let target = { x: world.w / 2, y: world.h / 2 };
   for (let i = 0; i < world.n; i++) {
@@ -194,7 +196,7 @@ function island(errors: string[]): Island {
   if (near[1]) Object.assign(near[1], { x: target.x - 1, y: target.y, hp: 35 });
   const land = new Uint8Array(world.n);
   for (let i = 0; i < world.n; i++) land[i] = world.depth[i] > 0.5 ? 0 : 1;
-  return { world, rt, target, land, random: seeded(SEED + 1), life };
+  return { world, rt, target, land, random: seeded(SEED + 1 + streams * 101), life };
 }
 
 function step(world: World, rt: Runtime, life: () => number): void {
@@ -465,6 +467,154 @@ function* protectProbe(req: CastRequest): Generator<void, { ok: boolean; saved: 
     saved,
     detail: `It promises protection, but the village it covers was barely safer with it than without it (${lines.join("; ")}). Raise w.ward over what it protects within two seconds of the cast, lasting at least 15 seconds, with no solid shell over people.`,
   };
+}
+
+// The living island (3.6), on the same island and with the same seeded
+// streams as the probes above. A scene is cast as a spell through the World
+// API, like the threats: a dragon that hoards, a vampire, three more wolves,
+// gold and a shrine, beside the villages, forest and wildlife the island
+// already has. Then nothing is done for `seconds`. It answers what the player
+// would see after walking away: did every creature change something, and did
+// any kind explode or vanish?
+export const SCENE = `const spell = {
+  materials: [{ name: "gold", layer: "ground", colors: ["#ffd23d", "#f5c518"], lures: ["villager"], taken: true }],
+  creatures: [
+    { name: "dragon", base: "beast", body: "dragon", color: "#8a1c1c", color2: "#e0a030", flying: true, fireproof: true, hp: 900, speed: 4,
+      goal: "hoard", prey: ["deer", "boar"], attack: 30, sense: 14, scares: ["villager"],
+      abilities: [{ do: "breathe fire", when: "enemy near", every: 12 }] },
+    { name: "vampire", base: "villager", color: "#3a0d1e", goal: "convert", behavior: "hunt", prey: ["villager"], attack: 40, converts: true,
+      active: "night", weak: ["light"], hp: 400, speed: 4, abilities: [{ do: "teleport", when: "hurt", every: 12 }] },
+  ],
+  *cast(w) {
+    // Dry land near a point, on the island.
+    const dry = (x, y) => {
+      for (let k = 0; k < 60; k++) {
+        const px = Math.max(4, Math.min(w.width - 5, x + w.rand(-10, 10)));
+        const py = Math.max(4, Math.min(w.height - 5, y + w.rand(-10, 10)));
+        const c = w.cell(px, py);
+        if (c.depth < 0.05 && c.cover !== "tree" && c.cover !== "house" && c.cover !== "boulder") return [px, py];
+      }
+      return [x, y];
+    };
+    const toward = (t) => [w.x + (w.width / 2 - w.x) * t, w.y + (w.height / 2 - w.y) * t];
+    w.paint(w.x - 4, w.y + 4, 2, "gold", 1);
+    w.landmark(w.x - 6, w.y + 2, { name: "shrine", scares: ["vampire"], aura: "heal", radius: 5 });
+    const [dx, dy] = dry(...toward(0.9));
+    w.spawn("dragon", dx, dy);
+    const [vx, vy] = dry(...toward(1.2));
+    w.spawn("vampire", vx, vy);
+    const [fx, fy] = dry(...toward(1.4));
+    for (let k = 0; k < 3; k++) w.spawn("wolf", fx + k * 0.7, fy);
+  },
+};`;
+
+export interface SceneReport {
+  seconds: number;
+  // Living creatures by kind: at the start (after the scene arrived), the fewest and most seen, and at the end.
+  kinds: Record<string, { start: number; min: number; max: number; end: number }>;
+  // Creatures there at the start that lived at least `idleAfter` seconds and changed nothing.
+  idle: { id: number; kind: string; action: string }[];
+  // How many of those creatures changed something, by kind, of how many.
+  lively: Record<string, [number, number]>;
+  marks: Record<string, number>;
+  deeds: Record<string, number>;
+  errors: string[];
+  worstTickMs: number;
+  meanTickMs: number;
+}
+
+export function* sceneRun(
+  seconds: number,
+  extra: CastRequest | null = null,
+  idleAfter = 150,
+  // Dev scripts look in once a second.
+  watch?: (world: World) => void,
+  streams = 0,
+): Generator<void, SceneReport> {
+  const outer = Math.random;
+  try {
+    const errors: string[] = [];
+    const isl = island(errors, streams);
+    const { world, rt, target } = isl;
+    Math.random = isl.random;
+    rt.cast({ key: "scene", name: "The five minute scene", tier: "major", code: SCENE }, target.x, target.y);
+    if (extra) rt.cast({ ...extra, key: `check:${extra.key}` }, target.x, target.y);
+    // The scene's creatures come in on the first tick.
+    step(world, rt, isl.life);
+    const tally = () => {
+      const t = new Map<string, number>();
+      for (const c of world.creatures) if (!c.dead) t.set(base(c.kind), (t.get(base(c.kind)) ?? 0) + 1);
+      return t;
+    };
+    const kinds: SceneReport["kinds"] = {};
+    for (const [k, n] of tally()) kinds[k] = { start: n, min: n, max: n, end: n };
+    // Everyone there now, and how long each lived.
+    const watched = new Map(world.creatures.filter((c) => !c.dead).map((c) => [c, 0]));
+    let worst = 0;
+    let total = 0;
+    const ticks = Math.round(seconds / TICK);
+    for (let k = 0; k < ticks; k++) {
+      const t0 = performance.now();
+      step(world, rt, isl.life);
+      const ms = performance.now() - t0;
+      if (k > 30) worst = Math.max(worst, ms);
+      total += ms;
+      if (k % 30 === 0) {
+        watch?.(world);
+        for (const [c, lived] of watched) if (!c.dead) watched.set(c, lived + 1);
+        const t = tally();
+        for (const key of new Set([...Object.keys(kinds), ...t.keys()])) {
+          const n = t.get(key) ?? 0;
+          const e = (kinds[key] ??= { start: 0, min: n, max: n, end: n });
+          e.min = Math.min(e.min, n);
+          e.max = Math.max(e.max, n);
+          e.end = n;
+        }
+      }
+      if (k % 5 === 4) {
+        yield;
+        Math.random = isl.random;
+      }
+    }
+    const idle: SceneReport["idle"] = [];
+    const lively: SceneReport["lively"] = {};
+    const deeds: Record<string, number> = {};
+    for (const [c, lived] of watched) {
+      const did = (c.mind?.deeds ?? 0) > 0;
+      const key = base(c.kind);
+      const row = (lively[key] ??= [0, 0]);
+      row[1]++;
+      if (did) row[0]++;
+      deeds[key] = (deeds[key] ?? 0) + (c.mind?.deeds ?? 0);
+      if (!did && lived >= idleAfter)
+        idle.push({ id: c.id, kind: key === "villager" ? `${unpackLook(c.look).age} ${unpackLook(c.look).job}` : key, action: c.mind?.action ?? "no mind" });
+    }
+    const marks: Record<string, number> = {};
+    for (const m of world.marks) marks[m.kind] = (marks[m.kind] ?? 0) + m.size;
+    return {
+      seconds,
+      kinds,
+      idle,
+      lively,
+      marks,
+      deeds,
+      errors,
+      worstTickMs: Math.round(worst * 10) / 10,
+      meanTickMs: Math.round((total / ticks) * 100) / 100,
+    };
+  } finally {
+    Math.random = outer;
+  }
+}
+
+const base = (kind: string) => kind.split("#")[0];
+
+export function runScene(seconds: number, extra: CastRequest | null = null, idleAfter = 150, watch?: (world: World) => void, streams = 0): SceneReport {
+  const it = sceneRun(seconds, extra, idleAfter, watch, streams);
+  for (;;) {
+    const r = it.next();
+    if (r.done) return r.value;
+  }
 }
 
 export function runCheck(req: CastRequest): CheckResult {

@@ -1,4 +1,5 @@
-import { dressVillages, restoreCreature, KINDS, type Creature } from "./creatures";
+import { dressVillages, restoreCreature, saveMind, KINDS, type Creature, type SavedMind } from "./creatures";
+import { MARKS, MAX_MARKS, type Mark, type Village } from "./kin";
 import { BUILTIN, LAYERS, type Layer } from "./materials";
 import { World } from "./world";
 import type { Landmark } from "./social";
@@ -17,7 +18,10 @@ export interface SavedWorld {
   layers: Record<string, string>;
   custom: Record<Layer, string[]>;
   owners: Record<string, string>;
-  creatures: Partial<Creature>[];
+  creatures: (Partial<Creature> & { m?: SavedMind })[];
+  // Villages' stores and the marks goals left (3.6).
+  villages?: { x: number; y: number; food: number; wood: number; gold: number }[];
+  marks?: Mark[];
   // Free standing voxels as [key, color] pairs.
   decor?: [number, number][];
   landmarks?: Landmark[];
@@ -63,7 +67,12 @@ export function saveWorld(world: World, owners: Map<string, string>): SavedWorld
     creatures: world.creatures
       .filter((c) => !c.dead)
       .slice(0, 400)
-      .map(({ kind, x, y, hp, size, color, homeX, homeY, look }) => ({ kind, x, y, hp, size, color, homeX, homeY, look })),
+      .map((c) => {
+        const { kind, x, y, hp, size, color, homeX, homeY, look } = c;
+        return { kind, x, y, hp, size, color, homeX, homeY, look, m: saveMind(c) };
+      }),
+    villages: world.villages.map(({ x, y, food, wood, gold }) => ({ x, y, food: Math.round(food * 10) / 10, wood, gold })),
+    marks: world.marks,
   };
 }
 
@@ -127,6 +136,15 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
     ? data.landmarks.filter((l) => l && typeof l.x === "number" && typeof l.y === "number" && Array.isArray(l.lures) && Array.isArray(l.scares)).slice(0, 60)
     : [];
   world.wealth = typeof data.wealth === "number" && Number.isFinite(data.wealth) ? data.wealth : 0;
+  const finite = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+  world.villages = (Array.isArray(data.villages) ? data.villages : [])
+    .filter((v) => v && [v.x, v.y, v.food, v.wood, v.gold].every(finite))
+    .slice(0, 16)
+    .map((v): Village => ({ x: v.x, y: v.y, food: Math.max(0, v.food), wood: Math.max(0, v.wood), gold: Math.max(0, v.gold), people: 0, houses: 0 }));
+  world.marks = (Array.isArray(data.marks) ? data.marks : [])
+    .filter((m) => m && (MARKS as readonly string[]).includes(m.kind) && finite(m.x) && finite(m.y) && finite(m.size))
+    .slice(0, MAX_MARKS)
+    .map((m) => ({ kind: m.kind, x: m.x, y: m.y, size: m.size, by: String(m.by ?? "").slice(0, 40) }));
   // Villagers saved before 3.5 have no look: they get one, in their village's clothes.
   const undressed: Creature[] = [];
   for (const raw of data.creatures ?? []) {

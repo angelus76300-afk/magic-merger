@@ -1,5 +1,7 @@
 import { C, F, G } from "./materials";
 import type { World } from "./world";
+import { unpackLook } from "./villagers";
+import { deed, harmed, remember, villageOf } from "./kin";
 import type { Creature, CreatureKind } from "./creatures";
 
 // How creatures notice each other and the things spells put in the world.
@@ -102,8 +104,18 @@ export function social(world: World, c: Creature, k: CreatureKind, kindOf: (c: C
 
   if (seen.threat && !seen.threat.dead) {
     const t = seen.threat;
+    // Something that only scares, and never attacks, is got used to after a
+    // while (3.6): a dragon on its hoard does not keep a village in panic forever.
+    if (!seen.fight && !hunts(t, kindOf(t), c)) {
+      const since = (c.data.scaredSince as number | undefined) ?? world.time;
+      c.data.scaredSince = since;
+      if (world.time - since > 20) {
+        c.data.braveUntil = world.time + 40;
+        c.data.scaredSince = undefined;
+      }
+    }
     if (seen.fight) {
-      attack(c, t, seen.fight, dt);
+      attack(world, c, t, seen.fight, dt);
       return { x: t.x, y: t.y, pace: 1.3, mood: "angry" };
     }
     // A place that scares the threat is a refuge: run there if one is near.
@@ -122,6 +134,7 @@ export function social(world: World, c: Creature, k: CreatureKind, kindOf: (c: C
     return { ...fleeFrom(world, c, t.x, t.y), pace: 1.5, mood: "fear" };
   }
   if (seen.scary) return { ...fleeFrom(world, c, seen.scary.x, seen.scary.y), pace: 1.3, mood: "fear" };
+  c.data.scaredSince = undefined;
   if (seen.lure && world.time >= ((c.data.boredUntil as number | undefined) ?? 0)) {
     const p = seen.lure;
     const d = Math.hypot(p.x + 0.5 - c.x, p.y + 0.5 - c.y);
@@ -196,7 +209,8 @@ interface Seen {
 function see(world: World, c: Creature, k: CreatureKind, kindOf: (c: Creature) => CreatureKind): Seen {
   const seen: Seen = { threat: null, fight: 0, scary: null, lure: null };
   const sense = k.ai?.sense ?? 14;
-  let threatD = 9;
+  // A starving creature only runs from what is close: it has to eat (3.6).
+  let threatD = (c.mind?.hunger ?? 0) > 0.85 ? 5 : 9;
   let lureD = sense;
   let allies = 0;
   // Creatures: hunters, scary ones, lures, and how many friends stand close.
@@ -209,8 +223,11 @@ function see(world: World, c: Creature, k: CreatureKind, kindOf: (c: Creature) =
     if (o.kind === c.kind && d < 6 && o.burning <= 0) allies++;
     const ok = kindOf(o);
     const guarding = c.kind === "golem" && !k.ai && o.kind !== "villager" && hunts(o, ok, { ...c, kind: "villager" });
-    const scary = !!ok.ai && names(ok.ai.scares, c.kind) && !names(k.ai?.immune ?? [], "fear");
-    if ((hunts(o, ok, c) || scary || guarding) && d < (guarding ? 12 : threatD)) {
+    const scary =
+      !!ok.ai && names(ok.ai.scares, c.kind) && !names(k.ai?.immune ?? [], "fear") && world.time >= ((c.data.braveUntil as number | undefined) ?? 0);
+    // A hunter asleep out of its hours is given a wide berth, not run from (3.6).
+    const dozing = o.data.mood === "asleep" || o.sleep > 0;
+    if ((hunts(o, ok, c) || scary || guarding) && d < (guarding ? 12 : dozing ? Math.min(threatD, 4) : threatD)) {
       threatD = d;
       seen.threat = o;
       seen.fight = guarding ? 25 : 0;
@@ -220,8 +237,12 @@ function see(world: World, c: Creature, k: CreatureKind, kindOf: (c: Creature) =
       seen.lure = { x: o.x - 0.5, y: o.y - 0.5, lures: ok.ai.lures, scares: [], taken: false, color: ok.color };
     }
   }
-  // A mob of villagers stands up to a threat they can handle.
-  if (seen.threat && !seen.fight && c.kind === "villager" && allies >= 2) {
+  // Guards stand and fight (3.6); a mob of villagers stands up to a threat they can handle.
+  // Nobody on foot can strike what flies above them.
+  if (seen.threat && seen.threat.z > 1.5 && !guardingHigh(seen)) seen.fight = 0;
+  else if (seen.threat && !seen.fight && c.kind === "villager" && unpackLook(c.look).job === "guard" && c.hp > 40 && seen.threat.hp < 130 * (allies + 1))
+    seen.fight = 16;
+  if (seen.threat && !seen.fight && c.kind === "villager" && allies >= 2 && seen.threat.z <= 1.5) {
     const t = seen.threat;
     if (t.hp < 90 * (allies + 1)) seen.fight = 8;
   }
@@ -247,9 +268,20 @@ function see(world: World, c: Creature, k: CreatureKind, kindOf: (c: Creature) =
   return seen;
 }
 
-function attack(c: Creature, t: Creature, dps: number, dt: number): void {
+function guardingHigh(seen: Seen): boolean {
+  return seen.fight > 0 && seen.fight !== 8 && seen.fight !== 16;
+}
+
+function attack(world: World, c: Creature, t: Creature, dps: number, dt: number): void {
   if (Math.hypot(t.x - c.x, t.y - c.y) > 1.6 + t.size * 0.5) return;
   t.hp -= dps * dt;
+  // Remembered by both sides, and counted as something it did (3.6).
+  if (c.data.struck !== t.id) {
+    c.data.struck = t.id;
+    deed(c, `fought a ${baseName(t.kind)}`);
+    remember(c, t.kind, -1);
+  }
+  harmed(world, t, c, dps * dt);
   if (t.hp <= 0) t.dead = true;
 }
 
@@ -278,6 +310,9 @@ function take(world: World, c: Creature, p: Presence): void {
 function deposit(world: World, c: Creature): void {
   c.data.carry = undefined;
   world.wealth++;
+  const village = villageOf(world, c.homeX, c.homeY);
+  if (village) village.gold++;
+  deed(c, "brought treasure home");
   world.particles.add({ x: c.x, y: c.y, z: 1.5, vz: 2, life: 1, color: 0xffd36a, size: 1.4, glow: true });
   if (world.wealth % 4 !== 0) return;
   // A 2 by 2 house on dry free land near home.

@@ -72,6 +72,8 @@ export interface CheckRequest {
   problem: "crash" | "nothing" | "wiped" | "promise" | null;
   detail: string;
   stats?: Record<string, number>;
+  // A live program tested again against a promise it never faced (3.6).
+  recheck?: boolean;
 }
 
 // The player cast this version: they may vote on it for a while.
@@ -103,7 +105,9 @@ export interface VoteResponse {
 // The program each element should have now, by name, so a browser learns of
 // rewrites and rollbacks.
 export interface LiveResponse {
-  programs: Record<string, { id: number; trial: boolean }>;
+  // recheck: the intents a live program promises and was never tested on
+  // (written before its element had them): the browser tests it again.
+  programs: Record<string, { id: number; trial: boolean; recheck?: string[] }>;
 }
 
 // Admin only: every version of one element's program.

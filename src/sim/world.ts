@@ -8,6 +8,7 @@ import { DecorStore } from "./decor";
 import { CreatureGrid } from "./crowd";
 import type { Landmark, Presence } from "./social";
 import type { Ward } from "./wards";
+import type { Death, Mark, Village } from "./kin";
 
 export const TICK = 1 / 30;
 export const AMBIENT = 15;
@@ -64,6 +65,11 @@ export class World {
   readonly wardMask: Uint8Array;
   // Gifts villagers have brought home; every few build a house.
   wealth = 0;
+  // Villages and their stock, the marks goals left on the land, and who died
+  // where lately (3.6, kin.ts).
+  villages: Village[] = [];
+  marks: Mark[] = [];
+  deaths: Death[] = [];
   // Which wild species live here and come back; null for all (3.5).
   wild: readonly string[] | null = null;
   time = 0;

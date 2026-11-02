@@ -7,7 +7,7 @@ import type { LibraryExample } from "./prompts";
 // live one of each element, as before, plus `pid`, its row here.
 
 export type ProgramStatus = "trial" | "live" | "retired" | "rejected";
-export type ProgramOrigin = "legacy" | "new" | "draft" | "batch" | "votes" | "judge" | "check" | "repair" | "admin";
+export type ProgramOrigin = "legacy" | "new" | "draft" | "batch" | "votes" | "judge" | "check" | "repair" | "admin" | "promise";
 
 export interface ProgramRow {
   id: number;

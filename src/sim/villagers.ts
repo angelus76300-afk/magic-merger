@@ -1,11 +1,13 @@
 // Villagers who differ (3.5): children and elders, clothes per village, a
 // look per job. All of it is one number per villager, saved with it, so a
-// reloaded island keeps its people. Jobs are only looks until 3.6 gives them
-// work to do.
+// reloaded island keeps its people. Since 3.6 a job is also the villager's
+// goal (goals.ts): farmers sow and harvest, woodcutters fell trees, builders
+// build houses with that wood, fishers fish, guards patrol, priests pray and
+// bury the dead, merchants carry food between villages.
 
 export const AGES = ["adult", "child", "elder"] as const;
 export type Age = (typeof AGES)[number];
-export const JOBS = ["none", "farmer", "woodcutter", "fisher", "smith", "guard", "priest", "merchant"] as const;
+export const JOBS = ["none", "farmer", "woodcutter", "fisher", "smith", "guard", "priest", "merchant", "builder"] as const;
 export type Job = (typeof JOBS)[number];
 
 export interface Look {
@@ -34,7 +36,7 @@ export const GRAY_HAIR = 0xd8d8d8;
 
 // Job shares among adults, then whether an adult is a child or an elder.
 const JOB_WEIGHTS: [Job, number][] = [
-  ["none", 20],
+  ["none", 14],
   ["farmer", 25],
   ["woodcutter", 14],
   ["fisher", 10],
@@ -42,6 +44,7 @@ const JOB_WEIGHTS: [Job, number][] = [
   ["guard", 10],
   ["priest", 5],
   ["merchant", 9],
+  ["builder", 6],
 ];
 
 function weighted<T>(list: [T, number][], r: number): T {

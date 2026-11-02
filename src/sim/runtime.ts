@@ -3,6 +3,9 @@ import { TIER_REACH, type Tier } from "../../shared/tiers";
 import { BUILTIN_KINDS, KINDS, hostile, kindOf, makeCreature, maxHp, shieldedCreature, type Behavior, type Creature, type CreatureKind } from "./creatures";
 import { bodyFrom } from "./body";
 import { NATIVE_NAMES } from "./wildlife";
+import { goalFrom, goalFromBehavior, goalFromName } from "./goals";
+import { abilitiesFrom, abilitiesFromName } from "./abilities";
+import { CUSTOM_GOALS, LOADS, TRIGGERS, mindOf, remember, type AbilitySpec, type Load, type Trigger } from "./kin";
 import { BUILTIN, C, F, G, LAYERS, type Layer } from "./materials";
 import { valueNoise } from "./noise";
 import { addGas } from "./cells";
@@ -41,6 +44,7 @@ export interface CastRequest {
 interface SpellObject {
   materials?: unknown[];
   creatures?: unknown[];
+  goals?: unknown[];
   cast?: (w: SpellApi) => Iterator<unknown>;
 }
 
@@ -99,16 +103,20 @@ export class Runtime {
       w.lures = [];
       return;
     }
-    const byId = new Map<string, { lures: string[]; scares: string[]; taken: boolean; color: number }>();
-    for (const layer of ["ground", "cover", "fluid"] as const) {
-      w.materials.list[layer].forEach((m, id) => {
+    // Rules by material id, one table per layer: the scan of every cell reads
+    // three bytes and three array slots instead of building strings (3.6).
+    type Rule = { lures: string[]; scares: string[]; taken: boolean; color: number };
+    const table = (layer: "ground" | "cover" | "fluid") =>
+      w.materials.list[layer].map((m) => {
         const rule = w.lureMaterials.get(m.name);
-        if (rule) byId.set(`${layer}:${id}`, { ...rule, color: m.colors[0] });
+        return rule ? ({ ...rule, color: m.colors[0] } as Rule) : null;
       });
-    }
+    const ground = table("ground");
+    const cover = table("cover");
+    const fluid = table("fluid");
     const found: Presence[] = [];
     for (let i = 0; i < w.n; i++) {
-      const rule = byId.get(`cover:${w.cover[i]}`) ?? byId.get(`ground:${w.ground[i]}`) ?? (w.fluid[i] ? byId.get(`fluid:${w.fluid[i]}`) : undefined);
+      const rule = cover[w.cover[i]] ?? ground[w.ground[i]] ?? (w.fluid[i] ? fluid[w.fluid[i]] : null);
       if (rule) found.push({ x: i % w.w, y: Math.floor(i / w.w), lures: rule.lures, scares: rule.scares, taken: rule.taken, color: rule.color });
     }
     const max = 400;
@@ -190,6 +198,37 @@ export class Runtime {
       else this.ticks.delete(ruleKey);
       this.brokenRules.delete(ruleKey);
     }
+    // Goals of its own (3.6), before its creatures, which may name them.
+    for (const raw of Array.isArray(spell.goals) ? spell.goals : []) {
+      const g = raw as Record<string, unknown>;
+      if (!g || typeof g.name !== "string") continue;
+      const name = g.name.trim().toLowerCase().slice(0, 40);
+      if (!name || goalFrom(name)) continue;
+      const act =
+        typeof g.act === "function" ? (g.act as (self: CreatureHandle, w: SpellApi, x: number, y: number, target: CreatureHandle | null) => unknown) : null;
+      const ruleKey = `goal:${name}`;
+      CUSTOM_GOALS.set(name, {
+        name,
+        seek: typeof g.seek === "string" && g.seek.trim() ? g.seek.trim().toLowerCase().slice(0, 30) : "anywhere",
+        near: num(g.near, 3, 40, 14),
+        work: num(g.work, 0.5, 30, 3),
+        carry: (LOADS as readonly string[]).includes(g.carry as string) ? (g.carry as Load) : null,
+        like: goalFrom(g.like),
+        run: act
+          ? (self, x, y, target) => {
+              if (this.brokenRules.has(ruleKey)) return false;
+              return this.run(
+                req.key,
+                req.name,
+                () => void act(new CreatureHandle(self, this, req.key), this.ruleApi(req), x, y, target ? new CreatureHandle(target, this, req.key) : null),
+                () => this.brokenRules.add(ruleKey),
+              );
+            }
+          : null,
+      });
+      this.brokenRules.delete(ruleKey);
+      this.owners.set(ruleKey, req.key);
+    }
     const creatures = (Array.isArray(spell.creatures) ? spell.creatures : []).filter(
       (raw): raw is Record<string, unknown> => !!raw && typeof (raw as Record<string, unknown>).name === "string",
     );
@@ -224,6 +263,9 @@ export class Runtime {
         body: bodyFrom(k, written, base.body),
         fallback: base.name,
         ai: behaviorOf(k, alias),
+        goal: undefined,
+        abilities: undefined,
+        needs: false,
         tick: userTick
           ? (self: Creature, dt: number) => {
               const ruleKey = `creature:${name}`;
@@ -237,9 +279,54 @@ export class Runtime {
             }
           : undefined,
       };
+      // A goal and abilities (3.6): declared, or read from what it already
+      // declares, its name and its base, so older spells need no rewrite.
+      // Only kinds that declare a goal get needs (hunger, rest).
+      const own = typeof k.goal === "string" ? k.goal.trim().toLowerCase() : "";
+      const declared = goalFrom(k.goal) ?? (CUSTOM_GOALS.has(own) ? own : null);
+      kind.goal = declared ?? goalFromBehavior(kind.ai) ?? goalFromName(written) ?? base.goal ?? "explore";
+      const mine = this.ownAbilities(k.abilities, req);
+      kind.abilities = mine.length ? [...(abilitiesFrom(k.abilities) ?? []), ...mine].slice(0, 3) : (abilitiesFrom(k.abilities) ?? abilitiesFromName(written));
+      kind.needs = declared !== null;
       KINDS.set(name, kind);
       this.owners.set(`creature:${name}`, req.key);
     }
+  }
+
+  // Abilities a spell writes itself (3.6): {name, when, every, act(self, w, target)}.
+  private ownAbilities(list: unknown, req: CastRequest): AbilitySpec[] {
+    if (!Array.isArray(list)) return [];
+    const out: AbilitySpec[] = [];
+    for (const raw of list) {
+      const a = raw as Record<string, unknown>;
+      if (!a || typeof a.act !== "function") continue;
+      const name = String(a.name ?? a.do ?? "its magic")
+        .trim()
+        .toLowerCase()
+        .slice(0, 40);
+      const act = a.act as (self: CreatureHandle, w: SpellApi, target: CreatureHandle | null) => unknown;
+      const when = (TRIGGERS as readonly string[]).includes(a.when as string) ? (a.when as Trigger) : "every so often";
+      const ruleKey = `ability:${req.key}:${name}`;
+      out.push({
+        do: name,
+        when,
+        every: num(a.every, 3, 120, 12),
+        run: (self, target) => {
+          if (this.brokenRules.has(ruleKey)) return false;
+          let did = false;
+          this.run(
+            req.key,
+            req.name,
+            () => {
+              did = act(new CreatureHandle(self, this, req.key), this.ruleApi(req), target ? new CreatureHandle(target, this, req.key) : null) !== false;
+            },
+            () => this.brokenRules.add(ruleKey),
+          );
+          return did;
+        },
+      });
+    }
+    return out;
   }
 
   cast(req: CastRequest, x: number, y: number): boolean {
@@ -713,10 +800,14 @@ export class CreatureHandle {
     return shieldedCreature(this.rt.world, this.raw) && !hostile(this.raw);
   }
   hurt(n: number) {
-    this.raw.hp -= num(n, 0, 1e6, 0) * (this.shielded() ? 0.15 : 1);
+    const blow = num(n, 0, 1e6, 0) * (this.shielded() ? 0.15 : 1);
+    this.raw.hp -= blow;
+    // People remember what magic did to them (3.6).
+    if (blow > 5 && this.raw.kind === "villager") remember(this.raw, "magic", -0.5);
     if (this.raw.hp <= 0) this.raw.dead = true;
   }
   heal(n: number) {
+    if (this.raw.kind === "villager" && this.raw.hp < maxHp(this.raw) - 5) remember(this.raw, "magic", 0.5);
     this.raw.hp = Math.min(maxHp(this.raw), this.raw.hp + num(n, 0, 1e6, 0));
     this.raw.burning = 0;
     this.raw.frozen = 0;
@@ -1389,6 +1480,26 @@ export class SpellApi {
       owner: this.req.key,
       hit: -10,
     });
+  }
+
+  // Gives villagers near (x, y) a goal this spell defined as their job (3.6):
+  // a forge hires smiths, an orchard pickers. Adults only, nearest first, up
+  // to count (at most 6). Returns how many took it.
+  hire(goal: string, x: number, y: number, count = 2): number {
+    const name = String(goal).trim().toLowerCase();
+    if (!CUSTOM_GOALS.has(name)) return 0;
+    const w = this.rt.world;
+    const n = Math.round(num(count, 1, 6, 2));
+    const near = w.creatures
+      .filter((c) => !c.dead && c.kind === "villager" && (c.look & 3) === 0 && Math.hypot(c.x - x, c.y - y) < 16 && c.mind?.job !== name)
+      .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y))
+      .slice(0, n);
+    for (const c of near) {
+      const m = mindOf(c);
+      m.job = name;
+      m.task = "none";
+    }
+    return near.length;
   }
 
   // A lasting presence at a place: villagers and creatures it lures come to

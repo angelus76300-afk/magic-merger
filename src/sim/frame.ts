@@ -1,5 +1,6 @@
 import { Engine, type WorldSize } from "./engine";
-import { makeCreature } from "./creatures";
+import { kindOf, makeCreature, maxHp, type Creature } from "./creatures";
+import { creatureAt, inspect } from "./inspect";
 import type { FromWorld, ToWorld } from "./protocol";
 import type { CastRequest, Runtime } from "./runtime";
 import type { SavedWorld } from "./save";
@@ -32,14 +33,75 @@ const hooks = {
   onTap: (x: number, y: number) => {
     if (!engine) return;
     if (!selected) {
-      send({ type: "tap-without-spell" });
+      // No spell in hand: a tap on a creature shows what it is doing (3.6).
+      const c = creatureAt(engine.world, x, y);
+      if (c) showInspect(c);
+      else {
+        closeInspect();
+        send({ type: "tap-without-spell" });
+      }
       return;
     }
     if (engine.cast(selected, x, y)) send({ type: "cast", key: selected.key });
   },
 };
 
+// The inspect card: built from text nodes only (kind names come from spells),
+// refreshed twice a second while it is open.
+const card = document.getElementById("inspect") as HTMLElement;
+let inspected: Creature | null = null;
+let inspectTimer = 0;
+
+function showInspect(c: Creature): void {
+  if (inspected) delete inspected.data.inspected;
+  inspected = c;
+  c.data.inspected = true;
+  drawInspect();
+  card.hidden = false;
+  clearInterval(inspectTimer);
+  inspectTimer = window.setInterval(drawInspect, 500);
+}
+
+function closeInspect(): void {
+  if (inspected) delete inspected.data.inspected;
+  inspected = null;
+  card.hidden = true;
+  clearInterval(inspectTimer);
+}
+
+function el(tag: string, cls: string, text = ""): HTMLElement {
+  const e = document.createElement(tag);
+  e.className = cls;
+  e.textContent = text;
+  return e;
+}
+
+function drawInspect(): void {
+  if (!engine || !inspected || !engine.world.creatures.includes(inspected)) return closeInspect();
+  const info = inspect(engine.world, inspected, kindOf, maxHp);
+  const close = el("button", "close", "×");
+  close.setAttribute("aria-label", "Close");
+  close.addEventListener("click", closeInspect);
+  const head = el("div", "head");
+  head.append(el("strong", "title", info.title), el("span", "sub", info.dead ? "dead" : info.subtitle), close);
+  const bars = el("div", "bars");
+  for (const b of info.bars) {
+    const row = el("div", "bar");
+    const fill = el("i", "");
+    fill.style.width = `${Math.round(b.value * 100)}%`;
+    fill.style.background = b.value > 0.6 ? "#7ed492" : b.value > 0.3 ? "#f2c94c" : "#ef6b5b";
+    const track = el("span", "track");
+    track.append(fill);
+    row.append(el("span", "label", b.label), track);
+    bars.append(row);
+  }
+  const rows = el("dl", "rows");
+  for (const [k, v] of info.rows) rows.append(el("dt", "", k), el("dd", "", v));
+  card.replaceChildren(head, bars, rows);
+}
+
 function mount(next: Engine): void {
+  closeInspect();
   engine?.dispose();
   unbind?.();
   engine = next;
@@ -140,6 +202,7 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
     }
     case "select":
       selected = msg.spell;
+      if (selected) closeInspect();
       if (selected && engine) {
         try {
           engine.runtime.compile(selected);

@@ -173,6 +173,29 @@ export class WorldHost {
       if (now && now.id !== this.store.spell(key)?.id) await this.prepare(key, false, true, true);
     }
     this.renderSpells();
+    // Live programs written before their element had a promise, tested on it
+    // now (3.6): one that breaks it is written again, and goes through its
+    // own test run here before it replaces the old one.
+    for (const d of held) {
+      const key = elementKey(d.element.name);
+      const now = live.programs[d.element.name];
+      const program = this.store.spell(key);
+      const tier = d.element.tier;
+      if (!now?.recheck?.length || !program || program.id !== now.id || !tier) continue;
+      try {
+        const result = await this.checker.check({ key, name: d.element.name, tier, code: program.code, intents: now.recheck });
+        let res = await api.checkSpell({ name: d.element.name, id: now.id, ...result, recheck: true });
+        if (res.program.trial) {
+          res = await this.settle(key, res, true);
+          this.store.setSpell(key, withoutTrial(res.program));
+          const req = this.request(key);
+          if (req) this.send({ type: "spell-updated", spell: req });
+        }
+      } catch {
+        // Tried again on the next visit.
+      }
+    }
+    this.renderSpells();
   }
 
   // Writes a program in the background if it is cheap and not written yet.
@@ -205,6 +228,13 @@ export class WorldHost {
     this.frame = null;
     this.ready = false;
     this.show();
+  }
+
+  deselect(): void {
+    this.selected = null;
+    this.send({ type: "select", spell: null });
+    this.renderSpells();
+    toast("Tap a creature to see what it is doing");
   }
 
   hide(): void {
@@ -344,7 +374,7 @@ export class WorldHost {
         }
         break;
       case "tap-without-spell":
-        toast(this.selected ? "Still preparing this spell…" : "Pick a spell below first");
+        toast(this.selected ? "Still preparing this spell…" : "Pick a spell below, or tap a creature to see what it is doing");
         break;
       case "cast":
         if (!this.store.get(msg.key)) break;
@@ -563,7 +593,8 @@ export class WorldHost {
       chip.setAttribute("aria-pressed", String(key === this.selected));
       // Dimmed until its program is written.
       chip.dataset.ready = this.request(key) ? "1" : "0";
-      chip.addEventListener("click", () => this.selectSpell(key));
+      // A second tap puts the spell away, so a tap on the island inspects a creature (3.6).
+      chip.addEventListener("click", () => (key === this.selected ? this.deselect() : this.selectSpell(key)));
       fragment.append(chip);
     }
     if (!shown.length) {
@@ -581,11 +612,12 @@ export class WorldHost {
   private updateStatus(): void {
     const key = this.selected;
     const name = key ? this.store.get(key)?.element.name : null;
-    let text = "Pick a spell, then tap the island to cast it. Drag to turn, pinch to zoom, two fingers to pan.";
+    let text = "Pick a spell, then tap the island to cast it, or tap a creature to see what it wants. Drag to turn, pinch to zoom, two fingers to pan.";
     if (key && name) {
       if (this.testing.has(key)) text = `Testing ${name} on a practice island…`;
       else if (this.preparing.has(key)) text = `Preparing ${name}… the first cast of a spell takes a moment.`;
-      else if (this.request(key)) text = `Tap the island to ${this.store.get(key)?.element.kind === "artifact" ? "place" : "cast"} ${name}.`;
+      else if (this.request(key))
+        text = `Tap the island to ${this.store.get(key)?.element.kind === "artifact" ? "place" : "cast"} ${name}. Tap it again to put it away and look at creatures.`;
       else text = `${name} is not ready yet.`;
     }
     this.el.status.textContent = text;
