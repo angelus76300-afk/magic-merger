@@ -1,9 +1,14 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { parseIntents, type Intent } from "../shared/promises";
 import { syntaxError } from "../shared/spellcode";
 import { isTier, type Tier } from "../shared/tiers";
 import type { ElementKind } from "../shared/types";
 import {
   DESCRIBE_SYSTEM,
+  DESIGN_SCHEMA,
+  DESIGN_SYSTEM,
+  INTENT_SCHEMA,
+  INTENT_SYSTEM,
   JUDGE_SCHEMA,
   JUDGE_SYSTEM,
   MERGE_SCHEMA,
@@ -13,10 +18,14 @@ import {
   TIERS_SCHEMA,
   TIER_SYSTEM,
   describeUserMessage,
+  designUserMessage,
+  intentUserMessage,
+  spellSystem,
   judgeUserMessage,
   mergeUserMessage,
   repairUserMessage,
   spellUserMessage,
+  type LibraryDoc,
   type LibraryExample,
   type Rewrite,
 } from "./prompts";
@@ -39,6 +48,28 @@ export interface SpellRequest {
   examples?: LibraryExample[];
   // Set when the spell is written again, with why.
   rewrite?: Rewrite;
+  // What it promises, with the test that promise faces (shared/promises.ts).
+  intents?: Intent[];
+  // Helpers and hints the API has grown (worker/evolve.ts).
+  library?: LibraryDoc[];
+}
+
+// Spells that lacked the same ability, for the API designer.
+export interface DesignRequest {
+  gaps: { id: number; spell: string; tier: string; missing: string }[];
+  library: LibraryDoc[];
+}
+
+export interface DesignAnswer {
+  decision: "helper" | "engine" | "exists" | "none";
+  // The gap ids it answers.
+  answers: number[];
+  name: string;
+  signature: string;
+  doc: string;
+  code: string;
+  example: string;
+  spec: string;
 }
 
 export interface JudgeRequest {
@@ -81,6 +112,8 @@ export interface BatchOutcome {
 export interface ProgramAnswer {
   summary: string;
   code: string;
+  // What the API lacked for this spell, in the writer's words; empty when nothing.
+  missing?: string;
 }
 
 export interface Spent {
@@ -103,6 +136,10 @@ export interface Oracle {
   spell(request: SpellRequest): Promise<ProgramAnswer>;
   repair(name: string, tier: Tier, code: string, error: string): Promise<ProgramAnswer>;
   judge(request: JudgeRequest): Promise<JudgeAnswer>;
+  // What an element promises, from its name and grimoire entry (3.4.2).
+  intents(name: string, kind: ElementKind, description: string): Promise<Intent[]>;
+  // How the API grows to give spells what they lacked (3.4.2).
+  design(request: DesignRequest): Promise<DesignAnswer>;
   // Big spells are written through the Batch API, at half price, within a
   // day (usually minutes). Returns the batch id.
   submitBatch(items: BatchItem[]): Promise<string>;
@@ -117,6 +154,8 @@ export interface OracleModels {
   spell: string;
   spellEffort: Effort;
   judge: string;
+  // The API designer: rare and consequential, so the big model.
+  design: string;
 }
 
 // Models whose spell calls are rare and lone: a legendary spell every few
@@ -216,7 +255,48 @@ export class ClaudeOracle implements Oracle {
   }
 
   async spell(request: SpellRequest): Promise<ProgramAnswer> {
-    return this.program(request.rewrite ? "rewrite" : "spell", [{ role: "user", content: spellMessage(request) }]);
+    return this.program(request.rewrite ? "rewrite" : "spell", [{ role: "user", content: spellMessage(request) }], request.library);
+  }
+
+  async intents(name: string, kind: ElementKind, description: string): Promise<Intent[]> {
+    const text = await this.ask(
+      "intent",
+      this.models.judge,
+      "low",
+      INTENT_SYSTEM,
+      [{ role: "user", content: intentUserMessage(name, kind, description) }],
+      INTENT_SCHEMA,
+      2000,
+    );
+    const intents = parseIntents((parseJson(text) as { intents?: unknown }).intents);
+    return intents.length ? intents : ["other"];
+  }
+
+  async design(request: DesignRequest): Promise<DesignAnswer> {
+    const text = await this.ask(
+      "design",
+      this.models.design,
+      "high",
+      DESIGN_SYSTEM + SPELL_SYSTEM,
+      [{ role: "user", content: designUserMessage(request.gaps, request.library) }],
+      DESIGN_SCHEMA,
+      // The most a call can ask without streaming, as for spells.
+      20000,
+      false,
+    );
+    const a = parseJson(text) as Partial<DesignAnswer>;
+    if (!["helper", "engine", "exists", "none"].includes(a.decision as string)) throw new OracleError("The design answer did not match the schema");
+    const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : "");
+    return {
+      decision: a.decision as DesignAnswer["decision"],
+      answers: Array.isArray(a.answers) ? a.answers.filter((n): n is number => Number.isInteger(n)).slice(0, 80) : [],
+      name: str(a.name, 40),
+      signature: str(a.signature, 200),
+      doc: str(a.doc, 400),
+      code: str(a.code, 12000),
+      example: str(a.example, 12000),
+      spec: str(a.spec, 4000),
+    };
   }
 
   async judge(request: JudgeRequest): Promise<JudgeAnswer> {
@@ -241,7 +321,15 @@ export class ClaudeOracle implements Oracle {
     const batch = await this.client.beta.messages.batches.create({
       requests: items.map((item) => ({
         custom_id: item.id,
-        params: requestParams(model, spellEffort, SPELL_SYSTEM, [{ role: "user", content: spellMessage(item.request) }], SPELL_SCHEMA, 20000, false),
+        params: requestParams(
+          model,
+          spellEffort,
+          spellSystem(item.request.library),
+          [{ role: "user", content: spellMessage(item.request) }],
+          SPELL_SCHEMA,
+          20000,
+          false,
+        ),
       })),
     });
     return batch.id;
@@ -283,10 +371,11 @@ export class ClaudeOracle implements Oracle {
 
   // Asks for a program; if it does not even parse, shows the model the
   // parser's complaint once and takes the second answer.
-  private async program(call: string, messages: Anthropic.Beta.BetaMessageParam[]): Promise<ProgramAnswer> {
+  private async program(call: string, messages: Anthropic.Beta.BetaMessageParam[], library?: LibraryDoc[]): Promise<ProgramAnswer> {
     const { spell: model, spellEffort } = this.models;
     const cache = !LONE_SPELL_MODELS.has(model);
-    let answer = toProgram(await this.ask(call, model, spellEffort, SPELL_SYSTEM, messages, SPELL_SCHEMA, 20000, cache));
+    const system = spellSystem(library);
+    let answer = toProgram(await this.ask(call, model, spellEffort, system, messages, SPELL_SCHEMA, 20000, cache));
     const error = syntaxError(answer.code);
     if (error) {
       const retry: Anthropic.Beta.BetaMessageParam[] = [
@@ -294,7 +383,7 @@ export class ClaudeOracle implements Oracle {
         { role: "assistant", content: JSON.stringify(answer) },
         { role: "user", content: `That program does not parse: ${error}. Send the corrected program.` },
       ];
-      answer = toProgram(await this.ask(`${call}-retry`, model, spellEffort, SPELL_SYSTEM, retry, SPELL_SCHEMA, 20000, cache));
+      answer = toProgram(await this.ask(`${call}-retry`, model, spellEffort, system, retry, SPELL_SCHEMA, 20000, cache));
       if (syntaxError(answer.code)) throw new OracleError("The spell's program could not be written");
     }
     return answer;
@@ -302,7 +391,7 @@ export class ClaudeOracle implements Oracle {
 }
 
 function spellMessage(r: SpellRequest): string {
-  return spellUserMessage(r.name, r.kind, r.description, r.recipe, r.tier, r.examples, r.rewrite);
+  return spellUserMessage(r.name, r.kind, r.description, r.recipe, r.tier, r.examples, r.rewrite, r.intents);
 }
 
 function requestParams(
@@ -325,11 +414,11 @@ function requestParams(
 }
 
 function toProgram(text: string): ProgramAnswer {
-  const { summary, code } = parseJson(text) as Partial<ProgramAnswer>;
+  const { summary, code, missing } = parseJson(text) as Partial<ProgramAnswer>;
   if (typeof summary !== "string" || typeof code !== "string" || !code.includes("spell")) {
     throw new OracleError("The spell answer did not match the schema");
   }
-  return { summary: summary.slice(0, 240), code: code.slice(0, 40000) };
+  return { summary: summary.slice(0, 240), code: code.slice(0, 40000), missing: typeof missing === "string" ? missing.trim().slice(0, 300) : "" };
 }
 
 // Dollars per million tokens: input, output, cache read, cache write (5 minute TTL).
@@ -430,6 +519,14 @@ export class MockOracle implements Oracle {
     return { score: 3, reason: "fine", note: "Mock judge: set ANTHROPIC_API_KEY for a real one." };
   }
 
+  async intents(name: string): Promise<Intent[]> {
+    return /ward|shield|aegis|protect|barrier|sanctuary|bulwark/i.test(name) ? ["protect"] : ["other"];
+  }
+
+  async design(): Promise<DesignAnswer> {
+    return { decision: "none", answers: [], name: "", signature: "", doc: "", code: "", example: "", spec: "" };
+  }
+
   async submitBatch(): Promise<string> {
     throw new OracleError("The mock oracle has no Batch API");
   }
@@ -440,6 +537,11 @@ export class MockOracle implements Oracle {
 }
 
 const MOCK_THEMES: { words: string[]; colors: [string, string]; impact: string }[] = [
+  {
+    words: ["ward", "shield", "aegis", "protect", "barrier", "sanctuary"],
+    colors: ["#9fd8ff", "#ffffff"],
+    impact: 'w.ward(w.x, w.y, w.r, { seconds: 20, color: "#9fd8ff" });',
+  },
   {
     words: ["fire", "flame", "inferno", "burn", "blaze"],
     colors: ["#ff7a1a", "#ffd166"],

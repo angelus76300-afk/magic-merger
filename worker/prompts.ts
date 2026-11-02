@@ -1,3 +1,4 @@
+import { INTENTS, PROMISE_TEST, type Intent } from "../shared/promises";
 import { TIERS } from "../shared/tiers";
 
 // The merge prompt only ever sees the two input names. No history, no
@@ -179,6 +180,7 @@ When the built-in world cannot express the spell, add to it; new rules stay in t
 spell.materials: [{name, layer, colors, flammable 0 to 1, fuel, flow (fluids), hurts, heat (temperature it pulls toward), glow, solid (cover), becomes, reacts, decays, spreads, lures, scares, taken}]. reacts maps fire, water, lava, acid, cold or heat to what the material turns into when that touches it: any material, or none, fire, explode, steam, smoke. decays: seconds before it turns into becomes. spreads: {into: [materials it takes over, or "any"], rate} with rate 0.02 (creeping) to 0.3 (fast). Prefer these declared rules over tick(cell, w), which costs a call per cell per frame.
 spell.creatures: [{name, base (a built-in kind), color, speed, hp, radius, flying, fireproof, swims, glow, behavior, prey, leader, attack, sense, aura, auraRadius, auraPower, leaves, weak, immune, lifespan, onDeath, lures, scares, converts, active}]. behavior: wander, hunt (chases prey and attacks), guard (stays where it was spawned and attacks prey that comes close), follow (walks with a leader kind), flee. aura: heal, fear, calm, sleep, burn, freeze or hurt on everyone around it. leaves: fire, ice, flowers or a material, on the cells it walks over. weak and immune: water, fire, cold, light (daylight), lightning, acid. lifespan in seconds for summons. onDeath: explode, fire, seeds, ice, spawn:<kind> or a material. converts: true makes its victims rise as its own kind. active: day or night, when it is awake.
 w.landmark(x, y, {name, lures, scares, aura, radius, power}) leaves a lasting presence at a place, for things that are not creatures or materials: a shrine, a relic, a scarecrow, a cursed stone. Build its look with the structures or voxels; the landmark is what it does. When a landmark names whom it scares, its harmful aura (hurt, burn, freeze, sleep, fear) touches only those kinds and a kind aura (heal, calm) spares them. Lured creatures visit for a few seconds and come back later; they do not stay for ever.
+w.ward(x, y, r, {against, seconds, color, keepOut, allow}) raises a clear dome that keeps what is inside safe for seconds (default 20, up to 600). against lists fire, fluids, lightning, creatures, harm, cold (all of them by default). Fire and floods of lava or water stop at its edge, lightning strikes the dome, creatures that hunt or hurt are pushed out (keepOut and allow name kinds to push out or let in), blasts and direct harm barely touch those inside, and frightened villagers run under it. Every shield, ward, sanctuary, barrier or protection uses it; never build a solid shell of blocks over people, it hides them and stops nothing.
 
 RELATIONSHIPS
 The world is alive because things want, fear and use each other. Villagers and beasts already: flee from whatever hunts them or scares them; fight back as a mob when three or more villagers face something weak enough; walk to whatever lures them and, when it can be taken, carry it home, where every few gifts their village builds a new house; golems guard villagers against hunters. lures and scares list kinds (villager, beast, spirit, golem, your own kinds, or "all").
@@ -204,7 +206,27 @@ ${EXAMPLE_FIREBALL}
 Example, Haunted Grove (major artifact):
 ${EXAMPLE_GROVE}
 
-Reply with a one sentence summary for the spell card, and the program.`;
+Reply with a one sentence summary for the spell card, the program, and missing: when part of what this spell means could not be done with the API above, name the ability that was lacking in a few words and what it was for (for example "a barrier that stops lava: to keep the village safe"), otherwise an empty string. Be honest: this is how the API grows.`;
+
+// Helpers and hints the API has grown since (worker/evolve.ts), added after
+// the fixed prompt so the part that never changes stays cached.
+export interface LibraryDoc {
+  kind: "helper" | "hint";
+  name: string;
+  signature: string;
+  doc: string;
+}
+
+export function spellSystem(library: LibraryDoc[] = []): string {
+  if (!library.length) return SPELL_SYSTEM;
+  const helpers = library.filter((l) => l.kind === "helper");
+  const hints = library.filter((l) => l.kind === "hint");
+  let text = SPELL_SYSTEM;
+  if (helpers.length)
+    text += `\n\nLIBRARY\nHelpers written for spells like yours, each tested. Call them as written, with w first; lib is there without declaring it. They return at once (what lasts runs on its own).\n${helpers.map((h) => `${h.signature}: ${h.doc}`).join("\n")}`;
+  if (hints.length) text += `\n\nHINTS\nThings writers thought the API could not do, and how it does:\n${hints.map((h) => `${h.doc}`).join("\n")}`;
+  return text;
+}
 
 // A program players liked, shown to the small model as a reference (3.3).
 export interface LibraryExample {
@@ -232,10 +254,13 @@ export function spellUserMessage(
   tier: string,
   examples: LibraryExample[] = [],
   rewrite?: Rewrite,
+  intents: Intent[] = [],
 ): string {
   const origin = recipe ? `It is made from ${recipe[0]} and ${recipe[1]}.` : "It is one of the primal forces.";
   const label = kind === "artifact" ? "Artifact (placed, not cast)" : "Spell";
   let text = `${label}: ${name}\nTier: ${tier}\n${origin}\nGrimoire entry: ${description}`;
+  const promises = intents.map((i) => PROMISE_TEST[i]).filter(Boolean);
+  if (promises.length) text += `\n\n${promises.join("\n")}`;
   if (examples.length) {
     text += `\n\nPrograms players liked, for reference only. This spell needs its own signature: take what makes them work (scale, a clear impact, an interaction the world carries on), not their look.`;
     for (const e of examples) text += `\n\nLiked: ${e.name} (${e.tier} ${e.kind})\n${e.code}`;
@@ -255,10 +280,72 @@ export function repairUserMessage(name: string, tier: string, code: string, erro
 
 export const SPELL_SCHEMA = {
   type: "object",
-  properties: { summary: { type: "string" }, code: { type: "string" } },
-  required: ["summary", "code"],
+  properties: { summary: { type: "string" }, code: { type: "string" }, missing: { type: "string" } },
+  required: ["summary", "code", "missing"],
   additionalProperties: false,
 } as const;
+
+// What a spell promises (3.4.2), asked of the small model from the name and
+// grimoire entry alone, before any program exists: the writer of the program
+// never chooses what it is tested on.
+export const INTENT_SYSTEM = `Magic Merger is a crafting game about magic. Items are cast or placed on a small island of villages, forests, lakes and hills. Say what this item promises to do, from its name and grimoire entry: one main intent, and a second only if it truly does both.
+protect: keeps people, houses or land safe from harm (shields, wards, sanctuaries, barriers, guardians).
+heal: restores health or life, mends what is broken.
+harm: destroys, burns, hurts or kills.
+summon: brings a creature or a being.
+create: makes something lasting: a building, a forest, a material, an object.
+transform: changes what things are or how they look.
+weather: rain, storms, snow, sun, wind, night.
+move: carries, throws, lifts or teleports things or people.
+reveal: shows, lights or senses what was hidden.
+other: none of these.
+Judge what it does, not its name alone: Shield Bash harms, Iron Skin protects.`;
+
+export const INTENT_SCHEMA = {
+  type: "object",
+  properties: { intents: { type: "array", items: { type: "string", enum: [...INTENTS] } } },
+  required: ["intents"],
+  additionalProperties: false,
+} as const;
+
+export function intentUserMessage(name: string, kind: string, description: string): string {
+  return `${kind === "artifact" ? "Artifact" : "Spell"}: ${name}\nGrimoire entry: ${description}`;
+}
+
+// The API designer (3.4.2). Writers report what the API lacked; when several
+// spells lack the same thing, the big model decides how the API grows.
+export const DESIGN_SYSTEM = `You maintain the World API of Magic Merger, a crafting game about magic in which every spell is a short JavaScript program written by a model from the API below. Writers report the abilities they lacked, one spell a line with its number. Find the one ability that the most spells lacked, at least three different spells, list in answers the numbers of the lines it answers, and decide how the API grows, one of three ways (or none, with empty answers, when no ability is shared by three spells):
+
+helper: the ability can be built from the API as it is. Write it as one JavaScript function expression, function (w, ...) { ... }, using only w and plain JavaScript (no DOM, no network, no timers, no globals, no state outside its arguments, never more than about 20000 cells in one frame). It is called from inside a spell's cast and returns at once: it must not yield. What has to last or act every frame runs on its own, with a body (look "none" for an invisible one) whose tick does the work, a creature, a material rule or a landmark. Keep it short and general, so many spells can use it: options in an object with sensible defaults. Give its signature as spells will call it, lib.name(w, ...), and one line of doc for the writers' prompt. Write an example: a complete short spell program (const spell = { *cast(w) { ... } }) that uses it the way the reporting spells wanted. The example is cast in a test run and must visibly do what the helper says.
+engine: the ability needs the simulation itself to change (a new rule of the land, a new kind of thing, how something is drawn) and a helper could only fake it badly. Write spec: what the engine should add, the API call it would have, and why a helper cannot do it. A developer reviews it.
+exists: the API can already do it and the writers missed it. Write doc: one line telling writers how, which joins their prompt as a hint.
+
+Prefer exists over helper and helper over engine. Name it in lower camel case. Never break or rename what exists.
+
+THE API THE WRITERS HAVE
+`;
+
+export const DESIGN_SCHEMA = {
+  type: "object",
+  properties: {
+    decision: { type: "string", enum: ["helper", "engine", "exists", "none"] },
+    answers: { type: "array", items: { type: "integer" } },
+    name: { type: "string" },
+    signature: { type: "string" },
+    doc: { type: "string" },
+    code: { type: "string" },
+    example: { type: "string" },
+    spec: { type: "string" },
+  },
+  required: ["decision", "answers", "name", "signature", "doc", "code", "example", "spec"],
+  additionalProperties: false,
+} as const;
+
+export function designUserMessage(gaps: { id: number; spell: string; tier: string; missing: string }[], library: LibraryDoc[]): string {
+  let text = `What the writers lacked, one spell a line:\n${gaps.map((g) => `${g.id}. ${g.spell} (${g.tier}): ${g.missing}`).join("\n")}`;
+  if (library.length) text += `\n\nAlready grown (do not write these again):\n${library.map((l) => `${l.kind} ${l.signature || l.name}: ${l.doc}`).join("\n")}`;
+  return text;
+}
 
 // The judge (3.3): Haiku looks at three Spell Lab frames of a cast and says
 // whether a player would vote it up. Its notes from earlier votes come in the

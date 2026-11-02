@@ -3,6 +3,10 @@
 # where Haiku scores it (about $0.0004 a program). Needs two repository
 # secrets: MM_URL (the game's address) and MM_TOKEN (its ADMIN_TOKEN).
 # Without them the job does nothing.
+#
+# First, the API's growth (3.4.2, scripts/evolve-runner.ts): helpers the
+# designer wrote are tested in Node, and engine proposals become issues
+# labelled api-gap. No Claude call.
 name: Judge
 on:
   schedule:
@@ -12,6 +16,9 @@ on:
       limit:
         description: "Programs to judge at most"
         default: "30"
+permissions:
+  contents: read
+  issues: write
 jobs:
   judge:
     runs-on: ubuntu-latest
@@ -19,6 +26,7 @@ jobs:
     env:
       MM_URL: ${{ secrets.MM_URL }}
       MM_TOKEN: ${{ secrets.MM_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         if: env.MM_URL != '' && env.MM_TOKEN != ''
@@ -30,6 +38,7 @@ jobs:
       - if: env.MM_URL != '' && env.MM_TOKEN != ''
         run: |
           npm ci
+          npm run evolve
           npm install --no-save playwright
           npx playwright install --with-deps chromium
           node scripts/judge-runner.mjs ${{ inputs.limit || '30' }}

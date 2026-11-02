@@ -177,6 +177,10 @@ npm run test:worker
 
 `npm run test:worker` (3.4) runs the Worker itself with `wrangler dev` on a fresh local D1, with a stub in place of Claude that counts calls: no invite, a made up link, a capped invite (new merges refused, known ones free, other people unaffected, a top-up, a pause), a revoked invite and a new link, two calls at the last dollar in five rounds (exactly one passes), four calls with room for two, the same merge three times in flight (one Claude call) and twelve new merges at once from one person (ten pass, two refused and logged). It needs `dist/` to exist (the build makes it). CI runs it after `npm test`.
 
+`npm run test:worker` also covers 3.4.2: a spell gets its promise before its program and its writer is told the test, gaps are recorded, three spells lacking the same thing grow a helper on trial that writers do not see until its example passes, a live helper joins the prompt and is appended to the program that calls it, and a broken promise is written again with what the test found.
+
+`npm run evolve` (3.4.2), with `MM_URL` and `MM_TOKEN` set, tests the helpers waiting for their test run and opens a GitHub issue for each engine proposal when `GITHUB_TOKEN` and `GITHUB_REPOSITORY` are set (the daily Judge workflow sets both). No Claude call.
+
 `node scripts/overlap-lab.mjs <out-dir>` casts the cases of 3.4's overlap fixes in the Spell Lab (a waterfall over the cut side, water on terraces, blocks in the land and through houses, a drawing over cliffs and water); compare with `docs/visual-checks`.
 
 Runs the simulation in Node, without a browser, in about 20 seconds on four cores (35 on two): map generation, the reference spells, the loop guard, a save round trip, every challenge with its solution and, over eight seeds in worker threads, with nothing, the test run on good and bad programs, and the vote rules. GitHub Actions runs `npm run build` and `npm test` on every pull request.

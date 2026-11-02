@@ -69,7 +69,7 @@ export interface CheckRequest {
   name: string;
   id: number;
   ok: boolean;
-  problem: "crash" | "nothing" | "wiped" | null;
+  problem: "crash" | "nothing" | "wiped" | "promise" | null;
   detail: string;
   stats?: Record<string, number>;
 }

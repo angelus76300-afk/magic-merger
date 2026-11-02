@@ -28,7 +28,9 @@ import type {
 import { changeFeedback, listFeedback, postFeedback, syncFeedback, voteFeedback } from "./feedback";
 import type { FeedbackAction } from "../shared/feedback";
 import { HttpError } from "./http";
-import { ClaudeOracle, MockOracle, OracleError, parseEffort, type Oracle, type SpellRequest as OracleSpellRequest } from "./oracle";
+import { ClaudeOracle, MockOracle, OracleError, parseEffort, type Oracle, type ProgramAnswer, type SpellRequest as OracleSpellRequest } from "./oracle";
+import { parseIntents, type Intent } from "../shared/promises";
+import { designDue, evolution, liveLibrary, openGaps, recordGap, settleHelper, storeDesign, trialHelpers, withLibrary, type Library } from "./evolve";
 import {
   averageDaily,
   downReasons,
@@ -118,6 +120,10 @@ export interface Env {
   ROUTINE_TOKEN?: string;
   // Tests point this at a stub.
   GITHUB_API_URL?: string;
+  // 3.4.2. Who decides how the API grows (worker/evolve.ts); SPELL_MODEL by default.
+  DESIGN_MODEL?: string;
+  // "0" stops the API from growing on its own (the admin can still ask).
+  EVOLVE?: string;
 }
 
 const MAX_NAME_LENGTH = 60;
@@ -251,6 +257,7 @@ export default {
         pollBatches(env),
         sweep(env.DB).catch((err) => console.error("sweep", err)),
         syncFeedback(env).catch((err) => console.error("feedback sync", err)),
+        env.EVOLVE === "0" ? null : evolve(env, false).catch((err) => console.error("evolve", err)),
       ]).then(() => undefined),
     );
   },
@@ -287,6 +294,7 @@ function makeOracle(env: Env, o: OracleOverrides): Oracle {
     spell: o.spellModel && SPELL_MODELS.has(o.spellModel) ? o.spellModel : env.SPELL_MODEL,
     spellEffort: parseEffort(o.spellEffort ?? env.SPELL_EFFORT, "medium"),
     judge: env.JUDGE_MODEL || "claude-haiku-5-5",
+    design: env.DESIGN_MODEL || env.SPELL_MODEL,
   };
   return new ClaudeOracle(env.ANTHROPIC_API_KEY, models, env.ANTHROPIC_BASE_URL);
 }
@@ -526,13 +534,24 @@ async function handleSpell(body: SpellRequest, env: Env, oracle: Oracle, admin: 
   const batch = !oracle.mock && !regenerate && !(admin && body.model) && isBig(tier, smallUpTo(env)) && batchEnabled(env);
   const model = body.model && admin ? body.model : batch ? smallModel(env) : spellModelFor(env, tier);
   await ensureBudget(env, oracle, "spell", spellEstimate(env, model));
-  const request: OracleSpellRequest = { name: element.name, kind: element.kind, description, recipe: await firstRecipe(env.DB, key), tier };
+  const intents = await ensureIntents(env, oracle, element, description);
+  const library = oracle.mock ? NO_LIBRARY : await liveLibrary(env.DB);
+  const request: OracleSpellRequest = {
+    name: element.name,
+    kind: element.kind,
+    description,
+    recipe: await firstRecipe(env.DB, key),
+    tier,
+    intents,
+    library: library.docs,
+  };
   if (!oracle.mock && model === smallModel(env)) request.examples = await examplesFor(env, key, request);
   const answer = await writeWith(env, oracle, model, body.effort, (w) => w.spell(request));
-  const program: SpellProgram = { version: PROGRAM_VERSION, summary: answer.summary, code: answer.code };
+  const program = programFrom(answer, intents, library);
   if (oracle.mock) return { name: element.name, tier, program: { ...program, model }, mock: true };
   const origin: ProgramOrigin = regenerate ? "admin" : batch ? "draft" : "new";
   const id = await insertProgram(env.DB, key, JSON.stringify(program), model, PROGRAM_VERSION, origin, "trial", live?.row.id ?? null);
+  await recordGap(env.DB, key, id, answer.missing);
   // The Opus version through the Batch API is held once the draft exists: a
   // player near their allowance keeps the draft and skips the upgrade.
   const batchHold = batch ? await holdBatch(env, oracle).catch(() => null) : null;
@@ -563,7 +582,8 @@ async function handleRepair(body: RepairRequest, env: Env, oracle: Oracle, admin
   // exists is not where Opus earns its price.
   const model = env.REPAIR_MODEL || "claude-haiku-5-5";
   const answer = await writeWith(env, oracle, model, undefined, (w) => w.repair(element.name, tier, stored?.code ?? "", error));
-  const program: SpellProgram = { version: PROGRAM_VERSION, summary: answer.summary || stored?.summary || "", code: answer.code };
+  const library = oracle.mock ? NO_LIBRARY : await liveLibrary(env.DB);
+  const program = programFrom({ ...answer, summary: answer.summary || stored?.summary || "" }, parseIntents(stored?.intents), library);
   if (oracle.mock || !live) return { name: element.name, tier, program: { ...program, model }, mock: oracle.mock };
   await env.DB.prepare("UPDATE spells SET repairs = repairs + 1 WHERE key = ?").bind(key).run();
   const id = await insertProgram(env.DB, key, JSON.stringify(program), model, PROGRAM_VERSION, "repair", "trial", live.row.id);
@@ -619,7 +639,7 @@ async function handleCheck(body: CheckRequest, env: Env, oracle: Oracle): Promis
   // Someone else's browser got there first.
   if (row.status !== "trial") return served();
   const detail = String(body.detail ?? "").slice(0, 400);
-  const problem = body.problem === "crash" || body.problem === "nothing" || body.problem === "wiped" ? body.problem : null;
+  const problem = body.problem === "crash" || body.problem === "nothing" || body.problem === "wiped" || body.problem === "promise" ? body.problem : null;
   const verdict = { ok: body.ok === true, problem, detail, stats: body.stats ?? {}, at: Date.now() };
   await env.DB.prepare("UPDATE programs SET checked = ? WHERE id = ?").bind(JSON.stringify(verdict).slice(0, 2000), row.id).run();
   if (verdict.ok || !problem) {
@@ -643,13 +663,18 @@ async function handleCheck(body: CheckRequest, env: Env, oracle: Oracle): Promis
     // Over a budget: the program is kept as it is rather than refused.
     return keep();
   }
+  const tested = programOf(row);
+  const intents = parseIntents(tested?.intents);
+  const library = await liveLibrary(env.DB);
   const request: OracleSpellRequest = {
     name: element.name,
     kind: element.kind,
     description,
     recipe: await firstRecipe(env.DB, key),
     tier,
-    rewrite: { reasons: [`its test run found: ${detail}`], summary: programOf(row)?.summary, code: programOf(row)?.code },
+    intents,
+    library: library.docs,
+    rewrite: { reasons: [`its test run found: ${detail}`], summary: tested?.summary, code: tested?.code },
   };
   let answer;
   try {
@@ -659,8 +684,9 @@ async function handleCheck(body: CheckRequest, env: Env, oracle: Oracle): Promis
     return keep();
   }
   await setStatus(env.DB, row.id, "rejected");
-  const program: SpellProgram = { version: PROGRAM_VERSION, summary: answer.summary, code: answer.code };
+  const program = programFrom(answer, intents, library);
   const id = await insertProgram(env.DB, key, JSON.stringify(program), smallModel(env), PROGRAM_VERSION, "check", "trial", row.parent);
+  await recordGap(env.DB, key, id, answer.missing);
   await env.DB.prepare("INSERT INTO rewrites (key, from_pid, to_pid, cause, at, status, model) VALUES (?, ?, ?, 'check', ?, 'done', ?)")
     .bind(key, row.id, id, Date.now(), smallModel(env))
     .run();
@@ -807,7 +833,18 @@ async function rewriteWith(env: Env, oracle: Oracle, row: ProgramRow, cause: "vo
     throw err;
   }
   const rewrite: Rewrite = { reasons, summary: programOf(row)?.summary };
-  const request: OracleSpellRequest = { name: element.name, kind: element.kind, description, recipe: await firstRecipe(db, row.key), tier, rewrite };
+  const intents = await ensureIntents(env, oracle, element, description);
+  const library = await liveLibrary(db);
+  const request: OracleSpellRequest = {
+    name: element.name,
+    kind: element.kind,
+    description,
+    recipe: await firstRecipe(db, row.key),
+    tier,
+    rewrite,
+    intents,
+    library: library.docs,
+  };
   if (batchHold !== null) {
     await queueBatch(env, row.key, request, row.id, cause, ledgerOf(oracle).payer.invite, batchHold);
     return "queued in a batch";
@@ -817,8 +854,9 @@ async function rewriteWith(env: Env, oracle: Oracle, row: ProgramRow, cause: "vo
   const at = Date.now();
   try {
     const answer = await writeWith(env, oracle, model, undefined, (w) => w.spell(request));
-    const program: SpellProgram = { version: PROGRAM_VERSION, summary: answer.summary, code: answer.code };
+    const program = programFrom(answer, intents, library);
     const id = await insertProgram(db, row.key, JSON.stringify(program), model, PROGRAM_VERSION, cause, "trial", row.id);
+    await recordGap(db, row.key, id, answer.missing);
     await db
       .prepare("INSERT INTO rewrites (key, from_pid, to_pid, cause, at, status, model) VALUES (?, ?, ?, ?, ?, 'done', ?)")
       .bind(row.key, row.id, id, cause, at, model)
@@ -887,8 +925,18 @@ function batchItemId(cause: string, id: number): string {
 async function pollBatches(env: Env): Promise<{ done: number; failed: number; waiting: number }> {
   const db = env.DB;
   const pending = await db
-    .prepare("SELECT id, key, from_pid, cause, batch, model, invite, reservation FROM rewrites WHERE status = 'pending' AND batch IS NOT NULL")
-    .all<{ id: number; key: string; from_pid: number; cause: string; batch: string; model: string; invite: string | null; reservation: number | null }>();
+    .prepare("SELECT id, key, from_pid, cause, batch, model, invite, reservation, request FROM rewrites WHERE status = 'pending' AND batch IS NOT NULL")
+    .all<{
+      id: number;
+      key: string;
+      from_pid: number;
+      cause: string;
+      batch: string;
+      model: string;
+      invite: string | null;
+      reservation: number | null;
+      request: string | null;
+    }>();
   const out = { done: 0, failed: 0, waiting: 0 };
   if (!pending.results.length || !env.ANTHROPIC_API_KEY) return out;
   const oracle = makeOracle(env, {});
@@ -922,13 +970,20 @@ async function pollBatches(env: Env): Promise<{ done: number; failed: number; wa
         continue;
       }
       if (taken) {
-        const program: SpellProgram = { version: PROGRAM_VERSION, summary: o.answer.summary, code: o.answer.code };
+        let intents: Intent[] = [];
+        try {
+          intents = parseIntents((JSON.parse(row.request ?? "{}") as OracleSpellRequest).intents);
+        } catch {
+          // An old row without a request: no promise to keep.
+        }
+        const program = programFrom(o.answer, intents, await liveLibrary(db));
         const origin: ProgramOrigin = row.cause === "upgrade" ? "batch" : row.cause === "judge" ? "judge" : "votes";
         // Its parent is what is live now: the draft may have been fixed, or the
         // spell rolled back, while the batch ran.
         const live = await liveProgram(db, row.key);
         const id = await insertProgram(db, row.key, JSON.stringify(program), o.model, PROGRAM_VERSION, origin, "trial", live?.row.id ?? row.from_pid);
         await db.prepare("UPDATE rewrites SET status = 'done', to_pid = ?, model = ? WHERE id = ?").bind(id, o.model, row.id).run();
+        await recordGap(db, row.key, id, o.answer.missing);
         out.done++;
       }
     }
@@ -1084,6 +1139,19 @@ async function handleAdmin(request: Request, url: URL, env: Env, oracle: Oracle,
   // 3.4.1: send an idea to Claude, decline, reopen or delete it; read GitHub now.
   if (post && path === "feedback") return json(await changeFeedback(env, await readBody<FeedbackAction>(request)));
   if (post && path === "feedback-sync") return json(await syncFeedback(env, 20));
+  // 3.4.2: the API that grows.
+  if (!post && path === "evolution") return json(await evolution(env.DB));
+  if (post && path === "evolve") return json(await evolve(env, true));
+  if (!post && path === "helpers") return json(await trialHelpers(env.DB));
+  if (post && path === "helper-check") {
+    const body = await readBody<{ id?: unknown; ok?: unknown; detail?: unknown }>(request);
+    return json({ status: await settleHelper(env.DB, Number(body.id), body.ok === true, String(body.detail ?? "")) });
+  }
+  if (!post && path === "proposals") {
+    const rows = await env.DB.prepare("SELECT * FROM extensions WHERE kind = 'engine' AND status = 'open' ORDER BY id").all();
+    return json(rows.results);
+  }
+  if (post && path === "extension") return json(await changeExtension(await readBody<{ id?: unknown; status?: unknown; issue?: unknown }>(request), env));
   return null;
 }
 
@@ -1448,4 +1516,67 @@ async function batchTrialResults(batch: string, env: Env) {
   } finally {
     await recordSpend(env.DB, oracle);
   }
+}
+
+// 3.4.2: promises and the growing API.
+
+const NO_LIBRARY: Library = { docs: [], helpers: [] };
+
+// The program as stored: the helpers it calls appended, and its promise with it.
+function programFrom(answer: ProgramAnswer, intents: Intent[], library: Library): SpellProgram {
+  const program: SpellProgram = { version: PROGRAM_VERSION, summary: answer.summary, code: withLibrary(answer.code, library.helpers) };
+  if (intents.length) program.intents = intents;
+  return program;
+}
+
+// What an element promises, decided once by its own small call (3.4.2). A
+// failure here never stops a spell from being written: it is then written
+// without a promise, as before.
+async function ensureIntents(env: Env, oracle: Oracle, element: GameElement, description: string): Promise<Intent[]> {
+  const key = elementKey(element.name);
+  const row = await env.DB.prepare("SELECT intents FROM elements WHERE key = ?").bind(key).first<{ intents: string | null }>();
+  if (row?.intents) return parseIntents(row.intents);
+  try {
+    await ensureBudget(env, oracle, "intent", ESTIMATE.intent);
+    const intents = await oracle.intents(element.name, element.kind, description);
+    if (!oracle.mock) await env.DB.prepare("UPDATE elements SET intents = ? WHERE key = ?").bind(intents.join(","), key).run();
+    return intents;
+  } catch (err) {
+    console.error("intents", err);
+    return [];
+  }
+}
+
+// Asks the designer how the API should grow, when enough spells lacked
+// something (worker/evolve.ts). Daily from the cron; at once for the admin.
+async function evolve(env: Env, force: boolean): Promise<Record<string, unknown>> {
+  if (!env.ANTHROPIC_API_KEY) return { skipped: "no API key" };
+  if (!force && !(await designDue(env.DB))) return { skipped: "not due" };
+  const gaps = await openGaps(env.DB);
+  if (new Set(gaps.map((g) => g.key)).size < 3) return { skipped: "fewer than three spells lacked anything" };
+  const oracle = oracleFor(env, {}, new Ledger(ADMIN_PAYER));
+  try {
+    await ensureBudget(env, oracle, "design", ESTIMATE.design);
+    const library = await liveLibrary(env.DB);
+    const answer = await oracle.design({ gaps: gaps.map((g) => ({ id: g.id, spell: g.spell, tier: g.tier, missing: g.missing })), library: library.docs });
+    const stored = await storeDesign(env.DB, answer, gaps, env.DESIGN_MODEL || env.SPELL_MODEL);
+    console.log(JSON.stringify({ evolve: answer.decision, name: answer.name, ...stored }));
+    return { decision: answer.decision, name: answer.name, ...stored };
+  } finally {
+    await closeLedger(env.DB, oracle);
+  }
+}
+
+// The admin retires a helper or hint, or closes an engine proposal; the runner records its issue.
+async function changeExtension(body: { id?: unknown; status?: unknown; issue?: unknown }, env: Env) {
+  const id = Number(body.id);
+  if (!Number.isInteger(id)) throw new HttpError(400, "Which extension?");
+  if (typeof body.issue === "string" && /^https:\/\/github\.com\//.test(body.issue)) {
+    await env.DB.prepare("UPDATE extensions SET issue = ? WHERE id = ?").bind(body.issue.slice(0, 300), id).run();
+  }
+  const allowed = ["live", "retired", "rejected", "done"];
+  if (typeof body.status === "string" && allowed.includes(body.status)) {
+    await env.DB.prepare("UPDATE extensions SET status = ? WHERE id = ?").bind(body.status, id).run();
+  }
+  return env.DB.prepare("SELECT id, kind, name, status, issue FROM extensions WHERE id = ?").bind(id).first();
 }

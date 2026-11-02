@@ -1,6 +1,6 @@
 import { guardLoops } from "../../shared/spellcode";
 import { TIER_REACH, type Tier } from "../../shared/tiers";
-import { KINDS, kindOf, makeCreature, maxHp, type Behavior, type Creature, type CreatureKind } from "./creatures";
+import { KINDS, hostile, kindOf, makeCreature, maxHp, shieldedCreature, type Behavior, type Creature, type CreatureKind } from "./creatures";
 import { BUILTIN, C, F, G, LAYERS, type Layer } from "./materials";
 import { valueNoise } from "./noise";
 import { addGas } from "./cells";
@@ -13,6 +13,7 @@ import { VK, igniteVoxels, kindId } from "./voxels";
 import { keyLevel, keyX, keyY, voxelKey } from "./voxelkey";
 import { type Landmark, type Presence } from "./social";
 import { hexColor, toColor } from "./colors";
+import { DOME_SQUASH, WARD, addWard, ownWard, wardBits, wardHit, warded } from "./wards";
 
 // Runs spell programs. A program is JavaScript that defines `spell`:
 //
@@ -31,6 +32,8 @@ export interface CastRequest {
   name: string;
   tier: Tier;
   code: string;
+  // What it promises (shared/promises.ts), for its test run. The runtime ignores it.
+  intents?: string[];
 }
 
 interface SpellObject {
@@ -663,8 +666,12 @@ export class CreatureHandle {
   get data() {
     return this.raw.data;
   }
+  // A ward against harm takes most of a blow meant for someone it protects.
+  private shielded() {
+    return shieldedCreature(this.rt.world, this.raw) && !hostile(this.raw);
+  }
   hurt(n: number) {
-    this.raw.hp -= num(n, 0, 1e6, 0);
+    this.raw.hp -= num(n, 0, 1e6, 0) * (this.shielded() ? 0.15 : 1);
     if (this.raw.hp <= 0) this.raw.dead = true;
   }
   heal(n: number) {
@@ -673,6 +680,10 @@ export class CreatureHandle {
     this.raw.frozen = 0;
   }
   kill() {
+    if (this.shielded()) {
+      this.raw.hp -= maxHp(this.raw) * 0.15;
+      if (this.raw.hp > 0) return;
+    }
     this.raw.dead = true;
     this.raw.hp = 0;
   }
@@ -693,6 +704,11 @@ export class CreatureHandle {
   status(name: string, seconds: number, fromX?: number, fromY?: number) {
     const s = num(seconds, 0, 120, 3);
     const c = this.raw;
+    const ward = this.rt.world.wards.length
+      ? this.rt.world.wardMask[this.rt.world.idx(Math.max(0, Math.min(this.rt.world.w - 1, c.x)), Math.max(0, Math.min(this.rt.world.h - 1, c.y)))]
+      : 0;
+    if ((name === "burn" || name === "burning") && ward & WARD.fire) return;
+    if ((name === "freeze" || name === "frozen") && ward & WARD.cold) return;
     switch (name) {
       case "burn":
       case "burning":
@@ -911,7 +927,26 @@ export class SpellApi {
   // gas, amount is depth or density.
   set(x: number, y: number, material: string, amount = 1) {
     if (!this.inside(x, y)) return;
-    this.rt.world.place(this.i(x, y), String(material).toLowerCase(), num(amount, 0, 50, 1));
+    const name = String(material).toLowerCase();
+    const i = this.i(x, y);
+    if (this.isFluid(name) && this.fluidBlocked(i)) return;
+    this.rt.world.place(i, name, num(amount, 0, 50, 1));
+  }
+  private isFluid(name: string): boolean {
+    return this.rt.world.materials.find(name)?.layer === "fluid";
+  }
+  // Fluids a spell pours do not land inside someone else's ward against fluids.
+  private fluidBlocked(i: number): boolean {
+    const w = this.rt.world;
+    if (!w.wards.length || !warded(w, i, WARD.fluids) || ownWard(w, i, this.req.key)) return false;
+    if (Math.random() < 0.02) wardHit(w, i);
+    return true;
+  }
+  private fireBlocked(i: number): boolean {
+    const w = this.rt.world;
+    if (!w.wards.length || !warded(w, i, WARD.fire)) return false;
+    if (Math.random() < 0.02) wardHit(w, i);
+    return true;
   }
   clear(x: number, y: number, layer: Layer) {
     if (!this.inside(x, y)) return;
@@ -923,13 +958,16 @@ export class SpellApi {
     else if (layer === "ground") w.ground[i] = G.DIRT;
   }
   fire(x: number, y: number, intensity = 1) {
-    if (!this.inside(x, y)) return;
+    if (!this.inside(x, y) || this.fireBlocked(this.i(x, y))) return;
     const w = this.rt.world;
     w.fire[this.i(x, y)] = Math.max(w.fire[this.i(x, y)], num(intensity, 0, 1, 1));
   }
   heat(x: number, y: number, degrees: number) {
     if (!this.inside(x, y)) return;
-    this.rt.world.temp[this.i(x, y)] += num(degrees, -500, 3000, 0);
+    const d = num(degrees, -500, 3000, 0);
+    const i = this.i(x, y);
+    if (warded(this.rt.world, i, d > 0 ? WARD.fire : WARD.cold)) return;
+    this.rt.world.temp[i] += d;
   }
   raise(x: number, y: number, amount: number) {
     if (!this.inside(x, y)) return;
@@ -971,7 +1009,7 @@ export class SpellApi {
   ignite(x: number, y: number, r: number, chance = 1) {
     const w = this.rt.world;
     forDisc(w, x, y, num(r, 0, 400, 3), (i) => {
-      if (Math.random() < chance) w.fire[i] = Math.max(w.fire[i], 0.8);
+      if (Math.random() < chance && !this.fireBlocked(i)) w.fire[i] = Math.max(w.fire[i], 0.8);
     });
     if (w.decor.size) igniteVoxels(w, x, y, num(r, 0, 400, 3) * 0.8);
   }
@@ -979,7 +1017,9 @@ export class SpellApi {
   flood(x: number, y: number, r: number, fluid = "water", depth = 1) {
     const w = this.rt.world;
     const d = num(depth, 0, 40, 1);
-    forDisc(w, x, y, num(r, 0, 400, 3), (i, k) => w.place(i, String(fluid).toLowerCase(), d * (0.3 + 0.7 * k)));
+    forDisc(w, x, y, num(r, 0, 400, 3), (i, k) => {
+      if (!this.fluidBlocked(i)) w.place(i, String(fluid).toLowerCase(), d * (0.3 + 0.7 * k));
+    });
   }
   drain(x: number, y: number, r: number) {
     const w = this.rt.world;
@@ -989,7 +1029,9 @@ export class SpellApi {
   paint(x: number, y: number, r: number, material: string, density = 1, amount = 1) {
     const w = this.rt.world;
     const name = String(material).toLowerCase();
+    const fluid = this.isFluid(name);
     forDisc(w, x, y, num(r, 0, 400, 3), (i, k) => {
+      if (fluid && this.fluidBlocked(i)) return;
       if (Math.random() < density * (0.4 + 0.6 * k)) w.place(i, name, num(amount, 0, 50, 1));
     });
   }
@@ -998,7 +1040,9 @@ export class SpellApi {
   temperature(x: number, y: number, r: number, delta: number) {
     const w = this.rt.world;
     const d = num(delta, -500, 3000, 0);
+    const guard = d > 0 ? WARD.fire : WARD.cold;
     forDisc(w, x, y, num(r, 0, 400, 3), (i, k) => {
+      if (warded(w, i, guard)) return;
       w.temp[i] += d * (0.4 + 0.6 * k);
       if (d < -20) {
         w.fire[i] = 0;
@@ -1012,6 +1056,7 @@ export class SpellApi {
     });
     for (const c of this.rt.world.creatures) {
       if (c.dead || Math.hypot(c.x - x, c.y - y) > r) continue;
+      if (warded(w, w.idx(Math.max(0, Math.min(w.w - 1, c.x)), Math.max(0, Math.min(w.h - 1, c.y))), guard)) continue;
       if (d < -40) c.frozen = Math.max(c.frozen, Math.min(10, -d / 20));
       if (d > 150 && !kindOf(c).fireproof) c.burning = Math.max(c.burning, 2);
     }
@@ -1279,6 +1324,29 @@ export class SpellApi {
     }
   }
 
+  // A ward (3.5): a clear dome that keeps what is inside safe for `seconds`
+  // from what it is against: fire, fluids, lightning, creatures, harm, cold
+  // (all of them by default). Hostile creatures are pushed out; keepOut and
+  // allow name kinds to push out or let in whatever they are.
+  ward(x: number, y: number, r: number, o: Record<string, unknown> = {}) {
+    const w = this.rt.world;
+    if (!this.inside(x, y)) return;
+    const seconds = num(o.seconds, 1, 600, 20);
+    addWard(w, {
+      x,
+      y,
+      r: num(r, 1, 120, 8),
+      against: wardBits(o.against),
+      from: w.time,
+      until: w.time + seconds,
+      color: colorOr(o.color, 0x9fd8ff),
+      keepOut: strings(o.keepOut),
+      allow: strings(o.allow),
+      owner: this.req.key,
+      hit: -10,
+    });
+  }
+
   // A lasting presence at a place: villagers and creatures it lures come to
   // it, those it scares keep away, and its aura acts on whoever stands near.
   // It has no look of its own: build one (a shrine, a totem, a cursed stone).
@@ -1316,6 +1384,13 @@ export class SpellApi {
     const cy = Math.round(y);
     for (let l = target + 1; l < target + 140; l++) if (w.decor.has(voxelKey(cx, cy, l))) target = l + 1;
     if (w.depth[i] > 0.05) target = Math.max(target, (w.height[i] + w.depth[i]) * 0.5);
+    // Under a ward against lightning, the bolt ends on the dome.
+    const dome = warded(w, i, WARD.lightning) ? w.wards.find((d) => d.against & WARD.lightning && Math.hypot(d.x - x, d.y - y) <= d.r) : undefined;
+    if (dome) {
+      const top = w.height[w.idx(Math.max(0, Math.min(w.w - 1, dome.x)), Math.max(0, Math.min(w.h - 1, dome.y)))] * 0.5;
+      target = Math.max(target, top + Math.sqrt(Math.max(0, dome.r ** 2 - (x - dome.x) ** 2 - (y - dome.y) ** 2)) * DOME_SQUASH);
+      dome.hit = w.time;
+    }
     const path = (x0: number, y0: number, l0: number, x1: number, y1: number, l1: number, jag: number) => {
       const pts = [{ x: x0, y: y0, l: l0 }];
       const n = 10;
@@ -1344,6 +1419,7 @@ export class SpellApi {
     vis.lights.push({ x, y, r: 10 * Math.max(0.6, power), color, t: 0, dur: 0.5 });
     this.flash(color, 0.3);
     this.sound("zap", Math.min(1, 0.4 + power * 0.2));
+    if (dome) return;
     // Effects on the land.
     const g = w.ground[i];
     if (g === G.SAND && Math.random() < 0.6) w.ground[i] = G.CRYSTAL;

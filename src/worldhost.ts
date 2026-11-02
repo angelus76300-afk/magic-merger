@@ -272,7 +272,7 @@ export class WorldHost {
     this.updateStatus();
     try {
       for (let round = 0; round < 3 && res.program.trial && res.program.id; round++) {
-        const result = await this.checker.check({ key, name: res.name, tier: res.tier, code: res.program.code });
+        const result = await this.checker.check({ key, name: res.name, tier: res.tier, code: res.program.code, intents: res.program.intents });
         const id = res.program.id;
         res = await api.checkSpell({ name: res.name, id, ...result });
         if (res.program.id !== id && round === 0 && !result.ok && !quiet)
