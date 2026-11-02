@@ -67,10 +67,13 @@ export interface BatchItem {
   request: SpellRequest;
 }
 
+// What one batch item cost is returned, not recorded: the caller records it
+// when it takes the item, so a batch read twice is not billed twice.
 export interface BatchOutcome {
   id: string;
   answer?: ProgramAnswer;
   error?: string;
+  call: string;
   model: string;
   usd: number;
 }
@@ -251,23 +254,24 @@ export class ClaudeOracle implements Oracle {
     for await (const item of await this.client.beta.messages.batches.results(id)) {
       const r = item.result;
       if (r.type !== "succeeded") {
-        out.push({ id: item.custom_id, error: r.type === "errored" ? JSON.stringify(r.error).slice(0, 300) : r.type, model: this.models.spell, usd: 0 });
+        out.push({
+          id: item.custom_id,
+          error: r.type === "errored" ? JSON.stringify(r.error).slice(0, 300) : r.type,
+          call: "batch-spell",
+          model: this.models.spell,
+          usd: 0,
+        });
         continue;
       }
       // Batch requests cost half of the same call made directly. Ids that
       // start with "rw" are rewrites, counted against the daily rewrite budget.
       const spent = logUsage(item.custom_id.startsWith("rw") ? "batch-rewrite" : "batch-spell", r.message, 0.5);
-      this.spent.push(spent);
       try {
         const answer = toProgram(readText(r.message));
         const error = syntaxError(answer.code);
-        out.push(
-          error
-            ? { id: item.custom_id, error: `does not parse: ${error}`, model: spent.model, usd: spent.usd }
-            : { id: item.custom_id, answer, model: spent.model, usd: spent.usd },
-        );
+        out.push(error ? { id: item.custom_id, error: `does not parse: ${error}`, ...spent } : { id: item.custom_id, answer, ...spent });
       } catch (err) {
-        out.push({ id: item.custom_id, error: err instanceof Error ? err.message : String(err), model: spent.model, usd: spent.usd });
+        out.push({ id: item.custom_id, error: err instanceof Error ? err.message : String(err), ...spent });
       }
     }
     return out;

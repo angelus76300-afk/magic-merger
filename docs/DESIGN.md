@@ -83,13 +83,13 @@ Each program ever written for an element is a row of `programs`, with its origin
 
 ### The test run
 
-A new program is a trial until a browser has cast it on a practice island (`src/sim/check.ts`): the small seeded island, a cast near a village, compared second by second with the same island left alone, so a river that flows or a villager who walks is not counted as the spell. It fails on:
+A new program is a trial until a browser has cast it on a practice island (`src/sim/check.ts`): the small seeded island, a cast near a village with a corpse and a wounded villager next to the target (so healing and raising spells have something to act on), compared second by second with the same island left alone, so a river that flows or a villager who walks is not counted as the spell. It fails on:
 
 1. **a crash**: an error, or no generator;
 2. **nothing visible**: fewer than 3 land cells, 4 blocks and 1 creature differ from the control and no body flew for half a second (particles, flashes and circles alone do not count);
 3. **an island wiped**: more than 60% of the land changed (90% for legendary), or a spell up to grand that leaves fewer than a fifth of the villagers and houses. Cosmic spells may (decision 1 below).
 
-A failed trial is written once more by Haiku with the failing code and what the test found; a second failure keeps the program that was live before, or, for a new spell, keeps the second one (something to cast is better than nothing, and a crash still has the repair loop). The 14 old programs in `lab/legacy` and the 6 reference spells all pass; it takes 0.1 to 1.2 s in Node.
+A failed trial is written once more by Haiku with the failing code and what the test found; a second failure keeps the program that was live before, or, for a new spell, keeps the second one (something to cast is better than nothing, and a crash still has the repair loop). The 14 old programs in `lab/legacy` and the 6 reference spells all pass, and 131 of the 132 programs stored on 2026-11-02 (Earth crashes); it takes 0.1 to 1.2 s in Node.
 
 It runs in the browser because the Worker cannot: Cloudflare Workers forbid `new Function`, and a spell is code. It runs in a second hidden sandboxed iframe (`check.html`, same CSP as the World) so a program under test shares nothing with the player's island, and it works before the World tab is opened. It runs 8 ms at a time between frames. A browser could lie about a result; the worst it can do is one extra Haiku call per trial, since a program written to fix a failed test is never fixed again.
 
@@ -115,9 +115,13 @@ A new legendary or cosmic spell used to wait 20 to 40 s for Opus at $0.076. Now 
 
 ### The judge
 
-Haiku looks at three Spell Lab frames (1, 3 and 6 s after the cast) with a sentence of what changed (cells, deaths, statuses) and scores 1 to 5 with the reason a player would give. The Worker cannot render, so the frames come from `scripts/judge-runner.mjs` (on a computer with Playwright, or the daily `Judge` GitHub workflow), which casts every live program the judge has not seen and posts its frames to `/api/admin/judge`.
+Haiku looks at three Spell Lab frames (1, 3 and 6 s after the cast; 2, 6 and 12 s for legendary and cosmic spells, which build up longer) with a sentence of what changed (cells, deaths, statuses) and scores 1 to 5 with the reason a player would give. The Worker cannot render, so the frames come from `scripts/judge-runner.mjs` (on a computer with Playwright, or the daily `Judge` GitHub workflow), which casts every live program the judge has not seen and posts its frames to `/api/admin/judge`.
 
 It is calibrated on votes in two ways. Its prompt carries the latest cases where it disagreed with the player ("Tornado: you gave 4; the player voted it down because it was too small"), and the score at or below which it means "voted down" is the one that best matches the votes once five judged programs have votes. Until it agrees with ten or more voted programs at least 70% of the time it only advises (on the admin card and `/api/admin/judge-stats`); after that, a bad score on a live program nobody voted on asks for a rewrite, within the same cooldown and budget as votes.
+
+### Measured
+
+On 20 spells (`docs/measurements/spell-quality-2026-11.md`), graded blind from Spell Lab frames: writing a spell again without a reason does not make it better. Small spells went from 2.73 to 3.00 out of 5 with the library (2.80 without), within noise; big ones went from 3.80 to 3.00 with fresh Opus programs, with swings from 5 to 1. Rewrites only pay when votes choose what to rewrite and what to keep, which is the design. A big spell now costs $0.040 instead of $0.061, a small one $0.0024 instead of $0.0014, and the judge agrees with the blind grader within one point on 54 programs of 60 but only advises until votes calibrate it.
 
 ### View source
 

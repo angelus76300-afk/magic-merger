@@ -172,6 +172,15 @@ function island(errors: string[]): Island {
       break;
     }
   }
+  // Something for healing and raising spells to work on: a villager lies dead
+  // by the target and another stands there wounded. Without them, Resurrection,
+  // Necromancy and Holy Light did nothing visible and failed.
+  const near = world.creatures
+    .filter((c) => c.kind === "villager" && !c.dead)
+    .sort((a, b) => Math.hypot(a.x - target.x, a.y - target.y) - Math.hypot(b.x - target.x, b.y - target.y));
+  // Right next to it: some spells only reach a few cells.
+  if (near[0]) Object.assign(near[0], { x: target.x + 1, y: target.y + 1, hp: 0, dead: true });
+  if (near[1]) Object.assign(near[1], { x: target.x - 1, y: target.y, hp: 35 });
   const land = new Uint8Array(world.n);
   for (let i = 0; i < world.n; i++) land[i] = world.depth[i] > 0.5 ? 0 : 1;
   return { world, rt, target, land, random: seeded(SEED + 1) };
