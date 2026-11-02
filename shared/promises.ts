@@ -1,4 +1,4 @@
-// What a spell promises (3.5). Each element gets one or two intents, decided
+// What a spell promises (3.4.1). Each element gets one or two intents, decided
 // from its name and grimoire entry by a call of their own, before any program
 // exists, so the model that writes the program never decides what it will be
 // tested on. Some intents have a probe in the test run (src/sim/check.ts):

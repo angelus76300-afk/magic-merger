@@ -1,6 +1,6 @@
 import type { World } from "./world";
 
-// Wards (3.5): a place a spell keeps safe for a while. Before wards, a
+// Wards (3.4.1): a place a spell keeps safe for a while. Before wards, a
 // protection spell could only build an opaque shell of magic blocks that lava
 // flowed under and fire spread through, and that hid the village it was meant
 // to guard. A ward is a rule of the land instead: inside it, what the ward is

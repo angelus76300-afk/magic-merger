@@ -1,4 +1,5 @@
-// Worker tests for 3.4: invites, the budget caps and the bug guard. Runs the
+// Worker tests for 3.4 and 3.4.1: invites, the budget caps, the bug guard,
+// promises and the API that grows. Runs the
 // real Worker with `wrangler dev` on a fresh local D1 (every migration
 // applied) and answers its Claude calls with a stub server that counts them
 // and takes a moment, so requests are really in flight together. The test
@@ -16,20 +17,59 @@ const ADMIN = "admin-secret-for-tests";
 const STATE = mkdtempSync(join(tmpdir(), "mm-worker-test-"));
 const env = { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost", WRANGLER_SEND_METRICS: "false", CI: "1" };
 
-// The stub Claude: every message is a merge answer named after a counter. Its
-// usage is priced (oracle.ts) at 100 input and 100 output tokens of Opus 5.5:
-// $0.0024, under the merge hold of $0.004.
+// The stub Claude: a merge answer named after a counter, unless the system
+// prompt asks for something else (a grimoire entry, an intent, a program, an
+// API design). Its usage is priced (oracle.ts) at 100 input and 100 output
+// tokens of Opus 5.5: $0.0024, under the merge hold of $0.004. What each kind
+// of call was last sent is kept in `seen`, for the checks.
 let calls = 0;
 const STUB_USD = (100 * 4 + 100 * 20) / 1e6;
+const seen = {};
+const lastSpell = () => seen["You write the spells"] ?? { system: "", user: "" };
+function stubAnswer(n, system, user) {
+  if (system.startsWith("You write the grimoire")) return "A clear dome rises over the village and keeps fire and lava out.";
+  if (system.includes("Say what this item promises")) return JSON.stringify({ intents: ["protect"] });
+  if (system.startsWith("You maintain the World API")) {
+    const answers = [...user.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1]));
+    return JSON.stringify({
+      decision: "helper",
+      answers,
+      name: "haven",
+      signature: "lib.haven(w, x, y, r, {seconds})",
+      doc: "a sanctuary: a ward and a circle of light over a place",
+      code: "function (w, x, y, r, o = {}) { w.ward(x, y, r, { seconds: o.seconds || 20 }); w.circle(x, y, r, '#9fd8ff', '#fff', 1); }",
+      example: "const spell = { *cast(w) { yield 0.5; lib.haven(w, w.x, w.y, w.r); } };",
+      spec: "",
+    });
+  }
+  if (system.startsWith("You write the spells")) {
+    const code = system.includes("lib.haven(")
+      ? "const spell = { *cast(w) { lib.haven(w, w.x, w.y, w.r); } };"
+      : "const spell = { *cast(w) { w.ward(w.x, w.y, w.r, { seconds: 20 }); } };";
+    return JSON.stringify({ summary: "A dome.", code, missing: "a barrier that stops lava: to keep the village safe" });
+  }
+  return JSON.stringify({ name: `Answer ${n}`, emoji: "✨", kind: "spell", tier: "minor" });
+}
 const stub = createServer((req, res) => {
-  req.resume();
+  const chunks = [];
+  req.on("data", (c) => chunks.push(c));
   req.on("end", () => {
     if (!req.url.endsWith("/v1/messages")) {
       res.writeHead(404).end("not stubbed");
       return;
     }
     const n = ++calls;
-    const answer = { name: `Answer ${n}`, emoji: "✨", kind: "spell", tier: "minor" };
+    let body = {};
+    try {
+      body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    } catch {
+      // not JSON: answered as a merge
+    }
+    const system = (body.system ?? []).map((b) => b.text).join("");
+    const last = body.messages?.at(-1)?.content;
+    const user = typeof last === "string" ? last : Array.isArray(last) ? last.map((b) => b.text ?? "").join("") : "";
+    const text = stubAnswer(n, system, user);
+    seen[system.slice(0, 20)] = { system, user };
     setTimeout(() => {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
@@ -38,7 +78,7 @@ const stub = createServer((req, res) => {
           type: "message",
           role: "assistant",
           model: "claude-opus-5-5",
-          content: [{ type: "text", text: JSON.stringify(answer) }],
+          content: [{ type: "text", text }],
           stop_reason: "end_turn",
           stop_sequence: null,
           usage: { input_tokens: 100, output_tokens: 100 },
@@ -301,6 +341,74 @@ const fresh = () => ALL[pairs++];
   const r = await api("/api/admin/people", { admin: true });
   const kim = r.data?.people?.find((p) => p.name === "Kim");
   check("the admin sees each person", r.status === 200 && r.data.budget === 50 && kim && kim.refusals === 2 && kim.discoveries >= 10);
+}
+
+// 9. Promises and the API that grows (3.4.1).
+{
+  await reset();
+  const now = Date.now();
+  const names = ["Aegis Ward", "Stone Bulwark", "Lava Shield"];
+  for (const name of names)
+    await db
+      .prepare("INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES (?, ?, '🛡️', 'spell', 3, 'major', NULL, ?)")
+      .bind(name.toLowerCase(), name, now)
+      .run();
+  const first = await api("/api/spell", { admin: true, body: { name: names[0] } });
+  const spellCall = lastSpell();
+  check(
+    "a spell gets its promise before its program",
+    first.status === 200 && JSON.stringify(first.data.program.intents) === '["protect"]' && first.data.program.trial === true,
+    JSON.stringify(first.data?.program?.intents ?? first.data),
+  );
+  check("the writer is told the test its promise faces", /promises protection/.test(spellCall?.user ?? "") && spellCall.system.includes("w.ward("));
+  const stored = await db.prepare("SELECT intents FROM elements WHERE key = 'aegis ward'").first();
+  check("the promise is stored with the element", stored?.intents === "protect");
+  for (const name of names.slice(1)) await api("/api/spell", { admin: true, body: { name } });
+  const gaps = await db.prepare("SELECT COUNT(DISTINCT key) AS n FROM gaps WHERE extension IS NULL").first();
+  check("what the API lacked is recorded, once per program", gaps.n === 3, `${gaps.n} spells`);
+
+  const evolved = await api("/api/admin/evolve", { admin: true, body: {} });
+  check(
+    "three spells lacking the same thing grow a helper, on trial",
+    evolved.data?.kind === "helper" && evolved.data?.status === "trial",
+    JSON.stringify(evolved.data),
+  );
+  const answered = await db.prepare("SELECT COUNT(*) AS n FROM gaps WHERE extension IS NULL").first();
+  check("the gaps it answers are closed", answered.n === 0);
+  const again = await api("/api/admin/evolve", { admin: true, body: {} });
+  check("nothing to design when no gap is open", !!again.data?.skipped, JSON.stringify(again.data));
+  const trials = (await api("/api/admin/helpers", { admin: true })).data;
+  check(
+    "the runner gets the example with the helper appended and its promise",
+    trials.length === 1 && trials[0].code.includes("const lib") && trials[0].intents[0] === "protect",
+  );
+  const before = await api("/api/spell", { admin: true, body: { name: names[0], regenerate: true } });
+  check("a helper on trial is not offered to writers", !lastSpell().system.includes("LIBRARY") && before.status === 200);
+  const settled = await api("/api/admin/helper-check", { admin: true, body: { id: trials[0].id, ok: true, detail: "passed" } });
+  check("a helper whose example passes goes live", settled.data?.status === "live");
+
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES ('holy dome', 'Holy Dome', '⛪', 'spell', 3, 'major', NULL, ?)",
+    )
+    .bind(now)
+    .run();
+  const withLib = await api("/api/spell", { admin: true, body: { name: "Holy Dome" } });
+  const libCall = lastSpell();
+  check("live helpers join the writers' prompt", libCall.system.includes("LIBRARY") && libCall.system.includes("lib.haven(w, x, y, r, {seconds})"));
+  check("a program that calls a helper carries its code", withLib.data?.program?.code.includes("haven: function"), withLib.data?.program?.code);
+
+  const broken = await api("/api/spell/check", {
+    admin: true,
+    body: { name: "Holy Dome", id: withLib.data.program.id, ok: false, problem: "promise", detail: "It promises protection, but the village burned." },
+  });
+  check(
+    "a broken promise is written again, with what the test found",
+    broken.status === 200 && broken.data.program.id !== withLib.data.program.id && /its test run found: It promises protection/.test(lastSpell().user),
+  );
+  const rejected = await db.prepare("SELECT status FROM programs WHERE id = ?").bind(withLib.data.program.id).first();
+  check("the program that broke it is rejected", rejected?.status === "rejected");
+  await reset();
 }
 
 console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at stub prices`);

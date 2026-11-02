@@ -92,6 +92,17 @@ Asked for: send the link to friends and coworkers, $50 of API a month in total w
 
 This takes part of 4.5 "Ready for strangers" early, for a closed circle: quotas, a report button, a privacy note, no shared token. Still missing before anything public: Turnstile, name checks before a name is stored, AI labels on generated content, legal pages, AI Gateway caps.
 
+## Done in 3.4.1: spells keep their promise
+
+Asked for: protection spells were not protecting and should be clear domes; new spells should do what they say; and the API should have grown a protection ability after the first protection spells, by itself. DESIGN.md, "Spells keep their promise" and "An API that grows", has the rules.
+
+1. **Wards**: `w.ward` makes fire, fluids, lightning, hostile creatures, blasts and frost stop at an edge, and villagers run under it. Drawn as a clear dome that ripples when hit.
+2. **Intents** for every element, decided before its program by a call of their own, and a **protection probe** in the test run: fire, lava, a blast and raiders against the village, at least half of the harm prevented. Aegis prevents 96 to 100%; the old shell of blocks none.
+3. **An API that grows**: writers report what they lacked; once a day the big model turns what three spells lacked into a tested helper, a hint, or an engine proposal opened as a GitHub issue.
+4. **Checked**: `npm test` (the ward, the probe both ways, helpers appended and refused), `npm run test:worker` (a promise before the program, gaps, a helper from trial to live to a writer's prompt to a stored program, a broken promise rewritten), and the two frames in `docs/visual-checks`.
+
+Not done: no stored protection program was re-tested, since the live database is not reachable from here. Run the probe on them once (below) before trusting the numbers. Heal and summon have no probe yet. There is no admin card for the evolution yet; it is JSON at `/api/admin/evolution` and issues on GitHub.
+
 ## Decisions taken
 
 1. **Cosmic spells may ruin the island.** Consequences are part of the fun; the land regrows on its own (ash turns to soil, grass and forests come back) and Reset is one tap away. Revisit if it feels punishing in play.
@@ -103,6 +114,9 @@ This takes part of 4.5 "Ready for strangers" early, for a closed circle: quotas,
 2. **Phones.** Still measured only in Node and a headless browser. The HUD sends real numbers to `/api/perf` as soon as someone plays with it on. In steady state the simulation's cost is temperature and fluids (about 40% of a tick in every scene), not voxels or creatures: that is the next lever if phones run hot.
 3. **Sounds** were checked for errors, not listened to.
 4. **Challenge balance with real spells.** The checks use simple hand-written solutions; Claude's spells may be stronger or weaker. Wildfire used to be won by doing nothing 1 time in 5: villagers rebuilt the burnt houses while the fire died down, and the end check counted them. It is now lost the moment a second house burns, and `npm test` replays every challenge with nothing over 8 seeds (0 wins in 64 for Wildfire, rain still wins 64 in 64).
+
+5. **The API's growth.** Read `GET /api/admin/evolution` weekly for a month: are gaps honest (the writer saying what it lacked) or noise, does the designer choose helper, hint or engine sensibly, and do live helpers get used. If gaps are mostly noise, raise the three spells to five before anything else.
+6. **Stored protection spells.** Export them (`scripts/replay-stored.ts` has the command), run the probe on each, and rewrite the ones that fail from the admin card, one at a time, never in bulk.
 
 ## What the money taught us
 

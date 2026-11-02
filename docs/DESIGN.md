@@ -158,6 +158,48 @@ The test seeds the month at $49.995 and sends two merges at once, five times: on
 
 A card has "Report this name": Claude names things, and a name can be wrong or offensive. Reports go to the admin's people view, one open report per name and person; dismissing one is the only action for now (renaming an element would change everyone's recipe book). New players see one paragraph on what the game is, that Claude writes the spells, what their month looks like, and a short privacy note: what is kept and why, that item names go to Claude and nothing about the person does, Cloudflare's request logs, no ads or cookies, and who to ask for deletion. The `?` in the top bar shows it again.
 
+## Spells keep their promise (3.4.1)
+
+Protection spells did not protect. The writer had a good idea (a shield over the village) and no way to carry it out: nothing in the World API could stop fire, lava or a hunter, so it built a shell of `magic` blocks. Lava flowed under it, fire spread through it, and it hid the village it was meant to guard. The test run passed it, since something visible happened, and the judge scored a shiny dome on a calm island. Nothing anywhere checked that a spell does what its name says. Two fixes, in this order: first the means, then the test (a test without the means only pays for rewrites that cannot succeed).
+
+### Wards
+
+`w.ward(x, y, r, {against, seconds, color, keepOut, allow})` is a rule of the land (`src/sim/wards.ts`). Each ward sets bits on the cells it covers (`world.wardMask`, rebuilt only when a ward appears or ends), so physics reads one byte per cell:
+
+1. **fire** does not spread in or start inside, what burned inside goes out, and heat from outside is capped;
+2. **fluids**: lava, acid, water and every spell fluid stop at the edge (they pool against the dome); a spell's own fluids may still be placed inside its own ward;
+3. **lightning** ends on the dome, at its height there;
+4. **creatures** that hunt people, convert or carry a harmful aura are pushed out to the edge; `keepOut` and `allow` name kinds; a guard a spell set to fight only the undead is no threat and stays;
+5. **harm**: blasts and quakes leave the land and houses inside alone, and direct harm from spells (`hurt`, `kill`, burn) keeps 15% of its force on those it protects;
+6. **cold**: frost and blizzards stop at the edge.
+
+Frightened villagers within 14 cells run under the nearest ward instead of away into the open (raiders were stopped 60% of the time before this, 90% after). Wards last up to 600 seconds and are not saved with the world.
+
+The view draws each ward as a clear dome (`src/sim/voxel/domes.ts`): one draw call, nearly invisible face on, a bright rim edge on, faint rising bands, a flash where something hits it, and a ring on the ground. `docs/visual-checks/ward-dome-under-attack.png` shows lava pooled around it, lightning on it and the village untouched and in plain sight; `shell-of-blocks-before-wards.png` shows what protection spells built before.
+
+### Intents and the protection probe
+
+Every element gets one or two intents (`shared/promises.ts`: protect, heal, harm, summon, create, transform, weather, move, reveal, other), decided once by a small call of their own from the name and grimoire entry, before any program exists, and stored with the element. The model that writes the program never chooses what it is tested on. The writer is told the test its promise faces, so the test is the specification and not a surprise.
+
+A spell that promises protection gets a fourth failure in its test run, **promise**. It is cast on the village; three seconds later a threat hits the same spot, one at a time: a rain of fire, a flood of lava, a blast and six raiders. What its reach covered at the cast (houses, and villagers by their health) is counted at twelve seconds and compared with the same threat and no spell, and with no threat at all. Each threat is a small hostile spell going through the same World API, so a ward has to stop what a player's Fireball would do, not a test double. It passes if it prevents at least half of the harm on average; a threat that does no harm on its own is not counted. Runs without the spell are cached. Aegis (`lab/promises/aegis.js`) prevents 96 to 100% at minor, major and grand; Glass Shell (`lab/promises/glass-shell.js`), the shell of blocks, prevents none and fails. A protection check takes 2 to 5 s in Node instead of under 1.2 s; in the browser it runs between frames like the rest.
+
+Only protect is probed today. The other intents are recorded so the next probe (heal, summon) can be measured on every stored program before it gates anything.
+
+## An API that grows (3.4.1)
+
+The ward is the kind of change that should have come from the first protection spells, not from a player noticing months later. So writers now say what the API lacked, and the API grows from it (`worker/evolve.ts`):
+
+1. **Gaps.** Every program's answer has `missing`: the ability the writer lacked, in a few words, or nothing. Each becomes a row of `gaps`.
+2. **Design.** Once a day at most (the ten minute cron), when open gaps come from at least three spells, the big model reads them all, finds the ability at least three spells lacked (by meaning, not by shared words: "a barrier that stops lava" and "a shield against fire" share none) and decides one of three things:
+   1. **helper**: the ability can be built from the API as it is. It writes a function, `lib.name(w, ...)`, and an example spell that uses it. The helper is a trial until the example passes the test run, with the promise of the spells that lacked it, at two reaches. Spell code cannot run in a Worker, so `npm run evolve` (`scripts/evolve-runner.ts`, also the first step of the daily Judge workflow) runs it in Node and reports back. A live helper is listed in every later writer's prompt.
+   2. **hint**: the API could already do it; one line joins the writers' prompt.
+   3. **engine**: the simulation itself must change. A proposal, which the runner opens as a GitHub issue labelled `api-gap` for a developer to review.
+3. **Programs stay what was tested.** A program that calls `lib.name` gets the helper's code appended to it (`const lib = {...}` after the program, so line numbers in errors do not move) when it is stored. Changing or retiring a helper never touches programs already written, and a helper never needs a rewrite in bulk.
+
+Why helpers are automatic and engine changes are not: a helper runs in the same sandbox as any spell, with the same loop guard and the same API, and only reaches new programs that chose it and then passed their own test run. The worst a bad helper does is fail its test. An engine change touches the physics every spell and challenge relies on, and the checks that would catch a regression there (`npm test`, the challenge replays) are a developer's to run and read. Wards are what an engine proposal looks like: no helper could have stopped lava at a boundary or drawn a clear dome.
+
+Cost: the designer is one Opus call a day at most (held at $0.40), only when gaps are open; the intent call is a Haiku call per new element (about $0.0001). `EVOLVE=0` stops the daily design; `DESIGN_MODEL` picks its model. Admin endpoints: `GET /api/admin/evolution` (open gaps and every extension), `POST /api/admin/evolve` (design now), `GET /api/admin/helpers` and `POST /api/admin/helper-check` (the runner's), `GET /api/admin/proposals`, `POST /api/admin/extension` (`{id, status}` to retire a helper or close a proposal).
+
 ## Challenges
 
 Hand-made islands with a hazard and a goal (`src/sim/scenarios.ts`, titles in `scenario-list.ts` so the game page does not load the engine to list them). A challenge builds its own world, runs a `tick` every frame (a volcano vent, a rising sea, the sun drying fields) and a `check` twice a second that returns progress text and playing, won or lost. It never touches the player's island: the iframe keeps the sandbox save in memory and restores it on leaving.

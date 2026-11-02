@@ -19,6 +19,7 @@ import { SOLUTIONS, replay, seed, step, type Replay } from "./challenge-replay";
 import { runCheck } from "../src/sim/check";
 import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../shared/votes";
 import { pickExamples, words } from "../worker/programs";
+import { helperProblem, withLibrary } from "../worker/evolve";
 
 // Challenges with nothing cast, over several seeds: one seed can pass by
 // luck (Wildfire did, at 3 wins in 16). These replays run in worker threads
@@ -430,7 +431,7 @@ for (const scenario of SCENARIOS) {
   check("no block inside the land; a block on a house replaces it", buried === 0 && world.decor.size === before + 1 && world.cover[house] === C.NONE);
 }
 
-// 9d. Wards and promises (3.5): a protection spell has to protect. Aegis
+// 9d. Wards and promises (3.4.1): a protection spell has to protect. Aegis
 // raises a ward and passes the protection probe; Glass Shell builds the
 // opaque shell of magic blocks protection spells used to be, and fails it.
 // A ward keeps lava out and lightning off what it covers.
@@ -466,6 +467,26 @@ for (const scenario of SCENARIOS) {
       if (world.fire[i] > 0) burning++;
     }
   check("a ward keeps lava out and lightning off", inside === 0 && burning === 0 && !errors.length, `${inside} lava cells, ${burning} burning inside`);
+}
+
+// 9e. The API that grows (3.4.1): a helper is appended to the programs that
+// call it, runs inside them like any spell code, and is refused when it
+// yields, reaches outside the sandbox or is never called by its example.
+{
+  const helper = {
+    name: "haven",
+    code: "function (w, x, y, r, o = {}) { w.ward(x, y, r, { seconds: o.seconds || 20 }); w.circle(x, y, r, '#9fd8ff', '#fff', 1); }",
+  };
+  const code = "const spell = { *cast(w) { yield 0.5; lib.haven(w, w.x, w.y, w.r); } };";
+  const full = withLibrary(code, [helper, { name: "unused", code: "function (w) {}" }]);
+  check("a program carries the helpers it calls, only those", full.includes("haven: function") && !full.includes("unused"));
+  check("a program that declares lib is left alone", withLibrary("const lib = {}; " + code, [helper]) === "const lib = {}; " + code);
+  const r = runCheck({ key: "haven", name: "Haven", tier: "major", code: full, intents: ["protect"] });
+  check("a spell built on a helper passes its test run", r.ok, r.detail);
+  check("a helper that yields is refused", helperProblem("x", "function (w) { yield 1; }", "lib.x(w)") !== null);
+  check("a helper that reaches outside is refused", helperProblem("x", "function (w) { fetch('/'); }", "lib.x(w)") !== null);
+  check("a helper its example never calls is refused", helperProblem("x", "function (w) {}", "const spell = { *cast(w) {} };") !== null);
+  check("a sound helper is accepted", helperProblem("haven", helper.code, code) === null);
 }
 
 // 10. Votes: how many are needed, when they rewrite, roll back or reach the library.
