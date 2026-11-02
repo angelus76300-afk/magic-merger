@@ -69,7 +69,7 @@ function stubGitHub(req, res, raw) {
   }
   if (req.headers.authorization !== "Bearer gh-test" || !req.headers["user-agent"]) return sendJson(res, 401, { message: "Bad credentials" });
   const base = `/repos/${REPO}/issues`;
-  const m = new URL(req.url, "http://x").pathname.slice(base.length).match(/^(?:\/(\d+))?(\/comments|\/timeline)?$/);
+  const m = new URL(req.url, "http://x").pathname.slice(base.length).match(/^(?:\/(\d+))?(\/comments|\/timeline|\/labels\/[^/]+)?$/);
   if (!req.url.startsWith(base) || !m) return sendJson(res, 404, { message: "Not Found" });
   const n = Number(m[1]);
   const issue = gh.issues[n - 1];
@@ -82,7 +82,13 @@ function stubGitHub(req, res, raw) {
   if (req.method === "POST" && m[2] === "/comments") return (gh.comments.push({ n, ...body }), sendJson(res, 201, {}));
   if (req.method === "PATCH") return (Object.assign(issue, body), sendJson(res, 200, {}));
   if (m[2] === "/timeline") return sendJson(res, 200, gh.timeline[n] ?? []);
-  return sendJson(res, 200, { state: issue.state, state_reason: issue.state_reason });
+  if (req.method === "DELETE" && m[2]?.startsWith("/labels/")) {
+    const name = decodeURIComponent(m[2].slice("/labels/".length));
+    if (!issue.labels?.includes(name)) return sendJson(res, 404, { message: "Label does not exist" });
+    issue.labels = issue.labels.filter((l) => l !== name);
+    return sendJson(res, 200, []);
+  }
+  return sendJson(res, 200, { state: issue.state, state_reason: issue.state_reason, labels: (issue.labels ?? []).map((name) => ({ name })) });
 }
 
 const stub = createServer((req, res) => {
@@ -488,6 +494,36 @@ const fresh = () => ALL[pairs++];
   check("feedback: merged, it is done", (await find(id, ann)).status === "shipped");
   const s3 = await sync();
   check("feedback: done ideas are not read again", s3.data.checked === 0);
+
+  // Claude stops to ask (FEEDBACK.md): its needs-info label shows a question,
+  // and sending again with a clearer brief takes the label off.
+  const fourth = (await idea(bob, "Make it better")).data.id;
+  await act({ id: fourth, action: "send", brief: "Make it better." });
+  const asked = gh.issues[gh.issues.length - 1];
+  asked.labels = [...(asked.labels ?? []), "needs-info"];
+  await sync();
+  const question = await find(fourth, bob);
+  check(
+    "feedback: Claude's needs-info label shows a question",
+    question.status === "question" && /question/.test(question.note ?? ""),
+    JSON.stringify(question),
+  );
+  check("feedback: votes stay closed on a question", (await vote(bob, fourth)).status === 400);
+  await db.prepare("UPDATE suggestions SET sent_at = sent_at - 120000 WHERE id = ?").bind(fourth).run();
+  const fires = gh.fires.length;
+  const resent = await act({
+    id: fourth,
+    action: "send",
+    brief: "Spells of grand tier and above glow 20% brighter.\n\nDone when:\n1. A grand spell's glow is brighter than before.",
+  });
+  const answered = await find(fourth);
+  check(
+    "feedback: sent again, the label comes off and Claude starts over",
+    resent.status === 200 && answered.status === "sent" && !answered.note && !asked.labels.includes("needs-info") && gh.fires.length === fires + 1,
+    JSON.stringify(resent.data),
+  );
+  await sync();
+  check("feedback: and the old question does not come back", (await find(fourth)).status === "sent");
 
   const third = (await idea(bob, "Talking cats")).data.id;
   await act({ id: third, action: "decline", note: "Too far from magic" });

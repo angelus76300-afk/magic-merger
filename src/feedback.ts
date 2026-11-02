@@ -79,7 +79,7 @@ function render(data: FeedbackResponse): void {
     list.innerHTML = `<p class="feedback-empty">No ideas yet. Be the first.</p>`;
     return;
   }
-  const working = all.filter((s) => s.status === "sent" || s.status === "review");
+  const working = all.filter((s) => s.status === "sent" || s.status === "question" || s.status === "review");
   const open = all.filter((s) => s.status === "open").sort((a, b) => b.votes - a.votes || b.createdAt - a.createdAt);
   const shipped = all.filter((s) => s.status === "shipped");
   const declined = all.filter((s) => s.status === "declined");
@@ -216,7 +216,7 @@ function adminRow(s: Suggestion): HTMLElement {
     };
     row.append(b);
   };
-  if (s.status === "open" || s.status === "sent" || s.status === "declined") {
+  if (s.status === "open" || s.status === "sent" || s.status === "question" || s.status === "declined") {
     const b = document.createElement("button");
     b.className = "idea-send";
     b.textContent = s.status === "open" ? "Send to Claude" : "Send again";

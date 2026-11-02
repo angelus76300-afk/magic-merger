@@ -100,6 +100,7 @@ Asked for: a tab where people put suggestions and vote, and a way for the admin 
 2. **Send to Claude** for the admin: an editable brief, a GitHub issue without the player's name, then a Claude Code routine fired through its API, which opens a draft pull request with `Closes #<issue>`.
 3. **Statuses from GitHub** every ten minutes on the existing cron, or at once from the admin box.
 4. **Checked**: `npm run test:worker` runs the whole flow against a stub GitHub and a stub routine (one issue, one fire, a double tap, a refused fire then a retry on the same issue, review, merged, declined); `npm test` checks the status rules.
+5. **Found by the first real send**: a test idea whose brief said "don't do anything" was handled right (Claude read FEEDBACK.md, made no change and asked on the issue in 30 seconds), but the idea then said "Claude is on it" forever, since nothing on GitHub changed. Now the run puts a `needs-info` label on the issue when it stops to ask, the game shows "Claude has a question", and sending again takes the label off.
 
 ## Done in 3.4.2: spells keep their promise
 

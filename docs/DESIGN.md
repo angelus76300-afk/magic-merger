@@ -172,7 +172,7 @@ The Worker opens the GitHub issue before firing the routine: it is the record ou
 
 ### What players see
 
-Open for votes, Claude is on it, Waiting for review (with the pull request), Done, Not this time (with the admin's reason, or "closed without merging"). The admin also sees the brief and the Claude Code session. A merged pull request wins over an open one, an open one over a closed issue, and a pull request closed unmerged only declines the idea if it came after the latest send.
+Open for votes, Claude is on it, Claude has a question (the run stopped to ask and put the `needs-info` label on the issue), Waiting for review (with the pull request), Done, Not this time (with the admin's reason, or "closed without merging"). The admin also sees the brief and the Claude Code session. A merged pull request wins over an open one, an open one over a closed issue, a closed issue over Claude's question, and a pull request closed unmerged only declines the idea if it came after the latest send. Sending again takes the label off, so an old question never sticks to a new brief.
 
 ## Spells keep their promise (3.4.2)
 

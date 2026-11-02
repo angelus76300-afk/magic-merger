@@ -1364,6 +1364,10 @@ input {
   color: var(--spell);
 }
 
+.idea-question .idea-status {
+  color: var(--accent);
+}
+
 .idea-shipped .idea-status {
   color: #6fcf97;
 }
