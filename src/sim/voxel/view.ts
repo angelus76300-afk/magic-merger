@@ -32,6 +32,7 @@ import { kindOf } from "../creatures";
 import { BUILTIN, C, F, S } from "../materials";
 import { envelope, type Body, type Visuals } from "../visuals";
 import type { World } from "../world";
+import { keyCell, shines, voxelColor, voxelKind } from "../voxels";
 import { daylight } from "./daylight";
 import { MODELS, geometryOf } from "./models";
 import { OrbitCamera } from "./orbit";
@@ -74,7 +75,10 @@ export class VoxelView {
   private sky = "";
   private skyCanvas = document.createElement("canvas");
   private decorMesh: InstancedMesh;
+  // Voxels that shine (crystal, magic, fire) are not darkened at night.
+  private decorGlow: InstancedMesh;
   private decorVersion = -1;
+  private shining: { x: number; y: number; level: number }[] = [];
   private decal: HTMLCanvasElement;
   private decalCtx: CanvasRenderingContext2D;
   private decalTexture: CanvasTexture;
@@ -135,6 +139,7 @@ export class VoxelView {
     this.scene.add(this.glowPoints, this.dullPoints);
     this.clouds = this.makeClouds();
     this.decorMesh = this.instanced("puff", basic, 20000);
+    this.decorGlow = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true }), 20000);
     this.windows = this.instanced("flame", new MeshBasicMaterial({ vertexColors: true }), 4096);
     this.lit = [land, fluid, basic, this.puffs.material as MeshBasicMaterial, this.clouds.material as MeshBasicMaterial];
   }
@@ -200,7 +205,7 @@ export class VoxelView {
     }
     if (world.decorVersion !== this.decorVersion) {
       this.decorVersion = world.decorVersion;
-      this.placeDecor();
+      this.placeDecor(time);
     }
     this.placeCreatures(time);
     this.placeFireAndGas(time);
@@ -290,23 +295,34 @@ export class VoxelView {
     }
   }
 
-  private placeDecor(): void {
+  private placeDecor(time: number): void {
     const { world } = this;
+    const burning = world.voxels.burning;
+    const flame = [0xffd36a, 0xffa43a, 0xff6a1a, 0xe8420f];
     let n = 0;
-    for (const [key, color] of world.decor) {
-      if (n >= 20000) break;
-      const level = (key % 512) - 128;
-      const cell = Math.floor(key / 512);
-      const x = cell % 1024;
-      const y = Math.floor(cell / 1024);
+    let g = 0;
+    this.shining = [];
+    for (const [key, v] of world.decor) {
+      const { x, y, level } = keyCell(key);
+      const kind = voxelKind(v);
+      const fire = burning.get(key);
+      const glow = fire !== undefined || shines(kind);
+      const mesh = glow ? this.decorGlow : this.decorMesh;
+      const k = glow ? g++ : n++;
+      if (k >= 20000) continue;
       this.m.makeTranslation(x - world.w / 2 + 0.5, level + 0.5, y - world.h / 2 + 0.5);
-      this.decorMesh.setMatrixAt(n, this.m);
-      this.decorMesh.setColorAt(n, this.col.setHex(color));
-      n++;
+      mesh.setMatrixAt(k, this.m);
+      mesh.setColorAt(k, this.col.setHex(fire !== undefined ? flame[(key + Math.floor(time * 10)) % 4] : voxelColor(v)));
+      if (glow && this.shining.length < 80 && (k % 7 === 0 || fire !== undefined)) this.shining.push({ x, y, level });
     }
-    this.decorMesh.count = n;
-    this.decorMesh.instanceMatrix.needsUpdate = true;
-    if (this.decorMesh.instanceColor) this.decorMesh.instanceColor.needsUpdate = true;
+    for (const [mesh, count] of [
+      [this.decorMesh, n],
+      [this.decorGlow, g],
+    ] as const) {
+      mesh.count = Math.min(20000, count);
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
   }
 
   // Tints the land, the sky and the fog for the time of day; lights the
@@ -618,6 +634,7 @@ export class VoxelView {
       for (const l of visuals.lights) hole(l.x, l.y, this.groundAt(l.x, l.y), l.r, envelope(l.t, l.dur));
       for (const b of visuals.bodies) if (b.glow && b.look !== "none") hole(b.x, b.y, this.groundAt(b.x, b.y) + b.z, Math.max(3, b.r * 4), 0.9);
       for (const c of this.world.creatures) if (!c.dead && kindOf(c).glow) hole(c.x, c.y, this.groundAt(c.x, c.y), 4, 0.8);
+      for (const v of this.shining) hole(v.x + 0.5, v.y + 0.5, v.level, 4, 0.5);
       const { world } = this;
       for (let y = 0; y < world.h; y += 3) {
         for (let x = 0; x < world.w; x += 3) {

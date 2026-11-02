@@ -6,7 +6,9 @@ import { valueNoise } from "./noise";
 import { addGas, explode, forDisc, quake } from "./physics";
 import type { ParticleOptions } from "./particles";
 import { Visuals, type Body, type BodyLook, type DrawFn } from "./visuals";
-import { TICK, type World } from "./world";
+import { TICK, World } from "./world";
+import { Builder, arch, island, spire, tower, tree, treeDefaults, wall } from "./structures";
+import { VK, igniteVoxels, kindId } from "./voxels";
 
 // Runs spell programs. A program is JavaScript that defines `spell`:
 //
@@ -68,6 +70,8 @@ export class Runtime {
   private nextCast = 1;
   private nextBody = 1;
   private loops = 0;
+  // Builds growing over time: voxels still to place, in order.
+  private jobs: { order: [number, number][]; at: number; perTick: number }[] = [];
   // Spell rules that run on their material's cells every tick, by layer and id.
   private ticks = new Map<string, { key: string; name: string; fn: (cell: CellHandle, w: SpellApi) => void }>();
   private brokenRules = new Set<string>();
@@ -221,9 +225,39 @@ export class Runtime {
       }
     }
     this.casts = this.casts.filter((c) => !c.done || this.visuals.bodies.some((b) => b.owner === c.id));
+    this.stepJobs();
     this.stepBodies(dt);
     this.stepRules(dt);
     this.visuals.update(dt);
+  }
+
+  // Places the next voxels of every growing build.
+  private stepJobs(): void {
+    if (!this.jobs.length) return;
+    for (const job of this.jobs) {
+      const end = Math.min(job.order.length, job.at + job.perTick);
+      for (; job.at < end; job.at++) this.placeVoxel(job.order[job.at][0], job.order[job.at][1]);
+    }
+    this.jobs = this.jobs.filter((j) => j.at < j.order.length);
+    this.world.decorVersion++;
+  }
+
+  placeVoxel(key: number, value: number): void {
+    const { decor, voxels } = this.world;
+    if (!decor.has(key) && decor.size >= World.MAX_DECOR) return;
+    decor.set(key, value);
+    voxels.burning.delete(key);
+  }
+
+  // Places a build now, or grows it over `seconds` from its base outward.
+  commit(b: Builder, seconds: number): void {
+    if (seconds <= 0) {
+      for (const [k, v] of b.cells) this.placeVoxel(k, v);
+      this.world.decorVersion++;
+      return;
+    }
+    const order = b.growOrder();
+    this.jobs.push({ order, at: 0, perTick: Math.max(1, Math.ceil(order.length / (seconds / TICK))) });
   }
 
   private abort(c: ActiveCast): void {
@@ -305,6 +339,7 @@ export class Runtime {
 
   clear(): void {
     this.casts = [];
+    this.jobs = [];
     this.visuals.clear();
   }
 }
@@ -345,6 +380,11 @@ export function toColor(v: unknown): number | null {
 
 function colorOr(v: unknown, fallback: number): number {
   return toColor(v) ?? fallback;
+}
+
+function colorList(v: unknown, fallback: number[]): number[] {
+  const list = (Array.isArray(v) ? v : v === undefined ? [] : [v]).map(toColor).filter((c): c is number => c !== null);
+  return list.length ? list.slice(0, 12) : fallback;
 }
 
 // A creature as a spell sees it.
@@ -692,6 +732,7 @@ export class SpellApi {
     forDisc(w, x, y, num(r, 0, 400, 3), (i) => {
       if (Math.random() < chance) w.fire[i] = Math.max(w.fire[i], 0.8);
     });
+    if (w.decor.size) igniteVoxels(w, x, y, num(r, 0, 400, 3) * 0.8);
   }
   // Adds fluid in a disc, deepest at the center.
   flood(x: number, y: number, r: number, fluid = "water", depth = 1) {
@@ -757,38 +798,92 @@ export class SpellApi {
     w.setCover(i, C.NONE);
   }
 
-  // Free standing voxels, for what floats or overhangs: a tree's crown, a
-  // floating rock, a statue, an arch. z is in voxels above the ground there.
-  voxel(x: number, y: number, z: number, color: string | number) {
+  // Free standing voxels, z in voxels above the land at that cell. `kind` gives
+  // them physics: stone, wood, leaf, ice, glow fall when nothing holds them;
+  // magic and float stay where they are put. Wood and leaves burn, ice melts.
+  voxel(x: number, y: number, z: number, color: string | number, kind: string = "stone") {
     if (!this.inside(x, y)) return;
     const w = this.rt.world;
     const ground = Math.round(w.height[this.i(x, y)] * 0.5);
-    w.setVoxel(x, y, ground + Math.round(num(z, -40, 300, 0)), colorOr(color, 0xffffff));
+    w.setVoxel(x, y, ground + Math.round(num(z, -40, 300, 0)), colorOr(color, 0xffffff), kindId(kind));
   }
-  sphere(x: number, y: number, z: number, r: number, colors: (string | number)[] | string | number, density = 1) {
-    const list = (Array.isArray(colors) ? colors : [colors]).map((c) => colorOr(c, 0xffffff));
+  sphere(x: number, y: number, z: number, r: number, colors: (string | number)[] | string | number, density = 1, kind: string = "stone") {
+    const list = colorList(colors, [0xffffff]);
     const rr = num(r, 0.5, 40, 3);
     const w = this.rt.world;
+    const k = kindId(kind);
     const base = Math.round(w.height[this.i(x, y)] * 0.5) + num(z, -40, 300, 0);
     for (let dy = -rr; dy <= rr; dy++) {
       for (let dx = -rr; dx <= rr; dx++) {
         for (let dz = -rr; dz <= rr; dz++) {
-          if (dx * dx + dy * dy + dz * dz > rr * rr || Math.random() > density) continue;
-          w.setVoxel(x + dx, y + dy, base + dz, list[(Math.random() * list.length) | 0]);
+          const d = (dx * dx + dy * dy + dz * dz) / (rr * rr);
+          // Density only thins the outer shell, so the inside stays whole.
+          if (d > 1 || (d > 0.6 && Math.random() > density)) continue;
+          w.setVoxel(x + dx, y + dy, base + dz, list[(Math.random() * list.length) | 0], k);
         }
       }
     }
   }
-  box(x: number, y: number, z: number, sx: number, sy: number, sz: number, colors: (string | number)[] | string | number) {
-    const list = (Array.isArray(colors) ? colors : [colors]).map((c) => colorOr(c, 0xffffff));
+  box(x: number, y: number, z: number, sx: number, sy: number, sz: number, colors: (string | number)[] | string | number, kind: string = "stone") {
+    const list = colorList(colors, [0xffffff]);
     const w = this.rt.world;
+    const k = kindId(kind);
     const base = Math.round(w.height[this.i(x, y)] * 0.5) + num(z, -40, 300, 0);
     for (let dy = 0; dy < num(sy, 1, 60, 1); dy++)
       for (let dx = 0; dx < num(sx, 1, 60, 1); dx++)
-        for (let dz = 0; dz < num(sz, 1, 80, 1); dz++) w.setVoxel(x + dx, y + dy, base + dz, list[(Math.random() * list.length) | 0]);
+        for (let dz = 0; dz < num(sz, 1, 80, 1); dz++) w.setVoxel(x + dx, y + dy, base + dz, list[(Math.random() * list.length) | 0], k);
   }
   unvoxel(x: number, y: number, r: number) {
     this.rt.world.clearVoxels(x, y, num(r, 0, 2000, 3));
+  }
+  // Sets fire to wood and leaves within r.
+  burnVoxels(x: number, y: number, r: number) {
+    igniteVoxels(this.rt.world, x, y, num(r, 0, 400, 3));
+  }
+
+  // The structure kit. Each takes an options object; `grow: seconds` raises
+  // the build over time from its base instead of all at once.
+  tree(x: number, y: number, o: Record<string, unknown> = {}) {
+    const styles = ["oak", "pine", "birch", "willow", "palm", "dead", "giant", "mushroom", "crystal"];
+    const style = typeof o.style === "string" && styles.includes(o.style) ? o.style : "oak";
+    const d = treeDefaults(style);
+    const b = new Builder(this.rt.world);
+    tree(b, x, y, num(o.z, 0, 200, 0), {
+      height: num(o.height, 4, 120, style === "giant" ? 40 : 12),
+      style,
+      trunk: colorList(o.trunk, d.trunk),
+      leaves: style === "dead" ? [] : colorList(o.leaves, d.leaves),
+      accent: colorList(o.accent, []),
+      accentShare: num(o.accentShare, 0, 1, 0.25),
+      leafKind: o.glow === true ? VK.GLOW : style === "crystal" ? VK.GLOW : VK.LEAF,
+    });
+    this.rt.commit(b, num(o.grow, 0, 30, 0));
+  }
+  spire(x: number, y: number, o: Record<string, unknown> = {}) {
+    const b = new Builder(this.rt.world);
+    const h = num(o.height, 2, 150, 14);
+    spire(b, x, y, h, num(o.radius, 0.5, 20, Math.max(1, h / 7)), colorList(o.colors, [0xb9a4ff, 0xd3c6ff, 0x9f88f5]), kindId(o.kind, VK.GLOW), num(o.lean, 0, 1, 0), num(o.angle, -10, 10, 0));
+    this.rt.commit(b, num(o.grow, 0, 30, 0));
+  }
+  tower(x: number, y: number, o: Record<string, unknown> = {}) {
+    const b = new Builder(this.rt.world);
+    tower(b, x, y, num(o.height, 3, 120, 16), num(o.radius, 1.5, 20, 3), colorList(o.colors, [0x9a9aa0, 0x8a8a90, 0xa8a8ae]), o.roof === undefined ? 0x7a3b5a : o.roof === null || o.roof === false ? null : colorOr(o.roof, 0x7a3b5a), o.windows === false ? null : colorOr(o.windows, 0xffd36a));
+    this.rt.commit(b, num(o.grow, 0, 30, 0));
+  }
+  wall(x0: number, y0: number, x1: number, y1: number, o: Record<string, unknown> = {}) {
+    const b = new Builder(this.rt.world);
+    wall(b, x0, y0, x1, y1, num(o.height, 1, 80, 4), num(o.thick, 1, 6, 1), colorList(o.colors, [0x9a9aa0, 0x8a8a90]), kindId(o.kind, VK.STONE));
+    this.rt.commit(b, num(o.grow, 0, 30, 0));
+  }
+  arch(x0: number, y0: number, x1: number, y1: number, o: Record<string, unknown> = {}) {
+    const b = new Builder(this.rt.world);
+    arch(b, x0, y0, x1, y1, num(o.height, 2, 100, Math.hypot(x1 - x0, y1 - y0) / 2), num(o.thick, 1, 6, 1), colorList(o.colors, [0x9a9aa0, 0x8a8a90]), kindId(o.kind, VK.STONE));
+    this.rt.commit(b, num(o.grow, 0, 30, 0));
+  }
+  island(x: number, y: number, o: Record<string, unknown> = {}) {
+    const b = new Builder(this.rt.world);
+    island(b, x, y, num(o.z, 4, 200, 20), num(o.r, 2, 30, 6), colorList(o.top, [0x5d9c3a, 0x67a842]), colorList(o.rock, [0x8a6a44, 0x8a8a8e, 0x7e7e84]));
+    this.rt.commit(b, num(o.grow, 0, 30, 0));
   }
 
   // Grass, then trees, bushes and flowers.

@@ -12,6 +12,19 @@ import { Runtime } from "../src/sim/runtime";
 import { loadWorld, saveWorld } from "../src/sim/save";
 import { SCENARIOS } from "../src/sim/scenarios";
 import { TICK, generateWorld, type World } from "../src/sim/world";
+import { VK, floats, keyCell, voxelKind } from "../src/sim/voxels";
+
+// Seeded randomness, so a check gives the same answer on every run.
+function seed(n: number): void {
+  let a = n >>> 0;
+  Math.random = () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 let failures = 0;
 function check(name: string, ok: boolean, detail = ""): void {
@@ -82,7 +95,49 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   check("save and load", !!back && drift < 0.02 && back.creatures.length === world.creatures.filter((c) => !c.dead).length, `height drift ${drift.toFixed(3)}`);
 }
 
-// 5. Challenges: nothing does not win; the solution wins.
+// 5. Voxel physics: nothing floats unless it is magic; a burnt trunk drops
+// its crown; a grown tree stands; ice melts by fire.
+{
+  const lowest = (world: World) => {
+    // For each voxel, is anything below it to stand on? Count those that hang.
+    let hanging = 0;
+    for (const [key, v] of world.decor) {
+      const { x, y, level } = keyCell(key);
+      if (floats(voxelKind(v)) || level <= Math.round(world.height[y * world.w + x] * 0.5)) continue;
+      const near = [1, -1, 512, -512, 512 * 1024, -512 * 1024].some((d) => world.decor.has(key + d));
+      if (!near) hanging++;
+    }
+    return hanging;
+  };
+  const world = generateWorld(112, 112, 9);
+  const errors: string[] = [];
+  const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
+  let x = 56;
+  let y = 56;
+  for (let k = 0; k < 400 && world.depth[y * 112 + x] > 0; k++) {
+    x = 20 + ((k * 37) % 72);
+    y = 20 + ((k * 53) % 72);
+  }
+  rt.cast({ key: "kit", name: "Kit", tier: "grand", code: `const spell = { *cast(w) { w.tree(w.x, w.y, { style: "oak", height: 24, grow: 1 }); w.voxel(w.x + 2, w.y, 60, "#ffffff"); w.voxel(w.x - 2, w.y, 60, "#b48cff", "magic"); } };` }, x, y);
+  for (let k = 0; k < 30 * 6; k++) step(world, rt);
+  const top = (w: World) => Math.max(...[...w.decor.entries()].filter(([, v]) => !floats(voxelKind(v))).map(([key]) => keyCell(key).level));
+  const grown = world.decor.size;
+  const height = top(world) - Math.round(world.height[y * 112 + x] * 0.5);
+  check("grown tree stands", errors.length === 0 && grown > 300 && height > 20 && lowest(world) === 0, `${grown} voxels, ${height} high, ${lowest(world)} hanging, ${errors[0] ?? "no errors"}`);
+  const magic = [...world.decor.values()].filter((v) => voxelKind(v) === VK.MAGIC).length;
+  check("stray voxel falls, magic floats", magic === 1 && lowest(world) === 0, `${magic} magic`);
+  // Burn the trunk at its base.
+  const crownBefore = [...world.decor.entries()].filter(([, v]) => voxelKind(v) === VK.LEAF).length;
+  world.fire[y * 112 + x] = 1;
+  for (let k = 0; k < 30 * 25; k++) {
+    world.fire[y * 112 + x] = Math.max(world.fire[y * 112 + x], 0.6);
+    step(world, rt);
+  }
+  const crownAfter = [...world.decor.entries()].filter(([, v]) => voxelKind(v) === VK.LEAF).length;
+  check("burnt tree loses its crown and nothing hangs", crownAfter < crownBefore * 0.3 && lowest(world) === 0 && top(world) - Math.round(world.height[y * 112 + x] * 0.5) < height * 0.6, `${crownBefore} leaves before, ${crownAfter} after, top now ${top(world) - Math.round(world.height[y * 112 + x] * 0.5)}`);
+}
+
+// 6. Challenges: nothing does not win; the solution wins.
 const solutions: Record<string, { file: string; tier: "major" | "grand" | "legendary"; at: [number, number][] }> = {
   wildfire: { file: "rain.js", tier: "grand", at: [[16, 56]] },
   lava: { file: "wall.js", tier: "grand", at: [[58, 58]] },
@@ -92,6 +147,7 @@ const solutions: Record<string, { file: string; tier: "major" | "grand" | "legen
 };
 for (const scenario of SCENARIOS) {
   for (const withMagic of [false, true]) {
+    seed(17);
     const { world, run } = scenario.build();
     const errors: string[] = [];
     const rt = new Runtime(world, (_k, _n, m) => errors.push(m));

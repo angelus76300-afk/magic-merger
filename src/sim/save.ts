@@ -114,7 +114,7 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
   }
   for (const [key, color] of data.decor ?? []) {
     if (world.decor.size >= World.MAX_DECOR) break;
-    world.decor.set(key >>> 0, color & 0xffffff);
+    world.decor.set(key >>> 0, color % 0x8000000);
   }
   world.decorVersion++;
   for (const raw of data.creatures ?? []) {
