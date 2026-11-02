@@ -210,15 +210,19 @@ Found in play after 3.5, to fix before 4.0, right after 3.6 since it touches the
 
 Items 5 and 7 of 3.6, split off so each part stays reviewable: creatures cast real spells from the shared library (capped tier and rate), and artifacts that act (effects over time and on triggers, state, `grants` and `uses`, declared pairs). The five minute test extends to every placed artifact.
 
-### 3.7 Your island's story
+### 3.7 Challenges from nothing, and your island's story
 
-Decided: no village mana, no hints, no discoveries made in the World, no par scores. The challenge islands are replaced by events on the player's own island.
+Decided: no village mana, no hints, no discoveries made in the World. Challenges stay, rebuilt around merging.
 
-1. **Events on your island** instead of challenge mode: a drought, a lightning wildfire, a rising sea, a harsh winter, a dragon moving into the mountain, a wolf pack, a plague in a village, a volcano waking, a trader bringing gold. Each is announced a little before it starts, grows with the island (a bigger village draws bigger trouble), and is answered with whatever the player has discovered. No win or lose screen: the island keeps what happened. A setting chooses how often (off, calm, lively). Events use the engine and creatures already in the library, so they cost no API.
-2. **The chronicle of the island**: Haiku writes a short story from the event log and villagers' memories (the fire that took the mill, the golem that held the bridge), once a session, about $0.002.
-3. **The recipe book**: everything the player found, how they made it and when, and what it was used for. Memory only: no hints, no suggestions, nothing the player has not found.
-4. **Opposites and depth in the merge prompt**: Fire and Water give Steam, never "Super Fire Water"; a result's tier follows its depth in the recipe tree, plus or minus one.
-5. **Challenge islands retired** once events work: their balance tests become event tests (an event with no answer hurts the island, the right answer saves it).
+1. **A Challenges tab: start from nothing, fewest merges wins.** Each challenge is a hazard island (wildfire, lava, flood, drought, river crossing, and new ones) and a start set: the primitives only, or fewer. The player merges on the challenge's own board until they have a spell or artifact that saves the village, then casts it. The score is the number of merges used.
+2. **Par and stars**: par is the shortest known solution, from the shared recipe graph and every solution players found. Three stars at par or better, two within two merges of it, one for any win. Beating par lowers it for everyone.
+3. **Increasing difficulty**: early challenges need one obvious spell; later ones remove a primitive (a wildfire without Water), combine hazards (lava then flood), demand a higher tier, or start the hazard while the player is still merging.
+4. **Always solvable**: a challenge is shown only once at least one solution path is known and verified in the simulation (with the 3.4.2 probe), and re-verified when a spell on that path is rewritten.
+5. **Fair cost**: merges use the shared library, so known pairs are free; new pairs cost as usual within the player's $5. Discoveries made in a challenge also count in the main inventory.
+6. **Among friends**: each challenge shows the fewest merges any friend needed, and who.
+7. **The chronicle of the island**: Haiku writes a short story from the event log and villagers' memories, once a session, about $0.002.
+8. **The recipe book**: everything the player found, how and when, and what it was used for. Memory only: no hints.
+9. **Opposites and depth in the merge prompt**: Fire and Water give Steam, never "Super Fire Water"; a tier follows its depth in the recipe tree, plus or minus one.
 
 ### 4.0 Accounts: your progress everywhere
 
