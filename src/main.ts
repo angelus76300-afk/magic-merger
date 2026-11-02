@@ -92,14 +92,32 @@ async function refreshSession(): Promise<void> {
 async function showSpend(badge: HTMLElement): Promise<void> {
   const spend = await api.spend();
   if (!spend) return;
-  badge.textContent = `admin · $${spend.month.toFixed(2)} of $${spend.budget}`;
+  badge.textContent = `admin $${spend.month.toFixed(2)}`;
   badge.title = spend.calls.map((c) => `${c.call} ${c.model.replace("claude-", "")}: ${c.n} calls, $${c.usd.toFixed(3)}`).join("\n");
 }
 void refreshSession();
 
+// A long press on the title shows the frame HUD in the World (and sends its
+// numbers to the Worker every 30 seconds while it is on).
+let pressTimer = 0;
+let longPressed = false;
+const title = $(".title");
+title.addEventListener("pointerdown", () => {
+  longPressed = false;
+  clearTimeout(pressTimer);
+  pressTimer = window.setTimeout(() => {
+    longPressed = true;
+    const on = world.toggleHud();
+    toast(on ? "Frame HUD on: open the World tab" : "Frame HUD off");
+  }, 700);
+});
+for (const type of ["pointerup", "pointercancel", "pointerleave"]) title.addEventListener(type, () => clearTimeout(pressTimer));
+title.addEventListener("contextmenu", (e) => e.preventDefault());
+
 // Five quick taps on the title ask for a token: the way in for the admin.
 let taps: number[] = [];
-$(".title").addEventListener("click", () => {
+title.addEventListener("click", () => {
+  if (longPressed) return;
   const now = Date.now();
   taps = [...taps.filter((t) => now - t < 3000), now];
   if (taps.length < 5) return;

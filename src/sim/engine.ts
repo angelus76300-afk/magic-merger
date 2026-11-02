@@ -1,4 +1,5 @@
 import { lifeCycle, populate, updateCreature } from "./creatures";
+import { FrameStats } from "./hud";
 import { stepPhysics } from "./physics";
 import { Runtime, type CastRequest, type ErrorReporter } from "./runtime";
 import { loadWorld, saveWorld, type SavedWorld } from "./save";
@@ -27,6 +28,8 @@ export class Engine {
   readonly runtime: Runtime;
   readonly view: VoxelView;
   readonly sound = new SpellSound();
+  // Frame times for the HUD; always collected, it costs a few array writes.
+  stats = new FrameStats();
   private running = false;
   private last = 0;
   private acc = 0;
@@ -132,13 +135,18 @@ export class Engine {
     this.last = now;
     this.acc += dt;
     let steps = 0;
+    const t0 = performance.now();
     while (this.acc >= TICK && steps < 3) {
       this.step();
       this.acc -= TICK;
       steps++;
     }
     if (this.acc > TICK * 3) this.acc = 0;
+    const t1 = performance.now();
     this.render(dt);
+    const t2 = performance.now();
+    this.stats.push({ frame: dt * 1000, sim: t1 - t0, render: t2 - t1 });
+    this.stats.counts = { ...this.view.counts(), voxels: this.world.decor.size, creatures: this.world.creatures.length, size: this.world.w };
     this.rafId = requestAnimationFrame((t) => this.frame(t));
   }
 

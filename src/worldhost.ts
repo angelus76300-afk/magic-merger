@@ -14,6 +14,7 @@ import { toast } from "./toast";
 
 const WORLD_KEY = "magic-merger.world2";
 const MUTE_KEY = "magic-merger.muted";
+const HUD_KEY = "magic-merger.hud";
 // A crashing spell is sent back to Claude at most this often per session.
 const MAX_REPAIRS = 2;
 // Programs up to this tier are written by the cheap model (see worker/index.ts),
@@ -47,6 +48,8 @@ export class WorldHost {
   private preparing = new Set<string>();
   private repairs = new Map<string, number>();
   private muted = readFlag(MUTE_KEY);
+  private hud = readFlag(HUD_KEY);
+  private lastPerf = 0;
   // Mock programs are never saved, but are kept for the session.
   private sessionPrograms = new Map<string, CastRequest>();
   // The challenge being played, if any.
@@ -258,6 +261,7 @@ export class WorldHost {
           "*",
         );
         for (const queued of this.queue.splice(0)) this.send(queued);
+        if (this.hud) this.send({ type: "hud", on: true });
         if (this.selected) {
           const req = this.request(this.selected);
           if (req) this.send({ type: "select", spell: req });
@@ -290,11 +294,28 @@ export class WorldHost {
       case "error":
         if (this.store.get(msg.key)) void this.repair(msg.key, msg.name, msg.message);
         break;
+      case "perf": {
+        // Spell code runs in the frame too, so it could send these: only
+        // forwarded while the HUD is on, and at most every 20 seconds.
+        const now = Date.now();
+        if (!this.hud || now - this.lastPerf < 20_000) break;
+        this.lastPerf = now;
+        api.sendPerf({ ...msg.sample, screen: `${screen.width}x${screen.height}@${window.devicePixelRatio}`, cores: navigator.hardwareConcurrency ?? 0 });
+        break;
+      }
       case "objective":
         // Only the challenge this page started can report on itself.
         if (msg.id === this.challenge) this.showObjective(msg.id, msg.text, msg.status);
         break;
     }
+  }
+
+  // The frame HUD, toggled by a long press on the title. Remembered per browser.
+  toggleHud(): boolean {
+    this.hud = !this.hud;
+    writeFlag(HUD_KEY, this.hud);
+    this.send({ type: "hud", on: this.hud });
+    return this.hud;
   }
 
   private openChallenges(): void {

@@ -229,6 +229,12 @@ export class VoxelView {
     this.adapt(performance.now() - started, dt);
   }
 
+  // What the last frame drew, for the HUD.
+  counts(): { calls: number; triangles: number; pixelRatio: number } {
+    const r = this.renderer.info.render;
+    return { calls: r.calls, triangles: r.triangles, pixelRatio: this.pixelRatio };
+  }
+
   // Lower the pixel density when frames are slow, raise it back when they are fast.
   private adapt(ms: number, dt: number): void {
     this.frameTimes.push(Math.max(ms, dt * 1000));
