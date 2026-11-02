@@ -197,32 +197,36 @@ Nothing on the island just stands there. Every creature wants something and acts
 9. **Inspect** any creature or artifact with a tap: goal, current action, needs, charges, what it carries.
 10. **The five minute test** in `npm test` and in the judge: a village, a forest, wolves, a dragon, a vampire, gold, a well and a shrine for ten simulated minutes; populations neither explode nor vanish, and every placed thing changed something.
 
-### 3.6.1 Creatures that look alive
+### 3.7 Alive, acting and challenged (one pull request, everything before 4.0)
 
-Found in play after 3.5, to fix before 4.0, right after 3.6 since it touches the same code.
+Everything left before 4.0, in one session and one pull request, built in four parts in this order. Each part ends with its own commit, its own checks green, and a deploy, so a problem is caught where it starts and the pull request can be read part by part. Decided: no village mana, no hints, no discoveries made in the World, no sharing features.
+
+**Part A. Creatures that look alive** (found in play after 3.5)
 
 1. **Sizes**: some animals are far too big (bears above all). Every species and body plan gets a size checked against a villager and a house, in the bestiary and in `npm test`.
-2. **Smooth movement over terrain**: creatures jump from one terrain level to the next. They should walk up and down steps, ease their height between cells, and only climb what they can climb.
-3. **Overlapping faces on models**: some animal and villager models show parts drawn in the same plane, which flicker (the old villager look was the one noticed). Find every case in the bestiary, fix it, and add a check that no two parts of a model share a face.
-4. **Merged creatures are alive**: creatures created by merging must look and move like the native ones. A model Claude designs gets motion on its parts (legs, wings, tails, heads); a model without motion falls back to the nearest body plan with its colors and features; the spell judge asks "does it look alive?".
+2. **Smooth movement over terrain**: creatures jump from one terrain level to the next. They walk up and down steps, ease their height between cells, and only climb what they can climb.
+3. **No flickering faces**: some animal and villager models have parts in the same plane (the old villager look was the one noticed). Find every case in the bestiary, fix it, and check that no two parts of a model share a face.
+4. **Merged creatures are alive**: a model Claude designs gets motion on its parts; one without motion falls back to the nearest body plan with its colors and features; the judge asks "does it look alive?". Checked on stored creatures without rewriting spells in bulk.
 
-### 3.6.2 Artifacts that act
+**Part B. Artifacts that act** (items 5 and 7 of 3.6)
 
-Items 5 and 7 of 3.6, split off so each part stays reviewable: creatures cast real spells from the shared library (capped tier and rate), and artifacts that act (effects over time and on triggers, state, `grants` and `uses`, declared pairs). The five minute test extends to every placed artifact.
+5. **Creatures cast real spells** from the shared library by name, at a capped tier and rate.
+6. **Artifacts act**: effects over time and on triggers (a Well waters fields each morning, a Totem calls rain in a drought), state (charges, fuel, health), `grants` and `uses` (villagers draw water, arm themselves, pray; creatures steal, guard or destroy), declared pairs between artifacts (a Phoenix Feather near a corpse revives it). The five minute test extends to every placed artifact through the 3.4.2 promise checks.
 
-### 3.7 Challenges from nothing, and your island's story
+**Part C. Challenges from nothing**
 
-Decided: no village mana, no hints, no discoveries made in the World. Challenges stay, rebuilt around merging.
+7. **A Challenges tab**: a hazard island and a start set (the primitives, or fewer). The player merges on the challenge's own board until they have something that saves the village, casts it, and is scored by the number of merges.
+8. **Par and stars**: par is the shortest known solution from the shared recipe graph and players' solutions; three stars at par or better, two within two merges, one for any win; beating par lowers it for everyone. Each challenge shows the fewest merges any friend needed, and who.
+9. **Increasing difficulty**: one obvious spell first, then a missing primitive (a wildfire without Water), combined hazards, a higher tier, or a hazard that starts while the player is still merging.
+10. **Always solvable and fair**: a challenge appears only once a solution path is known and verified in the simulation (the 3.4.2 probe), re-verified when a spell on the path is rewritten. Known pairs are free; new ones count against the player's $5; discoveries join the main inventory.
 
-1. **A Challenges tab: start from nothing, fewest merges wins.** Each challenge is a hazard island (wildfire, lava, flood, drought, river crossing, and new ones) and a start set: the primitives only, or fewer. The player merges on the challenge's own board until they have a spell or artifact that saves the village, then casts it. The score is the number of merges used.
-2. **Par and stars**: par is the shortest known solution, from the shared recipe graph and every solution players found. Three stars at par or better, two within two merges of it, one for any win. Beating par lowers it for everyone.
-3. **Increasing difficulty**: early challenges need one obvious spell; later ones remove a primitive (a wildfire without Water), combine hazards (lava then flood), demand a higher tier, or start the hazard while the player is still merging.
-4. **Always solvable**: a challenge is shown only once at least one solution path is known and verified in the simulation (with the 3.4.2 probe), and re-verified when a spell on that path is rewritten.
-5. **Fair cost**: merges use the shared library, so known pairs are free; new pairs cost as usual within the player's $5. Discoveries made in a challenge also count in the main inventory.
-6. **Among friends**: each challenge shows the fewest merges any friend needed, and who.
-7. **The chronicle of the island**: Haiku writes a short story from the event log and villagers' memories, once a session, about $0.002.
-8. **The recipe book**: everything the player found, how and when, and what it was used for. Memory only: no hints.
-9. **Opposites and depth in the merge prompt**: Fire and Water give Steam, never "Super Fire Water"; a tier follows its depth in the recipe tree, plus or minus one.
+**Part D. The island's story**
+
+11. **The chronicle**: Haiku writes a short story from the event log and villagers' memories, once a session, about $0.002.
+12. **The recipe book**: what the player found, how and when, and what it was used for. Memory only, no hints.
+13. **Opposites and depth in the merge prompt**: Fire and Water give Steam, never "Super Fire Water"; a tier follows its depth in the recipe tree, plus or minus one.
+
+**Budget for the session**: keep the simulation p95 on a large island within the HUD numbers from 3.6, and API spend for the whole session under about $3.
 
 ### 4.0 Accounts: your progress everywhere
 
