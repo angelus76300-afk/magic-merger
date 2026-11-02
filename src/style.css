@@ -71,6 +71,19 @@ input {
 
 .badge-admin {
   background: var(--accent);
+  cursor: pointer;
+}
+
+.help {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
 }
 
 .badge {
@@ -984,4 +997,174 @@ input {
   color: var(--muted);
   font-size: 18px;
   padding: 4px 6px;
+}
+
+/* 3.4: report button, welcome, invite gate, the admin's people view. */
+
+.card-report {
+  margin: 4px 0 0 12px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.card-report[hidden] {
+  display: none;
+}
+
+.welcome-text {
+  line-height: 1.5;
+}
+
+.welcome-month {
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.welcome-month[hidden] {
+  display: none;
+}
+
+.welcome-privacy,
+.gate-privacy {
+  margin-top: 14px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.gate {
+  display: flex;
+  justify-content: center;
+  padding: 40px 16px;
+}
+
+.gate[hidden],
+.tabs[hidden] {
+  display: none;
+}
+
+.gate-box {
+  max-width: 460px;
+  text-align: center;
+}
+
+.gate-box h2 {
+  color: var(--accent);
+}
+
+.gate-emoji {
+  font-size: 44px;
+  margin: 0;
+}
+
+.people {
+  max-width: 640px;
+}
+
+.people-new {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.people-new input,
+.people-link-url {
+  flex: 1;
+  min-width: 0;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.people button {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.people-link {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px;
+  margin-bottom: 10px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+}
+
+.people-link[hidden] {
+  display: none;
+}
+
+.people-link-label {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 13px;
+}
+
+.people-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.people-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1 1 240px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.people-info strong {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.people-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent) var(--used), var(--line) var(--used));
+}
+
+.people-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.people-revoked {
+  opacity: 0.5;
+}
+
+.people-others,
+.people-calls {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: pre-line;
+}
+
+.people-report {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  padding: 4px 0;
 }

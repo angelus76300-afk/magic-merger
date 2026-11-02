@@ -42,6 +42,27 @@ export function openCard(store: Store, key: string, first = false): void {
   d.querySelector(".card-depth")!.textContent = element.depth === 0 ? `Primal force · ${tier}` : `${tier} · depth ${element.depth}`;
   d.querySelector(".card-recipe")!.textContent = recipe ? `${recipe[0]} + ${recipe[1]}` : "One of the eight primal forces";
 
+  // Claude names things: a player who finds a name offensive or wrong tells the admin.
+  const report = d.querySelector<HTMLButtonElement>(".card-report")!;
+  report.hidden = element.depth === 0 || session.admin || session.mock;
+  report.disabled = false;
+  report.textContent = "Report this name";
+  report.onclick = () => {
+    const reason = window.prompt(`What is wrong with the name "${element.name}"? (optional)`, "");
+    if (reason === null) return;
+    report.disabled = true;
+    api
+      .report(element.name, reason)
+      .then(() => {
+        report.textContent = "Reported, thank you";
+        toast("Thanks: the admin will look at it");
+      })
+      .catch((err: unknown) => {
+        report.disabled = false;
+        toast(err instanceof Error ? err.message : "The report did not go through", "error");
+      });
+  };
+
   const isSpell = element.kind === "spell";
   const summary = d.querySelector<HTMLElement>(".card-summary")!;
   const program = store.spell(key);
@@ -211,6 +232,7 @@ function ensureDialog(): HTMLDialogElement {
       <p class="card-source-meta"></p>
       <pre><code></code></pre>
     </div>
+    <button class="card-report" type="button">Report this name</button>
     <div class="card-admin">
       <span class="card-admin-label">Admin</span>
       <span class="card-written"></span>

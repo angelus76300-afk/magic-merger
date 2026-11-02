@@ -1,11 +1,13 @@
 import type {
   ApiError,
   CastResponse,
+  ErrorCode,
   CheckRequest,
   DescribeResponse,
   HealthResponse,
   LiveResponse,
   MergeResponse,
+  PeopleResponse,
   PerfSample,
   ProgramInfo,
   SpellResponse,
@@ -14,10 +16,68 @@ import type {
   VoteResponse,
 } from "../shared/types";
 
+// The admin token (five taps on the title), and this person's invite link.
 const TOKEN_KEY = "magic-merger.token";
+const INVITE_KEY = "magic-merger.invite";
 const PLAYER_KEY = "magic-merger.player";
 
-export class ApiRequestError extends Error {}
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly code?: ErrorCode,
+  ) {
+    super(message);
+  }
+}
+
+// Told when the Worker says this browser has no valid invite (or it was
+// revoked), so the page can say so instead of failing request by request.
+export let onLockedOut: (code: "invite" | "revoked", message: string) => void = () => undefined;
+export function setLockedOut(fn: typeof onLockedOut): void {
+  onLockedOut = fn;
+}
+
+// An invite link is /#invite=<secret>. The secret is kept by this browser and
+// taken out of the address bar, so it is not shared by copying the URL or
+// left in the history. Returns true when the page was opened from a link.
+export function captureInvite(): boolean {
+  const m = /(?:^#|&)invite=([A-Za-z0-9_-]{20,64})/.exec(location.hash);
+  if (!m) return false;
+  store(INVITE_KEY, m[1]);
+  history.replaceState(null, "", location.pathname + location.search);
+  return true;
+}
+
+export function hasInvite(): boolean {
+  return !!read(INVITE_KEY);
+}
+
+// A player reports a name as offensive or wrong; the admin sees it.
+export function report(name: string, reason: string): Promise<{ ok: boolean }> {
+  return post<{ ok: boolean }>("/api/report", { name, reason });
+}
+
+// Admin: everyone invited, with spend, discoveries and last visit.
+export async function people(): Promise<PeopleResponse | null> {
+  try {
+    const res = await fetch("/api/admin/people", { headers: authHeaders() });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function createInvite(name: string): Promise<{ id: string; name: string; cap: number; link: string }> {
+  return post("/api/admin/invites", { name });
+}
+
+export function changeInvite(id: string, action: "pause" | "resume" | "revoke" | "topup" | "relink", usd?: number): Promise<{ ok: boolean; link?: string }> {
+  return post("/api/admin/invite", { id, action, usd });
+}
+
+export function closeReport(id: number): Promise<{ ok: boolean }> {
+  return post("/api/admin/report", { id });
+}
 
 export function merge(a: string, b: string): Promise<MergeResponse> {
   return post<MergeResponse>("/api/merge", { a, b });
@@ -86,23 +146,25 @@ export function sendPerf(sample: PerfSample): void {
 }
 
 export function setToken(token: string): void {
-  try {
-    localStorage.setItem(TOKEN_KEY, token.trim());
-  } catch {
-    sessionToken = token.trim();
-  }
+  store(TOKEN_KEY, token.trim());
 }
 
+// The Worker's view of this browser. A revoked link answers 403.
 export async function health(): Promise<HealthResponse | null> {
   try {
     const res = await fetch("/api/health", { headers: authHeaders() });
+    if (res.status === 403) {
+      const data = (await res.json().catch(() => null)) as ApiError | null;
+      onLockedOut("revoked", data?.error ?? "This invite link has been turned off.");
+      return null;
+    }
     return res.ok ? await res.json() : null;
   } catch {
     return null;
   }
 }
 
-async function post<T>(path: string, body: unknown, retried = false): Promise<T> {
+async function post<T>(path: string, body: unknown): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, {
@@ -114,23 +176,34 @@ async function post<T>(path: string, body: unknown, retried = false): Promise<T>
     throw new ApiRequestError("No connection to the Worker");
   }
 
-  // The Worker can be locked with ACCESS_TOKEN. Ask once, then remember it.
-  if (res.status === 401 && !retried) {
-    const token = window.prompt("Access token for this Magic Merger server:");
-    if (token) {
-      setToken(token);
-      return post<T>(path, body, true);
-    }
-  }
-
   const data = (await res.json().catch(() => null)) as T | ApiError | null;
   if (!res.ok || !data) {
-    throw new ApiRequestError((data as ApiError | null)?.error ?? `Request failed (${res.status})`);
+    const error = data as ApiError | null;
+    const message = error?.error ?? `Request failed (${res.status})`;
+    if (error?.code === "invite" || error?.code === "revoked") onLockedOut(error.code, message);
+    throw new ApiRequestError(message, error?.code);
   }
   return data as T;
 }
 
-let sessionToken: string | null = null;
+// Storage can be blocked (private modes): values then live for this page only.
+const memory = new Map<string, string>();
+function store(key: string, value: string): void {
+  memory.set(key, value);
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // kept in memory
+  }
+}
+function read(key: string): string | null {
+  try {
+    return localStorage.getItem(key) ?? memory.get(key) ?? null;
+  } catch {
+    return memory.get(key) ?? null;
+  }
+}
+
 let sessionPlayer: string | null = null;
 
 // An anonymous id for this browser, made up here: it says nothing about the
@@ -150,13 +223,10 @@ export function playerId(): string {
 }
 
 function authHeaders(): Record<string, string> {
-  let token = sessionToken;
-  try {
-    token = localStorage.getItem(TOKEN_KEY) ?? token;
-  } catch {
-    // Storage blocked: fall back to the in-memory token.
-  }
   const headers: Record<string, string> = { "x-player": playerId() };
+  const token = read(TOKEN_KEY);
+  const invite = read(INVITE_KEY);
   if (token) headers["x-access-token"] = token;
+  if (invite) headers["x-invite"] = invite;
   return headers;
 }
