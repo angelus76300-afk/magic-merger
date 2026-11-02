@@ -239,7 +239,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   if (onGround) {
     if (world.fire[i] > 0.25 && !k.fireproof && !immune("fire")) c.burning = Math.max(c.burning, 3);
     const fluid = world.materials.get("fluid", world.fluid[i]);
-    if (world.depth[i] > 0.05 && fluid.hurts > 0 && !(k.fireproof && world.fluid[i] === F.LAVA) && !(immune("acid") && world.fluid[i] === F.ACID)) c.hp -= fluid.hurts * dt;
+    if (world.depth[i] > 0.05 && fluid.hurts > 0 && !(k.fireproof && world.fluid[i] === F.LAVA) && !(immune("acid") && world.fluid[i] === F.ACID))
+      c.hp -= fluid.hurts * dt;
     if (world.fluid[i] === F.WATER && world.depth[i] > 0.25) c.burning = 0;
     if (world.fluid[i] === F.WATER && world.depth[i] > 1.4 && !k.swims && !immune("water")) {
       c.drowning += dt;
@@ -302,7 +303,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       pace = 1.5;
     } else if (c.calm > 0) {
       pace = 0;
-    } else if (ai && ai.active !== "always" && (daylight(world.time).night > 0.5) !== (ai.active === "night")) {
+    } else if (ai && ai.active !== "always" && daylight(world.time).night > 0.5 !== (ai.active === "night")) {
       // Out of its hours it rests where it is.
       pace = 0;
       mood = "asleep";
@@ -503,29 +504,43 @@ function sideEffects(world: World, c: Creature, ai: Behavior, i: number, onGroun
     }
     if (o.hp <= 0) o.dead = true;
   }
-  if (ai.aura === "freeze") forDisc(world, c.x, c.y, r, (j) => {
-    world.temp[j] = Math.min(world.temp[j], -5);
-    world.fire[j] = 0;
-  });
-  if (ai.aura === "burn" || ai.aura === "heal") world.particles.add({ x: c.x + (Math.random() - 0.5) * r, y: c.y + (Math.random() - 0.5) * r, z: 0.5, vz: 1.5, life: 0.8, color: ai.aura === "heal" ? 0x9dffb0 : 0xff8a2a, size: 1, glow: true });
+  if (ai.aura === "freeze")
+    forDisc(world, c.x, c.y, r, (j) => {
+      world.temp[j] = Math.min(world.temp[j], -5);
+      world.fire[j] = 0;
+    });
+  if (ai.aura === "burn" || ai.aura === "heal")
+    world.particles.add({
+      x: c.x + (Math.random() - 0.5) * r,
+      y: c.y + (Math.random() - 0.5) * r,
+      z: 0.5,
+      vz: 1.5,
+      life: 0.8,
+      color: ai.aura === "heal" ? 0x9dffb0 : 0xff8a2a,
+      size: 1,
+      glow: true,
+    });
 }
 
 function deathOf(world: World, c: Creature, what: string): void {
   if (what === "explode") explode(world, c.x, c.y, 3 + c.size * 2, 1);
   else if (what === "fire") forDisc(world, c.x, c.y, 2.5, (j) => (world.fire[j] = Math.max(world.fire[j], 0.8)));
-  else if (what === "seeds") forDisc(world, c.x, c.y, 3, (j) => {
-    if (world.depth[j] < 0.1 && Math.random() < 0.4) {
-      world.ground[j] = G.GRASS;
-      world.setCover(j, Math.random() < 0.5 ? C.TREE : C.FLOWER);
-    }
-  });
-  else if (what === "ice") forDisc(world, c.x, c.y, 3, (j) => {
-    world.temp[j] = -20;
-    if (world.fluid[j] === F.WATER) world.fluid[j] = F.ICE;
-  });
+  else if (what === "seeds")
+    forDisc(world, c.x, c.y, 3, (j) => {
+      if (world.depth[j] < 0.1 && Math.random() < 0.4) {
+        world.ground[j] = G.GRASS;
+        world.setCover(j, Math.random() < 0.5 ? C.TREE : C.FLOWER);
+      }
+    });
+  else if (what === "ice")
+    forDisc(world, c.x, c.y, 3, (j) => {
+      world.temp[j] = -20;
+      if (world.fluid[j] === F.WATER) world.fluid[j] = F.ICE;
+    });
   else if (what.startsWith("spawn:")) {
     const kind = what.slice(6);
-    if (KINDS.has(kind) && world.creatures.length < 600) for (let n = 0; n < 2; n++) world.creatures.push(makeCreature(kind, c.x + Math.random() - 0.5, c.y + Math.random() - 0.5));
+    if (KINDS.has(kind) && world.creatures.length < 600)
+      for (let n = 0; n < 2; n++) world.creatures.push(makeCreature(kind, c.x + Math.random() - 0.5, c.y + Math.random() - 0.5));
   } else forDisc(world, c.x, c.y, 2, (j) => world.place(j, what, 0.6));
 }
 

@@ -33,11 +33,51 @@ export function pushBox(pos: number[], col: number[], b: Box): void {
   const x1 = x + w;
   const y1 = y + h;
   const z1 = z + d;
-  quad([[x, y1, z], [x, y1, z1], [x1, y1, z1], [x1, y1, z]], FACE_LIGHT.top);
-  quad([[x1, y, z], [x1, y1, z], [x1, y1, z1], [x1, y, z1]], FACE_LIGHT.east);
-  quad([[x, y, z1], [x1, y, z1], [x1, y1, z1], [x, y1, z1]], FACE_LIGHT.south);
-  quad([[x, y, z], [x, y, z1], [x, y1, z1], [x, y1, z]], FACE_LIGHT.west);
-  quad([[x, y, z], [x, y1, z], [x1, y1, z], [x1, y, z]], FACE_LIGHT.north);
+  quad(
+    [
+      [x, y1, z],
+      [x, y1, z1],
+      [x1, y1, z1],
+      [x1, y1, z],
+    ],
+    FACE_LIGHT.top,
+  );
+  quad(
+    [
+      [x1, y, z],
+      [x1, y1, z],
+      [x1, y1, z1],
+      [x1, y, z1],
+    ],
+    FACE_LIGHT.east,
+  );
+  quad(
+    [
+      [x, y, z1],
+      [x1, y, z1],
+      [x1, y1, z1],
+      [x, y1, z1],
+    ],
+    FACE_LIGHT.south,
+  );
+  quad(
+    [
+      [x, y, z],
+      [x, y, z1],
+      [x, y1, z1],
+      [x, y1, z],
+    ],
+    FACE_LIGHT.west,
+  );
+  quad(
+    [
+      [x, y, z],
+      [x, y1, z],
+      [x1, y1, z],
+      [x1, y, z],
+    ],
+    FACE_LIGHT.north,
+  );
 }
 
 export function geometryOf(boxes: Box[]): BufferGeometry {
@@ -56,7 +96,12 @@ const B = (x: number, y: number, z: number, w: number, h: number, d: number, col
 
 export const MODELS: Record<string, Box[]> = {
   tree: [B(0.4, 0, 0.4, 0.2, 0.7, 0.2, 0x6b4a2b), B(0.05, 0.6, 0.05, 0.9, 0.75, 0.9, 0x3a7d32), B(0.22, 1.3, 0.22, 0.56, 0.4, 0.56, 0x4a9a3c)],
-  pine: [B(0.42, 0, 0.42, 0.16, 0.5, 0.16, 0x5b3d24), B(0.1, 0.4, 0.1, 0.8, 0.5, 0.8, 0x24603a), B(0.2, 0.85, 0.2, 0.6, 0.5, 0.6, 0x2b7044), B(0.32, 1.3, 0.32, 0.36, 0.45, 0.36, 0x348050)],
+  pine: [
+    B(0.42, 0, 0.42, 0.16, 0.5, 0.16, 0x5b3d24),
+    B(0.1, 0.4, 0.1, 0.8, 0.5, 0.8, 0x24603a),
+    B(0.2, 0.85, 0.2, 0.6, 0.5, 0.6, 0x2b7044),
+    B(0.32, 1.3, 0.32, 0.36, 0.45, 0.36, 0x348050),
+  ],
   bush: [B(0.2, 0, 0.2, 0.6, 0.4, 0.6, 0x4f9136)],
   crop: [B(0.15, 0, 0.15, 0.2, 0.45, 0.2, 0xe0c14a), B(0.6, 0, 0.25, 0.2, 0.5, 0.2, 0xd6b23e), B(0.35, 0, 0.6, 0.2, 0.4, 0.2, 0xe8cc58)],
   house: [

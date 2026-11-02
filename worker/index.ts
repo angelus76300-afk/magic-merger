@@ -216,12 +216,18 @@ async function recordPerf(db: D1Database, body: PerfSample, ua: string): Promise
 
 // Elements from before tiers: rated once, all in one call (about 100 names).
 async function backfillTiers(env: Env, oracle: Oracle): Promise<{ rated: number; missing: string[] }> {
-  const rows = await env.DB.prepare("SELECT key, name, kind FROM elements WHERE tier IS NULL LIMIT 300").all<{ key: string; name: string; kind: ElementKind }>();
+  const rows = await env.DB.prepare("SELECT key, name, kind FROM elements WHERE tier IS NULL LIMIT 300").all<{
+    key: string;
+    name: string;
+    kind: ElementKind;
+  }>();
   if (!rows.results.length) return { rated: 0, missing: [] };
   await ensureBudget(env, oracle);
   const tiers = await oracle.tiers(rows.results);
   if (oracle.mock) return { rated: 0, missing: [] };
-  const updates = rows.results.filter((r) => tiers.has(r.name)).map((r) => env.DB.prepare("UPDATE elements SET tier = ? WHERE key = ?").bind(tiers.get(r.name)!, r.key));
+  const updates = rows.results
+    .filter((r) => tiers.has(r.name))
+    .map((r) => env.DB.prepare("UPDATE elements SET tier = ? WHERE key = ?").bind(tiers.get(r.name)!, r.key));
   if (updates.length) await env.DB.batch(updates);
   return { rated: updates.length, missing: rows.results.filter((r) => !tiers.has(r.name)).map((r) => r.name) };
 }
@@ -230,7 +236,9 @@ async function recordSpend(db: D1Database, oracle: Oracle): Promise<void> {
   if (!oracle.spent.length) return;
   const at = Date.now();
   try {
-    await db.batch(oracle.spent.splice(0).map((s) => db.prepare("INSERT INTO spend (at, call, model, usd) VALUES (?, ?, ?, ?)").bind(at, s.call, s.model, s.usd)));
+    await db.batch(
+      oracle.spent.splice(0).map((s) => db.prepare("INSERT INTO spend (at, call, model, usd) VALUES (?, ?, ?, ?)").bind(at, s.call, s.model, s.usd)),
+    );
   } catch (err) {
     console.error("could not record spend", err);
   }
@@ -241,9 +249,7 @@ async function handleMerge(body: MergeRequest, env: Env, oracle: Oracle): Promis
   const b = await resolveInput(env.DB, body.b, oracle.mock);
   const pair = pairKey(a.name, b.name);
 
-  const known = await env.DB.prepare("SELECT result FROM recipes WHERE pair = ?")
-    .bind(pair)
-    .first<{ result: string }>();
+  const known = await env.DB.prepare("SELECT result FROM recipes WHERE pair = ?").bind(pair).first<{ result: string }>();
   if (known) {
     const element = await getElement(env.DB, known.result);
     if (element) return { element, firstDiscovery: false, mock: oracle.mock };
@@ -278,9 +284,7 @@ async function handleMerge(body: MergeRequest, env: Env, oracle: Oracle): Promis
       await env.DB.prepare("UPDATE elements SET tier = ? WHERE key = ?").bind(candidate.tier, key).run();
     }
   } else {
-    const inserted = await env.DB.prepare(
-      "INSERT OR IGNORE INTO elements (key, name, emoji, kind, depth, tier, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    )
+    const inserted = await env.DB.prepare("INSERT OR IGNORE INTO elements (key, name, emoji, kind, depth, tier, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .bind(key, candidate.name, candidate.emoji, candidate.kind, candidate.depth, candidate.tier, Date.now())
       .run();
     firstDiscovery = inserted.meta.changes > 0;
@@ -288,9 +292,7 @@ async function handleMerge(body: MergeRequest, env: Env, oracle: Oracle): Promis
   }
 
   const [ka, kb] = pair.split("+");
-  await env.DB.prepare("INSERT OR IGNORE INTO recipes (pair, a, b, result, created_at) VALUES (?, ?, ?, ?, ?)")
-    .bind(pair, ka, kb, key, Date.now())
-    .run();
+  await env.DB.prepare("INSERT OR IGNORE INTO recipes (pair, a, b, result, created_at) VALUES (?, ?, ?, ?, ?)").bind(pair, ka, kb, key, Date.now()).run();
 
   return { element, firstDiscovery, mock: false };
 }
@@ -399,7 +401,6 @@ function spellModelFor(env: Env, tier: Tier): string {
   return small && TIERS.indexOf(tier) <= TIERS.indexOf(upTo) ? small : env.SPELL_MODEL;
 }
 
-
 function checkRegenerate(requested: unknown, admin: boolean): boolean {
   if (requested !== true) return false;
   if (!admin) throw new HttpError(403, "Only the admin can regenerate");
@@ -410,10 +411,7 @@ async function ensureDescription(env: Env, oracle: Oracle, element: GameElement,
   const db = env.DB;
   const key = elementKey(element.name);
   if (!oracle.mock && !regenerate) {
-    const cached = await db
-      .prepare("SELECT description FROM elements WHERE key = ?")
-      .bind(key)
-      .first<{ description: string | null }>();
+    const cached = await db.prepare("SELECT description FROM elements WHERE key = ?").bind(key).first<{ description: string | null }>();
     if (cached?.description) return cached.description;
   }
 
@@ -455,10 +453,7 @@ async function getElement(db: D1Database, key: string): Promise<GameElement | nu
 }
 
 async function firstRecipe(db: D1Database, key: string): Promise<[string, string] | null> {
-  const row = await db
-    .prepare("SELECT a, b FROM recipes WHERE result = ? ORDER BY created_at LIMIT 1")
-    .bind(key)
-    .first<{ a: string; b: string }>();
+  const row = await db.prepare("SELECT a, b FROM recipes WHERE result = ? ORDER BY created_at LIMIT 1").bind(key).first<{ a: string; b: string }>();
   if (!row) return null;
   const [a, b] = await Promise.all([getElement(db, row.a), getElement(db, row.b)]);
   return a && b ? [a.name, b.name] : null;
@@ -473,9 +468,7 @@ function cleanName(raw: string): string {
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 4)
-    .map((word, i) =>
-      i > 0 && MINOR_WORDS.has(word.toLowerCase()) ? word.toLowerCase() : word[0].toUpperCase() + word.slice(1),
-    );
+    .map((word, i) => (i > 0 && MINOR_WORDS.has(word.toLowerCase()) ? word.toLowerCase() : word[0].toUpperCase() + word.slice(1)));
   const name = words.join(" ").slice(0, 40).trim();
   if (!name) throw new OracleError("The merge answer had no name");
   return name;

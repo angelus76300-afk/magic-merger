@@ -10,15 +10,7 @@ import { WorldHost } from "./worldhost";
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
 const store = new Store();
-const craft = new Craft(
-  store,
-  $("#board"),
-  $("#inventory"),
-  $("#inventory-list"),
-  $<HTMLInputElement>("#search"),
-  $("#count"),
-  $("#inventory-filters"),
-);
+const craft = new Craft(store, $("#board"), $("#inventory"), $("#inventory-list"), $<HTMLInputElement>("#search"), $("#count"), $("#inventory-filters"));
 craft.init();
 $("#clear").addEventListener("click", () => craft.clearBoard());
 
@@ -38,12 +30,12 @@ const world = new WorldHost(store, {
 
 function showTab(view: string): void {
   $("#admin-badge").addEventListener("click", () => {
-  const badge = $("#admin-badge");
-  if (badge.title) window.alert(`This month, by call:\n${badge.title}`);
-  void showSpend(badge);
-});
+    const badge = $("#admin-badge");
+    if (badge.title) window.alert(`This month, by call:\n${badge.title}`);
+    void showSpend(badge);
+  });
 
-for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
+  for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
     tab.setAttribute("aria-selected", String(tab.dataset.view === view));
   }
   for (const section of document.querySelectorAll<HTMLElement>(".view")) {

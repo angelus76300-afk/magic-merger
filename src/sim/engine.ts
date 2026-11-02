@@ -53,7 +53,14 @@ export class Engine {
     this.resize();
   }
 
-  static create(canvas: HTMLCanvasElement, overlay: HTMLCanvasElement, size: WorldSize, hooks: EngineHooks, seed = (Math.random() * 2 ** 31) | 0, options: EngineOptions = {}): Engine {
+  static create(
+    canvas: HTMLCanvasElement,
+    overlay: HTMLCanvasElement,
+    size: WorldSize,
+    hooks: EngineHooks,
+    seed = (Math.random() * 2 ** 31) | 0,
+    options: EngineOptions = {},
+  ): Engine {
     const n = WORLD_SIZES[size] ?? WORLD_SIZES.medium;
     const world = generateWorld(n, n, seed);
     populate(world);
@@ -172,7 +179,16 @@ export class Engine {
       "pointerdown",
       (e) => {
         c.setPointerCapture(e.pointerId);
-        this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now(), moved: false, button: e.button, shift: e.shiftKey });
+        this.pointers.set(e.pointerId, {
+          x: e.clientX,
+          y: e.clientY,
+          sx: e.clientX,
+          sy: e.clientY,
+          t: performance.now(),
+          moved: false,
+          button: e.button,
+          shift: e.shiftKey,
+        });
         if (this.pointers.size === 2) this.pinch = this.pinchState();
       },
       opts,

@@ -9,7 +9,7 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": ["/api/*"],
   },
   "d1_databases": [
     {
@@ -17,8 +17,8 @@
       "database_name": "magic-merger",
       // Created on 2026-11-01. A fork needs its own id from `npx wrangler d1 create magic-merger`.
       "database_id": "2faca013-6f31-4c46-8bf1-08d5691d89ff",
-      "migrations_dir": "migrations"
-    }
+      "migrations_dir": "migrations",
+    },
   ],
   "vars": {
     // See docs/SETUP.md for what each call costs.
@@ -31,7 +31,7 @@
     // Repairs fix one error in a program that exists: always the small model.
     "REPAIR_MODEL": "claude-haiku-5-5",
     "SPELL_EFFORT": "medium",
-    "BUDGET_USD": "20"
+    "BUDGET_USD": "20",
   },
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
 }

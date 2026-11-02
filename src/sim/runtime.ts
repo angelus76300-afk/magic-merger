@@ -196,7 +196,12 @@ export class Runtime {
           ? (self: Creature, dt: number) => {
               const ruleKey = `creature:${name}`;
               if (this.brokenRules.has(ruleKey)) return;
-              this.run(req.key, req.name, () => userTick(new CreatureHandle(self, this), this.ruleApi(req), dt), () => this.brokenRules.add(ruleKey));
+              this.run(
+                req.key,
+                req.name,
+                () => userTick(new CreatureHandle(self, this), this.ruleApi(req), dt),
+                () => this.brokenRules.add(ruleKey),
+              );
             }
           : undefined,
       };
@@ -333,11 +338,23 @@ export class Runtime {
       b.y += b.vy * dt;
       const wasUp = b.z > 0;
       b.z += b.vz * dt;
-      if (hooks?.tick) this.run(hooks.key, hooks.name, () => hooks.tick!(hooks.handle, hooks.api, dt), () => (b.alive = false));
+      if (hooks?.tick)
+        this.run(
+          hooks.key,
+          hooks.name,
+          () => hooks.tick!(hooks.handle, hooks.api, dt),
+          () => (b.alive = false),
+        );
       if (!b.alive) continue;
       if (wasUp && b.z <= 0) {
         b.z = 0;
-        if (hooks?.land) this.run(hooks.key, hooks.name, () => hooks.land!(hooks.handle, hooks.api), () => (b.alive = false));
+        if (hooks?.land)
+          this.run(
+            hooks.key,
+            hooks.name,
+            () => hooks.land!(hooks.handle, hooks.api),
+            () => (b.alive = false),
+          );
         else b.alive = false;
       }
       if (b.life > 0 && b.age >= b.life) {
@@ -349,7 +366,20 @@ export class Runtime {
       const out = b.x < -1 || b.y < -1 || b.x > this.world.w + 1 || b.y > this.world.h + 1;
       if ((out && b.z < 24) || b.x < -80 || b.y < -80 || b.x > this.world.w + 80 || b.y > this.world.h + 80) b.alive = false;
       if (b.alive && b.trail !== null && b.look !== "none") {
-        this.world.particles.add({ x: b.x + (Math.random() - 0.5) * b.r, y: b.y + (Math.random() - 0.5) * b.r, z: b.z + b.r, vx: -b.vx * 0.1, vy: -b.vy * 0.1, vz: -b.vz * 0.1 + 0.5, life: 0.5 + Math.random() * 0.5, color: b.trail, size: Math.max(0.8, Math.min(4, b.r * 0.9)), glow: true, gravity: -0.5, drag: 1.5 });
+        this.world.particles.add({
+          x: b.x + (Math.random() - 0.5) * b.r,
+          y: b.y + (Math.random() - 0.5) * b.r,
+          z: b.z + b.r,
+          vx: -b.vx * 0.1,
+          vy: -b.vy * 0.1,
+          vz: -b.vz * 0.1 + 0.5,
+          life: 0.5 + Math.random() * 0.5,
+          color: b.trail,
+          size: Math.max(0.8, Math.min(4, b.r * 0.9)),
+          glow: true,
+          gravity: -0.5,
+          drag: 1.5,
+        });
       }
     }
   }
@@ -375,7 +405,12 @@ export class Runtime {
       if (!t || this.brokenRules.has(rule)) continue;
       const api = this.ruleApi({ key: t.key, name: t.name, tier: "minor", code: "" });
       const cell = new CellHandle(i % world.w, Math.floor(i / world.w), api, dt / keep);
-      this.run(t.key, t.name, () => t.fn(cell, api), () => this.brokenRules.add(rule));
+      this.run(
+        t.key,
+        t.name,
+        () => t.fn(cell, api),
+        () => this.brokenRules.add(rule),
+      );
     }
   }
 
@@ -510,7 +545,10 @@ function message(err: unknown): string {
 }
 
 function strings(v: unknown, max = 12): string[] {
-  return (Array.isArray(v) ? v : typeof v === "string" ? [v] : []).filter((x): x is string => typeof x === "string").map((x) => x.toLowerCase().slice(0, 30)).slice(0, max);
+  return (Array.isArray(v) ? v : typeof v === "string" ? [v] : [])
+    .filter((x): x is string => typeof x === "string")
+    .map((x) => x.toLowerCase().slice(0, 30))
+    .slice(0, max);
 }
 
 interface Reaction {
@@ -526,7 +564,8 @@ interface Reaction {
 function reactionOf(m: Record<string, unknown>, layer: Layer, name: string): Reaction | undefined {
   const reacts: Reaction["reacts"] = {};
   const raw = m.reacts && typeof m.reacts === "object" ? (m.reacts as Record<string, unknown>) : {};
-  for (const k of ["fire", "water", "lava", "acid", "cold", "heat"] as const) if (typeof raw[k] === "string") reacts[k] = (raw[k] as string).toLowerCase().slice(0, 30);
+  for (const k of ["fire", "water", "lava", "acid", "cold", "heat"] as const)
+    if (typeof raw[k] === "string") reacts[k] = (raw[k] as string).toLowerCase().slice(0, 30);
   const spread = m.spreads && typeof m.spreads === "object" ? (m.spreads as Record<string, unknown>) : null;
   const decay = num(m.decays, 0, 3600, 0);
   void layer;
@@ -1069,12 +1108,31 @@ export class SpellApi {
   spire(x: number, y: number, o: Record<string, unknown> = {}) {
     const b = new Builder(this.rt.world);
     const h = num(o.height, 2, 150, 14);
-    spire(b, x, y, h, num(o.radius, 0.5, 20, Math.max(1, h / 7)), colorList(o.colors, [0xb9a4ff, 0xd3c6ff, 0x9f88f5]), kindId(o.kind, VK.GLOW), num(o.lean, 0, 1, 0), num(o.angle, -10, 10, 0));
+    spire(
+      b,
+      x,
+      y,
+      h,
+      num(o.radius, 0.5, 20, Math.max(1, h / 7)),
+      colorList(o.colors, [0xb9a4ff, 0xd3c6ff, 0x9f88f5]),
+      kindId(o.kind, VK.GLOW),
+      num(o.lean, 0, 1, 0),
+      num(o.angle, -10, 10, 0),
+    );
     this.rt.commit(b, num(o.grow, 0, 30, 0));
   }
   tower(x: number, y: number, o: Record<string, unknown> = {}) {
     const b = new Builder(this.rt.world);
-    tower(b, x, y, num(o.height, 3, 120, 16), num(o.radius, 1.5, 20, 3), colorList(o.colors, [0x9a9aa0, 0x8a8a90, 0xa8a8ae]), o.roof === undefined ? 0x7a3b5a : o.roof === null || o.roof === false ? null : colorOr(o.roof, 0x7a3b5a), o.windows === false ? null : colorOr(o.windows, 0xffd36a));
+    tower(
+      b,
+      x,
+      y,
+      num(o.height, 3, 120, 16),
+      num(o.radius, 1.5, 20, 3),
+      colorList(o.colors, [0x9a9aa0, 0x8a8a90, 0xa8a8ae]),
+      o.roof === undefined ? 0x7a3b5a : o.roof === null || o.roof === false ? null : colorOr(o.roof, 0x7a3b5a),
+      o.windows === false ? null : colorOr(o.windows, 0xffd36a),
+    );
     this.rt.commit(b, num(o.grow, 0, 30, 0));
   }
   wall(x0: number, y0: number, x1: number, y1: number, o: Record<string, unknown> = {}) {
@@ -1084,7 +1142,17 @@ export class SpellApi {
   }
   arch(x0: number, y0: number, x1: number, y1: number, o: Record<string, unknown> = {}) {
     const b = new Builder(this.rt.world);
-    arch(b, x0, y0, x1, y1, num(o.height, 2, 100, Math.hypot(x1 - x0, y1 - y0) / 2), num(o.thick, 1, 6, 1), colorList(o.colors, [0x9a9aa0, 0x8a8a90]), kindId(o.kind, VK.STONE));
+    arch(
+      b,
+      x0,
+      y0,
+      x1,
+      y1,
+      num(o.height, 2, 100, Math.hypot(x1 - x0, y1 - y0) / 2),
+      num(o.thick, 1, 6, 1),
+      colorList(o.colors, [0x9a9aa0, 0x8a8a90]),
+      kindId(o.kind, VK.STONE),
+    );
     this.rt.commit(b, num(o.grow, 0, 30, 0));
   }
   island(x: number, y: number, o: Record<string, unknown> = {}) {
@@ -1270,7 +1338,13 @@ export class SpellApi {
     vis.bolts.push({ points: main, color, width: num(o.width, 0.3, 4, 1) * Math.max(0.6, Math.sqrt(power)), t: 0, dur: 0.35 });
     for (let k = 0; k < 2; k++) {
       const from = main[3 + k * 3];
-      vis.bolts.push({ points: path(from.x, from.y, from.l, from.x + (Math.random() - 0.5) * 16, from.y + (Math.random() - 0.5) * 16, from.l - 15 - Math.random() * 15, 3), color, width: 0.6, t: 0, dur: 0.25 });
+      vis.bolts.push({
+        points: path(from.x, from.y, from.l, from.x + (Math.random() - 0.5) * 16, from.y + (Math.random() - 0.5) * 16, from.l - 15 - Math.random() * 15, 3),
+        color,
+        width: 0.6,
+        t: 0,
+        dur: 0.25,
+      });
     }
     vis.lights.push({ x, y, r: 10 * Math.max(0.6, power), color, t: 0, dur: 0.5 });
     this.flash(color, 0.3);
@@ -1278,7 +1352,8 @@ export class SpellApi {
     // Effects on the land.
     const g = w.ground[i];
     if (g === G.SAND && Math.random() < 0.6) w.ground[i] = G.CRYSTAL;
-    if (w.depth[i] < 0.05 && (w.materials.get("cover", w.cover[i]).flammable > 0 || w.materials.get("ground", g).flammable > 0)) w.fire[i] = Math.max(w.fire[i], 0.9);
+    if (w.depth[i] < 0.05 && (w.materials.get("cover", w.cover[i]).flammable > 0 || w.materials.get("ground", g).flammable > 0))
+      w.fire[i] = Math.max(w.fire[i], 0.9);
     if (w.cover[i] === C.POWDER) explode(w, x, y, 4, 1);
     if (w.fluid[i] === F.OIL) w.fire[i] = 1;
     igniteVoxels(w, x, y, 1.5);
@@ -1303,12 +1378,29 @@ export class SpellApi {
     const w = this.rt.world;
     const l0 = w.height[this.i(x0, y0)] * 0.5 + num(z0, -40, 400, 0);
     const l1 = w.height[this.i(x1, y1)] * 0.5 + num(z1, -40, 400, 0);
-    this.rt.visuals.bolts.push({ points: [{ x: x0, y: y0, l: l0 }, { x: x1, y: y1, l: l1 }], color: colorOr(o.color, 0xfff3b0), width: num(o.width, 0.2, 6, 1), t: 0, dur: num(o.seconds, 0.05, 30, 0.5) });
+    this.rt.visuals.bolts.push({
+      points: [
+        { x: x0, y: y0, l: l0 },
+        { x: x1, y: y1, l: l1 },
+      ],
+      color: colorOr(o.color, 0xfff3b0),
+      width: num(o.width, 0.2, 6, 1),
+      t: 0,
+      dur: num(o.seconds, 0.05, 30, 0.5),
+    });
   }
 
   // Screen and camera.
   shockwave(x: number, y: number, r: number, color: string | number = "#ffffff", seconds = 0.8, width = 1) {
-    this.rt.visuals.shockwaves.push({ x, y, r: num(r, 0, 3000, 10), color: colorOr(color, 0xffffff), width: num(width, 0.1, 50, 1), t: 0, dur: num(seconds, 0.05, 20, 0.8) });
+    this.rt.visuals.shockwaves.push({
+      x,
+      y,
+      r: num(r, 0, 3000, 10),
+      color: colorOr(color, 0xffffff),
+      width: num(width, 0.1, 50, 1),
+      t: 0,
+      dur: num(seconds, 0.05, 20, 0.8),
+    });
   }
   light(x: number, y: number, r: number, color: string | number = "#fff3b0", seconds = 2) {
     this.rt.visuals.lights.push({ x, y, r: num(r, 0, 3000, 8), color: colorOr(color, 0xfff3b0), t: 0, dur: num(seconds, 0.05, 60, 2) });

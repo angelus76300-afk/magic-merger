@@ -53,24 +53,24 @@ Tap the "Magic Merger" title five times quickly and enter your `ADMIN_TOKEN`. An
 
 Set in `wrangler.jsonc`:
 
-| Variable | Default | Used for |
-| --- | --- | --- |
-| `MERGE_MODEL` | `claude-opus-5-5`, low effort | what two items make, and their power tier; once per new pair, ever |
-| `DESCRIBE_MODEL` | `claude-haiku-5-5`, low effort | the grimoire text on a card; once per element, ever |
-| `SPELL_MODEL_SMALL` | `claude-haiku-5-5` | writing spells up to `SPELL_SMALL_UP_TO` (grand) |
-| `SPELL_MODEL` | `claude-opus-5-5` | writing legendary and cosmic spells |
-| `SPELL_EFFORT` | `medium` | how long the spell writer thinks |
-| `BUDGET_USD` | `20` | Claude spend allowed per calendar month |
+| Variable            | Default                        | Used for                                                           |
+| ------------------- | ------------------------------ | ------------------------------------------------------------------ |
+| `MERGE_MODEL`       | `claude-opus-5-5`, low effort  | what two items make, and their power tier; once per new pair, ever |
+| `DESCRIBE_MODEL`    | `claude-haiku-5-5`, low effort | the grimoire text on a card; once per element, ever                |
+| `SPELL_MODEL_SMALL` | `claude-haiku-5-5`             | writing spells up to `SPELL_SMALL_UP_TO` (grand)                   |
+| `SPELL_MODEL`       | `claude-opus-5-5`              | writing legendary and cosmic spells                                |
+| `SPELL_EFFORT`      | `medium`                       | how long the spell writer thinks                                   |
+| `BUDGET_USD`        | `20`                           | Claude spend allowed per calendar month                            |
 
 Measured on the live Worker in November 2026:
 
-| Call | Average | Time |
-| --- | --- | --- |
-| Merge (Opus) | $0.001 | about 3 s |
-| Description (Haiku) | $0.0001 | about 2 s |
-| Spell up to grand (Haiku) | $0.002 | about 6 s |
-| Legendary or cosmic spell (Opus) | $0.076 | 20 to 40 s |
-| Sonnet, for reference | $0.021 | |
+| Call                             | Average | Time       |
+| -------------------------------- | ------- | ---------- |
+| Merge (Opus)                     | $0.001  | about 3 s  |
+| Description (Haiku)              | $0.0001 | about 2 s  |
+| Spell up to grand (Haiku)        | $0.002  | about 6 s  |
+| Legendary or cosmic spell (Opus) | $0.076  | 20 to 40 s |
+| Sonnet, for reference            | $0.021  |            |
 
 A spell is written once, for everyone, the first time a player picks it in the World tab.
 

@@ -1,0 +1,8 @@
+dist
+node_modules
+package-lock.json
+lab/legacy
+lab/spells
+lab/solutions
+migrations
+.wrangler

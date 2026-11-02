@@ -33,9 +33,13 @@ export function readFromWorld(data: unknown): FromWorld | null {
     case "cast":
       return str(m.key, 120) ? { type: "cast", key: m.key as string } : null;
     case "error":
-      return str(m.key, 120) && str(m.name, 120) && typeof m.message === "string" ? { type: "error", key: m.key as string, name: m.name as string, message: m.message.slice(0, 400) } : null;
+      return str(m.key, 120) && str(m.name, 120) && typeof m.message === "string"
+        ? { type: "error", key: m.key as string, name: m.name as string, message: m.message.slice(0, 400) }
+        : null;
     case "perf":
-      return m.sample && typeof m.sample === "object" && JSON.stringify(m.sample).length < 2000 ? { type: "perf", sample: m.sample as Record<string, number> } : null;
+      return m.sample && typeof m.sample === "object" && JSON.stringify(m.sample).length < 2000
+        ? { type: "perf", sample: m.sample as Record<string, number> }
+        : null;
     case "objective":
       return str(m.id, 40) && typeof m.text === "string" && (m.status === "playing" || m.status === "won" || m.status === "lost")
         ? { type: "objective", id: m.id as string, text: m.text.slice(0, 200), status: m.status }

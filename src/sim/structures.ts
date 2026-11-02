@@ -162,7 +162,8 @@ export function tree(b: Builder, x: number, y: number, lift: number, o: TreeOpti
   const H = Math.max(4, Math.min(120, Math.round(o.height)));
   const base = b.top(x, y) + lift;
   const trunk = pickFrom(o.trunk);
-  const leafColor = () => (o.accent.length && Math.random() < o.accentShare ? o.accent[(Math.random() * o.accent.length) | 0] : o.leaves[(Math.random() * o.leaves.length) | 0]);
+  const leafColor = () =>
+    o.accent.length && Math.random() < o.accentShare ? o.accent[(Math.random() * o.accent.length) | 0] : o.leaves[(Math.random() * o.leaves.length) | 0];
   const t = H < 10 ? 1 : H < 22 ? 2 : H < 40 ? 3 : H < 70 ? 4 : 5;
   const half = (t - 1) / 2;
   const style = o.style;

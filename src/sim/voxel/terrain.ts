@@ -338,19 +338,19 @@ class Writer {
     // Corners a, b, c, d; triangles a b c and a c d.
     switch (dir) {
       case EAST:
-        v(X + 1, lo, Z), v(X + 1, hi, Z), v(X + 1, hi, Z + 1), v(X + 1, lo, Z), v(X + 1, hi, Z + 1), v(X + 1, lo, Z + 1);
+        (v(X + 1, lo, Z), v(X + 1, hi, Z), v(X + 1, hi, Z + 1), v(X + 1, lo, Z), v(X + 1, hi, Z + 1), v(X + 1, lo, Z + 1));
         break;
       case SOUTH:
-        v(X, lo, Z + 1), v(X + 1, lo, Z + 1), v(X + 1, hi, Z + 1), v(X, lo, Z + 1), v(X + 1, hi, Z + 1), v(X, hi, Z + 1);
+        (v(X, lo, Z + 1), v(X + 1, lo, Z + 1), v(X + 1, hi, Z + 1), v(X, lo, Z + 1), v(X + 1, hi, Z + 1), v(X, hi, Z + 1));
         break;
       case WEST:
-        v(X, lo, Z), v(X, lo, Z + 1), v(X, hi, Z + 1), v(X, lo, Z), v(X, hi, Z + 1), v(X, hi, Z);
+        (v(X, lo, Z), v(X, lo, Z + 1), v(X, hi, Z + 1), v(X, lo, Z), v(X, hi, Z + 1), v(X, hi, Z));
         break;
       case NORTH:
-        v(X, lo, Z), v(X, hi, Z), v(X + 1, hi, Z), v(X, lo, Z), v(X + 1, hi, Z), v(X + 1, lo, Z);
+        (v(X, lo, Z), v(X, hi, Z), v(X + 1, hi, Z), v(X, lo, Z), v(X + 1, hi, Z), v(X + 1, lo, Z));
         break;
       default:
-        v(X, hi, Z), v(X, hi, Z + 1), v(X + 1, hi, Z + 1), v(X, hi, Z), v(X + 1, hi, Z + 1), v(X + 1, hi, Z);
+        (v(X, hi, Z), v(X, hi, Z + 1), v(X + 1, hi, Z + 1), v(X, hi, Z), v(X + 1, hi, Z + 1), v(X + 1, hi, Z));
     }
   }
 

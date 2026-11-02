@@ -87,9 +87,7 @@ export class OracleError extends Error {}
 const FALLBACK_MODELS = new Set(["claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5"]);
 
 function fallbackFor(model: string) {
-  return FALLBACK_MODELS.has(model)
-    ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }
-    : {};
+  return FALLBACK_MODELS.has(model) ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {};
 }
 
 export class ClaudeOracle implements Oracle {
@@ -129,7 +127,15 @@ export class ClaudeOracle implements Oracle {
   }
 
   async merge(a: string, b: string): Promise<MergeAnswer> {
-    const text = await this.ask("merge", this.models.merge, this.models.mergeEffort, MERGE_SYSTEM, [{ role: "user", content: mergeUserMessage(a, b) }], MERGE_SCHEMA, 4000);
+    const text = await this.ask(
+      "merge",
+      this.models.merge,
+      this.models.mergeEffort,
+      MERGE_SYSTEM,
+      [{ role: "user", content: mergeUserMessage(a, b) }],
+      MERGE_SCHEMA,
+      4000,
+    );
     const { name, emoji, kind, tier } = parseJson(text) as Partial<MergeAnswer>;
     if (typeof name !== "string" || typeof emoji !== "string" || (kind !== "spell" && kind !== "artifact")) {
       throw new OracleError("The merge answer did not match the schema");
@@ -138,7 +144,15 @@ export class ClaudeOracle implements Oracle {
   }
 
   async describe(name: string, kind: ElementKind, recipe: [string, string] | null): Promise<string> {
-    const text = await this.ask("describe", this.models.describe, "low", DESCRIBE_SYSTEM, [{ role: "user", content: describeUserMessage(name, kind, recipe) }], null, 2000);
+    const text = await this.ask(
+      "describe",
+      this.models.describe,
+      "low",
+      DESCRIBE_SYSTEM,
+      [{ role: "user", content: describeUserMessage(name, kind, recipe) }],
+      null,
+      2000,
+    );
     return text.trim();
   }
 
@@ -286,14 +300,42 @@ export class MockOracle implements Oracle {
 }
 
 const MOCK_THEMES: { words: string[]; colors: [string, string]; impact: string }[] = [
-  { words: ["fire", "flame", "inferno", "burn", "blaze"], colors: ["#ff7a1a", "#ffd166"], impact: "w.explode(w.x, w.y, w.r * 0.4, 0.6); w.ignite(w.x, w.y, w.r, 0.4);" },
-  { words: ["lava", "magma", "volcan"], colors: ["#ff4d00", "#ffb03a"], impact: 'w.terraform(w.x, w.y, w.r * 0.5, 4); w.flood(w.x, w.y, w.r * 0.3, "lava", 1.5);' },
+  {
+    words: ["fire", "flame", "inferno", "burn", "blaze"],
+    colors: ["#ff7a1a", "#ffd166"],
+    impact: "w.explode(w.x, w.y, w.r * 0.4, 0.6); w.ignite(w.x, w.y, w.r, 0.4);",
+  },
+  {
+    words: ["lava", "magma", "volcan"],
+    colors: ["#ff4d00", "#ffb03a"],
+    impact: 'w.terraform(w.x, w.y, w.r * 0.5, 4); w.flood(w.x, w.y, w.r * 0.3, "lava", 1.5);',
+  },
   { words: ["water", "rain", "tide", "flood", "wave"], colors: ["#4cc9f0", "#a9def9"], impact: 'w.flood(w.x, w.y, w.r * 0.6, "water", 2);' },
-  { words: ["ice", "frost", "snow", "freeze", "cold"], colors: ["#bde0fe", "#ffffff"], impact: 'w.temperature(w.x, w.y, w.r, -80); w.paint(w.x, w.y, w.r, "snow", 0.6);' },
-  { words: ["earth", "stone", "rock", "quake"], colors: ["#8d6e63", "#d7ccc8"], impact: "for (let k = 0; k < 20; k++) { w.quake(w.x, w.y, w.r, 1); yield 0.1; }" },
-  { words: ["life", "grow", "nature", "forest", "heal"], colors: ["#80ed99", "#38b000"], impact: "w.grow(w.x, w.y, w.r, 0.8); for (const c of w.creatures(w.x, w.y, w.r)) c.heal(100);" },
-  { words: ["shadow", "dark", "night", "void"], colors: ["#3c096c", "#9d4edd"], impact: "w.darken(0.8, 5); for (const c of w.creatures(w.x, w.y, w.r)) c.status('fear', 5, w.x, w.y);" },
-  { words: [], colors: ["#b48cff", "#ffffff"], impact: "for (const c of w.creatures(w.x, w.y, w.r)) c.status('levitate', 4); w.shockwave(w.x, w.y, w.r, '#b48cff', 1, 1);" },
+  {
+    words: ["ice", "frost", "snow", "freeze", "cold"],
+    colors: ["#bde0fe", "#ffffff"],
+    impact: 'w.temperature(w.x, w.y, w.r, -80); w.paint(w.x, w.y, w.r, "snow", 0.6);',
+  },
+  {
+    words: ["earth", "stone", "rock", "quake"],
+    colors: ["#8d6e63", "#d7ccc8"],
+    impact: "for (let k = 0; k < 20; k++) { w.quake(w.x, w.y, w.r, 1); yield 0.1; }",
+  },
+  {
+    words: ["life", "grow", "nature", "forest", "heal"],
+    colors: ["#80ed99", "#38b000"],
+    impact: "w.grow(w.x, w.y, w.r, 0.8); for (const c of w.creatures(w.x, w.y, w.r)) c.heal(100);",
+  },
+  {
+    words: ["shadow", "dark", "night", "void"],
+    colors: ["#3c096c", "#9d4edd"],
+    impact: "w.darken(0.8, 5); for (const c of w.creatures(w.x, w.y, w.r)) c.status('fear', 5, w.x, w.y);",
+  },
+  {
+    words: [],
+    colors: ["#b48cff", "#ffffff"],
+    impact: "for (const c of w.creatures(w.x, w.y, w.r)) c.status('levitate', 4); w.shockwave(w.x, w.y, w.r, '#b48cff', 1, 1);",
+  },
 ];
 
 const MOCK_EMOJI = ["🌀", "⚡", "🌟", "❄️", "🌊", "🔥", "🌿", "💀", "🪄", "💎"];

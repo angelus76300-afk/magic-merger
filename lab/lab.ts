@@ -96,7 +96,9 @@ async function runSpell(code: string, options: LabOptions = {}) {
   const overlay = document.getElementById("overlay") as HTMLCanvasElement;
   const errors: string[] = [];
   current?.dispose();
-  const engine = Engine.create(canvas, overlay, options.size ?? "medium", { onError: (_k, _n, m) => errors.push(m), onTap: () => {} }, seed, { preserveDrawingBuffer: true });
+  const engine = Engine.create(canvas, overlay, options.size ?? "medium", { onError: (_k, _n, m) => errors.push(m), onTap: () => {} }, seed, {
+    preserveDrawingBuffer: true,
+  });
   current = engine;
   (window as unknown as { labEngine: Engine }).labEngine = engine;
   const world = engine.world;
@@ -152,7 +154,10 @@ async function runSpell(code: string, options: LabOptions = {}) {
 
 // Plays a challenge for some seconds, optionally casting spells at given
 // times and places, and reports how the objective evolved.
-async function runScenario(id: string, options: { seconds?: number; casts?: { t: number; x: number; y: number; code: string; tier: string }[]; shots?: number[] } = {}) {
+async function runScenario(
+  id: string,
+  options: { seconds?: number; casts?: { t: number; x: number; y: number; code: string; tier: string }[]; shots?: number[] } = {},
+) {
   seedRandom(5);
   const def = SCENARIOS.find((s) => s.id === id)!;
   const canvas = document.getElementById("world") as HTMLCanvasElement;
@@ -172,7 +177,8 @@ async function runScenario(id: string, options: { seconds?: number; casts?: { t:
   const ticks = Math.round((options.seconds ?? 60) / TICK);
   let status = "playing";
   for (let tick = 0; tick <= ticks; tick++) {
-    for (const c of options.casts ?? []) if (Math.round(c.t / TICK) === tick) engine.cast({ key: `lab${c.t}`, name: "Lab", tier: isTier(c.tier) ? c.tier : "major", code: c.code }, c.x, c.y);
+    for (const c of options.casts ?? [])
+      if (Math.round(c.t / TICK) === tick) engine.cast({ key: `lab${c.t}`, name: "Lab", tier: isTier(c.tier) ? c.tier : "major", code: c.code }, c.x, c.y);
     engine.step();
     run.tick(world);
     if (tick % 30 === 0 || shots.includes(tick)) {

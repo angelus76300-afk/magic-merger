@@ -115,7 +115,12 @@ export function openCard(store: Store, key: string, first = false): void {
 // "Written for API v3 by Haiku": tells the admin whether a rewrite could help.
 function writtenText(program: { version: number; model?: string } | undefined): string {
   if (!program) return "No program yet";
-  const by = program.model ? ` by ${program.model.replace(/^claude-/, "").replace(/-\d.*$/, "").replace(/^./, (c) => c.toUpperCase())}` : "";
+  const by = program.model
+    ? ` by ${program.model
+        .replace(/^claude-/, "")
+        .replace(/-\d.*$/, "")
+        .replace(/^./, (c) => c.toUpperCase())}`
+    : "";
   const age = program.version < PROGRAM_VERSION ? ` (current API is v${PROGRAM_VERSION})` : "";
   return `Written for API v${program.version}${by}${age}`;
 }

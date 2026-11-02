@@ -122,7 +122,9 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
     world.decor.set(key >>> 0, color % 0x8000000);
   }
   world.decorVersion++;
-  world.landmarks = Array.isArray(data.landmarks) ? data.landmarks.filter((l) => l && typeof l.x === "number" && typeof l.y === "number" && Array.isArray(l.lures) && Array.isArray(l.scares)).slice(0, 60) : [];
+  world.landmarks = Array.isArray(data.landmarks)
+    ? data.landmarks.filter((l) => l && typeof l.x === "number" && typeof l.y === "number" && Array.isArray(l.lures) && Array.isArray(l.scares)).slice(0, 60)
+    : [];
   world.wealth = typeof data.wealth === "number" && Number.isFinite(data.wealth) ? data.wealth : 0;
   for (const raw of data.creatures ?? []) {
     if (raw.kind && !KINDS.has(raw.kind)) raw.kind = "beast";

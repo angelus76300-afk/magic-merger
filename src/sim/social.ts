@@ -240,7 +240,8 @@ function take(world: World, c: Creature, p: Presence): void {
   const i = Math.round(p.y) * world.w + Math.round(p.x);
   if (i < 0 || i >= world.n) return;
   const custom = world.materials;
-  const name = (layer: "ground" | "cover" | "fluid") => custom.get(layer, layer === "ground" ? world.ground[i] : layer === "cover" ? world.cover[i] : world.fluid[i]).name;
+  const name = (layer: "ground" | "cover" | "fluid") =>
+    custom.get(layer, layer === "ground" ? world.ground[i] : layer === "cover" ? world.cover[i] : world.fluid[i]).name;
   const lureNames = new Set(world.lureMaterials.keys());
   if (lureNames.has(name("cover"))) world.setCover(i, C.NONE);
   else if (lureNames.has(name("ground"))) world.ground[i] = G.DIRT;

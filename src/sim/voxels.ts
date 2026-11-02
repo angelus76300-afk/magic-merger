@@ -216,7 +216,21 @@ function land(world: World): void {
       const y = Math.floor(i / world.w);
       if (world.cover[i] === C.HOUSE && n >= 2) world.setCover(i, C.RUBBLE);
       else if (world.cover[i] === C.TREE || world.cover[i] === C.BUSH || world.cover[i] === C.CROP) world.setCover(i, C.NONE);
-      if (Math.random() < 0.25) world.particles.add({ x: x + 0.5, y: y + 0.5, z: 0.5, vx: (Math.random() - 0.5) * 4, vy: (Math.random() - 0.5) * 4, vz: 3, life: 0.8, color: 0x9a8f80, size: 1.4, glow: false, gravity: 6, drag: 1 });
+      if (Math.random() < 0.25)
+        world.particles.add({
+          x: x + 0.5,
+          y: y + 0.5,
+          z: 0.5,
+          vx: (Math.random() - 0.5) * 4,
+          vy: (Math.random() - 0.5) * 4,
+          vz: 3,
+          life: 0.8,
+          color: 0x9a8f80,
+          size: 1.4,
+          glow: false,
+          gravity: 6,
+          drag: 1,
+        });
     }
     for (const c of world.creatures) {
       if (c.dead) continue;
@@ -244,7 +258,7 @@ function fireAndHeat(world: World, dt: number): void {
   const stride = Math.max(1, Math.ceil(decor.size / 3000));
   let k = 0;
   for (const [key, v] of decor) {
-    if (stride > 1 && k++ % stride !== (world.tick % stride)) continue;
+    if (stride > 1 && k++ % stride !== world.tick % stride) continue;
     const kind = voxelKind(v);
     if (kind !== VK.WOOD && kind !== VK.LEAF && kind !== VK.ICE) continue;
     const { x, y, level } = keyCell(key);
@@ -298,7 +312,21 @@ function fireAndHeat(world: World, dt: number): void {
       }
       if (level - top(world, x, y) <= 3) world.fire[i] = Math.max(world.fire[i], 0.5);
       world.temp[i] = Math.max(world.temp[i], 120);
-      if (Math.random() < 0.3) world.particles.add({ x: x + Math.random(), y: y + Math.random(), z: level - top(world, x, y) + 1, vx: world.wind.x, vy: world.wind.y, vz: 2 + Math.random() * 2, life: 0.5 + Math.random() * 0.4, color: Math.random() < 0.5 ? 0xffb347 : 0xff6a1a, size: 1.1, glow: true, gravity: -1, drag: 0.5 });
+      if (Math.random() < 0.3)
+        world.particles.add({
+          x: x + Math.random(),
+          y: y + Math.random(),
+          z: level - top(world, x, y) + 1,
+          vx: world.wind.x,
+          vy: world.wind.y,
+          vz: 2 + Math.random() * 2,
+          life: 0.5 + Math.random() * 0.4,
+          color: Math.random() < 0.5 ? 0xffb347 : 0xff6a1a,
+          size: 1.1,
+          glow: true,
+          gravity: -1,
+          drag: 0.5,
+        });
       if (Math.random() < 0.08) addGas(world, i, S.SMOKE, 0.3);
       // Embers drop from high fires and can light the ground below.
       if (Math.random() < 0.02) world.fire[i] = Math.max(world.fire[i], 0.4);

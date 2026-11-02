@@ -47,7 +47,7 @@ function ball(boxes: Box[], r: number, step: number, color: (x: number, y: numbe
         n++;
         if (d > 1 || (d > 0.75 && hash(n) < ragged)) continue;
         // Inside cubes are never seen.
-        if (d < 1 - step * 1.8 / r) continue;
+        if (d < 1 - (step * 1.8) / r) continue;
         boxes.push(cube(x, y, z, step, color(x, y, z, d)));
       }
     }
@@ -62,7 +62,10 @@ export function bodyBoxes(look: BodyLook, c1: number, c2: number): Box[] {
       for (let l = 0; l < 7; l++) {
         const r = 0.9 * (1 - l / 7) ** 0.8;
         const y = -0.8 + l * 0.32;
-        for (let x = -r; x <= r; x += 0.3) for (let z = -r; z <= r; z += 0.3) if (x * x + z * z <= r * r && hash(l * 31 + x * 7 + z * 13) > 0.15) boxes.push(cube(x, y, z, 0.3, mix(c2, c1, Math.min(1, l / 5 + Math.hypot(x, z) * 0.4))));
+        for (let x = -r; x <= r; x += 0.3)
+          for (let z = -r; z <= r; z += 0.3)
+            if (x * x + z * z <= r * r && hash(l * 31 + x * 7 + z * 13) > 0.15)
+              boxes.push(cube(x, y, z, 0.3, mix(c2, c1, Math.min(1, l / 5 + Math.hypot(x, z) * 0.4))));
       }
       break;
     }
@@ -96,7 +99,8 @@ export function bodyBoxes(look: BodyLook, c1: number, c2: number): Box[] {
       // A crystal: a tall diamond with a bright core.
       for (let l = -4; l <= 4; l++) {
         const r = 0.45 * (1 - Math.abs(l) / 5);
-        for (let x = -r; x <= r + 1e-6; x += 0.22) for (let z = -r; z <= r + 1e-6; z += 0.22) boxes.push(cube(x, l * 0.25, z, 0.22, Math.abs(x) + Math.abs(z) < 0.15 ? c2 : c1));
+        for (let x = -r; x <= r + 1e-6; x += 0.22)
+          for (let z = -r; z <= r + 1e-6; z += 0.22) boxes.push(cube(x, l * 0.25, z, 0.22, Math.abs(x) + Math.abs(z) < 0.15 ? c2 : c1));
       }
       break;
     }

@@ -55,7 +55,12 @@ export class WorldHost {
   // The challenge being played, if any.
   private challenge: string | null = null;
   private challengeDialog: HTMLDialogElement | null = null;
-  private filters = new FilterBar("mm-world-filters", { kind: "all", tier: "any", sort: "used", query: "" }, { search: true, sorts: ["used", "newest", "name", "power"] }, () => this.renderSpells());
+  private filters = new FilterBar(
+    "mm-world-filters",
+    { kind: "all", tier: "any", sort: "used", query: "" },
+    { search: true, sorts: ["used", "newest", "name", "power"] },
+    () => this.renderSpells(),
+  );
   private expanded = readFlag(EXPAND_KEY);
 
   constructor(

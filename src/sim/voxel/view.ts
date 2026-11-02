@@ -105,7 +105,12 @@ export class VoxelView {
     private world: World,
     options: { preserveDrawingBuffer?: boolean } = {},
   ) {
-    this.renderer = new WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance", preserveDrawingBuffer: !!options.preserveDrawingBuffer });
+    this.renderer = new WebGLRenderer({
+      canvas,
+      antialias: false,
+      powerPreference: "high-performance",
+      preserveDrawingBuffer: !!options.preserveDrawingBuffer,
+    });
     this.renderer.outputColorSpace = LinearSRGBColorSpace;
     this.pixelRatio = Math.min(2, window.devicePixelRatio || 1);
     this.renderer.setPixelRatio(this.pixelRatio);
@@ -123,7 +128,13 @@ export class VoxelView {
     this.decalTexture = new CanvasTexture(this.decal);
     const land = withDecal(new MeshBasicMaterial({ vertexColors: true }), this.decalTexture, world);
     const fluid = withDecal(new MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false }), this.decalTexture, world);
-    this.terrain = new Terrain(world, land, fluid, (m) => this.scene.add(m), (m) => this.scene.remove(m));
+    this.terrain = new Terrain(
+      world,
+      land,
+      fluid,
+      (m) => this.scene.add(m),
+      (m) => this.scene.remove(m),
+    );
 
     const basic = new MeshBasicMaterial({ vertexColors: true });
     for (const key of ["tree", "pine", "bush", "crop", "house", "rubble", "powder", "stump", "flower", "boulder", "block", "slab"]) {
@@ -148,7 +159,11 @@ export class VoxelView {
     this.decorGlow = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true }), 20000);
     this.windows = this.instanced("flame", new MeshBasicMaterial({ vertexColors: true }), 4096);
     this.boltCore = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true }), 3000);
-    this.boltHalo = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.35, blending: AdditiveBlending, depthWrite: false }), 3000);
+    this.boltHalo = this.instanced(
+      "puff",
+      new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.35, blending: AdditiveBlending, depthWrite: false }),
+      3000,
+    );
     this.lit = [land, fluid, basic, this.puffs.material as MeshBasicMaterial, this.clouds.material as MeshBasicMaterial];
   }
 
@@ -376,7 +391,19 @@ export class VoxelView {
     // Chimney smoke: a puff now and then from a random house.
     if (this.houseCells.length && Math.random() < Math.min(0.6, this.houseCells.length / 60)) {
       const i = this.houseCells[(Math.random() * this.houseCells.length) | 0];
-      this.world.particles.add({ x: (i % this.world.w) + 0.5, y: Math.floor(i / this.world.w) + 0.5, z: 1.4, vz: 1.2, vx: this.world.wind.x * 0.6, vy: this.world.wind.y * 0.6, life: 2.5, color: 0xd8d4cc, size: 1.6, drag: 0.4, gravity: -0.3 });
+      this.world.particles.add({
+        x: (i % this.world.w) + 0.5,
+        y: Math.floor(i / this.world.w) + 0.5,
+        z: 1.4,
+        vz: 1.2,
+        vx: this.world.wind.x * 0.6,
+        vy: this.world.wind.y * 0.6,
+        life: 2.5,
+        color: 0xd8d4cc,
+        size: 1.6,
+        drag: 0.4,
+        gravity: -0.3,
+      });
     }
   }
 
@@ -411,7 +438,7 @@ export class VoxelView {
       this.headMesh.setColorAt(n, this.col.setHex(c.fear > 0 && Math.floor(time * 4) % 2 === 0 ? 0xffe066 : c.sleep > 0 ? 0xa9c8ff : headColor));
       const mood = c.dead ? null : (c.data.mood as string | null | undefined);
       if (mood && marks < 900) {
-        const color = mood === "carry" ? ((c.data.carry as number | undefined) ?? 0xffd36a) : MOOD_COLORS[mood] ?? 0xffffff;
+        const color = mood === "carry" ? ((c.data.carry as number | undefined) ?? 0xffd36a) : (MOOD_COLORS[mood] ?? 0xffffff);
         const s = Math.max(0.22, size * 0.28) * (mood === "lured" || mood === "angry" ? 0.9 + 0.2 * Math.sin(time * 8 + c.id) : 1);
         this.m.makeScale(s, s, s);
         this.m.setPosition(p.x, p.y + bob + size * tall + head + s * 1.2, p.z);
@@ -499,7 +526,7 @@ export class VoxelView {
     };
     fill(this.glowPoints, true);
     fill(this.dullPoints, false);
-    const scale = this.renderer.getPixelRatio() * this.cssH * 0.5 / Math.tan((this.orbit.camera.fov * Math.PI) / 360);
+    const scale = (this.renderer.getPixelRatio() * this.cssH * 0.5) / Math.tan((this.orbit.camera.fov * Math.PI) / 360);
     (this.glowPoints.material as ShaderMaterial).uniforms.scale.value = scale;
     (this.dullPoints.material as ShaderMaterial).uniforms.scale.value = scale;
   }
@@ -555,11 +582,17 @@ export class VoxelView {
       const mote = new BoxGeometry(0.16, 0.16, 0.16);
       for (let k = 0; k < 16; k++) group.add(new Mesh(mote, new MeshBasicMaterial({ color: k % 3 ? b.color : b.color2 })));
     } else {
-      const mat = new MeshBasicMaterial({ vertexColors: true, transparent: b.look === "cloud" || b.look === "vortex", opacity: b.look === "cloud" ? 0.88 : b.look === "vortex" ? 0.8 : 1 });
+      const mat = new MeshBasicMaterial({
+        vertexColors: true,
+        transparent: b.look === "cloud" || b.look === "vortex",
+        opacity: b.look === "cloud" ? 0.88 : b.look === "vortex" ? 0.8 : 1,
+      });
       group.add(new Mesh(bodyGeometry(b.look, b.color, b.color2), mat));
     }
     if (b.glow) {
-      const glow = new Sprite(new SpriteMaterial({ map: this.glowTexture, color, blending: AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.7 }));
+      const glow = new Sprite(
+        new SpriteMaterial({ map: this.glowTexture, color, blending: AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.7 }),
+      );
       glow.scale.setScalar(b.look === "cloud" ? 2.5 : 3.2);
       group.add(glow);
     }
@@ -608,7 +641,10 @@ export class VoxelView {
 
   private placeRingsAndLights(visuals: Visuals): void {
     while (this.rings.length < visuals.shockwaves.length) {
-      const ring = new Mesh(new RingGeometry(0.92, 1, 64), new MeshBasicMaterial({ transparent: true, blending: AdditiveBlending, side: DoubleSide, depthWrite: false }));
+      const ring = new Mesh(
+        new RingGeometry(0.92, 1, 64),
+        new MeshBasicMaterial({ transparent: true, blending: AdditiveBlending, side: DoubleSide, depthWrite: false }),
+      );
       ring.rotation.x = -Math.PI / 2;
       this.rings.push(ring);
       this.scene.add(ring);
@@ -882,5 +918,7 @@ function withColors(mesh: InstancedMesh): void {
 }
 
 function scaleHex(c: number, k: number): number {
-  return (Math.min(255, Math.round(((c >> 16) & 255) * k)) << 16) | (Math.min(255, Math.round(((c >> 8) & 255) * k)) << 8) | Math.min(255, Math.round((c & 255) * k));
+  return (
+    (Math.min(255, Math.round(((c >> 16) & 255) * k)) << 16) | (Math.min(255, Math.round(((c >> 8) & 255) * k)) << 8) | Math.min(255, Math.round((c & 255) * k))
+  );
 }

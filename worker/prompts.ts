@@ -65,11 +65,7 @@ For an artifact: say what it is, what it looks like and what mages use it for. D
 
 Write vivid plain prose. No lists, no headings, no quotation marks around the name, nothing unsuitable for all ages.`;
 
-export function describeUserMessage(
-  name: string,
-  kind: string,
-  recipe: [string, string] | null,
-): string {
+export function describeUserMessage(name: string, kind: string, recipe: [string, string] | null): string {
   const origin = recipe ? ` It is made from ${recipe[0]} and ${recipe[1]}.` : " It is one of the primal forces.";
   const article = kind === "artifact" ? "an" : "a";
   return `Write the entry for ${name}, ${article} ${kind}.${origin}`;

@@ -358,12 +358,13 @@ export function buildVillage(world: World, cx: number, cy: number, rng: Rng): vo
     }
   }
   // A dirt square in the middle.
-  for (let y = cy - 2; y <= cy + 2; y++) for (let x = cx - 2; x <= cx + 2; x++) {
-    const i = y * w + x;
-    flatten(x, y);
-    world.ground[i] = G.DIRT;
-    world.setCover(i, C.NONE);
-  }
+  for (let y = cy - 2; y <= cy + 2; y++)
+    for (let x = cx - 2; x <= cx + 2; x++) {
+      const i = y * w + x;
+      flatten(x, y);
+      world.ground[i] = G.DIRT;
+      world.setCover(i, C.NONE);
+    }
   // Fields in a ring outside the houses.
   for (let k = 0; k < 4; k++) {
     const a = rng.range(0, Math.PI * 2);

@@ -123,7 +123,8 @@ export class FilterBar {
   }
 
   private sync(): void {
-    for (const b of this.el.querySelectorAll<HTMLButtonElement>(".filter-kinds button")) b.setAttribute("aria-pressed", String(b.dataset.kind === this.state.kind));
+    for (const b of this.el.querySelectorAll<HTMLButtonElement>(".filter-kinds button"))
+      b.setAttribute("aria-pressed", String(b.dataset.kind === this.state.kind));
     (this.el.querySelector(".filter-tier") as HTMLSelectElement).value = this.state.tier;
     (this.el.querySelector(".filter-sort") as HTMLSelectElement).value = this.state.sort;
   }

@@ -28,7 +28,7 @@ const KEYS: { at: number; tint: [number, number, number]; night: number; top: nu
 
 export function daylight(time: number): Daylight {
   // Worlds start in the morning, not at the edge of night.
-  const f = (((time + DAY_LENGTH * 0.1) % DAY_LENGTH) + DAY_LENGTH) % DAY_LENGTH / DAY_LENGTH;
+  const f = ((((time + DAY_LENGTH * 0.1) % DAY_LENGTH) + DAY_LENGTH) % DAY_LENGTH) / DAY_LENGTH;
   let k = 0;
   while (k < KEYS.length - 2 && KEYS[k + 1].at <= f) k++;
   const a = KEYS[k];
