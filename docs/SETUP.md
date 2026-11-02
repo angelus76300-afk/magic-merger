@@ -70,6 +70,38 @@ MM_URL=https://magic-merger.<your-subdomain>.workers.dev MM_TOKEN=<ADMIN_TOKEN> 
 
 Or let GitHub do it every night: add the repository secrets `MM_URL` and `MM_TOKEN` (Settings > Secrets and variables > Actions) and the `Judge` workflow runs at 04:17 UTC, or by hand from the Actions tab. Without the secrets it does nothing. `GET /api/admin/judge-stats` says how well the judge agrees with votes.
 
+### Feedback (3.4.1)
+
+The Ideas tab works with nothing to set up: invited players post ideas and vote for them, and the admin can decline, reopen or delete one. **Send to Claude** needs three secrets more. The flow and the rules Claude follows are in [FEEDBACK.md](FEEDBACK.md).
+
+1. **The routine** (a Pro, Max, Team or Enterprise plan with Claude Code on the web). At https://claude.ai/code/routines, create one named "Magic Merger feedback" with the repository `angelus76300-afk/magic-merger` and, as its instructions, the prompt in FEEDBACK.md ("The routine's saved prompt"). Pick the model the features deserve. In **Connectors**, remove every connector: they are all included by default, with write access, and this routine needs none. Under **Select a trigger** choose **API**, then **Create**: copy the token at once (it is shown once) and the URL.
+2. **A GitHub token** for the Worker: https://github.com/settings/personal-access-tokens/new, fine-grained, **Only select repositories** with this one, permissions **Issues: read and write** and **Pull requests: read**. Nothing else. Put a reminder in your calendar for its expiry.
+3. **The secrets:**
+
+```bash
+npx wrangler secret put GITHUB_TOKEN
+```
+
+```bash
+npx wrangler secret put ROUTINE_URL
+```
+
+```bash
+npx wrangler secret put ROUTINE_TOKEN
+```
+
+4. `npm run deploy` (it applies migration 0007). `GITHUB_REPO` is already in `wrangler.jsonc`; a fork sets its own.
+
+Until all of it is set, the admin box at the top of the Ideas tab names what is missing. Locally, the same names go in `.dev.vars`.
+
+Things to know:
+
+1. Each run is a Claude Code cloud session on your plan and counts against its usage, not against `BUDGET_USD`. A routine accepts 30 fires an hour; past that the Worker says so and nothing changes.
+2. The run works on GitHub as you, on a `claude/` branch. If you want `main` to refuse its pushes even by mistake, add a ruleset on `main` that requires a pull request with no bypass: a rule your own access can bypass does not stop a run.
+3. The issue is public if the repository is. It holds the brief and the idea's text, never the player's name.
+4. Statuses follow GitHub every ten minutes (the cron); **Check GitHub now** in the admin box reads it at once. The pull request must say `Closes #<issue>` for the game to find it; the routine's rules ask for it.
+5. The routine API is experimental. If it changes, Send to Claude shows the error it returns and the rest of the tab keeps working.
+
 ### Frame HUD
 
 A long press on the title shows a small panel in the World: frame time p50 and p95, simulation and draw milliseconds, draw calls, triangles, pixel density, voxels, creatures and the boxes drawn for them (3.5), and frames skipped because nothing changed. While it is on, a summary is sent every 30 seconds to `/api/perf` (kept 30 days); the admin reads them back with `GET /api/perf`. A long press again hides it.
