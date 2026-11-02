@@ -1,36 +1,23 @@
-// Spell Lab: casts one spell spec on a fixed world and reports what it did.
+// Spell Lab: casts one spell program on a fixed world and reports what it did.
 // Dev only. scripts/spell-lab.mjs loads this page in a headless browser, calls
-// window.runSpell, and saves the frames and numbers, so a spell design can be
-// judged by what it does in the world instead of by its JSON.
-import { SCALE_RADIUS, sanitizeSpellSpec, type Scale } from "../shared/spell";
-import { MATERIALS } from "../src/world/materials";
-import { Renderer } from "../src/world/render";
-import { TICK, World } from "../src/world/world";
+// window.runSpell, and saves the frames and numbers, so a spell can be judged
+// by what it does in the world, not by its code.
+import { TIERS, isTier, type Tier } from "../shared/tiers";
+import { C } from "../src/sim/materials";
+import { Engine, type WorldSize } from "../src/sim/engine";
+import { LAYERS } from "../src/sim/materials";
+import { TICK, type World } from "../src/sim/world";
 
 interface LabOptions {
-  maxScale?: Scale;
-  width?: number;
-  height?: number;
+  tier?: Tier;
+  size?: WorldSize;
   seed?: number;
-  // Seconds after the start of the cast at which to capture a frame.
+  // Seconds after the cast at which to capture a frame.
   shots?: number[];
-  // Seconds to keep simulating after the cast ends, to see what the world does with it.
+  // Seconds simulated after the last shot.
   settle?: number;
 }
 
-interface CreatureTally {
-  alive: number;
-  dead: number;
-  burning: number;
-  frozen: number;
-  asleep: number;
-  afraid: number;
-  levitating: number;
-  calm: number;
-  byType: Record<string, number>;
-}
-
-// Math.random drives creatures, particles and effects; seeding it makes runs comparable.
 function seedRandom(seed: number): void {
   let a = seed >>> 0;
   Math.random = () => {
@@ -42,29 +29,37 @@ function seedRandom(seed: number): void {
   };
 }
 
-function materials(world: World): Record<string, number> {
-  const counts: Record<string, number> = {};
-  for (const m of world.grid.mat) counts[MATERIALS[m].name] = (counts[MATERIALS[m].name] ?? 0) + 1;
-  return counts;
+function census(world: World): Record<string, number> {
+  const out: Record<string, number> = {};
+  const arrays = { ground: world.ground, fluid: world.fluid, cover: world.cover };
+  for (const layer of LAYERS) {
+    if (layer === "gas") continue;
+    const arr = arrays[layer];
+    for (let i = 0; i < world.n; i++) {
+      if (layer !== "ground" && arr[i] === 0) continue;
+      const name = `${layer}:${world.materials.get(layer, arr[i]).name}`;
+      out[name] = (out[name] ?? 0) + 1;
+    }
+  }
+  let fire = 0;
+  for (let i = 0; i < world.n; i++) if (world.fire[i] > 0.1) fire++;
+  out.burning = fire;
+  return out;
 }
 
-function tally(world: World): CreatureTally {
-  const t: CreatureTally = { alive: 0, dead: 0, burning: 0, frozen: 0, asleep: 0, afraid: 0, levitating: 0, calm: 0, byType: {} };
-  for (const c of world.creatures) {
-    if (c.dead) {
-      t.dead++;
-      continue;
-    }
-    t.alive++;
-    t.byType[c.type] = (t.byType[c.type] ?? 0) + 1;
-    if (c.burning > 0) t.burning++;
-    if (c.frozen > 0) t.frozen++;
-    if (c.sleep > 0) t.asleep++;
-    if (c.fear > 0) t.afraid++;
-    if (c.levitate > 0) t.levitating++;
-    if (c.calm > 0) t.calm++;
-  }
-  return t;
+function creatures(world: World) {
+  const alive = world.creatures.filter((c) => !c.dead);
+  const count = (f: (c: World["creatures"][number]) => boolean) => alive.filter(f).length;
+  return {
+    alive: alive.length,
+    dead: world.creatures.length - alive.length,
+    burning: count((c) => c.burning > 0),
+    frozen: count((c) => c.frozen > 0),
+    afraid: count((c) => c.fear > 0),
+    asleep: count((c) => c.sleep > 0),
+    flying: count((c) => c.z > 1),
+    kinds: [...new Set(alive.map((c) => c.kind))].join(","),
+  };
 }
 
 function diff(a: Record<string, number>, b: Record<string, number>): Record<string, number> {
@@ -76,56 +71,52 @@ function diff(a: Record<string, number>, b: Record<string, number>): Record<stri
   return out;
 }
 
-async function runSpell(raw: unknown, options: LabOptions = {}) {
-  const width = options.width ?? 200;
-  const height = options.height ?? 120;
-  const seed = options.seed ?? 7;
+async function runSpell(code: string, options: LabOptions = {}) {
+  const seed = options.seed ?? 11;
   seedRandom(seed);
-  const world = World.create(width, height, seed);
-  // A crowd near the target, so effects on creatures are visible.
-  const cx = Math.round(width / 2);
-  for (let i = 0; i < 6; i++) world.spawn("villager", cx - 12 + i * 5);
-  world.spawn("beast", cx + 4);
-  for (let i = 0; i < 60; i++) world.step();
-
-  const spec = sanitizeSpellSpec(raw, options.maxScale ?? "cataclysmic");
-  const cy = world.grid.groundY(cx) - 1;
   const canvas = document.getElementById("world") as HTMLCanvasElement;
-  const renderer = new Renderer(canvas, width, height);
+  const errors: string[] = [];
+  let engine!: Engine;
+  engine = Engine.create(canvas, options.size ?? "medium", { onError: (_k, _n, m) => errors.push(m), onTap: () => {} }, seed);
+  const world = engine.world;
+  // Let rivers settle before casting.
+  for (let k = 0; k < 90; k++) engine.step();
 
-  const before = materials(world);
-  const creaturesBefore = tally(world);
-  world.cast(spec, cx, cy);
-  const cast = world.casts[0];
-  const castEnd = (cast as unknown as { end: number }).end;
-  const releaseAt = (cast as unknown as { releaseAt: number }).releaseAt;
-
-  const shots = (options.shots ?? [releaseAt * 0.6, releaseAt + 0.15, releaseAt + 1, castEnd]).map((s) => Math.round(s / TICK));
-  const settle = options.settle ?? 4;
-  const totalTicks = Math.round((castEnd + settle) / TICK);
-  const frames: { t: number; png: string }[] = [];
-  let peakParticles = 0;
-  let atRelease: CreatureTally | null = null;
-  for (let tick = 0; tick <= totalTicks; tick++) {
-    if (shots.includes(tick) || tick === totalTicks) {
-      renderer.draw(world);
-      frames.push({ t: +(tick * TICK).toFixed(2), png: canvas.toDataURL("image/png") });
-    }
-    if (tick === Math.round((releaseAt + 1) / TICK)) atRelease = tally(world);
-    world.step();
-    if (tick % 5 === 0) {
-      let alive = 0;
-      for (const life of world.particles.life) if (life > 0) alive++;
-      peakParticles = Math.max(peakParticles, alive);
+  // Aim at the edge of a village, where there are people, houses and trees.
+  let target = { x: world.w / 2, y: world.h / 2 };
+  for (let i = 0; i < world.n; i++) {
+    if (world.cover[i] === C.HOUSE) {
+      target = { x: (i % world.w) + 6, y: Math.floor(i / world.w) + 6 };
+      break;
     }
   }
+  engine.camera.x = target.x;
+  engine.camera.y = target.y;
+  const tier = isTier(options.tier) ? options.tier : TIERS[2];
+  const before = census(world);
+  const creaturesBefore = creatures(world);
+  const started = performance.now();
+  const ok = engine.cast({ key: "lab", name: "Lab", tier, code }, target.x, target.y);
+  const shots = (options.shots ?? [0.5, 1.5, 3, 6]).map((s) => Math.round(s / TICK));
+  const last = Math.max(...shots) + Math.round((options.settle ?? 2) / TICK);
+  const frames: { t: number; png: string }[] = [];
+  let worst = 0;
+  for (let tick = 0; tick <= last; tick++) {
+    const t0 = performance.now();
+    engine.step();
+    worst = Math.max(worst, performance.now() - t0);
+    engine.render(TICK);
+    if (shots.includes(tick)) frames.push({ t: +(tick * TICK).toFixed(2), png: canvas.toDataURL("image/png") });
+  }
   return {
-    spec,
-    timing: { releaseAt: +releaseAt.toFixed(2), castEnd: +castEnd.toFixed(2) },
-    radius: SCALE_RADIUS[spec.scale],
-    peakParticles,
-    terrainChange: diff(before, materials(world)),
-    creatures: { before: creaturesBefore, oneSecondAfterRelease: atRelease, end: tally(world) },
+    ok,
+    errors: [...new Set(errors)],
+    tier,
+    target,
+    msTotal: Math.round(performance.now() - started),
+    worstTickMs: +worst.toFixed(1),
+    terrain: diff(before, census(world)),
+    creatures: { before: creaturesBefore, after: creatures(world) },
     frames,
   };
 }

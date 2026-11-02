@@ -25,7 +25,8 @@
     "MERGE_MODEL": "claude-opus-5-5",
     "DESCRIBE_MODEL": "claude-haiku-5-5",
     "SPELL_MODEL": "claude-opus-5-5",
-    "SPELL_EFFORT": "high"
+    "SPELL_EFFORT": "high",
+    "BUDGET_USD": "20"
   },
   "observability": { "enabled": true }
 }

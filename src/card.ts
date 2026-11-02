@@ -1,3 +1,4 @@
+import { TIER_LABEL, tierFromDepth } from "../shared/tiers";
 import * as api from "./api";
 import { session } from "./session";
 import type { Store } from "./store";
@@ -34,14 +35,15 @@ export function openCard(store: Store, key: string): void {
   const kind = d.querySelector<HTMLElement>(".card-kind")!;
   kind.textContent = element.kind;
   kind.dataset.kind = element.kind;
-  d.querySelector(".card-depth")!.textContent = element.depth === 0 ? "Primal force" : `Depth ${element.depth}`;
+  const tier = TIER_LABEL[element.tier ?? tierFromDepth(element.depth)];
+  d.querySelector(".card-depth")!.textContent = element.depth === 0 ? `Primal force · ${tier}` : `${tier} · depth ${element.depth}`;
   d.querySelector(".card-recipe")!.textContent = recipe ? `${recipe[0]} + ${recipe[1]}` : "One of the eight primal forces";
 
   const isSpell = element.kind === "spell";
   const summary = d.querySelector<HTMLElement>(".card-summary")!;
-  const spec = store.spell(key);
-  summary.hidden = !isSpell || !spec?.summary;
-  summary.textContent = spec ? `${spec.summary} (${spec.scale})` : "";
+  const program = store.spell(key);
+  summary.hidden = !isSpell || !program?.summary;
+  summary.textContent = program?.summary ?? "";
 
   const cast = d.querySelector<HTMLButtonElement>(".card-cast")!;
   cast.hidden = !isSpell;
@@ -87,7 +89,7 @@ export function openCard(store: Store, key: string): void {
       const fresh = store.spell(key);
       if (serial === openSerial && fresh) {
         summary.hidden = false;
-        summary.textContent = `${fresh.summary} (${fresh.scale})`;
+        summary.textContent = fresh.summary;
       }
       toast(`${element.name} was redesigned`);
     } finally {

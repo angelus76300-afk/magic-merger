@@ -5,7 +5,7 @@ import { Craft } from "./craft";
 import { session } from "./session";
 import { Store } from "./store";
 import { toast } from "./toast";
-import { WorldView } from "./world/view";
+import { WorldHost } from "./worldhost";
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
@@ -21,9 +21,8 @@ const craft = new Craft(
 craft.init();
 $("#clear").addEventListener("click", () => craft.clearBoard());
 
-const world = new WorldView(store, {
+const world = new WorldHost(store, {
   stage: $("#world-stage"),
-  canvas: $<HTMLCanvasElement>("#world-canvas"),
   status: $("#world-status"),
   list: $("#spell-list"),
   add: $<HTMLButtonElement>("#world-add"),
@@ -50,11 +49,6 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
 
 world.init();
 
-// A spell is designed the first time anyone needs it, which takes 10 to 15
-// seconds. Starting as soon as it is discovered means it is usually ready by
-// the time the player opens the World tab. Each spell is designed once for
-// everyone, for about 3 cents, so this costs little and removes the longest wait.
-craft.onNewSpell = (key) => void world.prepare(key, false, true);
 
 setCardActions({
   cast: (key) => {

@@ -1,0 +1,12 @@
+# The World runs Claude's spell code. Its page gets no network at all and can
+# only load scripts from this site. It is also loaded in a sandboxed iframe
+# without allow-same-origin, so it cannot read the game page or its storage.
+/world
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; worker-src 'none'; frame-ancestors 'self'
+/world.html
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; worker-src 'none'; frame-ancestors 'self'
+
+# The sandboxed iframe has an opaque origin, so its module scripts are cross
+# origin requests: allow them. These files are public anyway.
+/assets/*
+  Access-Control-Allow-Origin: *

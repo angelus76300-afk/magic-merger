@@ -1,5 +1,6 @@
 // Types shared by the browser and the Worker.
-import type { SpellSpec } from "./spell";
+import type { SpellProgram } from "./spellcode";
+import type { Tier } from "./tiers";
 
 // A spell can be cast in the World tab. An artifact is anything magical that
 // cannot be cast: an object, material, creature, place, person or idea.
@@ -11,6 +12,8 @@ export interface GameElement {
   kind: ElementKind;
   // Number of merges between this element and the primitives. Primitives are 0.
   depth: number;
+  // How powerful it is, chosen once at merge time. Older elements may lack it.
+  tier?: Tier;
 }
 
 export interface MergeRequest {
@@ -46,8 +49,15 @@ export interface SpellRequest {
 
 export interface SpellResponse {
   name: string;
-  spec: SpellSpec;
+  tier: Tier;
+  program: SpellProgram;
   mock: boolean;
+}
+
+// The program crashed in the World: ask Claude to fix it.
+export interface RepairRequest {
+  name: string;
+  error: string;
 }
 
 export interface HealthResponse {
