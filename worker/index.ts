@@ -1,5 +1,5 @@
 import { PRIMITIVES, elementKey, pairKey } from "../shared/elements";
-import type { SpellProgram } from "../shared/spellcode";
+import { PROGRAM_VERSION, type SpellProgram } from "../shared/spellcode";
 import { TIERS, capTier, isTier, tierFromDepth, type Tier } from "../shared/tiers";
 import type {
   DescribeRequest,
@@ -235,7 +235,7 @@ async function handleSpell(body: SpellRequest, env: Env, oracle: Oracle, admin: 
   const writer = model === env.SPELL_MODEL || oracle.mock ? oracle : oracleFor(env, model, body.effort);
   try {
     const answer = await writer.spell({ name: element.name, kind: element.kind, description, recipe: await firstRecipe(env.DB, key), tier });
-    const program: SpellProgram = { version: 2, summary: answer.summary, code: answer.code };
+    const program: SpellProgram = { version: PROGRAM_VERSION, summary: answer.summary, code: answer.code };
     if (!oracle.mock) await storeProgram(env, key, program, 0, model);
     return { name: element.name, tier, program, mock: oracle.mock };
   } finally {
@@ -248,7 +248,7 @@ async function handleRepair(body: RepairRequest, env: Env, oracle: Oracle, admin
   const key = elementKey(element.name);
   const error = typeof body.error === "string" ? body.error.slice(0, 500) : "";
   if (!error) throw new HttpError(400, "A repair needs the error");
-  const row = await env.DB.prepare("SELECT spec, repairs FROM spells WHERE key = ? AND version = 2").bind(key).first<{ spec: string; repairs: number }>();
+  const row = await env.DB.prepare("SELECT spec, repairs FROM spells WHERE key = ? AND version = ?").bind(key, PROGRAM_VERSION).first<{ spec: string; repairs: number }>();
   if (!row) throw new HttpError(404, "There is no program to repair");
   if (row.repairs >= MAX_REPAIRS && !admin) throw new HttpError(429, `${element.name} has been mended too often; ask the admin for a new spell`);
   const tier = await ensureTier(env, oracle, element);
@@ -258,7 +258,7 @@ async function handleRepair(body: RepairRequest, env: Env, oracle: Oracle, admin
   const writer = model === env.SPELL_MODEL || oracle.mock ? oracle : oracleFor(env, model);
   try {
     const answer = await writer.repair(element.name, tier, stored.code, error);
-    const program: SpellProgram = { version: 2, summary: answer.summary || stored.summary, code: answer.code };
+    const program: SpellProgram = { version: PROGRAM_VERSION, summary: answer.summary || stored.summary, code: answer.code };
     if (!oracle.mock) await storeProgram(env, key, program, row.repairs + 1, model);
     return { name: element.name, tier, program, mock: oracle.mock };
   } finally {
@@ -267,7 +267,7 @@ async function handleRepair(body: RepairRequest, env: Env, oracle: Oracle, admin
 }
 
 async function storedProgram(db: D1Database, key: string): Promise<SpellProgram | null> {
-  const row = await db.prepare("SELECT spec FROM spells WHERE key = ? AND version = 2").bind(key).first<{ spec: string }>();
+  const row = await db.prepare("SELECT spec FROM spells WHERE key = ? AND version = ?").bind(key, PROGRAM_VERSION).first<{ spec: string }>();
   if (!row) return null;
   try {
     const program = JSON.parse(row.spec) as SpellProgram;
@@ -279,11 +279,11 @@ async function storedProgram(db: D1Database, key: string): Promise<SpellProgram 
 
 async function storeProgram(env: Env, key: string, program: SpellProgram, repairs: number, model?: string): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO spells (key, spec, model, version, repairs, created_at) VALUES (?, ?, ?, 2, ?, ?)
-     ON CONFLICT (key) DO UPDATE SET spec = excluded.spec, model = excluded.model, version = 2,
+    `INSERT INTO spells (key, spec, model, version, repairs, created_at) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (key) DO UPDATE SET spec = excluded.spec, model = excluded.model, version = excluded.version,
        repairs = excluded.repairs, created_at = excluded.created_at`,
   )
-    .bind(key, JSON.stringify(program), model ?? env.SPELL_MODEL, repairs, Date.now())
+    .bind(key, JSON.stringify(program), model ?? env.SPELL_MODEL, PROGRAM_VERSION, repairs, Date.now())
     .run();
 }
 

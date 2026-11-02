@@ -131,7 +131,10 @@ export class World {
     if (!this.inside(Math.round(x), Math.round(y)) || level < -60 || level > 380) return;
     const key = this.decorKey(x, y, level);
     if (color === null) {
-      if (this.decor.delete(key)) this.decorVersion++;
+      if (this.decor.delete(key)) {
+        this.decorVersion++;
+        this.voxels.removals++;
+      }
     } else if (this.decor.has(key) || this.decor.size < World.MAX_DECOR) {
       this.decor.set(key, packVoxel(color, kind));
       this.voxels.burning.delete(key);
@@ -148,6 +151,7 @@ export class World {
       if ((cx - x) ** 2 + (cy - y) ** 2 <= r * r) this.decor.delete(key);
     }
     this.decorVersion++;
+    this.voxels.removals++;
   }
 
   layerName(layer: Layer, id: number): string {

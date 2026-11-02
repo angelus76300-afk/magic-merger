@@ -63,16 +63,26 @@ export class Builder {
     }
   }
 
-  // An ellipsoid of leaves or rock, solid inside, ragged at the edge.
+  // An ellipsoid of leaves or rock, ragged at the edge. Big ones are a thick
+  // shell with a cross through the middle that ties it to whatever reaches the
+  // center: the inside is never seen, and voxels are counted.
   blob(cx: number, cy: number, cl: number, r: number, squash: number, color: () => number, kind: number, ragged = 0.35): void {
     const rv = Math.max(1, r * squash);
+    const hollow = r > 3.5 && rv > 2.5;
+    // Points with d below this are inside the shell.
+    const inner = hollow ? (1 - (r > 7 ? 1.5 : 2.2) / Math.min(r, rv)) ** 2 : -1;
+    const rcx = Math.round(cx);
+    const rcy = Math.round(cy);
+    const rcl = Math.round(cl);
     for (let dl = -Math.ceil(rv); dl <= Math.ceil(rv); dl++) {
       for (let dy = -Math.ceil(r); dy <= Math.ceil(r); dy++) {
         for (let dx = -Math.ceil(r); dx <= Math.ceil(r); dx++) {
           const d = (dx * dx + dy * dy) / (r * r) + (dl * dl) / (rv * rv);
           if (d > 1) continue;
+          const axis = (dx === 0 && dy === 0) || (dx === 0 && dl === 0) || (dy === 0 && dl === 0);
+          if (d < inner && !axis) continue;
           if (d > 0.7 && Math.random() < ragged) continue;
-          this.put(cx + dx, cy + dy, cl + dl, color(), kind);
+          this.put(rcx + dx, rcy + dy, rcl + dl, color(), kind);
         }
       }
     }
@@ -235,7 +245,10 @@ export function tree(b: Builder, x: number, y: number, lift: number, o: TreeOpti
       }
       const tips: { x: number; y: number; l: number; r: number }[] = [];
       const branches = style === "birch" ? 2 : giant ? 7 : H < 10 ? 2 : 4 + Math.round(Math.random() * 2);
-      const crownR = style === "birch" ? Math.max(2, H * 0.16) : Math.max(2, H * (giant ? 0.2 : 0.26));
+      // Crowns widen with height, then more slowly past 40 voxels: a world tree
+      // must still fit in the world's voxel budget.
+      const reach = H <= 40 ? H : 40 + (H - 40) * 0.5;
+      const crownR = style === "birch" ? Math.max(2, reach * 0.16) : Math.max(2, reach * (giant ? 0.2 : 0.26));
       for (let k = 0; k < branches; k++) {
         const a = (k / branches) * Math.PI * 2 + Math.random() * 0.6;
         const from = base + Math.round(crownH * (0.5 + 0.4 * Math.random()));

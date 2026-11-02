@@ -4,8 +4,13 @@ import { parse } from "acorn";
 // loop gets a counter so a loop that never ends throws instead of freezing the
 // page. The Worker uses the same parser to reject code that does not parse.
 
+// Bumped when the World API changes enough that old programs should be
+// written again: 3 brought typed voxels, the structure kit, lightning and
+// declared rules.
+export const PROGRAM_VERSION = 3;
+
 export interface SpellProgram {
-  version: 2;
+  version: typeof PROGRAM_VERSION;
   summary: string;
   code: string;
 }

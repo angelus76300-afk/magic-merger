@@ -1,5 +1,5 @@
 import { PRIMITIVES, elementKey } from "../shared/elements";
-import type { SpellProgram } from "../shared/spellcode";
+import { PROGRAM_VERSION, type SpellProgram } from "../shared/spellcode";
 import type { GameElement } from "../shared/types";
 
 export interface Discovery {
@@ -78,7 +78,7 @@ export class Store {
 
   spell(key: string): SpellProgram | undefined {
     const program = this.data.spells?.[key];
-    return program?.version === 2 && typeof program.code === "string" ? program : undefined;
+    return program?.version === PROGRAM_VERSION && typeof program.code === "string" ? program : undefined;
   }
 
   setSpell(key: string, program: SpellProgram): void {

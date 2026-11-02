@@ -2,6 +2,7 @@ import { elementKey } from "../shared/elements";
 import { TIERS, tierFromDepth, type Tier } from "../shared/tiers";
 import * as api from "./api";
 import { chipElement } from "./craft";
+import { FilterBar, applyFilters, lastUsed, markUsed } from "./filters";
 import type { FromWorld, ToWorld } from "./sim/protocol";
 import { SCENARIO_LIST } from "./sim/scenario-list";
 import type { CastRequest } from "./sim/runtime";
@@ -26,6 +27,8 @@ export interface WorldElements {
   challenges: HTMLButtonElement;
   status: HTMLElement;
   list: HTMLElement;
+  bar: HTMLElement;
+  tools: HTMLElement;
   add: HTMLButtonElement;
   reset: HTMLButtonElement;
   size: HTMLSelectElement;
@@ -48,6 +51,8 @@ export class WorldHost {
   // The challenge being played, if any.
   private challenge: string | null = null;
   private challengeDialog: HTMLDialogElement | null = null;
+  private filters = new FilterBar("mm-world-filters", { kind: "all", tier: "any", sort: "used", query: "" }, { search: true, sorts: ["used", "newest", "name", "power"] }, () => this.renderSpells());
+  private expanded = readFlag(EXPAND_KEY);
 
   constructor(
     private store: Store,
@@ -56,6 +61,23 @@ export class WorldHost {
 
   init(): void {
     window.addEventListener("message", (e) => this.onMessage(e));
+    // The spell bar: filters, and a button that opens it into a grid.
+    const expand = document.createElement("button");
+    expand.type = "button";
+    expand.className = "spellbar-expand";
+    const showExpand = () => {
+      this.el.bar.classList.toggle("expanded", this.expanded);
+      expand.textContent = this.expanded ? "Fewer" : "All";
+      expand.setAttribute("aria-expanded", String(this.expanded));
+      expand.title = this.expanded ? "Show one row" : "Show every spell";
+    };
+    expand.addEventListener("click", () => {
+      this.expanded = !this.expanded;
+      writeFlag(EXPAND_KEY, this.expanded);
+      showExpand();
+    });
+    this.el.tools.append(this.filters.el, expand);
+    showExpand();
     this.el.add.addEventListener("click", () => {
       this.send({ type: "villager" });
       toast("A villager wanders in");
@@ -224,6 +246,13 @@ export class WorldHost {
         toast(this.selected ? "Still preparing this spell…" : "Pick a spell below first");
         break;
       case "cast":
+        markUsed(msg.key);
+        // In a grid the bar covers the island: fold it once a spell is used.
+        if (this.expanded && window.innerWidth < 700) {
+          this.expanded = false;
+          this.el.bar.classList.remove("expanded");
+          (this.el.tools.querySelector(".spellbar-expand") as HTMLButtonElement).textContent = "All";
+        }
         break;
       case "error":
         void this.repair(msg.key, msg.name, msg.message);
@@ -338,12 +367,10 @@ export class WorldHost {
   }
 
   renderSpells(): void {
-    // Spells first, newest first, then artifacts: both can be used on the island.
-    const spells = this.store
-      .discoveries()
-      .sort((a, b) => (a.element.kind === b.element.kind ? b.discoveredAt - a.discoveredAt : a.element.kind === "spell" ? -1 : 1));
+    const all = this.store.discoveries();
+    const shown = applyFilters(all, this.filters.state, lastUsed, (d) => elementKey(d.element.name));
     const fragment = document.createDocumentFragment();
-    for (const { element } of spells) {
+    for (const { element } of shown) {
       const key = elementKey(element.name);
       const chip = chipElement(element, "button");
       chip.classList.add("chip-castable");
@@ -352,6 +379,14 @@ export class WorldHost {
       chip.dataset.ready = this.request(key) ? "1" : "0";
       chip.addEventListener("click", () => this.selectSpell(key));
       fragment.append(chip);
+    }
+    if (!shown.length) {
+      const empty = document.createElement("button");
+      empty.type = "button";
+      empty.className = "spell-empty";
+      empty.textContent = all.length ? "Nothing matches. Clear the filters" : "Discover spells in Craft first";
+      if (all.length) empty.addEventListener("click", () => this.filters.reset());
+      fragment.append(empty);
     }
     this.el.list.replaceChildren(fragment);
     this.updateStatus();
@@ -369,6 +404,8 @@ export class WorldHost {
     this.el.status.textContent = text;
   }
 }
+
+const EXPAND_KEY = "mm-spellbar-expanded";
 
 function tierOf(tier: Tier | undefined, depth: number): Tier {
   return tier ?? tierFromDepth(depth);

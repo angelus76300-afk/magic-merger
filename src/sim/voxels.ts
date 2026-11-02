@@ -70,6 +70,10 @@ export class VoxelState {
   // Fallen leaves that will rot away.
   litter = new Set<number>();
   checkedVersion = -1;
+  // Counts voxels taken away: only removals can leave others hanging, so a
+  // change that only added voxels is checked less often.
+  removals = 0;
+  checkedRemovals = 0;
   sinceCheck = 0;
   sinceFire = 0;
   sinceFall = 0;
@@ -104,7 +108,8 @@ export function stepVoxels(world: World, dt: number): void {
       s.sinceFall = 0;
       fall(world);
     }
-  } else if (world.decorVersion !== s.checkedVersion || s.sinceCheck > 1) {
+  } else if (world.decorVersion !== s.checkedVersion && (s.checkedVersion === -1 || s.sinceCheck >= (s.removals !== s.checkedRemovals ? 0.25 : 1))) {
+    s.checkedRemovals = s.removals;
     s.sinceCheck = 0;
     s.checkedVersion = world.decorVersion;
     findUnsupported(world);
@@ -116,21 +121,26 @@ export function stepVoxels(world: World, dt: number): void {
 }
 
 // Flood fill from every held voxel; what is not reached starts to fall.
+// Plain arithmetic on keys, no objects: this runs on up to 20000 voxels.
 function findUnsupported(world: World): void {
-  const { decor } = world;
+  const { decor, height, w } = world;
   const held = new Set<number>();
   const stack: number[] = [];
   for (const [key, v] of decor) {
-    const { x, y, level } = keyCell(key);
-    if (floats(voxelKind(v)) || level <= top(world, x, y)) {
+    const cell = Math.floor(key / 512);
+    const level = (key % 512) - 128;
+    const x = cell % 1024;
+    const y = (cell - x) / 1024;
+    if (floats(voxelKind(v)) || level <= Math.round(height[y * w + x] * 0.5)) {
       held.add(key);
       stack.push(key);
     }
   }
+  const steps = [1, -1, 512, -512, 512 * 1024, -512 * 1024];
   while (stack.length) {
     const key = stack.pop()!;
-    for (const [dx, dy, dl] of N6) {
-      const k = key + D(dx, dy, dl);
+    for (let d = 0; d < 6; d++) {
+      const k = key + steps[d];
       if (!held.has(k) && decor.has(k)) {
         held.add(k);
         stack.push(k);
@@ -230,8 +240,8 @@ function fireAndHeat(world: World, dt: number): void {
   let changed = false;
 
   // Ignition from the land: a fire or heat on the cell reaches the lowest voxels.
-  // Sampled, so very large builds stay cheap.
-  const stride = decor.size > 6000 ? 3 : 1;
+  // Sampled, so very large builds stay cheap (about 3000 looked at per pass).
+  const stride = Math.max(1, Math.ceil(decor.size / 3000));
   let k = 0;
   for (const [key, v] of decor) {
     if (stride > 1 && k++ % stride !== (world.tick % stride)) continue;
@@ -244,6 +254,7 @@ function fireAndHeat(world: World, dt: number): void {
     if (kind === VK.ICE) {
       if ((hot || world.temp[i] > 30) && Math.random() < 0.35 * stride) {
         decor.delete(key);
+        s.removals++;
         world.place(i, "water", 0.25);
         changed = true;
       }
@@ -276,6 +287,7 @@ function fireAndHeat(world: World, dt: number): void {
         const nkind = voxelKind(nv);
         if (nkind === VK.ICE && Math.random() < 0.3) {
           decor.delete(nk);
+          s.removals++;
           changed = true;
           continue;
         }
@@ -294,6 +306,7 @@ function fireAndHeat(world: World, dt: number): void {
       if (rest <= 0) {
         s.burning.delete(key);
         decor.delete(key);
+        s.removals++;
         changed = true;
         // Some burnt wood stays as charcoal and still holds what is above.
         if (kind === VK.WOOD && Math.random() < 0.15) decor.set(key, packVoxel(0x2b2622, VK.STONE));
@@ -311,6 +324,7 @@ function fireAndHeat(world: World, dt: number): void {
       else if (Math.random() < 0.06 * dt * 5) {
         decor.delete(key);
         s.litter.delete(key);
+        s.removals++;
         changed = true;
       }
     }

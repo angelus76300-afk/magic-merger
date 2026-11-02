@@ -502,6 +502,116 @@ input {
   scrollbar-width: thin;
 }
 
+/* Opened into a grid: every spell at once, scrolling up and down. */
+.spellbar.expanded .spell-list {
+  flex-wrap: wrap;
+  overflow-x: hidden;
+  overflow-y: auto;
+  max-height: min(42vh, 360px);
+  align-content: flex-start;
+}
+
+.spell-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px 8px;
+}
+
+.spell-tools .filterbar {
+  flex: 1;
+  min-width: 0;
+}
+
+.spellbar-expand {
+  flex: none;
+}
+
+@media (max-width: 520px) {
+  .spell-tools .filter-search {
+    width: 4.5em;
+  }
+}
+
+.spell-empty {
+  color: var(--muted);
+  background: none;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  padding: 6px 12px;
+}
+
+.inventory-filters {
+  padding: 0 16px 10px;
+}
+
+/* Filters: kind toggles, tier and order. Scrolls sideways on narrow screens. */
+.filterbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.filterbar::-webkit-scrollbar {
+  display: none;
+}
+
+.filterbar input,
+.filterbar select,
+.filter-kinds button,
+.spellbar-expand {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 8px;
+  min-height: 32px;
+}
+
+.filter-search {
+  width: 7.5em;
+  flex: none;
+  outline: none;
+}
+
+.filter-search:focus {
+  border-color: var(--spell);
+}
+
+.filter-kinds {
+  display: flex;
+  flex: none;
+}
+
+.filter-kinds button {
+  border-radius: 0;
+  margin-left: -1px;
+  cursor: pointer;
+}
+
+.filter-kinds button:first-child {
+  border-radius: 8px 0 0 8px;
+  margin-left: 0;
+}
+
+.filter-kinds button:last-child {
+  border-radius: 0 8px 8px 0;
+}
+
+.filter-kinds button[aria-pressed="true"] {
+  background: var(--spell);
+  border-color: var(--spell);
+  color: var(--bg);
+}
+
+.filterbar select {
+  flex: none;
+}
+
 .chip-castable {
   flex: none;
   cursor: pointer;
