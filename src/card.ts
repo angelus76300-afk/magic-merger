@@ -79,10 +79,38 @@ export function openCard(store: Store, key: string, first = false): void {
     text.classList.remove("loading");
   } else showDescription(false);
 
+  // View source: the program itself, for anyone curious how a spell works.
+  const source = d.querySelector<HTMLElement>(".card-source")!;
+  const sourceButton = d.querySelector<HTMLButtonElement>(".card-view-source")!;
+  source.hidden = true;
+  sourceButton.hidden = !program;
+  sourceButton.textContent = "View source";
+  sourceButton.setAttribute("aria-expanded", "false");
+  sourceButton.onclick = () => {
+    const current = store.spell(key);
+    if (!current) return;
+    const open = source.hidden;
+    source.hidden = !open;
+    sourceButton.textContent = open ? "Hide source" : "View source";
+    sourceButton.setAttribute("aria-expanded", String(open));
+    if (open) {
+      source.querySelector(".card-source-meta")!.textContent = sourceMeta(current);
+      source.querySelector("code")!.textContent = current.code;
+    }
+  };
+
   const admin = d.querySelector<HTMLElement>(".card-admin")!;
   admin.hidden = !session.admin;
   const written = d.querySelector<HTMLElement>(".card-written")!;
   written.textContent = writtenText(program);
+  const versions = d.querySelector<HTMLElement>(".card-versions")!;
+  versions.textContent = "";
+  if (session.admin && program) {
+    void api.programInfo(element.name).then((list) => {
+      if (serial !== openSerial || !list) return;
+      versions.textContent = list.map(versionText).join("\n");
+    });
+  }
   d.querySelector<HTMLButtonElement>(".card-new-description")!.onclick = () => showDescription(true);
   // The only way a stored spell is ever written again: one at a time, by the
   // admin, after seeing what it costs. A version bump never does it.
@@ -101,6 +129,8 @@ export function openCard(store: Store, key: string, first = false): void {
         summary.hidden = false;
         summary.textContent = fresh.summary;
         written.textContent = writtenText(fresh);
+        sourceButton.hidden = false;
+        if (!source.hidden) source.querySelector("code")!.textContent = fresh.code;
       }
       toast(`${element.name} was rewritten`);
     } finally {
@@ -112,22 +142,50 @@ export function openCard(store: Store, key: string, first = false): void {
   d.showModal();
 }
 
+// Version, writer and summary above the code.
+function sourceMeta(program: { version: number; model?: string; id?: number; summary: string }): string {
+  const by = program.model ? ` by ${shortModel(program.model)}` : "";
+  return `${program.id ? `Version #${program.id}, ` : ""}World API v${program.version}${by}. ${program.summary}`;
+}
+
+function shortModel(model: string): string {
+  return model
+    .replace(/^claude-/, "")
+    .replace(/-\d.*$/, "")
+    .replace(/^./, (c) => c.toUpperCase());
+}
+
+// One line per version for the admin: status, origin, votes, test run, judge.
+function versionText(v: {
+  id: number;
+  status: string;
+  origin: string;
+  model: string;
+  up: number;
+  down: number;
+  library: boolean;
+  checked: unknown;
+  judged: unknown;
+}): string {
+  const checked = v.checked as { ok?: boolean; problem?: string } | null;
+  const judged = v.judged as { score?: number; reason?: string } | null;
+  const parts = [`#${v.id} ${v.status}`, `${v.origin}, ${shortModel(v.model)}`, `${v.up} up ${v.down} down${v.library ? " (library)" : ""}`];
+  if (checked) parts.push(checked.ok ? "test ok" : `test ${checked.problem}`);
+  if (judged) parts.push(`judge ${judged.score}/5 ${judged.reason}`);
+  return parts.join(" · ");
+}
+
 // "Written for API v3 by Haiku": tells the admin whether a rewrite could help.
 function writtenText(program: { version: number; model?: string } | undefined): string {
   if (!program) return "No program yet";
-  const by = program.model
-    ? ` by ${program.model
-        .replace(/^claude-/, "")
-        .replace(/-\d.*$/, "")
-        .replace(/^./, (c) => c.toUpperCase())}`
-    : "";
+  const by = program.model ? ` by ${shortModel(program.model)}` : "";
   const age = program.version < PROGRAM_VERSION ? ` (current API is v${PROGRAM_VERSION})` : "";
   return `Written for API v${program.version}${by}${age}`;
 }
 
 // Measured in November 2026: Haiku spells cost about $0.002, Opus ones $0.06.
 function costHint(tier: Tier): string {
-  return TIERS.indexOf(tier) > TIERS.indexOf("grand") ? "Opus writes it, about 6 cents." : "Haiku writes it, a fraction of a cent.";
+  return TIERS.indexOf(tier) > TIERS.indexOf("grand") ? "Opus writes it, about 8 cents." : "Haiku writes it, a fraction of a cent.";
 }
 
 function ensureDialog(): HTMLDialogElement {
@@ -148,11 +206,17 @@ function ensureDialog(): HTMLDialogElement {
     <p class="card-description"></p>
     <p class="card-summary"></p>
     <button class="card-cast">Cast in the World</button>
+    <button class="card-view-source" type="button">View source</button>
+    <div class="card-source" hidden>
+      <p class="card-source-meta"></p>
+      <pre><code></code></pre>
+    </div>
     <div class="card-admin">
       <span class="card-admin-label">Admin</span>
       <span class="card-written"></span>
       <button class="card-new-description">New description</button>
       <button class="card-new-spell">Rewrite this spell</button>
+      <pre class="card-versions"></pre>
     </div>
   `;
   dialog.querySelector(".card-close")!.addEventListener("click", () => dialog!.close());

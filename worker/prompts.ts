@@ -206,10 +206,47 @@ ${EXAMPLE_GROVE}
 
 Reply with a one sentence summary for the spell card, and the program.`;
 
-export function spellUserMessage(name: string, kind: string, description: string, recipe: [string, string] | null, tier: string): string {
+// A program players liked, shown to the small model as a reference (3.3).
+export interface LibraryExample {
+  name: string;
+  tier: string;
+  kind: string;
+  code: string;
+}
+
+// Why a spell is written again: what players said about the version they
+// cast, or what its test run found. The old program is shown only when it is
+// to be fixed (a test run failure), not when it is to be rethought.
+export interface Rewrite {
+  // One line per reason, already worded for the model.
+  reasons: string[];
+  summary?: string;
+  code?: string;
+}
+
+export function spellUserMessage(
+  name: string,
+  kind: string,
+  description: string,
+  recipe: [string, string] | null,
+  tier: string,
+  examples: LibraryExample[] = [],
+  rewrite?: Rewrite,
+): string {
   const origin = recipe ? `It is made from ${recipe[0]} and ${recipe[1]}.` : "It is one of the primal forces.";
   const label = kind === "artifact" ? "Artifact (placed, not cast)" : "Spell";
-  return `${label}: ${name}\nTier: ${tier}\n${origin}\nGrimoire entry: ${description}`;
+  let text = `${label}: ${name}\nTier: ${tier}\n${origin}\nGrimoire entry: ${description}`;
+  if (examples.length) {
+    text += `\n\nPrograms players liked, for reference only. This spell needs its own signature: take what makes them work (scale, a clear impact, an interaction the world carries on), not their look.`;
+    for (const e of examples) text += `\n\nLiked: ${e.name} (${e.tier} ${e.kind})\n${e.code}`;
+  }
+  if (rewrite?.reasons.length) {
+    text += `\n\nThis spell is being written again. About the previous version${rewrite.summary ? ` ("${rewrite.summary}")` : ""}:\n${rewrite.reasons.map((r) => `- ${r}`).join("\n")}`;
+    text += rewrite.code
+      ? `\n\nThe previous program, to fix:\n${rewrite.code}`
+      : `\n\nWrite a new program that answers this. Do not keep the old design if that is what failed.`;
+  }
+  return text;
 }
 
 export function repairUserMessage(name: string, tier: string, code: string, error: string): string {
@@ -222,3 +259,36 @@ export const SPELL_SCHEMA = {
   required: ["summary", "code"],
   additionalProperties: false,
 } as const;
+
+// The judge (3.3): Haiku looks at three Spell Lab frames of a cast and says
+// whether a player would vote it up. Its notes from earlier votes come in the
+// user message, so it learns this player's taste.
+export const JUDGE_SYSTEM = `You judge spells in Magic Merger, a crafting game about magic. A spell is a program that plays out on a floating voxel island with hills, lakes, forests, fields and villages of tiny people. You see three frames taken during and after one cast, on the same island, near a village, plus numbers about what changed. Say whether a player who cast it would vote it up.
+
+What players vote up: the spell looks like its name and grimoire entry at once; its size matches its tier (cantrip a spot, minor a house, major a village, grand a valley, legendary a region, cosmic the world); there is a clear impact and something the world carries on (fire spreading, ice, water, growth, creatures reacting); it has a look of its own.
+What players vote down, with the reason they pick:
+nothing: nothing visible happened, or only a faint flash or a few particles.
+small: real but much smaller than the name and tier promise.
+wrong: it does not look like its name; or it looks broken: blocks floating in the sky with nothing holding them, a tree crown off its trunk, gray pillars or boxes standing in for things, giant low poly shapes, a flat line for lightning.
+broke: it ruined the island far beyond its reach (a cosmic spell may).
+boring: plain and predictable, the default orb and explosion, no interaction.
+
+Score from 1 to 5: 5 a player would show it to a friend, 4 good, 3 fine but forgettable, 2 a player would vote it down, 1 broken or empty. Give the main reason (fine when the score is 3 or more) and one short sentence on what you see.`;
+
+export const JUDGE_SCHEMA = {
+  type: "object",
+  properties: {
+    score: { type: "integer", enum: [1, 2, 3, 4, 5] },
+    reason: { type: "string", enum: ["fine", "nothing", "small", "wrong", "broke", "boring"] },
+    note: { type: "string" },
+  },
+  required: ["score", "reason", "note"],
+  additionalProperties: false,
+} as const;
+
+export function judgeUserMessage(name: string, kind: string, tier: string, description: string, facts: string, notes: string[], shots: number[]): string {
+  let text = `${kind === "artifact" ? "Artifact (placed, not cast)" : "Spell"}: ${name}\nTier: ${tier}\nGrimoire entry: ${description}\nWhat changed in the world: ${facts}\nFrames at ${shots.map((s) => `${s} s`).join(", ")} after the cast follow.`;
+  if (notes.length)
+    text += `\n\nThe player's votes on spells you judged before. Where you disagreed, they were right:\n${notes.map((n) => `- ${n}`).join("\n")}`;
+  return text;
+}

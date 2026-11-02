@@ -1,6 +1,6 @@
 # Where the game stands, and what comes next
 
-Updated on 2026-11-02, during 3.2 (PR #5).
+Updated on 2026-11-02, during 3.3.
 
 ## Done since the first review
 
@@ -63,6 +63,19 @@ Asked for after 3.0: "a vampire will kill humans, gold will attract humans; we n
    - A grid for creatures and precomputed danger probes: with 312 creatures, creature update p50 1.07 to 0.91 ms, worst 25 to 18 ms. The pairwise scan was not the main cost.
 5. **Hygiene.** Prettier and ESLint in CI; the simulation cannot import the view or three.js; `voxelkey.ts` and `colors.ts` replace copies in five files; physics and voxels no longer import each other; the day clock moved from the view into the simulation.
 
+## Done in 3.3: spells that get better
+
+DESIGN.md, "Spells that get better", has the rules; `docs/measurements/spell-quality-2026-11.md` the measurement.
+
+1. **Every version is kept** (`programs` table): trial, live, retired or rejected, with where it came from. Nothing is deleted, so anything can come back.
+2. **A test run before a program is stored.** The browser casts it on a practice island in a hidden sandboxed frame and compares it with the same island left alone: a crash, nothing visible, or an island wiped by a spell that is not cosmic gets it rewritten once by Haiku with the failing code. The Worker cannot do it (no `new Function` in Cloudflare Workers).
+3. **Votes.** An anonymous id per browser, casts recorded with the version cast, a Good / Not good bar six seconds after a cast with one reason on a down vote, only from players who cast that version in the last 48 hours, one vote each. N = max(1, 10% of the 7-day average daily players), at most 25; N votes and 60% down rewrite the spell with the reasons in the prompt, at most once every three days and within `REWRITE_BUDGET_USD` a day; a rewrite voted worse than its parent rolls back.
+4. **The library.** Programs voted up (N votes, 60% up) are shown to Haiku as two examples picked by shared words, kind and tier.
+5. **Big spells drafted now, written later.** A new legendary or cosmic spell is drafted by Haiku at once and written by Opus through the Batch API at half price; a cron every ten minutes collects it, and it goes through the test run like any program. Big rewrites go through the batch too.
+6. **The judge.** Haiku scores three Spell Lab frames with what changed; its threshold and its prompt are calibrated on votes, and it only advises until it agrees with ten or more votes 70% of the time. `scripts/judge-runner.mjs` and a nightly GitHub workflow give it its frames.
+7. **View source** on the spell card, for everyone; the admin row lists every version with votes, test run and judge score.
+8. **Checked**: `npm test` casts good and bad programs through the test run and checks the vote rules; a local end to end run (wrangler dev, local D1, a stub Claude API) went through trial, failed test, rewrite, live, casts, votes, rewrite with reasons, rollback, cooldown, a legacy row, a batch rewrite, a draft then its batch upgrade, the library and the judge; a headless browser went through the World, the test run frame, a cast, the vote bar and View source.
+
 ## Decisions taken
 
 1. **Cosmic spells may ruin the island.** Consequences are part of the fun; the land regrows on its own (ash turns to soil, grass and forests come back) and Reset is one tap away. Revisit if it feels punishing in play.
@@ -70,9 +83,10 @@ Asked for after 3.0: "a vampire will kill humans, gold will attract humans; we n
 
 ## What to watch
 
-1. **Phones.** Still measured only in Node and a headless browser. The HUD sends real numbers to `/api/perf` as soon as someone plays with it on. In steady state the simulation's cost is temperature and fluids (about 40% of a tick in every scene), not voxels or creatures: that is the next lever if phones run hot.
-2. **Sounds** were checked for errors, not listened to.
-3. **Challenge balance with real spells.** The checks use simple hand-written solutions; Claude's spells may be stronger or weaker. Wildfire used to be won by doing nothing 1 time in 5: villagers rebuilt the burnt houses while the fire died down, and the end check counted them. It is now lost the moment a second house burns, and `npm test` replays every challenge with nothing over 8 seeds (0 wins in 64 for Wildfire, rain still wins 64 in 64).
+1. **The judge and the votes.** No vote exists yet, so the judge is uncalibrated and only advises; the library is empty until players vote programs up. Watch `GET /api/admin/judge-stats` after a week of play, and how often a vote leads to a rewrite and a rewrite to a rollback (`rewrites` table).
+2. **Phones.** Still measured only in Node and a headless browser. The HUD sends real numbers to `/api/perf` as soon as someone plays with it on. In steady state the simulation's cost is temperature and fluids (about 40% of a tick in every scene), not voxels or creatures: that is the next lever if phones run hot.
+3. **Sounds** were checked for errors, not listened to.
+4. **Challenge balance with real spells.** The checks use simple hand-written solutions; Claude's spells may be stronger or weaker. Wildfire used to be won by doing nothing 1 time in 5: villagers rebuilt the burnt houses while the fire died down, and the end check counted them. It is now lost the moment a second house burns, and `npm test` replays every challenge with nothing over 8 seeds (0 wins in 64 for Wildfire, rain still wins 64 in 64).
 
 ## What the money taught us
 
@@ -90,7 +104,7 @@ Sizes are per Claude Code session: S a few hours, M a full session, L two or mor
 4. **Performance.** 30 fps on phones and no redraw when idle; voxels in a dense typed array with a reusable flood fill queue; partial updates of the decor mesh; the night overlay as a tint; a spatial grid for creature lookups in `src/sim/social.ts`.
 5. **Hygiene.** Prettier and ESLint (the simulation never imports the view), one module for voxel keys and one for colors, no import cycle between physics and voxels.
 
-### 3.3 Spells that are always good, voted by players
+### 3.3 Spells that are always good, voted by players (done, see above)
 
 1. **Votes.** An anonymous player id per browser; casts recorded on the server; after a cast, up or down, with one reason on a down vote (nothing happened, too small, looked wrong, broke the island, boring). Only players who cast that spell version recently vote, once each.
 2. **Rewrite rule.** At least N votes and 60% down, with N = max(1, 10% of the average daily active players over seven days), capped at 25. With one player, one down vote is enough. Reasons go into the rewrite prompt; the old version is kept and comes back if the new one is voted worse; at most one rewrite per spell every three days, within a daily rewrite budget; big ones through the Batch API.

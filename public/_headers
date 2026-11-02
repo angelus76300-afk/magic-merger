@@ -5,6 +5,11 @@
   Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; worker-src 'none'; frame-ancestors 'self'
 /world.html
   Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; worker-src 'none'; frame-ancestors 'self'
+# The test run of new programs (3.3): spell code again, same rules.
+/check
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; worker-src 'none'; frame-ancestors 'self'
+/check.html
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; worker-src 'none'; frame-ancestors 'self'
 
 # The sandboxed iframe has an opaque origin, so its module scripts are cross
 # origin requests: allow them. These files are public anyway.

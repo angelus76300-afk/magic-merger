@@ -16,6 +16,9 @@ import { generateWorld, type World } from "../src/sim/world";
 import { VK, floats, voxelKind } from "../src/sim/voxels";
 import { keyCell } from "../src/sim/voxelkey";
 import { SOLUTIONS, replay, seed, step, type Replay } from "./challenge-replay";
+import { runCheck } from "../src/sim/check";
+import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../shared/votes";
+import { pickExamples, words } from "../worker/programs";
 
 // Challenges with nothing cast, over several seeds: one seed can pass by
 // luck (Wildfire did, at 3 wins in 16). These replays run in worker threads
@@ -361,6 +364,60 @@ for (const scenario of SCENARIOS) {
     runs.length === SEEDS && tally("won") === 0 && !error,
     `won ${tally("won")}, lost ${tally("lost")}, playing ${tally("playing")}${error ? ", " + error : ""}`,
   );
+}
+
+// 9. The test run before a program is stored (3.3): reference spells pass;
+// a program that crashes, does nothing visible or wipes the island fails.
+// It keeps its own random stream (check.ts), so it shifts nothing above.
+{
+  const passing: string[] = [];
+  const all = [...readdirSync("lab/spells").map((f) => join("lab/spells", f)), ...readdirSync("lab/legacy").map((f) => join("lab/legacy", f))];
+  for (const file of all) {
+    const code = readFileSync(file, "utf8");
+    const tier = (/\((cantrip|minor|major|grand|legendary|cosmic)\)/.exec(code)?.[1] ?? (file.includes("bang") ? "cosmic" : "legendary")) as "major";
+    const r = runCheck({ key: file, name: file, tier, code });
+    if (!r.ok) passing.push(`${file}: ${r.detail}`);
+  }
+  check(`test run passes the reference and old programs (${all.length})`, passing.length === 0, passing[0] ?? "");
+  const bad: [string, string, string, string][] = [
+    ["crash", "minor", "crash", "const spell = { *cast(w) { yield 1; w.nope(); } };"],
+    ["no generator", "minor", "crash", "const spell = { cast(w) { return 1; } };"],
+    [
+      "nothing",
+      "major",
+      "nothing",
+      "const spell = { *cast(w) { w.circle(w.x, w.y, w.r, '#fff', '#f00', 1); w.burst(w.x, w.y, { count: 200, colors: ['#fff'], speed: 5, up: 5, life: 1 }); w.flash('#fff', 1); yield 2; } };",
+    ],
+    ["wiped", "major", "wiped", "const spell = { *cast(w) { w.flood(w.width / 2, w.height / 2, w.width, 'lava', 3); yield 2; } };"],
+  ];
+  for (const [name, tier, problem, code] of bad) {
+    const r = runCheck({ key: name, name, tier: tier as "major", code });
+    check(`test run catches ${name}`, r.problem === problem, r.detail);
+  }
+  const cosmic = runCheck({ key: "end", name: "end", tier: "cosmic", code: bad[3][3] });
+  check("a cosmic spell may wipe the island", cosmic.ok, cosmic.detail);
+}
+
+// 10. Votes: how many are needed, when they rewrite, roll back or reach the library.
+{
+  check("one player: one vote is enough", votesNeeded(1) === 1 && votesNeeded(0) === 1 && votesNeeded(0.3) === 1);
+  check("a tenth of daily players, capped at 25", votesNeeded(40) === 4 && votesNeeded(150) === 15 && votesNeeded(1000) === 25);
+  check("60% down rewrites", votedDown({ up: 2, down: 3 }, 5) && !votedDown({ up: 3, down: 2 }, 5) && !votedDown({ up: 0, down: 3 }, 4));
+  check("60% up joins the library", votedUp({ up: 3, down: 2 }, 5) && !votedUp({ up: 1, down: 0 }, 2));
+  check("rolled back when voted worse", votedWorse({ up: 0, down: 2 }, { up: 1, down: 2 }, 2) && !votedWorse({ up: 1, down: 1 }, { up: 0, down: 1 }, 1));
+  check("down share", downShare({ up: 1, down: 3 }) === 0.75 && downShare({ up: 0, down: 0 }) === 0);
+  const library = [
+    { key: "inferno", name: "Inferno", tier: "grand", kind: "spell", description: "A roaring fire that burns the forest", code: "a" },
+    { key: "golem", name: "Golem", tier: "minor", kind: "artifact", description: "A stone giant who guards villagers", code: "b" },
+    { key: "blizzard", name: "Blizzard", tier: "grand", kind: "spell", description: "Snow and ice freeze the lakes", code: "c" },
+  ];
+  const picked = pickExamples(
+    library,
+    { key: "wildfire", name: "Wildfire", description: "Fire races through the forest and burns villages", kind: "spell", tier: "major" },
+    1,
+  );
+  check("the library finds the closest program", picked[0]?.name === "Inferno", picked.map((p) => p.name).join(","));
+  check("words are stemmed", words("Burning forests").has("burn") && words("Burning forests").has("forest"));
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");

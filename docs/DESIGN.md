@@ -67,11 +67,61 @@ Merges stay on Opus. A merge is answered once and frozen forever, so a weak answ
 
 ### Repairs
 
-A crashing program is mended by `REPAIR_MODEL` (Haiku) whatever its tier: the repair sees the program and the error, and fixing one error is not where Opus earns forty times the price.
+A crashing program is mended by `REPAIR_MODEL` (Haiku) whatever its tier: the repair sees the program and the error, and fixing one error is not where Opus earns forty times the price. Since 3.3 the fix is a trial like any new program and goes through the test run before it replaces the crashing one.
 
 ### Program versions
 
-`PROGRAM_VERSION` records which World API a program was written for. It never triggers a rewrite: 3.1 bumped it to 4 and every big spell was written again on its next cast, which took Opus spell calls from 43 to 96 in a day. The API only grows, old programs keep running (`lab/legacy` holds fourteen v2 and v3 programs that `npm test` casts), and a spell is rewritten one at a time with the admin's "Rewrite this spell" button. Only version 1 rows, which are declarative specs and not code, are written again on their next cast.
+`PROGRAM_VERSION` records which World API a program was written for. It never triggers a rewrite: 3.1 bumped it to 4 and every big spell was written again on its next cast, which took Opus spell calls from 43 to 96 in a day. The API only grows, old programs keep running (`lab/legacy` holds fourteen v2 and v3 programs that `npm test` casts), and a spell is rewritten one at a time: by players' votes (3.3, below) or the admin's "Rewrite this spell" button. Only version 1 rows, which are declarative specs and not code, are written again on their next cast.
+
+## Spells that get better (3.3)
+
+A program is no longer written once and frozen: players vote, and a spell they vote down is written again. Everything below is in `worker/index.ts`, `worker/programs.ts` and `shared/votes.ts`; the schema is `migrations/0005_votes_versions.sql`.
+
+### Every version is kept
+
+Each program ever written for an element is a row of `programs`, with its origin (new, draft, batch, votes, judge, check, repair, admin, or legacy for those from before 3.3) and a status: **trial** (written, not yet through its test run), **live** (the one everybody gets), **retired** (replaced, kept to come back to) or **rejected**. `spells` still holds the live one of each element, plus `pid`, its row. Nothing is ever deleted.
+
+### The test run
+
+A new program is a trial until a browser has cast it on a practice island (`src/sim/check.ts`): the small seeded island, a cast near a village, compared second by second with the same island left alone, so a river that flows or a villager who walks is not counted as the spell. It fails on:
+
+1. **a crash**: an error, or no generator;
+2. **nothing visible**: fewer than 3 land cells, 4 blocks and 1 creature differ from the control and no body flew for half a second (particles, flashes and circles alone do not count);
+3. **an island wiped**: more than 60% of the land changed (90% for legendary), or a spell up to grand that leaves fewer than a fifth of the villagers and houses. Cosmic spells may (decision 1 below).
+
+A failed trial is written once more by Haiku with the failing code and what the test found; a second failure keeps the program that was live before, or, for a new spell, keeps the second one (something to cast is better than nothing, and a crash still has the repair loop). The 14 old programs in `lab/legacy` and the 6 reference spells all pass; it takes 0.1 to 1.2 s in Node.
+
+It runs in the browser because the Worker cannot: Cloudflare Workers forbid `new Function`, and a spell is code. It runs in a second hidden sandboxed iframe (`check.html`, same CSP as the World) so a program under test shares nothing with the player's island, and it works before the World tab is opened. It runs 8 ms at a time between frames. A browser could lie about a result; the worst it can do is one extra Haiku call per trial, since a program written to fix a failed test is never fixed again.
+
+### Votes
+
+The browser makes up an anonymous id (a random UUID in localStorage) and sends it with every request. A cast is recorded with the version that was cast. Six seconds after a cast, if this player may vote on that version, a small bar asks "How was Fireball?", Good or Not good, and Not good asks one reason: nothing happened, too small, looked wrong, broke the island, boring. Only players who cast that version in the last 48 hours may vote, once each (a changed mind replaces the earlier vote).
+
+After each vote, in this order (`afterVote`):
+
+1. **Rollback.** A version that replaced another (except a repair) goes back to its parent when it has N votes and a larger share of them down than the parent.
+2. **Library.** N votes and at least 60% up: the program joins the library; it leaves it when that stops being true.
+3. **Rewrite.** N votes and at least 60% down: the spell is written again with the reasons in the prompt ("2 players voted it down: it was too small for its name and tier"), unless it was rewritten in the last three days or the day's rewrites are over `REWRITE_BUDGET_USD` ($0.50). Spells up to grand are written at once by Haiku; legendary and cosmic ones go to Opus through the Batch API, and the live version stays until the new one is back and through its test run.
+
+N = max(1, round(10% of the average daily players over the last seven days)), at most 25. With one player, one vote is enough.
+
+### The library
+
+Programs voted up are shown to Haiku when it writes a spell: the two closest by shared words in the name and grimoire entry (the name counts double), same kind and nearby tier first, each cut to 3,000 characters, with a line saying to take what makes them work and not their look. No embeddings: there are a few hundred short names, and the words that matter (fire, tree, vampire) are literal. Opus is not shown them.
+
+### Big spells: a draft now, Opus later
+
+A new legendary or cosmic spell used to wait 20 to 40 s for Opus at $0.076. Now Haiku drafts it at once (about $0.002, through the test run like any program), and the same request goes to Opus through the Batch API at half price. A cron every ten minutes collects finished batches; the Opus program comes back as a trial whose parent is whatever is live by then, so it is rolled back if players like it less than the draft. The admin's "Rewrite this spell" still asks Opus directly and says so. `BIG_SPELLS_BATCH=0` brings back the 3.2 behaviour.
+
+### The judge
+
+Haiku looks at three Spell Lab frames (1, 3 and 6 s after the cast) with a sentence of what changed (cells, deaths, statuses) and scores 1 to 5 with the reason a player would give. The Worker cannot render, so the frames come from `scripts/judge-runner.mjs` (on a computer with Playwright, or the daily `Judge` GitHub workflow), which casts every live program the judge has not seen and posts its frames to `/api/admin/judge`.
+
+It is calibrated on votes in two ways. Its prompt carries the latest cases where it disagreed with the player ("Tornado: you gave 4; the player voted it down because it was too small"), and the score at or below which it means "voted down" is the one that best matches the votes once five judged programs have votes. Until it agrees with ten or more voted programs at least 70% of the time it only advises (on the admin card and `/api/admin/judge-stats`); after that, a bad score on a live program nobody voted on asks for a rewrite, within the same cooldown and budget as votes.
+
+### View source
+
+The spell card has a "View source" link for everyone: the program, its version number, its API version and who wrote it. The admin row lists every version with its status, origin, votes, test run and judge score.
 
 ### Artifacts
 

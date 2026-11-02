@@ -23,6 +23,8 @@ interface LabOptions {
   time?: number;
   // Collect CPU time per frame and per render part instead of frames.
   profile?: boolean;
+  // Frames as JPEG (smaller, for the judge) instead of PNG.
+  jpeg?: boolean;
 }
 
 function seedRandom(seed: number): void {
@@ -81,14 +83,14 @@ function diff(a: Record<string, number>, b: Record<string, number>): Record<stri
 let current: Engine | null = null;
 
 // The 3D canvas with the 2D overlay (night, flashes) on top.
-function composite(canvas: HTMLCanvasElement, overlay: HTMLCanvasElement): string {
+function composite(canvas: HTMLCanvasElement, overlay: HTMLCanvasElement, jpeg = false): string {
   const out = document.createElement("canvas");
   out.width = canvas.width;
   out.height = canvas.height;
   const ctx = out.getContext("2d")!;
   ctx.drawImage(canvas, 0, 0);
   ctx.drawImage(overlay, 0, 0, out.width, out.height);
-  return out.toDataURL("image/png");
+  return jpeg ? out.toDataURL("image/jpeg", 0.82) : out.toDataURL("image/png");
 }
 
 async function runSpell(code: string, options: LabOptions = {}) {
@@ -144,7 +146,7 @@ async function runSpell(code: string, options: LabOptions = {}) {
     engine.render(TICK);
     stepMs.push(t1 - t0);
     renderMs.push(performance.now() - t1);
-    if (shots.includes(tick) && !options.profile) frames.push({ t: +(tick * TICK).toFixed(2), png: composite(canvas, overlay) });
+    if (shots.includes(tick) && !options.profile) frames.push({ t: +(tick * TICK).toFixed(2), png: composite(canvas, overlay, options.jpeg) });
   }
   engine.view.profile = null;
   return {

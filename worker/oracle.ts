@@ -4,6 +4,8 @@ import { isTier, type Tier } from "../shared/tiers";
 import type { ElementKind } from "../shared/types";
 import {
   DESCRIBE_SYSTEM,
+  JUDGE_SCHEMA,
+  JUDGE_SYSTEM,
   MERGE_SCHEMA,
   MERGE_SYSTEM,
   SPELL_SCHEMA,
@@ -11,9 +13,12 @@ import {
   TIERS_SCHEMA,
   TIER_SYSTEM,
   describeUserMessage,
+  judgeUserMessage,
   mergeUserMessage,
   repairUserMessage,
   spellUserMessage,
+  type LibraryExample,
+  type Rewrite,
 } from "./prompts";
 
 export interface MergeAnswer {
@@ -30,6 +35,44 @@ export interface SpellRequest {
   description: string;
   recipe: [string, string] | null;
   tier: Tier;
+  // Programs players liked, retrieved for this spell (small model only).
+  examples?: LibraryExample[];
+  // Set when the spell is written again, with why.
+  rewrite?: Rewrite;
+}
+
+export interface JudgeRequest {
+  name: string;
+  kind: ElementKind;
+  tier: Tier;
+  description: string;
+  // What the Spell Lab measured, in a sentence.
+  facts: string;
+  // JPEG or PNG frames as data URLs, and when they were taken.
+  frames: string[];
+  shots: number[];
+  // The player's votes on earlier judgments, worded for the judge.
+  notes: string[];
+}
+
+export interface JudgeAnswer {
+  score: number;
+  reason: string;
+  note: string;
+}
+
+// One program asked of the Batch API, and what came back.
+export interface BatchItem {
+  id: string;
+  request: SpellRequest;
+}
+
+export interface BatchOutcome {
+  id: string;
+  answer?: ProgramAnswer;
+  error?: string;
+  model: string;
+  usd: number;
 }
 
 export interface ProgramAnswer {
@@ -56,6 +99,12 @@ export interface Oracle {
   tiers(items: { name: string; kind: ElementKind }[]): Promise<Map<string, Tier>>;
   spell(request: SpellRequest): Promise<ProgramAnswer>;
   repair(name: string, tier: Tier, code: string, error: string): Promise<ProgramAnswer>;
+  judge(request: JudgeRequest): Promise<JudgeAnswer>;
+  // Big spells are written through the Batch API, at half price, within a
+  // day (usually minutes). Returns the batch id.
+  submitBatch(items: BatchItem[]): Promise<string>;
+  // null while the batch is still running.
+  batchResults(batch: string): Promise<BatchOutcome[] | null>;
 }
 
 export interface OracleModels {
@@ -64,6 +113,7 @@ export interface OracleModels {
   describe: string;
   spell: string;
   spellEffort: Effort;
+  judge: string;
 }
 
 // Models whose spell calls are rare and lone: a legendary spell every few
@@ -114,13 +164,8 @@ export class ClaudeOracle implements Oracle {
     cache = true,
   ): Promise<string> {
     const response = await this.client.beta.messages.create({
-      model,
-      max_tokens: maxTokens,
+      ...requestParams(model, effort, system, messages, schema, maxTokens, cache),
       ...fallbackFor(model),
-      output_config: schema ? { effort, format: { type: "json_schema", schema } } : { effort },
-      // The system prompts never change, so frequent calls cache them.
-      system: [cache ? { type: "text", text: system, cache_control: { type: "ephemeral" } } : { type: "text", text: system }],
-      messages,
     });
     this.spent.push(logUsage(call, response));
     return readText(response);
@@ -168,8 +213,64 @@ export class ClaudeOracle implements Oracle {
   }
 
   async spell(request: SpellRequest): Promise<ProgramAnswer> {
-    const message = spellUserMessage(request.name, request.kind, request.description, request.recipe, request.tier);
-    return this.program("spell", [{ role: "user", content: message }]);
+    return this.program(request.rewrite ? "rewrite" : "spell", [{ role: "user", content: spellMessage(request) }]);
+  }
+
+  async judge(request: JudgeRequest): Promise<JudgeAnswer> {
+    const content: Anthropic.Beta.BetaContentBlockParam[] = [
+      { type: "text", text: judgeUserMessage(request.name, request.kind, request.tier, request.description, request.facts, request.notes, request.shots) },
+    ];
+    for (const frame of request.frames.slice(0, 3)) {
+      const m = /^data:(image\/(?:jpeg|png));base64,(.+)$/.exec(frame);
+      if (m) content.push({ type: "image", source: { type: "base64", media_type: m[1] as "image/jpeg", data: m[2] } });
+    }
+    if (content.length < 2) throw new OracleError("The judge needs frames");
+    const text = await this.ask("judge", this.models.judge, "low", JUDGE_SYSTEM, [{ role: "user", content }], JUDGE_SCHEMA, 4000);
+    const { score, reason, note } = parseJson(text) as Partial<JudgeAnswer>;
+    if (typeof score !== "number" || typeof reason !== "string") throw new OracleError("The judge's answer did not match the schema");
+    return { score: Math.max(1, Math.min(5, Math.round(score))), reason, note: typeof note === "string" ? note.slice(0, 300) : "" };
+  }
+
+  // One request per program, written by the spell model at its effort. The
+  // system prompt is not cached: batch requests are processed out of order.
+  async submitBatch(items: BatchItem[]): Promise<string> {
+    const { spell: model, spellEffort } = this.models;
+    const batch = await this.client.beta.messages.batches.create({
+      requests: items.map((item) => ({
+        custom_id: item.id,
+        params: requestParams(model, spellEffort, SPELL_SYSTEM, [{ role: "user", content: spellMessage(item.request) }], SPELL_SCHEMA, 20000, false),
+      })),
+    });
+    return batch.id;
+  }
+
+  async batchResults(id: string): Promise<BatchOutcome[] | null> {
+    const batch = await this.client.beta.messages.batches.retrieve(id);
+    if (batch.processing_status !== "ended") return null;
+    const out: BatchOutcome[] = [];
+    for await (const item of await this.client.beta.messages.batches.results(id)) {
+      const r = item.result;
+      if (r.type !== "succeeded") {
+        out.push({ id: item.custom_id, error: r.type === "errored" ? JSON.stringify(r.error).slice(0, 300) : r.type, model: this.models.spell, usd: 0 });
+        continue;
+      }
+      // Batch requests cost half of the same call made directly. Ids that
+      // start with "rw" are rewrites, counted against the daily rewrite budget.
+      const spent = logUsage(item.custom_id.startsWith("rw") ? "batch-rewrite" : "batch-spell", r.message, 0.5);
+      this.spent.push(spent);
+      try {
+        const answer = toProgram(readText(r.message));
+        const error = syntaxError(answer.code);
+        out.push(
+          error
+            ? { id: item.custom_id, error: `does not parse: ${error}`, model: spent.model, usd: spent.usd }
+            : { id: item.custom_id, answer, model: spent.model, usd: spent.usd },
+        );
+      } catch (err) {
+        out.push({ id: item.custom_id, error: err instanceof Error ? err.message : String(err), model: spent.model, usd: spent.usd });
+      }
+    }
+    return out;
   }
 
   async repair(name: string, tier: Tier, code: string, error: string): Promise<ProgramAnswer> {
@@ -196,6 +297,29 @@ export class ClaudeOracle implements Oracle {
   }
 }
 
+function spellMessage(r: SpellRequest): string {
+  return spellUserMessage(r.name, r.kind, r.description, r.recipe, r.tier, r.examples, r.rewrite);
+}
+
+function requestParams(
+  model: string,
+  effort: Effort,
+  system: string,
+  messages: Anthropic.Beta.BetaMessageParam[],
+  schema: Record<string, unknown> | null,
+  maxTokens: number,
+  cache: boolean,
+) {
+  return {
+    model,
+    max_tokens: maxTokens,
+    output_config: schema ? { effort, format: { type: "json_schema" as const, schema } } : { effort },
+    // The system prompts never change, so frequent calls cache them.
+    system: [cache ? { type: "text" as const, text: system, cache_control: { type: "ephemeral" as const } } : { type: "text" as const, text: system }],
+    messages,
+  };
+}
+
 function toProgram(text: string): ProgramAnswer {
   const { summary, code } = parseJson(text) as Partial<ProgramAnswer>;
   if (typeof summary !== "string" || typeof code !== "string" || !code.includes("spell")) {
@@ -216,7 +340,7 @@ const PRICES: Record<string, [number, number, number, number]> = {
 };
 
 // One JSON line per call, visible with `wrangler tail` and in Workers Logs.
-function logUsage(call: string, response: Anthropic.Beta.BetaMessage): Spent {
+function logUsage(call: string, response: Anthropic.Beta.BetaMessage, discount = 1): Spent {
   const u = response.usage;
   const input = u.input_tokens ?? 0;
   const output = u.output_tokens ?? 0;
@@ -224,7 +348,7 @@ function logUsage(call: string, response: Anthropic.Beta.BetaMessage): Spent {
   const cacheWrite = u.cache_creation_input_tokens ?? 0;
   // Unknown models are priced like the most expensive one, so the budget errs on the safe side.
   const price = PRICES[response.model] ?? PRICES["claude-fable-5-1"];
-  const usd = (input * price[0] + output * price[1] + cacheRead * price[2] + cacheWrite * price[3]) / 1e6;
+  const usd = ((input * price[0] + output * price[1] + cacheRead * price[2] + cacheWrite * price[3]) / 1e6) * discount;
   console.log(JSON.stringify({ usage: call, model: response.model, stop: response.stop_reason, input, output, cacheRead, cacheWrite, usd }));
   return { call, model: response.model, usd };
 }
@@ -296,6 +420,18 @@ export class MockOracle implements Oracle {
 
   async repair(name: string): Promise<ProgramAnswer> {
     return this.spell({ name, kind: "spell", description: "", recipe: null, tier: "major" });
+  }
+
+  async judge(): Promise<JudgeAnswer> {
+    return { score: 3, reason: "fine", note: "Mock judge: set ANTHROPIC_API_KEY for a real one." };
+  }
+
+  async submitBatch(): Promise<string> {
+    throw new OracleError("The mock oracle has no Batch API");
+  }
+
+  async batchResults(): Promise<BatchOutcome[] | null> {
+    return [];
   }
 }
 

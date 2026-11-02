@@ -16,6 +16,11 @@ export interface SpellProgram {
   code: string;
   // Which model wrote it, for the admin card. Not stored in the spec itself.
   model?: string;
+  // Which version of the element's program this is (its row in `programs`),
+  // for casts and votes. Not stored in the spec itself.
+  id?: number;
+  // Written but not through its test run yet: the browser runs it first.
+  trial?: boolean;
 }
 
 type Node = { type: string; start: number; end: number; body?: Node | Node[] } & Record<string, unknown>;
