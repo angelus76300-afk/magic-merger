@@ -1,0 +1,35 @@
+# The judge's daily look at new programs (3.3): casts each live program the
+# judge has not seen in the Spell Lab and sends three frames to the Worker,
+# where Haiku scores it (about $0.0004 a program). Needs two repository
+# secrets: MM_URL (the game's address) and MM_TOKEN (its ADMIN_TOKEN).
+# Without them the job does nothing.
+name: Judge
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Programs to judge at most"
+        default: "30"
+jobs:
+  judge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MM_URL: ${{ secrets.MM_URL }}
+      MM_TOKEN: ${{ secrets.MM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        if: env.MM_URL != '' && env.MM_TOKEN != ''
+      - uses: actions/setup-node@v4
+        if: env.MM_URL != '' && env.MM_TOKEN != ''
+        with:
+          node-version: 22
+          cache: npm
+      - if: env.MM_URL != '' && env.MM_TOKEN != ''
+        run: |
+          npm ci
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+          node scripts/judge-runner.mjs ${{ inputs.limit || '30' }}

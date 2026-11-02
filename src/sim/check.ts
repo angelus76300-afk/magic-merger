@@ -40,9 +40,9 @@ export interface CheckResult {
 const SIZE = 112;
 const SEED = 11;
 // Below this many cells, voxels or creatures, a difference with the control is
-// noise from the random streams drifting apart (measured with a spell that
-// only draws random numbers: at most 3 cells and 0 creatures over 14 seconds).
-const MIN_CELLS = 8;
+// noise (spells that only draw random numbers or particles: 0 cells and 0
+// creatures over 14 seconds). A cantrip of gold lays 6 cells, so 3 is enough.
+const MIN_CELLS = 3;
 const MIN_VOXELS = 4;
 const MIN_CREATURES = 1;
 // Past this share of the land changed, or with almost every villager and house

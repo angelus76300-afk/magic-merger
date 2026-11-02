@@ -41,13 +41,27 @@ npx wrangler secret put ADMIN_TOKEN          # a different long random string, o
 npm run deploy
 ```
 
+`npm run deploy` also applies the D1 migrations and sets the cron trigger (every ten minutes) that collects the spells the Batch API has written.
+
 The game is then at `https://magic-merger.<your-subdomain>.workers.dev`. It is a normal web page, so on a phone you can use "Add to Home Screen".
 
 `ACCESS_TOKEN` matters: the Worker URL is public, and without the token anyone who finds it could spend your credit.
 
 ### Admin mode
 
-Tap the "Magic Merger" title five times quickly and enter your `ADMIN_TOKEN`. An admin badge appears with this month's Claude spend; tap it for the detail by call and model. Every card gets an admin row: which API version and model wrote its program, **New description**, and **Rewrite this spell**, which says what it will cost before it spends. They throw away the stored text or program and ask Claude again. Everyone else gets the stored version forever. Spells are never rewritten in bulk: this button is the only way. The admin token also works as an access token.
+Tap the "Magic Merger" title five times quickly and enter your `ADMIN_TOKEN`. An admin badge appears with this month's Claude spend; tap it for the detail by call and model. Every card gets an admin row: which API version and model wrote its program, **New description**, **Rewrite this spell**, which says what it will cost before it spends, and every version of the program with its status, origin, votes, test run and judge score. Spells are never rewritten in bulk: only this button, players' votes and the judge (once it is trusted, see DESIGN.md) rewrite a spell, one at a time. The admin token also works as an access token.
+
+### Votes and the judge (3.3)
+
+Players vote after a cast; nothing to set up. Two knobs in `wrangler.jsonc`: `REWRITE_BUDGET_USD`, dollars a day that rewrites may spend (votes, the judge and failed test runs), and `BIG_SPELLS_BATCH`.
+
+The judge needs eyes: a computer with Playwright that casts each new live program in the Spell Lab and sends three frames to the Worker.
+
+```bash
+MM_URL=https://magic-merger.<your-subdomain>.workers.dev MM_TOKEN=<ADMIN_TOKEN> node scripts/judge-runner.mjs 30
+```
+
+Or let GitHub do it every night: add the repository secrets `MM_URL` and `MM_TOKEN` (Settings > Secrets and variables > Actions) and the `Judge` workflow runs at 04:17 UTC, or by hand from the Actions tab. Without the secrets it does nothing. `GET /api/admin/judge-stats` says how well the judge agrees with votes.
 
 ### Frame HUD
 
@@ -57,16 +71,19 @@ A long press on the title shows a small panel in the World: frame time p50 and p
 
 Set in `wrangler.jsonc`:
 
-| Variable            | Default                        | Used for                                                                                                                |
-| ------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `MERGE_MODEL`       | `claude-opus-5-5`              | what two items make, and their power tier; once per new pair, ever (DESIGN.md has the comparison with Haiku and Sonnet) |
-| `MERGE_EFFORT`      | `low`                          | how long the merge model thinks                                                                                         |
-| `DESCRIBE_MODEL`    | `claude-haiku-5-5`, low effort | the grimoire text on a card; once per element, ever                                                                     |
-| `SPELL_MODEL_SMALL` | `claude-haiku-5-5`             | writing spells up to `SPELL_SMALL_UP_TO` (grand)                                                                        |
-| `SPELL_MODEL`       | `claude-opus-5-5`              | writing legendary and cosmic spells                                                                                     |
-| `REPAIR_MODEL`      | `claude-haiku-5-5`             | mending a program that crashed, whatever its tier                                                                       |
-| `SPELL_EFFORT`      | `medium`                       | how long the spell writer thinks                                                                                        |
-| `BUDGET_USD`        | `20`                           | Claude spend allowed per calendar month                                                                                 |
+| Variable             | Default                        | Used for                                                                                                                |
+| -------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `MERGE_MODEL`        | `claude-opus-5-5`              | what two items make, and their power tier; once per new pair, ever (DESIGN.md has the comparison with Haiku and Sonnet) |
+| `MERGE_EFFORT`       | `low`                          | how long the merge model thinks                                                                                         |
+| `DESCRIBE_MODEL`     | `claude-haiku-5-5`, low effort | the grimoire text on a card; once per element, ever                                                                     |
+| `SPELL_MODEL_SMALL`  | `claude-haiku-5-5`             | writing spells up to `SPELL_SMALL_UP_TO` (grand)                                                                        |
+| `SPELL_MODEL`        | `claude-opus-5-5`              | writing legendary and cosmic spells                                                                                     |
+| `REPAIR_MODEL`       | `claude-haiku-5-5`             | mending a program that crashed, whatever its tier                                                                       |
+| `SPELL_EFFORT`       | `medium`                       | how long the spell writer thinks                                                                                        |
+| `BUDGET_USD`         | `20`                           | Claude spend allowed per calendar month                                                                                 |
+| `JUDGE_MODEL`        | `claude-haiku-5-5`             | scoring three Spell Lab frames of a program (3.3)                                                                       |
+| `REWRITE_BUDGET_USD` | `0.5`                          | dollars a day for rewrites asked by votes, the judge and failed test runs                                               |
+| `BIG_SPELLS_BATCH`   | `1`                            | legendary and cosmic spells drafted by Haiku at once, written by Opus through the Batch API at half price; `0` for 3.2  |
 
 Measured on the live Worker in November 2026:
 
@@ -78,7 +95,7 @@ Measured on the live Worker in November 2026:
 | Legendary or cosmic spell (Opus) | $0.076  | 20 to 40 s |
 | Sonnet, for reference            | $0.021  |            |
 
-A spell is written once, for everyone, the first time a player picks it in the World tab.
+A spell is written for everyone the first time a player picks it in the World tab, tested in that player's browser, and written again only when players vote it down (DESIGN.md, "Spells that get better").
 
 **Budget:** every call is written to the `spend` table in D1. When this month's total reaches `BUDGET_USD`, the Worker stops calling Claude and says so in the game; known recipes, descriptions and spells keep working. The admin can read the month and today's totals, grouped by call and model, at `/api/spend`, and in the admin badge. Also set a spend limit on the Console workspace: it is the safety net that does not depend on this code.
 
@@ -100,7 +117,7 @@ node scripts/spell-lab.mjs lab-out lab/spells/*.js
 
 `lab/spells` holds hand written reference spells. A `.json` file can also be a saved `/api/spell` response. Environment variables: `LAB_TIER` (default major), `LAB_SHOTS` (seconds, comma separated), `LAB_SIZE` (small, medium, large), `LAB_DIST` (camera distance; 400 shows the whole island).
 
-To compare models, the admin can pass `model` and `effort` in an `/api/spell` request with `regenerate: true`.
+To compare models, the admin can pass `model` and `effort` in an `/api/spell` request with `regenerate: true`, or, without storing anything, call `/api/admin/spell-trial` (`name`, `model`, `effort`, `examples`, `rewrite`), `/api/admin/batch-trial` and `/api/admin/judge-trial`. `scripts/eval-spells.ts` uses them to measure a fixed set of 20 spells (see its header and `docs/measurements/spell-quality-2026-11.md`); point it at a version uploaded with `npx wrangler versions upload`, which gets its own preview URL and leaves production alone.
 
 `node scripts/scenario-lab.mjs out plan.json` plays challenges with spells cast at given times and saves frames and the objective's timeline (see the comment at the top of the script for the plan format).
 
@@ -110,4 +127,4 @@ To compare models, the admin can pass `model` and `effort` in an `/api/spell` re
 npm test
 ```
 
-Runs the simulation in Node, without a browser, in about 15 seconds: map generation, the reference spells, the loop guard, a save round trip, and every challenge with nothing and with its solution. GitHub Actions runs `npm run build` and `npm test` on every pull request.
+Runs the simulation in Node, without a browser, in about 35 seconds: map generation, the reference spells, the loop guard, a save round trip, every challenge with nothing and with its solution, the test run on good and bad programs, and the vote rules. GitHub Actions runs `npm run build` and `npm test` on every pull request.

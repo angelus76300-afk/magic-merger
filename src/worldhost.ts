@@ -70,6 +70,7 @@ export class WorldHost {
   private testing = new Set<string>();
   private voteBar: HTMLElement | null = null;
   private voteTimer = 0;
+  private asked = new Set<number>();
   private synced = false;
 
   constructor(
@@ -250,7 +251,9 @@ export class WorldHost {
         if (discovery.element.tier !== res.tier) this.store.discover({ ...discovery.element, tier: res.tier }, discovery.recipe ?? ["", ""]);
       }
       const req = this.request(key);
-      if (req && regenerate) this.send({ type: "spell-updated", spell: req });
+      // The World keeps the program it was handed: a rewrite, a rollback or a
+      // refresh must reach it, or a cast would run old code under a new id.
+      if (req) this.send({ type: "spell-updated", spell: req });
       return req;
     } catch (err) {
       if (!quiet) toast(err instanceof Error ? err.message : "The spell could not be prepared", "error");
@@ -496,8 +499,10 @@ export class WorldHost {
     } catch {
       return;
     }
+    // Asked once per version per visit: a spell cast ten times is not voted ten times.
+    if (!canVote || this.asked.has(program.id)) return;
+    this.asked.add(program.id);
     clearTimeout(this.voteTimer);
-    if (!canVote) return;
     this.voteTimer = window.setTimeout(() => this.askVote(name, program.id!), 6000);
   }
 
