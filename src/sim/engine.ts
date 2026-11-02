@@ -105,6 +105,8 @@ export class Engine {
     if (this.running) return;
     this.running = true;
     this.last = performance.now();
+    // The time the World was hidden is not a frame: the HUD would count it as one.
+    this.lastDraw = this.last;
     // A frame still pending from before a stop must not start a second loop.
     if (this.rafId === 0) this.rafId = requestAnimationFrame((t) => this.frame(t));
   }
