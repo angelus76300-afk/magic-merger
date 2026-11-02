@@ -666,3 +666,53 @@ input {
   font-size: 13px;
   color: var(--muted);
 }
+
+.card-ribbon {
+  display: none;
+  margin: -6px 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #f4d58d;
+  letter-spacing: 0.02em;
+}
+
+.card-first .card-ribbon {
+  display: block;
+}
+
+.card-first {
+  animation: card-glow 2.4s ease-out 1;
+  border-color: #f4d58d;
+}
+
+.card-first .card-emoji {
+  animation: card-emoji-pop 0.9s cubic-bezier(0.2, 1.6, 0.4, 1) 1;
+}
+
+@keyframes card-glow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(244, 213, 141, 0.9);
+  }
+  40% {
+    box-shadow: 0 0 60px 18px rgba(244, 213, 141, 0.45);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(244, 213, 141, 0);
+  }
+}
+
+@keyframes card-emoji-pop {
+  0% {
+    transform: scale(0.2) rotate(-30deg);
+  }
+  100% {
+    transform: scale(1) rotate(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-first,
+  .card-first .card-emoji {
+    animation: none;
+  }
+}

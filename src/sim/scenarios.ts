@@ -44,12 +44,14 @@ export const SCENARIOS: Scenario[] = [
       const world = plainWorld(SIZE, SIZE, 101, 12, 2);
       const rng = new Rng(101);
       buildVillage(world, 86, 70, rng);
-      plantForest(world, 6, 12, 70, 104, 0.7);
-      plantForest(world, 70, 40, 80, 100, 0.35);
+      plantForest(world, 6, 12, 72, 104, 0.82);
+      // Orchards and hedges reach the houses, so the fire has a road to the village.
+      plantForest(world, 72, 46, 84, 96, 0.72);
       populate(world);
-      world.wind.x = 1.6;
-      world.wind.y = 0.4;
-      for (let y = 26; y < 90; y++) for (let x = 8; x < 12; x++) world.fire[y * SIZE + x] = 1;
+      world.wind.x = 1.3;
+      world.wind.y = 0.2;
+      // It starts small, deep in the forest: there is time to act.
+      forDisc(world, 12, 56, 5, (i) => (world.fire[i] = 1));
       const v0 = villagers(world);
       const h0 = houses(world);
       let calm = 0;
@@ -78,7 +80,7 @@ export const SCENARIOS: Scenario[] = [
       const world = plainWorld(SIZE, SIZE, 202, 10, 1.5);
       const rng = new Rng(202);
       // The land slopes from the volcano down to the village.
-      for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) world.height[y * SIZE + x] += (SIZE * 2 - x - y) * 0.035;
+      for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) world.height[y * SIZE + x] += (SIZE * 2 - x - y) * 0.05;
       forDisc(world, 24, 24, 24, (i, k) => {
         world.height[i] += 18 * k * k;
         world.ground[i] = k > 0.5 ? G.BASALT : k > 0.2 ? G.ROCK : world.ground[i];
@@ -96,7 +98,7 @@ export const SCENARIOS: Scenario[] = [
         run: {
           tick(w) {
             if (w.time > ERUPTION) return;
-            forDisc(w, 24, 24, 3, (i) => w.place(i, "lava", 0.16));
+            forDisc(w, 24, 24, 3, (i) => w.place(i, "lava", 0.2));
             if (w.tick % 3 === 0) {
               addGas(w, 24 * SIZE + 24, S.SMOKE, 0.8);
               w.particles.add({ x: 24 + w.rng.next() * 4 - 2, y: 24 + w.rng.next() * 4 - 2, z: 2, vz: 10 + w.rng.next() * 10, vx: w.rng.next() * 6 - 3, vy: w.rng.next() * 6 - 3, life: 1.6, color: 0xff8a2a, size: 1.4, glow: true, gravity: 12 });
@@ -106,7 +108,7 @@ export const SCENARIOS: Scenario[] = [
           check(w) {
             const h = houses(w);
             const left = Math.max(0, Math.ceil(ERUPTION + 8 - w.time));
-            if (h < h0 * 0.6) return { text: "The lava swallowed the village.", status: "lost" };
+            if (h < h0 * 0.75) return { text: "The lava reached the village.", status: "lost" };
             if (left === 0) return { text: "The mountain sleeps again, and the village stands!", status: "won" };
             return { text: `${w.time < ERUPTION ? "Erupting" : "Cooling"}: ${left}s · houses ${Math.round(h / 4)}/${Math.round(h0 / 4)}`, status: "playing" };
           },

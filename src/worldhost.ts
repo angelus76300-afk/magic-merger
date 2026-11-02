@@ -302,10 +302,10 @@ export class WorldHost {
   }
 
   renderSpells(): void {
+    // Spells first, newest first, then artifacts: both can be used on the island.
     const spells = this.store
       .discoveries()
-      .filter((d) => d.element.kind === "spell")
-      .sort((a, b) => b.discoveredAt - a.discoveredAt);
+      .sort((a, b) => (a.element.kind === b.element.kind ? b.discoveredAt - a.discoveredAt : a.element.kind === "spell" ? -1 : 1));
     const fragment = document.createDocumentFragment();
     for (const { element } of spells) {
       const key = elementKey(element.name);
@@ -325,7 +325,7 @@ export class WorldHost {
     let text = "Pick a spell, then tap the island to cast it. Drag to turn, pinch to zoom, two fingers to pan.";
     if (key && name) {
       if (this.preparing.has(key)) text = `Preparing ${name}… the first cast of a spell takes a moment.`;
-      else if (this.request(key)) text = `Tap the island to cast ${name}.`;
+      else if (this.request(key)) text = `Tap the island to ${this.store.get(key)?.element.kind === "artifact" ? "place" : "cast"} ${name}.`;
       else text = `${name} is not ready yet.`;
     }
     this.el.status.textContent = text;

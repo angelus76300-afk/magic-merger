@@ -222,7 +222,11 @@ export class Craft {
       node.classList.add("pop");
 
       const label = `${result.element.emoji} ${result.element.name}`;
-      if (result.firstDiscovery) toast(`First discovery: ${label}`, "special");
+      if (result.firstDiscovery) {
+        toast(`First discovery: ${label}`, "special");
+        // Let the chip pop first, then celebrate with its card.
+        window.setTimeout(() => openCard(this.store, chip.key, true), 700);
+      }
       else if (newForMe) toast(`New: ${label}`);
       if (newForMe) this.renderInventory();
       if (newForMe && result.element.kind === "spell") this.onNewSpell(chip.key);

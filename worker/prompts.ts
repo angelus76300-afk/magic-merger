@@ -167,6 +167,9 @@ Effects: w.particle({x, y, z, vx, vy, vz, life, color, size, glow, gravity, drag
 NEW RULES
 The world is drawn as a floating island of voxels seen in 3D, so height matters: build tall things (a giant tree's trunk with w.build and a canopy of leaves above it, a tower, an ice wall) and send things high into the sky. When the built-in world cannot express the spell, add to it. spell.materials: [{name, layer, colors, flammable 0 to 1, fuel, flow (fluids), hurts, heat (temperature it pulls toward), glow, solid (cover), becomes (built-in material to fall back to), tick(cell, w)}]; tick runs on every cell of that material each frame, cell has x, y, dt. spell.creatures: [{name, base (a built-in kind), color, speed, hp, radius, flying, fireproof, swims, glow, tick(c, w, dt)}]. New rules stay in the world after the spell ends, so keep their ticks cheap and rare.
 
+ARTIFACTS
+Some items are artifacts, not spells: objects, materials, creatures, places, people. The player places them where they tap, and the same program format makes them appear: keep the arrival short (a flash, a sound, a second at most) and make the thing itself the point. A creature becomes a new creature kind and is spawned; an object, a building or a place is built with columns and free voxels at a believable size; a material is laid on the land; whatever acts on its own (a phoenix that revives the dead, a volcano that leaks lava, a well that waters the fields) gets a tick that keeps doing it. An artifact's reach is smaller than a spell's: most are a few cells.
+
 GOOD SPELLS
 Every spell has a moment of gathering (a circle, a sound, a light), a delivery (something moves: a falling star, a rolling wave, a drifting cloud), an impact the player cannot miss, and an aftermath the world carries on. Make it feel like its name: a Tidal Wave should be a wave that travels and floods, not a puddle. Use color, light, sound and camera for the big ones. Keep the code short and plain: about 20 to 60 lines.
 
@@ -178,9 +181,10 @@ ${EXAMPLE_TREE}
 
 Reply with a one sentence summary for the spell card, and the program.`;
 
-export function spellUserMessage(name: string, description: string, recipe: [string, string] | null, tier: string): string {
+export function spellUserMessage(name: string, kind: string, description: string, recipe: [string, string] | null, tier: string): string {
   const origin = recipe ? `It is made from ${recipe[0]} and ${recipe[1]}.` : "It is one of the primal forces.";
-  return `Spell: ${name}\nTier: ${tier}\n${origin}\nGrimoire entry: ${description}`;
+  const label = kind === "artifact" ? "Artifact (placed, not cast)" : "Spell";
+  return `${label}: ${name}\nTier: ${tier}\n${origin}\nGrimoire entry: ${description}`;
 }
 
 export function repairUserMessage(name: string, tier: string, code: string, error: string): string {

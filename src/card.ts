@@ -23,13 +23,15 @@ export function setCardActions(a: CardActions): void {
 
 // The spell card: what an element is, how it was made, and for spells the
 // button that sends it to the World tab.
-export function openCard(store: Store, key: string): void {
+// `first` marks a first discovery ever: the card opens with a little ceremony.
+export function openCard(store: Store, key: string, first = false): void {
   const discovery = store.get(key);
   if (!discovery) return;
   const { element, recipe } = discovery;
   const serial = ++openSerial;
   const d = ensureDialog();
 
+  d.classList.toggle("card-first", first);
   d.querySelector(".card-emoji")!.textContent = element.emoji;
   d.querySelector(".card-name")!.textContent = element.name;
   const kind = d.querySelector<HTMLElement>(".card-kind")!;
@@ -42,11 +44,11 @@ export function openCard(store: Store, key: string): void {
   const isSpell = element.kind === "spell";
   const summary = d.querySelector<HTMLElement>(".card-summary")!;
   const program = store.spell(key);
-  summary.hidden = !isSpell || !program?.summary;
+  summary.hidden = !program?.summary;
   summary.textContent = program?.summary ?? "";
 
   const cast = d.querySelector<HTMLButtonElement>(".card-cast")!;
-  cast.hidden = !isSpell;
+  cast.textContent = isSpell ? "Cast in the World" : "Place in the World";
   cast.onclick = () => {
     d.close();
     actions?.cast(key);
@@ -80,7 +82,7 @@ export function openCard(store: Store, key: string): void {
   admin.hidden = !session.admin;
   d.querySelector<HTMLButtonElement>(".card-new-description")!.onclick = () => showDescription(true);
   const newSpell = d.querySelector<HTMLButtonElement>(".card-new-spell")!;
-  newSpell.hidden = !isSpell;
+  newSpell.textContent = isSpell ? "New spell" : "New artifact";
   newSpell.onclick = async () => {
     newSpell.disabled = true;
     newSpell.textContent = "Designing…";
@@ -94,7 +96,7 @@ export function openCard(store: Store, key: string): void {
       toast(`${element.name} was redesigned`);
     } finally {
       newSpell.disabled = false;
-      newSpell.textContent = "New spell";
+      newSpell.textContent = isSpell ? "New spell" : "New artifact";
     }
   };
 
@@ -106,6 +108,7 @@ function ensureDialog(): HTMLDialogElement {
   dialog = document.createElement("dialog");
   dialog.className = "card";
   dialog.innerHTML = `
+    <p class="card-ribbon">First discovery! No one had ever made this.</p>
     <div class="card-head">
       <span class="card-emoji"></span>
       <div>

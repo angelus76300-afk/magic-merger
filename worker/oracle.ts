@@ -25,6 +25,8 @@ export interface MergeAnswer {
 
 export interface SpellRequest {
   name: string;
+  // Artifacts get programs too: they are placed, not cast.
+  kind: ElementKind;
   description: string;
   recipe: [string, string] | null;
   tier: Tier;
@@ -136,7 +138,7 @@ export class ClaudeOracle implements Oracle {
   }
 
   async spell(request: SpellRequest): Promise<ProgramAnswer> {
-    const message = spellUserMessage(request.name, request.description, request.recipe, request.tier);
+    const message = spellUserMessage(request.name, request.kind, request.description, request.recipe, request.tier);
     return this.program("spell", [{ role: "user", content: message }]);
   }
 
@@ -260,7 +262,7 @@ export class MockOracle implements Oracle {
   }
 
   async repair(name: string): Promise<ProgramAnswer> {
-    return this.spell({ name, description: "", recipe: null, tier: "major" });
+    return this.spell({ name, kind: "spell", description: "", recipe: null, tier: "major" });
   }
 }
 

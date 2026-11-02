@@ -18,7 +18,7 @@ export const SCENARIO_LIST: ScenarioInfo[] = [
   {
     id: "lava",
     title: "The mountain wakes",
-    brief: "The volcano above the village is erupting for a minute. Keep most of the houses standing until it falls quiet.",
+    brief: "The volcano above the village is erupting for a minute. Keep the lava out of the village until it falls quiet.",
     hint: "Walls and hills, a trench, cold or water to harden the lava into stone.",
   },
   {

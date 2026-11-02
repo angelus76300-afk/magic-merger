@@ -220,7 +220,6 @@ async function handleDescribe(body: DescribeRequest, env: Env, oracle: Oracle, a
 async function handleSpell(body: SpellRequest, env: Env, oracle: Oracle, admin: boolean): Promise<SpellResponse> {
   const regenerate = checkRegenerate(body.regenerate, admin);
   const element = await resolveInput(env.DB, body.name, oracle.mock);
-  if (element.kind !== "spell") throw new HttpError(400, `${element.name} is an artifact and cannot be cast`);
   const key = elementKey(element.name);
 
   if (!oracle.mock && !regenerate) {
@@ -235,7 +234,7 @@ async function handleSpell(body: SpellRequest, env: Env, oracle: Oracle, admin: 
   const model = body.model && admin ? body.model : spellModelFor(env, tier);
   const writer = model === env.SPELL_MODEL || oracle.mock ? oracle : oracleFor(env, model, body.effort);
   try {
-    const answer = await writer.spell({ name: element.name, description, recipe: await firstRecipe(env.DB, key), tier });
+    const answer = await writer.spell({ name: element.name, kind: element.kind, description, recipe: await firstRecipe(env.DB, key), tier });
     const program: SpellProgram = { version: 2, summary: answer.summary, code: answer.code };
     if (!oracle.mock) await storeProgram(env, key, program, 0, model);
     return { name: element.name, tier, program, mock: oracle.mock };
@@ -246,7 +245,6 @@ async function handleSpell(body: SpellRequest, env: Env, oracle: Oracle, admin: 
 
 async function handleRepair(body: RepairRequest, env: Env, oracle: Oracle, admin: boolean): Promise<SpellResponse> {
   const element = await resolveInput(env.DB, body.name, oracle.mock);
-  if (element.kind !== "spell") throw new HttpError(400, `${element.name} cannot be cast`);
   const key = elementKey(element.name);
   const error = typeof body.error === "string" ? body.error.slice(0, 500) : "";
   if (!error) throw new HttpError(400, "A repair needs the error");
