@@ -462,6 +462,7 @@ export function explode(world: World, x: number, y: number, r: number, power: nu
   }
   // Blasts blow away what spells built close by and set fire to wood further out;
   // whatever loses its support then falls.
+  if (world.landmarks.length) world.landmarks = world.landmarks.filter((l) => Math.hypot(l.x - x, l.y - y) > r * 0.6);
   if (world.decor.size) {
     world.clearVoxels(x, y, r * 0.6);
     igniteVoxels(world, x, y, r * (0.6 + 0.4 * Math.min(1, power)));

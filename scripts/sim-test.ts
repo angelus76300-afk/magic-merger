@@ -26,6 +26,9 @@ function seed(n: number): void {
   };
 }
 
+// Everything below is seeded, so a run gives the same answers every time.
+seed(1);
+
 let failures = 0;
 function check(name: string, ok: boolean, detail = ""): void {
   console.log(`${ok ? "ok  " : "FAIL"} ${name}${detail ? `: ${detail}` : ""}`);
@@ -184,7 +187,68 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   check("blight burns away", count() < spread * 0.3, `${count()} left`);
 }
 
-// 7. Challenges: nothing does not win; the solution wins.
+// 7. Interactions: gold draws villagers who carry it home and the village
+// grows; vampires spread at night; a mob kills a weak monster; a landmark
+// keeps beasts away.
+{
+  const villageWorld = () => {
+    seed(8);
+    const world = generateWorld(112, 112, 4);
+    populate(world);
+    const errors: string[] = [];
+    const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
+    const v = world.creatures.find((c) => c.kind === "villager")!;
+    return { world, rt, errors, v };
+  };
+  const houses = (world: World) => {
+    let n = 0;
+    for (let i = 0; i < world.n; i++) if (world.cover[i] === C.HOUSE) n++;
+    return n;
+  };
+  {
+    const { world, rt, errors, v } = villageWorld();
+    const before = houses(world);
+    rt.cast({ key: "gold", name: "Gold", tier: "minor", code: `const spell = { materials: [{ name: "gold", layer: "ground", colors: ["#ffd23d"], lures: ["villager"], taken: true }], *cast(w) { w.paint(w.x, w.y, 3, "gold", 1); } };` }, v.x + 6, v.y + 6);
+    for (let k = 0; k < 30 * 60; k++) step(world, rt);
+    check("gold draws villagers and grows the village", errors.length === 0 && world.wealth >= 4 && houses(world) > before, `wealth ${world.wealth}, houses ${before / 4} then ${houses(world) / 4}${errors[0] ? ", " + errors[0] : ""}`);
+  }
+  {
+    const { world, rt, errors, v } = villageWorld();
+    world.time = 262; // the middle of the night
+    rt.cast({ key: "vamp", name: "Vampire", tier: "minor", code: `const spell = { creatures: [{ name: "vampire", base: "beast", color: "#3a0d1e", behavior: "hunt", prey: ["villager"], attack: 60, converts: true, active: "night", speed: 6, hp: 400 }], *cast(w) { w.spawn("vampire", w.x, w.y); w.spawn("vampire", w.x + 1, w.y); } };` }, v.x + 3, v.y + 3);
+    for (let k = 0; k < 30 * 15; k++) step(world, rt);
+    const vampires = world.creatures.filter((c) => !c.dead && c.kind === "vampire").length;
+    check("vampires turn villagers at night", errors.length === 0 && vampires > 2, `${vampires} vampires`);
+  }
+  {
+    const { world, rt, errors, v } = villageWorld();
+    rt.cast({ key: "imp", name: "Imp", tier: "minor", code: `const spell = { creatures: [{ name: "imp", base: "beast", color: "#aa3333", behavior: "hunt", prey: ["villager"], attack: 5, hp: 60, speed: 2 }], *cast(w) { w.spawn("imp", w.x, w.y); } };` }, v.x, v.y);
+    for (let k = 0; k < 30 * 20; k++) step(world, rt);
+    const imps = world.creatures.filter((c) => !c.dead && c.kind === "imp").length;
+    check("villagers mob a weak monster", errors.length === 0 && imps === 0, `${imps} imps left`);
+  }
+  {
+    const { world, rt, errors } = villageWorld();
+    // An inland spot with room to run: no water within 14 cells.
+    let at = { x: 56, y: 56 };
+    search: for (let y = 20; y < 92; y += 4) {
+      for (let x = 20; x < 92; x += 4) {
+        let dry = true;
+        for (let dy = -14; dy <= 14 && dry; dy += 2) for (let dx = -14; dx <= 14 && dry; dx += 2) if (world.depth[(y + dy) * world.w + x + dx] > 0.05) dry = false;
+        if (dry) {
+          at = { x, y };
+          break search;
+        }
+      }
+    }
+    rt.cast({ key: "scare", name: "Scarecrow", tier: "minor", code: `const spell = { *cast(w) { w.landmark(w.x, w.y, { scares: ["beast"], radius: 10 }); for (let k = 0; k < 4; k++) w.spawn("beast", w.x + k % 2, w.y + 1); } };` }, at.x, at.y);
+    for (let k = 0; k < 30 * 12; k++) step(world, rt);
+    const near = world.creatures.filter((c) => !c.dead && c.kind === "beast" && Math.hypot(c.x - at.x, c.y - at.y) < 8);
+    check("a landmark keeps beasts away", errors.length === 0 && near.length === 0, `${near.length} beasts still near: ${near.map((c) => `at ${c.x.toFixed(1)},${c.y.toFixed(1)} from ${at.x.toFixed(1)},${at.y.toFixed(1)}, ${Math.hypot(c.x - at.x, c.y - at.y).toFixed(1)} cells, mood ${c.data.mood}, frozen ${c.frozen.toFixed(1)}, depth ${world.depth[Math.floor(c.y) * world.w + Math.floor(c.x)].toFixed(2)}`).join("; ")}`);
+  }
+}
+
+// 8. Challenges: nothing does not win; the solution wins.
 const solutions: Record<string, { file: string; tier: "major" | "grand" | "legendary"; at: [number, number][] }> = {
   wildfire: { file: "rain.js", tier: "grand", at: [[16, 56]] },
   lava: { file: "wall.js", tier: "grand", at: [[58, 58]] },

@@ -44,6 +44,7 @@ ColorManagement.enabled = false;
 const SKY_TOP = "#5fa8e8";
 const SKY_LOW = "#cfe8f7";
 const DECAL_SCALE = 4; // decal pixels per cell
+const MOOD_COLORS: Record<string, number> = { fear: 0xffe066, lured: 0xffc23d, angry: 0xff4d4d, hunt: 0xb3123b, asleep: 0xa9c8ff };
 
 // Draws the world as a floating voxel island. Built for phones: unlit
 // materials with lighting baked into colors, terrain rebuilt only where it
@@ -59,6 +60,9 @@ export class VoxelView {
   private lastCovers = -1;
   private bodyMesh: InstancedMesh;
   private headMesh: InstancedMesh;
+  // A small block over a creature's head that shows why it acts: fear,
+  // lured, carrying something home, angry, hunting, asleep.
+  private markMesh: InstancedMesh;
   private flames: InstancedMesh;
   private puffs: InstancedMesh;
   private glowPoints: Points;
@@ -132,6 +136,7 @@ export class VoxelView {
     }
     this.bodyMesh = this.instanced("body", basic, 900);
     this.headMesh = this.instanced("head", basic, 900);
+    this.markMesh = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true }), 900);
     this.flames = this.instanced("flame", new MeshBasicMaterial({ vertexColors: true }), 5000);
     this.puffs = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.22, depthWrite: false }), 4000);
     this.glowTexture = glowTexture();
@@ -372,6 +377,7 @@ export class VoxelView {
   private placeCreatures(time: number): void {
     const { world } = this;
     let n = 0;
+    let marks = 0;
     for (const c of world.creatures) {
       if (n >= 900) break;
       const k = kindOf(c);
@@ -397,10 +403,23 @@ export class VoxelView {
       this.headMesh.setMatrixAt(n, this.m);
       const headColor = c.kind === "villager" ? (c.dead ? 0x777070 : 0xf1c27d) : c.kind === "golem" ? 0x9dfcff : scaleHex(color, 1.1);
       this.headMesh.setColorAt(n, this.col.setHex(c.fear > 0 && Math.floor(time * 4) % 2 === 0 ? 0xffe066 : c.sleep > 0 ? 0xa9c8ff : headColor));
+      const mood = c.dead ? null : (c.data.mood as string | null | undefined);
+      if (mood && marks < 900) {
+        const color = mood === "carry" ? ((c.data.carry as number | undefined) ?? 0xffd36a) : MOOD_COLORS[mood] ?? 0xffffff;
+        const s = Math.max(0.22, size * 0.28) * (mood === "lured" || mood === "angry" ? 0.9 + 0.2 * Math.sin(time * 8 + c.id) : 1);
+        this.m.makeScale(s, s, s);
+        this.m.setPosition(p.x, p.y + bob + size * tall + head + s * 1.2, p.z);
+        this.markMesh.setMatrixAt(marks, this.m);
+        this.markMesh.setColorAt(marks, this.col.setHex(color));
+        marks++;
+      }
       n++;
     }
     this.bodyMesh.count = n;
     this.headMesh.count = n;
+    this.markMesh.count = marks;
+    this.markMesh.instanceMatrix.needsUpdate = true;
+    if (this.markMesh.instanceColor) this.markMesh.instanceColor.needsUpdate = true;
     this.bodyMesh.instanceMatrix.needsUpdate = true;
     this.headMesh.instanceMatrix.needsUpdate = true;
     if (this.bodyMesh.instanceColor) this.bodyMesh.instanceColor.needsUpdate = true;

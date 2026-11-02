@@ -9,6 +9,7 @@ import { BODY_LOOKS, Visuals, type Body, type BodyLook, type DrawFn } from "./vi
 import { TICK, World } from "./world";
 import { Builder, arch, island, spire, tower, tree, treeDefaults, wall } from "./structures";
 import { VK, igniteVoxels, kindId } from "./voxels";
+import { type Landmark, type Presence } from "./social";
 
 // Runs spell programs. A program is JavaScript that defines `spell`:
 //
@@ -80,6 +81,31 @@ export class Runtime {
   // Declared reactions of spell-made materials, by layer and id.
   private reactions = new Map<string, Reaction>();
   private sinceReact = 0;
+  private sinceAppeal = 0;
+
+  // Finds the cells of materials that lure or scare, sampled so that a
+  // field of gold stays cheap: creatures only need a few points to walk to.
+  private collectLures(): void {
+    const w = this.world;
+    if (!w.lureMaterials.size) {
+      w.lures = [];
+      return;
+    }
+    const byId = new Map<string, { lures: string[]; scares: string[]; taken: boolean; color: number }>();
+    for (const layer of ["ground", "cover", "fluid"] as const) {
+      w.materials.list[layer].forEach((m, id) => {
+        const rule = w.lureMaterials.get(m.name);
+        if (rule) byId.set(`${layer}:${id}`, { ...rule, color: m.colors[0] });
+      });
+    }
+    const found: Presence[] = [];
+    for (let i = 0; i < w.n; i++) {
+      const rule = byId.get(`cover:${w.cover[i]}`) ?? byId.get(`ground:${w.ground[i]}`) ?? (w.fluid[i] ? byId.get(`fluid:${w.fluid[i]}`) : undefined);
+      if (rule) found.push({ x: i % w.w, y: Math.floor(i / w.w), lures: rule.lures, scares: rule.scares, taken: rule.taken, color: rule.color });
+    }
+    const max = 400;
+    w.lures = found.length > max ? found.filter(() => Math.random() < max / found.length) : found;
+  }
   // Which spell defined each custom material and creature, for saving the world.
   readonly owners = new Map<string, string>();
   camera: CameraControl | null = null;
@@ -113,6 +139,7 @@ export class Runtime {
   // Registers the materials and creatures a spell brings, so they exist even
   // before it is cast (a reloaded world may already contain them).
   defineRules(req: CastRequest, spell: SpellObject): void {
+    const w0 = this.world;
     for (const raw of Array.isArray(spell.materials) ? spell.materials : []) {
       const m = raw as Record<string, unknown>;
       if (!m || typeof m.name !== "string") continue;
@@ -133,6 +160,10 @@ export class Runtime {
       const id = this.world.materials.define(mat);
       this.owners.set(`${layer}:${name}`, req.key);
       const ruleKey = `${layer}:${id}`;
+      const lures = strings(m.lures);
+      const scares = strings(m.scares);
+      if (lures.length || scares.length) w0.lureMaterials.set(name, { lures, scares, taken: m.taken === true });
+      else w0.lureMaterials.delete(name);
       const reaction = reactionOf(m, layer, name);
       if (reaction) this.reactions.set(ruleKey, reaction);
       else this.reactions.delete(ruleKey);
@@ -237,6 +268,11 @@ export class Runtime {
     this.stepJobs();
     this.stepBodies(dt);
     this.stepRules(dt);
+    this.sinceAppeal += dt;
+    if (this.sinceAppeal >= 0.5) {
+      this.sinceAppeal = 0;
+      this.collectLures();
+    }
     this.sinceReact += dt;
     if (this.sinceReact >= 0.2) {
       this.stepReactions(this.sinceReact);
@@ -511,7 +547,7 @@ const AURAS = ["heal", "fear", "calm", "sleep", "burn", "freeze", "hurt"];
 
 // Reads a creature's declared behavior; undefined when it declares none.
 function behaviorOf(k: Record<string, unknown>): Behavior | undefined {
-  const keys = ["behavior", "prey", "leader", "attack", "aura", "leaves", "weak", "immune", "lifespan", "onDeath"];
+  const keys = ["behavior", "prey", "leader", "attack", "aura", "leaves", "weak", "immune", "lifespan", "onDeath", "lures", "scares", "converts", "active"];
   if (!keys.some((key) => k[key] !== undefined)) return undefined;
   const mode = (MODES as readonly string[]).includes(k.behavior as string) ? (k.behavior as Behavior["mode"]) : "wander";
   return {
@@ -528,6 +564,10 @@ function behaviorOf(k: Record<string, unknown>): Behavior | undefined {
     immune: strings(k.immune),
     lifespan: num(k.lifespan, 0, 3600, 0),
     onDeath: typeof k.onDeath === "string" ? k.onDeath.toLowerCase().slice(0, 40) : null,
+    lures: strings(k.lures),
+    scares: strings(k.scares),
+    converts: k.converts === true,
+    active: k.active === "night" || k.active === "day" ? k.active : "always",
   };
 }
 
@@ -1174,6 +1214,28 @@ export class SpellApi {
         drag: num(o.drag, 0, 20, 1),
       });
     }
+  }
+
+  // A lasting presence at a place: villagers and creatures it lures come to
+  // it, those it scares keep away, and its aura acts on whoever stands near.
+  // It has no look of its own: build one (a shrine, a totem, a cursed stone).
+  landmark(x: number, y: number, o: Record<string, unknown> = {}) {
+    const w = this.rt.world;
+    if (!this.inside(x, y) || w.landmarks.length >= 60) return;
+    const aura = ["heal", "fear", "calm", "sleep", "burn", "freeze", "hurt"].includes(o.aura as string) ? (o.aura as string) : null;
+    const l: Landmark = {
+      x: Math.round(x),
+      y: Math.round(y),
+      name: typeof o.name === "string" ? o.name.slice(0, 40) : this.req.name,
+      lures: strings(o.lures),
+      scares: strings(o.scares),
+      taken: false,
+      color: colorOr(o.color, 0xffd36a),
+      radius: num(o.radius, 1, 40, 8),
+      aura,
+      power: num(o.power, 0, 10, 1),
+    };
+    w.landmarks.push(l);
   }
 
   // Lightning from the sky to a cell: strikes the highest thing there (a

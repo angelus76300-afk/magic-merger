@@ -39,6 +39,17 @@ From a review of eleven phone screenshots: good ideas, weird execution (crowns f
 5. **A new spell prompt** asking for a signature look and one real interaction per spell; programs are version 3, so every spell is written again on its next cast.
 6. **Filters** in Craft and World: kind, tier, order (newest, A to Z, most powerful, last used), a find box and a grid view of the spell bar.
 
+## Done in 3.1: relationships
+
+Asked for after 3.0: "a vampire will kill humans, gold will attract humans; we need a way to encourage more interactions".
+
+1. **Anything can lure or scare.** Spell materials, creatures and a new `w.landmark` (a shrine, a relic, a scarecrow) declare which kinds they draw in and which they drive away.
+2. **Villagers and beasts react by themselves.** They flee whatever hunts or scares them, run to a refuge (a landmark that scares their hunter) when one is near, fight back as a mob when three or more face something weak enough, visit what lures them and lose interest after a while. Golems guard villagers.
+3. **Taking things home.** Villagers carry what can be taken (gold) to their homes; every four gifts the village builds a house.
+4. **Converting and hours.** A hunter can turn its victims into its own kind (vampires) and be active only by night or by day.
+5. **Visible intent.** A small block over each head shows fear, lure, carrying, anger, hunting or sleep.
+6. **The prompt asks every artifact for at least one relationship.** Regenerated Vampire, Gold, Stake, Sanctuary, Dryad, Mandrake and Holy Grail all declared one; a Stake planted in a village saves villagers from vampires by night.
+
 ## Decisions taken
 
 1. **Cosmic spells may ruin the island.** Consequences are part of the fun; the land regrows on its own (ash turns to soil, grass and forests come back) and Reset is one tap away. Revisit if it feels punishing in play.

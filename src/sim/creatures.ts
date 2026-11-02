@@ -1,5 +1,6 @@
 import { C, F, G, S } from "./materials";
 import { explode, forDisc } from "./physics";
+import { lull, social, stepLandmarks, type Mood } from "./social";
 import { daylight } from "./voxel/daylight";
 import type { World } from "./world";
 
@@ -32,6 +33,13 @@ export interface Behavior {
   lifespan: number;
   // What happens when it dies: explode, fire, seeds, ice, spawn:<kind>, or a material.
   onDeath: string | null;
+  // Kinds drawn toward it, and kinds that keep away from it.
+  lures: string[];
+  scares: string[];
+  // Its victims rise as its own kind (vampires, zombies).
+  converts: boolean;
+  // When it is awake: always, day or night.
+  active: "always" | "day" | "night";
 }
 
 // What a kind of creature is. Spells can add kinds at run time, with a tick of
@@ -260,6 +268,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   let wantX = 0;
   let wantY = 0;
   let pace = 1;
+  let mood: Mood = null;
+  let plan2: ReturnType<typeof social> = null;
   if (!busy) {
     const dangerDir = senseDanger(world, c);
     if (c.fear > 0) {
@@ -286,11 +296,21 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       pace = 1.5;
     } else if (c.calm > 0) {
       pace = 0;
+    } else if (ai && ai.active !== "always" && (daylight(world.time).night > 0.5) !== (ai.active === "night")) {
+      // Out of its hours it rests where it is.
+      pace = 0;
+      mood = "asleep";
+    } else if ((plan2 = social(world, c, k, kindOf, dt))) {
+      wantX = plan2.x - c.x;
+      wantY = plan2.y - c.y;
+      pace = plan2.pace;
+      mood = plan2.mood;
     } else if (ai && ai.mode !== "wander" && behave(world, c, k, ai, dt)) {
       wantX = c.tx - c.x;
       wantY = c.ty - c.y;
       pace = ai.mode === "flee" || ai.mode === "hunt" ? 1.3 : 1;
       if (Math.hypot(wantX, wantY) < 0.4) pace = 0;
+      if (ai.mode === "hunt" && c.data.target) mood = "hunt";
     } else {
       plan(world, c, k, dt);
       wantX = c.tx - c.x;
@@ -338,6 +358,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   c.x = Math.max(0.5, Math.min(world.w - 1.5, c.x));
   c.y = Math.max(0.5, Math.min(world.h - 1.5, c.y));
   if (ai && !busy) sideEffects(world, c, ai, i, onGround, dt);
+  if (c.fear > 0 || c.burning > 0) mood = "fear";
+  c.data.mood = busy ? (c.sleep > 0 ? "asleep" : null) : mood;
   if (c.hp <= 0) c.dead = true;
 
   if (k.tick) k.tick(c, dt);
@@ -389,7 +411,18 @@ function behave(world: World, c: Creature, k: CreatureKind, ai: Behavior, dt: nu
       c.ty = target.y;
       if (Math.hypot(target.x - c.x, target.y - c.y) < kindOf(c).radius * c.size + kindOf(target).radius * target.size + 0.6) {
         target.hp -= ai.attack * dt;
-        if (target.hp <= 0) target.dead = true;
+        if (target.hp <= 0 && ai.converts && world.creatures.length < 600) {
+          // The victim rises as one of them.
+          const ratio = 0.6;
+          target.kind = c.kind;
+          target.color = kindOf(c).color;
+          target.hp = maxHp(target) * ratio;
+          target.dead = false;
+          target.fear = 0;
+          target.data = {};
+          world.particles.add({ x: target.x, y: target.y, z: 1, vz: 2, life: 1, color: kindOf(c).color, size: 2, glow: true });
+          c.data.target = undefined;
+        } else if (target.hp <= 0) target.dead = true;
         if (target.kind === "villager" && target.fear <= 0) {
           target.fear = 3;
           target.fearX = c.x;
@@ -453,7 +486,7 @@ function sideEffects(world: World, c: Creature, ai: Behavior, i: number, onGroun
         o.fear = 0;
         break;
       case "sleep":
-        if (o.kind !== c.kind) o.sleep = Math.max(o.sleep, 2);
+        if (o.kind !== c.kind) lull(world, o);
         break;
       case "burn":
         if (o.kind !== c.kind && !kindOf(o).fireproof) o.burning = Math.max(o.burning, 1);
@@ -601,6 +634,7 @@ export function populate(world: World): void {
 
 // Slow life: a new villager now and then while houses stand, the dead fade away.
 export function lifeCycle(world: World, dt: number): void {
+  stepLandmarks(world, maxHp, (c) => kindOf(c).fireproof);
   for (let k = world.creatures.length - 1; k >= 0; k--) {
     if (world.creatures[k].dead && world.creatures[k].deadFor > 40) world.creatures.splice(k, 1);
   }

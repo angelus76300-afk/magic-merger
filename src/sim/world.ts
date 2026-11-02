@@ -3,6 +3,7 @@ import { C, F, G, MaterialTable, type Layer } from "./materials";
 import { Rng, fbm, valueNoise } from "./noise";
 import { Particles } from "./particles";
 import { VoxelState, packVoxel, VK } from "./voxels";
+import type { Landmark, Presence } from "./social";
 
 export const TICK = 1 / 30;
 export const AMBIENT = 15;
@@ -45,6 +46,14 @@ export class World {
   readonly decor = new Map<number, number>();
   readonly voxels = new VoxelState();
   decorVersion = 0;
+  // Cells of spell materials that lure or scare, refreshed a few times a
+  // second, and the rules behind them by material name.
+  lures: Presence[] = [];
+  readonly lureMaterials = new Map<string, { lures: string[]; scares: string[]; taken: boolean }>();
+  // Places spells left behind that lure, scare or carry an aura.
+  landmarks: Landmark[] = [];
+  // Gifts villagers have brought home; every few build a house.
+  wealth = 0;
   time = 0;
   tick = 0;
   seaLevel = 8;
