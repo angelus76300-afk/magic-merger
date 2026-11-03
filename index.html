@@ -39,14 +39,17 @@
 
     <main id="world-view" class="view world" hidden>
       <div id="world-stage" class="world-stage">
-        <div id="world-banner" class="world-banner" hidden>
-          <strong class="world-banner-title"></strong>
-          <span class="world-banner-text"></span>
-          <span class="world-banner-hint"></span>
-          <span class="world-banner-actions">
-            <button class="world-banner-retry">Retry</button>
-            <button class="world-banner-leave">Back to my island</button>
-          </span>
+        <!-- The vote bar joins this stack above the banner, so neither covers the other (4.1, review M10). -->
+        <div class="world-bottom">
+          <div id="world-banner" class="world-banner" hidden>
+            <strong class="world-banner-title"></strong>
+            <span class="world-banner-text"></span>
+            <span class="world-banner-hint"></span>
+            <span class="world-banner-actions">
+              <button class="world-banner-retry">Retry</button>
+              <button class="world-banner-leave">Back to my island</button>
+            </span>
+          </div>
         </div>
         <div class="world-tools">
           <button id="world-challenges">Challenges</button>

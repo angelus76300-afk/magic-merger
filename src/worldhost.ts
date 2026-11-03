@@ -705,7 +705,8 @@ export class WorldHost {
       button("Not good", "vote-down", showReasons),
       dismiss,
     );
-    if (!bar.isConnected) this.el.stage.append(bar);
+    // Above the challenge banner in the same stack (M10).
+    if (!bar.isConnected) this.el.banner.before(bar);
     // Unanswered, it goes away; the next cast asks again.
     this.voteTimer = window.setTimeout(close, 30_000);
   }
