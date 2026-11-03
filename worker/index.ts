@@ -29,6 +29,27 @@ import { changeFeedback, listFeedback, postFeedback, syncFeedback, voteFeedback 
 import type { FeedbackAction } from "../shared/feedback";
 import { candidates, listChallenges, recordVerification, recordWin } from "./challenges";
 import { HttpError } from "./http";
+import {
+  accountInfo,
+  claimLink,
+  deleteAccount,
+  emailClaim,
+  emailLink,
+  emailReady,
+  exportAccount,
+  getProgress,
+  loginOptions,
+  loginVerify,
+  logout,
+  putProgress,
+  registrationOptions,
+  registrationVerify,
+  revokeSession,
+  sessionByToken,
+  setEmail,
+  type SessionRow,
+} from "./accounts";
+import type { ProgressPut } from "../shared/account";
 import { ClaudeOracle, MockOracle, OracleError, parseEffort, type Oracle, type ProgramAnswer, type SpellRequest as OracleSpellRequest } from "./oracle";
 import { PROBED, parseIntents, type Intent } from "../shared/promises";
 import { designDue, evolution, liveLibrary, openGaps, recordGap, settleHelper, storeDesign, trialHelpers, withLibrary, type Library } from "./evolve";
@@ -129,6 +150,11 @@ export interface Env {
   DESIGN_MODEL?: string;
   // "0" stops the API from growing on its own (the admin can still ask).
   EVOLVE?: string;
+  // 4.0: sign in links by email, through a Resend compatible endpoint. All
+  // three or nothing; without them the account page does not offer email.
+  EMAIL_API_URL?: string;
+  EMAIL_API_KEY?: string;
+  EMAIL_FROM?: string;
 }
 
 const MAX_NAME_LENGTH = 60;
@@ -142,19 +168,44 @@ export default {
 
     const who = await authenticate(request, env);
     if (who instanceof Response) return who;
-    const { admin, payer } = who;
+    const { admin, payer, session, invite } = who;
+    // A signed in person is the player for votes and casts, on every device.
+    const player = session ? session.invite : playerId(request);
     if (url.pathname === "/api/health" && request.method === "GET") {
-      const player = playerId(request);
       if (player && env.ANTHROPIC_API_KEY && payer) ctx.waitUntil(recordActivity(env.DB, player).catch(() => undefined));
-      return json(await health(env, admin, payer));
+      return json(await health(env, who));
+    }
+    try {
+      // 4.0: accounts. Sign in needs no invite; a one use link claims its account.
+      if (url.pathname.startsWith("/api/account/") && request.method === "POST") {
+        const path = url.pathname.slice("/api/account/".length);
+        if (path === "login/options") return json(await loginOptions(env, url));
+        if (path === "login/verify") return json(await loginVerify(env, url, request, await readBody(request)));
+        if (path === "email-link") return json(await emailLink(env, url, await readBody(request)));
+        if (path === "email-claim") return json(await emailClaim(env, request, await readBody(request)));
+        if (path === "claim-link" && invite) return json(await claimLink(env, request, invite));
+        if (path === "register/options" && invite) return json(await registrationOptions(env, url, invite, !!session));
+        if (path === "register/verify" && invite) return json(await registrationVerify(env, url, request, invite, !!session, await readBody(request)));
+      }
+    } catch (err) {
+      if (err instanceof HttpError) return json({ error: err.message, ...(err.detail ? { detail: err.detail } : {}) }, err.status);
+      console.error(err);
+      return json({ error: "Something went wrong in the Worker" }, 500);
     }
     if (!payer) return json({ error: "Magic Merger is invite only. Ask the person who told you about it for your own link.", code: "invite" }, 401);
     if (payer.invite !== "admin") ctx.waitUntil(seen(env.DB, payer.invite).catch(() => undefined));
 
     const ledger = new Ledger(payer);
     const oracle = oracleFor(env, {}, ledger);
-    const player = playerId(request);
     try {
+      if (session && invite && url.pathname.startsWith("/api/account")) {
+        const r = await handleAccount(request, url, env, session, invite);
+        if (r) return r;
+      }
+      if (session && url.pathname === "/api/progress") {
+        if (request.method === "GET") return json(await getProgress(env, session.invite));
+        if (request.method === "PUT") return json(await putProgress(env, session.invite, await readBody<ProgressPut>(request, MAX_PROGRESS_BODY)));
+      }
       if (request.method === "POST" && url.pathname === "/api/merge") {
         const body = await readBody<MergeRequest>(request);
         return json(await onceFor(env, oracle, `merge:${pairKey(String(body.a), String(body.b))}`, () => handleMerge(body, env, oracle)));
@@ -253,7 +304,7 @@ export default {
       }
       return json({ error: "Not found" }, 404);
     } catch (err) {
-      if (err instanceof HttpError) return json({ error: err.message }, err.status);
+      if (err instanceof HttpError) return json({ error: err.message, ...(err.detail ? { detail: err.detail } : {}) }, err.status);
       if (err instanceof LedgerError) return json({ error: err.message, code: err.code }, err.status);
       if (err instanceof OracleError) return json({ error: err.message }, 502);
       console.error(err);
@@ -355,18 +406,36 @@ async function closeLedger(db: D1Database, oracle: Oracle): Promise<void> {
   }
 }
 
-// The admin token, an invite link, or nobody. Without an API key the game runs
-// in mock mode and costs nothing, so it is open (local development).
-async function authenticate(request: Request, env: Env): Promise<{ admin: boolean; payer: Payer | null } | Response> {
+// Who is asking: the admin token, a signed in person (4.0, x-session), an
+// invite link, or nobody. An invite whose link was claimed is not a player
+// by its link any more: the link is one use (claim-link), and the person
+// plays with a session. Without an API key the game runs in mock mode and
+// costs nothing, so it is open (local development).
+interface Who {
+  admin: boolean;
+  payer: Payer | null;
+  session?: SessionRow;
+  // The invite behind the session or the link, for the account routes.
+  invite?: InviteRow;
+}
+
+async function authenticate(request: Request, env: Env): Promise<Who | Response> {
   const token = request.headers.get("x-access-token");
   if (env.ADMIN_TOKEN && token === env.ADMIN_TOKEN) return { admin: true, payer: ADMIN_PAYER };
+  const sessionToken = request.headers.get("x-session");
+  if (sessionToken) {
+    const found = await sessionByToken(env.DB, sessionToken);
+    if (found) return { admin: false, payer: payerOf(found.invite), session: found.session, invite: found.invite };
+  }
   const secret = request.headers.get("x-invite");
   if (secret) {
     const row = await inviteByToken(env.DB, secret);
-    if (row?.status === "revoked") return json({ error: "This invite link has been turned off.", code: "revoked" }, 403);
-    if (row) return { admin: false, payer: payerOf(row) };
+    if (row?.status === "revoked" || row?.deleted_at) return json({ error: "This invite link has been turned off.", code: "revoked" }, 403);
+    // A claimed account's link signs in once (claim-link); it plays nothing by itself.
+    if (row?.claimed_at) return { admin: false, payer: null, invite: row };
+    if (row) return { admin: false, payer: payerOf(row), invite: row };
   }
-  if (!env.ANTHROPIC_API_KEY) return { admin: false, payer: { ...ADMIN_PAYER, invite: "local", name: "local" } };
+  if (!env.ANTHROPIC_API_KEY && !sessionToken && !secret) return { admin: false, payer: { ...ADMIN_PAYER, invite: "local", name: "local" } };
   return { admin: false, payer: null };
 }
 
@@ -379,13 +448,33 @@ async function seen(db: D1Database, invite: string): Promise<void> {
     .run();
 }
 
-async function health(env: Env, admin: boolean, payer: Payer | null): Promise<HealthResponse> {
+async function health(env: Env, who: Who): Promise<HealthResponse> {
+  const { admin, payer, session, invite } = who;
   const out: HealthResponse = { ok: true, mock: !env.ANTHROPIC_API_KEY, admin, invited: !!payer };
   if (payer && payer.invite !== "admin" && payer.invite !== "local") {
     const spent = await spentBy(env.DB, payer.invite);
     out.invite = { name: payer.name, status: payer.status, spent: round(spent, 3), cap: payer.cap ?? 0 };
   }
+  if (invite) out.account = { name: invite.name, signedIn: !!session, claimed: !!invite.claimed_at, emailOffered: emailReady(env) };
   return out;
+}
+
+// 4.0: the signed in person's own account.
+async function handleAccount(request: Request, url: URL, env: Env, session: SessionRow, invite: InviteRow): Promise<Response | null> {
+  const path = url.pathname.slice("/api/account".length);
+  if (path === "" && request.method === "GET") return json(await accountInfo(env, invite, session));
+  if (path === "" && request.method === "DELETE") return json(await deleteAccount(env, invite));
+  if (path === "/export" && request.method === "GET") return json(await exportAccount(env, invite));
+  if (path === "/logout" && request.method === "POST") {
+    await logout(env, session);
+    return json({ ok: true });
+  }
+  if (path === "/session" && request.method === "DELETE") {
+    await revokeSession(env, invite.id, await readBody(request));
+    return json({ ok: true });
+  }
+  if (path === "/email" && request.method === "POST") return json(await setEmail(env, invite.id, await readBody(request)));
+  return null;
 }
 
 // The month so far, call by call, for the admin badge and `/api/spend`.
@@ -1629,6 +1718,8 @@ function cleanEmoji(raw: string): string {
 // refused before it is parsed, so a flood of big bodies cannot tie the Worker up.
 const MAX_BODY = 128 * 1024;
 const MAX_ADMIN_BODY = 8 * 1024 * 1024;
+// 4.0: an account's progress upload (a large island gzipped is under 200 KB).
+const MAX_PROGRESS_BODY = 2 * 1024 * 1024;
 
 async function readBody<T>(request: Request, limit = MAX_BODY): Promise<T> {
   const declared = Number(request.headers.get("content-length"));
@@ -1803,6 +1894,8 @@ async function people(env: Env): Promise<PeopleResponse> {
       refusals: count(refused.results, r.id),
       lastSeen: r.last_seen,
       createdAt: r.created_at,
+      claimedAt: r.claimed_at ?? null,
+      deletedAt: r.deleted_at ?? null,
     })),
     others: spend.results.filter((r) => !r.invite || !ids.has(r.invite)).map((r) => ({ who: r.invite ?? "before invites", spent: round(r.usd, 3) })),
     reports: reports.results,

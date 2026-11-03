@@ -101,6 +101,7 @@ function stubBatches(req, res, raw) {
 // The same server stubs GitHub and the feedback routine (3.4.1).
 const REPO = "angelus76300-afk/magic-merger";
 const gh = { issues: [], comments: [], fires: [], timeline: {}, failFire: false };
+const emails = [];
 const sendJson = (res, status, data) => res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(data));
 function stubGitHub(req, res, raw) {
   const body = raw ? JSON.parse(raw) : null;
@@ -144,6 +145,12 @@ const stub = createServer((req, res) => {
   req.on("data", (c) => (raw += c));
   req.on("end", () => {
     if (req.url.startsWith("/repos/") || req.url.startsWith("/v1/claude_code/")) return stubGitHub(req, res, raw);
+    // 4.0: the email provider for sign in links.
+    if (req.url === "/emails") {
+      if (req.headers.authorization !== "Bearer email-test") return sendJson(res, 401, { message: "bad key" });
+      emails.push(JSON.parse(raw));
+      return sendJson(res, 200, { id: `email_${emails.length}` });
+    }
     // The Batch API (3.7, the refresh): ended at once, each item answered like a message.
     if (req.url.startsWith("/v1/messages/batches")) return stubBatches(req, res, raw);
     if (!req.url.endsWith("/v1/messages") && !req.url.startsWith("/v1/messages?")) {
@@ -199,6 +206,9 @@ const vars = {
   GITHUB_API_URL: stubUrl,
   ROUTINE_URL: `${stubUrl}/v1/claude_code/routines/trig_test/fire`,
   ROUTINE_TOKEN: "rt-test",
+  EMAIL_API_URL: `${stubUrl}/emails`,
+  EMAIL_API_KEY: "email-test",
+  EMAIL_FROM: "magic@example.test",
 };
 const dev = spawn(
   "npx",
@@ -264,10 +274,11 @@ function check(name, ok, detail = "") {
   console.log(`${ok ? "ok  " : "FAIL"} ${name}${detail ? `: ${detail}` : ""}`);
 }
 
-async function api(path, { body, invite, admin, method } = {}) {
-  const headers = { "content-type": "application/json", "x-player": "test-player" };
+async function api(path, { body, invite, admin, method, session, player } = {}) {
+  const headers = { "content-type": "application/json", "x-player": player ?? "test-player" };
   if (invite) headers["x-invite"] = invite;
   if (admin) headers["x-access-token"] = ADMIN;
+  if (session) headers["x-session"] = session;
   const res = await fetch(`${BASE}${path}`, {
     method: method ?? (body ? "POST" : "GET"),
     headers,
@@ -1039,6 +1050,228 @@ const fresh = () => ALL[pairs++];
 }
 
 console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at stub prices`);
+// 16. Accounts (4.0): an invite becomes an account with the same id; one use
+// links, sessions, progress on the server, email links, export and deletion.
+// Passkeys themselves (WebAuthn attestation) are checked in a browser with a
+// virtual authenticator by scripts/account-verify.mjs; here the account is
+// claimed by hand in D1, as that verification does, and everything after it.
+{
+  await reset();
+  const dan = await invite("Dan", 5);
+  const eve = await invite("Eve", 5);
+  const h0 = await api("/api/health", { invite: dan.secret });
+  check(
+    "an unclaimed invite is offered an account",
+    h0.data.invited && h0.data.account?.claimed === false && h0.data.account?.signedIn === false,
+    JSON.stringify(h0.data.account),
+  );
+  const opts = await api("/api/account/register/options", { invite: dan.secret, body: {} });
+  check(
+    "a passkey registration starts from the invite",
+    opts.status === 200 && typeof opts.data.challengeId === "string" && opts.data.options.user?.name === "Dan" && opts.data.options.rp?.id === "127.0.0.1",
+    JSON.stringify(opts.data).slice(0, 200),
+  );
+  const bogus = await api("/api/account/register/verify", { invite: dan.secret, body: { challengeId: opts.data.challengeId, response: { id: "x" } } });
+  const twice = await api("/api/account/register/verify", { invite: dan.secret, body: { challengeId: opts.data.challengeId, response: { id: "x" } } });
+  check(
+    "a forged passkey answer is refused, and its challenge is spent",
+    bogus.status === 400 && twice.status === 400 && /already used|expired/.test(twice.data.error),
+    `${bogus.status} ${twice.status}`,
+  );
+  const noLogin = await api("/api/account/login/verify", { body: { challengeId: "nope", response: { id: "x" } } });
+  check("a sign in with no challenge is refused", noLogin.status === 400);
+
+  // The account exists (claimed as the browser test does); the old link is dead.
+  const claimed = Date.now();
+  await db.prepare("UPDATE invites SET claimed_at = ?, token_hash = 'gone' WHERE id = ?").bind(claimed, dan.id).run();
+  check("the link that made the account plays nothing any more", (await merge({ secret: dan.secret }, "Fire", "Water")).status === 401);
+  // The admin reissues a link: it signs in once.
+  const reissued = new URL((await api("/api/admin/invite", { admin: true, body: { id: dan.id, action: "relink" } })).data.link).hash.replace("#invite=", "");
+  const h1 = await api("/api/health", { invite: reissued });
+  check("a reissued link is a sign in, not a player", h1.data.invited === false && h1.data.account?.claimed === true && h1.data.account?.signedIn === false);
+  check("a reissued link plays nothing by itself", (await merge({ secret: reissued }, "Fire", "Water")).status === 401);
+  const [c1, c2] = await Promise.all([
+    api("/api/account/claim-link", { invite: reissued, body: {} }),
+    api("/api/account/claim-link", { invite: reissued, body: {} }),
+  ]);
+  const won = [c1, c2].filter((c) => c.status === 200);
+  check(
+    "a reissued link opened twice at once signs in once",
+    won.length === 1 && [c1, c2].some((c) => c.status === 401 || c.status === 409),
+    `${c1.status} ${c2.status}`,
+  );
+  const danSession = won[0].data.token;
+  check("and is dead after", (await api("/api/account/claim-link", { invite: reissued, body: {} })).status === 401);
+  const h2 = await api("/api/health", { session: danSession });
+  check(
+    "a session plays as the account, with its name and allowance",
+    h2.data.invited && h2.data.invite?.name === "Dan" && h2.data.account?.signedIn === true,
+    JSON.stringify(h2.data),
+  );
+  check("a made up session token is nobody", (await api("/api/health", { session: "x".repeat(43) })).data.invited === false);
+
+  // The cap follows: a merge by the session is paid by the invite's id.
+  const [a, b] = fresh();
+  const paid = await api("/api/merge", { session: danSession, body: { a, b } });
+  const rows = (await db.prepare("SELECT invite FROM spend").all()).results;
+  check(
+    "a merge by a session is paid by the account, the invite's id",
+    paid.status === 200 && rows.length === 1 && rows[0].invite === dan.id,
+    JSON.stringify(rows),
+  );
+  const found = await db.prepare("SELECT invite FROM elements WHERE name = ?").bind(paid.data.element.name).first();
+  check("and the First Discovery names the account", found?.invite === dan.id);
+  // Votes and casts are the account's, whatever x-player says.
+  const spell = await api("/api/spell", { session: danSession, body: { name: paid.data.element.name } });
+  await api("/api/spell/check", {
+    session: danSession,
+    body: { name: paid.data.element.name, id: spell.data.program.id, ok: true, problem: null, detail: "fine" },
+  });
+  await api("/api/cast", { session: danSession, player: "some-browser-id", body: { name: paid.data.element.name, id: spell.data.program.id } });
+  const vote = await api("/api/vote", {
+    session: danSession,
+    player: "another-browser",
+    body: { name: paid.data.element.name, id: spell.data.program.id, up: true },
+  });
+  const voter = await db.prepare("SELECT player FROM votes WHERE pid = ?").bind(spell.data.program.id).first();
+  check("a signed in vote is the account's, on every device", vote.status === 200 && voter?.player === dan.id, JSON.stringify(voter));
+
+  // Progress on the server.
+  const put = (session, body) => api("/api/progress", { session, method: "PUT", body });
+  const disc = [
+    { key: "steam", at: 1000, recipe: ["Fire", "Water"] },
+    { key: "fire", at: 0, recipe: null },
+  ];
+  const p1 = await put(danSession, { kind: "discoveries", data: disc, device: "phone" });
+  const got = await api("/api/progress", { session: danSession });
+  check(
+    "discoveries are kept on the account",
+    p1.status === 200 && got.data.progress.length === 1 && got.data.progress[0].data.length === 2 && got.data.progress[0].device === "phone",
+    JSON.stringify(got.data).slice(0, 200),
+  );
+  const stale = await put(danSession, { kind: "discoveries", data: disc, device: "laptop", since: p1.data.updatedAt - 1 });
+  check("an older device is refused with what is newer", stale.status === 409 && stale.data.detail?.device === "phone", JSON.stringify(stale.data));
+  const forced = await put(danSession, { kind: "discoveries", data: disc, device: "laptop", since: 0, force: true });
+  check("and may force it after the warning", forced.status === 200);
+  const badIsland = await put(danSession, { kind: "island", data: { gz: "not base64!", size: "small", at: 1 } });
+  const bigIsland = await put(danSession, { kind: "island", data: { gz: "A".repeat(1_600_000), size: "large", at: 1 } });
+  const badKind = await put(danSession, { kind: "spells", data: {} });
+  const badDisc = await put(danSession, { kind: "discoveries", data: [{ key: 5 }] });
+  check(
+    "a malformed, oversized or unknown save is refused",
+    badIsland.status === 400 && bigIsland.status === 413 && badKind.status === 400 && badDisc.status === 400,
+    `${badIsland.status} ${bigIsland.status} ${badKind.status} ${badDisc.status}`,
+  );
+  const island = await put(danSession, { kind: "island", data: { gz: "AAAA", size: "small", at: 5 }, device: "phone" });
+  check("an island is kept", island.status === 200);
+  check("progress needs a session", (await api("/api/progress", { invite: eve.secret })).status === 404);
+
+  // Another account sees nothing of Dan's.
+  await db.prepare("UPDATE invites SET claimed_at = ?, token_hash = 'gone2' WHERE id = ?").bind(Date.now(), eve.id).run();
+  const eveLink = new URL((await api("/api/admin/invite", { admin: true, body: { id: eve.id, action: "relink" } })).data.link).hash.replace("#invite=", "");
+  const eveSession = (await api("/api/account/claim-link", { invite: eveLink, body: {} })).data.token;
+  const eveSees = await api("/api/progress", { session: eveSession });
+  await put(eveSession, { kind: "island", data: { gz: "BBBB", size: "medium", at: 9 }, device: "tablet" });
+  const danStill = (await api("/api/progress", { session: danSession })).data.progress.find((p) => p.kind === "island");
+  check(
+    "one account cannot read or overwrite another's progress",
+    eveSees.data.progress.length === 0 && danStill.data.gz === "AAAA" && danStill.device === "phone",
+  );
+  const eveAccount = await api("/api/account", { session: eveSession });
+  const danAccount = await api("/api/account", { session: danSession });
+  check(
+    "the account page lists devices and progress",
+    danAccount.data.name === "Dan" &&
+      danAccount.data.devices.length === 1 &&
+      danAccount.data.devices[0].current &&
+      danAccount.data.progress.length === 2 &&
+      eveAccount.data.progress.length === 1,
+    JSON.stringify(danAccount.data).slice(0, 300),
+  );
+  check(
+    "a session cannot revoke another account's device",
+    (await api("/api/account/session", { session: eveSession, method: "DELETE", body: { hash: danAccount.data.devices[0].hash } })).status === 200 &&
+      (await api("/api/health", { session: danSession })).data.invited,
+  );
+
+  // Sign in links by email.
+  check(
+    "an unknown email gets the same answer and no mail",
+    (await api("/api/account/email-link", { body: { email: "nobody@example.test" } })).status === 200 && emails.length === 0,
+  );
+  check("a bad address is refused", (await api("/api/account/email", { session: danSession, body: { email: "not an address" } })).status === 400);
+  await api("/api/account/email", { session: danSession, body: { email: "Dan@Example.test" } });
+  const asked = await api("/api/account/email-link", { body: { email: "dan@example.test" } });
+  const mail = emails.at(-1);
+  const token = /#signin=([A-Za-z0-9_-]+)/.exec(mail?.text ?? "")?.[1];
+  check(
+    "a known email gets a one use link",
+    asked.status === 200 && !!token && mail.to[0] === "dan@example.test" && !mail.text.includes("passkey"),
+    mail?.text?.slice(0, 100),
+  );
+  const claimedByMail = await api("/api/account/email-claim", { body: { token } });
+  const mailAgain = await api("/api/account/email-claim", { body: { token } });
+  check(
+    "the email link signs in once",
+    claimedByMail.status === 200 && (await api("/api/health", { session: claimedByMail.data.token })).data.invite?.name === "Dan" && mailAgain.status === 403,
+  );
+  for (let k = 0; k < 4; k++) await api("/api/account/email-link", { body: { email: "dan@example.test" } });
+  check("at most three links an hour", emails.length === 3, `${emails.length} mails`);
+  check("the account page masks the email", (await api("/api/account", { session: danSession })).data.email === "d…@example.test");
+
+  // Export, logout, deletion.
+  const exported = await api("/api/account/export", { session: danSession });
+  check(
+    "export holds the account's discoveries, votes, progress and spend",
+    exported.status === 200 &&
+      exported.data.firstDiscoveries.length === 1 &&
+      exported.data.votes.length === 1 &&
+      exported.data.progress.length === 2 &&
+      exported.data.spend.length >= 1,
+    JSON.stringify(Object.keys(exported.data)),
+  );
+  const extra = claimedByMail.data.token;
+  await api("/api/account/logout", { session: extra, body: {} });
+  check(
+    "a signed out token is nobody",
+    (await api("/api/health", { session: extra })).data.invited === false && (await api("/api/health", { session: danSession })).data.invited,
+  );
+  const gone = await api("/api/account", { session: danSession, method: "DELETE" });
+  const after = await api("/api/health", { session: danSession });
+  const counts = {};
+  for (const [table, col] of [
+    ["credentials", "invite"],
+    ["sessions", "invite"],
+    ["progress", "invite"],
+    ["votes", "player"],
+    ["casts", "player"],
+    ["account_links", "invite"],
+    ["suggestions", "invite"],
+    ["reports", "invite"],
+    ["challenge_wins", "invite"],
+  ])
+    counts[table] = (await db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${col} = ?`).bind(dan.id).first()).n;
+  const named = (await db.prepare("SELECT COUNT(*) AS n FROM elements WHERE invite = ?").bind(dan.id).first()).n;
+  const spent = (await db.prepare("SELECT COUNT(*) AS n FROM spend WHERE invite = ?").bind(dan.id).first()).n;
+  const row = await db.prepare("SELECT status, deleted_at, email FROM invites WHERE id = ?").bind(dan.id).first();
+  check(
+    "deletion leaves nothing of the person, keeps the library and the month's spend",
+    gone.status === 200 &&
+      after.data.invited === false &&
+      Object.values(counts).every((n) => n === 0) &&
+      named === 0 &&
+      spent >= 1 &&
+      row.deleted_at &&
+      row.status === "revoked" &&
+      row.email === null,
+    JSON.stringify({ counts, named, spent, row }),
+  );
+  check("a deleted account gets no new link", (await api("/api/admin/invite", { admin: true, body: { id: dan.id, action: "relink" } })).status === 400);
+  const people = (await api("/api/admin/people", { admin: true })).data.people;
+  check("the admin sees who has an account", people.find((p) => p.id === eve.id)?.claimedAt > 0 && people.find((p) => p.id === dan.id)?.deletedAt > 0);
+  await reset();
+}
+
 stop();
 if (failed) {
   console.log(`\n${failed} worker checks failed`);
