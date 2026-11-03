@@ -161,14 +161,14 @@ Not done: combined hazards (they need a new island); the three lava challenges h
 
 Asked for: an independent review before the link goes beyond close friends, then accounts built on the reviewed code. `docs/REVIEW-4.0.md` has the findings and the numbers; DESIGN.md, "Accounts", has the rules.
 
-1. **The review**: no critical finding; three high (a player's idea could be the routine's task, a challenge win could set par to 0 for everyone, a lost test verdict left a program a trial for good) and seven medium fixed with a check each; the hold proved by mutation; the sandbox headers verified on the live site; a newcomer's first ten minutes at phone size with screenshots; the open items numbered under 4.1 and 4.5.
+1. **The review**: no critical finding; three high (a player's idea could be the routine's task, a challenge win could set par to 0 for everyone, a lost test verdict left a program a trial for good) and seven medium fixed with a check each; the hold proved by mutation; the sandbox headers verified on the live site; a newcomer's first ten minutes at phone size with screenshots; the open items numbered under 4.0.2 and 4.5.
 2. **The invite becomes the account, with the same id**: a passkey made from the link creates it, the link dies, and spend, First Discoveries, ideas and wins follow with no move; votes and casts are the account's across devices.
 3. **Sign in anywhere** with the passkey, or a one use link: the admin's "New link" on an account, or by email when a sender is set up (`EMAIL_API_URL`, `EMAIL_API_KEY`, `EMAIL_FROM`).
 4. **Progress on the server**: discoveries as a union, the board, the island packed; last saved wins for the island, with a warning before an older device replaces a newer save, and the other island loaded if the player says no.
 5. **The account page**: passkeys, devices (each can be signed out), what is saved, email, export as one file, delete everything.
 6. **Checked**: `npm run test:worker` (one use links opened twice at once, a forged passkey answer, a spent challenge, sessions made up, signed out or deleted, one account reading or writing another's progress, malformed and oversized uploads, email links used twice and rate limited, export, deletion leaving nothing of the person and keeping the library and the spend) and `scripts/account-verify.mjs` in a phone sized browser with a virtual authenticator (a link into an account, a second device signing in and receiving the island, one link on two devices at once, deletion signing both out).
 
-Not done: two tabs of one browser still overwrite each other's local saves (review M6; the server merge limits the damage to the island); the welcome is still long on a phone.
+Not done: two tabs of one browser still overwrite each other's local saves (review M6, in 4.0.2; the server merge limits the damage to the island); the welcome is still long on a phone.
 
 ## Decisions taken
 
@@ -179,7 +179,7 @@ Not done: two tabs of one browser still overwrite each other's local saves (revi
 
 1. **The judge and the votes.** No vote exists yet, so the judge is uncalibrated and only advises; the library is empty until players vote programs up. Watch `GET /api/admin/judge-stats` after a week of play, and how often a vote leads to a rewrite and a rewrite to a rollback (`rewrites` table).
 2. **Phones.** Still measured only in Node and a headless browser. The HUD sends real numbers to `/api/perf` as soon as someone plays with it on. In steady state the simulation's cost is temperature and fluids (about 40% of a tick in every scene), not voxels or creatures: that is the next lever if phones run hot.
-3. **Sounds** were checked for errors, not listened to.
+3. **Sounds** were checked for errors, not listened to. Players now hear a drum that never stops: it is the woodcutters (see 4.0.2 and 4.2).
 4. **Whether Claude uses bodies.** New spells should declare `body` and `features`; models should stay rare. Look at a week of new programs (`programs` table) for how often each appears, and at the bestiary when one looks wrong.
 5. **Creatures on phones.** 375 creatures cost 1.0 ms p50 but 5.1 ms p95 of CPU in the headless browser; the HUD's `parts` count in `/api/perf` will say what a real island costs.
 6. **Challenge balance with real spells.** The checks use simple hand-written solutions; Claude's spells may be stronger or weaker. Wildfire used to be won by doing nothing 1 time in 5: villagers rebuilt the burnt houses while the fire died down, and the end check counted them. It is now lost the moment a second house burns, and `npm test` replays every challenge with nothing over 8 seeds (0 wins in 64 for Wildfire, rain still wins 64 in 64).
@@ -195,107 +195,11 @@ The ledger holds $6.64 (plus about $3.32 before it existed): about $10 of the fi
 
 Sizes are per Claude Code session: S a few hours, M a full session, L two or more. The roadmap page written after 3.0 has the research behind each item and a ready prompt per version.
 
-### 3.2 Measure and protect the budget (done, see above)
+The plans of 3.2 to 4.0 are done and summed up under their "Done in" sections above; their full text is in the git history of this file.
 
-1. **Budget guard.** Programs of older versions stay castable; the version only records what a program was written for. An admin "rewrite this spell" button for one spell at a time. Repairs always on Haiku.
-2. **Cost quick wins.** Merges and tiers on Haiku or Sonnet at low effort after a side by side test on 30 pairs; no prompt cache write on lone Opus calls; tier folded into the merge answer; the Sonnet cache read price fixed in `worker/oracle.ts`; `/api/spend` grouped by call with the month's total, shown in the admin badge.
-3. **Frame HUD** (frame time p50 and p95, simulation ms, draw calls, triangles, voxels, creatures) behind a long press on the title, then one ten minute session on a real phone.
-4. **Performance.** 30 fps on phones and no redraw when idle; voxels in a dense typed array with a reusable flood fill queue; partial updates of the decor mesh; the night overlay as a tint; a spatial grid for creature lookups in `src/sim/social.ts`.
-5. **Hygiene.** Prettier and ESLint (the simulation never imports the view), one module for voxel keys and one for colors, no import cycle between physics and voxels.
+**Run order.** The numbers say what each version is, not when it runs. Suggested order: 4.0.2 first (the review's fixes, and CI that fails on timing would slow every later session), then 4.0.1, 4.1, 4.2, and 4.5 before anyone outside friends and coworkers. 4.1 and 4.2 can swap: sound does not depend on terrain, only weather sounds wait for 4.1's weather.
 
-### 3.3 Spells that are always good, voted by players (done, see above)
-
-1. **Votes.** An anonymous player id per browser; casts recorded on the server; after a cast, up or down, with one reason on a down vote (nothing happened, too small, looked wrong, broke the island, boring). Only players who cast that spell version recently vote, once each.
-2. **Rewrite rule.** At least N votes and 60% down, with N = max(1, 10% of the average daily active players over seven days), capped at 25. With one player, one down vote is enough. Reasons go into the rewrite prompt; the old version is kept and comes back if the new one is voted worse; at most one rewrite per spell every three days, within a daily rewrite budget; big ones through the Batch API.
-3. **Up votes** mark programs for the library of examples Haiku sees.
-4. **Machine checks.** A test run before storing (crash, no visible change, island wiped: rewrite once), a Haiku judge on three Spell Lab frames calibrated on votes, Haiku drafts of big spells now and Opus versions through the Batch API later, and view source on the spell card.
-
-### 3.4 Share with friends (done, see above)
-
-### 3.5 Many kinds of life (done, see above)
-
-Today every creature is the same two blocks in a different color. Give each kind a body you recognize at a glance, and the island wildlife worth a food web.
-
-1. **Body plans** as small voxel models, each drawn as a few instanced parts so a hundred creatures stay a handful of draw calls: two legs (people, knights, goblins), four legs (deer, wolf, boar, bear, horse), bird, fish and serpent, insect and spider, slime, floating spirit, golem, dragon, tree folk.
-2. **Simple animation per plan**: legs swing, wings flap, tails sway, bodies tilt, the dead sink. A scale and a rotation per part, no skeletons.
-3. **Features** on any body: horns, antlers, wings, tail, mane, hat, hood, crown, glowing eyes, armor, a carried item. Spells declare `body` and `features`.
-4. **A model Claude designs**: up to 16 boxes of its own for a truly strange creature, bounded so it stays cheap.
-5. **Native wildlife** with habitats: deer, rabbits, wolves, boars, birds, fish, bears.
-6. **Villagers who differ**: children, elders, clothes per village, a look per job.
-7. **A bestiary page** in the Spell Lab drawing every plan and feature.
-8. Teach `body`, `features` and models in the spell prompt **without rewriting existing spells in bulk**; old creatures get a body chosen from their base kind.
-
-### 3.6 Goals, actions and a living island (creatures done, see above; artifacts in 3.7 part B)
-
-Nothing on the island just stands there. Every creature wants something and acts to get it, some with magic of their own; every artifact does something, on its own or when something happens. The test for anything new: if the player does nothing for five minutes, what has it changed? Builds on `src/sim/social.ts` and the species from 3.5.
-
-1. **A goal for every kind**, from a small vocabulary: hunt, gather, hoard, build, tend, guard, steal, spread, convert, worship, explore, migrate.
-2. **Needs before goals**: survive, then eat and rest, then the goal, then wander.
-3. **Goals leave marks**: a dragon's hoard, a beaver dam, a goblin camp, a spreading graveyard.
-4. **Abilities** with a trigger (enemy near, hurt, night, a friend dies, every so often) and a cooldown, from a fixed vocabulary of engine actions: breathe fire, heal, summon, teleport, freeze, lightning, grow, raise the dead, shield, dig, flood, steal.
-5. **Creatures cast real spells** from the shared library by name, at a capped tier and rate.
-6. **Villagers' jobs are goals**: farmers, woodcutters who fell trees for houses, fishers, builders.
-7. **Artifacts that act**: effects over time and on triggers (a Well waters fields each morning, a Totem calls rain in a drought), state (charges, fuel, health), `grants` and `uses` (villagers draw water, arm themselves at a forge, pray; creatures steal, guard or destroy), and declared pairs between artifacts (a Phoenix Feather near a corpse revives it).
-8. **Food web** with the 3.5 species, allies and enemies, taming, herds, villagers' memory of harm and help.
-9. **Inspect** any creature or artifact with a tap: goal, current action, needs, charges, what it carries.
-10. **The five minute test** in `npm test` and in the judge: a village, a forest, wolves, a dragon, a vampire, gold, a well and a shrine for ten simulated minutes; populations neither explode nor vanish, and every placed thing changed something.
-
-### 3.7 Alive, acting and challenged (one pull request, everything before 4.0)
-
-Everything left before 4.0, in one session and one pull request, built in five parts in this order. Each part ends with its own commit, its own checks green, and a deploy, so a problem is caught where it starts and the pull request can be read part by part. Decided: no village mana, no hints, no discoveries made in the World, no sharing features.
-
-**Part A. Creatures that look alive** (found in play after 3.5)
-
-1. **Sizes**: some animals are far too big (bears above all). Every species and body plan gets a size checked against a villager and a house, in the bestiary and in `npm test`.
-2. **Smooth movement over terrain**: creatures jump from one terrain level to the next. They walk up and down steps, ease their height between cells, and only climb what they can climb.
-3. **No flickering faces**: some animal and villager models have parts in the same plane (the old villager look was the one noticed). Find every case in the bestiary, fix it, and check that no two parts of a model share a face.
-4. **Merged creatures are alive**: a model Claude designs gets motion on its parts; one without motion falls back to the nearest body plan with its colors and features; the judge asks "does it look alive?". Checked on stored creatures without rewriting spells in bulk.
-
-**Part B. Artifacts that act** (items 5 and 7 of 3.6)
-
-5. **Creatures cast real spells** from the shared library by name, at a capped tier and rate.
-6. **Artifacts act**: effects over time and on triggers (a Well waters fields each morning, a Totem calls rain in a drought), state (charges, fuel, health), `grants` and `uses` (villagers draw water, arm themselves, pray; creatures steal, guard or destroy), declared pairs between artifacts (a Phoenix Feather near a corpse revives it). The five minute test extends to every placed artifact through the 3.4.2 promise checks.
-
-**Part C. Challenges from nothing**
-
-7. **A Challenges tab**: a hazard island and a start set (the primitives, or fewer). The player merges on the challenge's own board until they have something that saves the village, casts it, and is scored by the number of merges.
-8. **Par and stars**: par is the shortest known solution from the shared recipe graph and players' solutions; three stars at par or better, two within two merges, one for any win; beating par lowers it for everyone. Each challenge shows the fewest merges any friend needed, and who.
-9. **Increasing difficulty**: one obvious spell first, then a missing primitive (a wildfire without Water), combined hazards, a higher tier, or a hazard that starts while the player is still merging.
-10. **Always solvable and fair**: a challenge appears only once a solution path is known and verified in the simulation (the 3.4.2 probe), re-verified when a spell on the path is rewritten. Known pairs are free; new ones count against the player's $5; discoveries join the main inventory.
-
-**Part D. The island's story**
-
-11. **The chronicle**: Haiku writes a short story from the event log and villagers' memories, once a session, about $0.002.
-12. **The recipe book**: what the player found, how and when, and what it was used for. Memory only, no hints.
-13. **Opposites and depth in the merge prompt**: Fire and Water give Steam, never "Super Fire Water"; a tier follows its depth in the recipe tree, plus or minus one.
-
-**Part E. Refresh the legacy library** (last, once A to D exist, right before 4.0)
-
-The one planned exception to "never rewrite in bulk": every stored program was written before bodies, goals, abilities, acting artifacts and wards existed, so old items look and behave poorer than new ones. On 2026-11-02 the library held 258 items (171 with a stored program, about a third legendary or cosmic) and 433 recipes.
-
-14. **Rewrite programs, not items**: names, emojis, tiers and recipes stay; every stored program is written again with today's prompt and engine, from the item's own intent (3.4.2), through the Batch API at half price.
-15. **A new version must earn its place**: it replaces the old one only if it passes the test run, the item's promise probe, the judge ("does it look alive?", "did it change anything after five minutes?") and is not voted below the old one; otherwise the old version stays. Old versions are kept for rollback, as with vote rewrites.
-16. **Budget**: estimated $3 to $5 for the whole library (about 60 Opus programs at about $0.04 in batch, about 110 Haiku ones at under $0.002, plus checks), capped at $8 and started early in a month; a dry run on 20 items first, with before and after frames for the owner to approve.
-17. **Trim duplicates without breaking anyone**: a cheap pass lists near duplicates and merges that make no sense (for example World Tree, World Tree Awakening and Yggdrasil; Ley Line and Ley Lines). Nothing is deleted: the owner approves each pair, and a duplicate becomes an alias of the kept item, so players' inventories, recipes and First Discoveries keep working.
-18. **A report**: how many programs improved, stayed or rolled back, what it cost, and the frames of the ten biggest changes.
-
-**Budget for the session**: keep the simulation p95 on a large island within the HUD numbers from 3.6, and API spend for parts A to D under about $3 (part E has its own cap).
-
-### 4.0 Accounts: your progress everywhere
-
-Today an invite link is kept by one browser, and progress lives in that browser only. The link becomes a one use account creation. Until 4.0 lands, invites keep working as they do. Revised by the 4.0 review (docs/REVIEW-4.0.md, part G), which found four things the plan was silent about: passkeys bind to the domain, the Worker cannot send email, everything the server holds is already keyed by the invite id, and two tabs of one browser overwrite each other's saves.
-
-1. **An invite is used once**: opening it creates an account (a passkey first, no password); the link stops working for anyone else. The admin can reissue a one use link for a friend who lost theirs: it signs the person into their existing account and offers a passkey again. An email link is the same mechanism behind a sender that does not exist yet; it turns on with a provider secret, not a code change.
-2. **The invite becomes the account, with the same id**: spend, First Discoveries, ideas, wins and reports are keyed by it already, so nothing moves and the $5 cap has no gap. Votes and casts, keyed by a random browser id today, use the account id once signed in, so one vote per person across devices.
-3. **Nobody loses progress**: on creating an account, the browser's discoveries, board and island are uploaded (the island gzipped, with its own 2 MB limit); existing friends get a one time "save your progress" prompt and the invite header keeps working until they answer.
-4. **The same progress on every device**: discoveries are the union by key with the earliest time; the island is last saved wins, with a warning before replacing a server save newer than this device's; the board follows the island.
-5. **Sessions** are bearer tokens in a header like the invite today, hashed at rest, 30 days, rotated on each passkey sign in, revocable per device from the account page.
-6. **Privacy**: an account page to export or delete everything the account holds; spend keeps the random id so the month's budget stays whole; the privacy note says so.
-7. **Tested**: an invite opened twice and at once, a reissued link used twice, a replayed registration challenge, a guessed or reused session token, one account reading or writing another's progress, an oversized or malformed upload, a deleted account's rows in every table, and the $5 cap before and after claiming.
-8. **Two tabs, one browser** (review M6): discoveries merge by key on every write; the island is saved by one tab at a time (a `BroadcastChannel` lock) or never over a newer save. The server side of 3 and 4 is where this is decided.
-9. **The domain** is chosen before the first passkey (a move means every friend registers again).
-
-### 4.0.1 Faster creation, every spell written at once (next)
+### 4.0.1 Faster creation, every spell written at once
 
 The 4.0 review measured 27 s from a discovery to a castable small spell in a phone sized browser, with 2 of 12 spells in the bar ready (M9). Most of that wait is the test run in the hidden frame, not Claude. Goal: everything from dropping one item on another to using the result gets faster, and every new item is written as soon as it is created. Rules set by the owner: **no lower quality** (no weaker drafts shown to players, no fast mode), and the extra cost of writing items nobody casts is accepted because spending has stayed well controlled, inside a daily cap.
 
@@ -313,7 +217,7 @@ Every open finding of docs/REVIEW-4.0.md that code can correct, in one pull requ
 
 1. **Nothing lost without a word.** Two tabs of one browser: discoveries merged by key on every write (the stored object read again first, a `storage` listener for the other tab's writes), the island saved by one tab at a time through a `BroadcastChannel` lock or refused over a newer save (M6, the last item of 4.0 still open). A toast once when a save hits the storage quota, and `MAX_SAVE_CHARS` at 1.5M (M13). A watchdog that replaces a World frame silent for 20 s while visible (M3, the part that fits in S to M).
 2. **Server hardening.** The admin token compared in constant time on two digests (L1); `/api/perf` one row per invite per 20 s (L2); `pollBatches` caught in `scheduled()` like its siblings (L7); the feedback sync links a pull request to an idea only when it says `Closes #n` or `Fixes #n` (L8); the chronicle digest bounded and passed to Haiku as quoted data, not facts (L10, cheap even if self harm only).
-3. **Small things a player sees.** The vote bar and the challenge banner stacked on a phone, checked with a screenshot at phone size (M10); a broken spell remembers the Worker's "mended too often" for the session and stops asking (L5); Retry and Reset of a live challenge keep the head start (L6); the refresh report says "not sent" for rows that never reached a batch (M12).
+3. **Small things a player sees.** The vote bar and the challenge banner stacked on a phone, checked with a screenshot at phone size (M10); a broken spell remembers the Worker's "mended too often" for the session and stops asking (L5); Retry and Reset of a live challenge keep the head start (L6); the refresh report says "not sent" for rows that never reached a batch (M12). **The drum players keep hearing**: every tree a woodcutter fells plays a "thump" at the same volume wherever it is on the island (`src/sim/goals.ts`, `fell`; about one every 3 s on a busy island, 41 in two simulated minutes in `npm test`), and so does every house built; any unknown sound name falls back to the same thump (`src/sim/sound.ts`, `VOICES[name] ?? VOICES.thump`; two live programs ask for "hum"). The quick fix: no sound for routine villager work until 4.2 gives it a place and a distance, and an unknown name falls back to the nearest voice by meaning ("hum" to drone) or to silence, never to a drum.
 4. **Tests you can trust.** `scripts/` typechecked (`@types/node`, a `scripts/tsconfig.json` in `npm run typecheck`) and `scripts/*.mjs` linted with Node globals (M7). One Worker test section each for votes, rewrites and rollbacks, repairs, casts, reports, spell info, spend and perf, then the admin routes the review listed (M7). `SLOW_MS` injectable, the worst tick printed, not asserted (M8); one scene stream in CI if that brings `npm test` well under the 92 s (L11).
 5. **Less code.** Dead exports removed (`artifactsOf`, `SOUND_NAMES`, `WorldHost.openChallenges`, `Store.markSolved`), one `api()` helper and one PRNG for `scripts/`, one tick loop shared by the engine, the check and the scripts (the engine's missing `world.events` clear decided on purpose, not by accident), the identical branches in `shared/tiers.ts` and the Worker test (L4). Behavior unchanged, proven by `npm test` and the Worker tests before and after.
 6. **What the review could not verify.** A test for a passkey whose counter goes backwards (a cloned authenticator) and for each attestation format the library accepts; the two leftover test accounts (`ccf78a03`, `82a0d421`) deleted with the statements from the 4.0 pull request, by the owner or with the owner's go ahead.
@@ -327,6 +231,20 @@ Then the owner's part of the review's section 8, which no session can do: the ro
 3. **Visual improvements**: baked ambient occlusion in the voxel lighting, better water (shore foam, depth color, gentle waves), weather you can see (rain, snow, fog), sun, moon and stars in the sky. Each measured with the HUD on a phone before it ships.
 
 The 4.0 review's open findings, which used to be listed here, are now 4.0.2.
+
+### 4.2 Sound and music
+
+The island is heard the same way from everywhere: a sound carries no position, routine villager work plays a thump the player cannot place, and 12 voices serve 167 live programs (all of them call `w.sound`; "chime" alone 127 times), so spells sound alike. Goal: the island sounds like a place, each spell sounds like itself, and music follows what happens, all generated in the browser with no audio files and no new paid call.
+
+1. **Sounds have a place.** Every sound event carries where it happened (a spell's default is its center, so `w.sound(name, size)` stays valid in every stored program). The listener is the camera: distance fades and dulls a sound (a low pass with distance), left and right follow the camera's angle, zoomed out the island is heard as a whole and zoomed in the near things stand out. Equal power panning by default, which is cheap on phones; HRTF only as a setting for headphones, since it costs memory and CPU on low end phones.
+2. **A sound budget.** At most about 24 voices at once; sounds of the same name within 100 ms merge into one louder sound; each name has a cooldown; when the budget is full the quietest at the listener is dropped. Routine work (felling, building, digging) plays only near the camera, quietly, with variation. A test renders a busy island's events offline and checks that no name repeats faster than its cooldown.
+3. **Ambience from what is in view.** Beds that rise and fall with what the camera sees, sampled a few times a second from the simulation's own grids: waves and shore where there is water, wind in leaves over forests, crackle and roar near fire, bubbling near lava, a village murmur and tools near houses, rain and wind with the weather (when 4.1 brings it), birds by day and crickets at night, a hollow wind at the island's edge.
+4. **Creatures you can hear.** A short call per body plan and species, made from the same synth (a wolf howls at night, birds chirp, a dragon roars when it breathes fire, slimes squelch), rate limited and only within earshot. A creature's ability plays its own sound.
+5. **Richer spell sounds, still backward compatible.** More voices (bell, gong, choir pad, wind, water, splash, crystal, heartbeat, thunder, roar, sparkle, pluck), each varied in pitch and timbre per cast so the same chime is never twice the same. A spell may describe a sound of its own within bounds (`w.sound({ wave, from, to, seconds, noise, filter, echo })`), as it describes a model of its own; the prompt gains a short section on it, measured against the judge and probes before and after, and **no stored program is rewritten** for it: old ones keep their names, which now sound richer by themselves. The tier of a spell scales its sound (a small spell a sparkle, a cosmic one fills the sky).
+6. **Music that follows the island.** Generated from the island's seed (key, tempo, a few chord progressions, pad, bass, a sparse melody), scheduled on a timer about 100 ms ahead and never from the drawing frame, in layers whose volume follows the state: calm by day, sparse at night, tense when fire, monsters or a challenge's hazard rise, a short swell when a big spell lands, a few notes when something is discovered. It ducks under loud spells, rests often (silence is part of it), and changes key with the time of day.
+7. **The Craft view is not silent.** A soft sound for picking up and dropping a chip, a merge that sounds by tier, a First Discovery that sounds like one, a refusal that is gentle. Its own small audio context on the page, the same mute rules.
+8. **Settings and manners.** One sound button as today, plus volumes for music, effects and ambience in the menu; music off by default on first visit until the player turns it on; audio paused when the tab is hidden (battery) and resumed on return; a mono option; never a sound before the player's first tap (browsers forbid it, and it should not surprise anyone).
+9. **Measured and tested.** Every voice rendered offline in `npm test` (no NaN, length bounded, peak and loudness within a range so no voice is ten times louder than another); the number of live audio nodes and voices in the HUD and in the perf sample; a ten minute session on a real phone with sound and music on, read back from `/api/perf`, simulation and frame p95 within the numbers of 4.1. Someone listens: the owner, on a phone, before merge.
 
 ### 4.5 Ready for strangers
 
