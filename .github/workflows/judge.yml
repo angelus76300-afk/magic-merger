@@ -7,6 +7,12 @@
 # First, the API's growth (3.4.2, scripts/evolve-runner.ts): helpers the
 # designer wrote are tested in Node, and engine proposals become issues
 # labelled api-gap. No Claude call.
+#
+# Then the challenges (3.7, scripts/challenge-runner.ts): spells made or
+# rewritten since are tried on each challenge in Node, so a challenge still
+# hidden (no verified solution) appears once a player makes a spell that
+# solves it, and one whose solver was rewritten is verified again. No
+# Claude call.
 name: Judge
 on:
   schedule:
@@ -39,6 +45,7 @@ jobs:
         run: |
           npm ci
           npm run evolve
+          npm run challenges -- 10
           npm install --no-save playwright
           npx playwright install --with-deps chromium
           node scripts/judge-runner.mjs ${{ inputs.limit || '30' }}
