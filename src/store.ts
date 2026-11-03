@@ -150,9 +150,16 @@ function load(): SaveData | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const data = JSON.parse(raw) as SaveData;
-    return data.version === 1 ? data : null;
+    const data = JSON.parse(raw) as Partial<SaveData>;
+    return wellFormed(data) ? data : null;
   } catch {
     return null;
   }
+}
+
+// A save this code can read: a crash here would be a blank page at startup,
+// before any UI exists, and no way for the player to recover.
+function wellFormed(data: Partial<SaveData>): data is SaveData {
+  const obj = (v: unknown) => !!v && typeof v === "object" && !Array.isArray(v);
+  return data.version === 1 && obj(data.discoveries) && obj(data.descriptions) && Array.isArray(data.board) && typeof data.nextChipId === "number";
 }

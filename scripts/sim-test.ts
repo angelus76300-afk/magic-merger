@@ -41,6 +41,7 @@ import { names } from "../src/sim/social";
 import { AGES, JOBS, packLook, unpackLook, type Job as Job3 } from "../src/sim/villagers";
 import { buildRig, drawScale, HOUSE_HEIGHT, MAX_HEIGHT, villagerUnits, type Rig } from "../src/sim/voxel/rigs";
 import { SPECIES } from "../src/sim/wildlife";
+import { Store } from "../src/store";
 
 // Challenges with nothing cast, over several seeds: one seed can pass by
 // luck (Wildfire did, at 3 wins in 16). These replays run in worker threads
@@ -349,6 +350,30 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   const pairs = countMerge(countMerge(countMerge([], "Fire", "Water"), "Water", "Fire"), "Steam", "Air");
   check("an attempt counts each distinct pair once", pairs.length === 2 && pairs.includes("fire+water"), pairs.join(", "));
 
+  // The player's save in this browser: a save of the wrong shape starts fresh
+  // instead of a blank page (it threw before any UI existed).
+  const mem = new Map<string, string>();
+  (globalThis as { localStorage?: unknown }).localStorage = {
+    getItem: (k: string) => mem.get(k) ?? null,
+    setItem: (k: string, v: string) => mem.set(k, v),
+    removeItem: (k: string) => mem.delete(k),
+  };
+  const fresh = (raw: string) => {
+    mem.set("magic-merger.save", raw);
+    try {
+      return new Store().discoveries().length;
+    } catch (err) {
+      return `threw: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  };
+  check("a save without discoveries starts fresh", fresh('{"version":1}') === 8 && fresh('{"version":1,"discoveries":[],"board":{}}') === 8);
+  check(
+    "a save with a discovery keeps it",
+    fresh(
+      '{"version":1,"discoveries":{"steam":{"element":{"name":"Steam","emoji":"x","kind":"spell","depth":1},"discoveredAt":1,"recipe":null}},"descriptions":{},"board":[],"nextChipId":1}',
+    ) === 9,
+  );
+  delete (globalThis as { localStorage?: unknown }).localStorage;
   check(
     "a challenge that asks for grand magic refuses a major spell",
     !strongEnough(CHALLENGES.find((d) => d.minTier)!, "major") && strongEnough(CHALLENGES.find((d) => d.minTier)!, "grand"),
