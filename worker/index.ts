@@ -1196,15 +1196,29 @@ async function handleLive(body: { names?: unknown }, env: Env): Promise<LiveResp
     )
       .bind(...chunk, FIRST_PROGRAM_VERSION)
       .all<{ key: string; pid: number | null; trial: number | null; intents: string | null; kind: string | null; checked: string | null }>();
+    const found = new Set<string>();
     for (const r of rows.results) {
       const id = r.trial ?? r.pid;
       if (!id) continue;
+      found.add(r.key);
       const entry: LiveResponse["programs"][string] = { id, trial: !!r.trial };
       // A live program whose promise is probed but that never faced the
       // probe, or an artifact that never faced its five minute test (3.7).
       const intents = parseIntents(r.intents);
       if (!r.trial && !faced(r.checked, r.kind, intents)) entry.recheck = r.kind === "artifact" ? [...intents, "act"] : intents;
       programs[byKey.get(r.key) ?? r.key] = entry;
+    }
+    // An element whose only program is a trial has no row in `spells` yet:
+    // the browser that holds that trial is told so, and tests it again if
+    // its verdict never arrived (a lost request kept it a trial for good).
+    const missing = chunk.filter((k) => !found.has(k));
+    if (missing.length) {
+      const trials = await env.DB.prepare(
+        `SELECT key, MAX(id) AS id FROM programs WHERE status = 'trial' AND key IN (${missing.map(() => "?").join(", ")}) GROUP BY key`,
+      )
+        .bind(...missing)
+        .all<{ key: string; id: number }>();
+      for (const t of trials.results) programs[byKey.get(t.key) ?? t.key] = { id: t.id, trial: true };
     }
   }
   return { programs };

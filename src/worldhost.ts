@@ -9,6 +9,7 @@ import { Checker } from "./checker";
 import { chipElement } from "./craft";
 import { FilterBar, applyFilters, lastUsed, markUsed } from "./filters";
 import { MAX_SAVE_CHARS, readFromWorld } from "./sim/protocol";
+import { programToFetch } from "../shared/sync";
 import type { ToWorld } from "./sim/protocol";
 import { SCENARIO_LIST } from "./sim/scenario-list";
 import type { CastRequest } from "./sim/runtime";
@@ -173,7 +174,7 @@ export class WorldHost {
     for (const d of held) {
       const key = elementKey(d.element.name);
       const now = live.programs[d.element.name];
-      if (now && now.id !== this.store.spell(key)?.id) await this.prepare(key, false, true, true);
+      if (programToFetch(now, this.store.spell(key)?.id)) await this.prepare(key, false, true, true);
     }
     this.renderSpells();
     // Live programs written before their element had a promise, tested on it

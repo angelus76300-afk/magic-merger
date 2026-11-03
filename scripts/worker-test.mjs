@@ -446,6 +446,25 @@ const fresh = () => ALL[pairs++];
   check("the admin sees each person", r.status === 200 && r.data.budget === 50 && kim && kim.refusals === 2 && kim.discoveries >= 10);
 }
 
+// 8a. A spell whose only program is a trial (its test run never reached the
+// Worker) is reported by /api/spells/live, so the browser holding it tests it
+// again instead of keeping it a trial for good (4.0 review).
+{
+  const ann = await invite("Ann T", 5);
+  const [a, b] = fresh();
+  const made = (await merge(ann, a, b)).data.element.name;
+  const written = await api("/api/spell", { invite: ann.secret, body: { name: made } });
+  const live = await api("/api/spells/live", { invite: ann.secret, body: { names: [made] } });
+  check(
+    "a trial with no live program yet is reported to the browser that holds it",
+    written.data.program.trial === true && live.data.programs[made]?.id === written.data.program.id && live.data.programs[made]?.trial === true,
+    JSON.stringify(live.data),
+  );
+  // The stub's program says what it lacked: not this section's business.
+  await db.prepare("DELETE FROM gaps").run();
+  await reset();
+}
+
 // 9. The Feedback tab (3.4.1): ideas, votes, Send to Claude and the GitHub sync.
 {
   const idea = (inv, title, body = "") => api("/api/feedback", { invite: inv?.secret, body: { title, body } });

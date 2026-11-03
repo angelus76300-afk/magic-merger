@@ -30,6 +30,7 @@ import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../share
 import { pickExamples, words } from "../worker/programs";
 import { verdict, type LinkedPull } from "../worker/feedback";
 import { draftBrief } from "../shared/feedback";
+import { programToFetch } from "../shared/sync";
 import { helperProblem, withLibrary } from "../worker/evolve";
 import { body, bodyFrom, BUILDS, EXTRA, FEATURES, ITEMS, MAX_MODEL_BOXES, modelOf, planOfModel, PLANS, stillModelColor } from "../src/sim/body";
 import type { BodySpec, Feature, ModelBox } from "../src/sim/body";
@@ -347,6 +348,7 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   // An attempt counts merges as par does: a pair merged twice is one merge, whichever way round.
   const pairs = countMerge(countMerge(countMerge([], "Fire", "Water"), "Water", "Fire"), "Steam", "Air");
   check("an attempt counts each distinct pair once", pairs.length === 2 && pairs.includes("fire+water"), pairs.join(", "));
+
   check(
     "a challenge that asks for grand magic refuses a major spell",
     !strongEnough(CHALLENGES.find((d) => d.minTier)!, "major") && strongEnough(CHALLENGES.find((d) => d.minTier)!, "grand"),
@@ -1302,6 +1304,11 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
     !draftBrief(hostile).includes("delete") && draftBrief(hostile).startsWith("Build: Fire hotter"),
   );
   check("feedback: a brief already written is kept", draftBrief({ ...hostile, brief: "Build X" }) === "Build X");
+
+  // Which programs a browser fetches again when it opens (shared/sync.ts).
+  check("a different live version is fetched again", programToFetch({ id: 5 }, 4) && !programToFetch({ id: 5 }, 5) && !programToFetch(undefined, 5));
+  check("the trial this browser holds, never settled, is fetched again", programToFetch({ id: 5, trial: true }, 5));
+
   check("feedback: a pull request wins over an old question", verdict(100, asking, [pr(7, 150, "open")]).status === "review");
   check("feedback: the issue closed as done, shipped", verdict(100, { open: false, reason: "completed", labels: [] }, []).status === "shipped");
 }
