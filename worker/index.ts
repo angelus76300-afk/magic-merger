@@ -1052,18 +1052,16 @@ async function refreshReport(env: Env) {
   const statuses = await db
     .prepare("SELECT status, dry, COUNT(*) AS n FROM rewrites WHERE cause = 'refresh' GROUP BY status, dry")
     .all<{ status: string; dry: number; n: number }>();
-  const verdicts = await db
-    .prepare("SELECT v.*, e.name FROM refresh_verdicts v JOIN elements e ON e.key = v.key ORDER BY v.at")
-    .all<{
-      to_pid: number;
-      key: string;
-      from_pid: number;
-      replaced: number;
-      reason: string;
-      old_score: number | null;
-      new_score: number | null;
-      name: string;
-    }>();
+  const verdicts = await db.prepare("SELECT v.*, e.name FROM refresh_verdicts v JOIN elements e ON e.key = v.key ORDER BY v.at").all<{
+    to_pid: number;
+    key: string;
+    from_pid: number;
+    replaced: number;
+    reason: string;
+    old_score: number | null;
+    new_score: number | null;
+    name: string;
+  }>();
   // Rolled back by votes since: the replaced program is no longer live.
   const rolled = await db
     .prepare("SELECT COUNT(*) AS n FROM refresh_verdicts v JOIN programs p ON p.id = v.to_pid WHERE v.replaced = 1 AND p.status != 'live'")
