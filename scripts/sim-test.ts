@@ -19,7 +19,7 @@ import { generateWorld, type World } from "../src/sim/world";
 import { VK, floats, voxelKind } from "../src/sim/voxels";
 import { keyCell } from "../src/sim/voxelkey";
 import { SOLUTIONS, replay, seed, step } from "./challenge-replay";
-import { CHALLENGES, fewestMerges, parOf, starsFor, strongEnough } from "../shared/challenges";
+import { CHALLENGES, countMerge, fewestMerges, parOf, starsFor, strongEnough } from "../shared/challenges";
 import { chronicleDigest } from "../src/sim/chronicle";
 import { readDigest } from "../shared/chronicle";
 import { capByDepth } from "../shared/tiers";
@@ -344,6 +344,9 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   check("an item the start set cannot reach has no par", !fewestMerges(graph, ["b"]).has("f"));
   check("beating par lowers it", parOf(graph, ["a", "b"], ["e"], 1).par === 1 && parOf(graph, ["a", "b"], ["e"], 5).par === 2);
   check("three stars at par, two within two, one for any win", starsFor(4, 4) === 3 && starsFor(3, 4) === 3 && starsFor(6, 4) === 2 && starsFor(7, 4) === 1);
+  // An attempt counts merges as par does: a pair merged twice is one merge, whichever way round.
+  const pairs = countMerge(countMerge(countMerge([], "Fire", "Water"), "Water", "Fire"), "Steam", "Air");
+  check("an attempt counts each distinct pair once", pairs.length === 2 && pairs.includes("fire+water"), pairs.join(", "));
   check(
     "a challenge that asks for grand magic refuses a major spell",
     !strongEnough(CHALLENGES.find((d) => d.minTier)!, "major") && strongEnough(CHALLENGES.find((d) => d.minTier)!, "grand"),

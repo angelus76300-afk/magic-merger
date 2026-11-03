@@ -831,11 +831,20 @@ const fresh = () => ALL[pairs++];
   const before = calls;
   const won = await api("/api/challenge/win", { invite: cara.secret, body: { id: "first-fire", merges: 4, spell: "Storm Rain" } });
   check("a win within two merges of par gets two stars", won.status === 200 && won.data.stars === 2 && calls === before, JSON.stringify(won.data));
-  const best = await api("/api/challenge/win", { invite: cara.secret, body: { id: "first-fire", merges: 1, spell: "Storm Rain" } });
+  // A client cannot claim fewer merges than the recipe graph allows, nor a
+  // spell the start set cannot reach: one client could set par to 0 for everyone.
+  const impossible = await api("/api/challenge/win", { invite: cara.secret, body: { id: "first-fire", merges: 1, spell: "Storm Rain" } });
+  const unreachable = await api("/api/challenge/win", { invite: cara.secret, body: { id: "first-fire", merges: 3, spell: "Rain" } });
+  check(
+    "a win below the graph's fewest merges, or with an unreachable spell, is refused",
+    impossible.status === 400 && unreachable.status === 400,
+    `${impossible.status} ${unreachable.status}`,
+  );
+  const best = await api("/api/challenge/win", { invite: cara.secret, body: { id: "first-fire", merges: 2, spell: "Storm Rain" } });
   const card = (await api("/api/challenges", { invite: cara.secret })).data.challenges.find((c) => c.id === "first-fire");
   check(
-    "beating par lowers it for everyone, and names who",
-    best.data.stars === 3 && best.data.best && card.par === 1 && card.best?.merges === 1 && card.best?.name === "Cara" && card.mine === 1,
+    "a win at par gets three stars, the fewest of anyone, and names who",
+    best.data.stars === 3 && best.data.best && card.par === 2 && card.best?.merges === 2 && card.best?.name === "Cara" && card.mine === 2,
     JSON.stringify(card),
   );
   const weak = await api("/api/challenge/win", { invite: cara.secret, body: { id: "great-eruption", merges: 2, spell: "Storm Rain" } });

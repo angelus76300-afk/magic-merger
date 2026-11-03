@@ -1,3 +1,4 @@
+import { pairKey } from "./elements";
 import { TIERS, type Tier } from "./tiers";
 
 // Challenges from nothing (3.7). A hazard island and a start set of
@@ -175,6 +176,13 @@ export function parOf(recipes: Recipe[], start: string[], solvers: string[], bes
   }
   if (bestWin !== null && (par === null || bestWin < par)) return { par: bestWin, via: null };
   return { par, via };
+}
+
+// The merges of an attempt, as par counts them: each distinct pair once,
+// whichever way round, however often it was merged again.
+export function countMerge(pairs: readonly string[], a: string, b: string): string[] {
+  const pair = pairKey(a, b);
+  return pairs.includes(pair) ? [...pairs] : [...pairs, pair];
 }
 
 // Three stars at par or better, two within two merges of it, one for any win.

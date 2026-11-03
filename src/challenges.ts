@@ -1,5 +1,5 @@
 import * as api from "./api";
-import { challengeById, liveAhead, starsFor, strongEnough, type ChallengeDef } from "../shared/challenges";
+import { challengeById, countMerge, liveAhead, starsFor, strongEnough, type ChallengeDef } from "../shared/challenges";
 import { elementKey } from "../shared/elements";
 import { chipElement } from "./craft";
 import type { Store } from "./store";
@@ -16,6 +16,8 @@ import type { WorldHost } from "./worldhost";
 interface Attempt {
   id: string;
   items: string[];
+  // Distinct pairs merged so far (shared/challenges.ts, countMerge); merges is their number.
+  pairs?: string[];
   merges: number;
   started: number;
 }
@@ -186,7 +188,9 @@ export class Challenges {
       const result = await api.merge(first.name, second.name);
       const made = elementKey(result.element.name);
       const newForMe = this.store.discover(result.element, [first.name, second.name]);
-      a.merges++;
+      const pairs = countMerge(a.pairs ?? [], first.name, second.name);
+      a.pairs = pairs;
+      a.merges = pairs.length;
       if (!a.items.includes(made)) a.items.push(made);
       saveAttempt(a);
       this.picked = made;

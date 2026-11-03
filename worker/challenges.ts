@@ -101,6 +101,13 @@ export async function recordWin(
   if (!row) throw new HttpError(400, "That is not a win of this challenge");
   const tier = isTier(row.tier) ? row.tier : tierFromDepth(row.depth);
   if (!strongEnough(def, tier)) throw new HttpError(400, "That is not a win of this challenge");
+  // The merge count comes from the browser: it can never be below what the
+  // recipe graph says that spell takes from this start set, and the spell
+  // must be reachable at all, or one client could set par to 0 for everyone.
+  const graph = await recipes(db);
+  const fewest = fewestMerges(graph, def.start.map(elementKey)).get(key);
+  if (!fewest) throw new HttpError(400, "That spell cannot be made from this challenge's start set");
+  if (merges < fewest.size) throw new HttpError(400, `That spell takes at least ${fewest.size} merges from this start set`);
   const before = (await bestWins(db)).get(def.id)?.merges ?? null;
   const now = Date.now();
   await db.batch([
@@ -114,7 +121,7 @@ export async function recordWin(
       .bind(def.id, key, row.pid, now),
   ]);
   const solvers = (await verified(db)).get(def.id) ?? [key];
-  const { par } = parOf(await recipes(db), def.start.map(elementKey), solvers, Math.min(merges, before ?? merges));
+  const { par } = parOf(graph, def.start.map(elementKey), solvers, Math.min(merges, before ?? merges));
   return { stars: starsFor(merges, par), par, best: before === null || merges < before };
 }
 
