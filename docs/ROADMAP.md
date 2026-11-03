@@ -307,23 +307,26 @@ The 4.0 review measured 27 s from a discovery to a castable small spell in a pho
 6. **Progress the player can see**: chips say "writing", "testing" and "ready" (moved here from 4.1, item 4.2), and a toast when a spell becomes ready.
 7. **Guards**: cost per spell must not rise (the total rises only by the items written ahead, inside the daily cap); the judge's pass rate, the promise probes and votes on new programs must not fall, on a fixed set of 20 spells written before and after.
 
+### 4.0.2 The review's findings, fixed
+
+Every open finding of docs/REVIEW-4.0.md that code can correct, in one pull request. Each one is reproduced first (a test, a script or a screenshot that shows it) and the same check is shown passing after the fix; a finding that cannot be reproduced is written down as such, not fixed blind. No spell is rewritten, no prompt changes, no new paid call. Left out on purpose: M9 (in 4.0.1), M11 (4.5, when strangers come), L9 (UTC months, consistent, not a bug), the simulation in a Worker thread (the real answer to M3, size L, worth doing after 4.0.1 has moved the test run into a Web Worker and changed the CSP once).
+
+1. **Nothing lost without a word.** Two tabs of one browser: discoveries merged by key on every write (the stored object read again first, a `storage` listener for the other tab's writes), the island saved by one tab at a time through a `BroadcastChannel` lock or refused over a newer save (M6, the last item of 4.0 still open). A toast once when a save hits the storage quota, and `MAX_SAVE_CHARS` at 1.5M (M13). A watchdog that replaces a World frame silent for 20 s while visible (M3, the part that fits in S to M).
+2. **Server hardening.** The admin token compared in constant time on two digests (L1); `/api/perf` one row per invite per 20 s (L2); `pollBatches` caught in `scheduled()` like its siblings (L7); the feedback sync links a pull request to an idea only when it says `Closes #n` or `Fixes #n` (L8); the chronicle digest bounded and passed to Haiku as quoted data, not facts (L10, cheap even if self harm only).
+3. **Small things a player sees.** The vote bar and the challenge banner stacked on a phone, checked with a screenshot at phone size (M10); a broken spell remembers the Worker's "mended too often" for the session and stops asking (L5); Retry and Reset of a live challenge keep the head start (L6); the refresh report says "not sent" for rows that never reached a batch (M12).
+4. **Tests you can trust.** `scripts/` typechecked (`@types/node`, a `scripts/tsconfig.json` in `npm run typecheck`) and `scripts/*.mjs` linted with Node globals (M7). One Worker test section each for votes, rewrites and rollbacks, repairs, casts, reports, spell info, spend and perf, then the admin routes the review listed (M7). `SLOW_MS` injectable, the worst tick printed, not asserted (M8); one scene stream in CI if that brings `npm test` well under the 92 s (L11).
+5. **Less code.** Dead exports removed (`artifactsOf`, `SOUND_NAMES`, `WorldHost.openChallenges`, `Store.markSolved`), one `api()` helper and one PRNG for `scripts/`, one tick loop shared by the engine, the check and the scripts (the engine's missing `world.events` clear decided on purpose, not by accident), the identical branches in `shared/tiers.ts` and the Worker test (L4). Behavior unchanged, proven by `npm test` and the Worker tests before and after.
+6. **What the review could not verify.** A test for a passkey whose counter goes backwards (a cloned authenticator) and for each attestation format the library accepts; the two leftover test accounts (`ccf78a03`, `82a0d421`) deleted with the statements from the 4.0 pull request, by the owner or with the owner's go ahead.
+
+Then the owner's part of the review's section 8, which no session can do: the routine's environment holds no token and `main` requires a pull request; one real phone session with the HUD on the medium island, read back from `/api/perf`; a real passkey made on a real phone; the welcome read on a phone; the refresh report read and its candidates decided.
+
 ### 4.1 Bigger and richer worlds
 
 1. **Bigger islands for those who can run them**: a huge size and beyond, offered when the device's own HUD numbers show the headroom (simulation and frame p95 on the current size), never by default on phones. Saved on the account (4.0), since a big island outgrows the browser's storage.
 2. **More varied terrain**: biomes (temperate forest, desert, tundra, jungle, swamp, volcanic, mesa), island shapes (archipelagos, plateaus, ridges, inland lakes, deltas), better rivers and coasts, chosen by a seed and a few sliders at reset.
 3. **Visual improvements**: baked ambient occlusion in the voxel lighting, better water (shore foam, depth color, gentle waves), weather you can see (rain, snow, fog), sun, moon and stars in the sky. Each measured with the HUD on a phone before it ships.
 
-4. **From the 4.0 review** (docs/REVIEW-4.0.md), in this order:
-   1. A watchdog that replaces a frozen World frame after 20 s without a message (review M3; the full answer, the simulation in a Worker thread, is L and changes the CSP and the view).
-   2. (Moved to 4.0.1: chips that say "writing" and "testing", and the test run's duration in the perf sample, M9.)
-   3. The vote bar and the challenge banner no longer overlap on a phone (M10, `docs/review-4.0/14-challenge-island.jpg`).
-   4. `scripts/` typechecked (`@types/node`, a `scripts/tsconfig.json` in `npm run typecheck`) and `scripts/*.mjs` linted with Node globals (M7).
-   5. One Worker test section each for votes, rewrites and rollbacks, repairs, the judge and judge-stats, spend and perf, reports (M7).
-   6. `npm test` no longer asserts on wall clock time: `SLOW_MS` injectable, the worst tick printed, not asserted (M8); one scene stream in CI if the 92 s hurt.
-   7. The admin token compared in constant time (L1); `/api/perf` one row per invite per 20 s (L2); `pollBatches` caught like its siblings in `scheduled()` (L7); the feedback sync matches pull requests that say `Closes #n`, not any mention (L8).
-   8. A toast once when a save hits the storage quota, and `MAX_SAVE_CHARS` at 1.5M (M13); the refresh report says "not sent" for rows that never reached a batch (M12).
-   9. A broken spell remembers the Worker's "mended too often" for the session (L5); Retry and Reset of a live challenge keep the head start (L6).
-   10. Dead exports removed, one `api()` helper and one PRNG for `scripts/`, one tick loop shared by the engine, the check and the scripts, the two identical branches in `shared/tiers.ts` and the Worker test (L4).
+The 4.0 review's open findings, which used to be listed here, are now 4.0.2.
 
 ### 4.5 Ready for strangers
 
