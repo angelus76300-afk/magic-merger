@@ -295,19 +295,17 @@ Today an invite link is kept by one browser, and progress lives in that browser 
 8. **Two tabs, one browser** (review M6): discoveries merge by key on every write; the island is saved by one tab at a time (a `BroadcastChannel` lock) or never over a newer save. The server side of 3 and 4 is where this is decided.
 9. **The domain** is chosen before the first passkey (a move means every friend registers again).
 
-### 4.0.1 Spells ready when you find them (next)
+### 4.0.1 Faster creation, same cost, same quality (next)
 
-The 4.0 review measured 27 s from a discovery to a castable small spell in a phone sized browser, and only 2 of 12 spells in the bar ready (M9). Most of that wait is the test run in the hidden frame, not Claude. A discovery should feel instant: spells are written as soon as the merge creates them, for every tier, and the owner accepts that this costs more.
+The 4.0 review measured 27 s from a discovery to a castable small spell in a phone sized browser, with 2 of 12 spells in the bar ready (M9). Most of that wait is the test run in the hidden frame, not Claude. Goal: everything from dropping one item on another to using the result gets faster. Rule set by the owner: **no extra cost and no lower quality**. So no writing programs for items nobody uses, no fast mode, no weaker drafts shown to players.
 
-1. **Measure first**: time each step (merge answer, intent, program write, test run, verdict) for small and big spells, in the perf sample and in a script, on a phone sized browser and on the real phone. Every change below is judged on these numbers.
-2. **Write at the merge**: the Worker starts the program the moment a merge creates a new item, and for a known item without a program when a player first gets it, in a background job that survives the response (Cloudflare Queues or Workflows; `waitUntil` is too short for a long Opus call), not when the player opens the World.
-3. **Every tier at once**: small spells as today; big ones get a Haiku draft that is castable within seconds, then the Opus version right away (not overnight), which replaces the draft once it passes the checks.
-4. **A faster test run**: simulation only with no rendering, in a Web Worker, as short as the probes allow, started in the background as soon as the program arrives.
-5. **Fewer round trips**: intent and program in one call or in parallel; the 1 hour prompt cache now that writes come in bursts.
-6. **Fast mode only if measured worth it**: twice the price for up to 2.5 times faster output, so only for the Opus write of a big first discovery, behind a setting, and only if step 1 shows the model is the bottleneck.
-7. **Progress the player can see**: chips say "writing", "testing" and "ready" (moved here from 4.1, item 4.2), and a toast when a spell becomes ready.
-8. **Budget**: the discoverer's $5 pays for what their merge starts; a daily cap on eager writes, beyond which spells go back to being written on first use; an estimate before shipping from the month's numbers (new items a day, share of big ones, about $0.045 an Opus spell and $0.002 a Haiku one). At 50 new items a day that is about $26 a month at normal speed and about $50 with fast mode.
-9. **Targets**: a small spell castable before the discovery card closes, a big spell's draft within 15 s, its final version within 2 minutes, measured on the real phone.
+1. **Measure first**: time each step of the whole path (merge answer, description, intent, program write, test run, verdict, first cast) for small and big spells and for artifacts, in the perf sample and in a script, on a phone sized browser and on the real phone. Every change below is judged on these numbers, and on cost per spell and quality, measured before and after.
+2. **A faster test run**: simulation only with no rendering, in a Web Worker, as short as the probes allow, started as soon as the program arrives rather than when the World opens.
+3. **Fewer round trips**: intent and program in one call or in parallel where they do not depend on each other; description alongside the merge answer where it is already written by the same call; no call waiting on another without need.
+4. **Cheaper and faster at once**: the 1 hour prompt cache where writes come in bursts (it lowers cost too); shorter prompts where the 3.x additions grew them without effect, checked against the judge and the probes.
+5. **Start earlier without paying more**: the background writing that already exists for small spells (about $0.002 each, once for everyone) starts at the merge instead of when the World opens; big spells are still written on first use, but their write starts the moment the player selects the spell, not at the tap.
+6. **Progress the player can see**: chips say "writing", "testing" and "ready" (moved here from 4.1, item 4.2), and a toast when a spell becomes ready.
+7. **Guards**: cost per spell and the month's spell spend must not rise; the judge's pass rate, the promise probes and votes on new programs must not fall, on a fixed set of 20 spells written before and after.
 
 ### 4.1 Bigger and richer worlds
 
