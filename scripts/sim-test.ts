@@ -43,6 +43,10 @@ import { AGES, JOBS, packLook, unpackLook, type Job as Job3 } from "../src/sim/v
 import { buildRig, drawScale, HOUSE_HEIGHT, MAX_HEIGHT, villagerUnits, type Rig } from "../src/sim/voxel/rigs";
 import { SPECIES } from "../src/sim/wildlife";
 import { Store } from "../src/store";
+import { voiceFor } from "../src/sim/sound";
+import { lifeCycle, updateCreature } from "../src/sim/creatures";
+import { stepPhysics } from "../src/sim/physics";
+import { TICK } from "../src/sim/world";
 
 // Challenges with nothing cast, over several seeds: one seed can pass by
 // luck (Wildfire did, at 3 wins in 16). These replays run in worker threads
@@ -1354,6 +1358,36 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
 
   check("feedback: a pull request wins over an old question", verdict(100, asking, [pr(7, 150, "open")]).status === "review");
   check("feedback: the issue closed as done, shipped", verdict(100, { open: false, reason: "completed", labels: [] }, []).status === "shipped");
+}
+
+// 11. The drum players kept hearing (4.1): routine work plays nothing, and a
+// sound name the prompt does not offer is played by the nearest voice in
+// meaning, or not at all, never by the thump.
+{
+  check("a known sound name plays its own voice", voiceFor("chime") === "chime" && voiceFor(" Boom ") === "boom");
+  check("an unknown name plays the nearest voice", voiceFor("hum") === "drone" && voiceFor("thunder") === "rumble" && voiceFor("bell") === "chime");
+  check("a name with no near voice is silent, never a thump", voiceFor("glorp") === null && voiceFor("") === null && voiceFor("constructor") === null);
+  seed(11);
+  resetCreatureIds();
+  const world = generateWorld(120, 120, 11);
+  populate(world);
+  world.time = 20;
+  const rt = new Runtime(world, () => {});
+  const stumps = () => world.cover.reduce((n, v) => n + (v === C.STUMP ? 1 : 0), 0);
+  const before = stumps();
+  let sounds = 0;
+  for (let tick = 0; tick < 60 / TICK; tick++) {
+    world.time += TICK;
+    world.tick++;
+    stepPhysics(world, TICK);
+    for (const c of world.creatures) updateCreature(world, c, TICK);
+    lifeCycle(world, TICK);
+    rt.step(TICK);
+    sounds += world.events.filter((e) => e.kind === "sound").length;
+    world.events.length = 0;
+  }
+  const felled = stumps() - before;
+  check("a busy island plays no sound by itself for a minute", sounds === 0 && felled > 0, `${sounds} sounds, ${felled} trees felled`);
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");

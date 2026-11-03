@@ -327,7 +327,7 @@ function deposit(world: World, c: Creature): void {
       world.ground[i] = G.DIRT;
       world.setCover(i, C.HOUSE);
     }
-    world.emit({ kind: "sound", name: "thump", size: 0.4 });
+    // A house that grows with the village is routine: silent until 4.5.
     return;
   }
 }
