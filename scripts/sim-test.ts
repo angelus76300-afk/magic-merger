@@ -651,7 +651,7 @@ for (const scenario of SCENARIOS) {
 for (const { stream, report: r } of sceneReports.sort((a, b) => a.stream - b.stream)) {
   const kinds = Object.entries(r.kinds);
   const vanished = kinds.filter(([, v]) => v.start >= 3 && v.min < Math.ceil(v.start / 3)).map(([k]) => k);
-  const exploded = kinds.filter(([, v]) => v.max > Math.max(v.start * 2.5, v.start + 3)).map(([k]) => `${k} ${v.start} to ${v.max}`);
+  const exploded = kinds.filter(([, v]) => v.max > Math.max(v.start * 2.5, v.start + 3)).map(([k, v]) => `${k} ${v.start} to ${v.max}`);
   const lively = Object.values(r.lively).reduce((a, [d, n]) => [a[0] + d, a[1] + n], [0, 0]);
   check(
     `five minute scene, stream ${stream}: every creature changed something`,

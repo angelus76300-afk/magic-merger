@@ -38,7 +38,7 @@ async function api(path: string, body?: unknown): Promise<any> {
     headers: { "content-type": "application/json", "x-access-token": token! },
     body: body ? JSON.stringify(body) : undefined,
   });
-  const data = await res.json().catch(() => null);
+  const data = (await res.json().catch(() => null)) as { error?: string } | null;
   if (!res.ok) throw new Error(`${path}: ${data?.error ?? res.status}`);
   return data;
 }

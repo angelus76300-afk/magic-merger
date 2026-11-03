@@ -136,7 +136,6 @@ function check(name, ok, detail = "") {
   if (!ok) failed++;
   log(`${ok ? "ok  " : "FAIL"} ${name}${detail ? `: ${detail}` : ""}`);
 }
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const browser = await chromium.launch({ args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--ignore-gpu-blocklist"] });
 const PHONE = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true };
 
