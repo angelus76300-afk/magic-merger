@@ -628,7 +628,7 @@ export class WorldHost {
   // A spell crashed in the World: Claude gets the error and fixes the program.
   private async repair(key: string, name: string, error: string): Promise<void> {
     const done = this.repairs.get(key) ?? 0;
-    if (done >= MAX_REPAIRS || this.sessionPrograms.has(key)) {
+    if (done >= MAX_REPAIRS || this.sessionPrograms.has(key) || mendedTooOften(key)) {
       toast(`${name} fizzled: ${error}`, "error");
       return;
     }
@@ -641,6 +641,9 @@ export class WorldHost {
       if (req) this.send({ type: "spell-updated", spell: req });
       toast(`${name} was mended, cast it again`);
     } catch (err) {
+      // The Worker mends a program three times in its life (4.0 review L5):
+      // past that, this session stops asking and the spell just fizzles.
+      if (err instanceof api.ApiRequestError && err.detail?.mended === true) markMended(key);
       toast(err instanceof Error ? err.message : "The spell could not be mended", "error");
     }
   }
@@ -787,6 +790,26 @@ function writeFlag(key: string, value: boolean): void {
     localStorage.setItem(key, value ? "1" : "0");
   } catch {
     // Storage blocked: the choice lasts for this page.
+  }
+}
+
+// Spells the Worker would not mend again, for this tab's session (L5).
+const MENDED = "mm-mended";
+const mendedHere = new Set<string>();
+function mendedTooOften(key: string): boolean {
+  if (mendedHere.has(key)) return true;
+  try {
+    return (JSON.parse(sessionStorage.getItem(MENDED) ?? "[]") as string[]).includes(key);
+  } catch {
+    return false;
+  }
+}
+function markMended(key: string): void {
+  mendedHere.add(key);
+  try {
+    sessionStorage.setItem(MENDED, JSON.stringify([...mendedHere]));
+  } catch {
+    // this page only
   }
 }
 
