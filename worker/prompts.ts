@@ -415,7 +415,9 @@ export const CHRONICLE_SYSTEM = `You write the chronicle of a small floating isl
 Write 90 to 140 words in plain English, past tense, warm and a little wry. Name the mage only as "the mage". Tell the few things that mattered most (a death, a birth, a creature that changed the village, magic that saved or ruined something), in order, and end with how the village stands now. Invent nothing that the facts do not say; leave out what is dull. No title, no lists, no hints about how to play.`;
 
 export function chronicleUserMessage(d: { days: number; lines: string[]; work: string[]; memories: string[]; now: string[] }): string {
-  const part = (title: string, list: string[]) => (list.length ? `${title}:\n${list.map((l) => `- ${l}`).join("\n")}` : `${title}: nothing`);
+  // Each entry is quoted as a string (4.0 review L10): what a sandbox sent is
+  // data in the message, never a line of its own.
+  const part = (title: string, list: string[]) => (list.length ? `${title}:\n${list.map((l) => `- ${JSON.stringify(l)}`).join("\n")}` : `${title}: nothing`);
   return [
     `The island has lived ${d.days} day${d.days === 1 ? "" : "s"}.`,
     part("What happened", d.lines),
