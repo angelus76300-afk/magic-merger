@@ -13,7 +13,8 @@ Every spell can then be cast in the World tab: a falling sand pixel world with t
 | Path          | What                                                                                                                                                           |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/`        | Browser game: board, inventory, spell card                                                                                                                     |
-| `src/world/`  | World tab: terrain physics, creatures, spell casting, renderer                                                                                                 |
+| `src/sim/`    | World tab: terrain physics, creatures, goals, spell casting, the voxel renderer (`src/sim/voxel/`)                                                             |
+| `lab/`        | The Spell Lab and the bestiary pages, reference spells, legacy programs and solutions cast by `npm test`                                                       |
 | `worker/`     | Cloudflare Worker: merges, descriptions, spell programs and their versions, votes, the judge, invites and the ledger, feedback, the API's growth, Claude calls |
 | `scripts/`    | `npm test`, `npm run test:worker`, `npm run evolve`, the Spell Lab, the judge runner, measurements                                                             |
 | `shared/`     | Types and primitives used by both                                                                                                                              |

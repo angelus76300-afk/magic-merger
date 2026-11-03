@@ -124,6 +124,10 @@ Set in `wrangler.jsonc`:
 | `JUDGE_MODEL`        | `claude-haiku-5-5`             | scoring three Spell Lab frames of a program (3.3)                                                                       |
 | `REWRITE_BUDGET_USD` | `0.5`                          | dollars a day for rewrites asked by votes, the judge and failed test runs                                               |
 | `BIG_SPELLS_BATCH`   | `1`                            | legendary and cosmic spells drafted by Haiku at once, written by Opus through the Batch API at half price; `0` for 3.2  |
+| `REFRESH_BUDGET_USD` | `8`                            | dollars a month the refresh of the legacy library may spend (3.7 part E), held before each batch is sent                |
+| `DESIGN_MODEL`       | `SPELL_MODEL`                  | who designs how the World API grows from what spells lacked (3.4.2), one call a day at most                             |
+| `EVOLVE`             | unset                          | `0` stops the API from growing on its own; the admin can still ask with `POST /api/admin/evolve`                        |
+| `ANTHROPIC_BASE_URL` | unset                          | routes Claude calls through a gateway, or the stub in `npm run test:worker`; `GITHUB_API_URL` does the same for GitHub  |
 
 Measured on the live Worker in November 2026:
 
@@ -185,4 +189,6 @@ npm run test:worker
 
 `node scripts/overlap-lab.mjs <out-dir>` casts the cases of 3.4's overlap fixes in the Spell Lab (a waterfall over the cut side, water on terraces, blocks in the land and through houses, a drawing over cliffs and water); compare with `docs/visual-checks`.
 
-Runs the simulation in Node, without a browser, in about 20 seconds on four cores (35 on two): map generation, the reference spells, the loop guard, a save round trip, every challenge with its solution and, over eight seeds in worker threads, with nothing, the test run on good and bad programs, and the vote rules. GitHub Actions runs `npm run build` and `npm test` on every pull request.
+`npm test` runs the simulation in Node, without a browser, in about 90 seconds on four cores (measured on 2026-11-03; the five minute scene on three streams is most of it): map generation, the reference spells, the loop guard, a save round trip, every challenge with its solution and, over eight seeds in worker threads, with nothing, the test run on good and bad programs, the five minute scene and the vote rules. GitHub Actions runs lint, the format check, `npm run build`, `npm test` and `npm run test:worker` on every pull request and on every push to `main`.
+
+`node scripts/local-verify.mjs` (4.0 review) runs the built game in a phone sized headless browser against `wrangler dev` with a stub Claude and checks what no Node test can: a check frame that never loads, a test verdict that never reaches the Worker, a challenge win kept for the next visit. It needs `dist/` and Playwright.

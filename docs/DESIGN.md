@@ -283,7 +283,7 @@ The first version spent 1.9 ms p50 on the crowd; flat arrays, shared matrices pe
 
 ## A living island (3.6)
 
-The rule: nothing on the island just stands there. If the player does nothing for five minutes, every creature has changed something. Everything is in `src/sim/kin.ts` (what creatures share: minds, villages, marks, memory), `src/sim/goals.ts` (deciding and acting), `src/sim/abilities.ts` and `src/sim/inspect.ts`. Artifacts that act and creatures casting library spells are 3.6.1.
+The rule: nothing on the island just stands there. If the player does nothing for five minutes, every creature has changed something. Everything is in `src/sim/kin.ts` (what creatures share: minds, villages, marks, memory), `src/sim/goals.ts` (deciding and acting), `src/sim/abilities.ts` and `src/sim/inspect.ts`. Artifacts that act and creatures casting library spells are 3.7 part B.
 
 ### Goals and needs
 

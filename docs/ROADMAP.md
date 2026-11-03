@@ -129,7 +129,7 @@ Asked for: every creature was the same two blocks in a different color. DESIGN.m
 
 ## Done in 3.6: a living island (creatures)
 
-Asked for: nothing on the island just stands there; if the player does nothing for five minutes, every creature must have changed something. This is the creatures half; artifacts that act and creatures casting library spells are 3.6.1. DESIGN.md, "A living island", has the rules and the numbers.
+Asked for: nothing on the island just stands there; if the player does nothing for five minutes, every creature must have changed something. This is the creatures half; artifacts that act and creatures casting library spells came in 3.7 part B. DESIGN.md, "A living island", has the rules and the numbers.
 
 1. **A goal for every kind** from twelve (hunt, gather, hoard, build, tend, guard, steal, spread, convert, worship, explore, migrate), **needs before goals** (survive, rest, eat) and **marks**: a dragon's heap of gold, dams, goblin camps with loot, graveyards, dens, flowers and candles at shrines, cairns.
 2. **Villagers' jobs are goals**, with a village's food, wood and gold: farmers sow and harvest, woodcutters fell trees, builders (a new job) build houses with that wood, fishers fish, guards patrol and fight, priests pray, heal and bury the dead, merchants carry food to poorer villages; children are born where there is food.
@@ -212,7 +212,7 @@ Today every creature is the same two blocks in a different color. Give each kind
 7. **A bestiary page** in the Spell Lab drawing every plan and feature.
 8. Teach `body`, `features` and models in the spell prompt **without rewriting existing spells in bulk**; old creatures get a body chosen from their base kind.
 
-### 3.6 Goals, actions and a living island (creatures done, see above; artifacts in 3.6.1)
+### 3.6 Goals, actions and a living island (creatures done, see above; artifacts in 3.7 part B)
 
 Nothing on the island just stands there. Every creature wants something and acts to get it, some with magic of their own; every artifact does something, on its own or when something happens. The test for anything new: if the player does nothing for five minutes, what has it changed? Builds on `src/sim/social.ts` and the species from 3.5.
 
@@ -229,7 +229,7 @@ Nothing on the island just stands there. Every creature wants something and acts
 
 ### 3.7 Alive, acting and challenged (one pull request, everything before 4.0)
 
-Everything left before 4.0, in one session and one pull request, built in four parts in this order. Each part ends with its own commit, its own checks green, and a deploy, so a problem is caught where it starts and the pull request can be read part by part. Decided: no village mana, no hints, no discoveries made in the World, no sharing features.
+Everything left before 4.0, in one session and one pull request, built in five parts in this order. Each part ends with its own commit, its own checks green, and a deploy, so a problem is caught where it starts and the pull request can be read part by part. Decided: no village mana, no hints, no discoveries made in the World, no sharing features.
 
 **Part A. Creatures that look alive** (found in play after 3.5)
 
