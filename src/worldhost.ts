@@ -18,7 +18,8 @@ import type { WorldSize } from "./sim/engine";
 import type { Store } from "./store";
 import { toast } from "./toast";
 
-const WORLD_KEY = "magic-merger.world2";
+export const WORLD_KEY = "magic-merger.world2";
+export const WORLD_AT_KEY = "magic-merger.world2.at";
 const MUTE_KEY = "magic-merger.muted";
 const HUD_KEY = "magic-merger.hud";
 // A crashing spell is sent back to Claude at most this often per session.
@@ -380,6 +381,8 @@ export class WorldHost {
           // A save that would crowd out the player's discoveries is dropped.
           if (json.length > MAX_SAVE_CHARS) break;
           localStorage.setItem(WORLD_KEY, json);
+          localStorage.setItem(WORLD_AT_KEY, String(Date.now()));
+          this.onSaved?.();
         } catch {
           // Storage full: the world lives on until the page closes.
         }
@@ -577,6 +580,8 @@ export class WorldHost {
 
   // The World's Challenges button opens the Challenges tab (main.ts).
   onChallenges: () => void = () => this.openChallenges();
+  // Told after each world save (4.0: the account's island follows).
+  onSaved: (() => void) | null = null;
 
   private leaveChallenge(): void {
     this.challenge = null;

@@ -1631,3 +1631,54 @@ input {
   padding: 6px 14px;
   font: inherit;
 }
+
+/* 4.0: accounts. */
+.account h3 {
+  margin: 14px 0 4px;
+  font-size: 13px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.account p {
+  margin: 0;
+}
+.account-device {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+}
+.account-email-form,
+.gate-email {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.account-email-form input,
+.gate-email input {
+  flex: 1;
+  min-width: 0;
+}
+.account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.account button.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.account-offer .account-later,
+.welcome-account {
+  width: 100%;
+  margin-top: 8px;
+}
+.gate-signin {
+  margin: 12px 0;
+}
+.gate-signin[hidden] {
+  display: none;
+}

@@ -153,9 +153,10 @@ function row(p: PersonInfo): HTMLElement {
   name.textContent = p.name;
   const facts = document.createElement("span");
   const status = p.status === "active" ? "" : ` · ${p.status}`;
+  const account = p.deletedAt ? " · account deleted" : p.claimedAt ? " · account" : "";
   const refused = p.refusals ? ` · ${p.refusals} refused by the bug guard` : "";
   const found = `${p.discoveries} ${p.discoveries === 1 ? "discovery" : "discoveries"}`;
-  facts.textContent = `${usd(p.spent)} of ${usd(allowance)} (${credits(p.spent)} of ${credits(allowance)} credits) · ${found} · ${p.lastSeen ? `seen ${ago(p.lastSeen)}` : "never came"}${status}${refused}`;
+  facts.textContent = `${usd(p.spent)} of ${usd(allowance)} (${credits(p.spent)} of ${credits(allowance)} credits) · ${found} · ${p.lastSeen ? `seen ${ago(p.lastSeen)}` : "never came"}${status}${account}${refused}`;
   const bar = document.createElement("span");
   bar.className = "people-bar";
   bar.style.setProperty("--used", `${Math.min(100, (p.spent / Math.max(0.01, allowance)) * 100)}%`);
@@ -183,9 +184,17 @@ function row(p: PersonInfo): HTMLElement {
     if (usd > 0) await api.changeInvite(p.id, "topup", usd);
   });
   act("New link", async () => {
-    if (!window.confirm(`Make a new link for ${p.name}? The old one stops working at once.`)) return;
+    const claimed = !!p.claimedAt;
+    if (
+      !window.confirm(
+        claimed
+          ? `Make a sign in link for ${p.name}? It signs their account in once, on the device that opens it.`
+          : `Make a new link for ${p.name}? The old one stops working at once.`,
+      )
+    )
+      return;
     const r = await api.changeInvite(p.id, "relink");
-    if (r.link) showLink(`New link for ${p.name}. The old one no longer works.`, r.link);
+    if (r.link) showLink(claimed ? `Sign in link for ${p.name}: it works once, then dies.` : `New link for ${p.name}. The old one no longer works.`, r.link);
   });
   act("Revoke", async () => {
     if (!window.confirm(`Revoke ${p.name}'s invite for good? Their link stops working; what they discovered stays.`)) return;

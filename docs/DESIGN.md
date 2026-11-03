@@ -427,6 +427,32 @@ The one planned exception to "never rewrite in bulk" (`worker/index.ts`, "refres
 4. **Trim without breaking anyone**: one cheap pass (Haiku) lists near duplicates and merges that make no sense. The admin decides one at a time in the People view. An approved duplicate becomes an alias (`aliases`): its name keeps working in inventories, recipes and First Discoveries and means the kept item; a recipe made with the alias's name still answers. An approved senseless merge is asked again on its next merge, its old answer kept in `recipe_history` and in inventories. Nothing is deleted.
 5. **The report**: `GET /api/admin/refresh-report`, replaced, kept, rolled back by votes since, and the cost.
 
+## Accounts (4.0)
+
+An invite link was kept by one browser, and progress lived there only. Now the link becomes an account the first time a passkey is made for it. Everything is in `worker/accounts.ts`, `src/account.ts` and `src/sync.ts`; the schema is `migrations/0011_accounts.sql`; `scripts/worker-test.mjs` (section 16) and `scripts/account-verify.mjs` check it. The plan was revised by the review in `docs/REVIEW-4.0.md`, part G.
+
+### The invite is the account
+
+Everything the server holds was already keyed by the invite id (`spend`, `elements.invite`, `suggestions`, `challenge_wins`, `reports`), so the account has the invite's id and nothing moves: the $5 a month, First Discoveries and ideas follow with no gap, and no migration rewrites a table. Votes and casts, keyed by a random browser id until now, use the account id for a signed in person, so a vote is one per person across devices. The claim is one statement (`UPDATE invites SET claimed_at ... WHERE claimed_at IS NULL`), so one link opened on two devices at once makes one account; the link's hash is replaced by one nobody holds, so it stops working for anyone else.
+
+### Passkeys, sessions, links
+
+Passkeys through WebAuthn (`@simplewebauthn/server` in the Worker, on WebCrypto; `@simplewebauthn/browser` on the page): discoverable credentials, so sign in needs no name; attestation `none`; user verification preferred, not required (a phone without biometrics still works); the relying party id is the request's host, which is why the domain must be chosen before the first passkey. Challenges live in `auth_challenges` for five minutes and are deleted when taken, so an answer cannot be replayed.
+
+A session is 32 random bytes in the `x-session` header, like the invite's secret in `x-invite`: hashed at rest, 30 days, one row per device, revocable from the account page, dead with the invite if it is revoked or deleted. No cookie: nothing on the page uses one, the sandboxed frames cannot read either, and a header has no CSRF surface.
+
+A one use link signs in an account that exists: the admin's "New link" on a claimed invite (the same `relink` as before; opening it calls `claim-link`, which retires the hash conditionally on the hash it was opened with, so two openings at once take it once), or a link sent by email when a provider is set up (`account_links`, 20 minutes, used once, three an hour, the same answer for an unknown address). The page uses either at once and drops the link from the address bar.
+
+### Progress
+
+Three documents per account in `progress`, each replaced whole: discoveries (key, time, the pair, and the element as the device knew it, so another device can show it), the board, and the island (the world save gzipped by `CompressionStream` and base64 encoded: a large island is about 700k characters raw and under 200k packed). Each has `updated_at` and a device label. Discoveries merge as a union by key with the earliest time (`shared/account.ts`, `mergeDiscoveries`); they go up five seconds after a change. The island goes up a minute after it changed and when the page is hidden; a device says what it last saw (`since`), and a newer save from another device is refused with when and where, so the page asks before replacing it, and loads the other one if the player says no. A device signing in takes the server's island when it is newer than its own, or has none.
+
+The upload has its own limit (2 MB a body, `PROGRESS_LIMITS` a document); every document is checked for shape; a document is only ever read or written through the session's own account.
+
+### Existing friends, export, deletion
+
+A browser playing with a link is offered the account once, after the welcome; "Later" is an answer, and the `?` button keeps the offer. Nothing changes until they answer: the invite header keeps playing. Export is one JSON of every row keyed by the account. Deletion removes passkeys, sessions, challenges, links, progress, votes, casts, activity, ideas and their votes, wins and reports, sets `elements.invite` to null (the element stays, the First Discovery no longer names anyone), and keeps the invite row as deleted with its spend, so the month's budget stays whole and the id is never reused. The privacy note says all of this.
+
 ## Challenges
 
 Hand-made islands with a hazard and a goal (`src/sim/scenarios.ts`, titles in `scenario-list.ts` so the game page does not load the engine to list them). A challenge builds its own world, runs a `tick` every frame (a volcano vent, a rising sea, the sun drying fields) and a `check` twice a second that returns progress text and playing, won or lost. It never touches the player's island: the iframe keeps the sandbox save in memory and restores it on leaving.

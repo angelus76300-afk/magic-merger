@@ -11,9 +11,13 @@ import { showFeedback } from "./feedback";
 import { Challenges } from "./challenges";
 import { openBook } from "./book";
 import { hideGate, showGate, showWelcome, welcomedBefore } from "./welcome";
+import { claimLink, offerAccount, offeredBefore, openAccount, setSignedIn, signIn } from "./account";
+import { Sync } from "./sync";
 
-// An invite link (/#invite=...) is kept by this browser before anything else.
+// An invite link (/#invite=...) is kept by this browser before anything else;
+// a sign in link by email (/#signin=...) is used once, below.
 const fromLink = api.captureInvite();
+const signInToken = api.captureSignIn();
 api.setLockedOut(showGate);
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
@@ -40,6 +44,12 @@ const world = new WorldHost(store, {
 });
 
 const challenges = new Challenges($("#challenges-view"), store, world);
+// 4.0: the account's progress follows this device while signed in.
+const sync = new Sync(store);
+world.onSaved = () => sync.islandSaved();
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) sync.flush();
+});
 
 function showTab(view: string): void {
   for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
@@ -65,8 +75,9 @@ $("#admin-badge").addEventListener("click", () => {
   void showSpend(badge);
 });
 
-// The ? button: the welcome again, with the privacy note and this month's magic.
-$("#help").addEventListener("click", () => void api.health().then(showWelcome));
+// The ? button: the welcome again, with the privacy note and this month's
+// magic; signed in, the account page is one tap further.
+$("#help").addEventListener("click", () => void api.health().then((h) => showWelcome(h, h?.account?.signedIn ? openAccount : null)));
 
 for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
   tab.addEventListener("click", () => showTab(tab.dataset.view!));
@@ -91,7 +102,21 @@ setCardActions({
   },
 });
 
+// Signed in (a passkey, a link): the server's progress joins this device's,
+// and the page starts again from what it holds now.
+setSignedIn(async () => {
+  const got = await sync.start();
+  if (got.discoveries) toast(`${got.discoveries} discoveries came from your other devices`);
+  if (got.island === "replaced") toast("Your island from another device is loading…");
+  window.setTimeout(() => location.reload(), 900);
+});
+
 async function refreshSession(): Promise<void> {
+  // A sign in link by email, or an admin's new link for an account that
+  // exists: used once, then this device is signed in.
+  if (signInToken) {
+    if (await claimLink("email", signInToken)) return;
+  }
   const status = await api.health();
   session.mock = status?.mock ?? false;
   session.admin = status?.admin ?? false;
@@ -100,16 +125,34 @@ async function refreshSession(): Promise<void> {
   badge.hidden = !session.admin;
   if (session.admin) void showSpend(badge);
   if (!status) return;
+  if (status.account?.claimed && !status.account.signedIn && !status.invited) {
+    if (await claimLink("link")) return;
+  }
   if (!status.invited) {
-    showGate("invite", "");
+    showGate("invite", "", { signIn, emailLink: (email) => api.account.emailLink(email) });
     return;
   }
   if (document.getElementById("gate") && !document.getElementById("gate")!.hidden) {
     hideGate();
     showTab("craft-view");
   }
+  if (status.account?.signedIn) {
+    const got = await sync.start();
+    if (got.discoveries) toast(`${got.discoveries} discoveries came from your other devices`);
+    if (got.island === "replaced") {
+      toast("Your island from another device is loading…");
+      window.setTimeout(() => location.reload(), 900);
+      return;
+    }
+  }
+  // A friend playing with a link is offered an account, once: after the
+  // welcome for a new player, at once for one who has played before.
+  const offer = status.account && !status.account.claimed && !status.account.signedIn && !offeredBefore() ? () => offerAccount(status) : null;
   // A new player, or anyone opening a fresh link, reads what the game is first.
-  if (!session.admin && (fromLink || !welcomedBefore())) showWelcome(status);
+  if (!session.admin && (fromLink || !welcomedBefore())) {
+    const welcome = showWelcome(status, status.account?.signedIn ? openAccount : null);
+    if (offer) welcome.addEventListener("close", offer, { once: true });
+  } else offer?.();
 }
 
 // The admin badge shows what Claude cost this month, and the detail on tap.

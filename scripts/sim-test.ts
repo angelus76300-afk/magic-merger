@@ -31,6 +31,7 @@ import { pickExamples, words } from "../worker/programs";
 import { verdict, type LinkedPull } from "../worker/feedback";
 import { draftBrief } from "../shared/feedback";
 import { programToFetch } from "../shared/sync";
+import { mergeDiscoveries } from "../shared/account";
 import { helperProblem, withLibrary } from "../worker/evolve";
 import { body, bodyFrom, BUILDS, EXTRA, FEATURES, ITEMS, MAX_MODEL_BOXES, modelOf, planOfModel, PLANS, stillModelColor } from "../src/sim/body";
 import type { BodySpec, Feature, ModelBox } from "../src/sim/body";
@@ -1333,6 +1334,23 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
   // Which programs a browser fetches again when it opens (shared/sync.ts).
   check("a different live version is fetched again", programToFetch({ id: 5 }, 4) && !programToFetch({ id: 5 }, 5) && !programToFetch(undefined, 5));
   check("the trial this browser holds, never settled, is fetched again", programToFetch({ id: 5, trial: true }, 5));
+
+  // Two devices' discoveries (4.0): a union by key, the earliest time wins, the recipe of the first finder.
+  const merged = mergeDiscoveries(
+    [
+      { key: "steam", at: 200, recipe: ["Fire", "Water"] },
+      { key: "fire", at: 0, recipe: null },
+    ],
+    [
+      { key: "steam", at: 100, recipe: ["Water", "Fire"] },
+      { key: "mist", at: 300, recipe: ["Air", "Water"] },
+    ],
+  );
+  check(
+    "discoveries from two devices merge as a union, earliest first",
+    merged.length === 3 && merged.find((d) => d.key === "steam")?.at === 100 && merged.find((d) => d.key === "steam")?.recipe?.[0] === "Water",
+    JSON.stringify(merged),
+  );
 
   check("feedback: a pull request wins over an old question", verdict(100, asking, [pr(7, 150, "open")]).status === "review");
   check("feedback: the issue closed as done, shipped", verdict(100, { open: false, reason: "completed", labels: [] }, []).status === "shipped");

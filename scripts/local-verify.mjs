@@ -2,7 +2,10 @@
 // fresh local D1, a stub Claude): a check frame that never loads no longer
 // blocks a spell for good, and a trial whose verdict never reached the
 // Worker is tested again on the next visit.
-import { chromium } from "/opt/node-tools/node_modules/playwright/index.mjs";
+import { createRequire } from "node:module";
+
+// require, not import: it also finds a Playwright installed globally (NODE_PATH), as lab-browser.mjs does.
+const { chromium } = createRequire(import.meta.url)("playwright");
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";

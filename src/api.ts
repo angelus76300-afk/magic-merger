@@ -1,4 +1,5 @@
 import type { Tier } from "../shared/tiers";
+import type { AccountInfo, ProgressDoc, ProgressPut } from "../shared/account";
 import type { FeedbackAction, FeedbackResponse } from "../shared/feedback";
 import type {
   ApiError,
@@ -22,6 +23,8 @@ import type {
 const TOKEN_KEY = "magic-merger.token";
 const INVITE_KEY = "magic-merger.invite";
 const PLAYER_KEY = "magic-merger.player";
+// 4.0: the account's session on this device.
+const SESSION_KEY = "magic-merger.session";
 
 export class ApiRequestError extends Error {
   constructor(
@@ -29,6 +32,8 @@ export class ApiRequestError extends Error {
     readonly code?: ErrorCode,
     // The HTTP status, 0 when the Worker could not be reached.
     readonly status = 0,
+    // What the Worker said besides words (a newer save exists: when, where).
+    readonly detail?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -48,13 +53,51 @@ export function captureInvite(): boolean {
   const m = /(?:^#|&)invite=([A-Za-z0-9_-]{20,64})/.exec(location.hash);
   if (!m) return false;
   store(INVITE_KEY, m[1]);
+  // A new link means a new start: a session this browser held is dropped.
+  clear(SESSION_KEY);
   history.replaceState(null, "", location.pathname + location.search);
   return true;
 }
 
-export function hasInvite(): boolean {
-  return !!read(INVITE_KEY);
+// A sign in link sent by email (4.0): /#signin=<token>, used once, at once.
+export function captureSignIn(): string | null {
+  const m = /(?:^#|&)signin=([A-Za-z0-9_-]{40,64})/.exec(location.hash);
+  if (!m) return null;
+  history.replaceState(null, "", location.pathname + location.search);
+  return m[1];
 }
+
+export function hasSession(): boolean {
+  return !!read(SESSION_KEY);
+}
+
+// Signed in: the session replaces the invite link on this device.
+export function setSession(token: string | null): void {
+  if (token) {
+    store(SESSION_KEY, token);
+    clear(INVITE_KEY);
+  } else clear(SESSION_KEY);
+}
+
+// 4.0: accounts.
+export const account = {
+  registerOptions: () => post<{ options: unknown; challengeId: string }>("/api/account/register/options", {}),
+  registerVerify: (challengeId: string, response: unknown) =>
+    post<{ token: string; name: string; created: boolean }>("/api/account/register/verify", { challengeId, response }),
+  loginOptions: () => post<{ options: unknown; challengeId: string }>("/api/account/login/options", {}),
+  loginVerify: (challengeId: string, response: unknown) => post<{ token: string; name: string }>("/api/account/login/verify", { challengeId, response }),
+  claimLink: () => post<{ token: string; name: string }>("/api/account/claim-link", {}),
+  emailLink: (email: string) => post<{ ok: true }>("/api/account/email-link", { email }),
+  emailClaim: (token: string) => post<{ token: string; name: string }>("/api/account/email-claim", { token }),
+  logout: () => post<{ ok: true }>("/api/account/logout", {}),
+  setEmail: (email: string) => post<{ ok: true }>("/api/account/email", { email }),
+  revokeDevice: (hash: string) => send<{ ok: true }>("DELETE", "/api/account/session", { hash }),
+  info: () => send<AccountInfo>("GET", "/api/account"),
+  export: () => send<Record<string, unknown>>("GET", "/api/account/export"),
+  remove: () => send<{ ok: true }>("DELETE", "/api/account"),
+  progress: () => send<{ progress: ProgressDoc[] }>("GET", "/api/progress"),
+  putProgress: (body: ProgressPut) => send<{ ok: true; updatedAt: number }>("PUT", "/api/progress", body),
+};
 
 // A player reports a name as offensive or wrong; the admin sees it.
 export function report(name: string, reason: string): Promise<{ ok: boolean }> {
@@ -201,24 +244,28 @@ export async function health(): Promise<HealthResponse | null> {
   }
 }
 
-async function post<T>(path: string, body: unknown): Promise<T> {
+function post<T>(path: string, body: unknown): Promise<T> {
+  return send<T>("POST", path, body);
+}
+
+async function send<T>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, {
-      method: "POST",
-      headers: { "content-type": "application/json", ...authHeaders() },
-      body: JSON.stringify(body),
+      method,
+      headers: { ...(body !== undefined ? { "content-type": "application/json" } : {}), ...authHeaders() },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
     throw new ApiRequestError("No connection to the Worker");
   }
 
-  const data = (await res.json().catch(() => null)) as T | ApiError | null;
+  const data = (await res.json().catch(() => null)) as T | (ApiError & { detail?: Record<string, unknown> }) | null;
   if (!res.ok || !data) {
-    const error = data as ApiError | null;
+    const error = data as (ApiError & { detail?: Record<string, unknown> }) | null;
     const message = error?.error ?? `Request failed (${res.status})`;
     if (error?.code === "invite" || error?.code === "revoked") onLockedOut(error.code, message);
-    throw new ApiRequestError(message, error?.code, res.status);
+    throw new ApiRequestError(message, error?.code, res.status, error?.detail);
   }
   return data as T;
 }
@@ -238,6 +285,14 @@ function read(key: string): string | null {
     return localStorage.getItem(key) ?? memory.get(key) ?? null;
   } catch {
     return memory.get(key) ?? null;
+  }
+}
+function clear(key: string): void {
+  memory.delete(key);
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // nothing to clear
   }
 }
 
@@ -263,7 +318,9 @@ function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = { "x-player": playerId() };
   const token = read(TOKEN_KEY);
   const invite = read(INVITE_KEY);
+  const session = read(SESSION_KEY);
   if (token) headers["x-access-token"] = token;
+  if (session) headers["x-session"] = session;
   if (invite) headers["x-invite"] = invite;
   return headers;
 }

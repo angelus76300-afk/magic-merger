@@ -157,6 +157,19 @@ Everything before 4.0 in one pull request, in five parts. DESIGN.md, "Alive, act
 
 Not done: combined hazards (they need a new island); the three lava challenges have no verified solver yet and stay hidden; the refresh of the whole library waits for the owner's look at the dry run.
 
+## Done in 4.0: a review, then accounts
+
+Asked for: an independent review before the link goes beyond close friends, then accounts built on the reviewed code. `docs/REVIEW-4.0.md` has the findings and the numbers; DESIGN.md, "Accounts", has the rules.
+
+1. **The review**: no critical finding; three high (a player's idea could be the routine's task, a challenge win could set par to 0 for everyone, a lost test verdict left a program a trial for good) and seven medium fixed with a check each; the hold proved by mutation; the sandbox headers verified on the live site; a newcomer's first ten minutes at phone size with screenshots; the open items numbered under 4.1 and 4.5.
+2. **The invite becomes the account, with the same id**: a passkey made from the link creates it, the link dies, and spend, First Discoveries, ideas and wins follow with no move; votes and casts are the account's across devices.
+3. **Sign in anywhere** with the passkey, or a one use link: the admin's "New link" on an account, or by email when a sender is set up (`EMAIL_API_URL`, `EMAIL_API_KEY`, `EMAIL_FROM`).
+4. **Progress on the server**: discoveries as a union, the board, the island packed; last saved wins for the island, with a warning before an older device replaces a newer save, and the other island loaded if the player says no.
+5. **The account page**: passkeys, devices (each can be signed out), what is saved, email, export as one file, delete everything.
+6. **Checked**: `npm run test:worker` (one use links opened twice at once, a forged passkey answer, a spent challenge, sessions made up, signed out or deleted, one account reading or writing another's progress, malformed and oversized uploads, email links used twice and rate limited, export, deletion leaving nothing of the person and keeping the library and the spend) and `scripts/account-verify.mjs` in a phone sized browser with a virtual authenticator (a link into an account, a second device signing in and receiving the island, one link on two devices at once, deletion signing both out).
+
+Not done: two tabs of one browser still overwrite each other's local saves (review M6; the server merge limits the damage to the island); the welcome is still long on a phone.
+
 ## Decisions taken
 
 1. **Cosmic spells may ruin the island.** Consequences are part of the fun; the land regrows on its own (ash turns to soil, grass and forests come back) and Reset is one tap away. Revisit if it feels punishing in play.
