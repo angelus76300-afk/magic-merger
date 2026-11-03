@@ -295,17 +295,17 @@ Today an invite link is kept by one browser, and progress lives in that browser 
 8. **Two tabs, one browser** (review M6): discoveries merge by key on every write; the island is saved by one tab at a time (a `BroadcastChannel` lock) or never over a newer save. The server side of 3 and 4 is where this is decided.
 9. **The domain** is chosen before the first passkey (a move means every friend registers again).
 
-### 4.0.1 Faster creation, same cost, same quality (next)
+### 4.0.1 Faster creation, every spell written at once (next)
 
-The 4.0 review measured 27 s from a discovery to a castable small spell in a phone sized browser, with 2 of 12 spells in the bar ready (M9). Most of that wait is the test run in the hidden frame, not Claude. Goal: everything from dropping one item on another to using the result gets faster. Rule set by the owner: **no extra cost and no lower quality**. So no writing programs for items nobody uses, no fast mode, no weaker drafts shown to players.
+The 4.0 review measured 27 s from a discovery to a castable small spell in a phone sized browser, with 2 of 12 spells in the bar ready (M9). Most of that wait is the test run in the hidden frame, not Claude. Goal: everything from dropping one item on another to using the result gets faster, and every new item is written as soon as it is created. Rules set by the owner: **no lower quality** (no weaker drafts shown to players, no fast mode), and the extra cost of writing items nobody casts is accepted because spending has stayed well controlled, inside a daily cap.
 
 1. **Measure first**: time each step of the whole path (merge answer, description, intent, program write, test run, verdict, first cast) for small and big spells and for artifacts, in the perf sample and in a script, on a phone sized browser and on the real phone. Every change below is judged on these numbers, and on cost per spell and quality, measured before and after.
 2. **A faster test run**: simulation only with no rendering, in a Web Worker, as short as the probes allow, started as soon as the program arrives rather than when the World opens.
 3. **Fewer round trips**: intent and program in one call or in parallel where they do not depend on each other; description alongside the merge answer where it is already written by the same call; no call waiting on another without need.
 4. **Cheaper and faster at once**: the 1 hour prompt cache where writes come in bursts (it lowers cost too); shorter prompts where the 3.x additions grew them without effect, checked against the judge and the probes.
-5. **Start earlier without paying more**: the background writing that already exists for small spells (about $0.002 each, once for everyone) starts at the merge instead of when the World opens; big spells are still written when a player first selects them, as today, so nothing is paid for spells nobody casts.
+5. **Every item written at the merge**: the Worker starts the program the moment a merge creates a new item, for every tier (Haiku up to grand, Opus above, as today), and for a known item without a program when a player first gets it, in a background job that survives the response (Cloudflare Queues or Workflows; `waitUntil` is too short for a long Opus call), idempotent so two players never pay twice. The discoverer's $5 pays for what their merge starts. A daily cap on these writes (for example $1.50) sends anything beyond it back to being written on first use. Estimate from this month's numbers before shipping: at 50 new items a day, about $26 a month.
 6. **Progress the player can see**: chips say "writing", "testing" and "ready" (moved here from 4.1, item 4.2), and a toast when a spell becomes ready.
-7. **Guards**: cost per spell and the month's spell spend must not rise; the judge's pass rate, the promise probes and votes on new programs must not fall, on a fixed set of 20 spells written before and after.
+7. **Guards**: cost per spell must not rise (the total rises only by the items written ahead, inside the daily cap); the judge's pass rate, the promise probes and votes on new programs must not fall, on a fixed set of 20 spells written before and after.
 
 ### 4.1 Bigger and richer worlds
 
