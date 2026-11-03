@@ -173,11 +173,15 @@ function openSandbox(): void {
   mount(restored ?? Engine.create(canvas, overlay, sandbox.size, hooks));
 }
 
+// The head start of the challenge being played, for a reset (L6).
+let scenarioAhead = 0;
+
 function openScenario(id: string, ahead = 0): void {
   const def = SCENARIOS.find((s) => s.id === id);
   if (!def) return;
   save();
   scenario = id;
+  scenarioAhead = ahead;
   const { world, run, focus } = def.build();
   const next = new Engine(canvas, overlay, world, hooks);
   next.view.orbit.tx = focus.x;
@@ -257,7 +261,7 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       break;
     case "reset":
       if (scenario) {
-        openScenario(scenario);
+        openScenario(scenario, scenarioAhead);
         break;
       }
       sandbox.size = msg.size;

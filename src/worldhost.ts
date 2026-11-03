@@ -63,6 +63,9 @@ export class WorldHost {
   // The challenge being played, if any.
   private challenge: string | null = null;
   private challengeDialog: HTMLDialogElement | null = null;
+  // Seconds the challenge's hazard ran while the player merged (3.7): kept
+  // for Retry and Restart, so losing on purpose does not buy a calm start.
+  private headStart = 0;
   private filters = new FilterBar(
     "mm-world-filters",
     { kind: "all", tier: "any", sort: "used", query: "" },
@@ -106,13 +109,14 @@ export class WorldHost {
       toast("A villager wanders in");
     });
     this.el.reset.addEventListener("click", () => {
-      if (this.challenge) this.send({ type: "reset", size: this.el.size.value as WorldSize });
+      // Restarting a live challenge plays its head start again (4.0 review L6).
+      if (this.challenge) this.startChallenge(this.challenge, this.headStart);
       else if (window.confirm("Reset the world? Everything in it will be lost.")) this.send({ type: "reset", size: this.el.size.value as WorldSize });
     });
     this.el.challenges.addEventListener("click", () => this.onChallenges());
     this.el.chronicle.addEventListener("click", () => void this.openChronicle());
     this.el.banner.querySelector(".world-banner-retry")!.addEventListener("click", () => {
-      if (this.challenge) this.startChallenge(this.challenge);
+      if (this.challenge) this.startChallenge(this.challenge, this.headStart);
     });
     this.el.banner.querySelector(".world-banner-leave")!.addEventListener("click", () => this.leaveChallenge());
     const showSound = () => {
@@ -491,6 +495,7 @@ export class WorldHost {
     const info = SCENARIO_LIST.find((s) => s.id === id);
     if (!info) return;
     this.challenge = id;
+    this.headStart = ahead;
     this.send({ type: "scenario", id, ahead });
     this.showObjective(id, this.attempt?.brief ?? info.brief, "playing");
     this.el.reset.textContent = "Restart";
