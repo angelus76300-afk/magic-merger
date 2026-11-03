@@ -303,7 +303,7 @@ The 4.0 review measured 27 s from a discovery to a castable small spell in a pho
 2. **A faster test run**: simulation only with no rendering, in a Web Worker, as short as the probes allow, started as soon as the program arrives rather than when the World opens.
 3. **Fewer round trips**: intent and program in one call or in parallel where they do not depend on each other; description alongside the merge answer where it is already written by the same call; no call waiting on another without need.
 4. **Cheaper and faster at once**: the 1 hour prompt cache where writes come in bursts (it lowers cost too); shorter prompts where the 3.x additions grew them without effect, checked against the judge and the probes.
-5. **Start earlier without paying more**: the background writing that already exists for small spells (about $0.002 each, once for everyone) starts at the merge instead of when the World opens; big spells are still written on first use, but their write starts the moment the player selects the spell, not at the tap.
+5. **Start earlier without paying more**: the background writing that already exists for small spells (about $0.002 each, once for everyone) starts at the merge instead of when the World opens; big spells are still written when a player first selects them, as today, so nothing is paid for spells nobody casts.
 6. **Progress the player can see**: chips say "writing", "testing" and "ready" (moved here from 4.1, item 4.2), and a toast when a spell becomes ready.
 7. **Guards**: cost per spell and the month's spell spend must not rise; the judge's pass rate, the promise probes and votes on new programs must not fall, on a fixed set of 20 spells written before and after.
 
