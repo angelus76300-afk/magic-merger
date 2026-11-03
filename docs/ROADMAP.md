@@ -1,6 +1,6 @@
 # Where the game stands, and what comes next
 
-Updated on 2026-11-02, during 3.6 (after 3.5).
+Updated on 2026-11-03, during 3.7 (after 3.6).
 
 ## Done since the first review
 
@@ -144,6 +144,18 @@ Asked for: nothing on the island just stands there; if the player does nothing f
 10. **Old spells face new promises**: every element gets its intents on the cron, and a live program that never faced its promise's probe is tested by the next browser that holds it and, if it breaks it, written once more as a trial. Found because all nine live protection programs, the Protection Spell included, failed the probe.
 
 Not done: the judge does not run the scene yet; abilities have no probe in the test run; no real phone session since goals (watch `/api/perf`).
+
+## Done in 3.7: alive, acting and challenged
+
+Everything before 4.0 in one pull request, in five parts. DESIGN.md, "Alive, acting and challenged", has the rules and the numbers.
+
+1. **Creatures that look alive**: sizes against a villager and a house (a bear 0.72 villagers tall instead of 1.56), walking up and down steps, no two parts sharing a face (1,359 found, the villager's hair first), still models fall back to a body plan, and the judge says whether creatures look alive.
+2. **Artifacts that act**: effects on triggers, charges, fuel and health, grants villagers use, uses creatures act on, pairs; creatures cast library spells by name at a capped tier and rate; every placed artifact faces a five minute test.
+3. **Challenges from nothing**: a Challenges tab, eight hazard islands from a few primitives, scored by merges against a par from the recipe graph, shown only with a solver verified in the simulation.
+4. **The island's story**: a chronicle by Haiku, a recipe book, opposites in the merge prompt and tiers capped by depth.
+5. **The legacy library refreshed**: programs rewritten through the Batch API under an $8 cap, each one kept only if it passes its tests and the judge; duplicates become aliases after the owner approves each.
+
+Not done: combined hazards (they need a new island); the three lava challenges have no verified solver yet and stay hidden; the refresh of the whole library waits for the owner's look at the dry run.
 
 ## Decisions taken
 
