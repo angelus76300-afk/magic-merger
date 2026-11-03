@@ -1,0 +1,45 @@
+invite 86f64f18 created, cap $0.03
+welcome shown at 1.7s; url now https://magic-merger.angelus76300.workers.dev/
+shot 01-welcome
+welcome text: 1595 chars, 289 words
+shot 02-craft-empty
+first merge answered in 794 ms: ♨️ Steam
+shot 03-first-merge
+merge 2: ⛲ Geyser in 3108 ms
+merge 3: ♨️ Steam in 2778 ms
+merge 4: 🌈 Rainbow in 2754 ms
+merge 5: 🔷 Prism in 2921 ms
+shot 05-board-after-merges
+shot 06-card
+shot 07-world-first
+world status: Pick a spell, then tap the island to cast it, or tap a creature to see what it wants. Drag to turn, pinch to zoom, two fingers to pan.
+spells in the bar: 12, ready: 2
+spell ready after 26904 ms: Tap the island to cast Arcane. Tap it again to put it away and look at creatures.
+shot 08-cast
+shot 09-after-cast-vote
+vote bar present: 1
+shot 10-inspect
+shot 11-challenges
+first challenge button: Play disabled=false
+shot 12-challenge-board
+shot 13-challenge-merged
+shot 14-challenge-island
+banner: Put out the fire Burning: 495 · villagers 14/14 · houses 5/5, lose 2 and it falls Back to my island
+shot 15-ideas
+spent so far by the test invite: $0.013 of $0.03
+cap loop 0: 🌈 Rainbow | toast: 
+cap loop 1: 🌌 Aurora | toast: First discovery: 🌌 Aurora
+cap loop 2: 🌌 Aurora | toast: First discovery: 🌌 Aurora
+cap loop 3: 🌱 Life | toast: 
+cap loop 4: 🌈 Rainbow | toast: New: ✨ Healing Light
+console error: Failed to load resource: the server responded with a status of 402 (Payment Required)
+shot 16-cap-message
+cap loop 5: 🌈 Rainbow | toast: New: ✨ Healing Light Your magic is spent for now. Everything already discovered still works: merge known recipes and cast any spell in the l
+cap message: New: ✨ Healing Light Your magic is spent for now. Everything already discovered still works: merge known recipes and cast any spell in the library.
+shot 17-help-month
+month line: Hello Review test. Your magic this month: 0 credits left of 3. Only new discoveries and new spells use credits; anything already in the shared library is free.
+after reload: 3 chips on the board, 14 in the inventory, welcome open: 0
+shot 18-after-reload
+page heap: {"used":33100000,"total":35100000}
+invite 86f64f18 revoked: {"ok":true}
+test invite spent $0.026
