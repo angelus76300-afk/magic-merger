@@ -1164,7 +1164,12 @@ async function refreshVerdict(
 async function refreshReport(env: Env) {
   const db = env.DB;
   const statuses = await db
-    .prepare("SELECT status, dry, COUNT(*) AS n FROM rewrites WHERE cause = 'refresh' GROUP BY status, dry")
+    // A row that failed before any batch held it was never sent (4.0 review
+    // M12: 94 rows of a first submitBatch that threw read as 94 failures).
+    .prepare(
+      `SELECT CASE WHEN status = 'failed' AND batch IS NULL THEN 'not sent' ELSE status END AS status, dry, COUNT(*) AS n
+       FROM rewrites WHERE cause = 'refresh' GROUP BY 1, dry`,
+    )
     .all<{ status: string; dry: number; n: number }>();
   const verdicts = await db.prepare("SELECT v.*, e.name FROM refresh_verdicts v JOIN elements e ON e.key = v.key ORDER BY v.at").all<{
     to_pid: number;

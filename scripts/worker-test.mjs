@@ -1384,6 +1384,18 @@ console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at st
     lines.slice(0, 6).join(" | "),
   );
   check("L10: and bounded", user.length < 9000 && !user.includes("x".repeat(200)), `${user.length} characters`);
+
+  // M12: refresh rows that failed before any batch held them are "not sent".
+  await db
+    .prepare(
+      "INSERT INTO rewrites (key, from_pid, to_pid, cause, at, status, model, batch) VALUES ('never', 0, NULL, 'refresh', ?, 'failed', 'claude-opus-5-5', NULL), ('sent', 0, NULL, 'refresh', ?, 'failed', 'claude-opus-5-5', 'msgbatch_x')",
+    )
+    .bind(Date.now(), Date.now())
+    .run();
+  const statuses = (await api("/api/admin/refresh-report", { admin: true })).data.statuses;
+  const of = (status) => statuses.filter((r) => r.status === status).reduce((n, r) => n + r.n, 0);
+  check("M12: the refresh report says not sent for a failed row with no batch", of("not sent") === 1 && of("failed") >= 1, JSON.stringify(statuses));
+  await db.prepare("DELETE FROM rewrites WHERE key IN ('never', 'sent')").run();
   await reset();
 }
 
