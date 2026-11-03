@@ -1610,9 +1610,19 @@ function cleanEmoji(raw: string): string {
   return emoji && !/[\p{L}\p{N}]/u.test(emoji) ? emoji : "✨";
 }
 
-async function readBody<T>(request: Request): Promise<T> {
+// A player's request is small (names, a digest, a test verdict); only the
+// judge's frames, from the admin's runner, are large. Anything bigger is
+// refused before it is parsed, so a flood of big bodies cannot tie the Worker up.
+const MAX_BODY = 128 * 1024;
+const MAX_ADMIN_BODY = 8 * 1024 * 1024;
+
+async function readBody<T>(request: Request, limit = MAX_BODY): Promise<T> {
+  const declared = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > limit) throw new HttpError(413, "The request is too big");
+  const text = await request.text();
+  if (text.length > limit) throw new HttpError(413, "The request is too big");
   try {
-    return (await request.json()) as T;
+    return JSON.parse(text) as T;
   } catch {
     throw new HttpError(400, "The request body must be JSON");
   }
@@ -1632,8 +1642,8 @@ async function handleAdmin(request: Request, url: URL, env: Env, oracle: Oracle,
   const post = request.method === "POST";
   if (!post && path === "programs")
     return json(await programsToJudge(env, Number(url.searchParams.get("limit")) || 20, url.searchParams.get("creatures") === "1"));
-  if (post && path === "judge") return json(await handleJudge(await readBody<JudgeBody>(request), env, oracle, ctx, true));
-  if (post && path === "judge-trial") return json(await handleJudge(await readBody<JudgeBody>(request), env, oracle, ctx, false));
+  if (post && path === "judge") return json(await handleJudge(await readBody<JudgeBody>(request, MAX_ADMIN_BODY), env, oracle, ctx, true));
+  if (post && path === "judge-trial") return json(await handleJudge(await readBody<JudgeBody>(request, MAX_ADMIN_BODY), env, oracle, ctx, false));
   if (!post && path === "judge-stats") return json(await calibration(env.DB));
   if (post && path === "poll-batches") return json(await pollBatches(env));
   if (post && path === "spell-trial") return json(await spellTrial(await readBody<SpellTrialBody>(request), env, oracle));

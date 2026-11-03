@@ -791,6 +791,20 @@ const fresh = () => ALL[pairs++];
   await reset();
 }
 
+// 8b. A request body too big is refused before it is parsed (4.0 review); the
+// admin's judge frames may be large.
+{
+  const ann = await invite("Ann B", 5);
+  const big = "x".repeat(300 * 1024);
+  const refused = await api("/api/merge", { invite: ann.secret, body: { a: "Fire", b: big } });
+  const judge = await api("/api/admin/judge-trial", { admin: true, body: { name: "Fire", frames: [big] } });
+  check(
+    "a 300 KB body is refused with 413, the admin's judge frames are not",
+    refused.status === 413 && judge.status !== 413,
+    `${refused.status} ${judge.status}`,
+  );
+}
+
 // 13. Challenges from nothing (3.7): shown only once a solver is verified,
 // par from the recipe graph, wins and the fewest merges any friend needed,
 // hidden again when the solver's program is rewritten, until verified anew.
