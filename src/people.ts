@@ -118,8 +118,10 @@ function render(data: PeopleResponse): void {
     `${usd(data.spent)} spent${data.held ? `, ${usd(data.held)} held by calls running` : ""}: ${usd(data.left)} left of $${data.budget}`;
   const list = d.querySelector<HTMLElement>(".people-list")!;
   list.textContent = "";
-  if (!data.people.length) list.textContent = "Nobody invited yet.";
-  for (const p of data.people) list.append(row(p));
+  // 4.0: a deleted account is gone from here too; its spend stays in the month's total.
+  const shown = data.people.filter((p) => !p.deletedAt);
+  if (!shown.length) list.textContent = "Nobody invited yet.";
+  for (const p of shown) list.append(row(p));
   d.querySelector(".people-others")!.textContent = data.others.length
     ? `Not from an invite: ${data.others.map((o) => `${o.who} ${usd(o.spent)}`).join(", ")}`
     : "";
