@@ -1,4 +1,4 @@
-import { BODY_MAX, BRIEF_MAX, STATUS_LABEL, TITLE_MAX, type FeedbackResponse, type Suggestion } from "../shared/feedback";
+import { BODY_MAX, BRIEF_MAX, STATUS_LABEL, TITLE_MAX, draftBrief, type FeedbackResponse, type Suggestion } from "../shared/feedback";
 import * as api from "./api";
 import { ago } from "./people";
 import { session } from "./session";
@@ -238,12 +238,6 @@ function adminRow(s: Suggestion): HTMLElement {
   return row;
 }
 
-// The brief starts from the player's words. What Claude builds is exactly
-// what is in the box, so the "Done when" list is where the admin adds the most.
-function draftBrief(s: Suggestion): string {
-  return s.brief ?? [s.title, "", s.body, "", "Done when:", "1. "].join("\n").replace(/\n{3,}/g, "\n\n");
-}
-
 function ensureSendDialog(): HTMLDialogElement {
   if (sendDialog) return sendDialog;
   const d = document.createElement("dialog");
@@ -255,6 +249,7 @@ function ensureSendDialog(): HTMLDialogElement {
       <button class="card-close" aria-label="Close">×</button>
     </div>
     <p class="idea-dialog-hint">Claude builds this brief, nothing else, on a new branch, runs the checks and opens a draft pull request. Nothing is merged or deployed without you. The GitHub issue shows the brief and the idea, not the player's name.</p>
+    <p class="idea-dialog-words"></p>
     <textarea class="idea-brief" rows="12" maxlength="${BRIEF_MAX}"></textarea>
     <div class="idea-dialog-actions">
       <button type="button" class="idea-dialog-cancel">Cancel</button>
@@ -288,6 +283,8 @@ function openSend(s: Suggestion): void {
   const d = ensureSendDialog();
   current = s;
   d.querySelector(".idea-dialog-title")!.textContent = `${s.title} · ${s.votes} ${s.votes === 1 ? "vote" : "votes"}`;
+  // The player's words, to read, not to send: Claude is told to build the brief only.
+  d.querySelector(".idea-dialog-words")!.textContent = s.body ? `The player wrote: ${s.body}` : "";
   d.querySelector<HTMLTextAreaElement>(".idea-brief")!.value = draftBrief(s);
   if (!d.open) d.showModal();
 }
