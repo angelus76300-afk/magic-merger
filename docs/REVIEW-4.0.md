@@ -213,3 +213,14 @@ Written by the same session that wrote the accounts code, so each attack is a te
 | Two tabs of one browser                                       | not covered (review M6)                                                                                                                                   | the local saves still race; the server keeps the island of whichever tab uploaded last, with the device warning                                                                       |
 
 Not verified: the WebAuthn library's own checks beyond what a virtual authenticator exercises (attestation formats, the counter for cloned authenticators); a real phone's passkey dialog; a real email provider.
+
+## 11. The accounts flow on the live site
+
+Deployed on 2026-11-03 at 04:36 UTC (migration 0011 applied; the live database exported first to `/tmp/claude-0/magic-merger-live-20261103-0435-before-0011.sql` in the review session's container), after the refresh of the legacy library had finished on the live Worker. Then the scratchpad script behind `docs/review-4.0/accounts-live-log.txt` ran the flow on the live site at iPhone 14 size with a virtual authenticator and a test invite (`Review account`, $0.05), and deleted the account from its own page at the end ($0 spent):
+
+1. The link, the welcome, then the one time offer (`20-account-offer.jpg`); "Make a passkey" made the account; afterwards the link answers `invited: false` with no account offered: dead.
+2. One merge and a minute in the World: the server held the board, the discoveries and the packed island (58k characters), all from "iPhone" (`21-account-page.jpg`).
+3. A second device with the same passkey and no link: the gate's "Sign in with a passkey" (`22-gate-signin.jpg`) signed in, the nine discoveries came down and the first device's island loaded (`23-second-device.jpg`, `24-second-device-island.jpg`).
+4. Deleting the account from the second device signed the first out (`invited: false` with its token) and the People view shows the invite as deleted with its spend kept.
+
+Two earlier runs of the same script failed on a dialog timing in the script itself after the account was made, so two test accounts (`ccf78a03`, `82a0d421`) were revoked but not deleted: each keeps one credential, two dead sessions and three small progress rows. The session's attempt to delete those rows through D1 was refused by its permissions; the statements are in the pull request for the owner to run, or they can stay (a revoked invite signs nobody in, and the rows cost nothing).

@@ -456,6 +456,7 @@ async function health(env: Env, who: Who): Promise<HealthResponse> {
     out.invite = { name: payer.name, status: payer.status, spent: round(spent, 3), cap: payer.cap ?? 0 };
   }
   if (invite) out.account = { name: invite.name, signedIn: !!session, claimed: !!invite.claimed_at, emailOffered: emailReady(env) };
+  out.email = emailReady(env);
   return out;
 }
 

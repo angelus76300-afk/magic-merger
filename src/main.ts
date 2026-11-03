@@ -129,7 +129,7 @@ async function refreshSession(): Promise<void> {
     if (await claimLink("link")) return;
   }
   if (!status.invited) {
-    showGate("invite", "", { signIn, emailLink: (email) => api.account.emailLink(email) });
+    showGate("invite", "", { signIn, emailLink: status.email ? (email) => api.account.emailLink(email) : null });
     return;
   }
   if (document.getElementById("gate") && !document.getElementById("gate")!.hidden) {

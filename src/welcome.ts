@@ -83,7 +83,8 @@ export function welcomedBefore(): boolean {
 // or a one use link by email, when the Worker can send one.
 export interface GateActions {
   signIn: () => Promise<boolean>;
-  emailLink: (email: string) => Promise<unknown>;
+  // Null when the Worker cannot send sign in links by email: the form is hidden.
+  emailLink: ((email: string) => Promise<unknown>) | null;
 }
 
 export function showGate(code: "invite" | "revoked", message: string, actions: GateActions | null = null): void {
@@ -104,10 +105,11 @@ export function showGate(code: "invite" | "revoked", message: string, actions: G
   if (actions) {
     gate.querySelector<HTMLButtonElement>(".gate-passkey")!.onclick = () => void actions.signIn();
     const form = gate.querySelector<HTMLFormElement>(".gate-email")!;
+    form.hidden = !actions.emailLink;
     form.onsubmit = (e) => {
       e.preventDefault();
       const input = form.querySelector<HTMLInputElement>("input")!;
-      if (!input.value) return;
+      if (!input.value || !actions.emailLink) return;
       void actions.emailLink(input.value).then(
         () => toast("If that address belongs to an account, a link is on its way. It works once, for 20 minutes."),
         (err: unknown) => toast(err instanceof Error ? err.message : "The link could not be sent", "error"),

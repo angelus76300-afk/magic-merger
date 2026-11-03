@@ -1682,3 +1682,7 @@ input {
 .gate-signin[hidden] {
   display: none;
 }
+
+.gate-email[hidden] {
+  display: none;
+}

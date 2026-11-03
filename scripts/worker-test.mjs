@@ -1061,8 +1061,8 @@ console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at st
   const eve = await invite("Eve", 5);
   const h0 = await api("/api/health", { invite: dan.secret });
   check(
-    "an unclaimed invite is offered an account",
-    h0.data.invited && h0.data.account?.claimed === false && h0.data.account?.signedIn === false,
+    "an unclaimed invite is offered an account, and health says email links are set up here",
+    h0.data.invited && h0.data.account?.claimed === false && h0.data.account?.signedIn === false && h0.data.email === true,
     JSON.stringify(h0.data.account),
   );
   const opts = await api("/api/account/register/options", { invite: dan.secret, body: {} });
