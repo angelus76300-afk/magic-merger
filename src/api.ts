@@ -27,6 +27,8 @@ export class ApiRequestError extends Error {
   constructor(
     message: string,
     readonly code?: ErrorCode,
+    // The HTTP status, 0 when the Worker could not be reached.
+    readonly status = 0,
   ) {
     super(message);
   }
@@ -216,7 +218,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     const error = data as ApiError | null;
     const message = error?.error ?? `Request failed (${res.status})`;
     if (error?.code === "invite" || error?.code === "revoked") onLockedOut(error.code, message);
-    throw new ApiRequestError(message, error?.code);
+    throw new ApiRequestError(message, error?.code, res.status);
   }
   return data as T;
 }
