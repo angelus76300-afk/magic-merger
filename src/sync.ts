@@ -124,8 +124,20 @@ export class Sync {
     this.discoveriesTimer = window.setTimeout(() => void this.pushDiscoveries(), 5000);
   }
 
+  // What the server holds was last seen by this tab or another tab of this
+  // browser (4.0 review M6): the newest of both, so an upload from one tab
+  // never reads as an older device to the other.
+  private refreshSeen(): void {
+    const stored = readSeen();
+    for (const k of ["discoveries", "board", "island"] as const) {
+      const v = Math.max(this.seen[k] ?? 0, stored[k] ?? 0);
+      if (v) this.seen[k] = v;
+    }
+  }
+
   async pushDiscoveries(): Promise<void> {
     if (!api.hasSession()) return;
+    this.refreshSeen();
     const device = deviceName();
     try {
       const r = await api.account.putProgress({ kind: "discoveries", data: this.store.exportDiscoveries(), since: this.seen.discoveries, force: true, device });
@@ -144,6 +156,7 @@ export class Sync {
     clearTimeout(this.islandTimer);
     this.islandTimer = 0;
     if (!api.hasSession() || this.busy) return;
+    this.refreshSeen();
     const save = localStorage.getItem(WORLD_KEY);
     if (!save) return;
     this.busy = true;

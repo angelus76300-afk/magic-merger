@@ -378,6 +378,28 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
       '{"version":1,"discoveries":{"steam":{"element":{"name":"Steam","emoji":"x","kind":"spell","depth":1},"discoveredAt":1,"recipe":null}},"descriptions":{},"board":[],"nextChipId":1}',
     ) === 9,
   );
+  // Two tabs of one browser (4.0 review M6): each loaded the save, each
+  // finds something, each writes; neither loses what the other found.
+  mem.clear();
+  (globalThis as { window?: unknown }).window = { setTimeout: () => 0, clearTimeout: () => {} };
+  const tabA = new Store();
+  const tabB = new Store();
+  const el = (name: string) => ({ name, emoji: "x", kind: "spell" as const, depth: 2 });
+  tabA.discover(el("Steam"), ["Fire", "Water"]);
+  tabA.write();
+  tabB.discover(el("Dust"), ["Earth", "Air"]);
+  tabB.addChip("dust", 10, 10);
+  tabB.write();
+  const both = Object.keys((JSON.parse(mem.get("magic-merger.save")!) as { discoveries: object }).discoveries);
+  check("two tabs: each tab's discovery survives the other's write", both.includes("steam") && both.includes("dust"), both.join(", "));
+  tabA.setSpell("steam", { version: 5, code: "old", id: 3 } as never);
+  tabA.write();
+  tabB.setSpell("steam", { version: 5, code: "new", id: 4 } as never);
+  tabB.write();
+  tabA.setSpell("dust", { version: 5, code: "d", id: 1 } as never);
+  tabA.write();
+  check("two tabs: the newer program of a spell is kept", tabA.spell("steam")?.code === "new");
+  delete (globalThis as { window?: unknown }).window;
   delete (globalThis as { localStorage?: unknown }).localStorage;
   check(
     "a challenge that asks for grand magic refuses a major spell",

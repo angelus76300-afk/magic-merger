@@ -294,4 +294,8 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
   }
 });
 
+// A heartbeat for the page's watchdog (4.0 review M3): spell code that never
+// returns stops it, and the page replaces this frame.
+window.setInterval(() => send({ type: "alive" }), 2000);
+
 send({ type: "ready" });

@@ -32,6 +32,7 @@ export function readFromWorld(data: unknown): FromWorld | null {
   const str = (v: unknown, max: number) => typeof v === "string" && v.length > 0 && v.length <= max;
   switch (m.type) {
     case "ready":
+    case "alive":
     case "tap-without-spell":
       return { type: m.type };
     case "save":
@@ -60,11 +61,15 @@ export function readFromWorld(data: unknown): FromWorld | null {
   return null;
 }
 
-// Largest world save the page will store, in characters of JSON.
-export const MAX_SAVE_CHARS = 3_000_000;
+// Largest world save the page will store, in characters of JSON. Browsers
+// keep about 5 MB per site as UTF-16, so 1.5M characters (3 MB) leaves room
+// for the discoveries (4.0 review M13; a large island is about 0.75M).
+export const MAX_SAVE_CHARS = 1_500_000;
 
 export type FromWorld =
   | { type: "ready" }
+  // A heartbeat every two seconds: a frame stuck in spell code stops it (M3).
+  | { type: "alive" }
   | { type: "save"; data: SavedWorld }
   | { type: "cast"; key: string }
   | { type: "tap-without-spell" }
