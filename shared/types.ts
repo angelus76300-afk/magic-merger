@@ -154,6 +154,12 @@ export interface HealthResponse {
   invited: boolean;
   // The invite's own month, for the player.
   invite?: { name: string; status: "active" | "paused" | "revoked"; spent: number; cap: number };
+  // 4.0: this browser holds a session (an account), or an invite link that
+  // is not yet an account (the one time "save your progress" offer), or a
+  // one use sign in link for an account that exists (claim it).
+  account?: { name: string; signedIn: boolean; claimed: boolean; emailOffered: boolean };
+  // 4.0: whether this Worker can send sign in links by email (the gate's form).
+  email?: boolean;
 }
 
 // Why a request was refused, when the game should say it its own way:
@@ -178,6 +184,9 @@ export interface PersonInfo {
   refusals: number;
   lastSeen: number | null;
   createdAt: number;
+  // 4.0: the invite is an account (made with a passkey), or was deleted.
+  claimedAt?: number | null;
+  deletedAt?: number | null;
 }
 
 export interface PeopleResponse {

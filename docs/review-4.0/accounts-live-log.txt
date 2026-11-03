@@ -1,0 +1,12 @@
+invite 69124f2b created
+shot 20-account-offer
+A: account made with a passkey
+A: the link afterwards: invited=false account=null
+A: on the server: board (68 chars, iPhone), discoveries (1079 chars, iPhone), island (57839 chars, iPhone)
+shot 21-account-page
+shot 22-gate-signin
+B: signed in; inventory 9 items; island present: true
+shot 23-second-device
+shot 24-second-device-island
+after deletion: device A invited=false
+test invite 69124f2b: status revoked, deleted yes, spent $0

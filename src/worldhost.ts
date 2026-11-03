@@ -9,6 +9,7 @@ import { Checker } from "./checker";
 import { chipElement } from "./craft";
 import { FilterBar, applyFilters, lastUsed, markUsed } from "./filters";
 import { MAX_SAVE_CHARS, readFromWorld } from "./sim/protocol";
+import { programToFetch } from "../shared/sync";
 import type { ToWorld } from "./sim/protocol";
 import { SCENARIO_LIST } from "./sim/scenario-list";
 import type { CastRequest } from "./sim/runtime";
@@ -17,7 +18,8 @@ import type { WorldSize } from "./sim/engine";
 import type { Store } from "./store";
 import { toast } from "./toast";
 
-const WORLD_KEY = "magic-merger.world2";
+export const WORLD_KEY = "magic-merger.world2";
+export const WORLD_AT_KEY = "magic-merger.world2.at";
 const MUTE_KEY = "magic-merger.muted";
 const HUD_KEY = "magic-merger.hud";
 // A crashing spell is sent back to Claude at most this often per session.
@@ -173,7 +175,7 @@ export class WorldHost {
     for (const d of held) {
       const key = elementKey(d.element.name);
       const now = live.programs[d.element.name];
-      if (now && now.id !== this.store.spell(key)?.id) await this.prepare(key, false, true, true);
+      if (programToFetch(now, this.store.spell(key)?.id)) await this.prepare(key, false, true, true);
     }
     this.renderSpells();
     // Live programs written before their element had a promise, tested on it
@@ -379,6 +381,8 @@ export class WorldHost {
           // A save that would crowd out the player's discoveries is dropped.
           if (json.length > MAX_SAVE_CHARS) break;
           localStorage.setItem(WORLD_KEY, json);
+          localStorage.setItem(WORLD_AT_KEY, String(Date.now()));
+          this.onSaved?.();
         } catch {
           // Storage full: the world lives on until the page closes.
         }
@@ -576,6 +580,8 @@ export class WorldHost {
 
   // The World's Challenges button opens the Challenges tab (main.ts).
   onChallenges: () => void = () => this.openChallenges();
+  // Told after each world save (4.0: the account's island follows).
+  onSaved: (() => void) | null = null;
 
   private leaveChallenge(): void {
     this.challenge = null;

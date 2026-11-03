@@ -1225,6 +1225,17 @@ input {
   color: var(--muted);
 }
 
+.idea-dialog-words {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--line, #4a3f6b);
+  color: var(--muted, #b9b0d6);
+  font-size: 13px;
+  white-space: pre-wrap;
+  max-height: 120px;
+  overflow: auto;
+}
+
 .feedback button,
 .idea-dialog button:not(.card-close) {
   padding: 6px 12px;
@@ -1619,4 +1630,59 @@ input {
   color: var(--text);
   padding: 6px 14px;
   font: inherit;
+}
+
+/* 4.0: accounts. */
+.account h3 {
+  margin: 14px 0 4px;
+  font-size: 13px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.account p {
+  margin: 0;
+}
+.account-device {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+}
+.account-email-form,
+.gate-email {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.account-email-form input,
+.gate-email input {
+  flex: 1;
+  min-width: 0;
+}
+.account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.account button.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.account-offer .account-later,
+.welcome-account {
+  width: 100%;
+  margin-top: 8px;
+}
+.gate-signin {
+  margin: 12px 0;
+}
+.gate-signin[hidden] {
+  display: none;
+}
+
+.gate-email[hidden] {
+  display: none;
 }

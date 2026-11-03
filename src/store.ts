@@ -38,6 +38,8 @@ const STORAGE_KEY = "magic-merger.save";
 export class Store {
   private data: SaveData;
   private saveTimer: number | undefined;
+  // Told after every write (4.0: the account's progress follows).
+  onChange: (() => void) | null = null;
 
   constructor() {
     this.data = load() ?? fresh();
@@ -129,6 +131,48 @@ export class Store {
     this.save();
   }
 
+  // 4.0: what the account keeps of the discoveries, and what another device
+  // found. Imported ones join as a union by key; the earliest time wins.
+  exportDiscoveries(): { key: string; at: number; recipe: [string, string] | null; element: GameElement }[] {
+    return Object.entries(this.data.discoveries).map(([key, d]) => ({ key, at: d.discoveredAt, recipe: d.recipe, element: d.element }));
+  }
+
+  // Returns how many were new to this browser.
+  importDiscoveries(list: { key: string; at: number; recipe: [string, string] | null; element?: Record<string, unknown> }[]): number {
+    let added = 0;
+    for (const d of list) {
+      const e = d.element as Partial<GameElement> | undefined;
+      if (!e || typeof e.name !== "string" || typeof e.emoji !== "string" || (e.kind !== "spell" && e.kind !== "artifact")) continue;
+      const element: GameElement = {
+        name: e.name,
+        emoji: e.emoji,
+        kind: e.kind,
+        depth: typeof e.depth === "number" ? e.depth : 1,
+        ...(e.tier ? { tier: e.tier } : {}),
+      };
+      const known = this.data.discoveries[d.key];
+      if (!known) {
+        this.data.discoveries[d.key] = { element, discoveredAt: d.at, recipe: d.recipe };
+        added++;
+      } else if (d.at > 0 && (known.discoveredAt === 0 || d.at < known.discoveredAt)) {
+        known.discoveredAt = d.at;
+        known.recipe ??= d.recipe;
+      }
+    }
+    if (added) this.save();
+    return added;
+  }
+
+  exportBoard(): { chips: BoardChip[]; next: number } {
+    return { chips: this.data.board, next: this.data.nextChipId };
+  }
+
+  importBoard(board: { chips: BoardChip[]; next: number }): void {
+    this.data.board = board.chips.filter((c) => this.data.discoveries[c.key]);
+    this.data.nextChipId = Math.max(this.data.nextChipId, board.next);
+    this.save();
+  }
+
   // Writes are batched: dragging calls moveChip far more often than needed.
   private save(): void {
     clearTimeout(this.saveTimer);
@@ -138,6 +182,7 @@ export class Store {
       } catch {
         // Private mode or full storage: the game still works for this session.
       }
+      this.onChange?.();
     }, 200);
   }
 }
@@ -150,9 +195,16 @@ function load(): SaveData | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const data = JSON.parse(raw) as SaveData;
-    return data.version === 1 ? data : null;
+    const data = JSON.parse(raw) as Partial<SaveData>;
+    return wellFormed(data) ? data : null;
   } catch {
     return null;
   }
+}
+
+// A save this code can read: a crash here would be a blank page at startup,
+// before any UI exists, and no way for the player to recover.
+function wellFormed(data: Partial<SaveData>): data is SaveData {
+  const obj = (v: unknown) => !!v && typeof v === "object" && !Array.isArray(v);
+  return data.version === 1 && obj(data.discoveries) && obj(data.descriptions) && Array.isArray(data.board) && typeof data.nextChipId === "number";
 }

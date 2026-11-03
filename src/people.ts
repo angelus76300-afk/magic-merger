@@ -118,8 +118,10 @@ function render(data: PeopleResponse): void {
     `${usd(data.spent)} spent${data.held ? `, ${usd(data.held)} held by calls running` : ""}: ${usd(data.left)} left of $${data.budget}`;
   const list = d.querySelector<HTMLElement>(".people-list")!;
   list.textContent = "";
-  if (!data.people.length) list.textContent = "Nobody invited yet.";
-  for (const p of data.people) list.append(row(p));
+  // 4.0: a deleted account is gone from here too; its spend stays in the month's total.
+  const shown = data.people.filter((p) => !p.deletedAt);
+  if (!shown.length) list.textContent = "Nobody invited yet.";
+  for (const p of shown) list.append(row(p));
   d.querySelector(".people-others")!.textContent = data.others.length
     ? `Not from an invite: ${data.others.map((o) => `${o.who} ${usd(o.spent)}`).join(", ")}`
     : "";
@@ -153,16 +155,15 @@ function row(p: PersonInfo): HTMLElement {
   name.textContent = p.name;
   const facts = document.createElement("span");
   const status = p.status === "active" ? "" : ` · ${p.status}`;
+  const account = p.deletedAt ? " · account deleted" : p.claimedAt ? " · account" : "";
   const refused = p.refusals ? ` · ${p.refusals} refused by the bug guard` : "";
   const found = `${p.discoveries} ${p.discoveries === 1 ? "discovery" : "discoveries"}`;
-  facts.textContent = `${usd(p.spent)} of ${usd(allowance)} (${credits(p.spent)} of ${credits(allowance)} credits) · ${found} · ${p.lastSeen ? `seen ${ago(p.lastSeen)}` : "never came"}${status}${refused}`;
+  facts.textContent = `${usd(p.spent)} of ${usd(allowance)} (${credits(p.spent)} of ${credits(allowance)} credits) · ${found} · ${p.lastSeen ? `seen ${ago(p.lastSeen)}` : "never came"}${status}${account}${refused}`;
   const bar = document.createElement("span");
   bar.className = "people-bar";
   bar.style.setProperty("--used", `${Math.min(100, (p.spent / Math.max(0.01, allowance)) * 100)}%`);
   info.append(name, facts, bar);
   el.append(info);
-  if (p.status === "revoked") return el;
-
   const actions = document.createElement("div");
   actions.className = "people-actions";
   const act = (label: string, fn: () => Promise<unknown>) => {
@@ -177,15 +178,39 @@ function row(p: PersonInfo): HTMLElement {
     };
     actions.append(b);
   };
+  // 4.0: a revoked invite keeps only the account's data to delete (a test
+  // account, a friend who asked); a deleted one has nothing left to do.
+  if (p.status === "revoked") {
+    if (!p.deletedAt)
+      act("Delete account data", async () => {
+        if (
+          !window.confirm(
+            `Delete everything ${p.name}'s account holds (passkeys, devices, saved progress, votes, ideas, wins)? Their first discoveries stay in the library without their name; the spend stays. This cannot be undone.`,
+          )
+        )
+          return;
+        await api.changeInvite(p.id, "delete");
+      });
+    el.append(actions);
+    return el;
+  }
   act(p.status === "paused" ? "Resume" : "Pause", () => api.changeInvite(p.id, p.status === "paused" ? "resume" : "pause"));
   act("Top up", async () => {
     const usd = Number(window.prompt(`Credits to add to ${p.name}'s magic for this month (100 credits = $1):`, "500")) / 100;
     if (usd > 0) await api.changeInvite(p.id, "topup", usd);
   });
   act("New link", async () => {
-    if (!window.confirm(`Make a new link for ${p.name}? The old one stops working at once.`)) return;
+    const claimed = !!p.claimedAt;
+    if (
+      !window.confirm(
+        claimed
+          ? `Make a sign in link for ${p.name}? It signs their account in once, on the device that opens it.`
+          : `Make a new link for ${p.name}? The old one stops working at once.`,
+      )
+    )
+      return;
     const r = await api.changeInvite(p.id, "relink");
-    if (r.link) showLink(`New link for ${p.name}. The old one no longer works.`, r.link);
+    if (r.link) showLink(claimed ? `Sign in link for ${p.name}: it works once, then dies.` : `New link for ${p.name}. The old one no longer works.`, r.link);
   });
   act("Revoke", async () => {
     if (!window.confirm(`Revoke ${p.name}'s invite for good? Their link stops working; what they discovered stays.`)) return;

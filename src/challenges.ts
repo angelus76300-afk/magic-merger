@@ -1,5 +1,5 @@
 import * as api from "./api";
-import { challengeById, liveAhead, starsFor, strongEnough, type ChallengeDef } from "../shared/challenges";
+import { challengeById, countMerge, liveAhead, starsFor, strongEnough, type ChallengeDef } from "../shared/challenges";
 import { elementKey } from "../shared/elements";
 import { chipElement } from "./craft";
 import type { Store } from "./store";
@@ -16,6 +16,8 @@ import type { WorldHost } from "./worldhost";
 interface Attempt {
   id: string;
   items: string[];
+  // Distinct pairs merged so far (shared/challenges.ts, countMerge); merges is their number.
+  pairs?: string[];
   merges: number;
   started: number;
 }
@@ -34,6 +36,32 @@ function saveAttempt(a: Attempt | null): void {
   try {
     if (a) localStorage.setItem(KEY, JSON.stringify(a));
     else localStorage.removeItem(KEY);
+  } catch {
+    // kept for this page
+  }
+}
+
+// A win the Worker has not recorded yet (no connection, a burst refusal):
+// kept here and sent again when the tab opens, so the merges are not lost.
+interface PendingWin {
+  id: string;
+  merges: number;
+  spell: string;
+}
+const WIN_KEY = "mm-challenge-win";
+
+function loadPendingWin(): PendingWin | null {
+  try {
+    const w = JSON.parse(localStorage.getItem(WIN_KEY) ?? "null") as PendingWin | null;
+    return w && typeof w.id === "string" && typeof w.merges === "number" && typeof w.spell === "string" ? w : null;
+  } catch {
+    return null;
+  }
+}
+function savePendingWin(w: PendingWin | null): void {
+  try {
+    if (w) localStorage.setItem(WIN_KEY, JSON.stringify(w));
+    else localStorage.removeItem(WIN_KEY);
   } catch {
     // kept for this page
   }
@@ -63,6 +91,8 @@ export class Challenges {
   ) {}
 
   async show(): Promise<void> {
+    // A win the last visit could not record goes first: it may change the cards.
+    if (this.pending) await this.submitWin();
     if (this.attempt && challengeById(this.attempt.id)) return this.renderAttempt();
     this.root.replaceChildren(el("p", "challenges-loading", "Looking for challenges…"));
     try {
@@ -186,7 +216,9 @@ export class Challenges {
       const result = await api.merge(first.name, second.name);
       const made = elementKey(result.element.name);
       const newForMe = this.store.discover(result.element, [first.name, second.name]);
-      a.merges++;
+      const pairs = countMerge(a.pairs ?? [], first.name, second.name);
+      a.pairs = pairs;
+      a.merges = pairs.length;
       if (!a.items.includes(made)) a.items.push(made);
       saveAttempt(a);
       this.picked = made;
@@ -240,12 +272,37 @@ export class Challenges {
     const merges = a.merges;
     this.attempt = null;
     saveAttempt(null);
+    this.pending = { id: def.id, merges, spell: this.store.get(spell)?.element.name ?? spell };
+    savePendingWin(this.pending);
+    await this.submitWin();
+  }
+
+  private pending: PendingWin | null = loadPendingWin();
+
+  // Sends the win waiting to be recorded, now or on a later visit. A refusal
+  // on the win itself (400, 404) drops it; anything else keeps it for later.
+  private async submitWin(): Promise<void> {
+    const w = this.pending;
+    if (!w) return;
+    const def = challengeById(w.id);
+    const title = def?.title ?? w.id;
     try {
-      const r = await api.challengeWin(def.id, merges, this.store.get(spell)?.element.name ?? spell);
-      toast(`${def.title}: won in ${merges} merges ${stars(r.stars)}${r.best ? ", the fewest of anyone" : ""}`, "special");
+      const r = await api.challengeWin(w.id, w.merges, w.spell);
+      this.pending = null;
+      savePendingWin(null);
+      toast(`${title}: won in ${w.merges} merges ${stars(r.stars)}${r.best ? ", the fewest of anyone" : ""}`, "special");
     } catch (err) {
+      const status = err instanceof api.ApiRequestError ? err.status : 0;
+      if (status === 400 || status === 404) {
+        this.pending = null;
+        savePendingWin(null);
+      }
       toast(err instanceof Error ? err.message : "The win could not be recorded", "error");
-      toast(`${def.title}: won in ${merges} merges ${stars(starsFor(merges, this.card()?.par ?? null))}`, "special");
+      if (this.pending)
+        toast(
+          `${title}: won in ${w.merges} merges ${stars(starsFor(w.merges, this.card()?.par ?? null))}. It will be recorded when the connection is back.`,
+          "special",
+        );
     }
   }
 }

@@ -12,6 +12,11 @@ export class Checker {
   private nextId = 1;
   private waiting = new Map<number, (r: Omit<CheckRequest, "name" | "id">) => void>();
 
+  // A frame that never says it is ready (a broken deploy of check.html, a
+  // phone that killed the hidden frame) is dropped after this long, and the
+  // test counts as a pass like a slow one does; the next check makes a new frame.
+  private static readonly OPEN_MS = 15_000;
+
   private open(): Promise<void> {
     if (this.ready) return this.ready;
     const frame = document.createElement("iframe");
@@ -23,10 +28,21 @@ export class Checker {
     frame.src = import.meta.env.DEV ? "/check.html" : "/check";
     this.frame = frame;
     this.ready = new Promise((resolve) => {
+      const timer = window.setTimeout(() => {
+        if (this.frame === frame) {
+          this.frame = null;
+          this.ready = null;
+          frame.remove();
+        }
+        resolve();
+      }, Checker.OPEN_MS);
       window.addEventListener("message", (e: MessageEvent<unknown>) => {
         if (e.source !== frame.contentWindow || e.origin !== "null") return;
         const m = e.data as { type?: string; id?: number; result?: Record<string, unknown> };
-        if (m?.type === "check-ready") resolve();
+        if (m?.type === "check-ready") {
+          clearTimeout(timer);
+          resolve();
+        }
         if (m?.type === "checked" && typeof m.id === "number") {
           const done = this.waiting.get(m.id);
           this.waiting.delete(m.id);
@@ -42,6 +58,7 @@ export class Checker {
   // so a slow phone cannot get a good program rewritten.
   async check(spell: CastRequest): Promise<Omit<CheckRequest, "name" | "id">> {
     await this.open();
+    if (!this.frame) return { ok: true, problem: null, detail: "The test run could not start" };
     const id = this.nextId++;
     return new Promise((resolve) => {
       const timer = window.setTimeout(() => {

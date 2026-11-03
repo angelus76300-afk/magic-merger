@@ -23,6 +23,11 @@ export interface InviteRow {
   topup_month: string | null;
   created_at: number;
   last_seen: number | null;
+  // 4.0: when the account was made with a passkey, when the person asked
+  // for deletion, and an email for sign in links, if the person set one.
+  claimed_at?: number | null;
+  deleted_at?: number | null;
+  email?: string | null;
 }
 
 // Who pays: an invite, or the admin (no allowance, only the monthly budget).
@@ -103,9 +108,9 @@ export async function sha256(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-// 24 random bytes, URL safe: the secret in a link.
-export function newSecret(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(24));
+// 24 random bytes, URL safe: the secret in a link (32 for a session token).
+export function newSecret(size = 24): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(size));
   return btoa(String.fromCharCode(...bytes))
     .replace(/\+/g, "-")
     .replace(/\//g, "_")

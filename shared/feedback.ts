@@ -58,3 +58,10 @@ export interface FeedbackAction {
   brief?: string;
   note?: string;
 }
+
+// The brief the admin starts from: the idea's title and an empty "Done when"
+// list. The player's own words are shown beside it, never copied into it:
+// the brief is what the routine builds, so it must be the admin's.
+export function draftBrief(s: Pick<Suggestion, "title" | "brief">): string {
+  return s.brief ?? `Build: ${s.title}\n\nDone when:\n1. `;
+}

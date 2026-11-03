@@ -129,7 +129,7 @@ Asked for: every creature was the same two blocks in a different color. DESIGN.m
 
 ## Done in 3.6: a living island (creatures)
 
-Asked for: nothing on the island just stands there; if the player does nothing for five minutes, every creature must have changed something. This is the creatures half; artifacts that act and creatures casting library spells are 3.6.1. DESIGN.md, "A living island", has the rules and the numbers.
+Asked for: nothing on the island just stands there; if the player does nothing for five minutes, every creature must have changed something. This is the creatures half; artifacts that act and creatures casting library spells came in 3.7 part B. DESIGN.md, "A living island", has the rules and the numbers.
 
 1. **A goal for every kind** from twelve (hunt, gather, hoard, build, tend, guard, steal, spread, convert, worship, explore, migrate), **needs before goals** (survive, rest, eat) and **marks**: a dragon's heap of gold, dams, goblin camps with loot, graveyards, dens, flowers and candles at shrines, cairns.
 2. **Villagers' jobs are goals**, with a village's food, wood and gold: farmers sow and harvest, woodcutters fell trees, builders (a new job) build houses with that wood, fishers fish, guards patrol and fight, priests pray, heal and bury the dead, merchants carry food to poorer villages; children are born where there is food.
@@ -156,6 +156,19 @@ Everything before 4.0 in one pull request, in five parts. DESIGN.md, "Alive, act
 5. **The legacy library refreshed**: programs rewritten through the Batch API under an $8 cap, each one kept only if it passes its tests and the judge; duplicates become aliases after the owner approves each.
 
 Not done: combined hazards (they need a new island); the three lava challenges have no verified solver yet and stay hidden; the refresh of the whole library waits for the owner's look at the dry run.
+
+## Done in 4.0: a review, then accounts
+
+Asked for: an independent review before the link goes beyond close friends, then accounts built on the reviewed code. `docs/REVIEW-4.0.md` has the findings and the numbers; DESIGN.md, "Accounts", has the rules.
+
+1. **The review**: no critical finding; three high (a player's idea could be the routine's task, a challenge win could set par to 0 for everyone, a lost test verdict left a program a trial for good) and seven medium fixed with a check each; the hold proved by mutation; the sandbox headers verified on the live site; a newcomer's first ten minutes at phone size with screenshots; the open items numbered under 4.1 and 4.5.
+2. **The invite becomes the account, with the same id**: a passkey made from the link creates it, the link dies, and spend, First Discoveries, ideas and wins follow with no move; votes and casts are the account's across devices.
+3. **Sign in anywhere** with the passkey, or a one use link: the admin's "New link" on an account, or by email when a sender is set up (`EMAIL_API_URL`, `EMAIL_API_KEY`, `EMAIL_FROM`).
+4. **Progress on the server**: discoveries as a union, the board, the island packed; last saved wins for the island, with a warning before an older device replaces a newer save, and the other island loaded if the player says no.
+5. **The account page**: passkeys, devices (each can be signed out), what is saved, email, export as one file, delete everything.
+6. **Checked**: `npm run test:worker` (one use links opened twice at once, a forged passkey answer, a spent challenge, sessions made up, signed out or deleted, one account reading or writing another's progress, malformed and oversized uploads, email links used twice and rate limited, export, deletion leaving nothing of the person and keeping the library and the spend) and `scripts/account-verify.mjs` in a phone sized browser with a virtual authenticator (a link into an account, a second device signing in and receiving the island, one link on two devices at once, deletion signing both out).
+
+Not done: two tabs of one browser still overwrite each other's local saves (review M6; the server merge limits the damage to the island); the welcome is still long on a phone.
 
 ## Decisions taken
 
@@ -212,7 +225,7 @@ Today every creature is the same two blocks in a different color. Give each kind
 7. **A bestiary page** in the Spell Lab drawing every plan and feature.
 8. Teach `body`, `features` and models in the spell prompt **without rewriting existing spells in bulk**; old creatures get a body chosen from their base kind.
 
-### 3.6 Goals, actions and a living island (creatures done, see above; artifacts in 3.6.1)
+### 3.6 Goals, actions and a living island (creatures done, see above; artifacts in 3.7 part B)
 
 Nothing on the island just stands there. Every creature wants something and acts to get it, some with magic of their own; every artifact does something, on its own or when something happens. The test for anything new: if the player does nothing for five minutes, what has it changed? Builds on `src/sim/social.ts` and the species from 3.5.
 
@@ -229,7 +242,7 @@ Nothing on the island just stands there. Every creature wants something and acts
 
 ### 3.7 Alive, acting and challenged (one pull request, everything before 4.0)
 
-Everything left before 4.0, in one session and one pull request, built in four parts in this order. Each part ends with its own commit, its own checks green, and a deploy, so a problem is caught where it starts and the pull request can be read part by part. Decided: no village mana, no hints, no discoveries made in the World, no sharing features.
+Everything left before 4.0, in one session and one pull request, built in five parts in this order. Each part ends with its own commit, its own checks green, and a deploy, so a problem is caught where it starts and the pull request can be read part by part. Decided: no village mana, no hints, no discoveries made in the World, no sharing features.
 
 **Part A. Creatures that look alive** (found in play after 3.5)
 
@@ -270,14 +283,17 @@ The one planned exception to "never rewrite in bulk": every stored program was w
 
 ### 4.0 Accounts: your progress everywhere
 
-Today an invite link is kept by one browser, and progress lives in that browser only. The link becomes a one use account creation. Until 4.0 lands, invites keep working as they do.
+Today an invite link is kept by one browser, and progress lives in that browser only. The link becomes a one use account creation. Until 4.0 lands, invites keep working as they do. Revised by the 4.0 review (docs/REVIEW-4.0.md, part G), which found four things the plan was silent about: passkeys bind to the domain, the Worker cannot send email, everything the server holds is already keyed by the invite id, and two tabs of one browser overwrite each other's saves.
 
-1. **An invite is used once**: opening it creates an account (a passkey first, no password; an email link as a fallback), and the link stops working for anyone else. The admin can issue a new one if a friend loses theirs.
-2. **Nobody loses progress**: on creating an account, the browser's local progress (discoveries, the board, the island) is uploaded and attached to it, and everything the server holds for that invite (spend, votes, casts, ideas, First Discoveries) moves to the account. Existing friends get a one time "save your progress" prompt; until they answer, nothing changes for them.
-3. **The same progress on every device**: discoveries are the union of what each device found; the island is saved per account, last saved wins, with a warning before replacing a newer one.
-4. **The account replaces the invite as the identity** for the $5 a month, votes, ideas and First Discoveries.
-5. **Privacy**: an account page to export or delete everything; the privacy note says what an account stores.
-6. **Tested**: an invite opened twice, a friend with weeks of local progress creating an account, two devices merging their discoveries, a deleted account leaving the shared library intact.
+1. **An invite is used once**: opening it creates an account (a passkey first, no password); the link stops working for anyone else. The admin can reissue a one use link for a friend who lost theirs: it signs the person into their existing account and offers a passkey again. An email link is the same mechanism behind a sender that does not exist yet; it turns on with a provider secret, not a code change.
+2. **The invite becomes the account, with the same id**: spend, First Discoveries, ideas, wins and reports are keyed by it already, so nothing moves and the $5 cap has no gap. Votes and casts, keyed by a random browser id today, use the account id once signed in, so one vote per person across devices.
+3. **Nobody loses progress**: on creating an account, the browser's discoveries, board and island are uploaded (the island gzipped, with its own 2 MB limit); existing friends get a one time "save your progress" prompt and the invite header keeps working until they answer.
+4. **The same progress on every device**: discoveries are the union by key with the earliest time; the island is last saved wins, with a warning before replacing a server save newer than this device's; the board follows the island.
+5. **Sessions** are bearer tokens in a header like the invite today, hashed at rest, 30 days, rotated on each passkey sign in, revocable per device from the account page.
+6. **Privacy**: an account page to export or delete everything the account holds; spend keeps the random id so the month's budget stays whole; the privacy note says so.
+7. **Tested**: an invite opened twice and at once, a reissued link used twice, a replayed registration challenge, a guessed or reused session token, one account reading or writing another's progress, an oversized or malformed upload, a deleted account's rows in every table, and the $5 cap before and after claiming.
+8. **Two tabs, one browser** (review M6): discoveries merge by key on every write; the island is saved by one tab at a time (a `BroadcastChannel` lock) or never over a newer save. The server side of 3 and 4 is where this is decided.
+9. **The domain** is chosen before the first passkey (a move means every friend registers again).
 
 ### 4.1 Bigger and richer worlds
 
@@ -285,6 +301,18 @@ Today an invite link is kept by one browser, and progress lives in that browser 
 2. **More varied terrain**: biomes (temperate forest, desert, tundra, jungle, swamp, volcanic, mesa), island shapes (archipelagos, plateaus, ridges, inland lakes, deltas), better rivers and coasts, chosen by a seed and a few sliders at reset.
 3. **Visual improvements**: baked ambient occlusion in the voxel lighting, better water (shore foam, depth color, gentle waves), weather you can see (rain, snow, fog), sun, moon and stars in the sky. Each measured with the HUD on a phone before it ships.
 
+4. **From the 4.0 review** (docs/REVIEW-4.0.md), in this order:
+   1. A watchdog that replaces a frozen World frame after 20 s without a message (review M3; the full answer, the simulation in a Worker thread, is L and changes the CSP and the view).
+   2. Chips in the spell bar say "writing" and "testing" instead of dimming, and the test run's duration joins the perf sample, so the 27 s first spell of the phone sized run can be measured on a real phone (M9).
+   3. The vote bar and the challenge banner no longer overlap on a phone (M10, `docs/review-4.0/14-challenge-island.jpg`).
+   4. `scripts/` typechecked (`@types/node`, a `scripts/tsconfig.json` in `npm run typecheck`) and `scripts/*.mjs` linted with Node globals (M7).
+   5. One Worker test section each for votes, rewrites and rollbacks, repairs, the judge and judge-stats, spend and perf, reports (M7).
+   6. `npm test` no longer asserts on wall clock time: `SLOW_MS` injectable, the worst tick printed, not asserted (M8); one scene stream in CI if the 92 s hurt.
+   7. The admin token compared in constant time (L1); `/api/perf` one row per invite per 20 s (L2); `pollBatches` caught like its siblings in `scheduled()` (L7); the feedback sync matches pull requests that say `Closes #n`, not any mention (L8).
+   8. A toast once when a save hits the storage quota, and `MAX_SAVE_CHARS` at 1.5M (M13); the refresh report says "not sent" for rows that never reached a batch (M12).
+   9. A broken spell remembers the Worker's "mended too often" for the session (L5); Retry and Reset of a live challenge keep the head start (L6).
+   10. Dead exports removed, one `api()` helper and one PRNG for `scripts/`, one tick loop shared by the engine, the check and the scripts, the two identical branches in `shared/tiers.ts` and the Worker test (L4).
+
 ### 4.5 Ready for strangers
 
-AI Gateway spend caps, Turnstile, name checks, AI labels, small legal pages. Accounts (4.0) come first, so strangers can keep their progress. Quotas, the report button and invite links instead of a shared token came early, in 3.4, for friends. Nothing public before this.
+AI Gateway spend caps, Turnstile, name checks, AI labels, small legal pages. Accounts (4.0) come first, so strangers can keep their progress. From the 4.0 review: trials decided by the admin's runner (or two browsers that agree), not by one browser's word (M11), since a stranger can promote a crashing program for everyone. Quotas, the report button and invite links instead of a shared token came early, in 3.4, for friends. Nothing public before this.

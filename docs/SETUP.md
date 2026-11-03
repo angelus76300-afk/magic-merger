@@ -54,6 +54,24 @@ Tap the admin badge: the People view lists everyone you invited, with what they 
 
 Each invite may spend `INVITE_CAP_USD` ($5) a month, shown to players as 500 credits (100 credits to the dollar; the top-up asks in credits). Past it, new merges and new spells say "Your magic is spent for now"; known recipes and every spell already in the library stay free. Your own plays with the admin token count toward `BUDGET_USD` but have no allowance of their own.
 
+### Accounts (4.0)
+
+Nothing to set up for passkeys. A friend who opens their link reads the welcome and is offered an account: a passkey made on their phone or computer (its own lock, no password) turns the invite into an account with the same id, uploads their discoveries, board and island, and the link stops working for anyone else. On another device, the gate page has "Sign in with a passkey" (a passkey synced by the platform, or one added from the account page). The admin's **New link** on an invite that is an account makes a one use sign in link instead: it signs the person in on the device that opens it, for a lost phone. The People view marks who has an account and who deleted theirs; on a revoked invite, **Delete account data** removes everything the account held (as the person's own Delete does), for a test account or a friend who asked.
+
+Passkeys are bound to the site's host name: a credential made on `magic-merger.<your-subdomain>.workers.dev` does not work on another domain. Decide the domain before the first friend makes a passkey, or every friend registers again after a move.
+
+Sign in links by email are optional and need a sender. The Worker posts JSON (`from`, `to`, `subject`, `text`, with a bearer key) to a Resend compatible endpoint:
+
+```bash
+npx wrangler secret put EMAIL_API_KEY
+```
+
+and in `wrangler.jsonc` `vars`: `EMAIL_API_URL` (for Resend, `https://api.resend.com/emails`) and `EMAIL_FROM` (an address on a domain the provider verified for you). With all three set, the account page lets a person save an address, and the gate page sends a one use link to it (20 minutes, three an hour, the same answer whether the address is known or not). Without them nothing is offered and the admin's new link is the way back in.
+
+The account page (the `?` button, "Your account") lists passkeys, signed in devices (each can be signed out), what is saved and when, and has **Export** (one JSON file of everything the account holds) and **Delete my account** (passkeys, devices, saved progress, votes, casts, ideas, wins and reports; what the person found first stays in the shared library without their name; the month's spend keeps the invite's random id so the budget stays whole; the invite row stays as deleted so the id is never reused).
+
+`node scripts/account-verify.mjs` (needs `dist/` and Playwright) runs the whole thing in a phone sized headless browser with a virtual authenticator against `wrangler dev`: a link into an account, a second device signing in with the same passkey and receiving the island, one link opened on two devices at once, deletion from one device signing out the other.
+
 ### Admin mode
 
 Tap the "Magic Merger" title five times quickly and enter your `ADMIN_TOKEN`. An admin badge appears with this month's Claude spend; tap it for the People view and the detail by call and model. Every card gets an admin row: which API version and model wrote its program, **New description**, **Rewrite this spell**, which says what it will cost before it spends, and every version of the program with its status, origin, votes, test run and judge score. Spells are never rewritten in bulk: only this button, players' votes and the judge (once it is trusted, see DESIGN.md) rewrite a spell, one at a time.
@@ -124,6 +142,11 @@ Set in `wrangler.jsonc`:
 | `JUDGE_MODEL`        | `claude-haiku-5-5`             | scoring three Spell Lab frames of a program (3.3)                                                                       |
 | `REWRITE_BUDGET_USD` | `0.5`                          | dollars a day for rewrites asked by votes, the judge and failed test runs                                               |
 | `BIG_SPELLS_BATCH`   | `1`                            | legendary and cosmic spells drafted by Haiku at once, written by Opus through the Batch API at half price; `0` for 3.2  |
+| `REFRESH_BUDGET_USD` | `8`                            | dollars a month the refresh of the legacy library may spend (3.7 part E), held before each batch is sent                |
+| `DESIGN_MODEL`       | `SPELL_MODEL`                  | who designs how the World API grows from what spells lacked (3.4.2), one call a day at most                             |
+| `EVOLVE`             | unset                          | `0` stops the API from growing on its own; the admin can still ask with `POST /api/admin/evolve`                        |
+| `ANTHROPIC_BASE_URL` | unset                          | routes Claude calls through a gateway, or the stub in `npm run test:worker`; `GITHUB_API_URL` does the same for GitHub  |
+| `EMAIL_API_URL`      | unset                          | 4.0: with the secret `EMAIL_API_KEY` and `EMAIL_FROM`, a Resend compatible endpoint for one use sign in links by email  |
 
 Measured on the live Worker in November 2026:
 
@@ -185,4 +208,6 @@ npm run test:worker
 
 `node scripts/overlap-lab.mjs <out-dir>` casts the cases of 3.4's overlap fixes in the Spell Lab (a waterfall over the cut side, water on terraces, blocks in the land and through houses, a drawing over cliffs and water); compare with `docs/visual-checks`.
 
-Runs the simulation in Node, without a browser, in about 20 seconds on four cores (35 on two): map generation, the reference spells, the loop guard, a save round trip, every challenge with its solution and, over eight seeds in worker threads, with nothing, the test run on good and bad programs, and the vote rules. GitHub Actions runs `npm run build` and `npm test` on every pull request.
+`npm test` runs the simulation in Node, without a browser, in about 90 seconds on four cores (measured on 2026-11-03; the five minute scene on three streams is most of it): map generation, the reference spells, the loop guard, a save round trip, every challenge with its solution and, over eight seeds in worker threads, with nothing, the test run on good and bad programs, the five minute scene and the vote rules. GitHub Actions runs lint, the format check, `npm run build`, `npm test` and `npm run test:worker` on every pull request and on every push to `main`.
+
+`node scripts/local-verify.mjs` (4.0 review) runs the built game in a phone sized headless browser against `wrangler dev` with a stub Claude and checks what no Node test can: a check frame that never loads, a test verdict that never reaches the Worker, a challenge win kept for the next visit. It needs `dist/` and Playwright.
