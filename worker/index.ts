@@ -1829,6 +1829,12 @@ async function changeInvite(body: InviteChange, env: Env, url: URL) {
     case "revoke":
       await db.prepare("UPDATE invites SET status = 'revoked' WHERE id = ?").bind(id).run();
       return { ok: true };
+    // 4.0: everything the account holds, as the person's own Delete does
+    // (passkeys, sessions, progress, votes, ideas, wins); for a test or a
+    // revoked invite. The row stays as deleted with its spend.
+    case "delete":
+      if (row.deleted_at) throw new HttpError(400, "This account is deleted already");
+      return deleteAccount(env, row);
     case "topup": {
       const usd = Number(body.usd);
       if (!Number.isFinite(usd) || usd <= 0 || usd > 50) throw new HttpError(400, "A top-up is between $0 and $50");
@@ -1846,7 +1852,7 @@ async function changeInvite(body: InviteChange, env: Env, url: URL) {
       return { ok: true, link: inviteLink(url, secret) };
     }
     default:
-      throw new HttpError(400, "pause, resume, revoke, topup or relink");
+      throw new HttpError(400, "pause, resume, revoke, topup, relink or delete");
   }
 }
 

@@ -162,8 +162,6 @@ function row(p: PersonInfo): HTMLElement {
   bar.style.setProperty("--used", `${Math.min(100, (p.spent / Math.max(0.01, allowance)) * 100)}%`);
   info.append(name, facts, bar);
   el.append(info);
-  if (p.status === "revoked") return el;
-
   const actions = document.createElement("div");
   actions.className = "people-actions";
   const act = (label: string, fn: () => Promise<unknown>) => {
@@ -178,6 +176,22 @@ function row(p: PersonInfo): HTMLElement {
     };
     actions.append(b);
   };
+  // 4.0: a revoked invite keeps only the account's data to delete (a test
+  // account, a friend who asked); a deleted one has nothing left to do.
+  if (p.status === "revoked") {
+    if (!p.deletedAt)
+      act("Delete account data", async () => {
+        if (
+          !window.confirm(
+            `Delete everything ${p.name}'s account holds (passkeys, devices, saved progress, votes, ideas, wins)? Their first discoveries stay in the library without their name; the spend stays. This cannot be undone.`,
+          )
+        )
+          return;
+        await api.changeInvite(p.id, "delete");
+      });
+    el.append(actions);
+    return el;
+  }
   act(p.status === "paused" ? "Resume" : "Pause", () => api.changeInvite(p.id, p.status === "paused" ? "resume" : "pause"));
   act("Top up", async () => {
     const usd = Number(window.prompt(`Credits to add to ${p.name}'s magic for this month (100 credits = $1):`, "500")) / 100;

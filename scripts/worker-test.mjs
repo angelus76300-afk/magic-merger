@@ -1267,6 +1267,20 @@ console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at st
     JSON.stringify({ counts, named, spent, row }),
   );
   check("a deleted account gets no new link", (await api("/api/admin/invite", { admin: true, body: { id: dan.id, action: "relink" } })).status === 400);
+  // The admin can delete a revoked (or test) account's data too.
+  await api("/api/admin/invite", { admin: true, body: { id: eve.id, action: "revoke" } });
+  const eveRows = async () =>
+    (await db.prepare("SELECT (SELECT COUNT(*) FROM progress WHERE invite = ?1) + (SELECT COUNT(*) FROM sessions WHERE invite = ?1) AS n").bind(eve.id).first())
+      .n;
+  const before = await eveRows();
+  const adminDelete = await api("/api/admin/invite", { admin: true, body: { id: eve.id, action: "delete" } });
+  const eveRow = await db.prepare("SELECT deleted_at FROM invites WHERE id = ?").bind(eve.id).first();
+  check(
+    "the admin deletes a revoked account's data",
+    before > 0 && adminDelete.status === 200 && (await eveRows()) === 0 && eveRow.deleted_at > 0,
+    `${before} rows before`,
+  );
+  check("and not twice", (await api("/api/admin/invite", { admin: true, body: { id: eve.id, action: "delete" } })).status === 400);
   const people = (await api("/api/admin/people", { admin: true })).data.people;
   check("the admin sees who has an account", people.find((p) => p.id === eve.id)?.claimedAt > 0 && people.find((p) => p.id === dan.id)?.deletedAt > 0);
   await reset();

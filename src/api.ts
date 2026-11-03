@@ -118,7 +118,11 @@ export function createInvite(name: string): Promise<{ id: string; name: string; 
   return post("/api/admin/invites", { name });
 }
 
-export function changeInvite(id: string, action: "pause" | "resume" | "revoke" | "topup" | "relink", usd?: number): Promise<{ ok: boolean; link?: string }> {
+export function changeInvite(
+  id: string,
+  action: "pause" | "resume" | "revoke" | "topup" | "relink" | "delete",
+  usd?: number,
+): Promise<{ ok: boolean; link?: string }> {
   return post("/api/admin/invite", { id, action, usd });
 }
 
