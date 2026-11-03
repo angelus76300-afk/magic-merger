@@ -1,3 +1,4 @@
+import type { ChronicleDigest } from "../shared/chronicle";
 import { elementKey } from "../shared/elements";
 import type { SpellProgram } from "../shared/spellcode";
 import { TIERS, tierFromDepth, type Tier } from "../shared/tiers";
@@ -31,6 +32,7 @@ export interface WorldElements {
   stage: HTMLElement;
   banner: HTMLElement;
   challenges: HTMLButtonElement;
+  chronicle: HTMLButtonElement;
   status: HTMLElement;
   list: HTMLElement;
   bar: HTMLElement;
@@ -105,7 +107,8 @@ export class WorldHost {
       if (this.challenge) this.send({ type: "reset", size: this.el.size.value as WorldSize });
       else if (window.confirm("Reset the world? Everything in it will be lost.")) this.send({ type: "reset", size: this.el.size.value as WorldSize });
     });
-    this.el.challenges.addEventListener("click", () => this.openChallenges());
+    this.el.challenges.addEventListener("click", () => this.onChallenges());
+    this.el.chronicle.addEventListener("click", () => void this.openChronicle());
     this.el.banner.querySelector(".world-banner-retry")!.addEventListener("click", () => {
       if (this.challenge) this.startChallenge(this.challenge);
     });
@@ -183,7 +186,7 @@ export class WorldHost {
       const tier = d.element.tier;
       if (!now?.recheck?.length || !program || program.id !== now.id || !tier) continue;
       try {
-        const result = await this.checker.check({ key, name: d.element.name, tier, code: program.code, intents: now.recheck });
+        const result = await this.checker.check({ key, name: d.element.name, tier, code: program.code, intents: now.recheck, kind: d.element.kind });
         let res = await api.checkSpell({ name: d.element.name, id: now.id, ...result, recheck: true });
         if (res.program.trial) {
           res = await this.settle(key, res, true);
@@ -302,7 +305,14 @@ export class WorldHost {
     this.updateStatus();
     try {
       for (let round = 0; round < 3 && res.program.trial && res.program.id; round++) {
-        const result = await this.checker.check({ key, name: res.name, tier: res.tier, code: res.program.code, intents: res.program.intents });
+        const result = await this.checker.check({
+          key,
+          name: res.name,
+          tier: res.tier,
+          code: res.program.code,
+          intents: res.program.intents,
+          kind: this.store.get(key)?.element.kind,
+        });
         const id = res.program.id;
         res = await api.checkSpell({ name: res.name, id, ...result });
         if (res.program.id !== id && round === 0 && !result.ok && !quiet)
@@ -378,6 +388,7 @@ export class WorldHost {
         break;
       case "cast":
         if (!this.store.get(msg.key)) break;
+        this.castInAttempt.push(msg.key);
         markUsed(msg.key);
         void this.afterCast(msg.key);
         // In a grid the bar covers the island: fold it once a spell is used.
@@ -389,6 +400,20 @@ export class WorldHost {
         break;
       case "error":
         if (this.store.get(msg.key)) void this.repair(msg.key, msg.name, msg.message);
+        break;
+      case "chronicle":
+        this.digestWaiter?.(msg.digest);
+        this.digestWaiter = null;
+        break;
+      case "need":
+        // Library spells a creature or an artifact casts (3.7): stored
+        // programs only, free; one that does not exist stays unknown.
+        api
+          .libraryPrograms(msg.names)
+          .then((r) =>
+            this.send({ type: "library", spells: r.spells.map((s) => ({ key: s.key, name: s.name, tier: s.tier, code: s.code, intents: s.intents })) }),
+          )
+          .catch(() => {});
         break;
       case "perf": {
         // Spell code runs in the frame too, so it could send these: only
@@ -458,17 +483,103 @@ export class WorldHost {
     d.showModal();
   }
 
-  private startChallenge(id: string): void {
+  private startChallenge(id: string, ahead = 0): void {
     const info = SCENARIO_LIST.find((s) => s.id === id);
     if (!info) return;
     this.challenge = id;
-    this.send({ type: "scenario", id });
-    this.showObjective(id, info.brief, "playing");
+    this.send({ type: "scenario", id, ahead });
+    this.showObjective(id, this.attempt?.brief ?? info.brief, "playing");
     this.el.reset.textContent = "Restart";
   }
 
+  // A challenge from nothing (3.7, challenges.ts): its hazard island with the
+  // spell made on its board in hand. A win is reported with the merges.
+  // Only what the player made on the challenge's board counts: a win after
+  // casting anything else from the spell bar is not recorded.
+  attempt: {
+    id: string;
+    title: string;
+    brief: string;
+    scenario: string;
+    items: Set<string>;
+    onEnd: (status: "won" | "lost", spell: string | null) => void;
+  } | null = null;
+  private castInAttempt: string[] = [];
+  playAttempt(a: NonNullable<WorldHost["attempt"]>, key: string, ahead: number): void {
+    this.attempt = a;
+    this.castInAttempt = [];
+    this.startChallenge(a.scenario, ahead);
+    this.selectSpell(key);
+  }
+
+  // The island's chronicle (3.7): written by Haiku from what the World
+  // recorded, once a session; the last ten chapters are kept by this browser.
+  private digestWaiter: ((d: ChronicleDigest) => void) | null = null;
+  private chronicleDialog: HTMLDialogElement | null = null;
+  private async openChronicle(): Promise<void> {
+    if (this.challenge) {
+      toast("The chronicle tells your own island: leave the challenge first");
+      return;
+    }
+    const kept = readChronicles();
+    let fresh = "";
+    if (!sessionChapter()) {
+      const digest = await new Promise<ChronicleDigest | null>((resolve) => {
+        this.digestWaiter = resolve;
+        this.send({ type: "chronicle" });
+        window.setTimeout(() => resolve(null), 4000);
+      });
+      if (!digest || (!digest.lines.length && !digest.memories.length)) {
+        toast("Nothing has happened on your island yet: cast something, or wait a little");
+        return;
+      }
+      toast("The village elder is thinking…");
+      try {
+        fresh = (await api.chronicle(digest)).text;
+        kept.unshift({ at: Date.now(), text: fresh });
+        writeChronicles(kept.slice(0, 10));
+        markSessionChapter();
+      } catch (err) {
+        toast(err instanceof Error ? err.message : "The chronicle could not be written", "error");
+        if (!kept.length) return;
+      }
+    }
+    if (!this.chronicleDialog) {
+      const d = document.createElement("dialog");
+      d.className = "chronicle";
+      d.addEventListener("click", (e) => {
+        if (e.target === d) d.close();
+      });
+      document.body.append(d);
+      this.chronicleDialog = d;
+    }
+    const d = this.chronicleDialog;
+    const title = document.createElement("h2");
+    title.textContent = "The island's chronicle";
+    const list = document.createElement("div");
+    for (const c of readChronicles()) {
+      const when = document.createElement("h3");
+      when.textContent = new Date(c.at).toLocaleString();
+      const p = document.createElement("p");
+      p.textContent = c.text;
+      list.append(when, p);
+    }
+    const note = document.createElement("p");
+    note.className = "chronicle-note";
+    note.textContent = "A new chapter is written once a session.";
+    const close = document.createElement("button");
+    close.textContent = "Close";
+    close.addEventListener("click", () => d.close());
+    d.replaceChildren(title, list, note, close);
+    d.showModal();
+  }
+
+  // The World's Challenges button opens the Challenges tab (main.ts).
+  onChallenges: () => void = () => this.openChallenges();
+
   private leaveChallenge(): void {
     this.challenge = null;
+    this.attempt = null;
     this.el.banner.hidden = true;
     this.el.reset.textContent = "Reset";
     this.send({ type: "sandbox" });
@@ -476,14 +587,25 @@ export class WorldHost {
 
   private showObjective(id: string, text: string, status: "playing" | "won" | "lost"): void {
     if (this.challenge !== id) return;
+    if (status === "playing" && text === this.attempt?.brief) this.castInAttempt = [];
     const info = SCENARIO_LIST.find((s) => s.id === id);
     const b = this.el.banner;
     b.hidden = false;
     b.dataset.status = status;
-    b.querySelector(".world-banner-title")!.textContent = info?.title ?? "";
+    b.querySelector(".world-banner-title")!.textContent = this.attempt?.title ?? info?.title ?? "";
     b.querySelector(".world-banner-text")!.textContent = text;
-    b.querySelector(".world-banner-hint")!.textContent = status === "lost" && info ? `Ideas: ${info.hint}` : "";
+    // No hints (3.7): finding the spell is the game.
+    b.querySelector(".world-banner-hint")!.textContent = "";
     (b.querySelector(".world-banner-retry") as HTMLElement).hidden = status === "playing";
+    if (this.attempt && status !== "playing") {
+      const a = this.attempt;
+      const cast = this.castInAttempt;
+      const fair = cast.length > 0 && cast.every((k) => a.items.has(k));
+      if (status === "won") this.attempt = null;
+      a.onEnd(status, fair ? cast[cast.length - 1] : null);
+      this.castInAttempt = [];
+      return;
+    }
     if (status === "won") {
       const first = !this.store.isSolved(id);
       this.store.markSolved(id);
@@ -658,5 +780,39 @@ function writeFlag(key: string, value: boolean): void {
     localStorage.setItem(key, value ? "1" : "0");
   } catch {
     // Storage blocked: the choice lasts for this page.
+  }
+}
+
+// The chronicle's chapters, kept by this browser (3.7).
+const CHRONICLES = "mm-chronicles";
+function readChronicles(): { at: number; text: string }[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(CHRONICLES) ?? "[]") as { at: number; text: string }[];
+    return Array.isArray(v) ? v.filter((c) => typeof c.text === "string" && typeof c.at === "number") : [];
+  } catch {
+    return [];
+  }
+}
+function writeChronicles(list: { at: number; text: string }[]): void {
+  try {
+    localStorage.setItem(CHRONICLES, JSON.stringify(list));
+  } catch {
+    // kept for this page only
+  }
+}
+let chapterThisSession = false;
+function sessionChapter(): boolean {
+  try {
+    return chapterThisSession || sessionStorage.getItem("mm-chronicle-session") === "1";
+  } catch {
+    return chapterThisSession;
+  }
+}
+function markSessionChapter(): void {
+  chapterThisSession = true;
+  try {
+    sessionStorage.setItem("mm-chronicle-session", "1");
+  } catch {
+    // this page only
   }
 }

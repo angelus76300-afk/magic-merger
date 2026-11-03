@@ -28,6 +28,10 @@ import {
   type LibraryDoc,
   type LibraryExample,
   type Rewrite,
+  CHRONICLE_SYSTEM,
+  chronicleUserMessage,
+  TRIM_SCHEMA,
+  TRIM_SYSTEM,
 } from "./prompts";
 
 export interface MergeAnswer {
@@ -86,10 +90,17 @@ export interface JudgeRequest {
   notes: string[];
 }
 
+export interface TrimAnswer {
+  duplicates: { keep: string; alias: string; why: string }[];
+  senseless: { a: string; b: string; why: string }[];
+}
+
 export interface JudgeAnswer {
   score: number;
   reason: string;
   note: string;
+  // Do the creatures it brought look alive (3.7)? none: no creature in the frames.
+  alive: "yes" | "no" | "none";
 }
 
 // One program asked of the Batch API, and what came back.
@@ -128,8 +139,13 @@ export interface Oracle {
   readonly mock: boolean;
   // Every call made so far and its cost, for the budget ledger.
   readonly spent: Spent[];
-  merge(a: string, b: string): Promise<MergeAnswer>;
+  // avoid: a name already refused for this pair (3.7: it only joined the two).
+  merge(a: string, b: string, avoid?: string): Promise<MergeAnswer>;
   describe(name: string, kind: ElementKind, recipe: [string, string] | null): Promise<string>;
+  // The trim of the library (3.7): near duplicates and senseless merges.
+  trim(names: string[], recipes: string[]): Promise<TrimAnswer>;
+  // The island's chronicle (3.7), from what its World recorded.
+  chronicle(digest: { days: number; lines: string[]; work: string[]; memories: string[]; now: string[] }): Promise<string>;
   // Tiers for elements from before tiers existed, all in one call. New
   // elements get theirs in the merge answer.
   tiers(items: { name: string; kind: ElementKind }[]): Promise<Map<string, Tier>>;
@@ -213,13 +229,13 @@ export class ClaudeOracle implements Oracle {
     return readText(response);
   }
 
-  async merge(a: string, b: string): Promise<MergeAnswer> {
+  async merge(a: string, b: string, avoid?: string): Promise<MergeAnswer> {
     const text = await this.ask(
       "merge",
       this.models.merge,
       this.models.mergeEffort,
       MERGE_SYSTEM,
-      [{ role: "user", content: mergeUserMessage(a, b) }],
+      [{ role: "user", content: mergeUserMessage(a, b, avoid) }],
       MERGE_SCHEMA,
       4000,
     );
@@ -241,6 +257,33 @@ export class ClaudeOracle implements Oracle {
       2000,
     );
     return text.trim();
+  }
+
+  async trim(names: string[], recipes: string[]): Promise<TrimAnswer> {
+    const text = await this.ask(
+      "trim",
+      this.models.describe,
+      "low",
+      TRIM_SYSTEM,
+      [{ role: "user", content: `Items:\n${names.join("\n")}\n\nRecipes:\n${recipes.join("\n")}` }],
+      TRIM_SCHEMA,
+      16000,
+    );
+    const v = parseJson(text) as Partial<TrimAnswer>;
+    return { duplicates: Array.isArray(v.duplicates) ? v.duplicates : [], senseless: Array.isArray(v.senseless) ? v.senseless : [] };
+  }
+
+  async chronicle(digest: { days: number; lines: string[]; work: string[]; memories: string[]; now: string[] }): Promise<string> {
+    const text = await this.ask(
+      "chronicle",
+      this.models.describe,
+      "low",
+      CHRONICLE_SYSTEM,
+      [{ role: "user", content: chronicleUserMessage(digest) }],
+      null,
+      2000,
+    );
+    return text.trim().slice(0, 2000);
   }
 
   async tiers(items: { name: string; kind: ElementKind }[]): Promise<Map<string, Tier>> {
@@ -309,9 +352,14 @@ export class ClaudeOracle implements Oracle {
     }
     if (content.length < 2) throw new OracleError("The judge needs frames");
     const text = await this.ask("judge", this.models.judge, "low", JUDGE_SYSTEM, [{ role: "user", content }], JUDGE_SCHEMA, 4000);
-    const { score, reason, note } = parseJson(text) as Partial<JudgeAnswer>;
+    const { score, reason, note, alive } = parseJson(text) as Partial<JudgeAnswer>;
     if (typeof score !== "number" || typeof reason !== "string") throw new OracleError("The judge's answer did not match the schema");
-    return { score: Math.max(1, Math.min(5, Math.round(score))), reason, note: typeof note === "string" ? note.slice(0, 300) : "" };
+    return {
+      score: Math.max(1, Math.min(5, Math.round(score))),
+      reason,
+      note: typeof note === "string" ? note.slice(0, 300) : "",
+      alive: alive === "yes" || alive === "no" ? alive : "none",
+    };
   }
 
   // One request per program, written by the spell model at its effort. The
@@ -353,7 +401,8 @@ export class ClaudeOracle implements Oracle {
       }
       // Batch requests cost half of the same call made directly. Ids that
       // start with "rw" are rewrites, counted against the daily rewrite budget.
-      const spent = logUsage(item.custom_id.startsWith("rw") ? "batch-rewrite" : "batch-spell", r.message, 0.5);
+      // "rf": the refresh of the legacy library (3.7), on its own cap.
+      const spent = logUsage(item.custom_id.startsWith("rf") ? "refresh" : item.custom_id.startsWith("rw") ? "batch-rewrite" : "batch-spell", r.message, 0.5);
       try {
         const answer = toProgram(readText(r.message));
         const error = syntaxError(answer.code);
@@ -485,6 +534,14 @@ export class MockOracle implements Oracle {
     return { name: `${firstWord(x)} ${firstWord(y)} ${suffix}`.split(" ").slice(-3).join(" "), emoji, kind, tier: "major" };
   }
 
+  async trim(): Promise<TrimAnswer> {
+    return { duplicates: [], senseless: [] };
+  }
+
+  async chronicle(digest: { days: number; lines: string[] }): Promise<string> {
+    return `Mock chronicle of ${digest.days} days: ${digest.lines.slice(0, 3).join("; ") || "nothing happened yet"}. Set ANTHROPIC_API_KEY on the Worker for a real one.`;
+  }
+
   async describe(name: string, kind: ElementKind, recipe: [string, string] | null): Promise<string> {
     const origin = recipe ? `Born from ${recipe[0]} and ${recipe[1]}.` : "One of the primal forces.";
     return `${origin} This is a placeholder ${kind} description for ${name}. Set ANTHROPIC_API_KEY on the Worker to get real ones.`;
@@ -516,7 +573,7 @@ export class MockOracle implements Oracle {
   }
 
   async judge(): Promise<JudgeAnswer> {
-    return { score: 3, reason: "fine", note: "Mock judge: set ANTHROPIC_API_KEY for a real one." };
+    return { score: 3, reason: "fine", note: "Mock judge: set ANTHROPIC_API_KEY for a real one.", alive: "none" };
   }
 
   async intents(name: string): Promise<Intent[]> {

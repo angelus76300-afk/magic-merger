@@ -77,6 +77,11 @@ export class Craft {
     window.addEventListener("resize", () => this.clampAll());
   }
 
+  // Something was discovered elsewhere (a challenge's board, 3.7).
+  refresh(): void {
+    this.renderInventory();
+  }
+
   clearBoard(): void {
     for (const [id, node] of this.nodes) {
       if (this.busy.has(id)) continue;

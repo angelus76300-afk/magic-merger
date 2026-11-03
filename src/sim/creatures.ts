@@ -9,7 +9,8 @@ import { SPECIES, habitatCell, targetOf } from "./wildlife";
 import { packLook, randomLook, shirtOf, sizeOf, unpackLook } from "./villagers";
 import { denDown, goalOfCreature, hasNeeds, kindGoal, needsTick, pursue, stepGoals } from "./goals";
 import { abilitiesFromName, useAbilities } from "./abilities";
-import { LOADS, deed, harmed, life, newMind, noteDeath, reborn, villageOf, type AbilitySpec, type Goal, type Mind } from "./kin";
+import { stepArtifacts } from "./artifacts";
+import { LOADS, deed, harmed, life, newMind, noteDeath, reborn, storyOn, tell, villageOf, type AbilitySpec, type Goal, type Mind } from "./kin";
 
 // What a spell-made creature does, declared rather than coded, so even a
 // short program gets a creature with a life of its own.
@@ -210,6 +211,7 @@ life.maxHp = maxHp;
 life.make = (kind, x, y) => makeCreature(kind, x, y);
 life.goalOf = (c) => goalOfCreature(c, kindOf(c));
 life.free = (c, x, y) => free(c, x, y);
+life.hostile = (c) => hostile(c);
 
 export function makeCreature(kindName: string, x: number, y: number): Creature {
   const k = KINDS.get(kindName) ?? KINDS.get("villager")!;
@@ -387,6 +389,7 @@ function blocked(world: World, x: number, y: number, c: Creature, k: CreatureKin
 export function updateCreature(world: World, c: Creature, dt: number): void {
   const k = kindOf(c);
   freeWorld = world;
+  storyOn(world);
   if (c.dead) {
     if (c.deadFor === 0) {
       noteDeath(world, c);
@@ -1093,6 +1096,7 @@ export function lifeCycle(world: World, dt: number): void {
   stepGoals(world);
   if (world.wards.length) keepOut(world);
   stepLandmarks(world, maxHp, (c) => kindOf(c).fireproof);
+  stepArtifacts(world);
   for (let k = world.creatures.length - 1; k >= 0; k--) {
     if (world.creatures[k].dead && world.creatures[k].deadFor > 40) world.creatures.splice(k, 1);
   }
@@ -1120,6 +1124,7 @@ export function lifeCycle(world: World, dt: number): void {
     c.hp = maxHp(c);
     c.color = shirtOf(look);
     world.creatures.push(c);
+    tell(world, "a child was born in the village");
     return;
   }
 }

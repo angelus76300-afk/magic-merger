@@ -1,3 +1,4 @@
+import { tell } from "./kin";
 import { lifeCycle, populate, updateCreature } from "./creatures";
 import { FrameStats } from "./hud";
 import { stepPhysics } from "./physics";
@@ -92,7 +93,10 @@ export class Engine {
   }
 
   cast(req: CastRequest, x: number, y: number): boolean {
-    return this.runtime.cast(req, x, y);
+    const ok = this.runtime.cast(req, x, y);
+    // The player's magic is part of the island's story (3.7).
+    if (ok) tell(this.world, `a mage ${req.kind === "artifact" ? "placed" : "cast"} ${req.name}`);
+    return ok;
   }
 
   resize(): void {

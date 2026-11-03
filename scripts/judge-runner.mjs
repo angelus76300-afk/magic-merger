@@ -17,6 +17,9 @@ if (!url || !token) {
   process.exit(1);
 }
 const limit = Number(process.argv[2]) || 20;
+// MM_CREATURES=1 (3.7): live programs that bring creatures, asked again
+// whether their creatures look alive, judged before or not.
+const creatures = process.env.MM_CREATURES === "1";
 // Big spells build up longer: at 1, 3 and 6 s a legendary meteor was still a
 // glow in the sky (docs/measurements/spell-quality-2026-11.md).
 const shotsFor = (tier) => (tier === "legendary" || tier === "cosmic" ? [2, 6, 12] : [1, 3, 6]);
@@ -32,7 +35,7 @@ async function api(path, body) {
   return data;
 }
 
-const programs = await api(`/api/admin/programs?limit=${limit}`);
+const programs = await api(`/api/admin/programs?limit=${limit}${creatures ? "&creatures=1" : ""}`);
 console.log(`${programs.length} programs to judge`);
 if (programs.length) {
   const lab = await openLab();
@@ -41,7 +44,9 @@ if (programs.length) {
       const shots = shotsFor(p.tier);
       const result = await lab.cast(p.code, { tier: p.tier, shots, jpeg: true });
       const judged = await api("/api/admin/judge", { id: p.id, frames: result.frames.map((f) => f.png), shots, facts: factsOf(result) });
-      console.log(`${p.name} (#${p.id}, ${p.tier}): ${judged.score}/5 ${judged.reason}, ${judged.verdict}; ${judged.note} [${judged.action}]`);
+      console.log(
+        `${p.name} (#${p.id}, ${p.tier}): ${judged.score}/5 ${judged.reason}, ${judged.verdict}, alive ${judged.alive}; ${judged.note} [${judged.action}]`,
+      );
     }
   } finally {
     await lab.close();

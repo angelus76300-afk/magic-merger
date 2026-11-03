@@ -6,8 +6,10 @@ import type { LibraryExample } from "./prompts";
 // Every version of every program (3.3). The `spells` table still holds the
 // live one of each element, as before, plus `pid`, its row here.
 
-export type ProgramStatus = "trial" | "live" | "retired" | "rejected";
-export type ProgramOrigin = "legacy" | "new" | "draft" | "batch" | "votes" | "judge" | "check" | "repair" | "admin" | "promise";
+// candidate (3.7): written by the refresh of the legacy library, served to
+// nobody until the refresh runner decides.
+export type ProgramStatus = "trial" | "live" | "retired" | "rejected" | "candidate";
+export type ProgramOrigin = "legacy" | "new" | "draft" | "batch" | "votes" | "judge" | "check" | "repair" | "admin" | "promise" | "refresh";
 
 export interface ProgramRow {
   id: number;
@@ -172,7 +174,10 @@ export async function rewriteSpendToday(db: D1Database, pendingEstimate: number,
     .prepare(`SELECT COALESCE(SUM(usd), 0) AS usd FROM spend WHERE at >= ? AND call IN (${REWRITE_CALLS.map(() => "?").join(", ")})`)
     .bind(today, ...REWRITE_CALLS)
     .first<{ usd: number }>();
-  const pending = await db.prepare("SELECT COUNT(*) AS n FROM rewrites WHERE status = 'pending' AND cause != 'upgrade'").first<{ n: number }>();
+  // The refresh of the library (3.7) has its own cap, not the daily rewrites'.
+  const pending = await db
+    .prepare("SELECT COUNT(*) AS n FROM rewrites WHERE status = 'pending' AND cause NOT IN ('upgrade', 'refresh')")
+    .first<{ n: number }>();
   return (spent?.usd ?? 0) + (pending?.n ?? 0) * pendingEstimate;
 }
 

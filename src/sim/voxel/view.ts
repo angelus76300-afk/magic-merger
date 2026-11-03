@@ -31,7 +31,8 @@ import {
 import { kindOf, type Creature, type CreatureKind } from "../creatures";
 import { F as FLUID } from "../materials";
 import { Figures, figureMaterials, type Pose } from "./figures";
-import { buildRig, paletteOf, ROLES, variantOf, type Rig } from "./rigs";
+import { buildRig, drawScale, paletteOf, ROLES, variantOf, type Rig } from "./rigs";
+import { easeGround, walkGround, type Footing } from "./walk";
 import { BUILTIN, C, F, S } from "../materials";
 import { envelope, type Body, type Visuals } from "../visuals";
 import type { World } from "../world";
@@ -74,7 +75,7 @@ export class VoxelView {
   // last frame: where it stood, its heading, its stride.
   private figures: Figures;
   private rigs = new WeakMap<CreatureKind, Map<number, Rig>>();
-  private gaits = new Map<number, { x: number; y: number; t: number; speed: number; phase: number; yaw: number; seen: number }>();
+  private gaits = new Map<number, Footing & { x: number; y: number; t: number; speed: number; phase: number; yaw: number; seen: number }>();
   private palette: number[] = new Array(ROLES).fill(0);
   private pose: Pose = {
     x: 0,
@@ -532,13 +533,20 @@ export class VoxelView {
       n++;
       const k = kindOf(c);
       const rig = this.rigFor(c, k);
-      // Figures are slimmer than the blocks they replace: drawn a little larger
-      // so a villager reads at a glance (the simulation's size is unchanged).
-      const size = k.radius * 1.85 * c.size;
+      // Sized against a villager and a house (3.7, rigs.ts), not from the
+      // simulation's radius, which is a creature's reach.
+      const size = drawScale(k.body, k.radius, rig, c.size);
       const i = Math.max(0, Math.min(world.w - 1, Math.floor(c.x))) + Math.max(0, Math.min(world.h - 1, Math.floor(c.y))) * world.w;
-      const ground = this.groundAt(c.x, c.y);
-      // Fish swim under the surface; a dead one floats.
+      let g = this.gaits.get(c.id);
+      if (!g) {
+        g = { x: c.x, y: c.y, t: time, speed: 0, phase: c.id, yaw: (c.id * 2.4) % (Math.PI * 2), seen: frame, gy: NaN, vy: 0, gt: time };
+        this.gaits.set(c.id, g);
+      }
+      g.seen = frame;
+      // Fish swim under the surface; a dead one floats. The rest walk up and
+      // down the island's steps instead of jumping between levels (walk.ts).
       const underwater = k.aquatic && !c.dead && world.depth[i] > 0.3 && world.fluid[i] === FLUID.WATER;
+      const ground = underwater ? this.groundAt(c.x, c.y) : easeGround(g, walkGround(world, c.x, c.y), time);
       const y = underwater ? ground - Math.min(0.7, world.depth[i] * 0.5) - size * 0.15 : ground + c.z;
       const p = this.toScene(c.x, c.y, y);
       this.sphere.center.set(p.x, p.y + rig.height * size * 0.5, p.z);
@@ -546,12 +554,6 @@ export class VoxelView {
       const seen = this.frustum.intersectsSphere(this.sphere);
 
       // The stride and heading come from how far it moved since the last tick.
-      let g = this.gaits.get(c.id);
-      if (!g) {
-        g = { x: c.x, y: c.y, t: time, speed: 0, phase: c.id, yaw: (c.id * 2.4) % (Math.PI * 2), seen: frame };
-        this.gaits.set(c.id, g);
-      }
-      g.seen = frame;
       if (time > g.t) {
         const dt = time - g.t;
         const dx = c.x - g.x;

@@ -1,6 +1,7 @@
-import { isItem, type BodySpec, type Build, type Feature, type ModelBox } from "../body";
+import { body, BUILDS, isItem, type BodySpec, type Build, type Feature, type ModelBox, type Plan } from "../body";
 import { scaleColor } from "../colors";
 import { GRAY_HAIR, HAIRS, SKINS, STYLES, unpackLook, type Look } from "../villagers";
+import { separate } from "./faces";
 
 // A creature's figure as boxes (3.5), in units of its size, standing on y 0
 // and facing +z. Pure math, no three.js: the view (figures.ts) and the
@@ -302,7 +303,8 @@ function serpent(B: Builder): Anchors {
   const seg = (i: number): Attach => ({ p: [0, 0.1, 0.4 - (i - 1) * 0.22], anim: A.SEG, seg: i });
   for (let i = 1; i <= 6; i++) {
     const k = 1 - (i - 1) * 0.12;
-    B.c(i % 2 ? R.BODY : R.BODY2, 0, 0, seg(i).p[2], 0.24 * k, 0.2 * k, 0.27, seg(i));
+    // Each a little off the ground of the one before, so no two bellies share a plane.
+    B.c(i % 2 ? R.BODY : R.BODY2, 0, 0.012 * i, seg(i).p[2], 0.24 * k, 0.2 * k, 0.27, seg(i));
   }
   return {
     head: { ...head, cx: 0, bottom: 0, top: 0.24, front: 0.78, back: 0.5, half: 0.14 },
@@ -887,7 +889,97 @@ export function buildRig(spec: BodySpec, look = 0): Rig {
         : "light";
   const flapRate = spec.plan === "insect" ? 4.5 : spec.plan === "dragon" ? 0.9 : spec.plan === "bird" ? 2.6 : 1.6;
   const glowColor = spec.plan === "spirit" ? 0xffffff : 0xffe066;
-  return { parts: B.parts, height, halfWidth, lean, flapRate, body2, glowColor };
+  const rig: Rig = { parts: B.parts, height, halfWidth, lean, flapRate, body2, glowColor };
+  // No two parts share a face (3.7): they would flicker.
+  separate(rig);
+  return rig;
+}
+
+// How big a creature is drawn (3.7), checked against a villager and a house.
+// A villager is the measure: figures are drawn a little larger than the
+// cells they stand on so one reads at a glance on a phone, and everything
+// else is sized against it as in life, not from its radius in the
+// simulation alone (a bear's radius is its reach: drawn from it, the bear
+// stood half again as tall as a villager, and a spell's Vampire of radius 1.2
+// twice as tall). A house is 0.8 of a villager: the island's houses are the
+// stylized thing, a cell wide.
+//
+// Natural heights in villager heights, standing, to the top of the head, at a
+// natural radius; a creature of another radius grows with its square root,
+// people with its fourth root (a radius of 1.2 makes an imposing knight, not
+// a giant: giants have the stout build), so a Giant Bear of radius 1.9 is
+// half again a bear.
+export const HOUSE_HEIGHT = 1.26;
+interface Natural {
+  height: number;
+  radius: number;
+  grow?: number;
+  max?: number;
+}
+const SIZE_BY_BUILD = new Map<Build, Natural>([
+  [BUILDS.deer, { height: 0.9, radius: 0.7 }],
+  [BUILDS.rabbit, { height: 0.2, radius: 0.36 }],
+  [BUILDS.wolf, { height: 0.5, radius: 0.62 }],
+  [BUILDS.boar, { height: 0.45, radius: 0.62 }],
+  [BUILDS.bear, { height: 0.72, radius: 0.95 }],
+  [BUILDS.horse, { height: 1.05, radius: 0.75 }],
+  [BUILDS.cat, { height: 0.38, radius: 0.55 }],
+  [BUILDS.ox, { height: 0.85, radius: 0.8 }],
+  [BUILDS.rat, { height: 0.15, radius: 0.4 }],
+  [BUILDS.small, { height: 0.7, radius: 0.55, grow: 0.25, max: 1 }],
+  [BUILDS.stout, { height: 1.3, radius: 0.7 }],
+  [BUILDS.thin, { height: 1, radius: 0.55, grow: 0.25, max: 1.3 }],
+]);
+const SIZE_BY_PLAN: Record<Plan, Natural> = {
+  "two legs": { height: 1, radius: 0.55, grow: 0.25, max: 1.3 },
+  "four legs": { height: 0.7, radius: 0.75 },
+  bird: { height: 0.22, radius: 0.34 },
+  fish: { height: 0.15, radius: 0.34 },
+  serpent: { height: 0.25, radius: 0.7 },
+  insect: { height: 0.25, radius: 0.45 },
+  spider: { height: 0.3, radius: 0.6 },
+  slime: { height: 0.45, radius: 0.6 },
+  spirit: { height: 0.9, radius: 0.6 },
+  golem: { height: 1.45, radius: 1 },
+  dragon: { height: 1.6, radius: 1.1 },
+  "tree folk": { height: 1.4, radius: 0.8 },
+};
+// Nothing is drawn taller than this many villagers, whatever its radius (a
+// spell may give one a radius of 6), nor smaller than the last.
+export const MAX_HEIGHT = 3.2;
+export const MIN_HEIGHT = 0.1;
+
+let villagerHeight = 0;
+// A grown villager's drawn height, in scene units.
+export function villagerUnits(): number {
+  if (!villagerHeight) villagerHeight = buildRig(body("two legs", [], { villager: true }), 0).height * 0.55 * 1.85;
+  return villagerHeight;
+}
+
+// The natural size of a body, in villager heights, at a radius.
+// A model Claude designs is a strange creature of no particular size: about
+// a villager at the usual radius.
+const MODEL_SIZE: Natural = { height: 0.9, radius: 0.6 };
+
+export function naturalHeight(spec: BodySpec, radius: number): number | null {
+  if (spec.villager) return null;
+  const n = spec.model ? MODEL_SIZE : (SIZE_BY_BUILD.get(spec.build) ?? SIZE_BY_PLAN[spec.plan]);
+  if (!n) return null;
+  const h = n.height * Math.pow(Math.max(0.05, radius) / n.radius, n.grow ?? 0.5);
+  return n.max && radius >= n.radius ? Math.min(n.max, h) : h;
+}
+
+// The scale a figure is drawn at, in scene units per figure unit. size is the
+// creature's own (children 0.68). Villagers keep the size their radius gives:
+// they are the measure.
+export function drawScale(spec: BodySpec, radius: number, rig: Rig, size = 1): number {
+  const V = villagerUnits();
+  const natural = naturalHeight(spec, radius);
+  let units = natural !== null ? (natural * V) / Math.max(0.05, rig.height) : radius * 1.85;
+  const h = units * rig.height;
+  if (h > MAX_HEIGHT * V) units *= (MAX_HEIGHT * V) / h;
+  else if (h < MIN_HEIGHT * V) units *= (MIN_HEIGHT * V) / h;
+  return units * size;
 }
 
 // Colors per role for one creature, written into out (length ROLES).

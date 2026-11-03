@@ -209,7 +209,35 @@ const NAMES: [string[], Guess][] = [
   [["serpent", "snake", "naga", "viper", "cobra", "python", "eel", "worm", "basilisk", "hydra", "leviathan", "wurm", "asp"], { plan: "serpent" }],
   [["fish", "shark", "piranha", "carp", "koi", "trout", "salmon", "pike", "minnow"], { plan: "fish" }],
   [
-    ["bird", "phoenix", "raven", "crow", "eagle", "hawk", "owl", "dove", "falcon", "vulture", "roc", "bat", "sparrow", "thunderbird", "songbird"],
+    [
+      "bird",
+      "phoenix",
+      "raven",
+      "crow",
+      "eagle",
+      "hawk",
+      "owl",
+      "dove",
+      "falcon",
+      "vulture",
+      "roc",
+      "bat",
+      "sparrow",
+      "thunderbird",
+      "songbird",
+      "dodo",
+      "chicken",
+      "hen",
+      "rooster",
+      "duck",
+      "goose",
+      "swan",
+      "penguin",
+      "ostrich",
+      "turkey",
+      "peacock",
+      "parrot",
+    ],
     { plan: "bird" },
   ],
   [["griffin", "gryphon", "hippogriff", "pegasus"], { plan: "four legs", build: "horse", features: ["wings"] }],
@@ -304,20 +332,74 @@ export function body(plan: Plan, features: Feature[] = [], extra: Partial<BodySp
   return { plan, features, build: {}, color2: null, model: null, ...extra };
 }
 
+// Parts of a model that move when the creature walks or idles.
+const MOVING = new Set<ModelPart>(["leg", "leg2", "arm", "arm2", "wing", "tail", "head"]);
+
+export function modelMoves(model: ModelBox[]): boolean {
+  return model.some((m) => m.part !== null && MOVING.has(m.part));
+}
+
+// The body plan a still model is nearest to, from its outline (3.7): tall and
+// narrow stands on two legs, long walks on four, flat and round is a slime,
+// what flies floats like a spirit, and anything squat and wide is a golem.
+export function planOfModel(model: ModelBox[], flying: boolean): Plan {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let z0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  let z1 = -Infinity;
+  for (const m of model) {
+    x0 = Math.min(x0, m.x);
+    y0 = Math.min(y0, m.y);
+    z0 = Math.min(z0, m.z);
+    x1 = Math.max(x1, m.x + m.w);
+    y1 = Math.max(y1, m.y + m.h);
+    z1 = Math.max(z1, m.z + m.d);
+  }
+  const W = x1 - x0;
+  const H = y1 - y0;
+  const D = z1 - z0;
+  if (flying) return "spirit";
+  if (H > 1.3 * Math.max(W, D)) return "two legs";
+  if (D > 1.25 * W && H < D * 1.1) return "four legs";
+  if (H < 0.7 * Math.max(W, D)) return "slime";
+  return "golem";
+}
+
+// The two colors a model is mostly made of, by volume.
+export function colorsOfModel(model: ModelBox[]): number[] {
+  const by = new Map<number, number>();
+  for (const m of model) if (m.part !== "glow") by.set(m.color, (by.get(m.color) ?? 0) + m.w * m.h * m.d);
+  return [...by.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
+}
+
 // The body of a kind a spell defines, from what it declares, its name, then
-// its base kind's body.
+// its base kind's body. A model with no part that moves would stand like a
+// statue on a living island: it falls back to the plan nearest to it (by
+// name, then outline), in its colors (3.7).
 export function bodyFrom(raw: Record<string, unknown>, name: string, base: BodySpec | undefined): BodySpec {
   const declared = planOf(raw.body);
   const declaredFeatures = raw.features !== undefined ? featuresOf(raw.features) : null;
-  const model = modelOf(raw.model);
-  const color2 = toColor(raw.color2);
+  const drawn = modelOf(raw.model);
+  const still = drawn !== null && !modelMoves(drawn);
+  const model = still ? null : drawn;
+  let color2 = toColor(raw.color2);
   const guess = guessBody(name);
   const fallback = base ?? body("four legs");
-  const plan: Plan = declared ?? guess.plan ?? fallback.plan;
+  if (still && drawn && color2 === null) color2 = colorsOfModel(drawn)[1] ?? null;
+  const plan: Plan = declared ?? guess.plan ?? (still && drawn ? planOfModel(drawn, raw.flying === true) : fallback.plan);
   let build: Build = {};
   if (guess.build && guess.plan === plan) build = guess.build;
-  else if (!declared && !guess.plan) build = fallback.build;
-  const features = declaredFeatures ?? (guess.features.length ? guess.features : declared || guess.plan ? [] : fallback.features);
+  else if (!declared && !guess.plan && plan === fallback.plan) build = fallback.build;
+  const features = declaredFeatures ?? (guess.features.length ? guess.features : declared || guess.plan || plan !== fallback.plan ? [] : fallback.features);
   // A spell creature built on a villager is a person, not one of the villagers.
   return { plan, features, build, color2, model };
+}
+
+// A still model's main color, for a creature that declared none: it keeps
+// the look it was designed with once it falls back to a plan.
+export function stillModelColor(raw: Record<string, unknown>): number | null {
+  const drawn = modelOf(raw.model);
+  return drawn && !modelMoves(drawn) && toColor(raw.color) === null ? (colorsOfModel(drawn)[0] ?? null) : null;
 }

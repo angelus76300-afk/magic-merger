@@ -47,7 +47,55 @@ function stubAnswer(n, system, user) {
       : "const spell = { *cast(w) { w.ward(w.x, w.y, w.r, { seconds: 20 }); } };";
     return JSON.stringify({ summary: "A dome.", code, missing: "a barrier that stops lava: to keep the village safe" });
   }
-  return JSON.stringify({ name: `Answer ${n}`, emoji: "✨", kind: "spell", tier: "minor" });
+  if (system.startsWith("You write the chronicle")) return "The mage came, and the village remembered.";
+  // 3.7: a pair answered once with its two names joined, then properly.
+  if (user.startsWith("Glow Moss + Dusk Fern") && !user.includes("(Not "))
+    return JSON.stringify({ name: "Glow Moss Dusk Fern", emoji: "✨", kind: "spell", tier: "cosmic" });
+  return JSON.stringify({ name: `Answer ${n}`, emoji: "✨", kind: "spell", tier: user.startsWith("Glow Moss") ? "cosmic" : "minor" });
+}
+
+const batches = new Map();
+function stubBatches(req, res, raw) {
+  const path = req.url.split("?")[0];
+  const send = (data) => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(data));
+  if (req.method === "POST" && path === "/v1/messages/batches") {
+    const body = JSON.parse(raw);
+    const id = `msgbatch_${batches.size + 1}`;
+    batches.set(id, body.requests);
+    calls += body.requests.length;
+    return send({ id, type: "message_batch", processing_status: "in_progress", request_counts: {} });
+  }
+  const m = /^\/v1\/messages\/batches\/([^/]+)(\/results)?$/.exec(path);
+  if (!m || !batches.has(m[1])) return res.writeHead(404).end("no batch");
+  if (!m[2])
+    return send({
+      id: m[1],
+      type: "message_batch",
+      processing_status: "ended",
+      results_url: `${stubUrl}/v1/messages/batches/${m[1]}/results`,
+      request_counts: {},
+    });
+  const lines = batches.get(m[1]).map((r, n) => {
+    const system = Array.isArray(r.params.system) ? r.params.system.map((b) => b.text).join("") : String(r.params.system ?? "");
+    const text = stubAnswer(n, system, "");
+    return JSON.stringify({
+      custom_id: r.custom_id,
+      result: {
+        type: "succeeded",
+        message: {
+          id: `m${n}`,
+          type: "message",
+          role: "assistant",
+          model: r.params.model,
+          content: [{ type: "text", text }],
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 100, output_tokens: 100 },
+        },
+      },
+    });
+  });
+  res.writeHead(200, { "content-type": "application/x-jsonl" }).end(lines.join("\n"));
 }
 
 // The same server stubs GitHub and the feedback routine (3.4.1).
@@ -96,7 +144,9 @@ const stub = createServer((req, res) => {
   req.on("data", (c) => (raw += c));
   req.on("end", () => {
     if (req.url.startsWith("/repos/") || req.url.startsWith("/v1/claude_code/")) return stubGitHub(req, res, raw);
-    if (!req.url.endsWith("/v1/messages")) {
+    // The Batch API (3.7, the refresh): ended at once, each item answered like a message.
+    if (req.url.startsWith("/v1/messages/batches")) return stubBatches(req, res, raw);
+    if (!req.url.endsWith("/v1/messages") && !req.url.startsWith("/v1/messages?")) {
       res.writeHead(404).end("not stubbed");
       return;
     }
@@ -663,6 +713,246 @@ const fresh = () => ALL[pairs++];
     body: { name: "Old Shield", id: first.data.program.id, ok: false, problem: "promise", detail: "again", recheck: true },
   });
   check("a second recheck writes nothing", twice.status === 200 && calls === before + 1);
+  await reset();
+}
+
+// 12. Artifacts that act and library spells (3.7): an artifact that never
+// faced its five minute test is tested again, and an idle one is recorded,
+// not written again (part E rewrites them); library spells are served by
+// name, stored programs only, with no Claude call.
+{
+  await reset();
+  const now = Date.now();
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('old well', 'Old Well', '🪣', 'artifact', 3, 'minor', 'A stone well', 'create', ?)",
+    )
+    .bind(now)
+    .run();
+  const first = await api("/api/spell", { admin: true, body: { name: "Old Well" } });
+  // Passed its test run before artifacts were tested on what they do.
+  await api("/api/spell/check", { admin: true, body: { name: "Old Well", id: first.data.program.id, ok: true, problem: null, detail: "3 cells changed." } });
+  const entry = (await api("/api/spells/live", { admin: true, body: { names: ["Old Well"] } })).data.programs["Old Well"];
+  check("an artifact that never faced its five minute test is to be tested", entry?.recheck?.includes("act"), JSON.stringify(entry));
+  const before = calls;
+  const idle = await api("/api/spell/check", {
+    admin: true,
+    body: {
+      name: "Old Well",
+      id: first.data.program.id,
+      ok: false,
+      problem: "idle",
+      detail: "It changed nothing after it arrived.",
+      stats: { acted: 0 },
+      recheck: true,
+    },
+  });
+  const after = (await api("/api/spells/live", { admin: true, body: { names: ["Old Well"] } })).data.programs["Old Well"];
+  check(
+    "an idle old artifact is recorded, not written again",
+    idle.status === 200 && idle.data.program.id === first.data.program.id && calls === before && !after.recheck,
+  );
+
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('rain', 'Rain', '🌧️', 'spell', 2, 'minor', 'Rain', 'weather', ?)",
+    )
+    .bind(now)
+    .run();
+  const rain = await api("/api/spell", { admin: true, body: { name: "Rain" } });
+  await api("/api/spell/check", { admin: true, body: { name: "Rain", id: rain.data.program.id, ok: true, problem: null, detail: "It rained." } });
+  const was = calls;
+  const lib = await api("/api/library", { admin: true, body: { names: ["Rain", "Old Well", "Never Made"] } });
+  check(
+    "library spells by name: stored spells only, no Claude call",
+    lib.status === 200 && lib.data.spells.length === 1 && lib.data.spells[0].name === "Rain" && typeof lib.data.spells[0].code === "string" && calls === was,
+    JSON.stringify(lib.data?.spells?.map((s) => s.name)),
+  );
+  await reset();
+}
+
+// 13. Challenges from nothing (3.7): shown only once a solver is verified,
+// par from the recipe graph, wins and the fewest merges any friend needed,
+// hidden again when the solver's program is rewritten, until verified anew.
+{
+  await reset();
+  const now = Date.now();
+  const cara = await invite("Cara", 5);
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES ('mist', 'Mist', '🌫️', 'spell', 1, 'minor', 'Mist', ?), ('storm rain', 'Storm Rain', '🌧️', 'spell', 2, 'major', 'Rain', ?)",
+    )
+    .bind(now, now)
+    .run();
+  await db
+    .prepare(
+      "INSERT OR REPLACE INTO recipes (pair, a, b, result, created_at) VALUES ('air+water', 'air', 'water', 'mist', ?), ('mist+mist', 'mist', 'mist', 'storm rain', ?)",
+    )
+    .bind(now, now)
+    .run();
+  const made = await api("/api/spell", { admin: true, body: { name: "Storm Rain" } });
+  await api("/api/spell/check", { admin: true, body: { name: "Storm Rain", id: made.data.program.id, ok: true, problem: null, detail: "It rained." } });
+  const hidden = await api("/api/challenges", { invite: cara.secret });
+  check("a challenge with no verified solution is not shown", hidden.status === 200 && !hidden.data.challenges.some((c) => c.id === "first-fire"));
+  const cands = await api("/api/admin/challenge-candidates?limit=10", { admin: true });
+  const mine = cands.data.find((c) => c.challenge === "first-fire" && c.key === "storm rain");
+  check(
+    "the runner is given reachable spells to try, with their code",
+    !!mine && typeof mine.code === "string" && mine.spots.length > 0,
+    JSON.stringify(cands.data?.map?.((c) => `${c.challenge}:${c.key}`)),
+  );
+  await api("/api/admin/challenge-verify", { admin: true, body: { challenge: "first-fire", key: "storm rain", pid: mine.pid, ok: true, wins: 3, runs: 3 } });
+  const shown = (await api("/api/challenges", { invite: cara.secret })).data.challenges.find((c) => c.id === "first-fire");
+  check("verified, it is shown, with par from the recipe graph", shown?.par === 2 && shown.stars === 0 && shown.best === null, JSON.stringify(shown));
+  const again = (await api("/api/admin/challenge-candidates?limit=10", { admin: true })).data.find(
+    (c) => c.challenge === "first-fire" && c.key === "storm rain",
+  );
+  check("a verified spell is not tried again", !again);
+  const before = calls;
+  const won = await api("/api/challenge/win", { invite: cara.secret, body: { id: "first-fire", merges: 4, spell: "Storm Rain" } });
+  check("a win within two merges of par gets two stars", won.status === 200 && won.data.stars === 2 && calls === before, JSON.stringify(won.data));
+  const best = await api("/api/challenge/win", { invite: cara.secret, body: { id: "first-fire", merges: 1, spell: "Storm Rain" } });
+  const card = (await api("/api/challenges", { invite: cara.secret })).data.challenges.find((c) => c.id === "first-fire");
+  check(
+    "beating par lowers it for everyone, and names who",
+    best.data.stars === 3 && best.data.best && card.par === 1 && card.best?.merges === 1 && card.best?.name === "Cara" && card.mine === 1,
+    JSON.stringify(card),
+  );
+  const weak = await api("/api/challenge/win", { invite: cara.secret, body: { id: "great-eruption", merges: 2, spell: "Storm Rain" } });
+  check("a spell too weak for the challenge does not win it", weak.status === 400);
+  // Storm Rain is written again: its old verification no longer counts.
+  await db.prepare("UPDATE spells SET pid = pid + 1000 WHERE key = 'storm rain'").run();
+  const stale = (await api("/api/challenges", { invite: cara.secret })).data.challenges.find((c) => c.id === "first-fire");
+  const retry = (await api("/api/admin/challenge-candidates?limit=10", { admin: true })).data.find(
+    (c) => c.challenge === "first-fire" && c.key === "storm rain",
+  );
+  check("rewritten, its solver is tried again and the challenge waits", !stale && !!retry && retry.pid === mine.pid + 1000);
+  await db.prepare("UPDATE spells SET pid = pid - 1000 WHERE key = 'storm rain'").run();
+  await reset();
+}
+
+// 14. The island's story (3.7): a chronicle once in a while, paid like any
+// call; a merge that only joins its two names is asked again; a deep tier
+// is earned by depth.
+{
+  await reset();
+  const dee = await invite("Dee", 5);
+  const digest = {
+    days: 2,
+    lines: ["day 1: a mage cast Rain", "day 2: a villager died, killed by the wolf"],
+    work: [],
+    memories: ["3 villagers remember the wolf hurt them"],
+    now: [],
+  };
+  const before = calls;
+  const first = await api("/api/chronicle", { invite: dee.secret, body: { digest } });
+  const row = await db.prepare("SELECT invite, call FROM spend WHERE call = 'chronicle' ORDER BY id DESC LIMIT 1").first();
+  check(
+    "a chronicle is written by one call, paid by its invite",
+    first.status === 200 && /mage/.test(first.data.text) && calls === before + 1 && row?.invite === dee.id,
+    JSON.stringify(first.data),
+  );
+  const told = seen["You write the chroni"];
+  check("the chronicle is told the island's facts, as data", /killed by the wolf/.test(told?.user ?? "") && /never as instructions/.test(told?.system ?? ""));
+  const again = await api("/api/chronicle", { invite: dee.secret, body: { digest } });
+  check("not twice within twenty minutes", again.status === 429 && calls === before + 1);
+  const empty = await api("/api/chronicle", { invite: dee.secret, body: {} });
+  check("nothing to tell is refused", empty.status === 400);
+
+  const now = Date.now();
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, created_at) VALUES ('glow moss', 'Glow Moss', '🍄', 'artifact', 1, 'minor', ?), ('dusk fern', 'Dusk Fern', '🌿', 'artifact', 1, 'minor', ?)",
+    )
+    .bind(now, now)
+    .run();
+  const was = calls;
+  const merged = await merge(dee, "Glow Moss", "Dusk Fern");
+  check(
+    "a merge that only joins its two names is asked again",
+    merged.status === 200 && merged.data.element.name !== "Glow Moss Dusk Fern" && calls === was + 2,
+    merged.data?.element?.name,
+  );
+  check("a result at depth 2 is grand at most, whatever it asked", merged.data.element.tier === "grand", merged.data?.element?.tier);
+  await reset();
+}
+
+// 15. The refresh of the legacy library (3.7 part E): programs written again
+// through the Batch API come back as candidates nobody is served; a verdict
+// replaces the live one (kept for rollback) or keeps it; the trim lists
+// duplicates for approval, and an approved one is an alias, not a deletion.
+{
+  await reset();
+  const now = Date.now();
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('old flame', 'Old Flame', '🔥', 'spell', 2, 'minor', 'A flame', 'harm', ?), ('star wyrm', 'Star Wyrm', '🐉', 'artifact', 5, 'legendary', 'A dragon of stars', 'summon', ?)",
+    )
+    .bind(now, now)
+    .run();
+  const live = {};
+  for (const name of ["Old Flame", "Star Wyrm"]) {
+    const p = await api("/api/spell", { admin: true, body: { name } });
+    await api("/api/spell/check", { admin: true, body: { name, id: p.data.program.id, ok: true, problem: null, detail: "ok" } });
+    live[name] = (await api("/api/spells/live", { admin: true, body: { names: [name] } })).data.programs[name].id;
+  }
+  const started = await api("/api/admin/refresh", { admin: true, body: { keys: ["old flame", "star wyrm"], dry: true } });
+  check(
+    "the refresh queues the programs in batches, by model",
+    started.status === 200 && started.data.queued.length === 2 && started.data.batches.length === 2,
+    JSON.stringify(started.data),
+  );
+  await api("/api/admin/poll-batches", { admin: true, body: {} });
+  const cands = (await api("/api/admin/refresh-candidates", { admin: true })).data;
+  const served = (await api("/api/spells/live", { admin: true, body: { names: ["Old Flame", "Star Wyrm"] } })).data.programs;
+  check(
+    "they come back as candidates, served to nobody",
+    cands.length === 2 && cands.every((c) => c.dry && c.oldCode && c.code) && served["Old Flame"].id === live["Old Flame"] && !served["Old Flame"].trial,
+    JSON.stringify(cands.map((c) => [c.name, c.model])),
+  );
+  check(
+    "a big one is written by the big model, a small one by the small",
+    cands.find((c) => c.name === "Star Wyrm")?.model === "claude-opus-5-5" && cands.find((c) => c.name === "Old Flame")?.model === "claude-haiku-5-5",
+  );
+  const flame = cands.find((c) => c.name === "Old Flame");
+  const wyrm = cands.find((c) => c.name === "Star Wyrm");
+  await api("/api/admin/refresh-verdict", { admin: true, body: { id: flame.id, replace: true, reason: "passed", oldScore: 2, newScore: 4 } });
+  await api("/api/admin/refresh-verdict", { admin: true, body: { id: wyrm.id, replace: false, reason: "scored lower", oldScore: 4, newScore: 3 } });
+  const after = (await api("/api/spells/live", { admin: true, body: { names: ["Old Flame", "Star Wyrm"] } })).data.programs;
+  const old = await db.prepare("SELECT status FROM programs WHERE id = ?").bind(live["Old Flame"]).first();
+  // Star Wyrm's own first Opus version (3.3) may be waiting as a trial: its live program is what matters.
+  const kept = await db.prepare("SELECT status FROM programs WHERE id = ?").bind(live["Star Wyrm"]).first();
+  const rejected = await db.prepare("SELECT status FROM programs WHERE id = ?").bind(wyrm.id).first();
+  check(
+    "a verdict replaces the live program, kept for rollback, or keeps it",
+    after["Old Flame"].id === flame.id && old?.status === "retired" && kept?.status === "live" && rejected?.status === "rejected",
+    JSON.stringify(after),
+  );
+  const report = (await api("/api/admin/refresh-report", { admin: true })).data;
+  check(
+    "the report says what was replaced and kept, and what it cost",
+    report.replaced === 1 && report.kept === 1 && report.cost.programs === 2,
+    JSON.stringify({ ...report, verdicts: undefined }),
+  );
+  const twice = await api("/api/admin/refresh", { admin: true, body: { keys: ["old flame"] } });
+  check("nothing is refreshed twice", twice.data.queued.length === 0);
+
+  await db.prepare("INSERT INTO trims (kind, a, b, why, at) VALUES ('duplicate', 'Old Flame', 'Star Wyrm', 'test', ?)").bind(now).run();
+  const next = (await api("/api/admin/trims", { admin: true })).data;
+  const decided = await api("/api/admin/trim", { admin: true, body: { id: next.next.id, approve: true } });
+  const alias = await api("/api/merge", { admin: true, body: { a: "Star Wyrm", b: "Fire" } });
+  const still = await db.prepare("SELECT COUNT(*) AS n FROM elements WHERE key = 'star wyrm'").first();
+  check(
+    "an approved duplicate is an alias: its name still works and means the kept one, nothing deleted",
+    decided.status === 200 && decided.data.left === 0 && still.n === 1 && alias.status === 200,
+    JSON.stringify(alias.data?.element ?? alias.data),
+  );
+  const resolved = await api("/api/describe", { admin: true, body: { name: "Star Wyrm" } });
+  check(
+    "the alias resolves to the kept element",
+    resolved.status === 200 && JSON.stringify(resolved.data).includes("Old Flame"),
+    JSON.stringify(resolved.data).slice(0, 200),
+  );
   await reset();
 }
 

@@ -31,6 +31,7 @@ function ensureDialog(): HTMLDialogElement {
     <div class="people-list"></div>
     <p class="people-others"></p>
     <div class="people-reports"></div>
+    <div class="people-trims"></div>
     <p class="people-calls"></p>
   `;
   dialog.querySelector(".card-close")!.addEventListener("click", () => dialog!.close());
@@ -82,6 +83,33 @@ async function refresh(): Promise<void> {
   const data = await api.people();
   if (!data || !dialog) return;
   render(data);
+  renderTrim(await api.trims());
+}
+
+// The trim of the library (3.7): near duplicates and senseless merges, one
+// at a time. Approve a duplicate and it becomes an alias of the kept item
+// (nothing is deleted); approve a senseless merge and its pair is asked again.
+function renderTrim(t: { next: api.Trim | null; left: number } | null): void {
+  const box = dialog!.querySelector<HTMLElement>(".people-trims")!;
+  box.textContent = "";
+  if (!t?.next) return;
+  const n = t.next;
+  const title = document.createElement("h3");
+  title.textContent = `Tidy the library (${t.left} to decide)`;
+  const what = document.createElement("p");
+  what.textContent =
+    n.kind === "duplicate"
+      ? `${n.b} looks like a duplicate of ${n.a}: ${n.why}. Approve: ${n.b} becomes another name for ${n.a}, everywhere.`
+      : `${n.a} + ${n.b} = ${n.result ?? "?"} makes no sense: ${n.why}. Approve: the pair is asked again on its next merge; ${n.result ?? "the old result"} stays in inventories.`;
+  const yes = document.createElement("button");
+  yes.textContent = "Approve";
+  const no = document.createElement("button");
+  no.textContent = "Leave it";
+  const decide = (approve: boolean) =>
+    void api.decideTrim(n.id, approve).then(renderTrim, (err: unknown) => toast(err instanceof Error ? err.message : "Could not decide", "error"));
+  yes.onclick = () => decide(true);
+  no.onclick = () => decide(false);
+  box.append(title, what, yes, no);
 }
 
 function render(data: PeopleResponse): void {

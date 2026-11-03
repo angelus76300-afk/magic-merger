@@ -1,3 +1,4 @@
+import type { Tier } from "../shared/tiers";
 import type { FeedbackAction, FeedbackResponse } from "../shared/feedback";
 import type {
   ApiError,
@@ -132,6 +133,11 @@ export function checkSpell(result: CheckRequest): Promise<SpellResponse> {
 }
 
 // Which program each of these elements has now (rewrites, rollbacks).
+// Spells from the shared library by name (3.7), for creatures and artifacts that cast them. Free.
+export function libraryPrograms(names: string[]): Promise<{ spells: { key: string; name: string; tier: Tier; code: string; intents: string[] }[] }> {
+  return post("/api/library", { names });
+}
+
 export function livePrograms(names: string[]): Promise<LiveResponse> {
   return post<LiveResponse>("/api/spells/live", { names });
 }
@@ -258,4 +264,57 @@ function authHeaders(): Record<string, string> {
   if (token) headers["x-access-token"] = token;
   if (invite) headers["x-invite"] = invite;
   return headers;
+}
+
+// 3.7: challenges from nothing.
+export interface ChallengeCard {
+  id: string;
+  title: string;
+  brief: string;
+  start: string[];
+  minTier: Tier | null;
+  live: boolean;
+  par: number | null;
+  best: { merges: number; name: string } | null;
+  mine: number | null;
+  stars: number;
+}
+
+export async function challenges(): Promise<{ challenges: ChallengeCard[] }> {
+  const res = await fetch("/api/challenges", { headers: authHeaders() }).catch(() => null);
+  if (!res?.ok) throw new ApiRequestError("The challenges could not be loaded");
+  return res.json();
+}
+
+export function challengeWin(id: string, merges: number, spell: string): Promise<{ stars: number; par: number | null; best: boolean }> {
+  return post("/api/challenge/win", { id, merges, spell });
+}
+
+// 3.7: the island's chronicle, written once a session (about $0.002).
+export function chronicle(digest: unknown): Promise<{ text: string; mock: boolean }> {
+  return post("/api/chronicle", { digest });
+}
+
+// 3.7: the trim of the library, for the admin, one pair at a time.
+export interface Trim {
+  id: number;
+  kind: "duplicate" | "senseless";
+  a: string;
+  b: string;
+  result: string | null;
+  why: string;
+  status: string;
+}
+
+export async function trims(): Promise<{ next: Trim | null; left: number } | null> {
+  try {
+    const res = await fetch("/api/admin/trims", { headers: authHeaders() });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function decideTrim(id: number, approve: boolean): Promise<{ next: Trim | null; left: number }> {
+  return post("/api/admin/trim", { id, approve });
 }

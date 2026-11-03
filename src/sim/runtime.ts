@@ -1,11 +1,13 @@
 import { guardLoops } from "../../shared/spellcode";
-import { TIER_REACH, type Tier } from "../../shared/tiers";
+import { parseIntents } from "../../shared/promises";
+import { TIERS, TIER_REACH, type Tier } from "../../shared/tiers";
+import { artDeed, artifactState, isArtifact, type Artifact } from "./artifacts";
 import { BUILTIN_KINDS, KINDS, hostile, kindOf, makeCreature, maxHp, shieldedCreature, type Behavior, type Creature, type CreatureKind } from "./creatures";
-import { bodyFrom } from "./body";
+import { bodyFrom, stillModelColor } from "./body";
 import { NATIVE_NAMES } from "./wildlife";
 import { goalFrom, goalFromBehavior, goalFromName } from "./goals";
 import { abilitiesFrom, abilitiesFromName } from "./abilities";
-import { CUSTOM_GOALS, LOADS, TRIGGERS, mindOf, remember, type AbilitySpec, type Load, type Trigger } from "./kin";
+import { CUSTOM_GOALS, LOADS, TRIGGERS, mindOf, remember, tell, type AbilitySpec, type Load, type Trigger } from "./kin";
 import { BUILTIN, C, F, G, LAYERS, type Layer } from "./materials";
 import { valueNoise } from "./noise";
 import { addGas } from "./cells";
@@ -39,11 +41,14 @@ export interface CastRequest {
   code: string;
   // What it promises (shared/promises.ts), for its test run. The runtime ignores it.
   intents?: string[];
+  // An artifact faces the five minute test in its test run (3.7).
+  kind?: "spell" | "artifact";
 }
 
 interface SpellObject {
   materials?: unknown[];
   creatures?: unknown[];
+  artifacts?: unknown[];
   goals?: unknown[];
   cast?: (w: SpellApi) => Iterator<unknown>;
 }
@@ -61,9 +66,15 @@ interface ActiveCast {
   wait: number;
   slowTicks: number;
   done: boolean;
+  // Cast by a creature or an artifact from the shared library (3.7).
+  library?: boolean;
 }
 
 export type ErrorReporter = (key: string, name: string, message: string) => void;
+
+// Library spells cast by creatures and artifacts, island wide (3.7).
+const LIBRARY_EVERY = 4;
+const LIBRARY_AT_ONCE = 2;
 
 // What spells may ask of the camera, whatever kind of view draws the world.
 export interface CameraControl {
@@ -140,7 +151,87 @@ export class Runtime {
   constructor(
     readonly world: World,
     private report: ErrorReporter,
-  ) {}
+  ) {
+    world.magic = {
+      run: (a, fn, target) => this.runArtifact(a, fn, target),
+      cast: (name, x, y, cap, by, enemy) => this.castLibrary(name, x, y, cap, by, enemy),
+    };
+  }
+
+  // Spells from the shared library, by name (3.7): what creatures and
+  // artifacts cast. The page sends the ones its world names; the spells this
+  // world has compiled are in it too.
+  private library = new Map<string, CastRequest>();
+  private lastLibrary = -1e9;
+  // The last library spells cast, for tests and the story.
+  readonly libraryLog: { name: string; tier: Tier; by: string; t: number }[] = [];
+  // Names asked for and not known: the page fetches them (frame.ts).
+  readonly wanted = new Set<string>();
+  setLibrary(list: CastRequest[]): void {
+    for (const r of list) if (r && typeof r.name === "string" && typeof r.code === "string") this.library.set(r.name.toLowerCase(), r);
+  }
+  knows(name: string): boolean {
+    return this.library.has(name.toLowerCase());
+  }
+
+  // A library spell cast by a creature or an artifact: at most at its cap
+  // (minor for creatures, major for artifacts, never above the spell's own
+  // tier), one every four seconds and two at once on the whole island, never
+  // pulling the camera; a spell that harms only at an enemy.
+  castLibrary(name: string, x: number, y: number, cap: Tier, by: string, enemy = false): boolean {
+    const req = this.library.get(String(name).toLowerCase());
+    if (!req) {
+      if (this.wanted.size < 20) this.wanted.add(String(name).slice(0, 60));
+      return false;
+    }
+    // A spell that harms is aimed at an enemy, never at the caster's feet.
+    if (!enemy && parseIntents(req.intents).includes("harm")) return false;
+    if (this.world.time - this.lastLibrary < LIBRARY_EVERY) return false;
+    if (this.casts.filter((c) => c.library && !c.done).length >= LIBRARY_AT_ONCE) return false;
+    const tier = TIERS.indexOf(req.tier) <= TIERS.indexOf(cap) ? req.tier : cap;
+    if (!this.cast({ ...req, tier }, x, y, true)) return false;
+    this.lastLibrary = this.world.time;
+    this.libraryLog.push({ name: req.name, tier, by: by.split("#")[0], t: this.world.time });
+    if (this.libraryLog.length > 20) this.libraryLog.shift();
+    tell(this.world, `the ${by.split("#")[0]} cast ${req.name}`);
+    return true;
+  }
+
+  // An artifact's own code, through the World API like a creature's tick.
+  readonly artFns = new Map<string, (self: ArtifactHandle, w: SpellApi, target: CreatureHandle | null) => unknown>();
+  // What spell.artifacts declares, by "key|name", so w.artifact(x, y, "Well") finds it.
+  readonly artDefs = new Map<string, Record<string, unknown>>();
+  private reqs = new Map<string, CastRequest>();
+  // The functions of an artifact's effects and pairs, by the index its state gives them.
+  keepArtifactCode(key: string, name: string, o: Record<string, unknown>): void {
+    for (const [field, prefix] of [
+      ["effects", "effect"],
+      ["pairs", "pair"],
+    ] as const)
+      (Array.isArray(o[field]) ? (o[field] as unknown[]) : []).forEach((raw, n) => {
+        const act = raw && typeof raw === "object" ? (raw as Record<string, unknown>).act : null;
+        if (typeof act === "function")
+          this.artFns.set(`${key}|${name}|${prefix}:${n}`, act as (self: ArtifactHandle, w: SpellApi, t: CreatureHandle | null) => unknown);
+      });
+  }
+
+  private runArtifact(a: Artifact, fn: string, target: Creature | null): boolean {
+    const f = this.artFns.get(`${a.art.key}|${a.name.toLowerCase()}|${fn}`);
+    const req = this.reqs.get(a.art.key);
+    if (!f || !req) return false;
+    const ruleKey = `artifact:${a.art.key}|${a.name}|${fn}`;
+    if (this.brokenRules.has(ruleKey)) return false;
+    let done = false;
+    this.run(
+      req.key,
+      req.name,
+      () => {
+        done = f(new ArtifactHandle(a, this.world), this.ruleApi(req), target ? new CreatureHandle(target, this, req.key) : null) !== false;
+      },
+      () => this.brokenRules.add(ruleKey),
+    );
+    return done;
+  }
 
   // Compiles a program, once per code version. Throws on a broken program.
   compile(req: CastRequest): Compiled {
@@ -229,6 +320,15 @@ export class Runtime {
       this.brokenRules.delete(ruleKey);
       this.owners.set(ruleKey, req.key);
     }
+    // Artifacts it declares (3.7): placed by name, their code kept across a reload.
+    this.reqs.set(req.key, req);
+    for (const raw of Array.isArray(spell.artifacts) ? spell.artifacts : []) {
+      const a = raw as Record<string, unknown>;
+      if (!a || typeof a.name !== "string") continue;
+      const name = a.name.toLowerCase().slice(0, 40);
+      this.artDefs.set(`${req.key}|${name}`, a);
+      this.keepArtifactCode(req.key, name, a);
+    }
     const creatures = (Array.isArray(spell.creatures) ? spell.creatures : []).filter(
       (raw): raw is Record<string, unknown> => !!raw && typeof (raw as Record<string, unknown>).name === "string",
     );
@@ -253,7 +353,7 @@ export class Runtime {
         speed: num(k.speed, 0, 20, base.speed),
         hp: num(k.hp, 1, 2000, base.hp),
         radius: num(k.radius, 0.3, 6, base.radius),
-        color: toColor(k.color) ?? base.color,
+        color: toColor(k.color) ?? stillModelColor(k) ?? base.color,
         flying: typeof k.flying === "boolean" ? k.flying : base.flying,
         fireproof: typeof k.fireproof === "boolean" ? k.fireproof : base.fireproof,
         swims: typeof k.swims === "boolean" ? k.swims : base.swims,
@@ -329,7 +429,7 @@ export class Runtime {
     return out;
   }
 
-  cast(req: CastRequest, x: number, y: number): boolean {
+  cast(req: CastRequest, x: number, y: number, library = false): boolean {
     let compiled: Compiled;
     try {
       compiled = this.compile(req);
@@ -339,7 +439,7 @@ export class Runtime {
     }
     const id = this.nextCast++;
     const api = new SpellApi(this, req, id, x, y);
-    const active: ActiveCast = { id, key: req.key, name: req.name, gen: null, wait: 0, slowTicks: 0, done: false };
+    const active: ActiveCast = { id, key: req.key, name: req.name, gen: null, wait: 0, slowTicks: 0, done: false, library };
     this.run(req.key, req.name, () => {
       active.gen = compiled.spell.cast!.call(compiled.spell, api);
     });
@@ -349,7 +449,7 @@ export class Runtime {
     }
     // Big spells get the camera pulled back to show them whole.
     const r = api.r;
-    if (this.camera && r * 1.2 > this.camera.visibleRadius()) {
+    if (!library && this.camera && r * 1.2 > this.camera.visibleRadius()) {
       this.camera.focus(x, y, r * 1.15, 0.8, this.world.time);
     }
     this.casts.push(active);
@@ -754,6 +854,48 @@ function colorOr(v: unknown, fallback: number): number {
 function colorList(v: unknown, fallback: number[]): number[] {
   const list = (Array.isArray(v) ? v : v === undefined ? [] : [v]).map(toColor).filter((c): c is number => c !== null);
   return list.length ? list.slice(0, 12) : fallback;
+}
+
+// An artifact as a spell sees it (3.7): where it is, its state, its deeds.
+export class ArtifactHandle {
+  constructor(
+    readonly raw: Artifact,
+    private world: World,
+  ) {}
+  get x() {
+    return this.raw.x;
+  }
+  get y() {
+    return this.raw.y;
+  }
+  get name() {
+    return this.raw.name;
+  }
+  get charges() {
+    return this.raw.art.charges;
+  }
+  set charges(v: number | null) {
+    if (typeof v === "number" && Number.isFinite(v)) this.raw.art.charges = Math.max(0, Math.min(99, v));
+  }
+  get fuel() {
+    return this.raw.art.fuel;
+  }
+  set fuel(v: number | null) {
+    if (typeof v === "number" && Number.isFinite(v)) this.raw.art.fuel = Math.max(0, Math.min(3600, v));
+  }
+  get health() {
+    return this.raw.art.health;
+  }
+  set health(v: number | null) {
+    if (typeof v === "number" && Number.isFinite(v)) this.raw.art.health = Math.max(0, Math.min(2000, v));
+  }
+  get deeds() {
+    return this.raw.art.deeds;
+  }
+  // Counts something it changed, for the five minute test and the card.
+  did(what: string) {
+    artDeed(this.world, this.raw, String(what).slice(0, 60));
+  }
 }
 
 // A creature as a spell sees it.
@@ -1522,6 +1664,47 @@ export class SpellApi {
       power: num(o.power, 0, 10, 1),
     };
     w.landmarks.push(l);
+  }
+
+  // An artifact that acts (3.7): a landmark with a life of its own. Its look
+  // is built apart, like a landmark's. o is what spell.artifacts declared
+  // under this name, or the options themselves:
+  //   { name, radius, color, lures, scares, aura, power,
+  //     charges, recharge, fuel, health, onBreak,
+  //     effects: [{ when, every, do, radius, cost, act(self, w, target) }],
+  //     grants: [{ what, to, cost }], uses: [{ do, by }],
+  //     pairs: [{ with, within, do, once, every, act(self, w, other) }] }
+  artifact(x: number, y: number, o: Record<string, unknown> | string = {}) {
+    const w = this.rt.world;
+    if (!this.inside(x, y) || w.landmarks.length >= 60) return null;
+    const asked = typeof o === "string" ? { name: o } : o && typeof o === "object" ? o : {};
+    const name = (typeof asked.name === "string" ? asked.name : this.req.name).slice(0, 40);
+    const def = this.rt.artDefs.get(`${this.req.key}|${name.toLowerCase()}`) ?? {};
+    const all: Record<string, unknown> = { ...def, ...asked };
+    if (!this.rt.artDefs.has(`${this.req.key}|${name.toLowerCase()}`)) this.rt.keepArtifactCode(this.req.key, name.toLowerCase(), all);
+    const aura = ["heal", "fear", "calm", "sleep", "burn", "freeze", "hurt"].includes(all.aura as string) ? (all.aura as string) : null;
+    const radius = num(all.radius, 1, 40, 6);
+    const a: Artifact = {
+      x: Math.round(x),
+      y: Math.round(y),
+      name,
+      lures: strings(all.lures),
+      scares: strings(all.scares),
+      taken: false,
+      color: colorOr(all.color, 0xffd36a),
+      radius,
+      aura,
+      power: num(all.power, 0, 10, 1),
+      art: artifactState(all, this.req.key, this.req.tier, w.time, radius),
+    };
+    w.landmarks.push(a);
+    return new ArtifactHandle(a, w);
+  }
+
+  // Artifacts on the island (3.7), near a point.
+  artifacts(x: number, y: number, r: number) {
+    const w = this.rt.world;
+    return w.landmarks.filter((l): l is Artifact => isArtifact(l) && Math.hypot(l.x - x, l.y - y) <= r).map((a) => new ArtifactHandle(a, w));
   }
 
   // Lightning from the sky to a cell: strikes the highest thing there (a

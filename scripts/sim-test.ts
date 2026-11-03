@@ -7,10 +7,10 @@ import { join } from "node:path";
 import { availableParallelism } from "node:os";
 import { Worker } from "node:worker_threads";
 import { guardLoops } from "../shared/spellcode";
-import { KINDS, makeCreature, populate } from "../src/sim/creatures";
+import { KINDS, makeCreature, populate, resetCreatureIds } from "../src/sim/creatures";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
-import { logDeeds, mindOf } from "../src/sim/kin";
+import { logDeeds, mindOf, remember } from "../src/sim/kin";
 import { C, F } from "../src/sim/materials";
 import { Runtime } from "../src/sim/runtime";
 import { loadWorld, saveWorld } from "../src/sim/save";
@@ -19,16 +19,25 @@ import { generateWorld, type World } from "../src/sim/world";
 import { VK, floats, voxelKind } from "../src/sim/voxels";
 import { keyCell } from "../src/sim/voxelkey";
 import { SOLUTIONS, replay, seed, step } from "./challenge-replay";
+import { CHALLENGES, fewestMerges, parOf, starsFor, strongEnough } from "../shared/challenges";
+import { chronicleDigest } from "../src/sim/chronicle";
+import { readDigest } from "../shared/chronicle";
+import { capByDepth } from "../shared/tiers";
+import { joinsBoth } from "../worker/prompts";
 import type { Job } from "./challenge-worker";
 import { runCheck, type SceneReport } from "../src/sim/check";
 import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../shared/votes";
 import { pickExamples, words } from "../worker/programs";
 import { verdict, type LinkedPull } from "../worker/feedback";
 import { helperProblem, withLibrary } from "../worker/evolve";
-import { body, bodyFrom, FEATURES, ITEMS, MAX_MODEL_BOXES, modelOf, PLANS } from "../src/sim/body";
+import { body, bodyFrom, BUILDS, EXTRA, FEATURES, ITEMS, MAX_MODEL_BOXES, modelOf, planOfModel, PLANS, stillModelColor } from "../src/sim/body";
+import type { BodySpec, Feature, ModelBox } from "../src/sim/body";
+import { sharedFaces } from "../src/sim/voxel/faces";
+import { MODELS } from "../src/sim/voxel/models";
+import { easeGround, walkGround, type Footing } from "../src/sim/voxel/walk";
 import { names } from "../src/sim/social";
 import { AGES, JOBS, packLook, unpackLook, type Job as Job3 } from "../src/sim/villagers";
-import { buildRig, type Rig } from "../src/sim/voxel/rigs";
+import { buildRig, drawScale, HOUSE_HEIGHT, MAX_HEIGHT, villagerUnits, type Rig } from "../src/sim/voxel/rigs";
 import { SPECIES } from "../src/sim/wildlife";
 
 // Challenges with nothing cast, over several seeds: one seed can pass by
@@ -42,18 +51,37 @@ const SCENE_STREAMS = 3;
 const SCENE_SECONDS = 600;
 const idle: Job[] = [
   ...Array.from({ length: SCENE_STREAMS }, (_, n) => ({ scene: n, seconds: SCENE_SECONDS })),
+  // 3.7: every challenge solved in the simulation by the plain solution of its hazard.
+  ...CHALLENGES.map((c) => ({ challenge: c.id })),
   ...SCENARIOS.flatMap((s) => Array.from({ length: SEEDS }, (_, n) => ({ id: s.id, seed: (n + 1) * 7919, magic: false }))),
 ];
 const idleResults = new Map<string, { status: string; errors: string[] }[]>();
 const sceneReports: { stream: number; report: SceneReport }[] = [];
+const verifiedChallenges = new Map<string, { ok: boolean; wins: number; runs: number }>();
 const nextIdle = new Int32Array(new SharedArrayBuffer(4));
 const idleDone = Promise.all(
   Array.from({ length: Math.min(4, Math.max(2, availableParallelism() - 1)) }, () => {
     const worker = new Worker(new URL("./challenge-worker.mjs", import.meta.url), { workerData: { jobs: idle, next: nextIdle } });
-    worker.on("message", ({ job, status, errors, report }: { job: Job; status: string; errors: string[]; report?: SceneReport }) => {
-      if (report && "scene" in job) sceneReports.push({ stream: job.scene, report });
-      else if ("id" in job) idleResults.set(job.id, [...(idleResults.get(job.id) ?? []), { status, errors }]);
-    });
+    worker.on(
+      "message",
+      ({
+        job,
+        status,
+        errors,
+        report,
+        verified,
+      }: {
+        job: Job;
+        status: string;
+        errors: string[];
+        report?: SceneReport;
+        verified?: { ok: boolean; wins: number; runs: number };
+      }) => {
+        if (verified && "challenge" in job) verifiedChallenges.set(job.challenge, verified);
+        else if (report && "scene" in job) sceneReports.push({ stream: job.scene, report });
+        else if ("id" in job) idleResults.set(job.id, [...(idleResults.get(job.id) ?? []), { status, errors }]);
+      },
+    );
     return new Promise<void>((resolve, reject) => {
       worker.on("error", reject);
       worker.on("exit", () => resolve());
@@ -221,10 +249,166 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   );
 }
 
+// 3.7 part B: artifacts that act, and creatures that cast library spells.
+{
+  const art = (f: string) => readFileSync(`lab/artifacts/${f}.js`, "utf8");
+  const t0 = performance.now();
+  const well = runCheck({ key: "well", name: "Well", tier: "minor", code: art("well"), kind: "artifact" });
+  check("a well passes its five minute test", well.ok && (well.stats.acted ?? 0) > 0, `${well.detail} (${Math.round(performance.now() - t0)} ms)`);
+  const statue = runCheck({ key: "statue", name: "Statue", tier: "minor", code: art("statue"), kind: "artifact" });
+  check("a statue that only stands there fails it", !statue.ok && statue.problem === "idle", statue.problem ?? "passed");
+  const spellCheck = runCheck({ key: "statue", name: "Statue", tier: "minor", code: art("statue") });
+  check("a spell does not face the artifact's test", spellCheck.ok && spellCheck.stats.acted === undefined, spellCheck.detail);
+  const forge = runCheck({ key: "forge", name: "Forge", tier: "major", code: art("forge"), kind: "artifact" });
+  check("villagers arm themselves at a forge", forge.ok && forge.detail.includes("armed"), forge.detail);
+  const feather = runCheck({ key: "feather", name: "Phoenix Feather", tier: "minor", code: art("phoenix-feather"), kind: "artifact" });
+  check("a phoenix feather near a corpse revives it, once", feather.ok && feather.detail.includes("brought the dead back to life"), feather.detail);
+
+  // A world of its own for the rest: a drought, library spells, saving.
+  seed(12);
+  const world = generateWorld(112, 112, 6);
+  populate(world);
+  const errors: string[] = [];
+  const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
+  const rain = readFileSync("lab/solutions/rain.js", "utf8");
+  const fireball = readFileSync("lab/spells/fireball.js", "utf8");
+  rt.setLibrary([
+    { key: "rain", name: "Rain", tier: "grand", code: rain },
+    { key: "fireball", name: "Fireball", tier: "major", code: fireball, intents: ["harm"] },
+  ]);
+  const v = world.creatures.find((c) => c.kind === "villager")!;
+  const tx = Math.round(v.homeX + 8);
+  const ty = Math.round(v.homeY + 8);
+  for (let dy = -14; dy <= 14; dy++)
+    for (let dx = -14; dx <= 14; dx++) {
+      const i = world.idx(Math.max(0, Math.min(111, tx + dx)), Math.max(0, Math.min(111, ty + dy)));
+      if (world.cover[i] === C.HOUSE || world.depth[i] > 0.3) continue;
+      world.ground[i] = 2; // sand: a drought
+      if (world.cover[i] !== C.NONE) world.setCover(i, C.NONE);
+    }
+  rt.cast({ key: "totem", name: "Rain Totem", tier: "major", code: art("rain-totem") }, tx, ty);
+  // Fire imps that cast Fireball on whatever comes near: a hunter set on them.
+  const imps = `const spell = {
+    creatures: [
+      { name: "fire imp", base: "beast", color: "#d0541a", hp: 2000, abilities: [{ do: "cast", spell: "Fireball", when: "enemy near", every: 20 }] },
+      { name: "imp hunter", base: "beast", color: "#303030", behavior: "hunt", prey: ["fire imp", "villager"], attack: 1, hp: 5000, sense: 40 },
+    ],
+    *cast(w) { for (let k = 0; k < 4; k++) w.spawn("fire imp", w.x + k, w.y); w.spawn("imp hunter", w.x, w.y + 3); },
+  };`;
+  rt.cast({ key: "imps", name: "Imps", tier: "minor", code: imps }, v.homeX - 12, v.homeY);
+  for (let k = 0; k < 30 * 40; k++) step(world, rt);
+  const totem = world.landmarks.find((l) => (l as { art?: { did: string[] } }).art && l.name === "Rain Totem") as
+    | { art: { did: string[]; deeds: number } }
+    | undefined;
+  const log = rt.libraryLog;
+  const byTotem = log.filter((e) => e.by === "Rain Totem");
+  const byImps = log.filter((e) => e.by === "fire imp");
+  check(
+    "a rain totem casts Rain from the library in a drought, at major at most",
+    !!totem && byTotem.length >= 1 && byTotem.every((e) => e.tier === "major") && totem.art.did.includes("cast a spell"),
+    `${byTotem.length} casts, tiers ${byTotem.map((e) => e.tier).join(",")}, did ${totem?.art.did.join("; ")}`,
+  );
+  const gaps = byImps.slice(1).map((e, n) => e.t - byImps[n].t);
+  check(
+    "creatures cast library spells by name, at minor and a capped rate",
+    byImps.length >= 2 && byImps.every((e) => e.tier === "minor") && gaps.every((g) => g >= 4 - 1e-6) && byImps.length <= 4 * 2 + 1 && !errors.length,
+    `${byImps.length} Fireballs in 40 s by 4 imps, at ${[...new Set(byImps.map((e) => e.tier))].join(",")}, gaps ${gaps.map((g) => g.toFixed(1)).join(",")}${errors[0] ? `, ${errors[0]}` : ""}`,
+  );
+  const unknown = rt.castLibrary("No Such Spell", tx, ty, "minor", "test");
+  check("an unknown library spell is asked for, not invented", !unknown && rt.wanted.has("No Such Spell"));
+  const back = loadWorld(JSON.parse(JSON.stringify(saveWorld(world, new Map()))), () => {});
+  const backTotem = back?.landmarks.find((l) => l.name === "Rain Totem") as { art?: { effects: unknown[]; deeds: number } } | undefined;
+  check("an artifact's state is saved with the world", !!backTotem?.art && backTotem.art.effects.length === 2 && backTotem.art.deeds === totem?.art.deeds);
+}
+
+// 3.7 part C: challenges from nothing. Par counts distinct merges (one
+// made once serves every later use), stars follow par, and every challenge
+// is solved in the simulation by the plain solution of its hazard, cast at
+// one of its spots, on two seeds of three.
+{
+  const graph = [
+    { a: "a", b: "b", result: "c" },
+    { a: "a", b: "c", result: "d" },
+    { a: "b", b: "c", result: "e" },
+    { a: "d", b: "e", result: "f" },
+    { a: "a", b: "a", result: "g" },
+    { a: "g", b: "g", result: "f" },
+  ];
+  const best = fewestMerges(graph, ["a", "b"]);
+  check(
+    "par counts each merge once, however often its result is used",
+    best.get("f")?.size === 2 && best.get("e")?.size === 2,
+    `f in ${best.get("f")?.size}, e in ${best.get("e")?.size}`,
+  );
+  check("an item the start set cannot reach has no par", !fewestMerges(graph, ["b"]).has("f"));
+  check("beating par lowers it", parOf(graph, ["a", "b"], ["e"], 1).par === 1 && parOf(graph, ["a", "b"], ["e"], 5).par === 2);
+  check("three stars at par, two within two, one for any win", starsFor(4, 4) === 3 && starsFor(3, 4) === 3 && starsFor(6, 4) === 2 && starsFor(7, 4) === 1);
+  check(
+    "a challenge that asks for grand magic refuses a major spell",
+    !strongEnough(CHALLENGES.find((d) => d.minTier)!, "major") && strongEnough(CHALLENGES.find((d) => d.minTier)!, "grand"),
+  );
+}
+
+// 3.7 part D: the island's story. What happens is told in lines (the same
+// line counted again), everyday work counted, villagers' memories gathered;
+// the digest is what the chronicle is written from, bounded on the way back.
+{
+  seed(21);
+  const world = generateWorld(112, 112, 8);
+  populate(world);
+  const rt = new Runtime(world, () => {});
+  rt.cast(
+    {
+      key: "imps",
+      name: "Imps",
+      tier: "minor",
+      code: `const spell = { creatures: [{ name: "imp", base: "beast", behavior: "hunt", prey: ["villager"], attack: 60, sense: 40, hp: 2000, speed: 6 }], *cast(w) { const v = w.creatures().filter((c) => c.kind === "villager")[0]; for (let k = 0; k < 3; k++) w.spawn("imp", v.x + 2, v.y + 2); } };`,
+    },
+    56,
+    56,
+  );
+  for (let k = 0; k < 30 * 60; k++) step(world, rt);
+  // What the survivors remember (that harm is remembered at all is a 3.6 check).
+  const alive = world.creatures.filter((c) => c.kind === "villager" && !c.dead).slice(0, 3);
+  for (const c of alive) remember(c, "imp", -2);
+  const d = chronicleDigest(world);
+  const killed = d.lines.find((l) => /a villager died, killed by the imp/.test(l));
+  check("the story tells who died and what killed them", !!killed, d.lines.slice(-4).join(" | "));
+  check("everyday work is counted, not told", d.work.length > 0 && !d.lines.some((l) => /grazed|harvested|picked/.test(l)), d.work.slice(0, 3).join(", "));
+  check(
+    "villagers' memories are gathered",
+    d.memories.some((m) => m === `${alive.length} villagers remember the imp hurt them`),
+    d.memories.join("; "),
+  );
+  const back = loadWorld(JSON.parse(JSON.stringify(saveWorld(world, new Map()))), () => {});
+  check("the story is saved with the world", back?.story.length === world.story.length && back.story.length <= 60);
+  const forged = readDigest({ days: 1e9, lines: ["x".repeat(500), 3, "ok"], work: "no", memories: [], now: [] });
+  check(
+    "a digest from the sandbox is bounded",
+    !!forged && forged.days === 10000 && forged.lines.length === 2 && forged.lines[0].length === 160 && forged.work.length === 0,
+  );
+  check(
+    "a tier is earned by depth: cosmic from seven merges, legendary from three",
+    capByDepth("cosmic", 2) === "grand" &&
+      capByDepth("cosmic", 3) === "legendary" &&
+      capByDepth("cosmic", 7) === "cosmic" &&
+      capByDepth("cantrip", 12) === "cantrip",
+  );
+  check(
+    "a name that only joins its two inputs is caught",
+    joinsBoth("Fire Water", "Fire", "Water") &&
+      joinsBoth("Super Fire Water", "Fire", "Water") &&
+      !joinsBoth("Steam", "Fire", "Water") &&
+      !joinsBoth("Fire Storm", "Fire", "Fire"),
+  );
+}
+
 // 6. Declared rules: a blight spreads and burns away, wolves hunt, the
-// undead burn by day.
+// undead burn by day. Creature ids start afresh, so what earlier sections
+// spawned does not change this one (3.7).
 {
   seed(3);
+  resetCreatureIds();
   const world = generateWorld(112, 112, 4);
   populate(world);
   const errors: string[] = [];
@@ -426,8 +610,21 @@ for (const { stream, report: r } of sceneReports.sort((a, b) => a.stream - b.str
     (r.marks.hoard ?? 0) > 0 && (r.marks.den ?? 0) > 0 && (r.marks.offerings ?? 0) > 0,
     `${JSON.stringify(r.marks)}, tick ${r.meanTickMs} ms mean, ${r.worstTickMs} ms worst`,
   );
+  check(
+    `five minute scene, stream ${stream}: every placed artifact changed something`,
+    r.artifacts.length >= 2 && r.artifacts.every((a) => a.deeds > 0),
+    r.artifacts.map((a) => `${a.name} ${a.deeds} (${a.did.join(", ")})`).join("; "),
+  );
 }
 check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length === SCENE_STREAMS);
+{
+  const unsolved = CHALLENGES.filter((c) => !verifiedChallenges.get(c.id)?.ok).map((c) => `${c.id} (${verifiedChallenges.get(c.id)?.wins ?? "?"} wins)`);
+  check(
+    `every challenge has a solution the simulation verifies (${CHALLENGES.length}, the hazard's plain solution, two seeds of three)`,
+    !unsolved.length,
+    unsolved.join(", "),
+  );
+}
 
 // 9. The test run before a program is stored (3.3): reference spells pass;
 // a program that crashes, does nothing visible or wipes the island fails.
@@ -616,6 +813,112 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
   );
   const modelRig = buildRig(body("two legs", [], { model: big }));
   check("a model is scaled to a creature's size", finite(modelRig) && modelRig.parts.length === 16 && modelRig.height <= 1.71);
+
+  // 3.7: sizes against a villager and a house, no two parts sharing a face,
+  // still models fall back to a plan.
+  const V = villagerUnits();
+  const drawn = (spec: BodySpec, radius: number, look = 0) => {
+    const r = buildRig(spec, look);
+    return (r.height * drawScale(spec, radius, r)) / V;
+  };
+  const houseTop = Math.max(...MODELS.house.map((b) => b.y + b.h));
+  check("the house the sizes are checked against is the island's house", Math.abs(houseTop - HOUSE_HEIGHT) < 1e-6, `${houseTop}`);
+  const heights = Object.fromEntries(SPECIES.map((sp) => [sp.kind.name, drawn(KINDS.get(sp.kind.name)!.body, KINDS.get(sp.kind.name)!.radius)]));
+  const villagerDrawn = drawn(KINDS.get("villager")!.body, 0.55);
+  check(
+    "wild animals are sized against a villager: none taller, a bear smaller than one",
+    Math.abs(villagerDrawn - 1) < 1e-6 &&
+      Object.values(heights).every((h) => h <= 0.95) &&
+      heights.bear < 0.8 &&
+      heights.bear > heights.wolf &&
+      heights.deer > heights.wolf &&
+      heights.wolf > heights.rabbit &&
+      heights.rabbit < 0.3,
+    Object.entries(heights)
+      .map(([k, h]) => `${k} ${h.toFixed(2)}`)
+      .join(", "),
+  );
+  const giantBear = drawn(bodyFrom({}, "giant bear", KINDS.get("beast")!.body), 1.9);
+  const vampire = drawn(bodyFrom({}, "vampire", KINDS.get("beast")!.body), 1.2);
+  const huge = drawn(body("golem"), 6);
+  check(
+    "a spell's creature grows with its radius, people hardly, nothing past the cap",
+    giantBear > heights.bear * 1.3 && vampire < 1.3 && vampire > 1 && huge <= MAX_HEIGHT + 1e-6,
+    `giant bear ${giantBear.toFixed(2)}, vampire of radius 1.2 ${vampire.toFixed(2)}, golem of radius 6 ${huge.toFixed(2)} villagers`,
+  );
+  const faces: string[] = [];
+  const noShared = (label: string, spec: BodySpec, look = 0) => {
+    const n = sharedFaces(buildRig(spec, look)).length;
+    if (n) faces.push(`${label} ${n}`);
+  };
+  for (const plan of PLANS) {
+    noShared(plan, body(plan));
+    for (const f of [...FEATURES, ...ITEMS, ...EXTRA] as Feature[]) noShared(`${plan}+${f}`, body(plan, [f]));
+    noShared(`${plan}+all`, body(plan, [...FEATURES, "sword"]));
+  }
+  for (const [name, k] of KINDS) for (const look of [0, 1, 2, 3]) noShared(name, k.body, look);
+  for (const age of AGES)
+    for (const job of JOBS)
+      for (const long of [false, true]) noShared(`${age} ${job}`, KINDS.get("villager")!.body, packLook({ age, job, style: 2, skin: 1, hair: 3, long }));
+  noShared("model", body("two legs", [], { model: big }));
+  const stored = JSON.parse(readFileSync("lab/stored-creatures.json", "utf8")) as {
+    name: string;
+    plan: string;
+    features: Feature[];
+    color2: number | null;
+    model: ModelBox[] | null;
+  }[];
+  for (const c of stored)
+    noShared(c.name, c.model ? body("two legs", [], { model: c.model }) : body(c.plan as (typeof PLANS)[number], c.features, { color2: c.color2 }));
+  check(
+    "no two parts of a figure share a face",
+    !faces.length,
+    faces.length ? faces.slice(0, 6).join(", ") : `every plan, feature, villager look, kind and ${stored.length} stored creatures`,
+  );
+  const stillBox = [
+    [-1, 0, -3, 2, 2, 6, "#8a5a2b"],
+    [-1, 2, 2, 2, 1, 1, "#e0c040"],
+  ];
+  const still = bodyFrom({ model: stillBox }, "box beast", KINDS.get("beast")!.body);
+  const named = bodyFrom({ model: stillBox }, "rock wolf", KINDS.get("beast")!.body);
+  const moving = bodyFrom({ model: [...stillBox, [0, 0, 0, 1, 1, 1, "#fff", "leg"]] }, "box beast", KINDS.get("beast")!.body);
+  check(
+    "a model that never moves falls back to the nearest plan, in its colors",
+    still.model === null &&
+      still.plan === "four legs" &&
+      still.color2 === 0xe0c040 &&
+      stillModelColor({ model: stillBox }) === 0x8a5a2b &&
+      named.plan === "four legs" &&
+      named.build === BUILDS.wolf &&
+      moving.model !== null &&
+      planOfModel(modelOf([[0, 0, 0, 2, 6, 2, "#fff"]])!, false) === "two legs" &&
+      planOfModel(modelOf([[0, 0, 0, 6, 2, 6, "#fff"]])!, false) === "slime" &&
+      planOfModel(modelOf([[0, 0, 0, 2, 2, 2, "#fff"]])!, true) === "spirit",
+    `${still.plan}, ${named.plan}, model kept: ${moving.model !== null}`,
+  );
+
+  // Walking up a step of one voxel: no jump; beside a cliff, no climbing its wall.
+  {
+    const world = generateWorld(32, 32, 3);
+    for (let i = 0; i < world.n; i++) {
+      const x = i % world.w;
+      world.height[i] = x < 14 ? 4 : x < 18 ? 6 : 14;
+      world.fluid[i] = F.NONE;
+      world.depth[i] = 0;
+    }
+    let jump = 0;
+    for (let x = 12; x < 17.9; x += 0.01) jump = Math.max(jump, Math.abs(walkGround(world, x + 0.01, 16.5) - walkGround(world, x, 16.5)));
+    const besideCliff = walkGround(world, 17.97, 16.5);
+    const foot: Footing = { gy: NaN, vy: 0, gt: 0 };
+    easeGround(foot, 7, 0);
+    let t = 0;
+    while (easeGround(foot, 3, t) > 3.001 && t < 2) t += 1 / 30;
+    check(
+      "creatures walk up a step instead of jumping, and fall off a cliff",
+      jump < 0.05 && Math.abs(besideCliff - 3) < 1e-6 && t > 0.2 && t < 1,
+      `largest change in a hundredth of a cell ${jump.toFixed(3)} voxel, ${besideCliff} beside the cliff, a fall of 4 voxels in ${t.toFixed(2)} s`,
+    );
+  }
 
   // Habitats: on every island size, each species where it belongs.
   for (const size of [112, 208]) {

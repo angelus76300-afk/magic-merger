@@ -5,6 +5,7 @@ import { C } from "./materials";
 import { unpackLook } from "./villagers";
 import { stepPhysics } from "./physics";
 import { Runtime, type CastRequest } from "./runtime";
+import { isArtifact, resetArtifactIds } from "./artifacts";
 import { TICK, generateWorld, type World } from "./world";
 
 // The test run a new program goes through before it is stored (3.3). It is
@@ -20,7 +21,7 @@ import { TICK, generateWorld, type World } from "./world";
 // (src/sim/checkframe.ts), and Node for `npm test` and the measurement scripts.
 // The Worker cannot run it, since Cloudflare Workers forbid new Function.
 
-export type CheckProblem = "crash" | "nothing" | "wiped" | "promise";
+export type CheckProblem = "crash" | "nothing" | "wiped" | "promise" | "idle";
 
 export interface CheckResult {
   ok: boolean;
@@ -41,6 +42,8 @@ export interface CheckResult {
     // The promise probe, when the spell has one: the share of the harm it
     // prevented, averaged over the threats (1 all of it, 0 none).
     saved?: number;
+    // The five minute test of an artifact (3.7): what it changed after its arrival.
+    acted?: number;
   };
 }
 
@@ -171,6 +174,7 @@ let baseId = 0;
 function island(errors: string[], streams = 0): Island {
   Math.random = seeded(SEED);
   resetCreatureIds();
+  resetArtifactIds();
   const world = generateWorld(SIZE, SIZE, SEED);
   populate(world);
   baseId = Math.max(0, ...world.creatures.map((c) => c.id));
@@ -340,13 +344,86 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
     }
   }
   const detail = `${cells} cells, ${voxels} blocks and ${creatures} creatures changed${bodies ? `, ${bodies} bodies flew` : ""}.`;
+  let result: CheckResult = { ok: true, problem: null, detail, stats };
   if (parseIntents(req.intents).includes("protect")) {
     const probe = yield* protectProbe(req);
     const withSaved = { ...stats, saved: probe.saved };
     if (!probe.ok) return { ok: false, problem: "promise", detail: probe.detail, stats: withSaved };
-    return { ok: true, problem: null, detail: `${detail} ${probe.detail}`, stats: withSaved };
+    result = { ok: true, problem: null, detail: `${detail} ${probe.detail}`, stats: withSaved };
   }
-  return { ok: true, problem: null, detail, stats };
+  if (req.kind === "artifact") {
+    const acts = yield* actsProbe(req);
+    const withActed = { ...result.stats, acted: acts.acted };
+    if (!acts.ok) return { ok: false, problem: "idle", detail: acts.detail, stats: withActed };
+    result = { ok: true, problem: null, detail: `${result.detail} ${acts.detail}`, stats: withActed };
+  }
+  return result;
+}
+
+// The five minute test of an artifact (3.7). Placed by the village of the
+// practice island, it is left alone for five simulated minutes, and must
+// have changed something: deeds of its own (an effect, a grant villagers
+// used, a pair), or after its arrival (its first 15 seconds) deeds of the
+// creatures it brought, cells of its own materials that keep spreading, or a
+// body of its own still at work. A statue that only stands there fails.
+export const ACT_SECONDS = 300;
+const ACT_FROM = 15;
+
+function* actsProbe(req: CastRequest): Generator<void, { ok: boolean; acted: number; detail: string }> {
+  const errors: string[] = [];
+  const isl = island(errors);
+  const { world, rt, target } = isl;
+  Math.random = isl.random;
+  const key = `check:${req.key}`;
+  rt.cast({ ...req, key }, target.x, target.y);
+  const owned = (what: string) => rt.owners.get(what) === key;
+  const creatureDeeds = () => world.creatures.reduce((sum, c) => sum + (owned(`creature:${c.kind}`) ? (c.mind?.deeds ?? 0) : 0), 0);
+  const materialCells = () => {
+    let n = 0;
+    for (const layer of ["ground", "cover", "fluid"] as const) {
+      const ids = world.materials.list[layer].map((m) => owned(`${layer}:${m.name}`));
+      if (!ids.some(Boolean)) continue;
+      const cells = world[layer];
+      for (let i = 0; i < world.n; i++) if (ids[cells[i]]) n++;
+    }
+    return n;
+  };
+  let deedsAt = 0;
+  let cellsAt = 0;
+  let bodySeconds = 0;
+  for (let k = 0; k < ACT_SECONDS / TICK && !errors.length; k++) {
+    step(world, rt, isl.life);
+    if (k === Math.round(ACT_FROM / TICK)) {
+      deedsAt = creatureDeeds();
+      cellsAt = materialCells();
+    }
+    if (k > ACT_FROM / TICK && k % 30 === 0 && rt.visuals.bodies.some((b) => b.alive && b.look !== "none")) bodySeconds++;
+    if (k % 5 === 4) {
+      yield;
+      Math.random = isl.random;
+    }
+  }
+  if (errors.length) return { ok: false, acted: 0, detail: `It crashed during its five minute test: ${errors[0]}` };
+  const own = world.landmarks.filter(isArtifact).filter((l) => l.art.key === key);
+  // Its own deeds count from the start: a Phoenix Feather that revives the
+  // corpse beside it at once has acted. What else changed counts after the
+  // arrival, when the placing itself is over.
+  const artDeeds = own.reduce((sum, a) => sum + a.art.deeds, 0);
+  const kinDeeds = Math.max(0, creatureDeeds() - deedsAt);
+  const spread = Math.abs(materialCells() - cellsAt);
+  const acted = artDeeds + kinDeeds + (spread >= MIN_CELLS ? 1 : 0) + (bodySeconds >= 30 ? 1 : 0);
+  const did = [
+    artDeeds ? `${artDeeds} things done by the artifact${own[0]?.art.did.length ? ` (${own[0].art.did.join(", ")})` : ""}` : "",
+    kinDeeds ? `${kinDeeds} by its creatures` : "",
+    spread >= MIN_CELLS ? `its material changed by ${spread} cells` : "",
+    bodySeconds >= 30 ? `a body of its own at work for ${bodySeconds} s` : "",
+  ].filter(Boolean);
+  if (acted > 0) return { ok: true, acted, detail: `After five minutes it had kept acting: ${did.join("; ")}.` };
+  return {
+    ok: false,
+    acted: 0,
+    detail: `Placed by a village and left alone for five minutes, it changed nothing after it arrived: no effect, nothing villagers or creatures used, no creature of its own at work, no material spreading. Make it act with w.artifact: effects on a trigger, grants villagers use, uses creatures act on, or pairs.`,
+  };
 }
 
 // The protection probe (3.4.2). The spell is cast on the village; three seconds
@@ -478,6 +555,10 @@ function* protectProbe(req: CastRequest): Generator<void, { ok: boolean; saved: 
 // any kind explode or vanish?
 export const SCENE = `const spell = {
   materials: [{ name: "gold", layer: "ground", colors: ["#ffd23d", "#f5c518"], lures: ["villager"], taken: true }],
+  artifacts: [
+    { name: "Well", radius: 8, charges: 4, recharge: 40, effects: [{ when: "dawn", do: "water", radius: 9 }], grants: [{ what: "water" }] },
+    { name: "Lantern Post", radius: 7, effects: [{ when: "night", do: "light", every: 10 }], uses: [{ do: "destroy", by: ["vampire"] }], health: 300 },
+  ],
   creatures: [
     { name: "dragon", base: "beast", body: "dragon", color: "#8a1c1c", color2: "#e0a030", flying: true, fireproof: true, hp: 900, speed: 4,
       goal: "hoard", prey: ["deer", "boar"], attack: 30, sense: 14, scares: ["villager"],
@@ -499,6 +580,8 @@ export const SCENE = `const spell = {
     const toward = (t) => [w.x + (w.width / 2 - w.x) * t, w.y + (w.height / 2 - w.y) * t];
     w.paint(w.x - 4, w.y + 4, 2, "gold", 1);
     w.landmark(w.x - 6, w.y + 2, { name: "shrine", scares: ["vampire"], aura: "heal", radius: 5 });
+    w.artifact(w.x + 3, w.y - 3, "Well");
+    w.artifact(w.x - 2, w.y - 5, "Lantern Post");
     const [dx, dy] = dry(...toward(0.9));
     w.spawn("dragon", dx, dy);
     const [vx, vy] = dry(...toward(1.2));
@@ -518,6 +601,8 @@ export interface SceneReport {
   lively: Record<string, [number, number]>;
   marks: Record<string, number>;
   deeds: Record<string, number>;
+  // Every placed artifact and what it did (3.7).
+  artifacts: { name: string; deeds: number; did: string[] }[];
   errors: string[];
   worstTickMs: number;
   meanTickMs: number;
@@ -591,6 +676,7 @@ export function* sceneRun(
     }
     const marks: Record<string, number> = {};
     for (const m of world.marks) marks[m.kind] = (marks[m.kind] ?? 0) + m.size;
+    const artifacts = world.landmarks.filter(isArtifact).map((a) => ({ name: a.name, deeds: a.art.deeds, did: a.art.did }));
     return {
       seconds,
       kinds,
@@ -598,6 +684,7 @@ export function* sceneRun(
       lively,
       marks,
       deeds,
+      artifacts,
       errors,
       worstTickMs: Math.round(worst * 10) / 10,
       meanTickMs: Math.round((total / ticks) * 100) / 100,

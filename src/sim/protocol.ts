@@ -1,3 +1,4 @@
+import { readDigest, type ChronicleDigest } from "../../shared/chronicle";
 import type { CastRequest } from "./runtime";
 import type { SavedWorld } from "./save";
 import type { WorldSize } from "./engine";
@@ -14,9 +15,14 @@ export type ToWorld =
   | { type: "reset"; size: WorldSize }
   | { type: "mute"; muted: boolean }
   | { type: "visible"; visible: boolean }
-  | { type: "scenario"; id: string }
+  // ahead: seconds of the hazard already played while the player merged (3.7).
+  | { type: "scenario"; id: string; ahead?: number }
   | { type: "sandbox" }
-  | { type: "hud"; on: boolean };
+  | { type: "hud"; on: boolean }
+  // Spells from the shared library the world asked for by name (3.7).
+  | { type: "library"; spells: CastRequest[] }
+  // What the island's chronicle is written from (3.7).
+  | { type: "chronicle" };
 
 // The iframe runs code nobody reviewed, so whatever it sends is checked for
 // shape and size before the page acts on it. Returns null for anything else.
@@ -40,6 +46,12 @@ export function readFromWorld(data: unknown): FromWorld | null {
       return m.sample && typeof m.sample === "object" && JSON.stringify(m.sample).length < 2000
         ? { type: "perf", sample: m.sample as Record<string, number> }
         : null;
+    case "chronicle": {
+      const digest = readDigest(m.digest);
+      return digest ? { type: "chronicle", digest } : null;
+    }
+    case "need":
+      return Array.isArray(m.names) && m.names.length <= 20 && m.names.every((n) => str(n, 120)) ? { type: "need", names: m.names as string[] } : null;
     case "objective":
       return str(m.id, 40) && typeof m.text === "string" && (m.status === "playing" || m.status === "won" || m.status === "lost")
         ? { type: "objective", id: m.id as string, text: m.text.slice(0, 200), status: m.status }
@@ -58,4 +70,7 @@ export type FromWorld =
   | { type: "tap-without-spell" }
   | { type: "error"; key: string; name: string; message: string }
   | { type: "objective"; id: string; text: string; status: "playing" | "won" | "lost" }
-  | { type: "perf"; sample: Record<string, number> };
+  | { type: "perf"; sample: Record<string, number> }
+  // Names of library spells creatures or artifacts want to cast (3.7).
+  | { type: "need"; names: string[] }
+  | { type: "chronicle"; digest: ChronicleDigest };

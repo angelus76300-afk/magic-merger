@@ -16,6 +16,7 @@
       <nav class="tabs" role="tablist">
         <button class="tab" role="tab" data-view="craft-view" aria-selected="true">Craft</button>
         <button class="tab" role="tab" data-view="world-view" aria-selected="false">World</button>
+        <button class="tab" role="tab" data-view="challenges-view" aria-selected="false">Challenges</button>
         <button class="tab" role="tab" data-view="feedback-view" aria-selected="false">Ideas</button>
       </nav>
     </header>
@@ -29,6 +30,7 @@
         <div class="inventory-head">
           <input id="search" type="search" placeholder="Search" autocomplete="off" />
           <span id="count" class="count"></span>
+          <button id="book" class="book-open" title="What you found, how and when">Book</button>
         </div>
         <div id="inventory-filters" class="inventory-filters"></div>
         <div id="inventory-list" class="inventory-list"></div>
@@ -48,6 +50,7 @@
         </div>
         <div class="world-tools">
           <button id="world-challenges">Challenges</button>
+          <button id="world-chronicle">Chronicle</button>
           <button id="world-add">+ Villager</button>
           <select id="world-size" aria-label="World size for the next reset">
             <option value="small">Small</option>
@@ -64,6 +67,8 @@
         <div id="spell-list" class="spell-list"></div>
       </section>
     </main>
+
+    <main id="challenges-view" class="view challenges-view" hidden></main>
 
     <main id="feedback-view" class="view feedback" hidden></main>
 

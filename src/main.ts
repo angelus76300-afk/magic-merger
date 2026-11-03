@@ -8,6 +8,8 @@ import { toast } from "./toast";
 import { WorldHost } from "./worldhost";
 import { openPeople } from "./people";
 import { showFeedback } from "./feedback";
+import { Challenges } from "./challenges";
+import { openBook } from "./book";
 import { hideGate, showGate, showWelcome, welcomedBefore } from "./welcome";
 
 // An invite link (/#invite=...) is kept by this browser before anything else.
@@ -20,11 +22,13 @@ const store = new Store();
 const craft = new Craft(store, $("#board"), $("#inventory"), $("#inventory-list"), $<HTMLInputElement>("#search"), $("#count"), $("#inventory-filters"));
 craft.init();
 $("#clear").addEventListener("click", () => craft.clearBoard());
+$("#book").addEventListener("click", () => openBook(store));
 
 const world = new WorldHost(store, {
   stage: $("#world-stage"),
   banner: $("#world-banner"),
   challenges: $<HTMLButtonElement>("#world-challenges"),
+  chronicle: $<HTMLButtonElement>("#world-chronicle"),
   status: $("#world-status"),
   list: $("#spell-list"),
   bar: $(".spellbar"),
@@ -34,6 +38,8 @@ const world = new WorldHost(store, {
   size: $<HTMLSelectElement>("#world-size"),
   sound: $<HTMLButtonElement>("#world-sound"),
 });
+
+const challenges = new Challenges($("#challenges-view"), store, world);
 
 function showTab(view: string): void {
   for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
@@ -46,7 +52,11 @@ function showTab(view: string): void {
   if (view === "world-view") world.show();
   else world.hide();
   if (view === "feedback-view") showFeedback();
+  if (view === "challenges-view") void challenges.show();
 }
+
+world.onChallenges = () => showTab("challenges-view");
+challenges.showWorld = () => showTab("world-view");
 
 // The admin badge opens the people view: invites, spend per person, the month.
 $("#admin-badge").addEventListener("click", () => {
@@ -65,6 +75,11 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
 world.init();
 // New discoveries get their program written in the background (cheap tiers only).
 craft.onNewElement = (key) => world.ahead(key);
+// What a challenge's board finds joins the main inventory (3.7).
+challenges.onDiscovered = (key) => {
+  craft.refresh();
+  world.ahead(key);
+};
 
 setCardActions({
   cast: (key) => {

@@ -1,6 +1,8 @@
+import { chronicleDigest } from "./chronicle";
 import { Engine, type WorldSize } from "./engine";
 import { kindOf, makeCreature, maxHp, type Creature } from "./creatures";
-import { creatureAt, inspect } from "./inspect";
+import { artifactAt, creatureAt, inspect, inspectArtifact } from "./inspect";
+import type { Artifact } from "./artifacts";
 import type { FromWorld, ToWorld } from "./protocol";
 import type { CastRequest, Runtime } from "./runtime";
 import type { SavedWorld } from "./save";
@@ -35,7 +37,9 @@ const hooks = {
     if (!selected) {
       // No spell in hand: a tap on a creature shows what it is doing (3.6).
       const c = creatureAt(engine.world, x, y);
+      const a = c ? null : artifactAt(engine.world, x, y);
       if (c) showInspect(c);
+      else if (a) showInspect(null, a);
       else {
         closeInspect();
         send({ type: "tap-without-spell" });
@@ -50,12 +54,14 @@ const hooks = {
 // refreshed twice a second while it is open.
 const card = document.getElementById("inspect") as HTMLElement;
 let inspected: Creature | null = null;
+let inspectedArtifact: Artifact | null = null;
 let inspectTimer = 0;
 
-function showInspect(c: Creature): void {
+function showInspect(c: Creature | null, a: Artifact | null = null): void {
   if (inspected) delete inspected.data.inspected;
   inspected = c;
-  c.data.inspected = true;
+  inspectedArtifact = a;
+  if (c) c.data.inspected = true;
   drawInspect();
   card.hidden = false;
   clearInterval(inspectTimer);
@@ -65,6 +71,7 @@ function showInspect(c: Creature): void {
 function closeInspect(): void {
   if (inspected) delete inspected.data.inspected;
   inspected = null;
+  inspectedArtifact = null;
   card.hidden = true;
   clearInterval(inspectTimer);
 }
@@ -77,8 +84,10 @@ function el(tag: string, cls: string, text = ""): HTMLElement {
 }
 
 function drawInspect(): void {
-  if (!engine || !inspected || !engine.world.creatures.includes(inspected)) return closeInspect();
-  const info = inspect(engine.world, inspected, kindOf, maxHp);
+  if (!engine) return closeInspect();
+  const a = inspectedArtifact;
+  if (a ? !engine.world.landmarks.includes(a) : !inspected || !engine.world.creatures.includes(inspected)) return closeInspect();
+  const info = a ? inspectArtifact(engine.world, a) : inspect(engine.world, inspected!, kindOf, maxHp);
   const close = el("button", "close", "×");
   close.setAttribute("aria-label", "Close");
   close.addEventListener("click", closeInspect);
@@ -100,11 +109,24 @@ function drawInspect(): void {
   card.replaceChildren(head, bars, rows);
 }
 
+// Library spells creatures and artifacts cast (3.7): asked of the page by
+// name, kept for every world this frame runs.
+const library: CastRequest[] = [];
+const asked = new Set<string>();
+window.setInterval(() => {
+  if (!engine || !engine.runtime.wanted.size) return;
+  const names = [...engine.runtime.wanted].filter((n) => !asked.has(n.toLowerCase())).slice(0, 20);
+  engine.runtime.wanted.clear();
+  for (const n of names) asked.add(n.toLowerCase());
+  if (names.length) send({ type: "need", names });
+}, 2000);
+
 function mount(next: Engine): void {
   closeInspect();
   engine?.dispose();
   unbind?.();
   engine = next;
+  engine.runtime.setLibrary(library);
   engine.sound.muted = muted;
   unbind = engine.bindInput();
   showHud(hudOn);
@@ -151,7 +173,7 @@ function openSandbox(): void {
   mount(restored ?? Engine.create(canvas, overlay, sandbox.size, hooks));
 }
 
-function openScenario(id: string): void {
+function openScenario(id: string, ahead = 0): void {
   const def = SCENARIOS.find((s) => s.id === id);
   if (!def) return;
   save();
@@ -173,6 +195,11 @@ function openScenario(id: string): void {
       send({ type: "objective", id, text, status });
     }
   };
+  // A live challenge (3.7): the hazard ran while the player merged. Played
+  // here before the island is shown, at most LIVE_MAX (8) seconds of it.
+  const ticks = Math.round(Math.max(0, Math.min(8, ahead)) * 30);
+  for (let k = 0; k < ticks && !over; k++) next.step();
+  world.events.length = 0;
   mount(next);
 }
 
@@ -192,6 +219,14 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
   if (e.source !== window.parent || !e.data || typeof e.data !== "object") return;
   const msg = e.data;
   switch (msg.type) {
+    case "chronicle":
+      // The sandbox's story, never a challenge's.
+      if (engine && !scenario) send({ type: "chronicle", digest: chronicleDigest(engine.world) });
+      break;
+    case "library":
+      library.push(...msg.spells);
+      engine?.runtime.setLibrary(msg.spells);
+      break;
     case "init": {
       muted = msg.muted;
       sandbox = { save: msg.save, size: msg.size, rules: msg.rules };
@@ -230,7 +265,7 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       save();
       break;
     case "scenario":
-      openScenario(msg.id);
+      openScenario(msg.id, msg.ahead ?? 0);
       break;
     case "sandbox":
       if (scenario) openSandbox();

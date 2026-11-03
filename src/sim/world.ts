@@ -1,3 +1,5 @@
+import type { ArtHooks } from "./artifacts";
+import type { StoryLine } from "./kin";
 import type { Creature } from "./creatures";
 import { C, F, G, MaterialTable, type Layer } from "./materials";
 import { Rng, fbm, valueNoise } from "./noise";
@@ -59,6 +61,12 @@ export class World {
   readonly lureMaterials = new Map<string, { lures: string[]; scares: string[]; taken: boolean }>();
   // Places spells left behind that lure, scare or carry an aura.
   landmarks: Landmark[] = [];
+  // What the runtime does for artifacts and creatures (3.7): an artifact's
+  // own code, and spells from the shared library cast by name.
+  magic: ArtHooks | null = null;
+  // The island's story (3.7, kin.ts): lines worth telling, and everyday work counted.
+  story: StoryLine[] = [];
+  storyCounts: Record<string, number> = {};
   // Places spells keep safe for a while (wards.ts), and what each cell is
   // protected against, as bits.
   wards: Ward[] = [];

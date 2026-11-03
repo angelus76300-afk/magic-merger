@@ -10,6 +10,7 @@ import {
   reborn,
   LOAD_COLORS,
   deed,
+  storyOn,
   feeling,
   findVillages,
   harmed,
@@ -28,6 +29,7 @@ import {
 } from "./kin";
 import type { Behavior, Creature, CreatureKind } from "./creatures";
 import type { World } from "./world";
+import { artifactVisit, useArtifact, type Visit } from "./artifacts";
 
 // Goals (3.6): nothing on the island just stands there. Every creature has a
 // goal from a small vocabulary (kin.ts, GOALS), needs that come before it
@@ -146,6 +148,7 @@ const TAMABLE = new Set(["deer", "rabbit", "boar", "wolf"]);
 
 // How long a task takes once there, and how close "there" is.
 const DURATION: Partial<Record<Task, number>> = {
+  use: 2.5,
   eat: 2,
   graze: 2.5,
   feast: 3,
@@ -176,10 +179,23 @@ const DURATION: Partial<Record<Task, number>> = {
   beg: 30,
   rest: Infinity,
 };
-const REACH: Partial<Record<Task, number>> = { fish: 2.6, fell: 1.9, build: 2.2, repair: 1.9, dam: 2, rest: 1.5, herd: 4, roam: 2, patrol: 2.5, beg: 1.8 };
+const REACH: Partial<Record<Task, number>> = {
+  use: 2.2,
+  fish: 2.6,
+  fell: 1.9,
+  build: 2.2,
+  repair: 1.9,
+  dam: 2,
+  rest: 1.5,
+  herd: 4,
+  roam: 2,
+  patrol: 2.5,
+  beg: 1.8,
+};
 
 export const TASK_WORDS: Record<Task, string> = {
   none: "looking around",
+  use: "going to an artifact",
   eat: "going home to eat",
   graze: "grazing",
   rest: "resting",
@@ -224,6 +240,7 @@ export function countOf(world: World, kind: string): number {
 
 // Once a tick from lifeCycle: villages and counts every three seconds.
 export function stepGoals(world: World): void {
+  storyOn(world);
   if (world.tick % 90 !== 1 && (world.villages.length || world.tick % 15 !== 1)) return;
   findVillages(world);
   const counts = new Map<string, number>();
@@ -438,6 +455,14 @@ function decide(world: World, c: Creature, k: CreatureKind, m: Mind, needs: bool
   if (m.task !== "none" && !stillValid(world, c, m)) drop(m);
   if (needs && urgent(world, c, k, m)) return;
   if (m.task !== "none" && m.task !== "herd") return;
+  // An artifact nearby that grants it something, or that its kind acts on (3.7).
+  const visit = world.landmarks.length && c.sleep <= 0 ? artifactVisit(world, c) : null;
+  if (visit) {
+    c.data.visit = visit.visit;
+    setTask(m, "use", visit.a.x, visit.a.y, 1);
+    m.action = visit.visit.kind === "grant" ? `going to the ${visit.a.name}` : `going for the ${visit.a.name}`;
+    return;
+  }
   if (c.kind === "villager") work(world, c, m);
   else goalTask(world, c, k, m, needs);
 }
@@ -1282,6 +1307,13 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
   const task = m.task;
   drop(m);
   switch (task) {
+    case "use": {
+      const visit = c.data.visit as Visit | undefined;
+      c.data.visit = undefined;
+      if (visit) useArtifact(world, c, visit);
+      if (m.carry && c.kind !== "villager" && m.lair >= 0) setTask(m, "carry", m.lair % world.w, Math.floor(m.lair / world.w));
+      return;
+    }
     case "custom": {
       const g = CUSTOM_GOALS.get(m.custom);
       if (!g) return;
@@ -1308,8 +1340,10 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
         world.setCover(i, C.NONE);
         deed(c, `ate ${cover === C.CROP ? "crops" : cover === C.FLOWER ? "flowers" : "a bush"}`);
         if (cover === C.CROP) for (const o of world.crowd.near(world, c.x, c.y, 10)) if (o.kind === "villager") remember(o, c.kind, -0.4);
-      } else if (world.ground[i] === G.GRASS && (c.kind === "boar" || Math.random() < 0.5)) {
-        // Grazed bare (a boar roots it up); grass creeps back from around it.
+      } else if (world.ground[i] === G.GRASS && (c.kind === "boar" || (c.data.grazes = ((c.data.grazes as number | undefined) ?? 0) + 1) % 2 === 1)) {
+        // Grazed bare (a boar roots it up) one graze in two, every other one
+        // rather than on a coin flip, so no grazer goes five minutes without
+        // a mark by bad luck (3.7); grass creeps back from around it.
         world.ground[i] = G.DIRT;
         deed(c, c.kind === "boar" ? "rooted up the grass" : "grazed the grass bare");
       }
