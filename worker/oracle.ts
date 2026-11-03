@@ -30,6 +30,8 @@ import {
   type Rewrite,
   CHRONICLE_SYSTEM,
   chronicleUserMessage,
+  TRIM_SCHEMA,
+  TRIM_SYSTEM,
 } from "./prompts";
 
 export interface MergeAnswer {
@@ -88,6 +90,11 @@ export interface JudgeRequest {
   notes: string[];
 }
 
+export interface TrimAnswer {
+  duplicates: { keep: string; alias: string; why: string }[];
+  senseless: { a: string; b: string; why: string }[];
+}
+
 export interface JudgeAnswer {
   score: number;
   reason: string;
@@ -135,6 +142,8 @@ export interface Oracle {
   // avoid: a name already refused for this pair (3.7: it only joined the two).
   merge(a: string, b: string, avoid?: string): Promise<MergeAnswer>;
   describe(name: string, kind: ElementKind, recipe: [string, string] | null): Promise<string>;
+  // The trim of the library (3.7): near duplicates and senseless merges.
+  trim(names: string[], recipes: string[]): Promise<TrimAnswer>;
   // The island's chronicle (3.7), from what its World recorded.
   chronicle(digest: { days: number; lines: string[]; work: string[]; memories: string[]; now: string[] }): Promise<string>;
   // Tiers for elements from before tiers existed, all in one call. New
@@ -248,6 +257,20 @@ export class ClaudeOracle implements Oracle {
       2000,
     );
     return text.trim();
+  }
+
+  async trim(names: string[], recipes: string[]): Promise<TrimAnswer> {
+    const text = await this.ask(
+      "trim",
+      this.models.describe,
+      "low",
+      TRIM_SYSTEM,
+      [{ role: "user", content: `Items:\n${names.join("\n")}\n\nRecipes:\n${recipes.join("\n")}` }],
+      TRIM_SCHEMA,
+      16000,
+    );
+    const v = parseJson(text) as Partial<TrimAnswer>;
+    return { duplicates: Array.isArray(v.duplicates) ? v.duplicates : [], senseless: Array.isArray(v.senseless) ? v.senseless : [] };
   }
 
   async chronicle(digest: { days: number; lines: string[]; work: string[]; memories: string[]; now: string[] }): Promise<string> {
@@ -378,7 +401,8 @@ export class ClaudeOracle implements Oracle {
       }
       // Batch requests cost half of the same call made directly. Ids that
       // start with "rw" are rewrites, counted against the daily rewrite budget.
-      const spent = logUsage(item.custom_id.startsWith("rw") ? "batch-rewrite" : "batch-spell", r.message, 0.5);
+      // "rf": the refresh of the legacy library (3.7), on its own cap.
+      const spent = logUsage(item.custom_id.startsWith("rf") ? "refresh" : item.custom_id.startsWith("rw") ? "batch-rewrite" : "batch-spell", r.message, 0.5);
       try {
         const answer = toProgram(readText(r.message));
         const error = syntaxError(answer.code);
@@ -508,6 +532,10 @@ export class MockOracle implements Oracle {
     const kind: ElementKind = h % 3 === 0 ? "artifact" : "spell";
     const suffix = kind === "artifact" ? MOCK_ARTIFACTS[h % MOCK_ARTIFACTS.length] : MOCK_SPELLS[h % MOCK_SPELLS.length];
     return { name: `${firstWord(x)} ${firstWord(y)} ${suffix}`.split(" ").slice(-3).join(" "), emoji, kind, tier: "major" };
+  }
+
+  async trim(): Promise<TrimAnswer> {
+    return { duplicates: [], senseless: [] };
   }
 
   async chronicle(digest: { days: number; lines: string[] }): Promise<string> {

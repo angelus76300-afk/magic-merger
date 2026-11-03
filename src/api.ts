@@ -294,3 +294,27 @@ export function challengeWin(id: string, merges: number, spell: string): Promise
 export function chronicle(digest: unknown): Promise<{ text: string; mock: boolean }> {
   return post("/api/chronicle", { digest });
 }
+
+// 3.7: the trim of the library, for the admin, one pair at a time.
+export interface Trim {
+  id: number;
+  kind: "duplicate" | "senseless";
+  a: string;
+  b: string;
+  result: string | null;
+  why: string;
+  status: string;
+}
+
+export async function trims(): Promise<{ next: Trim | null; left: number } | null> {
+  try {
+    const res = await fetch("/api/admin/trims", { headers: authHeaders() });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function decideTrim(id: number, approve: boolean): Promise<{ next: Trim | null; left: number }> {
+  return post("/api/admin/trim", { id, approve });
+}

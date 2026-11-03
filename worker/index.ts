@@ -107,6 +107,8 @@ export interface Env {
   ADMIN_TOKEN?: string;
   // Optional: route Claude calls through a gateway, or a local stub in tests.
   ANTHROPIC_BASE_URL?: string;
+  // 3.7. Dollars a month the refresh of the legacy library may spend.
+  REFRESH_BUDGET_USD?: string;
   // 3.3. Who looks at Spell Lab frames and guesses the vote (Haiku).
   JUDGE_MODEL?: string;
   // Dollars a day that votes, the judge and failed test runs may spend on rewrites.
@@ -463,7 +465,11 @@ async function handleMerge(body: MergeRequest, env: Env, oracle: Oracle): Promis
   const b = await resolveInput(env.DB, body.b, oracle.mock);
   const pair = pairKey(a.name, b.name);
 
-  const known = await env.DB.prepare("SELECT result FROM recipes WHERE pair = ?").bind(pair).first<{ result: string }>();
+  // The pair as written first: a recipe made with a name that is now an alias (3.7) still answers.
+  const asWritten = pairKey(String(body.a), String(body.b));
+  const known =
+    (asWritten !== pair ? await env.DB.prepare("SELECT result FROM recipes WHERE pair = ?").bind(asWritten).first<{ result: string }>() : null) ??
+    (await env.DB.prepare("SELECT result FROM recipes WHERE pair = ?").bind(pair).first<{ result: string }>());
   if (known) {
     const element = await getElement(env.DB, known.result);
     if (element) return { element, firstDiscovery: false, mock: oracle.mock };
@@ -855,6 +861,319 @@ async function handleLibrary(
   return { spells };
 }
 
+// --- 3.7 part E: refresh the legacy library. ---
+//
+// The one planned exception to "never rewrite in bulk". Every stored program
+// is written again with today's prompt and engine, from the element's own
+// name, entry, recipe, tier and intents, through the Batch API at half price:
+// legendary and cosmic by SPELL_MODEL, the rest by the small model. A new
+// program comes back as a candidate nobody is served; scripts/refresh-runner.ts
+// tests it (the test run, its promise probe and the five minute test of an
+// artifact), has the judge score it against the old one on the same frames,
+// and replaces the old one only if it passed and scored no lower (and its
+// creatures look no less alive). Players' votes then roll a replaced one back
+// if they like it less, as with any rewrite. Old versions are kept.
+// Capped at REFRESH_BUDGET_USD ($8) a month, estimates held before submitting.
+
+function refreshBudget(env: Env): number {
+  const v = Number(env.REFRESH_BUDGET_USD);
+  return Number.isFinite(v) && v >= 0 ? v : 8;
+}
+
+async function refreshSpentThisMonth(db: D1Database): Promise<number> {
+  const start = new Date();
+  start.setUTCDate(1);
+  start.setUTCHours(0, 0, 0, 0);
+  const r = await db
+    .prepare("SELECT COALESCE(SUM(estimate), 0) AS usd FROM rewrites WHERE cause = 'refresh' AND at >= ? AND status != 'failed'")
+    .bind(start.getTime())
+    .first<{ usd: number }>();
+  return r?.usd ?? 0;
+}
+
+const REFRESH_ESTIMATE = { big: 0.06, small: 0.006 };
+
+async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; limit?: unknown; dry?: unknown }) {
+  if (oracle.mock) throw new HttpError(400, "The refresh needs the Claude API");
+  const db = env.DB;
+  const asked = Array.isArray(body.keys) ? body.keys.filter((k): k is string => typeof k === "string").map(elementKey) : null;
+  const limit = Math.max(1, Math.min(200, Number(body.limit) || 20));
+  // Every element with a live program, never refreshed, the ones players hold most first.
+  const rows = await db
+    .prepare(
+      `SELECT s.key, s.pid FROM spells s JOIN elements e ON e.key = s.key
+       WHERE s.pid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM rewrites r WHERE r.key = s.key AND r.cause = 'refresh' AND r.status != 'failed')
+       ORDER BY (SELECT COUNT(*) FROM casts c JOIN programs p ON p.id = c.pid WHERE p.key = s.key) DESC, s.key`,
+    )
+    .all<{ key: string; pid: number }>();
+  const picked = (asked ? rows.results.filter((r) => asked.includes(r.key)) : rows.results).slice(0, limit);
+  const room = refreshBudget(env) - (await refreshSpentThisMonth(db));
+  const byModel = new Map<string, { id: string; request: OracleSpellRequest }[]>();
+  const queued: string[] = [];
+  let estimate = 0;
+  const library = await liveLibrary(db);
+  for (const r of picked) {
+    const element = await getElement(db, r.key);
+    const row = await getProgram(db, r.pid);
+    if (!element || !row) continue;
+    const tier = tierOf(element);
+    const big = isBig(tier, smallUpTo(env));
+    const cost = big ? REFRESH_ESTIMATE.big : REFRESH_ESTIMATE.small;
+    if (estimate + cost > room) break;
+    const description = await ensureDescription(env, oracle, element, false);
+    const intents = await ensureIntents(env, oracle, element, description);
+    const request: OracleSpellRequest = {
+      name: element.name,
+      kind: element.kind,
+      description,
+      recipe: await firstRecipe(db, r.key),
+      tier,
+      intents,
+      library: library.docs,
+    };
+    const model = big ? env.SPELL_MODEL : smallModel(env);
+    const hold = await holdBatch(env, oracle);
+    const ins = await db
+      .prepare(
+        "INSERT INTO rewrites (key, from_pid, cause, at, status, model, request, invite, reservation, estimate, dry) VALUES (?, ?, 'refresh', ?, 'pending', ?, ?, 'admin', ?, ?, ?)",
+      )
+      .bind(r.key, r.pid, Date.now(), model, JSON.stringify(request), hold, cost, body.dry === true ? 1 : 0)
+      .run();
+    const id = Number(ins.meta.last_row_id);
+    byModel.set(model, [...(byModel.get(model) ?? []), { id: batchItemId("refresh", id), request }]);
+    estimate += cost;
+    queued.push(element.name);
+  }
+  const batches: string[] = [];
+  for (const [model, items] of byModel) {
+    try {
+      const batch = await oracleFor(env, { spellModel: model }, ledgerOf(oracle)).submitBatch(items);
+      batches.push(batch);
+      for (const it of items)
+        await db
+          .prepare("UPDATE rewrites SET batch = ? WHERE id = ?")
+          .bind(batch, Number(it.id.slice(2)))
+          .run();
+    } catch (err) {
+      for (const it of items) {
+        const id = Number(it.id.slice(2));
+        const row = await db.prepare("SELECT reservation FROM rewrites WHERE id = ?").bind(id).first<{ reservation: number | null }>();
+        await db.prepare("UPDATE rewrites SET status = 'failed' WHERE id = ?").bind(id).run();
+        await releaseHold(db, row?.reservation ?? null);
+      }
+      throw err;
+    }
+  }
+  return { queued, batches, estimate: Math.round(estimate * 1000) / 1000, room: Math.round((room - estimate) * 100) / 100 };
+}
+
+// For the runner: candidates with the program they would replace.
+async function refreshCandidates(env: Env, limit: number) {
+  const rows = await env.DB.prepare(
+    `SELECT p.id, p.key, p.spec, p.model, p.parent, e.name, e.kind, e.tier, e.depth, e.intents,
+       (SELECT spec FROM programs o WHERE o.id = (SELECT pid FROM spells WHERE key = p.key)) AS old_spec,
+       (SELECT pid FROM spells WHERE key = p.key) AS old_id,
+       (SELECT dry FROM rewrites r WHERE r.to_pid = p.id) AS dry
+     FROM programs p JOIN elements e ON e.key = p.key WHERE p.status = 'candidate' AND p.origin = 'refresh' ORDER BY p.id LIMIT ?`,
+  )
+    .bind(Math.min(100, Math.max(1, limit)))
+    .all<{
+      id: number;
+      key: string;
+      spec: string;
+      model: string;
+      parent: number | null;
+      name: string;
+      kind: string;
+      tier: string | null;
+      depth: number;
+      intents: string | null;
+      old_spec: string | null;
+      old_id: number | null;
+      dry: number | null;
+    }>();
+  const code = (spec: string | null) => {
+    try {
+      return String((JSON.parse(spec ?? "{}") as { code?: unknown }).code ?? "");
+    } catch {
+      return "";
+    }
+  };
+  return rows.results.map((r) => ({
+    id: r.id,
+    key: r.key,
+    name: r.name,
+    kind: r.kind,
+    tier: isTier(r.tier) ? r.tier : tierFromDepth(r.depth),
+    intents: parseIntents(r.intents),
+    model: r.model,
+    code: code(r.spec),
+    oldId: r.old_id,
+    oldCode: code(r.old_spec),
+    dry: r.dry === 1,
+  }));
+}
+
+// What the runner decided. Replaced: the candidate goes live and the old
+// program is retired (kept, so a vote can bring it back). Kept: the
+// candidate is rejected and the old one stays live.
+async function refreshVerdict(
+  env: Env,
+  body: { id?: unknown; replace?: unknown; reason?: unknown; oldScore?: unknown; newScore?: unknown; checked?: unknown },
+) {
+  const db = env.DB;
+  const row = await getProgram(db, Number(body.id));
+  if (!row || row.status !== "candidate" || row.origin !== "refresh") throw new HttpError(404, "There is no such candidate");
+  const live = await liveProgram(db, row.key);
+  const replace = body.replace === true;
+  const score = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v) : null);
+  if (typeof body.checked === "object" && body.checked)
+    await db.prepare("UPDATE programs SET checked = ? WHERE id = ?").bind(JSON.stringify(body.checked).slice(0, 2000), row.id).run();
+  if (replace) await promote(db, { ...row, parent: live?.row.id ?? row.parent });
+  else await setStatus(db, row.id, "rejected");
+  await db
+    .prepare("INSERT OR REPLACE INTO refresh_verdicts (to_pid, key, from_pid, replaced, reason, old_score, new_score, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(
+      row.id,
+      row.key,
+      live?.row.id ?? row.parent,
+      replace ? 1 : 0,
+      String(body.reason ?? "").slice(0, 300),
+      score(body.oldScore),
+      score(body.newScore),
+      Date.now(),
+    )
+    .run();
+  return { ok: true, replaced: replace };
+}
+
+async function refreshReport(env: Env) {
+  const db = env.DB;
+  const statuses = await db
+    .prepare("SELECT status, dry, COUNT(*) AS n FROM rewrites WHERE cause = 'refresh' GROUP BY status, dry")
+    .all<{ status: string; dry: number; n: number }>();
+  const verdicts = await db
+    .prepare("SELECT v.*, e.name FROM refresh_verdicts v JOIN elements e ON e.key = v.key ORDER BY v.at")
+    .all<{
+      to_pid: number;
+      key: string;
+      from_pid: number;
+      replaced: number;
+      reason: string;
+      old_score: number | null;
+      new_score: number | null;
+      name: string;
+    }>();
+  // Rolled back by votes since: the replaced program is no longer live.
+  const rolled = await db
+    .prepare("SELECT COUNT(*) AS n FROM refresh_verdicts v JOIN programs p ON p.id = v.to_pid WHERE v.replaced = 1 AND p.status != 'live'")
+    .first<{ n: number }>();
+  const cost = await db.prepare("SELECT COALESCE(SUM(usd), 0) AS usd, COUNT(*) AS n FROM spend WHERE call = 'refresh'").first<{ usd: number; n: number }>();
+  return {
+    budget: refreshBudget(env),
+    held: Math.round((await refreshSpentThisMonth(db)) * 1000) / 1000,
+    statuses: statuses.results,
+    replaced: verdicts.results.filter((v) => v.replaced).length,
+    kept: verdicts.results.filter((v) => !v.replaced).length,
+    rolledBack: rolled?.n ?? 0,
+    cost: { usd: Math.round((cost?.usd ?? 0) * 10000) / 10000, programs: cost?.n ?? 0 },
+    verdicts: verdicts.results,
+  };
+}
+
+// --- 3.7 part E: trim duplicates without breaking anyone. ---
+
+// One cheap pass over every name and recipe: near duplicates (World Tree and
+// Yggdrasil, Ley Line and Ley Lines) and merges that make no sense. Nothing
+// changes until the owner approves each one (trimDecide).
+async function trimScan(env: Env, oracle: Oracle) {
+  const db = env.DB;
+  const names = (await db.prepare("SELECT name, kind FROM elements ORDER BY name").all<{ name: string; kind: string }>()).results;
+  const recipes = (
+    await db
+      .prepare(
+        "SELECT ea.name AS a, eb.name AS b, er.name AS r FROM recipes x JOIN elements er ON er.key = x.result LEFT JOIN elements ea ON ea.key = x.a LEFT JOIN elements eb ON eb.key = x.b",
+      )
+      .all<{ a: string | null; b: string | null; r: string }>()
+  ).results;
+  await ensureBudget(env, oracle, "trim", ESTIMATE.trim);
+  const answer = await oracle.trim(
+    names.map((n) => `${n.name} (${n.kind})`),
+    recipes.map((r) => `${r.a ?? "?"} + ${r.b ?? "?"} = ${r.r}`),
+  );
+  const now = Date.now();
+  const known = new Set(names.map((n) => elementKey(n.name)));
+  let added = 0;
+  for (const d of answer.duplicates.slice(0, 60)) {
+    if (!known.has(elementKey(d.keep)) || !known.has(elementKey(d.alias)) || elementKey(d.keep) === elementKey(d.alias)) continue;
+    await db.prepare("INSERT INTO trims (kind, a, b, why, at) VALUES ('duplicate', ?, ?, ?, ?)").bind(d.keep, d.alias, d.why.slice(0, 300), now).run();
+    added++;
+  }
+  for (const m of answer.senseless.slice(0, 40)) {
+    const pair = pairKey(m.a, m.b);
+    const found = await db.prepare("SELECT result FROM recipes WHERE pair = ?").bind(pair).first<{ result: string }>();
+    if (!found) continue;
+    await db
+      .prepare("INSERT INTO trims (kind, a, b, result, why, at) VALUES ('senseless', ?, ?, ?, ?, ?)")
+      .bind(m.a, m.b, found.result, m.why.slice(0, 300), now)
+      .run();
+    added++;
+  }
+  return { added };
+}
+
+async function trimNext(env: Env) {
+  const next = await env.DB.prepare("SELECT * FROM trims WHERE status = 'pending' ORDER BY kind, id LIMIT 1").first();
+  const left = await env.DB.prepare("SELECT COUNT(*) AS n FROM trims WHERE status = 'pending'").first<{ n: number }>();
+  const all = await env.DB.prepare("SELECT id, kind, a, b, result, why, status FROM trims ORDER BY kind, id").all();
+  return { next, left: left?.n ?? 0, all: all.results };
+}
+
+// Approved: a duplicate becomes an alias of the kept element (nothing is
+// deleted: the alias name keeps working in inventories, recipes and First
+// Discoveries, and means the kept one); a senseless merge is asked again on
+// its next merge, the old answer kept in recipe_history and in inventories.
+async function trimDecide(env: Env, body: { id?: unknown; approve?: unknown }) {
+  const db = env.DB;
+  const t = await db
+    .prepare("SELECT * FROM trims WHERE id = ? AND status = 'pending'")
+    .bind(Number(body.id))
+    .first<{ id: number; kind: string; a: string; b: string; result: string | null }>();
+  if (!t) throw new HttpError(404, "Nothing pending with that id");
+  const now = Date.now();
+  if (body.approve === true) {
+    if (t.kind === "duplicate") {
+      const keep = elementKey(t.a);
+      const alias = elementKey(t.b);
+      // An alias of an alias points at the end of the chain; never at itself.
+      const end = (await db.prepare("SELECT key FROM aliases WHERE alias = ?").bind(keep).first<{ key: string }>())?.key ?? keep;
+      if (end === alias) throw new HttpError(400, "That would make an alias of itself");
+      await db.batch([
+        db.prepare("INSERT OR REPLACE INTO aliases (alias, key, at) VALUES (?, ?, ?)").bind(alias, end, now),
+        db.prepare("UPDATE aliases SET key = ? WHERE key = ?").bind(end, alias),
+      ]);
+    } else {
+      const pair = pairKey(t.a, t.b);
+      const r = await db
+        .prepare("SELECT * FROM recipes WHERE pair = ?")
+        .bind(pair)
+        .first<{ pair: string; a: string; b: string; result: string; created_at: number }>();
+      if (r)
+        await db.batch([
+          db
+            .prepare("INSERT INTO recipe_history (pair, a, b, result, created_at, retired_at) VALUES (?, ?, ?, ?, ?, ?)")
+            .bind(r.pair, r.a, r.b, r.result, r.created_at, now),
+          db.prepare("DELETE FROM recipes WHERE pair = ?").bind(pair),
+        ]);
+    }
+  }
+  await db
+    .prepare("UPDATE trims SET status = ?, decided_at = ? WHERE id = ?")
+    .bind(body.approve === true ? "approved" : "declined", now, t.id)
+    .run();
+  return trimNext(env);
+}
+
 // The program each of these elements should have now.
 async function handleLive(body: { names?: unknown }, env: Env): Promise<LiveResponse> {
   const names = Array.isArray(body.names) ? body.names.filter((n): n is string => typeof n === "string" && n.length <= MAX_NAME_LENGTH).slice(0, 600) : [];
@@ -1086,7 +1405,7 @@ async function queueBatch(
 // "up" for a big spell's first real version, "rw" for a rewrite (oracle.ts
 // counts those against the daily rewrite budget).
 function batchItemId(cause: string, id: number): string {
-  return `${cause === "upgrade" ? "up" : "rw"}${id}`;
+  return `${cause === "upgrade" ? "up" : cause === "refresh" ? "rf" : "rw"}${id}`;
 }
 
 // Collects finished batches: each program comes back as a trial, tested by
@@ -1146,11 +1465,21 @@ async function pollBatches(env: Env): Promise<{ done: number; failed: number; wa
           // An old row without a request: no promise to keep.
         }
         const program = programFrom(o.answer, intents, await liveLibrary(db));
-        const origin: ProgramOrigin = row.cause === "upgrade" ? "batch" : row.cause === "judge" ? "judge" : "votes";
+        const origin: ProgramOrigin = row.cause === "upgrade" ? "batch" : row.cause === "judge" ? "judge" : row.cause === "refresh" ? "refresh" : "votes";
         // Its parent is what is live now: the draft may have been fixed, or the
-        // spell rolled back, while the batch ran.
+        // spell rolled back, while the batch ran. A refresh (3.7) waits as a
+        // candidate, served to nobody, for the refresh runner to decide.
         const live = await liveProgram(db, row.key);
-        const id = await insertProgram(db, row.key, JSON.stringify(program), o.model, PROGRAM_VERSION, origin, "trial", live?.row.id ?? row.from_pid);
+        const id = await insertProgram(
+          db,
+          row.key,
+          JSON.stringify(program),
+          o.model,
+          PROGRAM_VERSION,
+          origin,
+          row.cause === "refresh" ? "candidate" : "trial",
+          live?.row.id ?? row.from_pid,
+        );
         await db.prepare("UPDATE rewrites SET status = 'done', to_pid = ?, model = ? WHERE id = ?").bind(id, o.model, row.id).run();
         await recordGap(db, row.key, id, o.answer.missing);
         out.done++;
@@ -1236,6 +1565,9 @@ async function resolveInput(db: D1Database, raw: unknown, lenient: boolean): Pro
 async function getElement(db: D1Database, key: string): Promise<GameElement | null> {
   const primitive = PRIMITIVES.find((p) => elementKey(p.name) === key);
   if (primitive) return { ...primitive };
+  // An approved duplicate (3.7) means the element it is an alias of.
+  const alias = await db.prepare("SELECT key FROM aliases WHERE alias = ?").bind(key).first<{ key: string }>();
+  if (alias && alias.key !== key) return getElement(db, alias.key);
   const row = await db
     .prepare("SELECT name, emoji, kind, depth, tier FROM elements WHERE key = ?")
     .bind(key)
@@ -1310,6 +1642,13 @@ async function handleAdmin(request: Request, url: URL, env: Env, oracle: Oracle,
   if (post && path === "feedback") return json(await changeFeedback(env, await readBody<FeedbackAction>(request)));
   if (post && path === "feedback-sync") return json(await syncFeedback(env, 20));
   // 3.4.2: the API that grows.
+  if (post && path === "refresh") return json(await startRefresh(env, oracle, await readBody(request)));
+  if (!post && path === "refresh-candidates") return json(await refreshCandidates(env, Number(url.searchParams.get("limit")) || 20));
+  if (post && path === "refresh-verdict") return json(await refreshVerdict(env, await readBody(request)));
+  if (!post && path === "refresh-report") return json(await refreshReport(env));
+  if (post && path === "trim-scan") return json(await trimScan(env, oracle));
+  if (!post && path === "trims") return json(await trimNext(env));
+  if (post && path === "trim") return json(await trimDecide(env, await readBody(request)));
   if (!post && path === "challenge-candidates") return json(await candidates(env.DB, Math.min(60, Number(url.searchParams.get("limit")) || 20)));
   if (post && path === "challenge-verify") return json(await recordVerification(env.DB, await readBody(request)));
   if (!post && path === "evolution") return json(await evolution(env.DB));

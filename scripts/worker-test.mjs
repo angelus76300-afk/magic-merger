@@ -54,6 +54,50 @@ function stubAnswer(n, system, user) {
   return JSON.stringify({ name: `Answer ${n}`, emoji: "✨", kind: "spell", tier: user.startsWith("Glow Moss") ? "cosmic" : "minor" });
 }
 
+const batches = new Map();
+function stubBatches(req, res, raw) {
+  const path = req.url.split("?")[0];
+  const send = (data) => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(data));
+  if (req.method === "POST" && path === "/v1/messages/batches") {
+    const body = JSON.parse(raw);
+    const id = `msgbatch_${batches.size + 1}`;
+    batches.set(id, body.requests);
+    calls += body.requests.length;
+    return send({ id, type: "message_batch", processing_status: "in_progress", request_counts: {} });
+  }
+  const m = /^\/v1\/messages\/batches\/([^/]+)(\/results)?$/.exec(path);
+  if (!m || !batches.has(m[1])) return res.writeHead(404).end("no batch");
+  if (!m[2])
+    return send({
+      id: m[1],
+      type: "message_batch",
+      processing_status: "ended",
+      results_url: `${stubUrl}/v1/messages/batches/${m[1]}/results`,
+      request_counts: {},
+    });
+  const lines = batches.get(m[1]).map((r, n) => {
+    const system = Array.isArray(r.params.system) ? r.params.system.map((b) => b.text).join("") : String(r.params.system ?? "");
+    const text = stubAnswer(n, system, "");
+    return JSON.stringify({
+      custom_id: r.custom_id,
+      result: {
+        type: "succeeded",
+        message: {
+          id: `m${n}`,
+          type: "message",
+          role: "assistant",
+          model: r.params.model,
+          content: [{ type: "text", text }],
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 100, output_tokens: 100 },
+        },
+      },
+    });
+  });
+  res.writeHead(200, { "content-type": "application/x-jsonl" }).end(lines.join("\n"));
+}
+
 // The same server stubs GitHub and the feedback routine (3.4.1).
 const REPO = "angelus76300-afk/magic-merger";
 const gh = { issues: [], comments: [], fires: [], timeline: {}, failFire: false };
@@ -100,7 +144,9 @@ const stub = createServer((req, res) => {
   req.on("data", (c) => (raw += c));
   req.on("end", () => {
     if (req.url.startsWith("/repos/") || req.url.startsWith("/v1/claude_code/")) return stubGitHub(req, res, raw);
-    if (!req.url.endsWith("/v1/messages")) {
+    // The Batch API (3.7, the refresh): ended at once, each item answered like a message.
+    if (req.url.startsWith("/v1/messages/batches")) return stubBatches(req, res, raw);
+    if (!req.url.endsWith("/v1/messages") && !req.url.startsWith("/v1/messages?")) {
       res.writeHead(404).end("not stubbed");
       return;
     }
@@ -828,6 +874,85 @@ const fresh = () => ALL[pairs++];
     merged.data?.element?.name,
   );
   check("a result at depth 2 is grand at most, whatever it asked", merged.data.element.tier === "grand", merged.data?.element?.tier);
+  await reset();
+}
+
+// 15. The refresh of the legacy library (3.7 part E): programs written again
+// through the Batch API come back as candidates nobody is served; a verdict
+// replaces the live one (kept for rollback) or keeps it; the trim lists
+// duplicates for approval, and an approved one is an alias, not a deletion.
+{
+  await reset();
+  const now = Date.now();
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('old flame', 'Old Flame', '🔥', 'spell', 2, 'minor', 'A flame', 'harm', ?), ('star wyrm', 'Star Wyrm', '🐉', 'artifact', 5, 'legendary', 'A dragon of stars', 'summon', ?)",
+    )
+    .bind(now, now)
+    .run();
+  const live = {};
+  for (const name of ["Old Flame", "Star Wyrm"]) {
+    const p = await api("/api/spell", { admin: true, body: { name } });
+    await api("/api/spell/check", { admin: true, body: { name, id: p.data.program.id, ok: true, problem: null, detail: "ok" } });
+    live[name] = (await api("/api/spells/live", { admin: true, body: { names: [name] } })).data.programs[name].id;
+  }
+  const started = await api("/api/admin/refresh", { admin: true, body: { keys: ["old flame", "star wyrm"], dry: true } });
+  check(
+    "the refresh queues the programs in batches, by model",
+    started.status === 200 && started.data.queued.length === 2 && started.data.batches.length === 2,
+    JSON.stringify(started.data),
+  );
+  await api("/api/admin/poll-batches", { admin: true, body: {} });
+  const cands = (await api("/api/admin/refresh-candidates", { admin: true })).data;
+  const served = (await api("/api/spells/live", { admin: true, body: { names: ["Old Flame", "Star Wyrm"] } })).data.programs;
+  check(
+    "they come back as candidates, served to nobody",
+    cands.length === 2 && cands.every((c) => c.dry && c.oldCode && c.code) && served["Old Flame"].id === live["Old Flame"] && !served["Old Flame"].trial,
+    JSON.stringify(cands.map((c) => [c.name, c.model])),
+  );
+  check(
+    "a big one is written by the big model, a small one by the small",
+    cands.find((c) => c.name === "Star Wyrm")?.model === "claude-opus-5-5" && cands.find((c) => c.name === "Old Flame")?.model === "claude-haiku-5-5",
+  );
+  const flame = cands.find((c) => c.name === "Old Flame");
+  const wyrm = cands.find((c) => c.name === "Star Wyrm");
+  await api("/api/admin/refresh-verdict", { admin: true, body: { id: flame.id, replace: true, reason: "passed", oldScore: 2, newScore: 4 } });
+  await api("/api/admin/refresh-verdict", { admin: true, body: { id: wyrm.id, replace: false, reason: "scored lower", oldScore: 4, newScore: 3 } });
+  const after = (await api("/api/spells/live", { admin: true, body: { names: ["Old Flame", "Star Wyrm"] } })).data.programs;
+  const old = await db.prepare("SELECT status FROM programs WHERE id = ?").bind(live["Old Flame"]).first();
+  // Star Wyrm's own first Opus version (3.3) may be waiting as a trial: its live program is what matters.
+  const kept = await db.prepare("SELECT status FROM programs WHERE id = ?").bind(live["Star Wyrm"]).first();
+  const rejected = await db.prepare("SELECT status FROM programs WHERE id = ?").bind(wyrm.id).first();
+  check(
+    "a verdict replaces the live program, kept for rollback, or keeps it",
+    after["Old Flame"].id === flame.id && old?.status === "retired" && kept?.status === "live" && rejected?.status === "rejected",
+    JSON.stringify(after),
+  );
+  const report = (await api("/api/admin/refresh-report", { admin: true })).data;
+  check(
+    "the report says what was replaced and kept, and what it cost",
+    report.replaced === 1 && report.kept === 1 && report.cost.programs === 2,
+    JSON.stringify({ ...report, verdicts: undefined }),
+  );
+  const twice = await api("/api/admin/refresh", { admin: true, body: { keys: ["old flame"] } });
+  check("nothing is refreshed twice", twice.data.queued.length === 0);
+
+  await db.prepare("INSERT INTO trims (kind, a, b, why, at) VALUES ('duplicate', 'Old Flame', 'Star Wyrm', 'test', ?)").bind(now).run();
+  const next = (await api("/api/admin/trims", { admin: true })).data;
+  const decided = await api("/api/admin/trim", { admin: true, body: { id: next.next.id, approve: true } });
+  const alias = await api("/api/merge", { admin: true, body: { a: "Star Wyrm", b: "Fire" } });
+  const still = await db.prepare("SELECT COUNT(*) AS n FROM elements WHERE key = 'star wyrm'").first();
+  check(
+    "an approved duplicate is an alias: its name still works and means the kept one, nothing deleted",
+    decided.status === 200 && decided.data.left === 0 && still.n === 1 && alias.status === 200,
+    JSON.stringify(alias.data?.element ?? alias.data),
+  );
+  const resolved = await api("/api/describe", { admin: true, body: { name: "Star Wyrm" } });
+  check(
+    "the alias resolves to the kept element",
+    resolved.status === 200 && JSON.stringify(resolved.data).includes("Old Flame"),
+    JSON.stringify(resolved.data).slice(0, 200),
+  );
   await reset();
 }
 

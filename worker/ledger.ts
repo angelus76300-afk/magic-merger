@@ -54,6 +54,7 @@ export const ESTIMATE = {
   tier: 0.05,
   judge: 0.004,
   chronicle: 0.006,
+  trim: 0.1,
   small: 0.008,
   big: 0.15,
   batch: 0.06,
