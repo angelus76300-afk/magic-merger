@@ -936,6 +936,26 @@ const fresh = () => ALL[pairs++];
   );
   const twice = await api("/api/admin/refresh", { admin: true, body: { keys: ["old flame"] } });
   check("nothing is refreshed twice", twice.data.queued.length === 0);
+  // A candidate superseded (written with a prompt changed since) may be written again.
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('moss ward', 'Moss Ward', '🌿', 'spell', 2, 'minor', 'A ward of moss', 'protect', ?)",
+    )
+    .bind(now)
+    .run();
+  const moss = await api("/api/spell", { admin: true, body: { name: "Moss Ward" } });
+  await api("/api/spell/check", { admin: true, body: { name: "Moss Ward", id: moss.data.program.id, ok: true, problem: null, detail: "ok" } });
+  await api("/api/admin/refresh", { admin: true, body: { keys: ["moss ward"] } });
+  await api("/api/admin/poll-batches", { admin: true, body: {} });
+  const mossCand = (await api("/api/admin/refresh-candidates", { admin: true })).data.find((c) => c.name === "Moss Ward");
+  await api("/api/admin/refresh-verdict", { admin: true, body: { id: mossCand.id, supersede: true } });
+  const redo = await api("/api/admin/refresh", { admin: true, body: { keys: ["moss ward"] } });
+  const mossRow = await db.prepare("SELECT status FROM programs WHERE id = ?").bind(mossCand.id).first();
+  check(
+    "a superseded candidate is rejected and its element refreshed again",
+    redo.data.queued.length === 1 && mossRow.status === "rejected",
+    JSON.stringify(redo.data),
+  );
 
   await db.prepare("INSERT INTO trims (kind, a, b, why, at) VALUES ('duplicate', 'Old Flame', 'Star Wyrm', 'test', ?)").bind(now).run();
   const next = (await api("/api/admin/trims", { admin: true })).data;

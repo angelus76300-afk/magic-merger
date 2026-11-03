@@ -902,7 +902,7 @@ async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; li
   const rows = await db
     .prepare(
       `SELECT s.key, s.pid FROM spells s JOIN elements e ON e.key = s.key
-       WHERE s.pid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM rewrites r WHERE r.key = s.key AND r.cause = 'refresh' AND r.status != 'failed')
+       WHERE s.pid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM rewrites r WHERE r.key = s.key AND r.cause = 'refresh' AND r.status NOT IN ('failed', 'superseded'))
        ORDER BY (SELECT COUNT(*) FROM casts c JOIN programs p ON p.id = c.pid WHERE p.key = s.key) DESC, s.key`,
     )
     .all<{ key: string; pid: number }>();
@@ -1019,11 +1019,19 @@ async function refreshCandidates(env: Env, limit: number) {
 // candidate is rejected and the old one stays live.
 async function refreshVerdict(
   env: Env,
-  body: { id?: unknown; replace?: unknown; reason?: unknown; oldScore?: unknown; newScore?: unknown; checked?: unknown },
+  body: { id?: unknown; replace?: unknown; reason?: unknown; oldScore?: unknown; newScore?: unknown; checked?: unknown; supersede?: unknown },
 ) {
   const db = env.DB;
   const row = await getProgram(db, Number(body.id));
   if (!row || row.status !== "candidate" || row.origin !== "refresh") throw new HttpError(404, "There is no such candidate");
+  // Superseded: written with a prompt changed since (the dry run, before
+  // protection kept each item's own look). Rejected, and its element may be
+  // refreshed again; what it cost still counts against the cap.
+  if (body.supersede === true) {
+    await setStatus(db, row.id, "rejected");
+    await db.prepare("UPDATE rewrites SET status = 'superseded' WHERE cause = 'refresh' AND to_pid = ?").bind(row.id).run();
+    return { ok: true, replaced: false, superseded: true };
+  }
   const live = await liveProgram(db, row.key);
   const replace = body.replace === true;
   const score = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v) : null);

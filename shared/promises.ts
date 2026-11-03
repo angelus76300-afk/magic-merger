@@ -31,5 +31,5 @@ export function parseIntents(raw: unknown): Intent[] {
 // so the test is the specification and not a surprise.
 export const PROMISE_TEST: Partial<Record<Intent, string>> = {
   protect:
-    "This spell promises protection. Its test run casts it on a village, then three seconds later rains fire on the same spot, pours lava on it, drops a blast on it and sends raiders at its people, one at a time, and checks that the houses and villagers within w.r survive far better than without it. Protect with w.ward over what it guards, raised within two seconds and lasting at least 15. Never build a solid shell over people.",
+    "This spell promises protection. Its test run casts it on a village, then three seconds later rains fire on the same spot, pours lava on it, drops a blast on it and sends raiders at its people, one at a time, and checks that the houses and villagers within w.r survive far better than without it. Protect with w.ward over what it guards, raised within two seconds and lasting at least 15. Never build a solid shell over people. The ward is nearly invisible: it is how the item protects, not what it looks like. Keep the item's own look beside it (a sword planted in the square, a tome glowing on a lectern, a dungeon's stone gate, a wall of runes): two items that protect must not look alike.",
 };
