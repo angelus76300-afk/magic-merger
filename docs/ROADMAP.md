@@ -1,6 +1,6 @@
 # Where the game stands, and what comes next
 
-Updated on 2026-11-04, with 4.4.5 part B.
+Updated on 2026-11-04, with 4.4.5 part C.
 
 ## Done since the first review
 
@@ -262,7 +262,22 @@ Asked for: items 6 to 8 of "4.4.5 Every island a surprise" below, buildings that
 7. **Back only where it can live** (the owner's rule): a kind with habitat on the island never dies out (room for a pair whatever its food, a pair walking in when too few, a small habitat never missed); a kind whose habitat is gone, or a village whose houses are all gone, does not pop back, and returns only as the land regrows. Checked in `npm test` both ways (a wipe that leaves the habitat, a scorched island).
 8. **The owner's report on part A, fixed**: fish drawn on frozen lakes (now under the ice), rivers invisible on big islands (wider on large and bigger, running water freezes only below -10), Huge and Giant locked on fast devices (a recommendation now), and picking a spell still being made cast the previous one (a creation bar, a wait message, the spell in hand once ready).
 
-Not done: wonders are box models, not voxels (they cost no voxel budget, and a spell's blast takes a standing one away rather than breaking it block by block); villagers do not rest under a lone tree or bathe in a hot spring on their own, they get the effect when they pass; no sound of their own for wonders yet (4.5). Part C (a new wonder a day from the API) waits for the owner's look at its prompt and cost.
+Not done: wonders are box models, not voxels (they cost no voxel budget, and a spell's blast takes a standing one away rather than breaking it block by block); villagers do not rest under a lone tree or bathe in a hot spring on their own, they get the effect when they pass; no sound of their own for wonders yet (4.5).
+
+## Done in 4.4.5, part C: a library of nature that keeps growing
+
+Asked for: items 9 to 12 of "4.4.5 Every island a surprise" below, with the wonder prompt, three wonders it wrote and the cost from the ledger shown first; the owner chose Opus from uncommon up, a full moon trigger, a test that shows each wonder its change, and the judge's advice, and asked for the wonders to go into a pool every player's new islands draw from. Then, from a phone during the work: too much water, bad waves, elongated lands, too many cliffs, a weird sea. DESIGN.md, "A library of nature that keeps growing" and "The owner's report on the land and the water", has the rules; `docs/measurements/wonders-4.4.5-c.md` the numbers and frames.
+
+1. **A new wonder a day from the API**: a rarity, a land and a change of time drawn each day, the wonder written as a program in the spell format with its kind, lands, spot, reach and line for the first look, through the Batch API at half price (Haiku for a common one, Opus from uncommon up), in its own cap, `WONDER_BUDGET_USD` ($2, holds of $0.10 and $0.01 before each call). From the ledger: about $1.03 a month, $1.69 at worst. The first prompt wrote one wonder in three that passed; the second, three in three on the existing test.
+2. **Tested in Node by the nightly Action** (`npm run wonders`, `src/sim/wondercheck.ts`): built on three islands of its lands at its spot, a day and night from the morning of a full moon, a drought round it when it speaks of one; it fails on a crash, nothing built, over 1,500 voxels or 2 ms a tick, nothing done, over three of its creatures, or half the villagers or animals gone. Live or rejected with the reason; the owner retires or puts live any wonder (People, Wonders). The judge scores two day frames and a night one, as advice.
+3. **A pool for everyone**: `GET /api/wonders`; every new island draws from the live wonders beside the seventeen built-in kinds, in their lands; the save keeps a wonder's code, so a retired one stays where it is. The three wonders shown to the owner are in it: the aurora ice spires and the moon mire live, the dew towers rejected (they did nothing on one island in three).
+4. **Players' discoveries grow into the world**: a day's new artifacts up to grand are sorted by Haiku (place, material, creature, object, person); places, materials and creatures become rare trial wonders with their live program and the name of the friend who found them first, tested like any wonder. Nothing goes into an inventory.
+5. **New on islands this week**: said once when the World opens, and listed in the new island dialog.
+6. **A full moon trigger** for artifacts (`when: "full moon"`), asked for by both Opus wonders.
+7. **The owner's report on the land and the water**: noise that grows with the island and a warp that no longer stretches lands into worms, ridges on broad lands instead of in bands of sea, only the largest hollows kept as lakes, a little less sea, slopes softened once (cliffs of two voxels or more: medium 12.8% to 4.8% of land, huge 12.6% to 1.6%; water: medium 31% to 27%, huge 34% to 26%); waves drawn per pixel as thin broken crests instead of a vertex heave; the sea's color shaded per corner and nearly opaque past four voxels, so the seabed's steps no longer show through as a grid.
+8. **Found on the way**: water tops on gently sloping rivers opened hairline gaps (a corner judged against each top's own level); the frozen waterfall's check passed only while the land round it was warm.
+
+Not done: the production call has not run yet (the container had no API key; the first daily wonder will be the first real ledger row); the two program wonders up close are clusters of voxel pillars, chunkier than the built-in box models (the kit's spire is coarse; the judge's advice will say whether the next prompt should steer them to the land and fewer, finer voxels); 4.7's what's new list does not exist yet, so "new this week" is a toast and a line in the new island dialog.
 
 ## Decisions taken
 
@@ -292,9 +307,9 @@ The ledger holds $6.64 (plus about $3.32 before it existed): about $10 of the fi
 
 Sizes are per Claude Code session: S a few hours, M a full session, L two or more. The roadmap page has a ready prompt per version.
 
-**Numbered in the order to run them.** Renumbered on 3 November so the numbers are the order; `docs/REVIEW-4.0.md` and older pull requests use the old numbers (the review's findings were 4.0.2, faster creation 4.0.1, worlds 4.1, sound 4.2, strangers 4.5). Done since: 4.1, 4.2, 4.3, 4.4, 4.4.1 and 4.4.5 part A, summed up above; their plans are in the git history of this file. Left: 4.4.5 parts B and C, 4.4.6 (accounts, found on 4 November), 4.5, 4.6, then 4.7, the daily updates that keep going after the plan. 4.4.5 and 4.5 could swap; nothing public before 4.6.
+**Numbered in the order to run them.** Renumbered on 3 November so the numbers are the order; `docs/REVIEW-4.0.md` and older pull requests use the old numbers (the review's findings were 4.0.2, faster creation 4.0.1, worlds 4.1, sound 4.2, strangers 4.5). Done since: 4.1, 4.2, 4.3, 4.4, 4.4.1 and 4.4.5 (parts A, B and C), summed up above; their plans are in the git history of this file. Left: 4.4.6 (accounts, found on 4 November), 4.5, 4.6, then 4.7, the daily updates that keep going after the plan. 4.4.5 and 4.5 could swap; nothing public before 4.6.
 
-### 4.4.5 Every island a surprise (parts A and B done, see above)
+### 4.4.5 Every island a surprise (done, see above)
 
 Goal: be amazed at every new island, never feel the same one twice, and have it stay alive and balanced. Checked against main on 4 November: 4.4 gave each biome one tree look among seven models (oak, pine, palm, snowy pine, jungle, willow, juniper) and planted oases where a habitat was missing; a region otherwise has one bush, one flower, crops and boulders (cover kinds unchanged since 3.0), the structure kit (`src/sim/structures.ts`: birch, dead, giant, mushroom and crystal trees, arches, towers) is used only by spells, and 4.4.1 left villages and animals alike in every region. Native numbers are kept up by births in the habitat (`creatures.ts`, `lifeCycle`), with no notion of food, recovery or new species. Three parts, each its own pull request, in this order.
 

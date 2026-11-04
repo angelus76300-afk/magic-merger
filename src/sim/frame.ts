@@ -11,7 +11,17 @@ import type { SavedWorld } from "./save";
 import { Hud } from "./hud";
 import { SCENARIOS } from "./scenarios";
 import { firstLook } from "./firstlook";
-import { signatureOf, wonderInfo } from "./wonders";
+import { readDef, signatureOf, wonderInfo, type WonderDef } from "./wonders";
+
+// The pool of wonders written as programs (4.4.5 part C), checked: the page
+// relays what the server said, and a definition is code like any spell.
+let pool: WonderDef[] = [];
+function readPool(v: unknown): WonderDef[] {
+  return (Array.isArray(v) ? v : [])
+    .map(readDef)
+    .filter((d): d is WonderDef => d !== null)
+    .slice(0, 200);
+}
 
 function readRecent(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string" && s.length <= 300).slice(-10) : [];
@@ -93,6 +103,7 @@ function showWonder(info: ReturnType<typeof wonderInfo>): void {
   head.append(el("strong", "title", info.name[0].toUpperCase() + info.name.slice(1)), el("span", "sub", info.label), close);
   const rows = el("dl", "rows");
   rows.append(el("dt", "", "Rarity"), el("dd", "", info.rarity), el("dt", "", "Does"), el("dd", "", info.does));
+  if (info.by) rows.append(el("dt", "", "Found by"), el("dd", "", info.by));
   card.replaceChildren(head, rows);
   card.hidden = false;
 }
@@ -176,7 +187,7 @@ function mount(next: Engine): void {
 // land from the sliders (land-options.ts, resolveLand).
 function freshIsland(size: WorldSize, choice: LandChoice, seed: number | null): Engine {
   const s = seed ?? (Math.random() * 2 ** 31) | 0;
-  return Engine.create(canvas, overlay, size, hooks, s, {}, resolveLand(choice, s, WORLD_SIZES[size] ?? WORLD_SIZES.medium), recent);
+  return Engine.create(canvas, overlay, size, hooks, s, {}, resolveLand(choice, s, WORLD_SIZES[size] ?? WORLD_SIZES.medium), recent, pool);
 }
 
 // The wonder sets of the player's last islands (the page keeps them), and
@@ -288,6 +299,7 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       muted = msg.muted;
       sandbox = { save: msg.save, size: msg.size, land: readChoice(msg.land), rules: msg.rules };
       recent = readRecent(msg.recent);
+      pool = readPool(msg.wonders);
       openSandbox();
       clearInterval(saveTimer);
       saveTimer = window.setInterval(save, 10_000);
@@ -324,6 +336,9 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       mount(freshIsland(msg.size, sandbox.land, msg.seed));
       showFirstLook();
       save();
+      break;
+    case "wonders":
+      pool = readPool(msg.list);
       break;
     case "scenario":
       openScenario(msg.id, msg.ahead ?? 0);

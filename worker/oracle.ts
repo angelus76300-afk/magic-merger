@@ -32,6 +32,10 @@ import {
   chronicleUserMessage,
   TRIM_SCHEMA,
   TRIM_SYSTEM,
+  SORT_SCHEMA,
+  SORT_SYSTEM,
+  WONDER_SCHEMA,
+  wonderSystem,
 } from "./prompts";
 
 export interface MergeAnswer {
@@ -120,6 +124,43 @@ export interface BatchOutcome {
   usd: number;
 }
 
+// A wonder the API designed (4.4.5 part C), as it answered: checked by
+// worker/wonders.ts before it is stored, tested in Node before any island gets it.
+export interface WonderAnswer {
+  kind: string;
+  rarity: string;
+  lands: string[];
+  spot: string;
+  reach: number;
+  does: string;
+  summary: string;
+  code: string;
+  missing: string;
+}
+
+export interface WonderItem {
+  id: string;
+  model: string;
+  user: string;
+}
+
+export interface WonderOutcome {
+  id: string;
+  answer?: WonderAnswer;
+  error?: string;
+  model: string;
+  usd: number;
+}
+
+// What an artifact is, for players' discoveries grown into the world.
+export interface SortAnswer {
+  name: string;
+  sort: "place" | "material" | "creature" | "object" | "person";
+  lands: string[];
+  spot: string;
+  does: string;
+}
+
 export interface ProgramAnswer {
   summary: string;
   code: string;
@@ -168,6 +209,11 @@ export interface Oracle {
   submitBatch(items: BatchItem[]): Promise<string>;
   // null while the batch is still running.
   batchResults(batch: string): Promise<BatchOutcome[] | null>;
+  // 4.4.5 part C: a new wonder a day, through the Batch API at half price.
+  submitWonders(items: WonderItem[]): Promise<string>;
+  wonderResults(batch: string): Promise<WonderOutcome[] | null>;
+  // Which of players' artifacts are places, materials or creatures.
+  sortItems(items: { name: string; description: string }[]): Promise<SortAnswer[]>;
 }
 
 export interface OracleModels {
@@ -436,6 +482,48 @@ export class ClaudeOracle implements Oracle {
     return this.program("repair", [{ role: "user", content: repairUserMessage(name, tier, code, error) }]);
   }
 
+  // One wonder a request, each with the model its rarity asks for, at the
+  // spell writer's effort. Not cached: a lone daily call would pay the
+  // cache write and never read it.
+  async submitWonders(items: WonderItem[]): Promise<string> {
+    const system = wonderSystem();
+    const batch = await this.client.beta.messages.batches.create({
+      requests: items.map((item) => ({
+        custom_id: item.id,
+        params: requestParams(item.model, this.models.spellEffort, system, [{ role: "user", content: item.user }], WONDER_SCHEMA, 20000, false),
+      })),
+    });
+    return batch.id;
+  }
+
+  async wonderResults(id: string): Promise<WonderOutcome[] | null> {
+    const batch = await this.client.beta.messages.batches.retrieve(id);
+    if (batch.processing_status !== "ended") return null;
+    const out: WonderOutcome[] = [];
+    for await (const item of await this.client.beta.messages.batches.results(id)) {
+      const r = item.result;
+      if (r.type !== "succeeded") {
+        out.push({ id: item.custom_id, error: r.type === "errored" ? JSON.stringify(r.error).slice(0, 300) : r.type, model: "", usd: 0 });
+        continue;
+      }
+      const spent = logUsage("wonder", r.message, 0.5);
+      try {
+        out.push({ id: item.custom_id, answer: toWonder(readText(r.message)), model: spent.model, usd: spent.usd });
+      } catch (err) {
+        out.push({ id: item.custom_id, error: err instanceof Error ? err.message : String(err), model: spent.model, usd: spent.usd });
+      }
+    }
+    return out;
+  }
+
+  async sortItems(items: { name: string; description: string }[]): Promise<SortAnswer[]> {
+    if (!items.length) return [];
+    const list = items.map((i) => `${i.name}: ${i.description.replace(/\s+/g, " ").slice(0, 300)}`).join("\n");
+    const text = await this.ask("wonder-sort", this.models.judge, "low", SORT_SYSTEM, [{ role: "user", content: list }], SORT_SCHEMA, 8000, false);
+    const raw = (parseJson(text) as { items?: unknown }).items;
+    return (Array.isArray(raw) ? raw : []).filter((x): x is SortAnswer => !!x && typeof x === "object" && typeof (x as SortAnswer).name === "string");
+  }
+
   // Asks for a program; if it does not even parse, shows the model the
   // parser's complaint once and takes the second answer.
   private async program(call: string, messages: Anthropic.Beta.BetaMessageParam[], library?: LibraryDoc[]): Promise<ProgramAnswer> {
@@ -478,6 +566,23 @@ function requestParams(
     // The system prompts never change, so frequent calls cache them.
     system: [control ? { type: "text" as const, text: system, cache_control: control } : { type: "text" as const, text: system }],
     messages,
+  };
+}
+
+function toWonder(text: string): WonderAnswer {
+  const a = parseJson(text) as Partial<WonderAnswer>;
+  const str = (v: unknown, n: number) => (typeof v === "string" ? v.slice(0, n) : "");
+  if (typeof a.code !== "string" || typeof a.kind !== "string") throw new OracleError("The wonder answer did not match the schema");
+  return {
+    kind: str(a.kind, 60),
+    rarity: str(a.rarity, 20),
+    lands: Array.isArray(a.lands) ? a.lands.filter((l): l is string => typeof l === "string").slice(0, 7) : [],
+    spot: str(a.spot, 20),
+    reach: typeof a.reach === "number" ? a.reach : 0,
+    does: str(a.does, 200),
+    summary: str(a.summary, 600),
+    code: a.code.slice(0, 40000),
+    missing: str(a.missing, 300),
   };
 }
 
@@ -614,7 +719,52 @@ export class MockOracle implements Oracle {
   async batchResults(): Promise<BatchOutcome[] | null> {
     return [];
   }
+
+  // Offline (and in the Worker's tests): a small wonder that builds and acts,
+  // so the daily path can be followed end to end without the API.
+  async submitWonders(items: WonderItem[]): Promise<string> {
+    MOCK_WONDER_BATCHES.set(`mock-wonders-${MOCK_WONDER_BATCHES.size + 1}`, items);
+    return `mock-wonders-${MOCK_WONDER_BATCHES.size}`;
+  }
+
+  async wonderResults(batch: string): Promise<WonderOutcome[] | null> {
+    const items = MOCK_WONDER_BATCHES.get(batch) ?? [];
+    return items.map((item) => {
+      const rarity = /Rarity: (\w+)/.exec(item.user)?.[1] ?? "common";
+      const land = /belong to: (\w+)/.exec(item.user)?.[1] ?? "temperate";
+      const answer: WonderAnswer = {
+        kind: `mock stones ${item.id}`,
+        rarity,
+        lands: [land],
+        spot: "flat",
+        reach: rarity === "legendary" ? 8 : 6,
+        does: "at night its stones glow, and they heal whoever rests by them",
+        summary: "Mock wonder: three glowing stones that heal at night.",
+        code: `const spell = {
+  artifacts: [{ name: "Mock Stones", radius: 6, color: "#b8a0ff", effects: [{ when: "night", do: "heal", every: 30 }, { when: "every", do: "light", every: 40 }] }],
+  *cast(w) {
+    for (let k = 0; k < 3; k++) w.spire(w.x + Math.cos(k * 2.1) * 3, w.y + Math.sin(k * 2.1) * 3, { height: 8, radius: 1.2, colors: ["#b8a0ff", "#e0d4ff"], kind: "glow" });
+    w.artifact(w.x, w.y, "Mock Stones");
+  },
+};`,
+        missing: "",
+      };
+      return { id: item.id, answer, model: item.model, usd: 0 };
+    });
+  }
+
+  async sortItems(items: { name: string; description: string }[]): Promise<SortAnswer[]> {
+    return items.map((i) => ({
+      name: i.name,
+      sort: /oak|tree|grove|spire|spring|crystal|moss|ore|wisp|wolf|beast|dragon/i.test(i.name) ? "place" : "object",
+      lands: ["temperate"],
+      spot: "flat",
+      does: "it stands where it grew, and the animals rest by it",
+    }));
+  }
 }
+
+const MOCK_WONDER_BATCHES = new Map<string, WonderItem[]>();
 
 const MOCK_THEMES: { words: string[]; colors: [string, string]; impact: string }[] = [
   {

@@ -8,6 +8,11 @@
 # designer wrote are tested in Node, and engine proposals become issues
 # labelled api-gap. No Claude call.
 #
+# Then the day's new wonders (4.4.5 part C, scripts/wonder-runner.ts): each
+# trial wonder is built on three islands of its lands and watched for a day
+# and night in Node; it goes live in the pool new islands draw from only if
+# it passes. No Claude call.
+#
 # Then the challenges (3.7, scripts/challenge-runner.ts): spells made or
 # rewritten since are tried on each challenge in Node, so a challenge still
 # hidden (no verified solution) appears once a player makes a spell that
@@ -28,7 +33,7 @@ permissions:
 jobs:
   judge:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       MM_URL: ${{ secrets.MM_URL }}
       MM_TOKEN: ${{ secrets.MM_TOKEN }}
@@ -45,7 +50,9 @@ jobs:
         run: |
           npm ci
           npm run evolve
+          npm run wonders
           npm run challenges -- 10
           npm install --no-save playwright
           npx playwright install --with-deps chromium
           node scripts/judge-runner.mjs ${{ inputs.limit || '30' }}
+          node scripts/judge-runner.mjs wonders

@@ -10,13 +10,16 @@ import type { LandChoice } from "./land-options";
 
 export type ToWorld =
   // recent (4.4.5 part B): the wonder sets of the player's last ten islands.
-  | { type: "init"; save: SavedWorld | null; size: WorldSize; land: LandChoice; rules: CastRequest[]; muted: boolean; recent?: string[] }
+  // wonders (4.4.5 part C): the live pool of wonders written as programs.
+  | { type: "init"; save: SavedWorld | null; size: WorldSize; land: LandChoice; rules: CastRequest[]; muted: boolean; recent?: string[]; wonders?: unknown[] }
   | { type: "select"; spell: CastRequest | null }
   | { type: "spell-updated"; spell: CastRequest }
   | { type: "villager" }
   // 4.4.1: the sliders and the seed (null for a new one); the seed picks
   // the shape and the land.
   | { type: "reset"; size: WorldSize; land: LandChoice; seed: number | null; recent?: string[] }
+  // The pool of wonders written as programs, when it arrives or changes (4.4.5 part C).
+  | { type: "wonders"; list: unknown[] }
   | { type: "mute"; muted: boolean }
   | { type: "visible"; visible: boolean }
   // ahead: seconds of the hazard already played while the player merged (3.7).

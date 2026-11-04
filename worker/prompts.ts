@@ -214,7 +214,7 @@ Holy Relic: a small shrine plus w.landmark with scares your undead kinds and aur
 
 ARTIFACTS
 Some items are artifacts, not spells: objects, materials, creatures, places, people. The player places them where they tap, and the same program format makes them appear: keep the arrival short (a flash, a sound, a second at most) and make the thing itself the point. A creature becomes a new creature kind with a behavior and is spawned; a building or a place is built with the structures at a believable size; a material is laid on the land with its reactions; whatever acts on its own (a volcano that leaks lava, a well that waters the fields) gets a creature, a material rule or a body that keeps doing it. An artifact's reach is smaller than a spell's: most are a few cells.
-An object or a place acts through w.artifact(x, y, "Name") with spell.artifacts: [{name, radius, color, lures, scares, charges, recharge, fuel, health, onBreak, effects, grants, uses, pairs}] (plain data like spell.creatures, kept across a reload). effects: up to four {when, every, do, radius, cost}: when is dawn, dusk, night, day, every, drought, fire, enemy, death or hurt; do is water (waters dry fields and crops), rain, heal, grow, freeze, burn, lightning, shield, light (drives night hunters off), food, gold (to the nearest village's stores), revive (a corpse), summon:<kind>, cast:<a library spell's name> (at major at most), or act(self, w, target) of your own. charges (with recharge, seconds per charge back) are spent by effects and grants; fuel is seconds it burns before it goes out; health is worn down by fire and by kinds that destroy it, and onBreak is an effect. grants: up to three {what, to, cost}, what villagers come to it for: water (they carry it to their fields), arms (they become guards), prayer, food, heal, gold. uses: {do, by}, what kinds do to it: steal, guard, destroy, worship. pairs: {with, within, do, once} with a corpse, a creature kind, another artifact's name or a material: a Phoenix Feather near a corpse revives it. A Well: effects [{when: "dawn", do: "water"}], grants [{what: "water"}]; a Rain Totem: effects [{when: "drought", do: "cast:Rain", every: 120}]; a Forge: grants [{what: "arms"}], uses [{do: "steal", by: ["goblin"]}], health 200. Build its look with structures or voxels next to it.
+An object or a place acts through w.artifact(x, y, "Name") with spell.artifacts: [{name, radius, color, lures, scares, charges, recharge, fuel, health, onBreak, effects, grants, uses, pairs}] (plain data like spell.creatures, kept across a reload). effects: up to four {when, every, do, radius, cost}: when is dawn, dusk, night, day, every, drought, fire, enemy, death, hurt or full moon (one night in four); do is water (waters dry fields and crops), rain, heal, grow, freeze, burn, lightning, shield, light (drives night hunters off), food, gold (to the nearest village's stores), revive (a corpse), summon:<kind>, cast:<a library spell's name> (at major at most), or act(self, w, target) of your own. charges (with recharge, seconds per charge back) are spent by effects and grants; fuel is seconds it burns before it goes out; health is worn down by fire and by kinds that destroy it, and onBreak is an effect. grants: up to three {what, to, cost}, what villagers come to it for: water (they carry it to their fields), arms (they become guards), prayer, food, heal, gold. uses: {do, by}, what kinds do to it: steal, guard, destroy, worship. pairs: {with, within, do, once} with a corpse, a creature kind, another artifact's name or a material: a Phoenix Feather near a corpse revives it. A Well: effects [{when: "dawn", do: "water"}], grants [{what: "water"}]; a Rain Totem: effects [{when: "drought", do: "cast:Rain", every: 120}]; a Forge: grants [{what: "arms"}], uses [{do: "steal", by: ["goblin"]}], health 200. Build its look with structures or voxels next to it.
 Its test run places it by a village and leaves it alone for five minutes: it must keep changing something after it arrives (an effect, a grant villagers use, a pair, its creatures' deeds, a material that keeps spreading). A thing that only stands there fails.
 
 GOOD SPELLS
@@ -231,6 +231,128 @@ Example, Haunted Grove (major artifact):
 ${EXAMPLE_GROVE}
 
 Reply with a one sentence summary for the spell card, the program, and missing: when part of what this spell means could not be done with the API above, name the ability that was lacking in a few words and what it was for (for example "a barrier that stops lava: to keep the village safe"), otherwise an empty string. Be honest: this is how the API grows.`;
+
+// A new wonder a day (4.4.5 part C, worker/wonders.ts): the spell writer's
+// prompt without its reply paragraph, then what a wonder is. One call a day,
+// alone in its batch: caching it would cost more than it saves.
+const SPELL_REPLY = "\n\nReply with a one sentence summary for the spell card";
+const WONDER_SECTION = `
+WONDERS
+This time you do not write a spell. You design a wonder: a place of nature, or of old magic grown into nature, that the island generator puts on new islands beside the wonders it already has (listed in the message). A new island opens with a short flight over its wonders, each shown with its name and one line of what it does, so yours must be a sight a player has never seen on another island, and do something they can watch.
+
+What it is
+A place, never a creature, a building people made, an object or a spell. Its look comes first: decide what it is from far away (a silhouette, a color, a light at night) before any detail. It must not be one of the wonders already on the islands nor a reskin of one: a lava fall is a waterfall, a gold arch is a stone arch.
+The best wonders change with time: at night, at dawn, in rain, in a drought, in fire, in the cold, on a full moon. The message names one change to build around; a second is welcome.
+
+Rarity, given in the message, sets its size and its power:
+common: a pleasant sight that does one small, kind thing. Reach 4 to 6 cells.
+uncommon: a strange place with a clear effect on what comes near. Reach 5 to 8.
+rare: something a player remembers and comes back to look at. Reach 6 to 10.
+legendary: the reason to talk about this island. Reach 8 to 14.
+
+The program
+The same format as a spell: const spell = { materials, creatures, artifacts, goals, *cast(w) { ... } }. cast runs once while the island is being made, before anyone sees it, at the spot the generator found for it: w.x, w.y is its center and w.r its reach. So: no flash, tint, darken, shake, camera, sound or burst; no grow (it has always been there); no yield longer than 0.1. Build its look with the structures, voxels, w.terraform, w.build, w.paint and w.flood, within w.r, in at most 1500 voxels (spells share 20000 on the island): solid, dense shapes that read from the whole island, never a scatter of single blocks or blocks floating with nothing under them unless it truly floats (magic or float).
+What things cost, measured: the land helpers and covers (terraform, build, paint, flood, set) cost no voxels; a spire of 20 about 80, an arch about 30, a sphere of radius 3 about 120, a tower of 16 about 500, an oak of 12 about 300, a willow of 18 about 1600, a giant tree of 30 about 3400. So at most one tree from the kit, small; shape the land first and stand voxels only where the eye goes.
+What it does lives on after the cast, through what already exists: w.artifact with spell.artifacts (effects, grants, uses, pairs), w.landmark (lures, scares, aura), a material of its own that reacts or spreads slowly, or a creature of its own with a goal. Prefer an artifact with effects tied to its change of time: when night, dawn, dusk, drought, fire or full moon (one night in four). Declaring spell.artifacts places nothing: cast must end with w.artifact(w.x, w.y, its artifact's name), or the wonder does nothing and fails.
+Never use calm, as a status or an aura: on this island calm stops a creature where it stands, and a village frozen round a wonder is broken. To soothe, heal, or scare away what they fear.
+
+The island it joins stays alive and balanced
+1. Its own creatures, only when the wonder is about them: at most three, brought by an effect summon:<kind> every 120 seconds or more; the generator kills any past three. Never a hunter of villagers.
+2. It may heal, put to sleep, scare monsters away, lure and feed animals, water fields, give gold or food to a village, light the night, put out fire, warm or cool the land around it. Anything harmful stays within its reach and hurts only what it names; nothing spreads past twice its reach; it never ruins a village or empties the island of a kind.
+3. Its test run, in Node, before any island gets it: built on three islands of its lands, at the spot it asked for, and left alone for five minutes. It fails if it crashes, builds nothing visible, uses more than 1500 voxels or 2 ms a tick, does nothing in five minutes (no effect fired, no grant used, no creature's goal, no material spread), or leaves fewer than half the villagers and animals there would be without it.
+4. For all ages; no people's names, no real places, nothing from a known game, film or book.
+
+Where it stands
+spot, one of: high (a summit or ridge), slope (a hillside), flat (open level ground), low (a hollow or valley floor), drop (the top of a cliff, with a fall below), forest (the heart of a wood), shore (dry land by the sea), sea (shallow sea off a coast), water (in or beside a lake or river). lands: one to four of temperate, desert, tundra, jungle, swamp, volcanic, mesa, where it would really be found; the message names the one it must belong to.
+
+Reply with:
+kind: what it is in two to four lower case words, used as its card's title and in its name ("glass dunes", "a singing ice field" is wrong: no article).
+rarity: the one given.
+lands, spot, reach (whole cells, in its rarity's range).
+does: one line for the first look, under 90 characters, of what a player will see it do ("at dusk its stones hum, and every creature near falls asleep").
+summary: one sentence for the admin: what it looks like and what it does.
+code: the program.
+missing: what the API lacked for this wonder, in a few words, or an empty string.`;
+
+export function wonderSystem(): string {
+  const cut = SPELL_SYSTEM.lastIndexOf(SPELL_REPLY);
+  return (cut > 0 ? SPELL_SYSTEM.slice(0, cut) : SPELL_SYSTEM) + "\n\n" + WONDER_SECTION.trim();
+}
+
+export interface WonderDraw {
+  rarity: string;
+  land: string;
+  change: string;
+}
+
+export function wonderUserMessage(
+  draw: WonderDraw,
+  builtIn: { kind: string; rarity: string; does: string }[],
+  daily: { kind: string; rarity: string; does: string }[],
+  players: { kind: string; does: string }[],
+): string {
+  const byRarity = ["common", "uncommon", "rare", "legendary"]
+    .map(
+      (r) =>
+        `${r}: ${builtIn
+          .filter((w) => w.rarity === r)
+          .map((w) => `${w.kind} (${w.does})`)
+          .join("; ")}`,
+    )
+    .join("\n");
+  const list = (rows: { kind: string; does: string }[]) => (rows.length ? rows.map((w) => `${w.kind} (${w.does})`).join("; ") : "none yet.");
+  return `Design today's wonder.\nRarity: ${draw.rarity}\nIt must belong to: ${draw.land}\nIts change: ${draw.change}\n\nAlready on the islands, by rarity (never repeat or reskin these):\n${byRarity}\n\nMade by earlier days: ${list(daily)}\nMade by players and grown into the world: ${list(players)}`;
+}
+
+export const WONDER_SCHEMA = {
+  type: "object",
+  properties: {
+    kind: { type: "string" },
+    rarity: { type: "string", enum: ["common", "uncommon", "rare", "legendary"] },
+    lands: { type: "array", items: { type: "string", enum: ["temperate", "desert", "tundra", "jungle", "swamp", "volcanic", "mesa"] } },
+    spot: { type: "string", enum: ["high", "slope", "flat", "low", "drop", "forest", "shore", "sea", "water"] },
+    reach: { type: "integer" },
+    does: { type: "string" },
+    summary: { type: "string" },
+    code: { type: "string" },
+    missing: { type: "string" },
+  },
+  required: ["kind", "rarity", "lands", "spot", "reach", "does", "summary", "code", "missing"],
+  additionalProperties: false,
+} as const;
+
+// Players' discoveries grown into the world (4.4.5 part C): which artifacts
+// are places, materials or creatures, where they would be found and what
+// they would be seen doing there. All of a day's new ones in one call.
+export const SORT_SYSTEM = `Magic Merger is a crafting game about magic; players discover items by merging, and some of their discoveries will appear on new islands as wonders of nature, with the name of the friend who found them first. For each item, one per line with its grimoire entry, say:
+sort: place (a spot of land, a tree, a spring, a ruin, a grove), material (a substance that lies on the land: an ore, a moss, a crystal), creature (a living thing), object (made or carried: a tool, a weapon, a potion, a book) or person (a mage, a king, a role).
+lands: one to four of temperate, desert, tundra, jungle, swamp, volcanic, mesa, where it would be found in nature.
+spot: where on an island it would be: high, slope, flat, low, drop (a cliff top), forest, shore, sea or water.
+does: for a place, material or creature, one line under 90 characters of what a player would see it do there ("its moss glows at night and heals the deer that sleep on it"), plain words, no name; for an object or a person, an empty string.
+Answer with every item's name exactly as given.`;
+
+export const SORT_SCHEMA = {
+  type: "object",
+  properties: {
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          sort: { type: "string", enum: ["place", "material", "creature", "object", "person"] },
+          lands: { type: "array", items: { type: "string", enum: ["temperate", "desert", "tundra", "jungle", "swamp", "volcanic", "mesa"] } },
+          spot: { type: "string", enum: ["high", "slope", "flat", "low", "drop", "forest", "shore", "sea", "water"] },
+          does: { type: "string" },
+        },
+        required: ["name", "sort", "lands", "spot", "does"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["items"],
+  additionalProperties: false,
+} as const;
 
 // Helpers and hints the API has grown since (worker/evolve.ts), added after
 // the fixed prompt so the part that never changes stays cached.

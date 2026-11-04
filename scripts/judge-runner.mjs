@@ -16,6 +16,32 @@ if (!url || !token) {
   console.error("Set MM_URL (the game's address) and MM_TOKEN (its ADMIN_TOKEN).");
   process.exit(1);
 }
+// "wonders" (4.4.5 part C): live wonders the judge has not seen, cast in the
+// Spell Lab by day and by night; its score is advice for the owner only.
+if (process.argv[2] === "wonders") {
+  const wonders = await api("/api/admin/wonders-unjudged");
+  console.log(`${wonders.length} wonders to judge`);
+  if (wonders.length) {
+    const lab = await openLab();
+    try {
+      for (const w of wonders) {
+        const look = { kind: "artifact", reach: w.reach, tier: "grand", jpeg: true, dist: Math.max(30, w.reach * 5), settle: 0.5 };
+        const day = await lab.cast(w.code, { ...look, time: 60, shots: [1, 4] });
+        const night = await lab.cast(w.code, { ...look, time: 265, shots: [4] });
+        const judged = await api("/api/admin/wonder-judge", {
+          id: w.id,
+          frames: [...day.frames, ...night.frames].map((f) => f.png),
+          shots: [1, 4, 4],
+          facts: factsOf(day),
+        });
+        console.log(`${w.kind} (#${w.id}, ${w.rarity}): ${judged.score}/5 ${judged.reason}; ${judged.note}`);
+      }
+    } finally {
+      await lab.close();
+    }
+  }
+  process.exit(0);
+}
 const limit = Number(process.argv[2]) || 20;
 // MM_CREATURES=1 (3.7): live programs that bring creatures, asked again
 // whether their creatures look alive, judged before or not.

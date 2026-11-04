@@ -718,6 +718,53 @@ Births and arrivals no longer miss a small habitat: after sixty random tries the
 
 Fish were drawn standing on frozen lakes: the simulation keeps them under the ice, now the view does too. Rivers were one cell wide, a pixel on a huge island seen whole, and froze white within minutes in cold regions: on large islands and bigger, grown rivers are widened by their banks (fed by the river, not by more springs, so lakes keep their size), and running water freezes below -10 instead of 0. Huge and Giant were locked until a measure said the device could run them, which a desktop with a fast GPU never got (the simulation runs on one CPU core, and a Medium island projects Giant at six times its cost): the measure is now a recommendation, every size can be picked.
 
+## A library of nature that keeps growing (4.4.5, part C)
+
+Asked for: a new wonder a day from the API in its own cap under $2 a month, tested in Node by the nightly Action, players' discoveries up to grand growing into the world, and "new on islands this week". Shown to the owner before any code (the prompt, three wonders it wrote, the cost from the ledger), who chose: Opus from uncommon up, a full moon trigger, a test that shows each wonder its change, the judge's advice. Server side in `worker/wonders.ts`, the prompt in `worker/prompts.ts` (`wonderSystem`, `wonderUserMessage`), the simulation side in `src/sim/wonders.ts` (definitions, spots, the pool beside the built-in kinds), `src/sim/wonderbuild.ts` (building them with the island) and `src/sim/wondercheck.ts` (the test). Numbers and frames: `docs/measurements/wonders-4.4.5-c.md`.
+
+### A wonder written as a program
+
+A wonder from the API is a program in the spell format (materials, creatures, artifacts, goals and a `cast`), with what the generator needs beside it: its kind ("aurora ice spires"), its rarity, one to four lands, a spot (high, slope, flat, low, drop, forest, shore, sea or water), its reach in cells (by rarity: common 4 to 6, uncommon 5 to 8, rare 6 to 10, legendary 8 to 14), the line the first look shows, and a summary for the admin. Its cast runs once while the island is made, as an artifact whose `w.r` is its reach, with no camera, flash or sound; what it does lives on through what it placed (an artifact's effects, a landmark, its own materials or creatures). It travels with the island: the save keeps its definition, code included, so an island keeps a wonder that was retired since, and a reload compiles its code again before the cells are read.
+
+The prompt is the spell writer's without its reply paragraph, then a WONDERS section: what a wonder is and is not (a place, never a reskin of one the islands have), what rarity means, what things cost in voxels (measured: a willow of 18 is about 1,600, a spire of 20 about 80), that `spell.artifacts` places nothing without `w.artifact`, that "calm" freezes creatures where they stand, the balance rules, the test it will face, and the reply. The user message is the day's draw (a rarity, a land, a change of time) and every wonder islands already have. The first version of the prompt wrote one wonder in three that passed; the second, the one stored, three in three on the existing test (a stand-in for the call, written by the same two models; the measurement file has them).
+
+### One a day, in its own cap
+
+Every ten minutes the cron collects a finished batch and, once a day (20 hours apart at least), asks for the next wonder. The draw: common 35, uncommon 30, rare 25, legendary 10, among the lands that have the fewest wonders, with one of seven changes (night, dawn, dusk, drought, fire, cold, full moon). Haiku writes a common one, Opus the others, through the Batch API at half price, uncached (a lone daily call would pay the cache write and never read it). Before it is sent the Worker holds $0.10 for an Opus wonder and $0.01 for a Haiku one, more than the ledger's worst batch item of each ($0.077 and $0.004); `WONDER_BUDGET_USD` ($2) counts what wonder calls cost this month plus what pending ones hold, and refuses the call past it, inside the game's `BUDGET_USD`. Expected from the ledger: about $1.03 a month, $1.69 in a month where every Opus call costs its worst. `WONDERS=0` stops the daily call; the admin can still ask (`POST /api/admin/wonder-daily`).
+
+The answer is checked before it is stored: a kind in two to four lower case words that no island has, the rarity and land it was asked for, a spot, a reach in range, a line for the first look, code that parses and places something that acts. It is then a trial, served to nobody.
+
+### Tested before any island gets it
+
+The nightly "Judge" Action runs `npm run wonders` (`scripts/wonder-runner.ts`): each trial is built on three islands of its lands at the spot it asked for, the way a new island builds it, and watched for a whole day and night beside the same island without it. The day starts on the morning of a full moon, so night, dusk, dawn and the full moon all come; when its program speaks of a drought, the wild land round it dries halfway through (fields stay fields). It fails on a crash, nothing built, more than 1,500 voxels, more than 2 ms a tick on average, nothing done in the day (no effect of its artifact, no deed of its creatures, no cell of its materials changed), more than three of its own creatures alive, or fewer than half the villagers or animals of the island without it. It passes and goes live, or is rejected with the reason; the owner can retire any wonder, or put a rejected or retired one live (the admin badge, People, Wonders). Then the judge (Haiku, about $0.0004) looks at three Spell Lab frames of each live wonder it has not seen, two by day and one by night, and its score is written beside it for the owner only.
+
+Of the three wonders the owner saw, the aurora ice spires and the moon mire passed and are live (seeded by the migration); the dew towers did nothing on one island in three (no field within its reach, no villager came for water) and are stored rejected, for the owner to judge.
+
+### The pool, for everyone
+
+`GET /api/wonders` returns the live wonders, newest first (120 at most), and those that came this week. The World tab asks for it when it opens (ten minutes apart at most), keeps the newest sixty for offline, and hands it to the island frame, where every new island draws from it beside the seventeen built-in kinds with the same rarity weights, in the lands each names. With no pool (offline the first time, tests, the Spell Lab) an island is made exactly as before. A program wonder has no box model: it is its voxels and the land it shaped, and costs no draw call of its own. Its creatures are kept to three alive (`stepWonders`, the newest past three die).
+
+### Players' discoveries grow into the world
+
+Once a day, the day's new artifacts up to grand with a live program are sorted in one Haiku call (about $0.001): place, material, creature, object or person, with lands, a spot and a line of what it would be seen doing. A place, a material or a creature becomes a rare trial wonder with its own live program as its code, a reach by its tier, and the name of the friend who found it first (none for the owner's own); the nightly test decides as for any wonder. Nothing goes into anyone's inventory: the discovery stays made on the board (Decisions taken, 3). The first look says "found by" and its name.
+
+### New on islands this week
+
+When the World tab opens, wonders that came in the last seven days and that this browser has not been told of are said once ("New on islands this week: aurora ice spires (rare) and moon mire (legendary). A new island may have them."), and the new island dialog lists them above its warning. The what's new list of 4.7 will show the same.
+
+### The full moon, for artifacts
+
+`when: "full moon"` (also "moon") joins the artifact triggers: the night of a full moon, one in four (`fullMoon` in daylight.ts), with a long default wait like dawn and dusk. Both Opus wonders asked for it as what they lacked; the spell writer's prompt lists it too.
+
+## The owner's report on the land and the water (4.4.5, part C)
+
+Asked on 4 November from a phone, on a Huge island: too much water, waves that look bad, land masses too elongated, too many cliffs; rivers and lakes are liked, just fewer. Changed in `src/sim/land.ts` and the water shader in `src/sim/voxel/view.ts`; measured on twelve mixed islands per size (`docs/measurements/wonders-4.4.5-c.md`).
+
+1. **Lands like lands.** The noise kept a 48 cell wavelength on every island while its warp pushed by a quarter of the island's width over 40 cells: on a Huge island land was dragged up to 70 cells by a warp that changed every 40, into worms. The noise now grows with the island (its wavelength times (width / 152) to the 0.8) and the warp pushes by about half its own wavelength, so a medium island keeps its scale and a Huge one gets bigger lands, not more small ones. The "ridges" shape put its valleys under the sea, in bands; its ranges now stand on broad lands.
+2. **Fewer lakes, no inland seas.** Every hollow below the sea's level filled with sea water, far inland, and every hollow above it with a lake. Now only the largest hollows stay lakes (two on a medium island at the middle of the Water slider, more on bigger, wetter and Lakes islands, `lakesFor`); the others fill to their spill and are land, which rivers cross. The sea is also a little smaller at each position of the Water slider (the middle 16% instead of 20%).
+3. **Fewer cliffs.** Slopes are softened once above the shore (each cell halfway toward the mean of its neighbors), before mesas and plateaus cut their steps, which are their look.
+4. **Waves.** Each one-cell water top heaved by its corners on a wave about seven cells long and glinted by vertex: flashing triangles and dots. The surface now barely heaves (long slow swells) and the waves are drawn per pixel, three sines of the world position on a quarter-cell grid, soft crests and darker troughs that drift: a few operations per water pixel, no geometry, texture or draw call.
+
 ## Challenges
 
 Hand-made islands with a hazard and a goal (`src/sim/scenarios.ts`, titles in `scenario-list.ts` so the game page does not load the engine to list them). A challenge builds its own world, runs a `tick` every frame (a volcano vent, a rising sea, the sun drying fields) and a `check` twice a second that returns progress text and playing, won or lost. It never touches the player's island: the iframe keeps the sandbox save in memory and restores it on leaving.

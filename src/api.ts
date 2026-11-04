@@ -400,3 +400,60 @@ export async function trims(): Promise<{ next: Trim | null; left: number } | nul
 export function decideTrim(id: number, approve: boolean): Promise<{ next: Trim | null; left: number }> {
   return post("/api/admin/trim", { id, approve });
 }
+
+// 4.4.5 part C: the pool of wonders written as programs that new islands
+// draw from, and those that came this week. Null offline.
+export interface PoolWonder {
+  id: number;
+  kind: string;
+  rarity: string;
+  lands: string[];
+  spot: string;
+  reach: number;
+  does: string;
+  code: string;
+  source: "daily" | "player";
+  by?: string;
+  at: number;
+}
+
+export async function wonderPool(): Promise<{ wonders: PoolWonder[]; week: PoolWonder[] } | null> {
+  try {
+    const res = await fetch("/api/wonders", { headers: authHeaders() });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+// Admin only: every wonder written as a program, and the owner's say on one.
+export interface WonderAdminRow {
+  id: number;
+  source: string;
+  kind: string;
+  rarity: string;
+  lands: string;
+  spot: string;
+  does: string;
+  summary: string;
+  by_name: string | null;
+  status: string;
+  model: string;
+  usd: number;
+  checked: string | null;
+  judged: string | null;
+  created_at: number;
+}
+
+export async function wonderAdmin(): Promise<WonderAdminRow[] | null> {
+  try {
+    const res = await fetch("/api/admin/wonders", { headers: authHeaders() });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function changeWonder(id: number, status: "retired" | "live"): Promise<{ status: string }> {
+  return post("/api/admin/wonder", { id, status });
+}

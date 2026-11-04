@@ -246,8 +246,11 @@ export function wonderChecks(check: Check): void {
   tryKind("frozen waterfall", (w, x) => {
     daytime(w);
     let hot = 0;
+    // Heat over most of the cold it keeps (radius 4 of its 5): a 5 by 5
+    // square passed only while the land round it was already warm, and the
+    // softer slopes of part C put this one in colder air.
     run(w, 10, () => {
-      for (let y = -2; y <= 2; y++) for (let k = -2; k <= 2; k++) w.temp[(x.y + y) * w.w + x.x + k] = 60;
+      for (let y = -4; y <= 4; y++) for (let k = -4; k <= 4; k++) if (Math.hypot(y, k) <= 4) w.temp[(x.y + y) * w.w + x.x + k] = 60;
       hot++;
     });
     return x.kind === "waterfall" ? null : `still frozen after ${hot} heat waves`;

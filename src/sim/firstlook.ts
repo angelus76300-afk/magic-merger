@@ -76,7 +76,9 @@ export function firstLook(engine: Engine, card: HTMLElement, reducedMotion: bool
         theta,
       );
       const rarity = RARITY[info.rarity];
-      show(capital(info.name), rarity ? `${capital(info.label)} · ${rarity}` : capital(info.label), capital(info.does) + ".");
+      const what = rarity ? `${capital(info.label)} · ${rarity}` : capital(info.label);
+      // A player's discovery grown into the world (4.4.5 part C) says who found it.
+      show(capital(info.name), info.by ? `${what} · found by ${info.by}` : what, info.does ? capital(info.does) + "." : "");
     }),
   ];
   let k = 0;

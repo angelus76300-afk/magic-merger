@@ -1,0 +1,14 @@
+{
+  "id": 3,
+  "kind": "moon mire",
+  "rarity": "legendary",
+  "lands": ["swamp"],
+  "spot": "low",
+  "reach": 12,
+  "does": "on a full moon its drowned moon rises from the pool, and its silver light heals all around",
+  "summary": "A round black pool sunk in the bog, ringed by pale tusk-like spires leaning inward over a low silver orb of drowned moonlight on glowing moonmoss; at night it lights the marsh against hunters, at dawn it waters the fields, and on a full moon a moonbeam rises from it that heals every creature near, frightens off wolves and bears, greens the swamp and brings fish into the pool.",
+  "missing": "",
+  "source": "daily",
+  "model": "claude-opus-5-5",
+  "code": "const spell = {\n  materials: [\n    { name: 'moonmoss', layer: 'ground', colors: ['#9fb8c8', '#b9cfe0', '#8aa6b8'], glow: true,\n      flammable: 0.2, reacts: { fire: 'ash', lava: 'basalt' } },\n  ],\n  artifacts: [\n    { name: 'Moon Mire', radius: 12, color: '#dfe8ff', lures: ['deer', 'rabbit', 'bird'],\n      effects: [\n        { when: 'night', every: 30, do: 'light', radius: 12 },\n        { when: 'every', every: 60, do: 'heal', radius: 10 },\n        { when: 'dawn', do: 'water', radius: 12 },\n        { when: 'full moon', every: 300, radius: 14, act(self, w, target) {\n          const x = self.x, y = self.y;\n          w.beam(x, y, 0, x, y, 70, { color: '#dfe8ff', width: 2, seconds: 10 });\n          w.circle(x, y, 10, '#cfdcff', '#ffffff', 10);\n          w.light(x, y, 14, '#cfdcff', 40);\n          for (const c of w.creatures(x, y, 14)) {\n            if (!c.alive) continue;\n            c.heal(60);\n            if (c.kind === 'wolf' || c.kind === 'bear') c.status('fear', 20, x, y);\n          }\n          w.grow(x, y, 12, 0.3);\n          for (let k = 0; k < 2; k++) w.spawn('fish', x + w.rand(-3, 3), y + w.rand(-3, 3));\n          return true;\n        } },\n      ],\n      grants: [{ what: 'heal' }],\n      uses: [{ do: 'worship', by: ['villager'] }] },\n  ],\n  *cast(w) {\n    const x = w.x, y = w.y, r = w.r;\n    w.terraform(x, y, r * 0.9, -3);\n    w.paint(x, y, r * 0.85, 'mud', 0.5);\n    w.paint(x, y, r * 0.8, 'moonmoss', 0.6);\n    w.flood(x, y, r * 0.45, 'water', 2);\n    for (let k = 0; k < 7; k++) {\n      const a = k * Math.PI * 2 / 7 + w.rand(-0.15, 0.15), d = r * 0.62;\n      w.spire(x + Math.cos(a) * d, y + Math.sin(a) * d, { height: w.rand(16, 24), radius: 1.5,\n        colors: ['#e8e4d8', '#d2cdbd', '#f4f1e8'], kind: 'stone', lean: 0.35, angle: a + Math.PI });\n    }\n    w.sphere(x, y, 9, 3, ['#eef3ff', '#d6e2ff', '#ffffff'], 1, 'magic');\n    w.landmark(x, y, { name: 'Moon Mire', scares: ['wolf'], aura: 'fear', radius: r * 0.6, power: 1 });\n    w.artifact(x, y, 'Moon Mire');\n    yield 0;\n  },\n};\n"
+}

@@ -192,7 +192,11 @@ const SEA = 8;
 // since they are rescaled from their own distribution afterwards.
 function shapeHeights(w: number, h: number, seed: number, shape: Shape, rng: Rng): { raw: Float32Array; side: number } {
   const out = new Float32Array(w * h);
-  const scale = 1 / 48;
+  // 4.4.5 part C (the owner's report: "land masses are too elongated"): the
+  // noise grows with the island, so a Huge island has bigger lands rather
+  // than more of the same small ones. A medium island is unchanged.
+  const grow = Math.max(1, Math.min(w, h) / 152) ** 0.8;
+  const scale = 1 / (48 * grow);
   const coastX = rng.next() < 0.5 ? 0 : w;
   const coastY = rng.next() < 0.5 ? 0 : h;
   // Island centers for an archipelago, basins for lakes.
@@ -228,8 +232,10 @@ function shapeHeights(w: number, h: number, seed: number, shape: Shape, rng: Rng
       const ridge = 1 - Math.abs(fbm(x * scale * 0.7, y * scale * 0.7, seed + 31) * 2 - 1);
       // A warped position, so masks and ranges never come out as circles
       // and straight lines.
-      const wx = x + (fbm(x / 40, y / 40, seed + 61, 3) - 0.5) * Math.min(w, h) * 0.25;
-      const wy = y + (fbm(x / 40, y / 40, seed + 67, 3) - 0.5) * Math.min(w, h) * 0.25;
+      // Its push grows with its wavelength, not with the island: a quarter of
+      // a Huge island's width over 40 cells stretched lands into worms.
+      const wx = x + (fbm(x / (40 * grow), y / (40 * grow), seed + 61, 3) - 0.5) * 38 * grow;
+      const wy = y + (fbm(x / (40 * grow), y / (40 * grow), seed + 67, 3) - 0.5) * 38 * grow;
       const u = x / w;
       const v = y / h;
       // Distance to the nearest edge, 0 at the edge and 0.5 in the middle.
@@ -255,7 +261,11 @@ function shapeHeights(w: number, h: number, seed: number, shape: Shape, rng: Rng
           const along = (wx * ca + wy * sa) * scale * 0.7;
           const across = (-wx * sa + wy * ca) * scale * 1.25;
           const r = 1 - Math.abs(fbm(along, across, seed + 57, 4) * 2 - 1);
-          e = n * 12 + r ** 2.4 * 26 + Math.min(1, edge * 6) * 4;
+          // 4.4.5 part C: the ranges stand on broad lands, so the valleys
+          // between them are land too (they were sea, in long bands).
+          const land = fbm(wx / (110 * grow), wy / (110 * grow), seed + 71, 3);
+          const lift = Math.min(1, Math.max(0, (land - 0.35) / 0.25));
+          e = land * 24 + n * 9 + r ** 2.4 * 18 * lift + Math.min(1, edge * 6) * 4;
           break;
         }
         case "lakes": {
@@ -1177,6 +1187,71 @@ export interface Built {
 
 // Shapes, rescales and dresses a fresh world. Villages are built by the
 // caller (world.ts), on the flattest dry land.
+// Half of each land cell's height toward the mean of its eight neighbors:
+// a slope of three voxels a cell becomes one of two, a hill keeps its shape.
+function soften(world: World, above: number): void {
+  const { w, h, height } = world;
+  const src = height.slice();
+  for (let y = 1; y < h - 1; y++)
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      if (src[i] <= above) continue;
+      let sum = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (dx || dy) sum += src[i + dy * w + dx];
+      height[i] = Math.max(above, src[i] * 0.5 + (sum / 8) * 0.5);
+    }
+}
+
+// How many hollows stay lakes: two on a medium island at the middle of the
+// Water slider, more on bigger and wetter ones, many more on a Lakes island.
+export function lakesFor(world: World, land: LandOptions): number {
+  const area = Math.sqrt(world.n / (152 * 152));
+  const base = land.shape === "lakes" ? 6 : land.biome === "swamp" && !land.mixed ? 4 : 2;
+  return Math.max(1, Math.round(base * (0.5 + land.water) * area));
+}
+
+// Every hollow that would hold water above the sea, or sea water away from
+// the sea (a pocket of land below its level, inland): the `keep` biggest by
+// volume stay; the others are raised to their spill level, a flat floor the
+// rivers cross.
+export function fewerLakes(world: World, keep: number): number {
+  const { w, n, height } = world;
+  const { filled } = drainage(world);
+  const sea = world.seaLevel;
+  const seen = new Uint8Array(n);
+  const pools: { cells: number[]; volume: number }[] = [];
+  const queue: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (seen[i] || filled[i] < sea || filled[i] - height[i] < 0.3) continue;
+    const level = filled[i];
+    const cells: number[] = [];
+    let volume = 0;
+    seen[i] = 1;
+    queue.length = 0;
+    queue.push(i);
+    while (queue.length) {
+      const c = queue.pop()!;
+      cells.push(c);
+      volume += filled[c] - height[c];
+      const x = c % w;
+      for (const j of [c - 1, c + 1, c - w, c + w]) {
+        if (j < 0 || j >= n || seen[j] || (j === c - 1 && x === 0) || (j === c + 1 && x === w - 1)) continue;
+        if (filled[j] - height[j] < 0.05 || Math.abs(filled[j] - level) > 0.05) continue;
+        seen[j] = 1;
+        queue.push(j);
+      }
+    }
+    pools.push({ cells, volume });
+  }
+  pools.sort((a, b) => b.volume - a.volume);
+  let filledIn = 0;
+  for (const pool of pools.slice(keep)) {
+    for (const c of pool.cells) height[c] = Math.max(height[c], filled[c] - 0.04);
+    filledIn++;
+  }
+  return filledIn;
+}
+
 export function buildLand(world: World, land: LandOptions): Built {
   const rng = world.rng;
   const seed = world.seed;
@@ -1187,11 +1262,16 @@ export function buildLand(world: World, land: LandOptions): Built {
   // their own relief below.
   const one = land.mixed ? null : land.biome;
   const biomeBias = one ? { temperate: 0, desert: -0.04, tundra: 0, jungle: 0.03, swamp: 0.12, volcanic: 0, mesa: -0.05 }[one] : 0;
-  const seaShare = Math.min(0.62, Math.max(0.04, 0.05 + land.water * 0.3 + bias + biomeBias));
+  // 4.4.5 part C (the owner's report: "too much water"): a little less sea
+  // at each position of the Water slider (the middle gave 20%, now 16%).
+  const seaShare = Math.min(0.62, Math.max(0.04, 0.04 + land.water * 0.24 + bias + biomeBias));
   const reliefScale = (one === "swamp" ? 0.45 : one === "mesa" ? 1.15 : 1) * (land.shape === "archipelago" ? 0.65 : 1);
   const peak = (12 + land.relief * 24) * reliefScale;
   rescale(raw, seaShare, peak);
   world.height.set(raw);
+  // 4.4.5 part C (the owner's report: "too many cliffs"): slopes softened
+  // once, above the shore, before mesas and plateaus cut their own steps.
+  soften(world, SEA + 1);
   if (land.shape === "plateau") terrace(world.height, 4 + land.relief * 3, 0.22);
   let cone: ReturnType<typeof volcano> | null = null;
   if (land.mixed) {
@@ -1208,6 +1288,9 @@ export function buildLand(world: World, land: LandOptions): Built {
     if (one === "mesa") terrace(world.height, 3 + land.relief * 2, 0.16);
     if (one === "volcanic") cone = volcano(world, rng, peak);
   }
+  // 4.4.5 part C (the owner's report: "there is too much water"): only the
+  // biggest hollows stay lakes; the others fill up to their spill and are land.
+  fewerLakes(world, lakesFor(world, land));
   // The sea fills what lies below its level.
   for (let i = 0; i < world.n; i++) if (world.height[i] < world.seaLevel) world.setFluid(i, F.WATER, world.seaLevel - world.height[i]);
   const { river, area } = water(world, land);

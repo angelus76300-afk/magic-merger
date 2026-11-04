@@ -1,6 +1,6 @@
 import { C, F, G } from "./materials";
 import { Rng } from "./noise";
-import { seedRoll, type Biome } from "./land-options";
+import { BIOMES, seedRoll, type Biome } from "./land-options";
 import type { World } from "./world";
 import type { Creature } from "./creatures";
 import { DAMP, HEART, WOODLAND, cellHash, distanceTo, isSea } from "./ecology";
@@ -30,8 +30,8 @@ import { islandName, wonderName } from "./names";
 // its own random stream: the land, the rivers and the villages come out as
 // in part A, and the plants grow around the wonders by the same rules.
 
-export type Rarity = "common" | "uncommon" | "rare" | "legendary";
-export const RARITIES: readonly Rarity[] = ["common", "uncommon", "rare", "legendary"];
+import { RARITIES, SPOTS, type Rarity, type Spot } from "../../shared/wonders";
+export { RARITIES, SPOTS, type Rarity, type Spot };
 
 export interface Wonder {
   kind: string;
@@ -48,7 +48,33 @@ export interface Wonder {
   // A second spot: a waterfall's top, the arch's direction (radians).
   ax: number;
   ay: number;
+  // A wonder written as a program (4.4.5 part C): its definition travels
+  // with it, code included, so a saved island keeps it even once retired.
+  def?: WonderDef;
+  // The creature kinds its program brought (not saved: found again when it
+  // is compiled), at most WONDER_CREATURES alive.
+  own?: string[];
 }
+
+// A wonder written as a program: one a day from the API, or a player's
+// discovery grown into the world (worker/wonders.ts). The pool of live ones
+// comes from the server; each island draws from it beside the built-in kinds.
+export interface WonderDef {
+  id: number;
+  kind: string;
+  rarity: Rarity;
+  lands: Biome[];
+  spot: Spot;
+  reach: number;
+  does: string;
+  code: string;
+  source: "daily" | "player";
+  // The friend who found it first, for a player's discovery.
+  by?: string;
+}
+
+// Alive at once, of the creatures a program wonder brought.
+export const WONDER_CREATURES = 3;
 
 interface Kind {
   kind: string;
@@ -63,6 +89,7 @@ interface Kind {
   shape?: (world: World, w: Wonder, ctx: Ctx, rng: Rng) => void;
   // Stands above the land: a blast takes it away.
   standing?: boolean;
+  def?: WonderDef;
 }
 
 // What placing needs to know about the island.
@@ -730,6 +757,101 @@ export const WONDERS: Kind[] = [
 
 export const WONDER_KINDS = new Map(WONDERS.map((k) => [k.kind, k]));
 
+// --- Wonders written as programs (4.4.5 part C) ---------------------------
+
+// The best spot of a kind of place, the way the built-in finders do it.
+function findSpot(ctx: Ctx, rng: Rng, lands: readonly Biome[] | "any", spot: Spot, r: number) {
+  const { world } = ctx;
+  const sea = world.seaLevel;
+  const dryOpen = (i: number) => open(world, i) && world.height[i] > sea + 1;
+  const score = (x: number, y: number, i: number): number | null => {
+    switch (spot) {
+      case "high":
+        return dryOpen(i) && rough(world, x, y, 3) < 30 ? world.height[i] : null;
+      case "slope": {
+        if (!dryOpen(i)) return null;
+        const ro = rough(world, x, y, 4);
+        return ro > 8 && ro < 40 ? -Math.abs(ro - 18) : null;
+      }
+      case "flat":
+        return dryOpen(i) ? -rough(world, x, y, Math.min(6, r)) : null;
+      case "low":
+        return dryOpen(i) && rough(world, x, y, 4) < 24 ? -world.height[i] : null;
+      case "drop": {
+        if (!dryAt(world, i) || world.height[i] < sea + 4) return null;
+        const d = drop(world, x, y);
+        return d.d >= 3 ? d.d : null;
+      }
+      case "forest": {
+        if (!dryAt(world, i)) return null;
+        const trees = count(world, x, y, Math.min(7, r), (j) => world.cover[j] === C.TREE, 2);
+        return trees > 6 ? trees : null;
+      }
+      case "shore": {
+        if (!dryOpen(i)) return null;
+        const d = ctx.sea[i];
+        return d >= 2 && d <= 5 ? -Math.abs(d - 3) - rough(world, x, y, 2) * 0.1 : null;
+      }
+      case "sea": {
+        if (!isSea(world, i) || world.depth[i] > 4) return null;
+        const land = count(world, x, y, r + 3, (j) => dryAt(world, j), 2);
+        return land > 2 ? -world.depth[i] - Math.abs(land - 12) * 0.2 : null;
+      }
+      case "water": {
+        const fresh = count(world, x, y, Math.max(3, r - 2), (j) => world.depth[j] > 0.1 && !isSea(world, j), 1);
+        return fresh > 4 && !isSea(world, i) ? fresh : null;
+      }
+    }
+  };
+  // Water and the sea are near villages more often: closer is allowed there.
+  const fromHomes = spot === "sea" || spot === "water" || spot === "shore" ? 6 : 10;
+  const b = best(ctx, rng, 700, r, fromHomes, lands, score);
+  return b ? { x: b.x, y: b.y, r } : null;
+}
+
+export function defKind(def: WonderDef): Kind {
+  return {
+    kind: def.kind,
+    rarity: def.rarity,
+    label: def.kind,
+    does: def.does,
+    lands: def.lands.length ? def.lands : "any",
+    find: (ctx, rng, lands) => findSpot(ctx, rng, lands, def.spot, def.reach),
+    def,
+  };
+}
+
+// The kind of an island's wonder: built in, or the program it carries.
+function kindOf(w: Wonder): Kind | undefined {
+  return w.def ? defKind(w.def) : WONDER_KINDS.get(w.kind);
+}
+
+const clip = (v: unknown, n: number) => (typeof v === "string" ? v.trim().slice(0, n) : "");
+
+// A wonder definition from the server or a save, checked.
+export function readDef(v: unknown): WonderDef | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const kind = clip(o.kind, 40).toLowerCase();
+  const code = typeof o.code === "string" ? o.code.slice(0, 40000) : "";
+  const rarity = RARITIES.includes(o.rarity as Rarity) ? (o.rarity as Rarity) : null;
+  const spot = SPOTS.includes(o.spot as Spot) ? (o.spot as Spot) : null;
+  const id = typeof o.id === "number" && Number.isInteger(o.id) ? o.id : null;
+  if (!kind || !code || !rarity || !spot || id === null || WONDER_KINDS.has(kind)) return null;
+  const lands = (Array.isArray(o.lands) ? o.lands : []).filter((b): b is Biome => (BIOMES as readonly string[]).includes(b as string)).slice(0, 7);
+  const reach = typeof o.reach === "number" && Number.isFinite(o.reach) ? Math.max(3, Math.min(14, Math.round(o.reach))) : 6;
+  const by = clip(o.by, 40);
+  return { id, kind, rarity, lands, spot, reach, does: clip(o.does, 120), code, source: o.source === "player" ? "player" : "daily", ...(by ? { by } : {}) };
+}
+
+// What a program wonder is cast as: its tier only says how strong its
+// effects may be (a library spell it casts, a summon); w.r is its reach.
+export const DEF_TIER = { common: "minor", uncommon: "major", rare: "grand", legendary: "grand" } as const;
+
+export function defRequest(def: WonderDef) {
+  return { key: `wonder:${def.id}`, name: def.kind, tier: DEF_TIER[def.rarity], code: def.code, kind: "artifact" as const, reach: def.reach };
+}
+
 // The old houses of a ruin, from its seed: the simulation lays their rubble,
 // the view raises their broken walls on the same spots.
 export function ruinHouses(w: Wonder): { x: number; y: number }[] {
@@ -775,12 +897,14 @@ const FIRST_WEIGHTS: Record<Rarity, number> = { common: 0, uncommon: 70, rare: 2
 // last islands; a set that matches one is drawn again (a few dozen tries,
 // then the least seen wins). Returns the wonders in the order the first
 // look shows them.
-export function placeWonders(world: World, biomes: readonly Biome[], peak: number, recent: readonly string[] = []): void {
+export function placeWonders(world: World, biomes: readonly Biome[], peak: number, recent: readonly string[] = [], defs: readonly WonderDef[] = []): void {
   const homes = distanceTo(world, 40, (i) => world.cover[i] === C.HOUSE || world.ground[i] === G.FIELD);
   const sea = distanceTo(world, 10, (i) => isSea(world, i));
   const present = new Set<Biome>();
   for (let i = 0; i < world.n; i += 7) present.add(world.biomeMap ? biomes[world.biomeMap[i]] : (world.land?.biome ?? "temperate"));
-  const allowed = WONDERS.filter((k) => k.lands === "any" || k.lands.some((b) => present.has(b)));
+  // 4.4.5 part C: the pool of wonders written as programs joins the built-in ones.
+  const kinds = defs.length ? [...WONDERS, ...defs.map(defKind)] : WONDERS;
+  const allowed = kinds.filter((k) => k.lands === "any" || k.lands.some((b) => present.has(b)));
   const seen = new Set(recent);
   let chosen: { k: Kind; at: NonNullable<ReturnType<Kind["find"]>> }[] = [];
   let fallback: typeof chosen = [];
@@ -830,14 +954,15 @@ export function placeWonders(world: World, biomes: readonly Biome[], peak: numbe
     y: at.y,
     r: at.r,
     seed: (Math.imul(world.seed, 31) + n * 7919 + k.kind.length * 131) >>> 0,
-    name: wonderName(k.kind, world.seed + n * 101, biomeAtCell(at.x, at.y)),
+    name: k.def?.source === "player" ? k.def.kind.replace(/\b\w/g, (c) => c.toUpperCase()) : wonderName(k.kind, world.seed + n * 101, biomeAtCell(at.x, at.y)),
     t: 0,
     state: 0,
     ax: at.ax ?? 0,
     ay: at.ay ?? 0,
+    ...(k.def ? { def: k.def } : {}),
   }));
   for (const w of world.wonders) {
-    const k = WONDER_KINDS.get(w.kind)!;
+    const k = kindOf(w)!;
     k.shape?.(world, w, { world, biomes, peak, homes, sea, taken: [] }, new Rng(w.seed));
   }
   // The island's own name, from the land most of it is.
@@ -848,6 +973,21 @@ export function placeWonders(world: World, biomes: readonly Biome[], peak: numbe
   }
   const main = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "temperate";
   world.islandName = islandName(world.seed, main);
+}
+
+// One program wonder on an island already made, away from its wonders (the
+// nightly test of a new wonder, wondercheck.ts). Null when the island has no
+// spot for it.
+export function placeOne(world: World, def: WonderDef, seed: number): Wonder | null {
+  const homes = distanceTo(world, 40, (i) => world.cover[i] === C.HOUSE || world.ground[i] === G.FIELD);
+  const sea = distanceTo(world, 10, (i) => isSea(world, i));
+  const ctx: Ctx = { world, biomes: BIOMES, peak: 0, homes, sea, taken: world.wonders.map((w) => ({ x: w.x, y: w.y, r: w.r })) };
+  const k = defKind(def);
+  const at = k.find(ctx, new Rng(seed * 7 + 13), k.lands);
+  if (!at) return null;
+  const w: Wonder = { kind: def.kind, x: at.x, y: at.y, r: at.r, seed: seed >>> 0, name: def.kind, t: 0, state: 0, ax: 0, ay: 0, def };
+  world.wonders.push(w);
+  return w;
 }
 
 // After ecology.ts: what grows under and around a wonder.
@@ -888,11 +1028,24 @@ export interface WonderInfo {
   x: number;
   y: number;
   r: number;
+  // Who found it first, for a player's discovery grown into the world (part C).
+  by?: string;
 }
 
 export function wonderInfo(w: Wonder): WonderInfo {
-  const k = WONDER_KINDS.get(w.kind);
-  return { kind: w.kind, name: w.name, label: k?.label ?? w.kind, does: k?.does ?? "", rarity: k?.rarity ?? "common", x: w.x, y: w.y, r: w.r };
+  const k = kindOf(w);
+  const by = w.def?.by;
+  return {
+    kind: w.kind,
+    name: w.name,
+    label: k?.label ?? w.kind,
+    does: k?.does ?? "",
+    rarity: k?.rarity ?? "common",
+    x: w.x,
+    y: w.y,
+    r: w.r,
+    ...(by ? { by } : {}),
+  };
 }
 
 // --- What wonders do ---------------------------------------------------------
@@ -915,6 +1068,11 @@ export function stepWonders(world: World, spawn: Spawn, life: WonderLife): void 
   const day = daylight(world.time);
   for (const w of world.wonders) {
     w.t -= DT;
+    if (w.def) {
+      // Its program acts through what it placed; here only its creatures are kept to a few.
+      if (w.own?.length) capOwn(world, w.own);
+      continue;
+    }
     switch (w.kind) {
       case "waterfall":
         mist(world, w.x, w.y, 6);
@@ -1024,6 +1182,15 @@ export function stepWonders(world: World, spawn: Spawn, life: WonderLife): void 
         }
         break;
     }
+  }
+}
+
+// A program wonder's creatures past WONDER_CREATURES alive die, the newest first.
+function capOwn(world: World, own: readonly string[]): void {
+  let alive = 0;
+  for (const c of world.creatures) {
+    if (c.dead || !own.includes(c.kind)) continue;
+    if (++alive > WONDER_CREATURES) c.hp = 0;
   }
 }
 
@@ -1373,7 +1540,8 @@ export function readWonder(v: unknown): Wonder | null {
   if (!v || typeof v !== "object") return null;
   const o = v as Record<string, unknown>;
   const num = (k: string) => (typeof o[k] === "number" && Number.isFinite(o[k]) ? (o[k] as number) : 0);
-  if (typeof o.kind !== "string" || !WONDER_KINDS.has(o.kind)) return null;
+  const def = o.def ? readDef(o.def) : null;
+  if (typeof o.kind !== "string" || (o.def ? !def || def.kind !== o.kind : !WONDER_KINDS.has(o.kind))) return null;
   return {
     kind: o.kind,
     x: num("x"),
@@ -1385,5 +1553,6 @@ export function readWonder(v: unknown): Wonder | null {
     state: num("state"),
     ax: num("ax"),
     ay: num("ay"),
+    ...(def ? { def } : {}),
   };
 }

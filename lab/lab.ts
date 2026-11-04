@@ -32,6 +32,9 @@ interface LabOptions {
   // Camera angles around the target (orbit.ts), for visual checks.
   theta?: number;
   phi?: number;
+  // 4.4.5 part C: a wonder is cast as an artifact with its own reach.
+  kind?: "spell" | "artifact";
+  reach?: number;
 }
 
 // A water cell on the island's border, or one next to land at least two
@@ -158,7 +161,11 @@ async function runSpell(code: string, options: LabOptions = {}) {
   const before = census(world);
   const creaturesBefore = creatures(world);
   const started = performance.now();
-  const ok = engine.cast({ key: "lab", name: "Lab", tier, code }, target.x, target.y);
+  const ok = engine.cast(
+    { key: "lab", name: "Lab", tier, code, ...(options.kind ? { kind: options.kind } : {}), ...(options.reach ? { reach: options.reach } : {}) },
+    target.x,
+    target.y,
+  );
   const shots = (options.shots ?? [0.5, 1.5, 3, 6]).map((s) => Math.round(s / TICK));
   const last = Math.max(...shots) + Math.round((options.settle ?? 2) / TICK);
   const frames: { t: number; png: string }[] = [];

@@ -102,6 +102,9 @@ export class WorldHost {
   private synced = false;
   // The World tab is on screen (show() until hide()).
   private shown = false;
+  // 4.4.5 part C: wonders that came to the pool this week, and when the pool was last asked for.
+  private week: api.PoolWonder[] = [];
+  private poolAt = 0;
   // When the frame last said anything (M3).
   private heard = 0;
   // The island is written by one tab at a time (4.0 review M6): the tab that
@@ -188,6 +191,7 @@ export class WorldHost {
   show(): void {
     this.shown = true;
     this.heard = Date.now();
+    void this.refreshPool();
     // A newer island from another tab: the frame was replaced, and shown.
     if (this.takeIsland()) return;
     if (!this.frame) {
@@ -620,6 +624,7 @@ export class WorldHost {
         rules: save ? this.rulesFor(save) : [],
         muted: this.muted,
         recent: readRecentSets(),
+        wonders: readPool(),
       } satisfies ToWorld,
       "*",
     );
@@ -739,6 +744,11 @@ export class WorldHost {
     const warn = document.createElement("p");
     warn.className = "chronicle-note";
     warn.textContent = "Everything on your current island will be lost.";
+    // 4.4.5 part C: what is new on islands this week, a reason to make one.
+    const fresh = document.createElement("p");
+    fresh.className = "chronicle-note";
+    fresh.hidden = !this.week.length;
+    fresh.textContent = this.week.length ? `New on islands this week: ${listOf(this.week.map(wonderLabel))}.` : "";
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.textContent = "Cancel";
@@ -767,8 +777,27 @@ export class WorldHost {
     const grid = document.createElement("div");
     grid.className = "reset-fields";
     grid.append(field("Size", size), field("Warmth", warmth), field("Water", water), field("Mountains", relief), field("Forest", forest), field("Seed", seed));
-    d.replaceChildren(title, grid, hint, warn, actions);
+    d.replaceChildren(title, grid, hint, fresh, warn, actions);
     d.showModal();
+  }
+
+  // The pool of wonders written as programs (4.4.5 part C): asked for when
+  // the World opens, at most every ten minutes, kept for offline, handed to
+  // the frame for the next new island. What came this week is said once.
+  private async refreshPool(): Promise<void> {
+    if (Date.now() - this.poolAt < 600_000) return;
+    this.poolAt = Date.now();
+    const pool = await api.wonderPool();
+    if (!pool) return;
+    writePool(pool.wonders);
+    this.week = pool.week;
+    this.send({ type: "wonders", list: pool.wonders });
+    const seen = readSeenWonders();
+    const fresh = pool.week.filter((w) => !seen.includes(w.id));
+    if (fresh.length) {
+      writeSeenWonders([...seen, ...fresh.map((w) => w.id)]);
+      toast(`New on islands this week: ${listOf(fresh.map(wonderLabel))}. A new island may have them.`, "special");
+    }
   }
 
   // The frame HUD, toggled by a long press on the title. Remembered per browser.
@@ -1197,6 +1226,47 @@ function writeRecentSet(signature: string): void {
   } catch {
     // Full or blocked storage: the next island may repeat a set, nothing more.
   }
+}
+
+// The pool of wonders (4.4.5 part C), kept for offline: the newest sixty,
+// so the island's save keeps the room it needs.
+const POOL_KEY = "magic-merger.wonder-pool";
+const SEEN_KEY = "magic-merger.wonders-seen";
+function readPool(): unknown[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(POOL_KEY) ?? "[]") as unknown;
+    return Array.isArray(v) ? v.slice(0, 60) : [];
+  } catch {
+    return [];
+  }
+}
+function writePool(list: api.PoolWonder[]): void {
+  try {
+    localStorage.setItem(POOL_KEY, JSON.stringify(list.slice(0, 60)));
+  } catch {
+    // Full storage: new islands draw from the pool only while online.
+  }
+}
+function readSeenWonders(): number[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(SEEN_KEY) ?? "[]") as unknown;
+    return Array.isArray(v) ? v.filter((n): n is number => typeof n === "number").slice(-200) : [];
+  } catch {
+    return [];
+  }
+}
+function writeSeenWonders(ids: number[]): void {
+  try {
+    localStorage.setItem(SEEN_KEY, JSON.stringify(ids.slice(-200)));
+  } catch {
+    // Said again next time, nothing more.
+  }
+}
+function wonderLabel(w: api.PoolWonder): string {
+  return w.by ? `${w.kind} (${w.rarity}, found by ${w.by})` : `${w.kind} (${w.rarity})`;
+}
+function listOf(items: string[]): string {
+  return items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
 // Never a big island by default: small on a narrow screen, medium elsewhere.

@@ -1276,33 +1276,54 @@ function withDecal<T extends MeshBasicMaterial>(material: T, texture: CanvasText
   return material;
 }
 
-// Gentle waves on water tops (4.4): each vertex rides a few sine waves by its
-// `wave` weight (terrain.ts: none at the shore, against walls or in the
-// shallows), and the water glints a little as they pass.
+// Waves on water tops (4.4, redrawn in 4.4.5 part C on the owner's report:
+// "the animation for the water waves is bad"). Until then each vertex of the
+// one-cell tops rode sines about seven cells long and glinted by vertex, which
+// read as flashing triangles and dots. Now the surface barely heaves (long,
+// slow swells, so tops stay flat like the voxels around them) and the waves
+// are drawn in the fragment shader: two wave trains of the world position,
+// read on a quarter-cell grid so they look like the voxels, their fronts bent
+// by a slow warp, their crests thin lines broken by a mask that hands the
+// light from one train to the other. A few multiply-adds and five sines
+// per water pixel: no geometry, no texture, no draw call. The `wave` weight
+// (terrain.ts) keeps the shore, walls and shallows calm.
 function withWaves<T extends MeshBasicMaterial>(material: T, time: { value: number }): T {
   const before = material.onBeforeCompile;
   material.onBeforeCompile = (shader, renderer) => {
     before.call(material, shader, renderer);
     shader.uniforms.waveTime = time;
     shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", "#include <common>\nattribute float wave;\nuniform float waveTime;\nvarying float vGlint;")
+      .replace("#include <common>", "#include <common>\nattribute float wave;\nuniform float waveTime;\nvarying float vWave;\nvarying vec2 vSea;")
       .replace(
         "#include <begin_vertex>",
         `#include <begin_vertex>
-vGlint = 0.0;
+vWave = wave;
+vSea = (modelMatrix * vec4(position, 1.0)).xz;
 if (wave > 0.0) {
-  float s = sin(position.x * 0.9 + waveTime * 1.6) + sin(position.z * 0.7 - waveTime * 1.2 + position.x * 0.3);
-  transformed.y += wave * s * 0.045;
-  vGlint = wave * max(0.0, s - 1.2) * 0.12;
+  float swell = sin(vSea.x * 0.21 + vSea.y * 0.13 + waveTime * 0.8) + sin(vSea.y * 0.17 - vSea.x * 0.07 - waveTime * 0.6);
+  transformed.y += wave * swell * 0.02;
 }`,
       );
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying float vGlint;")
-      .replace("#include <dithering_fragment>", "#include <dithering_fragment>\ngl_FragColor.rgb += vGlint;");
+      .replace("#include <common>", "#include <common>\nuniform float waveTime;\nvarying float vWave;\nvarying vec2 vSea;")
+      .replace(
+        "#include <dithering_fragment>",
+        `#include <dithering_fragment>
+if (vWave > 0.01) {
+  vec2 q = floor(vSea * 4.0) * 0.25;
+  float bend = sin(q.y * 0.23 + q.x * 0.11) * 1.3 + sin(q.x * 0.17 - q.y * 0.07 + waveTime * 0.2);
+  float a = sin(dot(q, vec2(0.55, 0.32)) + bend + waveTime * 1.1);
+  float b = sin(dot(q, vec2(-0.21, 0.63)) - bend * 0.8 - waveTime * 0.8 + 1.9);
+  float m = smoothstep(0.15, 0.85, 0.5 + 0.5 * sin(dot(q, vec2(0.47, -0.38)) + waveTime * 0.4));
+  float crest = smoothstep(0.94, 1.0, a) * m + smoothstep(0.95, 1.0, b) * (1.0 - m) * 0.7;
+  gl_FragColor.rgb *= 1.0 + (a + b) * 0.02 * vWave;
+  gl_FragColor.rgb += crest * 0.07 * vWave;
+}`,
+      );
   };
   // Three caches programs by onBeforeCompile's source, which the darkness
   // wrapper makes the same for land and water: name this one apart.
-  material.customProgramCacheKey = () => "water-waves";
+  material.customProgramCacheKey = () => "water-waves-2";
   return material;
 }
 
