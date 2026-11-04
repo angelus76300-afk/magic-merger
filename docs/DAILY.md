@@ -6,20 +6,22 @@ The backlog is [IDEAS.md](IDEAS.md). The rules under "Never" in [FEEDBACK.md](FE
 
 ## The planner
 
-Scheduled every morning (07:43, Paris time) as a fresh session. **It reads, decides and writes one message; it changes nothing**: no file edited, nothing pushed, no comment posted, no `wrangler`, no database, no deploy. It only reads `main` and the repository's pull requests.
+One session, "Magic Merger daily planner", woken every morning at 07:36 Toronto time by a schedule, so its message is ready by 8 and it remembers the previous days. **It reads, decides and writes one message; it changes nothing**: no file edited, nothing pushed, no comment posted, no `wrangler`, no database, no deploy. It only reads `main`, the repository's pull requests and branches, and the sessions working on it.
 
 ### What it reads
 
 1. On `main`: `docs/ROADMAP.md` ("Next versions" and the newest "Done in" sections), this file, `docs/IDEAS.md`.
 2. The pull requests: open ones (drafts waiting for the owner, their CI), and the ones merged or closed in the last seven days with the owner's comments.
 3. CI on `main`.
+4. **What other sessions are doing**: the Claude Code sessions working on this repository (their titles, status and latest summaries) and the branches with commits in the last day. The owner often starts the next step before the planner proposes it.
 
 ### What it decides, first that applies
 
 1. **CI is red on `main`**: today's prompt fixes it, nothing else.
-2. **A builder's pull request waits for the owner**: today starts with reviewing it. The message names it, says what to try (on the phone when it shows something), and what to check before merging. The next prompt follows, to open once that one is merged. Two or more waiting: the message is only the review list, no new prompt, so work never piles up faster than it is read.
-3. **A planned version remains** in "Next versions" and is not built yet: today's prompt is that version's, the lowest number first. A version too big for one session is given in parts (part 1 today, part 2 when it is merged), each part useful on its own.
-4. **Otherwise, one idea**: the highest score in today's category (the rotation below). Score = value to players (1 to 5) × confidence it works (0.5 to 1) ÷ size (1 for a few hours, 2 for a session), plus 1 per player vote and plus 2 for a bug players hit; ties go to the idea that waited longest. An idea too big for one session is split, or proposed as a roadmap version for the owner to approve instead.
+2. **A step is already being built** in another session or on a recent branch: it is never proposed again. The message says what is in progress and where it stands, and gives the next step only if it touches other files and does not depend on it (two sessions on the same files, the same Worker or the same migrations collide); otherwise today is "let it finish".
+3. **A builder's pull request waits for the owner**: today starts with reviewing it. The message names it, says what to try (on the phone when it shows something), and what to check before merging. The next prompt follows, to open once that one is merged. Two or more waiting: the message is only the review list, no new prompt, so work never piles up faster than it is read.
+4. **A planned version remains** in "Next versions" and is not built yet: today's prompt is that version's, the lowest number first. A version too big for one session is given in parts (part 1 today, part 2 when it is merged), each part useful on its own.
+5. **Otherwise, one idea**: the highest score in today's category (the rotation below). Score = value to players (1 to 5) × confidence it works (0.5 to 1) ÷ size (1 for a few hours, 2 for a session), plus 1 per player vote and plus 2 for a bug players hit; ties go to the idea that waited longest. An idea too big for one session is split, or proposed as a roadmap version for the owner to approve instead.
 
 ### The message
 
