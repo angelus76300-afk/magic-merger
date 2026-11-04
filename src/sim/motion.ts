@@ -41,6 +41,9 @@ export interface KindMotion {
   intentFlips: number;
   stuck: number;
   actionChanges: number;
+  // Steps of more than half a cell in one tick: a hop out of a hollow, seen
+  // as a jump (unstick and life.free).
+  hops: number;
   // Flip-flops (turns of the step) by drive.
   flips: Record<string, number>;
   // Natural turns by what was finished.
@@ -56,7 +59,18 @@ export class MotionMeter {
   log: ((c: Creature, key: string, time: number) => void) | null = null;
 
   private kind(name: string): KindMotion {
-    return (this.kinds[name] ??= { seconds: 0, turns: 0, natural: 0, intentTurns: 0, intentFlips: 0, stuck: 0, actionChanges: 0, flips: {}, naturalBy: {} });
+    return (this.kinds[name] ??= {
+      seconds: 0,
+      turns: 0,
+      natural: 0,
+      intentTurns: 0,
+      intentFlips: 0,
+      stuck: 0,
+      actionChanges: 0,
+      hops: 0,
+      flips: {},
+      naturalBy: {},
+    });
   }
 
   // Something finished: the next sharp turn is natural.
@@ -88,6 +102,7 @@ export class MotionMeter {
     t.x = c.x;
     t.y = c.y;
     const moved = Math.hypot(dx, dy);
+    if (moved > 0.5 && moved < 4) k.hops++;
     if (drive !== t.drive) {
       if (awake) k.actionChanges++;
       t.drives.push([time, t.drive]);
@@ -167,7 +182,7 @@ export function motionLines(kinds: Record<string, KindMotion>): string[] {
     if (min < 0.5) continue;
     const per = (v: number) => (v / min).toFixed(1);
     out.push(
-      `${name.padEnd(9)} turns ${per(k.turns).padStart(5)}/min (natural ${per(k.natural)}, flip-flops ${per(k.turns - k.natural)}), intent flips ${per(k.intentFlips)}, stuck ${per(k.stuck)} s/min, action changes ${per(k.actionChanges)}/min, ${min.toFixed(0)} creature-min`,
+      `${name.padEnd(9)} turns ${per(k.turns).padStart(5)}/min (natural ${per(k.natural)}, flip-flops ${per(k.turns - k.natural)}), intent flips ${per(k.intentFlips)}, stuck ${per(k.stuck)} s/min, hops ${per(k.hops)}/min, action changes ${per(k.actionChanges)}/min, ${min.toFixed(0)} creature-min`,
     );
     if (k.turns > k.natural) out.push(`          flip-flops from: ${top(k.flips, min)}`);
     if (k.natural) out.push(`          natural after: ${top(k.naturalBy, min, 3)}`);
@@ -177,8 +192,19 @@ export function motionLines(kinds: Record<string, KindMotion>): string[] {
 
 export function mergeMotion(into: Record<string, KindMotion>, from: Record<string, KindMotion>): void {
   for (const [name, k] of Object.entries(from)) {
-    const t = (into[name] ??= { seconds: 0, turns: 0, natural: 0, intentTurns: 0, intentFlips: 0, stuck: 0, actionChanges: 0, flips: {}, naturalBy: {} });
-    for (const f of ["seconds", "turns", "natural", "intentTurns", "intentFlips", "stuck", "actionChanges"] as const) t[f] += k[f];
+    const t = (into[name] ??= {
+      seconds: 0,
+      turns: 0,
+      natural: 0,
+      intentTurns: 0,
+      intentFlips: 0,
+      stuck: 0,
+      actionChanges: 0,
+      hops: 0,
+      flips: {},
+      naturalBy: {},
+    });
+    for (const f of ["seconds", "turns", "natural", "intentTurns", "intentFlips", "stuck", "actionChanges", "hops"] as const) t[f] += k[f];
     for (const [a, v] of Object.entries(k.flips)) t.flips[a] = (t.flips[a] ?? 0) + v;
     for (const [a, v] of Object.entries(k.naturalBy)) t.naturalBy[a] = (t.naturalBy[a] ?? 0) + v;
   }

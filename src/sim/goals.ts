@@ -977,14 +977,22 @@ function goalTask(world: World, c: Creature, k: CreatureKind, m: Mind, needs: bo
 function wander(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
   if (herd(world, c, k, m)) return true;
   if (flock(world, c, m)) return true;
-  const range = m.goal === "explore" ? 30 : 14;
+  // A herd drifts together (4.3): its members roam a little ahead of its
+  // middle, the way the herd is going, instead of each off on its own and
+  // back again when it finds itself alone, a leash pulled back and forth.
+  const h = HERD;
+  const herded = h.n > 0 && !m.tame;
+  const range = herded ? 6 : m.goal === "explore" ? 30 : 14;
+  const heading = herded && Math.hypot(h.hx, h.hy) > 0.3 ? Math.atan2(h.hy, h.hx) : c.hd;
   for (let tries = 0; tries < 6; tries++) {
     // Mostly on the way it is already going (4.3): a new point anywhere
     // around it was an about turn one time in three.
-    const a = tries < 4 ? c.hd + (Math.random() - 0.5) * 2.2 : Math.random() * Math.PI * 2;
+    const a = tries < 4 ? heading + (Math.random() - 0.5) * 2.2 : Math.random() * Math.PI * 2;
     const r = range * (0.5 + Math.random() * 0.5);
-    const x = (m.tame ? (world.villages[m.tame - 1]?.x ?? c.homeX) : c.x) + Math.cos(a) * r;
-    const y = (m.tame ? (world.villages[m.tame - 1]?.y ?? c.homeY) : c.y) + Math.sin(a) * r;
+    const ox = herded ? h.x : m.tame ? (world.villages[m.tame - 1]?.x ?? c.homeX) : c.x;
+    const oy = herded ? h.y : m.tame ? (world.villages[m.tame - 1]?.y ?? c.homeY) : c.y;
+    const x = ox + Math.cos(a) * r;
+    const y = oy + Math.sin(a) * r;
     if (x < 2 || y < 2 || x > world.w - 3 || y > world.h - 3) continue;
     const i = world.idx(x, y);
     // Open ground it can stand on (4.3: a point in the middle of a wood had
@@ -996,20 +1004,35 @@ function wander(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
   return false;
 }
 
+// The herd herd() last looked at: how many, its middle, where it heads.
+const HERD = { n: 0, x: 0, y: 0, hx: 0, hy: 0 };
+
 function herd(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
+  HERD.n = 0;
   if (!k.native || c.kind === "bear" || c.kind === "bird") return false;
   let n = 0;
   let sx = 0;
   let sy = 0;
+  let hx = 0;
+  let hy = 0;
   for (const o of world.crowd.near(world, c.x, c.y, 12)) {
     if (o === c || o.kind !== c.kind) continue;
     n++;
     sx += o.x;
     sy += o.y;
+    if (o.sp > 0.3) {
+      hx += Math.cos(o.hd);
+      hy += Math.sin(o.hd);
+    }
   }
   if (!n) return false;
   sx /= n;
   sy /= n;
+  HERD.n = n;
+  HERD.x = (sx * n + c.x) / (n + 1);
+  HERD.y = (sy * n + c.y) / (n + 1);
+  HERD.hx = hx / n;
+  HERD.hy = hy / n;
   // Joins its herd once more than 7 cells from its middle, and is there at 3
   // (REACH): not in and out of it at one distance (4.3).
   if (Math.hypot(sx - c.x, sy - c.y) < 7) return false;
@@ -1023,8 +1046,8 @@ const FLOCKS = new Set(["bird"]);
 function flock(world: World, c: Creature, m: Mind): boolean {
   if (!FLOCKS.has(c.kind)) return false;
   let lead: Creature | null = null;
-  for (const o of world.crowd.near(world, c.x, c.y, 12)) {
-    if (o.kind !== c.kind || o.id >= c.id || !o.mind || o.mind.task !== "roam" || o.data.flockLead) continue;
+  for (const o of world.crowd.near(world, c.x, c.y, 16)) {
+    if (o.kind !== c.kind || o.id >= c.id || !o.mind || o.data.flockLead !== undefined) continue;
     if (!lead || o.id < lead.id) lead = o;
   }
   if (!lead || !lead.mind) {
@@ -1032,7 +1055,9 @@ function flock(world: World, c: Creature, m: Mind): boolean {
     return false;
   }
   c.data.flockLead = lead.id;
-  setTask(m, "roam", lead.mind.tx + (Math.random() - 0.5) * 4, lead.mind.ty + (Math.random() - 0.5) * 4, 0.85);
+  // Where the leader goes, or close round it while it stops to sow.
+  const going = lead.mind.task === "roam";
+  setTask(m, "roam", (going ? lead.mind.tx : lead.x) + (Math.random() - 0.5) * 4, (going ? lead.mind.ty : lead.y) + (Math.random() - 0.5) * 4, 0.85);
   m.action = "flying with its flock";
   return true;
 }
@@ -1042,7 +1067,7 @@ function flock(world: World, c: Creature, m: Mind): boolean {
 function roamAim(world: World, c: Creature, m: Mind, d: number): void {
   const id = c.data.flockLead as number | undefined;
   if (id !== undefined) {
-    for (const o of world.crowd.near(world, c.x, c.y, 14)) {
+    for (const o of world.crowd.near(world, c.x, c.y, 16)) {
       if (o.id !== id || o.dead || o.mind?.task !== "roam") continue;
       const back = 1.5 + (c.id % 4) * 0.8;
       const side = (((c.id >> 2) % 3) - 1) * 1.6;
@@ -1245,8 +1270,11 @@ function steal(world: World, c: Creature, k: CreatureKind, m: Mind): void {
 // A spell kind that leaves something behind spreads it; the undead dig
 // graves; birds and the rest sow seeds.
 function spread(world: World, c: Creature, k: CreatureKind, m: Mind): void {
-  // Birds sow now and then; a spell's spreader is busier.
-  if (Math.random() < (k.native ? 0.85 : 0.5)) return void wander(world, c, k, m);
+  // Birds sow now and then, a flock when its leader does (it lands with it,
+  // and flies on with it otherwise); a spell's spreader is busier.
+  const lead = c.data.flockLead as number | undefined;
+  const landing = lead !== undefined && world.crowd.near(world, c.x, c.y, 16).some((o) => o.id === lead && o.mind?.task === "seed");
+  if (lead !== undefined ? !landing : Math.random() < (k.native ? 0.85 : 0.5)) return void wander(world, c, k, m);
   const undead = /skeleton|ghoul|mummy|wraith|banshee|reaper|undead|necromancer|lich|zombie|revenant/.test(c.kind);
   if (undead) {
     const yard = world.marks.find((k2) => k2.kind === "graveyard" && Math.hypot(k2.x - c.x, k2.y - c.y) < 30);

@@ -34,7 +34,7 @@ const FAR = 0xffff;
 // The steepest step up a field takes: a little less than a creature can
 // climb (1.6), so a step that is just climbable when the field is made (or
 // with a little water on it) does not stop a creature that follows it later.
-const CLIMB = 1.4;
+const CLIMB = 1.55;
 
 interface Field {
   key: number;

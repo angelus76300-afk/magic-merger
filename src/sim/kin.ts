@@ -230,7 +230,8 @@ export function deed(c: Creature, what: string): void {
   m.deeds++;
   m.did = what;
   if (deedLog) deedLog.set(what, (deedLog.get(what) ?? 0) + 1);
-  if (catches && what.startsWith("caught a ")) {
+  // Caught on a hunt (goals.ts) or killed by a hunter's declared behavior (creatures.ts).
+  if (catches && (what.startsWith("caught a ") || what.startsWith("killed a "))) {
     const key = `${c.kind.split("#")[0]} caught a ${what.slice(9)}`;
     catches.set(key, (catches.get(key) ?? 0) + 1);
   }

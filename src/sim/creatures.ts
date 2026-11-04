@@ -653,7 +653,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     const trip = drive === "pursue" && m && m.task !== "none";
     const gx = trip ? (m.target ? m.target.x : m.tx) : c.x + wantX;
     const gy = trip ? (m.target ? m.target.y : m.ty) : c.y + wantY;
-    const stepped = steer(world, c, k, c.x + wantX, c.y + wantY, busy ? 0 : speed, arrive, dt, blocked, gx, gy);
+    const hunting = mood === "hunt" || mood === "angry";
+    const stepped = steer(world, c, k, c.x + wantX, c.y + wantY, busy ? 0 : speed, arrive, hunting, dt, blocked, gx, gy);
     wanted = stepped.wanted;
     if (stepped.jammed && speed > 0) {
       // Boxed in (born between trees and houses): after a while, out to the

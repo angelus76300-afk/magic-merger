@@ -97,6 +97,28 @@ export function playChallenge(def: ChallengeDef, code: string, tier: Tier, spot:
   return { status: errors.length ? "crashed" : status, errors };
 }
 
+// How often a program wins a challenge at its first spot, over seeds 101,
+// 202, ... (4.3): npm test asks the plain solutions for half of 12 at least.
+// Their verdict on the three seeds of solves() flips with anything that
+// changes what creatures do to the land (birds sowing, villagers felling),
+// since the lava challenges are won 9 times in 12 by the wall, so not on
+// every three: on main, racing lava wins 6 of these 12 and lost 101.
+// Stops as soon as the answer is known.
+export function winRate(def: ChallengeDef, code: string, tier: Tier, seeds = 12): { wins: number; runs: number; need: number; results: string } {
+  const need = Math.ceil(seeds / 2);
+  let wins = 0;
+  let runs = 0;
+  let results = "";
+  for (let n = 1; n <= seeds; n++) {
+    const won = playChallenge(def, code, tier, def.spots[0], n * 101).status === "won";
+    runs++;
+    if (won) wins++;
+    results += won ? "w" : "l";
+    if (wins >= need || wins + (seeds - n) < need) break;
+  }
+  return { wins, runs, need, results };
+}
+
 // Solved: won on at least two of three seeds at one of its spots.
 export function solves(def: ChallengeDef, code: string, tier: Tier): { ok: boolean; wins: number; runs: number } {
   let best = 0;

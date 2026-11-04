@@ -90,7 +90,9 @@ const OUT: Stepped = { wanted: 0, jammed: false };
 
 // One tick of moving toward (tx, ty) at vmax cells per second (0: stop).
 // arrive: slow down at the point (a destination), rather than run through it
-// (a chase, a flight). (gx, gy): where the trip ends, when the point is only
+// (a chase, a flight). chase: running after something, which takes the
+// flow field once the straight way to it is blocked (a flight never does:
+// it goes where it can, now). (gx, gy): where the trip ends, when the point is only
 // the way there (a bend in a walk, a place in a flock); the flow field is
 // the destination's.
 export function steer(
@@ -101,6 +103,7 @@ export function steer(
   ty: number,
   vmax: number,
   arrive: boolean,
+  chase: boolean,
   dt: number,
   blocked: Blocked,
   gx = tx,
@@ -122,11 +125,13 @@ export function steer(
     // A short trip whose straight line is blocked (a tree, a pond, a step
     // too high) takes the field from the start, instead of walking into the
     // dead end and turning back: looked at twice a second.
-    if (arrive && !air && trip > 2.5 && trip <= LONG_TRIP && (world.tick + c.id) % 15 === 0 && !lineOpen(world, c, k, gx, gy, blocked))
-      c.data.detour = world.time + 4;
-    if (arrive && !air && (trip > LONG_TRIP || (trip > 2.5 && world.time < ((c.data.detour as number | undefined) ?? 0)))) {
+    const routed = arrive || chase;
+    if (routed && !air && trip > 2.5 && (trip <= LONG_TRIP || chase) && (world.tick + c.id) % 15 === 0 && !lineOpen(world, c, k, gx, gy, blocked))
+      c.data.detour = world.time + (chase ? 2 : 4);
+    const detour = world.time < ((c.data.detour as number | undefined) ?? 0);
+    if (routed && !air && trip > 2.5 && ((arrive && trip > LONG_TRIP) || detour)) {
       const paths = pathsOf(world);
-      const f = paths.toward(world, k.aquatic ? Mobility.WATER : k.swims ? Mobility.SWIM : Mobility.WALK, gx, gy, trip <= LONG_TRIP * 1.5);
+      const f = paths.toward(world, k.aquatic ? Mobility.WATER : k.swims ? Mobility.SWIM : Mobility.WALK, gx, gy, !chase && trip <= LONG_TRIP * 1.5);
       if (f && !paths.aim(world, f, c.x, c.y, AIM)) {
         // No way there from here: the mind is told (goals.ts drops the task
         // and steps out of the hollow, instead of pacing along the wall).
@@ -179,6 +184,7 @@ export function steer(
         }
         // Going somewhere: the way round is the flow field's from now on.
         if (arrive) c.data.detour = world.time + 4;
+        else if (chase) c.data.detour = world.time + 2;
         if (!found) {
           jammed = true;
           ds = 0;
@@ -209,11 +215,15 @@ export function steer(
   // to turn to, then the other: past a corner it brushed (a creature on the
   // line between two cells, a tree on the far side of it).
   const side = delta >= 0 ? 1 : -1;
+  const cx = Math.round(c.x);
+  const cy = Math.round(c.y);
   for (const turn of GRAZE) {
     const a = c.hd + turn * side;
     const sx = Math.cos(a) * step;
     const sy = Math.sin(a) * step;
-    if (blocked(world, c.x + sx * 2.5, c.y + sy * 2.5, c, k)) continue;
+    const nx = c.x + sx * 2.5;
+    const ny = c.y + sy * 2.5;
+    if ((Math.round(nx) !== cx || Math.round(ny) !== cy) && blocked(world, nx, ny, c, k)) continue;
     c.x += sx;
     c.y += sy;
     if (turn) c.sp *= 0.85;
@@ -252,10 +262,13 @@ function clear(world: World, c: Creature, k: CreatureKind, a: number, reach: num
   const uy = Math.sin(a);
   let fx = c.x;
   let fy = c.y;
+  const cx = Math.round(c.x);
+  const cy = Math.round(c.y);
   for (let d = 0.55; ; d = Math.min(reach, d + 0.5)) {
     const x = c.x + ux * d;
     const y = c.y + uy * d;
-    if (blocked(world, x, y, c, k, fx, fy)) return false;
+    // Its own cell never stops it: a tree grown where it stands is walked out of.
+    if ((Math.round(x) !== cx || Math.round(y) !== cy) && blocked(world, x, y, c, k, fx, fy)) return false;
     if (d >= reach) return true;
     fx = x;
     fy = y;

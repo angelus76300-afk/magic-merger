@@ -92,7 +92,11 @@ export function fleeing(world: World, c: Creature): { x: number; y: number } | n
     }
   }
   const away = Math.hypot(c.x - a.x, c.y - a.y);
-  if (now - a.seen > CALM && away > a.r * KEEP * (a.who ? 1 : 0.7)) {
+  // Well away: from the danger itself while it is known, from where it was
+  // for a place (a deer cornered by the shore calms once the bear has gone,
+  // even if it could not get far from where it saw it).
+  const far = a.who ? Math.hypot(a.who.x - c.x, a.who.y - c.y) > a.r * KEEP : away > a.r * KEEP * 0.7;
+  if (now - a.seen > CALM && far) {
     calmDown(c);
     // A walk it was on before is forgotten: it was likely toward the danger.
     const m = c.mind;
