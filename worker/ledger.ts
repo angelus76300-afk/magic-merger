@@ -28,6 +28,9 @@ export interface InviteRow {
   claimed_at?: number | null;
   deleted_at?: number | null;
   email?: string | null;
+  // 4.4.6: the owner's account ('admin'): the admin powers on every device
+  // signed in to it, and no allowance of its own (only the monthly budget).
+  admin?: number;
 }
 
 // Who pays: an invite, or the admin (no allowance, only the monthly budget).
@@ -108,7 +111,7 @@ export function allowance(row: Pick<InviteRow, "cap_usd" | "topup_usd" | "topup_
 }
 
 export function payerOf(row: InviteRow): Payer {
-  return { invite: row.id, name: row.name, status: row.status, cap: allowance(row) };
+  return { invite: row.id, name: row.name, status: row.status, cap: row.admin ? null : allowance(row) };
 }
 
 export async function sha256(text: string): Promise<string> {

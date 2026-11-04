@@ -2733,6 +2733,8 @@ const signIn = async (key, count) => {
     owner.data.admin === true && owner.data.account?.id === "admin" && owner.data.account?.admin === true && owner.data.account?.claimed === false,
     JSON.stringify(owner.data.account ?? null),
   );
+  const early = await api("/api/admin/invite", { admin: true, body: { id: "admin", action: "relink" } });
+  check("owner: no link makes the owner's account, only the token", early.status === 400 && !early.data?.link, `${early.status}`);
   // The computer: the owner makes a passkey from the device that holds the token.
   const ownerKey = await authenticator();
   const o1 = await api("/api/account/register/options", { admin: true, body: {} });
@@ -2813,6 +2815,14 @@ const signIn = async (key, count) => {
     again.status === 409 && minted.status !== 200 && !minted.data?.token,
     `${again.status} ${minted.status}`,
   );
+  const lost = await api("/api/admin/invite", { admin: true, body: { id: "admin", action: "relink" } });
+  const lostLink = lost.data?.link ? new URL(lost.data.link).hash.replace("#invite=", "") : "";
+  const back = lostLink ? await api("/api/account/claim-link", { invite: lostLink, body: {} }) : lost;
+  check(
+    "owner: once made, a new link from People signs a device in to it once (a lost passkey)",
+    back.status === 200 && back.data.id === "admin" && (await api("/api/health", { session: back.data.token })).data.admin === true,
+    `${lost.status} ${back.status}`,
+  );
   const kept = [];
   for (const action of ["pause", "revoke", "delete"]) kept.push((await api("/api/admin/invite", { admin: true, body: { id: "admin", action } })).status);
   const selfDelete = await api("/api/account", { session: phone, method: "DELETE" });
@@ -2824,8 +2834,10 @@ const signIn = async (key, count) => {
   const ownerPage = await api("/api/account", { session: computer });
   const devs = ownerPage.data?.devices ?? [];
   check(
-    "owner: the account page lists both devices with their last sync",
-    devs.length === 2 && devs.every((d) => typeof d.lastSync === "number" && d.lastSync > 0),
+    "owner: the account page lists each device with its last sync, and the one signed in by the link as never synced",
+    devs.length === 3 &&
+      devs.filter((d) => typeof d.lastSync === "number" && d.lastSync > 0).length === 2 &&
+      devs.filter((d) => d.lastSync === null).length === 1,
     JSON.stringify(devs.map((d) => ({ device: d.device, lastSync: d.lastSync }))),
   );
 

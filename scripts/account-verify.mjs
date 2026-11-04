@@ -265,9 +265,10 @@ try {
 
   // D. Deleting the account from B signs A out too, and the data is gone.
   await closeDialogs(B.page);
+  // 4.4.6: the ? button opens the menu; the account page is in it.
   await B.page.click("#help");
-  await B.page.waitForSelector("dialog.welcome[open]");
-  await B.page.click("dialog.welcome .welcome-account");
+  await B.page.waitForSelector("dialog.menu[open]");
+  await B.page.click("dialog.menu .menu-account");
   await B.page.waitForSelector("dialog.account[open]", { timeout: 10000 });
   B.page.once("dialog", (d) => d.accept("Fay"));
   await B.page.click("dialog.account .account-delete");
@@ -405,11 +406,18 @@ try {
   );
   check("E: and the computer's island", await PH.page.evaluate(() => !!localStorage.getItem("magic-merger.world2")));
   // The phone finds something; "Sync now" on the computer brings it.
+  // The board came down from the computer: cleared, so the two chips are Earth and Air.
+  await PH.page.click("#clear");
   await mergePair(PH.page, "Earth", "Air");
   await PH.page.waitForTimeout(7000);
+  const phoneFound = keysOf(await progressOf(await tokenOf(PH)));
   const shownSync = await syncNow(PC);
   const pcHas = await inventory(PC);
-  check('E: "Sync now" on the computer brings what the phone found', shownSync && syncedPC && pcHas === 10, `${pcHas} items on the computer`);
+  check(
+    'E: "Sync now" on the computer brings what the phone found',
+    shownSync && syncedPC && pcHas === 10,
+    `${pcHas} items on the computer, the account holds ${phoneFound.length}: ${phoneFound.join(", ")}`,
+  );
   const text = await menuText(PC);
   check(
     "E: the ? menu says who is signed in and when the account was last saved",
@@ -516,7 +524,8 @@ try {
   await withLink.page.goto(`${BASE}/#invite=${secretOf(carl.link)}`);
   await withLink.page.waitForSelector("dialog.welcome[open]", { timeout: 20000 });
   await withLink.page.click("dialog.welcome .welcome-start");
-  await closeDialogs(withLink.page);
+  await withLink.page.waitForSelector("dialog.account-offer[open]", { timeout: 10000 });
+  await withLink.page.click("dialog.account-offer .account-later");
   const linkMenu = (await openMenu(withLink)) && (await withLink.page.locator("dialog.menu .menu-signin").isVisible());
   check('F: on a device with a link, "Sign in" is in the ? menu', linkMenu);
 } catch (err) {

@@ -3,6 +3,7 @@ import type { SpellProgram } from "../shared/spellcode";
 import { FIRST_PROGRAM_VERSION } from "../shared/version";
 import type { GameElement } from "../shared/types";
 import { isQuotaError, warnStorageFull } from "./quota";
+import { isFrozen } from "./device-save";
 
 export interface Discovery {
   element: GameElement;
@@ -196,6 +197,8 @@ export class Store {
   // The stored save is read again first and merged by key (M6): another tab
   // may have found something since this one loaded.
   write(): void {
+    // 4.4.6: the save is being moved to another account's place; the page reloads.
+    if (isFrozen()) return;
     try {
       const stored = load();
       if (stored) this.data = mergeSaves(this.data, stored);

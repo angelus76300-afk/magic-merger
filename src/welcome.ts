@@ -101,7 +101,7 @@ export function showGate(code: "invite" | "revoked", message: string, actions: G
       ? `${message} If you think it is a mistake, ask the person who invited you.`
       : "Ask the person who told you about it for your own link, then open it on this device. Already playing on another device? Sign in below.";
   const box = gate.querySelector<HTMLElement>(".gate-signin")!;
-  box.hidden = !actions || code === "revoked";
+  box.hidden = !actions;
   if (actions) {
     gate.querySelector<HTMLButtonElement>(".gate-passkey")!.onclick = () => void actions.signIn();
     const form = gate.querySelector<HTMLFormElement>(".gate-email")!;

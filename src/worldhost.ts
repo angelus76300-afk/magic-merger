@@ -20,6 +20,7 @@ import type { Store } from "./store";
 import { toast } from "./toast";
 import { isQuotaError, warnStorageFull } from "./quota";
 import { WORLD_AT_KEY, WORLD_KEY, packIsland, readIslandText } from "./island-store";
+import { isFrozen } from "./device-save";
 import { BIG_SIZES, readHeadroom, sizesOffered, writeHeadroom } from "./headroom";
 import { DEFAULT_LAND, MIXED_FROM, readChoice as readLandChoice, type LandChoice } from "./sim/land-options";
 
@@ -645,7 +646,7 @@ export class WorldHost {
     this.saving = this.saving.then(() => this.writeIslandNow(data));
   }
   private async writeIslandNow(data: SavedWorld): Promise<void> {
-    if (!this.owner) return;
+    if (!this.owner || isFrozen()) return;
     if (!this.island && readAt() !== this.islandAt) return;
     let value: string;
     try {
@@ -660,6 +661,7 @@ export class WorldHost {
       return;
     }
     const at = String(Date.now());
+    if (isFrozen()) return;
     try {
       localStorage.setItem(WORLD_KEY, value);
       localStorage.setItem(WORLD_AT_KEY, at);

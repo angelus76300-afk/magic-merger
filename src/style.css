@@ -1799,3 +1799,31 @@ input {
 .gate-email[hidden] {
   display: none;
 }
+
+/* 4.4.6: the ? menu, sign out, two islands, progress from before. */
+.menu-sync {
+  margin: 4px 0 10px;
+  color: var(--muted);
+}
+.menu-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.menu-actions [hidden] {
+  display: none;
+}
+.signout .signout-keep,
+.island-choice .choice-this,
+.save-offer .offer-aside {
+  width: 100%;
+  margin-top: 8px;
+}
+.signout p,
+.island-choice p,
+.save-offer p {
+  margin: 0 0 12px;
+}
+.account-previous {
+  margin-top: 6px !important;
+}

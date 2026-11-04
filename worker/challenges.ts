@@ -40,7 +40,7 @@ async function verified(db: D1Database): Promise<Map<string, string[]>> {
 async function bestWins(db: D1Database): Promise<Map<string, { merges: number; name: string }>> {
   const rows = await db
     .prepare(
-      `SELECT w.challenge, w.merges, COALESCE(i.name, CASE WHEN w.invite = 'admin' THEN 'the admin' ELSE 'a friend' END) AS name
+      `SELECT w.challenge, w.merges, CASE WHEN w.invite = 'admin' THEN 'the admin' ELSE COALESCE(i.name, 'a friend') END AS name
        FROM challenge_wins w LEFT JOIN invites i ON i.id = w.invite
        WHERE w.id IN (SELECT (SELECT id FROM challenge_wins x WHERE x.challenge = y.challenge ORDER BY merges, at LIMIT 1) FROM challenge_wins y GROUP BY challenge)`,
     )

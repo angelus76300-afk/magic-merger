@@ -11,14 +11,21 @@ import { showFeedback } from "./feedback";
 import { Challenges } from "./challenges";
 import { openBook } from "./book";
 import { hideGate, showGate, showWelcome, welcomedBefore } from "./welcome";
-import { claimLink, offerAccount, offeredBefore, openAccount, setSignedIn, signIn } from "./account";
+import { claimLink, followAccount, offerAccount, offeredBefore, openAccount, setSignedIn, signIn } from "./account";
 import { Sync } from "./sync";
+import { openMenu } from "./menu";
+import { followOtherTabs } from "./device-save";
+import type { GateActions } from "./welcome";
 
 // An invite link (/#invite=...) is kept by this browser before anything else;
 // a sign in link by email (/#signin=...) is used once, below.
 const fromLink = api.captureInvite();
 const signInToken = api.captureSignIn();
-api.setLockedOut(showGate);
+// 4.4.6: the gate always offers a sign in, whatever this device holds.
+const gateActions = (email: boolean): GateActions => ({ signIn, emailLink: email ? (address) => api.account.emailLink(address) : null });
+api.setLockedOut((code, message) => showGate(code, message, gateActions(false)));
+// Another tab signed in, out or switched: this one follows (device-save.ts).
+followOtherTabs();
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 
@@ -51,6 +58,11 @@ store.listen(() => {
 // 4.0: the account's progress follows this device while signed in.
 const sync = new Sync(store);
 world.onSaved = () => sync.islandSaved();
+// What another device found comes down while this one plays (4.4.6).
+sync.onPulled = () => {
+  craft.refresh();
+  world.renderSpells();
+};
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) sync.flush();
 });
@@ -79,9 +91,13 @@ $("#admin-badge").addEventListener("click", () => {
   void showSpend(badge);
 });
 
-// The ? button: the welcome again, with the privacy note and this month's
-// magic; signed in, the account page is one tap further.
-$("#help").addEventListener("click", () => void api.health().then((h) => showWelcome(h, h?.account?.signedIn ? openAccount : null)));
+// The ? button (4.4.6): who is signed in, whether the progress is saved,
+// sign in, sync now, switch account, sign out; the welcome and the privacy
+// note one tap further.
+$("#help").addEventListener(
+  "click",
+  () => void api.health().then((h) => openMenu(h, sync, () => void showWelcome(h, h?.account?.signedIn ? openAccount : null))),
+);
 
 for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
   tab.addEventListener("click", () => showTab(tab.dataset.view!));
@@ -109,12 +125,12 @@ setCardActions({
 
 // Signed in (a passkey, a link): the server's progress joins this device's,
 // and the page starts again from what it holds now.
-setSignedIn(async () => {
-  const got = await sync.start();
+setSignedIn(async (r) => {
+  const got = await sync.start(r.id);
   if (got.discoveries) toast(`${got.discoveries} discoveries came from your other devices`);
   if (got.island === "replaced") toast("Your island from another device is loading…");
   window.setTimeout(() => location.reload(), 900);
-});
+}, sync);
 
 async function refreshSession(): Promise<void> {
   // A sign in link by email, or an admin's new link for an account that
@@ -134,15 +150,20 @@ async function refreshSession(): Promise<void> {
     if (await claimLink("link")) return;
   }
   if (!status.invited) {
-    showGate("invite", "", { signIn, emailLink: status.email ? (email) => api.account.emailLink(email) : null });
+    showGate("invite", "", gateActions(!!status.email));
     return;
   }
+  // 4.4.6: the save on this device is the account's (or the link's, or the
+  // owner's by token); another's is set aside first and the page reloads.
+  if (status.account && (await followAccount(status.account.id))) return;
   if (document.getElementById("gate") && !document.getElementById("gate")!.hidden) {
     hideGate();
     showTab("craft-view");
   }
   if (status.account?.signedIn) {
-    const got = await sync.start();
+    // The owner's account holds the admin powers: the token is not needed here any more.
+    if (status.account.admin) api.setToken(null);
+    const got = await sync.start(status.account.id);
     if (got.discoveries) toast(`${got.discoveries} discoveries came from your other devices`);
     if (got.island === "replaced") {
       toast("Your island from another device is loading…");

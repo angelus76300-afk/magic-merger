@@ -53,7 +53,7 @@ The Worker URL is public: without an invite link or the admin token, the API ans
 
 Tap the admin badge: the People view lists everyone you invited, with what they spent this month, how many things they discovered first, when they last came and how often the bug guard refused them, plus what is left of `BUDGET_USD` and the reported names. Type a name and **Create invite**: you get a link like `https://magic-merger.<your-subdomain>.workers.dev/#invite=...` to send to that person only. Their browser keeps it (and removes it from the address bar); whoever opens it plays as that name. Per person: **Pause** (they keep playing the shared library, nothing new is asked of Claude), **Top up** (dollars added for this month only), **New link** (the old one stops working, the history stays) and **Revoke** (for good). Only a hash of each link is stored, so a lost link is replaced, never shown again.
 
-Each invite may spend `INVITE_CAP_USD` ($5) a month, shown to players as 500 credits (100 credits to the dollar; the top-up asks in credits). Past it, new merges and new spells say "Your magic is spent for now"; known recipes and every spell already in the library stay free. Your own plays with the admin token count toward `BUDGET_USD` but have no allowance of their own.
+Each invite may spend `INVITE_CAP_USD` ($5) a month, shown to players as 500 credits (100 credits to the dollar; the top-up asks in credits). Past it, new merges and new spells say "Your magic is spent for now"; known recipes and every spell already in the library stay free. Your own plays (with the admin token, or since 4.4.6 signed in to your own account) count toward `BUDGET_USD` but have no allowance of their own.
 
 ### Accounts (4.0)
 
@@ -71,7 +71,11 @@ and in `wrangler.jsonc` `vars`: `EMAIL_API_URL` (for Resend, `https://api.resend
 
 The account page (the `?` button, "Your account") lists passkeys, signed in devices (each can be signed out), what is saved and when, and has **Export** (one JSON file of everything the account holds) and **Delete my account** (passkeys, devices, saved progress, votes, casts, ideas, wins and reports; what the person found first stays in the shared library without their name; the month's spend keeps the invite's random id so the budget stays whole; the invite row stays as deleted so the id is never reused).
 
-`node scripts/account-verify.mjs` (needs `dist/` and Playwright) runs the whole thing in a phone sized headless browser with a virtual authenticator against `wrangler dev`: a link into an account, a second device signing in with the same passkey and receiving the island, one link opened on two devices at once, deletion from one device signing out the other.
+`node scripts/account-verify.mjs` (needs `dist/` and Playwright) runs the whole thing in a phone sized headless browser with a virtual authenticator against `wrangler dev`: a link into an account, a second device signing in with the same passkey and receiving the island, one link opened on two devices at once, deletion from one device signing out the other; since 4.4.6 also the owner on a computer and a phone, and a second account signing in on a phone that held the first one's progress.
+
+### Your own account (4.4.6)
+
+You are an account too, and admin is a role of it. Once, on the device you play on most: five taps on the title, the admin token, then **Make the owner's account** (offered at once, and in the `?` menu). That passkey makes the account whose id your admin rows already use (`admin`: your spend, First Discoveries, ideas and wins stay yours, nothing moves), uploads that device's progress, and drops the token from the browser. On every other device: the `?` menu or the gate, **Sign in with a passkey**; the admin powers follow the account, with no token to type, and the device's own progress from before is offered once for your account. No allowance of your own, as before. A lost passkey: **New link** on your own row of the People view (from a device that still has the token, or one signed in) signs a device in once; the row cannot be paused, revoked or deleted. The token itself stays for scripts and the nightly Action (`MM_TOKEN`), and works alone exactly as before; next to a session it never hides it.
 
 ### Admin mode
 
