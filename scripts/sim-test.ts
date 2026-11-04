@@ -59,6 +59,7 @@ import { BIOMES, DEFAULT_LAND, SHAPES, habitatCount, readLand, resolveLand, LOOK
 import { landProblems, type LandLife } from "./land-life";
 import type { Balance } from "./balance-run";
 import { wonderChecks } from "./wonders-test";
+import { programWonderChecks } from "./wonders-c-test";
 import { riverShape, riverTrenches } from "./river-metrics";
 import { projectedSim, sizesOffered, SIM_BUDGET_MS } from "../src/headroom";
 import { skyBodies, weatherAt } from "../src/sim/voxel/sky";
@@ -992,6 +993,7 @@ for (const scenario of SCENARIOS) {
   }
   // 4.4.5 part B: wonders, names, the last ten sets, buildings (wonders-test.ts).
   wonderChecks(check);
+  programWonderChecks(check);
   check("a small island is one land", generateWorld(112, 112, 5, resolveLand(mid, 5, 112)).biomeMap === null);
   // 4.4.1: rivers wind instead of running straight with right angle turns
   // (main had a run of 26 cells and a quarter of its river in runs of 8 or

@@ -1,0 +1,14 @@
+{
+  "id": 1,
+  "kind": "dew towers",
+  "rarity": "uncommon",
+  "lands": ["desert"],
+  "spot": "flat",
+  "reach": 6,
+  "does": "in a drought its towers sweat dew, and the fields around them turn green",
+  "summary": "A curved ring of five pale stone spires, each capped with a silver-white bowl, standing on a low rise in the desert; in a drought the bowls gather dew that waters the fields nearby, and villagers carry the water home.",
+  "missing": "a true dew effect that pulls water out of dry air; the water effect stands in for it",
+  "source": "daily",
+  "model": "claude-haiku-5-5",
+  "code": "const spell = {\n  artifacts: [\n    {\n      name: 'dew towers',\n      radius: 8,\n      color: '#e8f4ff',\n      grants: [{ what: 'water' }],\n      effects: [{ when: 'drought', do: 'water', every: 20, radius: 6 }],\n    },\n  ],\n  *cast(w) {\n    w.terraform(w.x, w.y, w.r * 0.5, 1.5);\n    const n = 5;\n    for (let k = 0; k < n; k++) {\n      const a = -0.6 + (k / (n - 1)) * 1.2;\n      const d = w.r * 0.4;\n      const x = Math.round(w.x + Math.cos(a) * d);\n      const y = Math.round(w.y + Math.sin(a) * d);\n      const h = 16 + (k % 2) * 4;\n      w.spire(x, y, { height: h, radius: 2, colors: ['#e9dcc0', '#cdb89a'], kind: 'stone' });\n      w.sphere(x, y, h - 1, 2, ['#e8f4ff', '#b9d7ea'], 0.9, 'stone');\n    }\n    w.artifact(w.x, w.y, 'dew towers');\n  },\n};\n"
+}

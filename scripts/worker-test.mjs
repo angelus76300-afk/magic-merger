@@ -43,6 +43,36 @@ function stubAnswer(n, system, user) {
       spec: "",
     });
   }
+  // 4.4.5 part C: the day's wonder, matching the draw it was asked for.
+  if (system.includes("\nWONDERS\n")) {
+    const rarity = /Rarity: (\w+)/.exec(user)?.[1] ?? "common";
+    const land = /belong to: (\w+)/.exec(user)?.[1] ?? "temperate";
+    const reach = { common: 5, uncommon: 6, rare: 8, legendary: 10 }[rarity];
+    return JSON.stringify({
+      kind: `humming stones ${String.fromCharCode(97 + (n % 26))}${String.fromCharCode(97 + (Math.floor(n / 26) % 26))}`,
+      rarity,
+      lands: [land],
+      spot: "flat",
+      reach,
+      does: "at night its stones hum and heal whoever rests by them",
+      summary: "Three glowing stones that heal at night.",
+      code: "const spell = { artifacts: [{ name: 'Humming Stones', radius: 6, effects: [{ when: 'night', do: 'heal', every: 30 }] }], *cast(w) { w.spire(w.x, w.y, { height: 8, radius: 1.2, kind: 'glow' }); w.artifact(w.x, w.y, 'Humming Stones'); } };",
+      missing: "",
+    });
+  }
+  if (system.startsWith("Magic Merger is a crafting game about magic; players discover"))
+    return JSON.stringify({
+      items: user
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => ({
+          name: line.split(":")[0],
+          sort: /moss/i.test(line) ? "material" : "object",
+          lands: ["swamp"],
+          spot: "low",
+          does: "it glows on the stones by night",
+        })),
+    });
   if (system.startsWith("You write the spells")) {
     const code = system.includes("lib.haven(")
       ? "const spell = { *cast(w) { lib.haven(w, w.x, w.y, w.r); } };"
@@ -107,7 +137,8 @@ function stubBatches(req, res, raw) {
     });
   const lines = batches.get(m[1]).map((r, n) => {
     const system = Array.isArray(r.params.system) ? r.params.system.map((b) => b.text).join("") : String(r.params.system ?? "");
-    const text = stubAnswer(n, system, "");
+    const last = r.params.messages?.at(-1)?.content;
+    const text = stubAnswer(n, system, typeof last === "string" ? last : "");
     return JSON.stringify({
       custom_id: r.custom_id,
       result: {
@@ -244,6 +275,8 @@ const vars = {
   // counts the calls it always counted; section 27 starts the Worker again
   // with a cap.
   AHEAD_DAILY_USD: "0",
+  // 4.4.5 part C: the cron asks for no wonder; section 28 asks through the admin.
+  WONDERS: "0",
 };
 // What the Worker logs, kept for the checks that read it (the cron, 4.1).
 let workerLog = "";
@@ -2558,6 +2591,115 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
   const report = await api("/api/admin/ahead", { admin: true });
   check("ahead: the admin sees the day's writes against the cap", report.status === 200 && report.data.cap === 1.5 && report.data.rows.length > 0);
   await reset();
+}
+
+// 28. A new wonder a day (4.4.5 part C, worker/wonders.ts): players get the
+// live pool (the wonders the owner saw, not the one the test rejected); the
+// day's wonder goes through the Batch API, is billed once as "wonder" with
+// its hold settled, and waits as a trial for the nightly test, which puts it
+// live; the month's wonder cap stops the next one; the owner retires one; a
+// player's artifact that is a material becomes a rare trial wonder with the
+// name of the friend who found it first, and an object does not; none of the
+// admin routes answer a player.
+{
+  await reset();
+  const pool = await api("/api/wonders", { invite: (await invite("Wanda")).secret });
+  const kinds = (pool.data?.wonders ?? []).map((w) => w.kind);
+  check(
+    "wonders: players get the live pool, the seeded wonders but not the rejected one",
+    pool.status === 200 && kinds.includes("aurora ice spires") && kinds.includes("moon mire") && !kinds.includes("dew towers"),
+    JSON.stringify(kinds),
+  );
+  await db.prepare("DELETE FROM wonders WHERE source = 'player' OR id > 3").run();
+  const asked = await api("/api/admin/wonder-daily", { admin: true, body: { force: true } });
+  const row = await lookup("SELECT * FROM wonders WHERE status = 'pending' ORDER BY id DESC");
+  check(
+    "wonders: the day's wonder is asked through the Batch API with its hold",
+    asked.status === 200 && !!asked.data.asked && !!row?.batch && row.reservation > 0,
+    JSON.stringify(asked.data),
+  );
+  const collected = await api("/api/admin/wonder-daily", { admin: true, body: {} });
+  const trial = await lookup("SELECT * FROM wonders WHERE id = ?", row.id);
+  const billed = await lookup("SELECT COUNT(*) AS n, SUM(usd) AS usd FROM spend WHERE call = 'wonder'");
+  const held = await lookup("SELECT settled FROM reservations WHERE id = ?", row.reservation);
+  check(
+    "wonders: collected as a trial, billed once, its hold settled",
+    collected.data.collected === 1 &&
+      trial.status === "trial" &&
+      trial.kind.startsWith("humming stones") &&
+      trial.rarity === row.rarity &&
+      billed.n === 1 &&
+      held.settled === 1,
+    JSON.stringify({ collected: collected.data, status: trial.status, billed }),
+  );
+  await api("/api/admin/wonder-daily", { admin: true, body: {} });
+  check("wonders: a batch read twice is billed once", (await lookup("SELECT COUNT(*) AS n FROM spend WHERE call = 'wonder'")).n === 1);
+  const trials = await api("/api/admin/wonders-trial", { admin: true });
+  const verdict = await api("/api/admin/wonder-check", { admin: true, body: { id: row.id, ok: true, detail: "passed on 3 islands" } });
+  const after = await api("/api/wonders", { invite: (await invite("Wanda2")).secret });
+  check(
+    "wonders: the nightly test gets the trial with its code and puts it live in the pool",
+    trials.data.some((w) => w.id === row.id && w.code.includes("w.artifact")) &&
+      verdict.data.status === "live" &&
+      after.data.wonders.some((w) => w.id === row.id) &&
+      after.data.week.some((w) => w.id === row.id),
+  );
+  const now = Date.now();
+  await db.prepare("INSERT INTO spend (at, call, model, usd, invite) VALUES (?, 'wonder', 'claude-opus-5-5', 1.999, 'admin')").bind(now).run();
+  const capped = await api("/api/admin/wonder-daily", { admin: true, body: { force: true } });
+  check(
+    "wonders: the month's wonder cap stops the next one",
+    capped.status === 200 && !capped.data.asked && /left of \$2/.test(capped.data.skipped ?? ""),
+    JSON.stringify(capped.data),
+  );
+  await db.prepare("DELETE FROM spend WHERE usd = 1.999 AND call = 'wonder'").run();
+  const retired = await api("/api/admin/wonder", { admin: true, body: { id: row.id, status: "retired" } });
+  const gone = await api("/api/wonders", { invite: (await invite("Wanda3")).secret });
+  check("wonders: a retired wonder leaves the pool", retired.data.status === "retired" && !gone.data.wonders.some((w) => w.id === row.id));
+  // A player's discoveries: an artifact that is a material, and one that is an object.
+  const finder = await invite("Mira");
+  for (const [name, tier] of [
+    ["Glimmer Moss", "minor"],
+    ["Rusty Key", "cantrip"],
+  ]) {
+    const key = name.toLowerCase();
+    await db
+      .prepare("INSERT INTO elements (key, name, emoji, kind, depth, tier, description, invite, created_at) VALUES (?, ?, '✨', 'artifact', 2, ?, ?, ?, ?)")
+      .bind(key, name, tier, `${name}, as its name says.`, finder.id, now)
+      .run();
+    const spec = JSON.stringify({ version: 4, summary: name, code: "const spell = { *cast(w) { w.paint(w.x, w.y, 2, 'crystal', 1); } };" });
+    const p = await db
+      .prepare("INSERT INTO programs (key, spec, model, version, origin, status, created_at) VALUES (?, ?, 'claude-haiku-5-5', 4, 'new', 'live', ?)")
+      .bind(key, spec, now)
+      .run();
+    await db
+      .prepare("INSERT INTO spells (key, spec, model, version, created_at, pid) VALUES (?, ?, 'claude-haiku-5-5', 4, ?, ?)")
+      .bind(key, spec, now, Number(p.lastInsertRowid))
+      .run();
+  }
+  const grown = await api("/api/admin/wonder-daily", { admin: true, body: { force: true } });
+  const moss = await lookup("SELECT * FROM wonders WHERE key = 'glimmer moss'");
+  const key = await lookup("SELECT * FROM wonders WHERE key = 'rusty key'");
+  check(
+    "wonders: a player's material becomes a rare trial wonder with its finder's name, an object does not",
+    grown.status === 200 && moss?.status === "trial" && moss.rarity === "rare" && moss.by_name === "Mira" && moss.lands === "swamp" && !key,
+    JSON.stringify({ grown: grown.data, moss }),
+  );
+  const sortedTwice = await api("/api/admin/wonder-daily", { admin: true, body: { force: true } });
+  check(
+    "wonders: an artifact is sorted once",
+    sortedTwice.status === 200 &&
+      !sortedTwice.data.trials.includes("Glimmer Moss") &&
+      (await lookup("SELECT COUNT(*) AS n FROM wonders WHERE key = 'glimmer moss'")).n === 1,
+    JSON.stringify(sortedTwice.data),
+  );
+  await reset();
+  let refused = 0;
+  for (const path of ["/api/admin/wonders", "/api/admin/wonders-trial"]) if ((await api(path, { invite: finder.secret })).status >= 400) refused++;
+  if ((await api("/api/admin/wonder-check", { invite: finder.secret, body: { id: moss.id, ok: true } })).status >= 400) refused++;
+  if ((await api("/api/admin/wonder", { invite: finder.secret, body: { id: 1, status: "retired" } })).status >= 400) refused++;
+  if ((await api("/api/admin/wonder-daily", { invite: finder.secret, body: { force: true } })).status >= 400) refused++;
+  check("wonders: no admin route answers a player", refused === 5);
 }
 
 stop();

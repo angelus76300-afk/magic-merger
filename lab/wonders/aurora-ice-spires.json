@@ -1,0 +1,14 @@
+{
+  "id": 2,
+  "kind": "aurora ice spires",
+  "rarity": "rare",
+  "lands": ["tundra"],
+  "spot": "flat",
+  "reach": 8,
+  "does": "at night its ice spires shine green and violet, healing deer and keeping wolves away",
+  "summary": "A ring of seven tall leaning ice spires around a small frozen tarn of pale ice that glows at night; after dark the spires cast aurora light into the sky, drive off night hunters, heal whatever shelters there and draw deer and rabbits in, and fire or heat melts its ice to water.",
+  "missing": "lures and scares that hold only at night; a sky-wide aurora curtain",
+  "source": "daily",
+  "model": "claude-opus-5-5",
+  "code": "const spell = {\n  materials: [\n    { name: 'aurora ice', layer: 'fluid', colors: ['#bff6f0', '#a6ecff', '#d6c8ff'], flow: 0, glow: true, heat: -6,\n      reacts: { fire: 'water', heat: 'water', lava: 'steam' } },\n  ],\n  artifacts: [{\n    name: 'Aurora Spires', radius: 8, color: '#7dffc8', lures: ['deer', 'rabbit'], scares: ['wolf'],\n    effects: [\n      { when: 'night', every: 15, do: 'light', radius: 8 },\n      { when: 'night', every: 30, do: 'heal', radius: 8 },\n      { when: 'night', every: 6, act(self, w) {\n        const cols = ['#7dffc8', '#b48cff', '#5ad1ff'];\n        for (let k = 0; k < 7; k++) {\n          const a = k * 0.8976, h = 12 + (k % 3) * 4;\n          const x = self.x + Math.cos(a) * 5, y = self.y + Math.sin(a) * 5;\n          w.beam(x, y, h, x + Math.cos(a) * 3 + w.rand(-1, 1), y + Math.sin(a) * 3 + w.rand(-1, 1), h + 30,\n            { color: w.pick(cols), width: 0.6, seconds: 5 });\n        }\n        return true;\n      } },\n    ],\n    grants: [{ what: 'heal' }],\n  }],\n  *cast(w) {\n    const x = w.x, y = w.y;\n    w.terraform(x, y, 4, -1);\n    w.paint(x, y, w.r, 'snow', 0.9);\n    w.disc(x, y, 3.5, (cx, cy) => w.set(cx, cy, 'aurora ice', 1));\n    w.ring(x, y, 4.5, 6.5, (cx, cy) => { if (w.chance(0.3)) w.set(cx, cy, 'crystal'); });\n    const cols = [['#bff6ff', '#8fe3ff', '#e8fdff'], ['#c9b8ff', '#a8e9ff', '#effcff']];\n    for (let k = 0; k < 7; k++) {\n      const a = k * 0.8976, h = 12 + (k % 3) * 4;\n      w.spire(x + Math.cos(a) * 5, y + Math.sin(a) * 5,\n        { height: h, radius: 1.4, colors: cols[k % 2], kind: 'glow', lean: 0.12, angle: a });\n    }\n    w.artifact(x, y, 'Aurora Spires');\n  },\n};\n"
+}

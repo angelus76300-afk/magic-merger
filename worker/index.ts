@@ -77,6 +77,26 @@ import type { LibraryExample, Rewrite } from "./prompts";
 import { joinsBoth } from "./prompts";
 import { readDigest } from "../shared/chronicle";
 import { cronJobs } from "./cron";
+import {
+  WONDER_ESTIMATE,
+  changeWonder,
+  dailyDue,
+  dailyMessage,
+  drawWonder,
+  growDiscoveries,
+  livePool,
+  modelFor,
+  poolOf,
+  settleWonder,
+  takenKinds,
+  trialWonders,
+  unsorted,
+  wonderBudget,
+  wonderList,
+  wonderProblem,
+  wonderSpent,
+  type WonderRow,
+} from "./wonders";
 import { AHEAD_ESTIMATE, activeWrite, aheadCap, aheadReport, claimWrite, finishWrite, getWrite, hasProgram, startWrite, type WriteJob } from "./ahead";
 import {
   ADMIN_PAYER,
@@ -161,6 +181,10 @@ export interface Env {
   // jobs go through, and the dollars a day they may spend together.
   WRITES?: Queue<WriteJob>;
   AHEAD_DAILY_USD?: string;
+  // 4.4.5 part C: dollars a month a new wonder a day may spend ($2), inside
+  // BUDGET_USD; "0" in WONDERS stops the daily call (the admin can still ask).
+  WONDER_BUDGET_USD?: string;
+  WONDERS?: string;
 }
 
 const MAX_NAME_LENGTH = 60;
@@ -270,6 +294,8 @@ export default {
         }
         // 3.7: challenges from nothing. Free: merges go through /api/merge.
         if (request.method === "GET" && url.pathname === "/api/challenges") return json(await listChallenges(env.DB, payer));
+        // 4.4.5 part C: the pool of wonders new islands draw from, and what came this week.
+        if (request.method === "GET" && url.pathname === "/api/wonders") return json(await livePool(env.DB));
         if (request.method === "POST" && url.pathname === "/api/challenge/win") {
           return json(await recordWin(env.DB, payer, await readBody<{ id?: unknown; merges?: unknown; spell?: unknown }>(request)));
         }
@@ -360,6 +386,7 @@ export default {
         "feedback sync": () => syncFeedback(env),
         evolve: env.EVOLVE === "0" ? null : () => evolve(env, false),
         "intents backfill": () => backfillIntents(env),
+        wonders: () => wonderDaily(env, env.WONDERS !== "0" ? "due" : "collect"),
       }),
     );
   },
@@ -2026,7 +2053,179 @@ async function handleAdmin(request: Request, url: URL, env: Env, oracle: Oracle,
     return json(rows.results);
   }
   if (post && path === "extension") return json(await changeExtension(await readBody<{ id?: unknown; status?: unknown; issue?: unknown }>(request), env));
+  // 4.4.5 part C: wonders written as programs.
+  if (!post && path === "wonders") return json(await wonderList(env.DB));
+  if (!post && path === "wonders-trial") return json((await trialWonders(env.DB)).map((r) => ({ ...poolOf(r), status: r.status })));
+  if (!post && path === "wonders-unjudged") {
+    const rows = await env.DB.prepare("SELECT * FROM wonders WHERE status = 'live' AND judged IS NULL ORDER BY id LIMIT 10").all<WonderRow>();
+    return json(rows.results.map(poolOf));
+  }
+  if (post && path === "wonder-check") {
+    const body = await readBody<{ id?: unknown; ok?: unknown; detail?: unknown; problem?: unknown }>(request);
+    return json({
+      status: await settleWonder(env.DB, Number(body.id), body.ok === true, String(body.detail ?? ""), typeof body.problem === "string" ? body.problem : null),
+    });
+  }
+  if (post && path === "wonder") {
+    const body = await readBody<{ id?: unknown; status?: unknown }>(request);
+    try {
+      return json({ status: await changeWonder(env.DB, Number(body.id), String(body.status)) });
+    } catch (err) {
+      throw new HttpError(400, err instanceof Error ? err.message : String(err));
+    }
+  }
+  if (post && path === "wonder-judge") return json(await judgeWonder(await readBody<JudgeBody>(request, MAX_ADMIN_BODY), env, oracle));
+  if (post && path === "wonder-daily") {
+    const body = await readBody<{ force?: unknown }>(request);
+    return json(await wonderDaily(env, body.force === true ? "force" : "due"));
+  }
   return null;
+}
+
+// --- 4.4.5 part C: a new wonder a day ------------------------------------
+
+// Collects the day's wonder when its batch has ended; when one is due (or
+// forced by the admin) and the month's wonder budget has room, asks for the
+// next one; and sorts the day's new artifacts for players' discoveries.
+async function wonderDaily(env: Env, mode: "collect" | "due" | "force") {
+  const db = env.DB;
+  const now = Date.now();
+  const out: { collected: number; failed: string[]; asked: string | null; sorted: number; trials: string[]; skipped: string | null } = {
+    collected: 0,
+    failed: [],
+    asked: null,
+    sorted: 0,
+    trials: [],
+    skipped: null,
+  };
+  // The admin pays; the day's batch hold outlives this run (taken out of the
+  // ledger, settled when the batch is collected), the sort's is settled at once.
+  const ledger = new Ledger(ADMIN_PAYER);
+  ledger.burstFree = true;
+  const oracle = oracleFor(env, {}, ledger);
+  // 1. What a batch wrote.
+  const pending = await db.prepare("SELECT * FROM wonders WHERE status = 'pending' AND batch IS NOT NULL").all<WonderRow>();
+  for (const batch of new Set(pending.results.map((r) => r.batch!))) {
+    const outcomes = await oracle.wonderResults(batch);
+    if (!outcomes) continue;
+    for (const row of pending.results.filter((r) => r.batch === batch)) {
+      const o = outcomes.find((x) => x.id === `wd${row.id}`);
+      const draw = { rarity: row.rarity, land: row.lands, change: row.change ?? "" };
+      const problem = o?.answer ? wonderProblem(o.answer, draw, await takenKinds(db)) : (o?.error ?? "the batch lost it");
+      const a = o?.answer;
+      const ok = !problem && a;
+      const update = ok
+        ? db
+            .prepare(
+              "UPDATE wonders SET status = 'trial', kind = ?, lands = ?, spot = ?, reach = ?, does = ?, summary = ?, code = ?, missing = ?, model = ?, usd = ? WHERE id = ? AND status = 'pending'",
+            )
+            .bind(
+              a.kind.trim().toLowerCase(),
+              a.lands.join(","),
+              a.spot,
+              a.reach,
+              a.does.trim(),
+              a.summary.trim(),
+              a.code,
+              a.missing.trim(),
+              o!.model,
+              o!.usd,
+              row.id,
+            )
+        : db
+            .prepare("UPDATE wonders SET status = 'failed', checked = ?, usd = ? WHERE id = ? AND status = 'pending'")
+            .bind(JSON.stringify({ ok: false, problem: "answer", detail: problem, at: now }), o?.usd ?? 0, row.id);
+      // Billed once, with the hold settled, only while the row is still pending.
+      const results = await db.batch([
+        db
+          .prepare(
+            `INSERT INTO spend (at, call, model, usd, invite)
+             SELECT ?, 'wonder', ?, ?, 'admin' WHERE ? > 0 AND EXISTS (SELECT 1 FROM wonders WHERE id = ? AND status = 'pending')`,
+          )
+          .bind(now, o?.model || row.model, o?.usd ?? 0, o?.usd ?? 0, row.id),
+        db.prepare("UPDATE reservations SET settled = 1 WHERE id = ?").bind(row.reservation ?? 0),
+        update,
+      ]);
+      if (results[2].meta.changes === 0) continue;
+      if (ok) out.collected++;
+      else out.failed.push(`#${row.id}: ${problem}`);
+    }
+  }
+  if (mode === "collect") return out;
+  if (mode === "due" && !(await dailyDue(db, now))) return out;
+  // 2. Today's wonder, within its cap.
+  const cap = wonderBudget(env.WONDER_BUDGET_USD);
+  const draw = await drawWonder(db);
+  const rarity = draw.rarity as WonderRow["rarity"];
+  const model = modelFor(rarity, { big: env.SPELL_MODEL, small: smallModel(env) });
+  const estimate = model === smallModel(env) ? WONDER_ESTIMATE.small : WONDER_ESTIMATE.big;
+  const spent = await wonderSpent(db, monthStart(now));
+  if (!oracle.mock && spent + estimate > cap) {
+    out.skipped = `the month's wonders have $${(cap - spent).toFixed(3)} left of $${cap}, and one costs up to $${estimate}`;
+  } else {
+    let reservation: number | null = null;
+    if (!oracle.mock) {
+      reservation = await hold(db, ledger, "wonder", estimate, budget(env));
+      ledger.held.splice(ledger.held.indexOf(reservation), 1);
+    }
+    const ins = await db
+      .prepare(
+        "INSERT INTO wonders (source, kind, rarity, lands, change, status, model, reservation, estimate, created_at) VALUES ('daily', '', ?, ?, ?, 'pending', ?, ?, ?, ?)",
+      )
+      .bind(draw.rarity, draw.land, draw.change, model, reservation, estimate, now)
+      .run();
+    const id = Number(ins.meta.last_row_id);
+    try {
+      const batch = await oracle.submitWonders([{ id: `wd${id}`, model, user: await dailyMessage(db, draw) }]);
+      await db.prepare("UPDATE wonders SET batch = ? WHERE id = ?").bind(batch, id).run();
+      out.asked = `${draw.rarity} ${draw.land} ${draw.change} (${model})`;
+    } catch (err) {
+      await db.batch([
+        db.prepare("UPDATE wonders SET status = 'failed', estimate = 0 WHERE id = ?").bind(id),
+        db.prepare("UPDATE reservations SET settled = 1 WHERE id = ?").bind(reservation ?? 0),
+      ]);
+      throw err;
+    }
+  }
+  // 3. Players' discoveries: a day's new artifacts sorted in one small call.
+  const list = await unsorted(db);
+  if (list.length) {
+    const room = cap - (await wonderSpent(db, monthStart(now)));
+    if (oracle.mock || room >= WONDER_ESTIMATE.sort) {
+      if (!oracle.mock) await hold(db, ledger, "wonder-sort", WONDER_ESTIMATE.sort, budget(env));
+      try {
+        const grown = await growDiscoveries(db, oracle, list, now);
+        out.sorted = grown.sorted;
+        out.trials = grown.trials;
+      } finally {
+        await closeLedger(db, oracle);
+      }
+    }
+  }
+  return out;
+}
+
+// The judge looks at a live wonder's frames, for advice only (4.4.5 part C).
+async function judgeWonder(body: JudgeBody, env: Env, oracle: Oracle) {
+  const frames = Array.isArray(body.frames) ? body.frames.filter((f) => typeof f === "string" && f.length < 2_000_000).slice(0, 3) : [];
+  if (frames.length < 1) throw new HttpError(400, "The judge needs frames");
+  const row = await env.DB.prepare("SELECT * FROM wonders WHERE id = ?").bind(Number(body.id)).first<WonderRow>();
+  if (!row) throw new HttpError(404, "There is no such wonder");
+  await ensureBudget(env, oracle, "judge", ESTIMATE.judge);
+  const shots = Array.isArray(body.shots) ? body.shots.map(Number).slice(0, 3) : [1, 3, 6];
+  const answer = await oracle.judge({
+    name: row.kind,
+    kind: "artifact",
+    tier: row.rarity === "legendary" ? "legendary" : "grand",
+    description: `A wonder of nature (${row.rarity}) on new islands: ${row.does}. ${row.summary}`,
+    facts: String(body.facts ?? "not measured").slice(0, 600),
+    frames,
+    shots,
+    notes: [],
+  });
+  const judged = { ...answer, model: env.JUDGE_MODEL || "claude-haiku-5-5", at: Date.now() };
+  if (!oracle.mock) await env.DB.prepare("UPDATE wonders SET judged = ? WHERE id = ?").bind(JSON.stringify(judged), row.id).run();
+  return judged;
 }
 
 interface InviteChange {

@@ -337,10 +337,24 @@ export class Terrain {
     const foam = FOAMS;
     const wave = WAVES;
     const alphas = ALPHAS;
+    const colors = COLORS;
     for (let k = 0; k < 4; k++) {
       const [cx, cy] = CORNER_CELLS[k];
       let shore = 0;
       let calm = 1;
+      // 4.4.5 part C (the owner: "the sea looks weird"): each corner takes the
+      // mean color and clearness of the water cells round it, the same for
+      // every top that shares it, so depth shades smoothly and not in tiles.
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let a = 0;
+      let wetCells = 0;
+      // 4.4.5 part C: judged from the four cells round the corner only, never
+      // against this top's own level: on a river sloping 0.03 a cell, two tops
+      // sharing a corner disagreed and opened a hairline gap.
+      let lo = Infinity;
+      let hi = -Infinity;
       for (const [dx, dy] of CORNER_AROUND[k]) {
         const nx = x + cx + dx;
         const ny = y + cy + dy;
@@ -355,14 +369,25 @@ export class Terrain {
           calm = 0;
           continue;
         }
-        if (Math.abs(surfaceY(world, j) - top) > 0.02) calm = 0;
-        else calm = Math.min(calm, Math.min(1, Math.max(0, (world.depth[j] - 0.3) / 1.2)));
+        const s = surfaceY(world, j);
+        lo = Math.min(lo, s);
+        hi = Math.max(hi, s);
+        const fc = j === y * world.w + x ? { color, alpha } : this.fluidColor(j);
+        r += (fc.color >> 16) & 255;
+        g += (fc.color >> 8) & 255;
+        b += fc.color & 255;
+        a += fc.alpha;
+        wetCells++;
+        calm = Math.min(calm, Math.min(1, Math.max(0, (world.depth[j] - 0.3) / 1.2)));
       }
+      if (hi - lo > 0.02) calm = 0;
       foam[k] = shore;
       wave[k] = calm;
-      alphas[k] = shore ? Math.min(0.95, alpha + 0.2) : alpha;
+      const mean = wetCells ? a / wetCells : alpha;
+      colors[k] = wetCells ? (Math.round(r / wetCells) << 16) | (Math.round(g / wetCells) << 8) | Math.round(b / wetCells) : color;
+      alphas[k] = shore ? Math.min(0.95, mean + 0.2) : mean;
     }
-    out.topFoam(X, Z, top, color, foam, alphas, wave);
+    out.topFoam(X, Z, top, colors, foam, alphas, wave);
   }
 
   private topColor(i: number): number {
@@ -423,9 +448,11 @@ export class Terrain {
     if (f === F.WATER) {
       if (GRAPHICS.water) {
         // Clear and light in the shallows, darker quickly with depth (4.4).
+        // 4.4.5 part C: nearly opaque past four voxels, so the seabed's steps
+        // no longer show through the open sea as a grid.
         const k = Math.sqrt(Math.min(1, d / 6));
         const water = this.waterAt(i);
-        return { color: mixColor(water[0], water[1], k), alpha: 0.6 + k * 0.32 };
+        return { color: mixColor(water[0], water[1], k), alpha: Math.min(0.97, 0.58 + Math.sqrt(Math.min(1, d / 4)) * 0.4) };
       }
       const k = Math.min(1, d / 5);
       return { color: mixColor(0x5cc0f0, 0x1d5d9e, k), alpha: 0.72 + k * 0.2 };
@@ -463,6 +490,7 @@ const ONES = [1, 1, 1, 1];
 const FOAMS = [0, 0, 0, 0];
 const WAVES = [0, 0, 0, 0];
 const ALPHAS = [1, 1, 1, 1];
+const COLORS = [0, 0, 0, 0];
 
 // Face directions: the four walls, then the top.
 const EAST = 0;
@@ -597,12 +625,12 @@ class Writer {
   }
 
   // A water top: its color mixed toward foam at shore corners.
-  topFoam(X: number, Z: number, y: number, color: number, foam: number[], alpha: number[], wave: number[]): void {
+  topFoam(X: number, Z: number, y: number, colors: number[], foam: number[], alpha: number[], wave: number[]): void {
     if ((this.n + 6) * 4 > this.col.length) this.grow();
     const px = [X, X, X + 1, X + 1];
     const pz = [Z, Z + 1, Z + 1, Z];
     const v = (k: number) => {
-      const c = foam[k] ? mixColor(color, FOAM, 0.55) : color;
+      const c = foam[k] ? mixColor(colors[k], FOAM, 0.55) : colors[k];
       this.vertex(px[k], y, pz[k], ((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255, alpha[k], 1, wave[k]);
     };
     for (const k of SQUARE) v(k);

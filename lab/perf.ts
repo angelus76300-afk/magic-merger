@@ -10,6 +10,7 @@ import { WORLD_SIZES } from "../src/sim/sizes";
 import { GRAPHICS, type GraphicsFlag } from "../src/sim/voxel/graphics";
 import { LAB_WEATHER } from "../src/sim/voxel/sky";
 import { firstLook } from "../src/sim/firstlook";
+import { readDef, type WonderDef } from "../src/sim/wonders";
 
 const q = new URLSearchParams(location.search);
 const canvas = document.getElementById("world") as HTMLCanvasElement;
@@ -30,7 +31,17 @@ const land =
     : q.has("mixed")
       ? resolveLand(readChoice({ warmth: num("warmth"), water: num("water"), relief: num("relief"), forest: num("forest") }), seed, WORLD_SIZES[size])
       : readLand({ biome: q.get("biome"), shape: q.get("shape") });
-const engine = Engine.create(canvas, overlay, size, { onError: () => {}, onTap: () => {} }, seed, {}, land);
+// 4.4.5 part C: "pool=1" hands new islands the live wonders of lab/wonders
+// (those the nightly test passed), as the World tab does with the server's pool.
+const LIVE = ["aurora-ice-spires", "moon-mire"];
+const files = import.meta.glob("./wonders/*.json", { eager: true, import: "default" }) as Record<string, unknown>;
+const pool = q.has("pool")
+  ? Object.entries(files)
+      .filter(([path]) => LIVE.some((n) => path.endsWith(`/${n}.json`)))
+      .map(([, v]) => readDef(v))
+      .filter((d): d is WonderDef => d !== null)
+  : [];
+const engine = Engine.create(canvas, overlay, size, { onError: () => {}, onTap: () => {} }, seed, {}, land, [], pool);
 if (q.has("time")) engine.world.time = Number(q.get("time"));
 engine.view.orbit.dist = Math.max(engine.world.w, engine.world.h) * Number(q.get("dist") ?? 0.42);
 if (q.has("phi")) engine.view.orbit.phi = Number(q.get("phi"));

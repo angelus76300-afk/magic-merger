@@ -53,6 +53,9 @@
     // everyone together (worker/ahead.ts); past it, items are written on
     // first use, as before. "0" writes nothing ahead.
     "AHEAD_DAILY_USD": "1.5",
+    // 4.4.5 part C. Dollars a month the new wonder a day may spend (held
+    // before each call, inside BUDGET_USD); "0" in WONDERS stops the daily call.
+    "WONDER_BUDGET_USD": "2",
   },
   // 4.2: the programs of new items, written at the merge by a background job
   // that outlives the response (a big model's program can take a minute).

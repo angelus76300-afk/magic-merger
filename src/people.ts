@@ -32,6 +32,7 @@ function ensureDialog(): HTMLDialogElement {
     <p class="people-others"></p>
     <div class="people-reports"></div>
     <div class="people-trims"></div>
+    <div class="people-wonders"></div>
     <p class="people-calls"></p>
   `;
   dialog.querySelector(".card-close")!.addEventListener("click", () => dialog!.close());
@@ -84,6 +85,47 @@ async function refresh(): Promise<void> {
   if (!data || !dialog) return;
   render(data);
   renderTrim(await api.trims());
+  renderWonders(await api.wonderAdmin());
+}
+
+// 4.4.5 part C: wonders written as programs, newest first: what each does,
+// where it came from, what the nightly test and the judge said, and the
+// owner's say. Retired: on no new island (those that have it keep it).
+function renderWonders(rows: api.WonderAdminRow[] | null): void {
+  const box = dialog!.querySelector<HTMLElement>(".people-wonders")!;
+  box.textContent = "";
+  if (!rows?.length) return;
+  const title = document.createElement("h3");
+  const live = rows.filter((r) => r.status === "live").length;
+  title.textContent = `Wonders (${live} live on new islands)`;
+  box.append(title);
+  for (const r of rows.slice(0, 30)) {
+    const line = document.createElement("p");
+    let test = "";
+    let judge = "";
+    try {
+      const c = r.checked ? (JSON.parse(r.checked) as { detail?: string }) : null;
+      test = c?.detail ? ` Test: ${c.detail}` : "";
+      const j = r.judged ? (JSON.parse(r.judged) as { score?: number; note?: string }) : null;
+      judge = j?.score ? ` Judge: ${j.score}/5, ${j.note ?? ""}` : "";
+    } catch {
+      // An unreadable note is left out.
+    }
+    const from = r.source === "player" ? `found by ${r.by_name ?? "the owner"}` : `${r.model || "?"}, $${r.usd.toFixed(3)}`;
+    line.textContent = `${r.kind || "(being written)"}, ${r.rarity}, ${r.lands || "?"}: ${r.status}. ${r.does} (${from}).${test}${judge}`;
+    if (r.status === "live" || r.status === "retired" || r.status === "rejected") {
+      const b = document.createElement("button");
+      const to = r.status === "live" ? "retired" : "live";
+      b.textContent = to === "retired" ? "Retire" : "Put live";
+      b.onclick = () =>
+        void api.changeWonder(r.id, to).then(
+          async () => renderWonders(await api.wonderAdmin()),
+          (err: unknown) => toast(err instanceof Error ? err.message : "Could not change it", "error"),
+        );
+      line.append(" ", b);
+    }
+    box.append(line);
+  }
 }
 
 // The trim of the library (3.7): near duplicates and senseless merges, one

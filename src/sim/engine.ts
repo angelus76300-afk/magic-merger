@@ -8,6 +8,8 @@ import { stepWorld } from "./tick";
 import { VoxelView } from "./voxel/view";
 import { TICK, generateWorld, type World } from "./world";
 import { DEFAULT_LAND, type LandOptions } from "./land";
+import { readWonder, type Wonder, type WonderDef } from "./wonders";
+import { ownCreatures, raiseWonders, reloadWonders } from "./wonderbuild";
 
 import { WORLD_SIZES, type WorldSize } from "./sizes";
 
@@ -67,11 +69,15 @@ export class Engine {
     land?: LandOptions,
     // The wonder sets of the player's last islands, not made again (4.4.5 part B).
     recent: readonly string[] = [],
+    // The pool of wonders written as programs (4.4.5 part C).
+    defs: readonly WonderDef[] = [],
   ): Engine {
     const n = WORLD_SIZES[size] ?? WORLD_SIZES.medium;
-    const world = generateWorld(n, n, seed, land, recent);
+    const world = generateWorld(n, n, seed, land, recent, defs);
     populate(world);
-    const engine = new Engine(canvas, overlay, world, hooks, undefined, options);
+    const runtime = new Runtime(world, hooks.onError);
+    raiseWonders(world, runtime);
+    const engine = new Engine(canvas, overlay, world, hooks, runtime, options);
     // Open on a village, a little zoomed in: the people make the world feel alive.
     const home = world.creatures.find((c) => c.kind === "villager");
     if (home) {
@@ -89,8 +95,14 @@ export class Engine {
     const world = loadWorld(data, (w) => {
       runtime = new Runtime(w, hooks.onError);
       rules(runtime);
+      // 4.4.5 part C: the island's program wonders carry their code.
+      reloadWonders(
+        (Array.isArray(data.wonders) ? data.wonders : []).map(readWonder).filter((x): x is Wonder => x !== null),
+        runtime,
+      );
     });
     if (!world || !runtime) return null;
+    ownCreatures(world, runtime);
     // An island saved before 4.4 is a temperate island with the old climate:
     // it gets the sky and weather of one, nothing else changes.
     world.land ??= { ...DEFAULT_LAND };

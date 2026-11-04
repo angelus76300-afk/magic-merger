@@ -1,5 +1,5 @@
 import { TIERS, type Tier } from "../../shared/tiers";
-import { daylight } from "./daylight";
+import { daylight, fullMoon } from "./daylight";
 import { C, F, G } from "./materials";
 import { names, type Landmark } from "./social";
 import { packLook, unpackLook } from "./villagers";
@@ -45,7 +45,8 @@ export const ART_EFFECTS = [
   "cast",
 ] as const;
 export type ArtEffectName = (typeof ART_EFFECTS)[number] | "code";
-export const ART_WHENS = ["dawn", "dusk", "night", "day", "every", "drought", "fire", "enemy", "death", "hurt"] as const;
+// "full moon" (4.4.5 part C): the night of a full moon, one in four (daylight.ts).
+export const ART_WHENS = ["dawn", "dusk", "night", "day", "every", "drought", "fire", "enemy", "death", "hurt", "full moon"] as const;
 export type ArtWhen = (typeof ART_WHENS)[number];
 export const ART_GRANTS = ["water", "arms", "prayer", "food", "heal", "gold"] as const;
 export type ArtGrantName = (typeof ART_GRANTS)[number];
@@ -476,6 +477,9 @@ export function stepArtifacts(world: World): void {
         case "hurt":
           fire = world.time - s.hurtAt < 1.5;
           break;
+        case "full moon":
+          fire = fullMoon(world.time);
+          break;
       }
       if (!fire || !canPay(l, e.cost)) continue;
       const done = doEffect(world, l, e.do, e.arg, e.radius, target);
@@ -732,6 +736,8 @@ const WHEN_WORDS: Record<string, ArtWhen> = {
   often: "every",
   always: "every",
   dry: "drought",
+  moon: "full moon",
+  "full moon night": "full moon",
   "enemy near": "enemy",
   enemies: "enemy",
   attacked: "hurt",
@@ -807,10 +813,12 @@ export function artifactState(o: Record<string, unknown>, key: string, tier: Tie
       .trim()
       .toLowerCase();
     const when = (ART_WHENS as readonly string[]).includes(w) ? (w as ArtWhen) : (WHEN_WORDS[w] ?? "every");
-    const minEvery = what.do === "cast" ? 30 : when === "dawn" || when === "dusk" ? 60 : 3;
+    // Dawn, dusk and a full moon come once a night or a day: a long wait by default.
+    const once = when === "dawn" || when === "dusk" || when === "full moon";
+    const minEvery = what.do === "cast" ? 30 : once ? 60 : 3;
     effects.push({
       when,
-      every: num(r.every, minEvery, 600, when === "dawn" || when === "dusk" ? 120 : 20),
+      every: num(r.every, minEvery, 600, once ? 120 : 20),
       do: what.do,
       arg: what.arg,
       radius: num(r.radius, 1, 30, Math.max(4, radius)),

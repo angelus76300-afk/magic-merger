@@ -145,6 +145,8 @@ Set in `wrangler.jsonc`:
 | `BIG_SPELLS_BATCH`   | `1`                            | legendary and cosmic spells drafted by Haiku at once, written by Opus through the Batch API at half price; `0` for 3.2  |
 | `AHEAD_DAILY_USD`    | `1.5`                          | 4.2: dollars a day that writing every new item at the merge may spend, everyone together; `0` turns it off (DESIGN.md)  |
 | `REFRESH_BUDGET_USD` | `8`                            | dollars a month the refresh of the legacy library may spend (3.7 part E), held before each batch is sent                |
+| `WONDER_BUDGET_USD`  | `2`                            | 4.4.5 part C: dollars a month a new wonder a day may spend (held before each call), inside `BUDGET_USD`                 |
+| `WONDERS`            | unset                          | `0` stops the daily wonder; the admin can still ask with `POST /api/admin/wonder-daily`                                 |
 | `DESIGN_MODEL`       | `SPELL_MODEL`                  | who designs how the World API grows from what spells lacked (3.4.2), one call a day at most                             |
 | `EVOLVE`             | unset                          | `0` stops the API from growing on its own; the admin can still ask with `POST /api/admin/evolve`                        |
 | `ANTHROPIC_BASE_URL` | unset                          | routes Claude calls through a gateway, or the stub in `npm run test:worker`; `GITHUB_API_URL` does the same for GitHub  |

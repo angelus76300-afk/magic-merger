@@ -1,0 +1,14 @@
+{
+  "id": 900,
+  "kind": "rain spires",
+  "rarity": "uncommon",
+  "lands": ["desert"],
+  "spot": "flat",
+  "reach": 6,
+  "does": "in a drought the spires pull rain from bare sky, and the land below greens",
+  "summary": "Three pale stone spires with glowing dew-caps stand on the open sand; in a drought they draw rain from the bare sky, and at dawn they water the dry fields and crops around them.",
+  "missing": "",
+  "source": "daily",
+  "model": "claude-haiku-5-5",
+  "code": "const spell = {\n  artifacts: [\n    {\n      name: 'rain spires', radius: 4, color: '#e8dcc4', lures: ['villager', 'beast'],\n      charges: 3, recharge: 90,\n      effects: [\n        { when: 'dawn', do: 'water', radius: 3, every: 240 },\n        { when: 'drought', do: 'rain', radius: 4, every: 60, cost: 1 },\n      ],\n      grants: [{ what: 'water', cost: 1 }],\n    },\n  ],\n  *cast(w) {\n    const d = w.r * 0.6;\n    for (let k = 0; k < 3; k++) {\n      const a = k * 2.094 + 0.5;\n      const x = w.x + Math.cos(a) * d, y = w.y + Math.sin(a) * d;\n      const h = 14 + k * 2;\n      w.spire(x, y, { height: h, radius: 2, colors: ['#e8dcc4', '#d9c9a6'], kind: 'stone' });\n      w.sphere(x, y, h - 1, 1.4, ['#9fe3ff', '#d8f6ff'], 0.9, 'glow');\n    }\n  },\n};"
+}

@@ -43,6 +43,8 @@ export interface CastRequest {
   intents?: string[];
   // An artifact faces the five minute test in its test run (3.7).
   kind?: "spell" | "artifact";
+  // A wonder written as a program (4.4.5 part C) works within its own reach, whatever the island's size.
+  reach?: number;
 }
 
 interface SpellObject {
@@ -549,6 +551,12 @@ export class Runtime {
 
   busy(): boolean {
     return this.casts.some((c) => !c.done);
+  }
+
+  // A cast still running or voxels still to place (4.4.5 part C: a wonder
+  // is built whole before anyone sees the island).
+  pending(): boolean {
+    return this.busy() || this.jobs.length > 0;
   }
 
   private stepBodies(dt: number): void {
@@ -1150,7 +1158,7 @@ export class SpellApi {
     this.tier = req.tier;
     this.width = rt.world.w;
     this.height = rt.world.h;
-    this.r = Math.max(2, Math.round(TIER_REACH[req.tier] * Math.min(rt.world.w, rt.world.h)));
+    this.r = req.reach ?? Math.max(2, Math.round(TIER_REACH[req.tier] * Math.min(rt.world.w, rt.world.h)));
   }
 
   get time() {
