@@ -277,26 +277,7 @@ The ledger holds $6.64 (plus about $3.32 before it existed): about $10 of the fi
 
 Sizes are per Claude Code session: S a few hours, M a full session, L two or more. The roadmap page has a ready prompt per version.
 
-**Numbered in the order to run them.** Renumbered on 3 November so the numbers are the order; `docs/REVIEW-4.0.md` and older pull requests use the old numbers (the review's findings were 4.0.2, faster creation 4.0.1, worlds 4.1, sound 4.2, strangers 4.5). Done since: 4.1, 4.2, 4.3, 4.4, 4.4.1 and 4.4.5 part A, summed up above; their plans are in the git history of this file. Left: 4.4.5 parts B and C, 4.4.2 (accounts, found on 4 November, right after the part B session open now), 4.5, 4.6, then 4.7, the daily updates that keep going after the plan. 4.4.5 and 4.5 could swap; nothing public before 4.6.
-
-### 4.4.2 Accounts you can trust: the owner's progress, signing in and out
-
-Found by the owner on 4 November: playing as the admin on a computer and a phone, progress is not kept. Read in the code (not yet reproduced in a test):
-
-- **The admin is not an account.** `authenticate` in `worker/index.ts` returns at once when the admin token matches (`{ admin: true, payer: ADMIN_PAYER }`), with no session and no invite, so `/api/health` has no `account`, `Sync.start` never runs and nothing goes to the server: the admin's discoveries, board and island live in each browser apart. A session held next to the token is ignored, since the token wins. The token is also typed again on every device (five taps on the title).
-- **Signing out keeps everything on the device.** "Sign out here" (`src/account.ts`) drops the session and reloads, but the local save stays; whoever signs in next on that device starts from it, and since discoveries merge as a union on sign in (`Sync.start`, then the upload), **a second account signing in on the same device would receive the first one's discoveries for good**.
-- **Signing in is hard to find** once a device has a link or a save: the passkey sign in shows on the gate only when the device has nothing.
-- With an account, the island does sync (last saved wins, `docs/DESIGN.md`, "Accounts"); the owner never saw it only because the admin has no account.
-
-The plan, in order:
-
-1. **Reproduce first**, as tests in `scripts/worker-test.mjs` and `scripts/account-verify.mjs` (phone sized, virtual authenticator): the admin's progress on two devices, and account B signing in on a device that held account A's progress.
-2. **The owner is an account, and admin is a role of it**: the owner signs in with a passkey like everyone, and an `admin` flag on that account gives the admin powers on every device where it is signed in, with no token to type. Existing rows written by the admin (`elements.invite`, ideas, wins, the payer `admin`) are kept by giving the owner's account the id they already use, the same trick as 4.0 (nothing moves). No personal cap for the owner, as today. The admin token stays for scripts and the nightly Action (`MM_TOKEN`), and a token next to a session no longer hides the session.
-3. **Progress belongs to one account**: the device's save is tagged with the account it belongs to. Signing out asks "keep a copy on this device" or "remove it from this device" (the default, since the account holds it); signing in with another account sets the other account's local save aside, never merges it, and never uploads it. Only a save made before any account (a link not yet claimed) is offered for upload, once, as in 4.0.
-4. **Connect and disconnect anywhere**: "Sign in" always in the ? menu and on the gate, even on a device with a link or a save; "Sign out", "Switch account" (sign out, then sign in, in one step) and "Signed in as <name>" in the menu; the account page lists devices with their last sync and signs any of them out, as today.
-5. **Sync you can see**: "Saved to your account 2 minutes ago", or "Not saved: offline" or "Not signed in", in the menu; "Sync now"; when another device saved a newer island, the warning says which device and when (as today) and offers both.
-6. **What syncs, written down**: discoveries, board, island, challenge wins (already on the server), the recipe book and the favorite spell (once the Community tab exists); settings stay per device (sound, HUD, graphics switches), on purpose.
-7. **Checked**: the tests of item 1 pass; the owner on two devices sees the same discoveries and island within a minute; sign out and sign in with another account leaves no trace of the first; the admin powers work with a passkey and with the token; the attacks of `docs/REVIEW-4.0.md` section 10 still pass. Shown to the owner on the live site before merging, on a phone and a computer.
+**Numbered in the order to run them.** Renumbered on 3 November so the numbers are the order; `docs/REVIEW-4.0.md` and older pull requests use the old numbers (the review's findings were 4.0.2, faster creation 4.0.1, worlds 4.1, sound 4.2, strangers 4.5). Done since: 4.1, 4.2, 4.3, 4.4, 4.4.1 and 4.4.5 part A, summed up above; their plans are in the git history of this file. Left: 4.4.5 parts B and C, 4.4.6 (accounts, found on 4 November), 4.5, 4.6, then 4.7, the daily updates that keep going after the plan. 4.4.5 and 4.5 could swap; nothing public before 4.6.
 
 ### 4.4.5 Every island a surprise (part A done, see above)
 
@@ -333,6 +314,25 @@ Goal: be amazed at every new island, never feel the same one twice, and have it 
 16. **Checked**: a thirty minute scene per biome and on a mixed large island in `npm test`, every native and regional species within a band of its target 80% of the time; a wipe (every animal killed, half the plants burnt) recovered to half the targets within ten simulated minutes; wolves still catch deer; every challenge passes on its seeds.
 
 **Measured** in each part like 4.4: the HUD numbers on medium and large islands stay within 4.4's (voxel and instance counts, simulation and frame p95), frames of the same three seeds before and after, and the variety itself: ten islands from ten seeds side by side, which no two should look alike.
+
+### 4.4.6 Accounts you can trust: the owner's progress, signing in and out
+
+Runs after every part of 4.4.5 (renumbered on the owner's ask, so it never interrupts 4.4.5). Found by the owner on 4 November: playing as the admin on a computer and a phone, progress is not kept. Read in the code (not yet reproduced in a test):
+
+- **The admin is not an account.** `authenticate` in `worker/index.ts` returns at once when the admin token matches (`{ admin: true, payer: ADMIN_PAYER }`), with no session and no invite, so `/api/health` has no `account`, `Sync.start` never runs and nothing goes to the server: the admin's discoveries, board and island live in each browser apart. A session held next to the token is ignored, since the token wins. The token is also typed again on every device (five taps on the title).
+- **Signing out keeps everything on the device.** "Sign out here" (`src/account.ts`) drops the session and reloads, but the local save stays; whoever signs in next on that device starts from it, and since discoveries merge as a union on sign in (`Sync.start`, then the upload), **a second account signing in on the same device would receive the first one's discoveries for good**.
+- **Signing in is hard to find** once a device has a link or a save: the passkey sign in shows on the gate only when the device has nothing.
+- With an account, the island does sync (last saved wins, `docs/DESIGN.md`, "Accounts"); the owner never saw it only because the admin has no account.
+
+The plan, in order:
+
+1. **Reproduce first**, as tests in `scripts/worker-test.mjs` and `scripts/account-verify.mjs` (phone sized, virtual authenticator): the admin's progress on two devices, and account B signing in on a device that held account A's progress.
+2. **The owner is an account, and admin is a role of it**: the owner signs in with a passkey like everyone, and an `admin` flag on that account gives the admin powers on every device where it is signed in, with no token to type. Existing rows written by the admin (`elements.invite`, ideas, wins, the payer `admin`) are kept by giving the owner's account the id they already use, the same trick as 4.0 (nothing moves). No personal cap for the owner, as today. The admin token stays for scripts and the nightly Action (`MM_TOKEN`), and a token next to a session no longer hides the session.
+3. **Progress belongs to one account**: the device's save is tagged with the account it belongs to. Signing out asks "keep a copy on this device" or "remove it from this device" (the default, since the account holds it); signing in with another account sets the other account's local save aside, never merges it, and never uploads it. Only a save made before any account (a link not yet claimed) is offered for upload, once, as in 4.0.
+4. **Connect and disconnect anywhere**: "Sign in" always in the ? menu and on the gate, even on a device with a link or a save; "Sign out", "Switch account" (sign out, then sign in, in one step) and "Signed in as <name>" in the menu; the account page lists devices with their last sync and signs any of them out, as today.
+5. **Sync you can see**: "Saved to your account 2 minutes ago", or "Not saved: offline" or "Not signed in", in the menu; "Sync now"; when another device saved a newer island, the warning says which device and when (as today) and offers both.
+6. **What syncs, written down**: discoveries, board, island, challenge wins (already on the server), the recipe book and the favorite spell (once the Community tab exists); settings stay per device (sound, HUD, graphics switches), on purpose.
+7. **Checked**: the tests of item 1 pass; the owner on two devices sees the same discoveries and island within a minute; sign out and sign in with another account leaves no trace of the first; the admin powers work with a passkey and with the token; the attacks of `docs/REVIEW-4.0.md` section 10 still pass. Shown to the owner on the live site before merging, on a phone and a computer.
 
 ### 4.5 Sound and music
 
