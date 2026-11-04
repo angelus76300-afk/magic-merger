@@ -47,6 +47,11 @@ import { voiceFor } from "../src/sim/sound";
 import { lifeCycle, updateCreature } from "../src/sim/creatures";
 import { stepPhysics } from "../src/sim/physics";
 import { TICK } from "../src/sim/world";
+// No verdict here depends on how fast the machine is (4.1, review M8): the
+// slow cast guard is off unless SLOW_MS is set, and worst ticks are printed,
+// not asserted. Section 3 checks the guard itself.
+Runtime.slowMs = Number(process.env.SLOW_MS) || Infinity;
+
 
 // Challenges with nothing cast, over several seeds: one seed can pass by
 // luck (Wildfire did, at 3 wins in 16). These replays run in worker threads
@@ -135,7 +140,7 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   const ok = rt.cast({ key: file, name: file, tier: file.includes("bang") ? "cosmic" : "legendary", code: readFileSync(join(spellDir, file), "utf8") }, 76, 76);
   let worst = 0;
   for (let k = 0; k < 30 * 12; k++) worst = Math.max(worst, step(world, rt));
-  check(`spell ${file}`, ok && errors.length === 0 && worst < 120, `${errors[0] ?? "no errors"}, worst tick ${worst.toFixed(1)}ms`);
+  check(`spell ${file}`, ok && errors.length === 0, `${errors[0] ?? "no errors"}, worst tick ${worst.toFixed(1)} ms (printed, not checked)`);
 }
 
 // 2b. Programs written for older World API versions still run: they are
@@ -175,6 +180,29 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
     errors[0] ?? "no error",
   );
   check("loop guard covers bodiless loops", guardLoops("for(;;) x++;").includes("__g()"));
+  // The slow cast guard, at the browser's 40 ms: a spell that spends 60 ms on
+  // every tick is stopped after five. A slower machine only makes it slower.
+  const slow: string[] = [];
+  const was = Runtime.slowMs;
+  Runtime.slowMs = 40;
+  const rt3 = new Runtime(world, (_k, _n, m) => slow.push(m));
+  rt3.cast(
+    {
+      key: "slow",
+      name: "Slow",
+      tier: "minor",
+      code: "const spell = { *cast(w) { for (;;) { const t = Date.now(); while (Date.now() - t < 60) {} yield 0; } } };",
+    },
+    50,
+    50,
+  );
+  for (let k = 0; k < 8 && !slow.length; k++) rt3.step(1 / 30);
+  Runtime.slowMs = was;
+  check(
+    "a spell slow on every tick is stopped by the slow cast guard",
+    slow.some((e) => e.includes("every frame")),
+    slow[0] ?? "not stopped",
+  );
   const lines: string[] = [];
   const rt2 = new Runtime(world, (_k, _n, m) => lines.push(m));
   rt2.cast({ key: "line", name: "Line", tier: "minor", code: "const spell = {\n  *cast(w) {\n    w.nothing();\n  },\n};" }, 50, 50);

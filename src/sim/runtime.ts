@@ -87,9 +87,12 @@ export interface CameraControl {
 const LOOP_LIMIT = 4_000_000;
 export const WRAPPER_LINES = 3;
 const MAX_JOBS = 24;
-const SLOW_MS = 40;
 
 export class Runtime {
+  // A cast whose ticks take longer than this five times is stopped. Tests
+  // set it (4.1, review M8): on a loaded CI runner a correct spell can pass
+  // 40 ms, and a verdict must not depend on the machine.
+  static slowMs = 40;
   readonly visuals = new Visuals();
   private compiled = new Map<string, Compiled>();
   private casts: ActiveCast[] = [];
@@ -483,7 +486,7 @@ export class Runtime {
         else c.wait = typeof r.value === "number" && Number.isFinite(r.value) ? Math.max(0, Math.min(30, r.value)) : 0;
       });
       if (!ok) this.abort(c);
-      else if (performance.now() - started > SLOW_MS && ++c.slowTicks > 5) {
+      else if (performance.now() - started > Runtime.slowMs && ++c.slowTicks > 5) {
         this.report(c.key, c.name, "The spell took too long on every frame and was stopped");
         this.abort(c);
       }
