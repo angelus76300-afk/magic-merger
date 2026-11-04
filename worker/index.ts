@@ -876,7 +876,9 @@ async function waitForWrite(env: Env, name: unknown, ahead: boolean): Promise<Sp
   const element = await resolveInput(db, name, false).catch(() => null);
   if (!element) return null;
   const key = elementKey(element.name);
-  const first = await activeWrite(db, key);
+  // No writes table (a deploy whose migration has not run): nothing is
+  // written ahead, so there is nothing to wait for.
+  const first = await activeWrite(db, key).catch(() => null);
   if (!first) return null;
   // A big item's batch takes minutes: the page is told at once and asks
   // again in 15 s; a small one is written in seconds, so the answer waits.
