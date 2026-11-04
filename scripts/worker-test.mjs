@@ -1643,16 +1643,14 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
   const deep = "RangeError: too much recursion";
   const third = await repair(bo, "Thorn Hedge", deep);
   check("repairs: the third repair is allowed", third.status === 200 && third.data.program.trial === true && (await repairs()) === 3, `status ${third.status}`);
-  // BUG? worker/index.ts:706 refuses at three repairs before :711 looks for
-  // the trial already waiting, so a second browser that saw the crash the
-  // third repair mends is told "mended too often" (and stops asking for the
-  // session, src/worldhost.ts:736) instead of being served that free trial.
-  // Checked as it behaves today.
+  // A second browser that saw the crash the third repair mends is served
+  // that waiting trial, free, before the limit is looked at (found by this
+  // section in 4.1: it used to be told "mended too often").
   const was = calls;
   const sameCrash = await repair(cy, "Thorn Hedge", deep);
   check(
-    "repairs: a second browser with the crash of the third repair is refused, not served the waiting trial (BUG?)",
-    sameCrash.status === 429 && sameCrash.data?.detail?.mended === true && calls === was,
+    "repairs: a second browser with the crash of the third repair is served the waiting trial, not refused",
+    sameCrash.status === 200 && sameCrash.data?.program?.id === third.data.program.id && calls === was,
     JSON.stringify(sameCrash.data),
   );
   await api("/api/spell/check", { admin: true, body: { name: "Thorn Hedge", id: third.data.program.id, ok: true, problem: null, detail: "ok" } });

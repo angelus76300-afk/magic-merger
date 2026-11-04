@@ -703,14 +703,16 @@ async function handleRepair(body: RepairRequest, env: Env, oracle: Oracle, admin
   if (!error) throw new HttpError(400, "A repair needs the error");
   const live = oracle.mock ? null : await liveProgram(env.DB, key);
   if (!oracle.mock && !live) throw new HttpError(404, "There is no program to repair");
-  if (live && live.repairs >= MAX_REPAIRS && !admin)
-    throw new HttpError(429, `${element.name} has been mended too often; ask the admin for a new spell`, { mended: true });
   const tier = tierOf(element);
   // A fix or a rewrite is already waiting for its test run (two browsers saw
-  // the same crash): that one is served, not mended again.
+  // the same crash): that one is served, not mended again, and before the
+  // limit below, since it costs nothing (4.1: the third repair's trial was
+  // refused to a second browser, which then stopped asking for the session).
   const waiting = live ? await newerTrial(env.DB, key, live.row.id) : null;
   const pending = waiting ? programOf(waiting) : null;
   if (pending) return { name: element.name, tier, program: pending, mock: false };
+  if (live && live.repairs >= MAX_REPAIRS && !admin)
+    throw new HttpError(429, `${element.name} has been mended too often; ask the admin for a new spell`, { mended: true });
   const stored = live ? programOf(live.row) : null;
   await ensureBudget(env, oracle, "repair", ESTIMATE.small);
   // Repairs always go to the small model: fixing one error in a program that
