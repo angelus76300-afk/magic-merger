@@ -11,6 +11,9 @@ import { denDown, goalOfCreature, hasNeeds, kindGoal, needsTick, pursue, stepGoa
 import { abilitiesFromName, useAbilities } from "./abilities";
 import { stepArtifacts } from "./artifacts";
 import { meter } from "./motion";
+import { steer } from "./steer";
+import { alarm, calmDown, fleeing } from "./flight";
+import { pathsOf } from "./paths";
 import { LOADS, deed, harmed, life, newMind, noteDeath, reborn, storyOn, tell, villageOf, type AbilitySpec, type Goal, type Mind } from "./kin";
 
 // What a spell-made creature does, declared rather than coded, so even a
@@ -159,6 +162,10 @@ export interface Creature {
   vx: number;
   vy: number;
   vz: number;
+  // Heading (radians, 0 along +x) and speed of its own walking (4.3, steer.ts);
+  // vx and vy are what throws and pushes it.
+  hd: number;
+  sp: number;
   hp: number;
   size: number;
   color: number;
@@ -228,6 +235,8 @@ export function makeCreature(kindName: string, x: number, y: number): Creature {
     vx: 0,
     vy: 0,
     vz: 0,
+    hd: ((nextId * 2.39996) % (Math.PI * 2)) - Math.PI,
+    sp: 0,
     hp: k.hp * (look ? sizeOf(look) : 1),
     size: look ? sizeOf(look) : 1,
     color: look ? shirtOf(look) : species ? species.colors[(Math.random() * species.colors.length) | 0] : k.color,
@@ -369,7 +378,10 @@ function danger(world: World, i: number): boolean {
   return world.fire[i] > 0.15 || world.fluid[i] === F.LAVA || world.fluid[i] === F.ACID || world.gas[i] === S.POISON;
 }
 
-function blocked(world: World, x: number, y: number, c: Creature, k: CreatureKind): boolean {
+// (fx, fy): where the step is taken from, for the cliff (4.3: a creature
+// looking a few cells ahead up a gentle slope compares each probe with the
+// one before it, not with where it stands, or the hill reads as a wall).
+function blocked(world: World, x: number, y: number, c: Creature, k: CreatureKind, fx = c.x, fy = c.y): boolean {
   if (!world.inside(x, y)) return true;
   if (k.flying || c.levitate > 0 || c.z > 1.5) return false;
   const i = world.idx(x, y);
@@ -383,7 +395,7 @@ function blocked(world: World, x: number, y: number, c: Creature, k: CreatureKin
     if (world.depth[i] > 1 && !k.swims) return true;
   }
   // Cliffs: too steep a step up (ice and fluids count as the surface you walk on).
-  const here = world.level(world.idx(c.x, c.y));
+  const here = world.level(world.idx(Math.max(0, Math.min(world.w - 1, fx)), Math.max(0, Math.min(world.h - 1, fy))));
   return world.level(i) - here > 1.6;
 }
 
@@ -403,6 +415,9 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     c.vz = c.z > 0 ? c.vz - 30 * dt : 0;
     return;
   }
+  // Frightened just now by a spell, an aura or a guard: a turn with a reason.
+  if (meter && c.fear > 0 && !c.data.feared) meter.done(c, "scared");
+  c.data.feared = c.fear > 0 || undefined;
   for (const s of ["frozen", "fear", "sleep", "calm", "levitate", "stun"] as const) c[s] = Math.max(0, c[s] - dt);
 
   const i = world.idx(Math.max(0, Math.min(world.w - 1, c.x)), Math.max(0, Math.min(world.h - 1, c.y)));
@@ -480,13 +495,21 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   let pace = 1;
   let mood: Mood = null;
   let plan2: ReturnType<typeof social> = null;
+  let flight: { x: number; y: number } | null = null;
   // Which decision drove this tick's step, for the motion meter (4.3).
   let drive = busy ? "asleep" : "idle";
   if (!busy) {
     // Danger is probed every third tick and remembered in between (3.6: goals
     // keep creatures on the move, and this was the dearest part of a tick).
     let dangerDir = c.data.danger as { x: number; y: number } | null | undefined;
-    if (dangerDir === undefined || (world.tick + c.id) % 3 === 0) c.data.danger = dangerDir = senseDanger(world, c);
+    if (dangerDir === undefined || (world.tick + c.id) % 3 === 0) {
+      dangerDir = senseDanger(world, c);
+      // Away from a fire for a moment after it is out of reach, not one tick
+      // in, one tick out at its edge (4.3).
+      if (dangerDir) c.data.dangerUntil = world.time + 0.8;
+      else if (world.time < ((c.data.dangerUntil as number | undefined) ?? 0)) dangerDir = c.data.danger as { x: number; y: number } | null;
+      c.data.danger = dangerDir;
+    }
     if (c.fear > 0) {
       const dx = c.x - c.fearX;
       const dy = c.y - c.fearY;
@@ -515,6 +538,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     } else if (c.calm > 0) {
       pace = 0;
       drive = "calm";
+      calmDown(c);
     } else if (ai && ai.active !== "always" && daylight(world.time).night > 0.5 !== (ai.active === "night")) {
       // Out of its hours it rests where it is; a creature of the night that
       // daylight burns first looks for the shade of the woods (3.6).
@@ -541,11 +565,14 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       mood = plan2.mood;
       drive = `social:${plan2.mood}`;
       if (c.mind) c.mind.action = plan2.mood === "fear" ? "running for its life" : plan2.mood === "angry" ? "fighting back" : c.mind.action;
-    } else if (ai?.mode === "flee" && !c.mind?.tame && c.mind?.task !== "beg" && (c.mind?.hunger ?? 0) < 0.7 && behave(world, c, k, ai, dt)) {
-      // Survival first: a deer runs from people and wolves before it eats.
-      wantX = c.tx - c.x;
-      wantY = c.ty - c.y;
-      pace = 1.3;
+    } else if ((flight = (ai?.mode === "flee" && lookOut(world, c, ai, dt), fleeing(world, c)))) {
+      // Survival first: a deer runs from people and wolves before it eats,
+      // and keeps running until it is well away and has not seen them for a
+      // while (4.3, flight.ts).
+      wantX = flight.x - c.x;
+      wantY = flight.y - c.y;
+      pace = 1.4;
+      mood = "fear";
       drive = "flee";
       if (c.mind) c.mind.action = "running away";
     } else if (needs && (plan2 = pursue(world, c, k, dt))) {
@@ -569,6 +596,12 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       pace = plan2.pace;
       mood = plan2.mood;
       drive = `pursue:${c.mind?.task ?? "none"}`;
+    } else if (needs && c.mind) {
+      // Between two tasks it stands and looks around, and thinks again soon,
+      // instead of setting off toward a random point for half a second (4.3).
+      pace = 0;
+      drive = "idle";
+      c.mind.think = Math.min(c.mind.think, 0.25);
     } else {
       plan(world, c, k, dt);
       wantX = c.tx - c.x;
@@ -594,33 +627,39 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     }
   }
 
+  // The step itself (4.3, steer.ts): a heading and a speed with a body behind
+  // them. A flight or a chase runs through its point; anything else slows
+  // down to arrive.
+  const chase = mood === "fear" || mood === "angry" || mood === "hunt" || drive === "fear" || drive === "burning" || drive === "danger" || drive === "flee";
+  const arrive = !chase || drive === "shelter";
   const len = Math.hypot(wantX, wantY);
   let wanted = 0;
-  if (len > 0 && pace > 0) {
-    let speed = k.speed * pace * Math.sqrt(c.size);
-    if (onGround && world.depth[i] > 0.3 && world.fluid[i] !== F.ICE) speed *= 0.5;
-    if (onGround && world.fluid[i] === F.MUD) speed *= 0.3;
-    const sx = (wantX / len) * speed * dt;
-    const sy = (wantY / len) * speed * dt;
-    wanted = speed * dt;
-    if (!blocked(world, c.x + sx * 3, c.y + sy * 3, c, k)) {
-      c.x += sx;
-      c.y += sy;
-    } else if (!blocked(world, c.x - sy * 3, c.y + sx * 3, c, k)) {
-      // Step around the obstacle.
-      c.x -= sy;
-      c.y += sx;
-    } else {
-      c.goal = 0;
+  {
+    let speed = 0;
+    if (len > 0 && pace > 0) {
+      speed = k.speed * pace * Math.sqrt(c.size);
+      if (onGround && world.depth[i] > 0.3 && world.fluid[i] !== F.ICE) speed *= 0.5;
+      if (onGround && world.fluid[i] === F.MUD) speed *= 0.3;
+    }
+    // The end of the trip, for its flow field: the task's place, when the
+    // point asked for is only a bend on the way (goals.ts roamAim).
+    const m = c.mind;
+    const trip = drive.startsWith("pursue:") && m && m.task !== "none";
+    const gx = trip ? (m.target ? m.target.x : m.tx) : c.x + wantX;
+    const gy = trip ? (m.target ? m.target.y : m.ty) : c.y + wantY;
+    const stepped = steer(world, c, k, c.x + wantX, c.y + wantY, busy ? 0 : speed, arrive, dt, blocked, gx, gy);
+    wanted = stepped.wanted;
+    if (stepped.jammed && speed > 0) {
       // Boxed in (born between trees and houses): after a while, out to the
       // nearest open cell, so it is not stuck for good (3.6).
       const stuck = ((c.data.stuck as number | undefined) ?? 0) + dt;
       c.data.stuck = stuck;
+      if (stuck > 1) c.goal = 0;
       if (stuck > 3 && !k.aquatic) {
         c.data.stuck = 0;
         unstick(world, c, k);
       }
-    }
+    } else if (c.data.stuck) c.data.stuck = Math.max(0, (c.data.stuck as number) - dt);
   }
 
   // Being thrown, lifted or knocked around.
@@ -648,10 +687,23 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   if (!busy && (k.abilities?.length || c.kind === "villager")) useAbilities(world, c, k);
   if (c.fear > 0 || c.burning > 0) mood = "fear";
   c.data.mood = busy ? (c.sleep > 0 ? "asleep" : null) : mood;
+  c.data.idle = idleOf(c, busy);
   if (c.hp <= 0) c.dead = true;
 
   if (k.tick) k.tick(c, dt);
   if (meter) meter.after(c, world.time, dt, drive, pace > 0 ? wantX : 0, pace > 0 ? wantY : 0, wanted);
+}
+
+// What a creature standing still is doing, for the view (4.3): lying down
+// (asleep, resting), head down at its food or its work, or looking around.
+const HEAD_DOWN = new Set(["graze", "forage", "eat", "feast", "harvest", "plant", "seed"]);
+function idleOf(c: Creature, busy: boolean): "lie" | "graze" | "look" | undefined {
+  if (c.sp > 0.15 || c.frozen > 0 || c.stun > 0) return undefined;
+  if (c.sleep > 0 || c.data.mood === "asleep") return "lie";
+  if (busy) return undefined;
+  const m = c.mind;
+  if (m && m.work > 0 && HEAD_DOWN.has(m.task)) return "graze";
+  return "look";
 }
 
 // A step of up to three cells toward (x, y) onto land it could stand on,
@@ -806,6 +858,20 @@ function behave(world: World, c: Creature, k: CreatureKind, ai: Behavior, dt: nu
   }
   void k;
   return false;
+}
+
+// A creature that flees by nature (deer, rabbits, a spell's timid kinds)
+// looks around a few times a second for what it runs from, and is alarmed
+// by it at its sense (flight.ts keeps the alarm until it is well away). Not
+// when tame, begging or starving: it has to eat.
+function lookOut(world: World, c: Creature, ai: Behavior, dt: number): void {
+  if (c.mind?.tame || c.mind?.task === "beg" || (c.mind?.hunger ?? 0) >= 0.85) return;
+  const look = ((c.data.look as number | undefined) ?? 0) - dt;
+  c.data.look = look;
+  if (look > 0) return;
+  c.data.look = 0.3 + Math.random() * 0.2;
+  const o = others(world, c, ai.sense, ai.prey);
+  if (o) alarm(world, c, o, o.x, o.y, ai.sense);
 }
 
 // Auras and trails, a few times a second.
@@ -1118,6 +1184,7 @@ function keepOut(world: World): void {
 
 export function lifeCycle(world: World, dt: number): void {
   stepGoals(world);
+  pathsOf(world).step(world);
   if (world.wards.length) keepOut(world);
   stepLandmarks(world, maxHp, (c) => kindOf(c).fireproof);
   stepArtifacts(world);

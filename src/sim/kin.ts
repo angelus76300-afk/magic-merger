@@ -122,6 +122,8 @@ export interface Mind {
   ready: number[];
   // Where a migration or exploration is heading next.
   away: number;
+  // In the middle of a meal (4.3): eats from 0.7 hunger until 0.3.
+  meal?: boolean;
 }
 
 export type Task =
@@ -226,6 +228,10 @@ export function deed(c: Creature, what: string): void {
   m.deeds++;
   m.did = what;
   if (deedLog) deedLog.set(what, (deedLog.get(what) ?? 0) + 1);
+  if (catches && what.startsWith("caught a ")) {
+    const key = `${c.kind.split("#")[0]} caught a ${what.slice(9)}`;
+    catches.set(key, (catches.get(key) ?? 0) + 1);
+  }
   if (storyWorld) storyDeed(storyWorld, c, what);
 }
 
@@ -271,6 +277,12 @@ function storyDeed(world: World, c: Creature, what: string): void {
 
 // Tests count what was done, by words; off (null) in the game.
 let deedLog: Map<string, number> | null = null;
+// The five minute scene counts who caught whom (4.3: wolves must still catch deer).
+let catches: Map<string, number> | null = null;
+export function logCatches(on: boolean): Map<string, number> | null {
+  catches = on ? new Map() : null;
+  return catches;
+}
 export function logDeeds(on: boolean): Map<string, number> | null {
   deedLog = on ? new Map() : null;
   return deedLog;

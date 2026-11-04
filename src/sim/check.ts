@@ -5,6 +5,7 @@ import { C } from "./materials";
 import { unpackLook } from "./villagers";
 import { Runtime, type CastRequest } from "./runtime";
 import { isArtifact, resetArtifactIds } from "./artifacts";
+import { logCatches } from "./kin";
 import { seeded } from "./noise";
 import { stepHeadless } from "./tick";
 import { TICK, generateWorld, type World } from "./world";
@@ -629,6 +630,8 @@ export interface SceneReport {
   deeds: Record<string, number>;
   // Every placed artifact and what it did (3.7).
   artifacts: { name: string; deeds: number; did: string[] }[];
+  // Who caught whom ("wolf caught a deer": 3), 4.3.
+  catches: Record<string, number>;
   errors: string[];
   worstTickMs: number;
   meanTickMs: number;
@@ -648,6 +651,7 @@ export function* sceneRun(
     const isl = island(errors, streams);
     const { world, rt, target } = isl;
     Math.random = isl.random;
+    const caught = logCatches(true)!;
     rt.cast({ key: "scene", name: "The five minute scene", tier: "major", code: SCENE }, target.x, target.y);
     if (extra) rt.cast({ ...extra, key: `check:${extra.key}` }, target.x, target.y);
     // The scene's creatures come in on the first tick.
@@ -711,12 +715,14 @@ export function* sceneRun(
       marks,
       deeds,
       artifacts,
+      catches: Object.fromEntries(caught),
       errors,
       worstTickMs: Math.round(worst * 10) / 10,
       meanTickMs: Math.round((total / ticks) * 100) / 100,
     };
   } finally {
     Math.random = outer;
+    logCatches(false);
   }
 }
 

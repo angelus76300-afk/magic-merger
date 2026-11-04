@@ -336,11 +336,13 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
       if (world.cover[i] !== C.NONE) world.setCover(i, C.NONE);
     }
   rt.cast({ key: "totem", name: "Rain Totem", tier: "major", code: art("rain-totem") }, tx, ty);
-  // Fire imps that cast Fireball on whatever comes near: a hunter set on them.
+  // Fire imps that cast Fireball on whatever comes near: a hunter set on them,
+  // and on them only (4.3: hunting villagers too, it ran off after one, and
+  // whether the imps had an enemy near for 40 s was luck of the chase).
   const imps = `const spell = {
     creatures: [
       { name: "fire imp", base: "beast", color: "#d0541a", hp: 2000, abilities: [{ do: "cast", spell: "Fireball", when: "enemy near", every: 20 }] },
-      { name: "imp hunter", base: "beast", color: "#303030", behavior: "hunt", prey: ["fire imp", "villager"], attack: 1, hp: 5000, sense: 40 },
+      { name: "imp hunter", base: "beast", color: "#303030", behavior: "hunt", prey: ["fire imp"], attack: 1, hp: 5000, sense: 40 },
     ],
     *cast(w) { for (let k = 0; k < 4; k++) w.spawn("fire imp", w.x + k, w.y); w.spawn("imp hunter", w.x, w.y + 3); },
   };`;
@@ -474,9 +476,12 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   const killed = d.lines.find((l) => /a villager died, killed by the imp/.test(l));
   check("the story tells who died and what killed them", !!killed, d.lines.slice(-4).join(" | "));
   check("everyday work is counted, not told", d.work.length > 0 && !d.lines.some((l) => /grazed|harvested|picked/.test(l)), d.work.slice(0, 3).join(", "));
+  // Everyone alive who remembers the imp hurting them, the three above and
+  // any survivor of its attacks (4.3: villagers that run better survive more).
+  const hurt = world.creatures.filter((c) => c.kind === "villager" && !c.dead && c.mind?.memory.some((e) => e.kind === "imp" && e.feel <= -0.5)).length;
   check(
     "villagers' memories are gathered",
-    d.memories.some((m) => m === `${alive.length} villagers remember the imp hurt them`),
+    hurt >= alive.length && d.memories.some((m) => m === `${hurt} villagers remember the imp hurt them`),
     d.memories.join("; "),
   );
   const back = loadWorld(JSON.parse(JSON.stringify(saveWorld(world, new Map()))), () => {});
@@ -704,6 +709,15 @@ for (const { stream, report: r } of sceneReports.sort((a, b) => a.stream - b.str
     !vanished.length && !exploded.length,
     kinds.map(([k, v]) => `${k} ${v.start}>${v.end} (${v.min}-${v.max})`).join(", "),
   );
+  // 4.3: deer run better, and wolves must still catch some.
+  const wolvesCaught = (r.catches["wolf caught a deer"] ?? 0) + (r.catches["wolf caught a rabbit"] ?? 0);
+  check(
+    `five minute scene, stream ${stream}: wolves still catch deer or rabbits`,
+    wolvesCaught > 0,
+    Object.entries(r.catches)
+      .map(([k, n]) => `${k} ${n}`)
+      .join(", ") || "nobody caught anything",
+  );
   check(
     `five minute scene, stream ${stream}: goals leave marks`,
     (r.marks.hoard ?? 0) > 0 && (r.marks.den ?? 0) > 0 && (r.marks.offerings ?? 0) > 0,
@@ -723,6 +737,25 @@ for (const { stream, report: r } of sceneReports.sort((a, b) => a.stream - b.str
 console.log(`\nmotion, island 112, seeds ${MOTION_SEEDS.join(", ")}, ${MOTION_SECONDS} s each`);
 for (const line of motionLines(motion)) console.log(`  ${line}`);
 check("motion runs without errors", motionErrors.length === 0 && Object.keys(motion).length > 0, motionErrors[0] ?? "");
+// Before 4.3: deer 16.9 flip-flops a minute, rabbits 11.2, villagers 4.1;
+// deer stuck 15 s a minute. A deer now under 2 flip-flops a minute (its
+// mind and its steps both), every kind under 3, and nobody stuck 3 s a minute.
+{
+  const per = (k: KindMotion, v: number) => (v / k.seconds) * 60;
+  const deer = motion.deer;
+  check(
+    "a deer makes under 2 sharp turns a minute outside natural ones, in its steps and in its mind",
+    !!deer && per(deer, deer.turns - deer.natural) < 2 && per(deer, deer.intentFlips) < 2,
+    deer ? `${per(deer, deer.turns - deer.natural).toFixed(1)} flip-flops, ${per(deer, deer.intentFlips).toFixed(1)} intent flips a minute` : "no deer",
+  );
+  const rows = Object.entries(motion).filter(([, k]) => k.seconds >= 180);
+  const bad = rows.filter(([, k]) => per(k, k.turns - k.natural) >= 3 || per(k, k.intentFlips) >= 3 || per(k, k.stuck) >= 3);
+  check(
+    "every kind under 3 flip-flops and 3 s stuck a minute",
+    rows.length >= 5 && bad.length === 0,
+    rows.map(([n, k]) => `${n} ${per(k, k.turns - k.natural).toFixed(1)}/${per(k, k.stuck).toFixed(1)}s`).join(", "),
+  );
+}
 
 // 4.2: no water drawn in the plane of its own land. The land's top is whole
 // voxels and the water's is not, so shallow water lay level with the sand

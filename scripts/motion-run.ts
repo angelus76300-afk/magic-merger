@@ -34,9 +34,10 @@ export function measureMotion(seed: number, seconds = MOTION_SECONDS, size = 112
     m.log = (c, key, time) => {
       if (c.kind !== trace) return;
       const thr = (c.data.social as { threat?: { kind: string; x: number; y: number } } | undefined)?.threat;
-      console.log(
-        `${time.toFixed(2)} #${c.id} ${key} task ${c.mind?.task} at ${c.x.toFixed(1)},${c.y.toFixed(1)}${thr ? ` threat ${thr.kind} ${Math.hypot(thr.x - c.x, thr.y - c.y).toFixed(1)}` : ""}`,
-      );
+      const dodge = time < ((c.data.sideUntil as number | undefined) ?? 0) ? " dodging" : "";
+      const detour = time < ((c.data.detour as number | undefined) ?? 0) ? " detour" : "";
+      const where = `${c.x.toFixed(1)},${c.y.toFixed(1)}`;
+      console.log(`${time.toFixed(2)} #${c.id} ${key} task ${c.mind?.task} at ${where}${dodge}${detour}${thr ? ` threat ${thr.kind}` : ""}`);
     };
   setMeter(m);
   try {

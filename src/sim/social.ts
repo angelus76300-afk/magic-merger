@@ -3,6 +3,7 @@ import type { World } from "./world";
 import { unpackLook } from "./villagers";
 import { deed, harmed, remember, villageOf } from "./kin";
 import { meter } from "./motion";
+import { alarm, alarmOf, calmDown, fleeing } from "./flight";
 import type { Creature, CreatureKind } from "./creatures";
 
 // How creatures notice each other and the things spells put in the world.
@@ -92,6 +93,9 @@ export function social(world: World, c: Creature, k: CreatureKind, kindOf: (c: C
   }
   const seen = c.data.social as Seen | undefined;
   if (!seen) return null;
+  // A danger it still remembers comes before carrying and lures (4.3):
+  // creatures.ts runs the flight.
+  if (!seen.threat && alarmOf(c)) return null;
 
   // Carrying something home comes before everything but danger.
   if (c.data.carry !== undefined && !seen.threat) {
@@ -113,6 +117,8 @@ export function social(world: World, c: Creature, k: CreatureKind, kindOf: (c: C
       if (world.time - since > 20) {
         c.data.braveUntil = world.time + 40;
         c.data.scaredSince = undefined;
+        calmDown(c);
+        return null;
       }
     }
     if (seen.fight) {
@@ -132,9 +138,19 @@ export function social(world: World, c: Creature, k: CreatureKind, kindOf: (c: C
     }
     if (refuge && refugeD > 1.5) return { x: refuge.x + 0.5, y: refuge.y + 0.5, pace: 1.5, mood: "fear" };
     if (refuge) return { x: c.x, y: c.y, pace: 0, mood: "fear" };
+    // Alarmed at the distance it noticed the threat; flight.ts keeps it running
+    // until it is well away and out of sight for a while (4.3).
+    alarm(world, c, t, t.x, t.y, (c.mind?.hunger ?? 0) > 0.85 ? 5 : 9);
+    const way = fleeing(world, c);
+    if (way) return { x: way.x, y: way.y, pace: 1.5, mood: "fear" };
     return { ...fleeFrom(world, c, t.x, t.y), pace: 1.5, mood: "fear" };
   }
-  if (seen.scary) return { ...fleeFrom(world, c, seen.scary.x, seen.scary.y), pace: 1.3, mood: "fear" };
+  if (seen.scary) {
+    alarm(world, c, null, seen.scary.x, seen.scary.y, 8);
+    const way = fleeing(world, c);
+    if (way) return { x: way.x, y: way.y, pace: 1.3, mood: "fear" };
+    return { ...fleeFrom(world, c, seen.scary.x, seen.scary.y), pace: 1.3, mood: "fear" };
+  }
   c.data.scaredSince = undefined;
   if (seen.lure && world.time >= ((c.data.boredUntil as number | undefined) ?? 0)) {
     const p = seen.lure;

@@ -188,7 +188,7 @@ const REACH: Partial<Record<Task, number>> = {
   repair: 1.9,
   dam: 2,
   rest: 1.5,
-  herd: 4,
+  herd: 3,
   roam: 2,
   patrol: 2.5,
   beg: 1.8,
@@ -264,6 +264,9 @@ export function pursue(world: World, c: Creature, k: CreatureKind, dt: number): 
     c.hp = Math.min(life.maxHp(c), c.hp + dt * 0.6);
   }
   m.think -= dt;
+  // A task just ended: the next one is thought of at once, not up to 0.85 s
+  // later with the creature drifting toward a random point meanwhile (4.3).
+  if (m.task === "none" && m.think > 0.1) m.think = 0.1;
   if (m.think <= 0) {
     // Two or three times a second while it hunts or fights, about once and a half otherwise.
     m.think = m.task === "hunt" || m.task === "fight" ? 0.3 + Math.random() * 0.15 : 0.5 + Math.random() * 0.35;
@@ -364,10 +367,26 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
   }
   const d = Math.hypot(tx - c.x, ty - c.y);
   const strike = m.task === "hunt" || m.task === "fight";
+  // Back to its task after a flight or a fight: how close it came before
+  // does not count, or the way back reads as no progress (4.3: it was then
+  // hopped three cells toward its goal and the task dropped).
+  if (c.data.actTick !== world.tick - 1) {
+    m.near = Infinity;
+    m.stall = 0;
+  }
+  c.data.actTick = world.tick;
   const reach = strike && t ? life.kindOf(c).radius * c.size + life.kindOf(t).radius * t.size + 0.7 : (REACH[m.task] ?? 1.6);
   OUT.mood = moodOf(m);
   if (d > reach) {
     m.walk += dt;
+    // The flow field says there is no way there from here (steer.ts): a step
+    // out of the hollow, then think again, rather than pace by the wall.
+    if (world.time - ((c.data.noWay as number | undefined) ?? -1) < 0.1 && m.task !== "spawn") {
+      c.data.noWay = undefined;
+      life.free(c, tx, ty);
+      drop(m);
+      return null;
+    }
     if (d < m.near - 0.3) {
       m.near = d;
       m.stall = 0;
@@ -393,6 +412,8 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
     OUT.x = tx;
     OUT.y = ty;
     OUT.pace = m.pace;
+    if (m.task === "roam") roamAim(world, c, m, d);
+    else if (m.task === "hunt" && t) surround(world, c, t, d);
     return OUT;
   }
   if (strike && t) {
@@ -454,9 +475,15 @@ const base = (kind: string) => kind.split("#")[0];
 // ---- Deciding ---------------------------------------------------------------
 
 function decide(world: World, c: Creature, k: CreatureKind, m: Mind, needs: boolean): void {
-  if (m.task !== "none" && !stillValid(world, c, m)) drop(m);
+  if (m.task !== "none" && !stillValid(world, c, m)) {
+    // Someone else sowed that field, ate that bush, felled that tree: a turn
+    // with a reason when it heads elsewhere.
+    if (meter) meter.done(c, "target gone");
+    drop(m);
+  }
   if (needs && urgent(world, c, k, m)) return;
-  if (m.task !== "none" && m.task !== "herd") return;
+  // Keeping with the herd is thought over again, but not before two seconds.
+  if (m.task !== "none" && (m.task !== "herd" || m.walk < 2)) return;
   // An artifact nearby that grants it something, or that its kind acts on (3.7).
   const visit = world.landmarks.length && c.sleep <= 0 ? artifactVisit(world, c) : null;
   if (visit) {
@@ -526,9 +553,14 @@ function urgent(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
     }
     if (m.task === "avoid") return true;
   }
-  // Night hunters have a short night: they hunt as soon as they are a little hungry.
-  const peckish = k.ai?.active === "night" ? 0.3 : 0.55;
-  if (m.hunger > peckish && !EATING.has(m.task) && m.task !== "carry") {
+  // A meal starts at 0.7 and goes on until 0.3 (4.3: it used to start at
+  // 0.55 and stop after one mouthful, so a deer went back and forth between
+  // grazing and roaming). Night hunters have a short night: they hunt as
+  // soon as they are a little hungry.
+  const night = k.ai?.active === "night";
+  if (m.hunger > (night ? 0.3 : 0.7)) m.meal = true;
+  else if (m.hunger <= (night ? 0.1 : 0.3)) m.meal = false;
+  if (m.meal && !EATING.has(m.task) && m.task !== "carry") {
     if (eat(world, c, k, m)) return true;
   }
   if (EATING.has(m.task)) return true;
@@ -583,7 +615,10 @@ function eat(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
   }
   const plants = PLANTS[c.kind] ?? (prey ? null : [C.BUSH, C.FLOWER, C.CROP]);
   if (plants) {
-    const i = findCell(world, c.x, c.y, 16, 24, (j) => plants.includes(world.cover[j]) && world.depth[j] < 0.3);
+    // The next mouthful close by and ahead, then further off.
+    const test = (j: number) => plants.includes(world.cover[j]) && world.depth[j] < 0.3;
+    let i = findCell(world, c.x + Math.cos(c.hd) * 3, c.y + Math.sin(c.hd) * 3, 5, 12, test);
+    if (i < 0) i = findCell(world, c.x, c.y, 16, 24, test);
     if (i >= 0) {
       cellTask(world, m, "graze", i);
       return true;
@@ -656,6 +691,17 @@ function reachable(world: World, i: number): boolean {
   return false;
 }
 
+// Not inside a tree, a house or a rock, nor hemmed in by them.
+function standable(world: World, i: number): boolean {
+  if (world.materials.get("cover", world.cover[i]).solid) return false;
+  let open = 0;
+  for (const d of [1, -1, world.w, -world.w]) {
+    const j = i + d;
+    if (j >= 0 && j < world.n && !world.materials.get("cover", world.cover[j]).solid) open++;
+  }
+  return open >= 3;
+}
+
 const dryFree = (world: World, i: number) => world.depth[i] < 0.05 && world.cover[i] === C.NONE && world.fire[i] < 0.1;
 
 // ---- Villagers: jobs as goals ----------------------------------------------------
@@ -709,9 +755,16 @@ function job2(world: World, c: Creature, m: Mind, v: Village, job: Job): void {
 }
 
 function farm(world: World, c: Creature, m: Mind, v: Village): void {
-  const ripe = findCell(world, v.x, v.y, 18, 24, (i) => world.cover[i] === C.CROP && world.fire[i] < 0.1);
+  // The next furrow close by and ahead first (4.3), then anywhere in the fields.
+  const ax = c.x + Math.cos(c.hd) * 2;
+  const ay = c.y + Math.sin(c.hd) * 2;
+  const isRipe = (i: number) => world.cover[i] === C.CROP && world.fire[i] < 0.1;
+  let ripe = Math.hypot(ax - v.x, ay - v.y) < 18 ? findCell(world, ax, ay, 4, 8, isRipe) : -1;
+  if (ripe < 0) ripe = findCell(world, v.x, v.y, 18, 24, isRipe);
   if (ripe >= 0 && v.food < 30) return cellTask(world, m, "harvest", ripe);
-  const bare = findCell(world, v.x, v.y, 18, 24, (i) => world.ground[i] === G.FIELD && world.cover[i] === C.NONE && world.depth[i] < 0.1);
+  const isBare = (i: number) => world.ground[i] === G.FIELD && world.cover[i] === C.NONE && world.depth[i] < 0.1;
+  let bare = Math.hypot(ax - v.x, ay - v.y) < 18 ? findCell(world, ax, ay, 4, 8, isBare) : -1;
+  if (bare < 0) bare = findCell(world, v.x, v.y, 18, 24, isBare);
   if (bare >= 0) return cellTask(world, m, "plant", bare);
   // No field left (burnt, flooded): till a new one on grass or dirt near the houses.
   const fresh = findCell(
@@ -923,15 +976,20 @@ function goalTask(world: World, c: Creature, k: CreatureKind, m: Mind, needs: bo
 // Herds keep together; otherwise it roams, and an explorer leaves a cairn.
 function wander(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
   if (herd(world, c, k, m)) return true;
+  if (flock(world, c, m)) return true;
   const range = m.goal === "explore" ? 30 : 14;
   for (let tries = 0; tries < 6; tries++) {
-    const a = Math.random() * Math.PI * 2;
+    // Mostly on the way it is already going (4.3): a new point anywhere
+    // around it was an about turn one time in three.
+    const a = tries < 4 ? c.hd + (Math.random() - 0.5) * 2.2 : Math.random() * Math.PI * 2;
     const r = range * (0.5 + Math.random() * 0.5);
     const x = (m.tame ? (world.villages[m.tame - 1]?.x ?? c.homeX) : c.x) + Math.cos(a) * r;
     const y = (m.tame ? (world.villages[m.tame - 1]?.y ?? c.homeY) : c.y) + Math.sin(a) * r;
     if (x < 2 || y < 2 || x > world.w - 3 || y > world.h - 3) continue;
     const i = world.idx(x, y);
-    if (k.aquatic ? world.fluid[i] !== F.WATER || world.depth[i] < 0.8 : !k.flying && world.depth[i] > 0.3) continue;
+    // Open ground it can stand on (4.3: a point in the middle of a wood had
+    // it pacing along the trees until it gave up).
+    if (k.aquatic ? world.fluid[i] !== F.WATER || world.depth[i] < 0.8 : !k.flying && (world.depth[i] > 0.3 || !standable(world, i))) continue;
     setTask(m, "roam", x, y, 0.8);
     return true;
   }
@@ -952,9 +1010,80 @@ function herd(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
   if (!n) return false;
   sx /= n;
   sy /= n;
-  if (Math.hypot(sx - c.x, sy - c.y) < 5) return false;
+  // Joins its herd once more than 7 cells from its middle, and is there at 3
+  // (REACH): not in and out of it at one distance (4.3).
+  if (Math.hypot(sx - c.x, sy - c.y) < 7) return false;
   setTask(m, "herd", sx, sy, 0.9);
   return true;
+}
+
+// Birds fly with a flock (4.3): the lowest id of those around that is on its
+// way somewhere leads, and the others take the same way, a little apart.
+const FLOCKS = new Set(["bird"]);
+function flock(world: World, c: Creature, m: Mind): boolean {
+  if (!FLOCKS.has(c.kind)) return false;
+  let lead: Creature | null = null;
+  for (const o of world.crowd.near(world, c.x, c.y, 12)) {
+    if (o.kind !== c.kind || o.id >= c.id || !o.mind || o.mind.task !== "roam" || o.data.flockLead) continue;
+    if (!lead || o.id < lead.id) lead = o;
+  }
+  if (!lead || !lead.mind) {
+    c.data.flockLead = undefined;
+    return false;
+  }
+  c.data.flockLead = lead.id;
+  setTask(m, "roam", lead.mind.tx + (Math.random() - 0.5) * 4, lead.mind.ty + (Math.random() - 0.5) * 4, 0.85);
+  m.action = "flying with its flock";
+  return true;
+}
+
+// On its way somewhere: a flock member keeps its place by its leader; anyone
+// else bends its way a little, slowly, so a walk is not a ruler line (4.3).
+function roamAim(world: World, c: Creature, m: Mind, d: number): void {
+  const id = c.data.flockLead as number | undefined;
+  if (id !== undefined) {
+    for (const o of world.crowd.near(world, c.x, c.y, 14)) {
+      if (o.id !== id || o.dead || o.mind?.task !== "roam") continue;
+      const back = 1.5 + (c.id % 4) * 0.8;
+      const side = (((c.id >> 2) % 3) - 1) * 1.6;
+      const ux = Math.cos(o.hd);
+      const uy = Math.sin(o.hd);
+      OUT.x = o.x - ux * back - uy * side;
+      OUT.y = o.y - uy * back + ux * side;
+      // Falling behind: a little faster than the leader, to catch up.
+      OUT.pace = Math.hypot(OUT.x - c.x, OUT.y - c.y) > 3 ? m.pace * 1.25 : m.pace;
+      return;
+    }
+    c.data.flockLead = undefined;
+  }
+  if (d < 4) return;
+  const bend = Math.sin(world.time * 0.35 + c.id * 1.7) * 0.35 + Math.sin(world.time * 0.13 + c.id) * 0.2;
+  const dx = OUT.x - c.x;
+  const dy = OUT.y - c.y;
+  const cs = Math.cos(bend);
+  const sn = Math.sin(bend);
+  OUT.x = c.x + dx * cs - dy * sn;
+  OUT.y = c.y + dx * sn + dy * cs;
+}
+
+// A pack closes in from around its prey (4.3): each wolf hunting the same
+// animal takes its own place on a circle around it, starting behind it, and
+// goes straight for it once close.
+function surround(world: World, c: Creature, t: Creature, d: number): void {
+  if (d < 3) return;
+  let rank = 0;
+  let n = 1;
+  for (const o of world.crowd.near(world, t.x, t.y, 16)) {
+    if (o === c || o.kind !== c.kind || o.mind?.task !== "hunt" || o.mind.target !== t) continue;
+    n++;
+    if (o.id < c.id) rank++;
+  }
+  if (n < 2) return;
+  const behind = t.hd + Math.PI;
+  const a = behind + (rank - (n - 1) / 2) * ((Math.PI * 1.4) / Math.max(1, n - 1));
+  const r = Math.min(3, d * 0.5);
+  OUT.x = t.x + Math.cos(t.hd) * t.sp * 0.4 + Math.cos(a) * r;
+  OUT.y = t.y + Math.sin(t.hd) * t.sp * 0.4 + Math.sin(a) * r;
 }
 
 function lairOf(world: World, c: Creature, m: Mind, farFromVillages: boolean): number {
@@ -982,8 +1111,8 @@ function lairOf(world: World, c: Creature, m: Mind, farFromVillages: boolean): n
 
 function gather(world: World, c: Creature, k: CreatureKind, m: Mind): void {
   if (hasNeeds(c, k)) {
-    // Grazers graze, a little ahead of hunger, and keep with their herd.
-    if (m.hunger > 0.3 && eat(world, c, k, m)) return;
+    // Grazers graze through a meal (urgent: from 0.7 to 0.3) and keep with their herd.
+    if (m.meal && eat(world, c, k, m)) return;
     wander(world, c, k, m);
     return;
   }
