@@ -1,0 +1,32 @@
+shot 01-computer-gate-signin
+shot 02-computer-token-owner-offer
+owner offer: 🔐 Make the owner's account × You hold the admin token on this device. Make the owner's account with a passkey (your phone's or computer's own lock, no password
+owner menu: ✨ Magic Merger The admin, by token on this device, not signed in × Not signed in: your progress stays on this device only. Sign in with a passkey Make a passkey: keep your progress About the game and 
+shot 03-computer-token-menu
+test invites f8e6a90a (stand-in) and 3718c32d (Ben) created
+stand-in flagged admin in D1
+computer: admin true, account {"id":"f8e6a90a","name":"Review 4.4.6","signedIn":true,"claimed":true,"emailOffered":false,"admin":true}, token kept false
+computer menu: ✨ Magic Merger Signed in as Review 4.4.6 (the owner, with the admin powers) × Saved to your account just now. Sync now Your account Switch account Sign out About the game and privacy
+shot 04-computer-signed-in-menu
+shot 05-phone-gate
+phone: admin true with no token, badge true, 9 items, steam true, island true
+shot 06-phone-signed-in
+phone menu: ✨ Magic Merger Signed in as Review 4.4.6 (the owner, with the admin powers) × Saved to your account just now. Sync now Your account Switch account Sign out About the game and privacy
+shot 07-phone-menu
+computer after Sync now: 10 items, sandstorm true
+shot 08-computer-after-sync-now
+two islands: 🏝️ Two islands × Your island was saved from Windows NT 10.0 just now (11/4/2026, 11:12:13 PM), and this device's island changed since it last looked. Which one do you play? The other stays on your account as the previou
+shot 09-phone-two-islands
+previous island kept: [{"kind":"island_previous","device":"Windows NT 10.0"}]
+account page: Windows NT 10.0 (this one), since 2 min ago, last synced just now iPhone, since just now, last synced just now Sign out | The previous island, from Windows NT 10.0, just now: kept when you chose another one. Play it again
+shot 10-computer-account-page
+sign out asks: 🚪 Sign out × Your discoveries, board and island are saved to your account. Remove them from this device (anyone using it next starts fresh), or keep a copy here for the next time you sign in on it. S; focused card-cast signout-remove
+shot 11-phone-sign-out
+Ben on the phone: 8 items, steam false; Ben's account: fire, water, earth, air, light, shadow, life, arcane; island false
+shot 12-phone-ben
+toasts while switching: Welcome back, Review 4.4.6
+switched back: Review 4.4.6, 10 items, steam true, sandstorm true
+shot 13-phone-switched-back
+cleanup f8e6a90a: {"ok":true}
+cleanup 3718c32d: {"ok":true}
+left of the test accounts: {"creds":0,"sessions":0,"progress":0,"usd":0,"admins":1}

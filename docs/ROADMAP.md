@@ -289,7 +289,7 @@ Asked for: items 1 to 7 of "4.4.6 Accounts you can trust" below, the two bugs re
 4. **Sign in, sign out, switch, "signed in as"** in the `?` menu, and the passkey sign in on the gate, whatever the device holds; the account page lists devices with their last sync.
 5. **Sync you can see**: the status line, **Sync now**, a pull of the discoveries every minute, the Worker joining discoveries instead of replacing them; a newer island from another device is taken when this one did not change, offered next to this one when it did, and the one not played stays on the account as the previous island.
 6. **What syncs** is written in DESIGN.md: discoveries, board, island, wins, ideas and votes, the recipe book through the discoveries, the favorite spell once it exists; settings stay per device, on purpose.
-7. **Checked**: every test above passes, with the 4.0 attacks of `docs/REVIEW-4.0.md` section 10 (the worker section 16 and 26 checks, account-verify A to D) and `scripts/verify-4.1.mjs`.
+7. **Checked**: every test above passes, with the 4.0 attacks of `docs/REVIEW-4.0.md` section 10 (the worker section 16 and 26 checks, account-verify A to D) and `scripts/verify-4.1.mjs`. On the live site, a computer and a phone ran the flow with test accounts (`docs/review-4.4.6`); the owner's own passkey is left for the owner to make (SETUP.md, "Your own account").
 
 Not done: the board is still taken only when the device's board is empty (last saved wins otherwise, as in 4.0); a newer island noticed while playing is offered, not loaded by itself; a save set aside lives in that browser's IndexedDB only, so clearing the browser's data loses the copy (the account still holds what it synced).
 

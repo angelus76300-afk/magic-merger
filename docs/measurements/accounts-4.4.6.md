@@ -94,3 +94,18 @@ ok   F: on a device with a link, "Sign in" is in the ? menu
 ```
 
 `scripts/verify-4.1.mjs` (two tabs of one browser, review M6, and the other 4.1 browser checks) passes unchanged.
+
+## On the live site
+
+Deployed on 2026-11-04 at 23:03 UTC (migration 0015 applied; the live database exported first to a file outside the repository, in the session container's scratchpad: `magic-merger-live-20261104-2301-before-0015.sql`, 3.9 MB, 9064 rows, sha256 `8e157e4a…5d9179`, and the D1 Time Travel bookmark `00000190-00000006-00005119-e09dab22692c5322251f698a844413ed` taken just before). Then a scratchpad script drove the live site with a Desktop Chrome computer and an iPhone 14 phone, each with a virtual authenticator. `docs/review-4.4.6/live-log.txt` is its log, the frames are beside it.
+
+The owner's own account was shown, not made: with the token, the computer is offered "Make the owner's account" (`02`) and the menu says "The admin, by token on this device, not signed in" (`03`); that passkey is the owner's to make on their own device. The rest of the flow ran on a stand-in, a test account flagged admin in D1 once made (no link may make an admin account), and a second test account, Ben:
+
+1. The computer made the stand-in's passkey from its link; flagged admin, it showed the admin badge with no token kept, and the menu "Signed in as Review 4.4.6 (the owner, with the admin powers)", "Saved to your account just now" (`04`).
+2. The phone, no link and no token, signed in from the gate (`05`): admin badge, Steam from the computer, the computer's island (`06`, `07`).
+3. The phone made Sandstorm; "Sync now" on the computer brought it (`08`).
+4. Both islands changed; "Sync now" on the phone offered both, naming the computer (`09`); the phone kept its own and the computer's stayed on the account as the previous island, listed on the account page with each device's last sync (`10`).
+5. The phone signed out keeping a copy (the dialog, remove focused by default, `11`); Ben signed in on it and saw 8 items, his account holding nothing of the stand-in's and no island (`12`); "Switch account" back (removing Ben's copy) brought the stand-in's 10 items back (`13`).
+6. Both test accounts were then unflagged, revoked and deleted from the People routes: no passkey, session or progress row left, $0 spent; the owner's row is untouched (unclaimed, no passkey, no session).
+
+A first run of the same script failed at step 5: the script had put back the stand-in's passkey as it was before the phone used it, so its signature counter repeated and the Worker refused it as a cloned authenticator (4.1). The second run carries the phone's own copy, as a real phone does; both runs' test accounts are deleted.
