@@ -7,7 +7,9 @@ import { Particles } from "./particles";
 import { VoxelState, packVoxel, VK } from "./voxels";
 import { keyX, keyY, voxelKey } from "./voxelkey";
 import { DecorStore } from "./decor";
-import { buildLand, type LandOptions, type Spring } from "./land";
+import { BIOMES, buildLand, drainage, type LandOptions, type Spring } from "./land";
+import { dressSettlements, ecology, growSettlements, markRefuges, type Refuge, type Settlement } from "./ecology";
+import { SPECIES } from "./wildlife";
 import { CreatureGrid } from "./crowd";
 import type { Landmark, Presence } from "./social";
 import type { Ward } from "./wards";
@@ -99,6 +101,16 @@ export class World {
   // Cells that keep a river flowing (land.ts). With any, water also leaves
   // the island over its edge, so the sea does not rise.
   springs: Spring[] = [];
+  // Nature that is never the same twice (4.4.5, ecology.ts): each cell's
+  // tree look and niche, the rare variant of a land it belongs to, a refuge
+  // kept for each wild species, each village's look and what it has built.
+  // All null or empty on the old island and the challenges.
+  flora: Uint8Array | null = null;
+  rare: Uint8Array | null = null;
+  refuges: Refuge[] = [];
+  settlements: Settlement[] = [];
+  // How often villagers walked over each cell lately: paths wear in (not saved).
+  wear: Uint8Array | null = null;
 
   constructor(
     readonly w: number,
@@ -332,6 +344,14 @@ function generateLand(w: number, h: number, seed: number, land: LandOptions): Wo
   const rng = world.rng;
   const { peak } = buildLand(world, land);
   placeVillages(world, rng, world.seaLevel + Math.max(10, peak * 0.62));
+  // 4.4.5: what grows where, rare variants, villages' looks, refuges.
+  ecology(world, BIOMES, peak, drainage(world).filled);
+  dressSettlements(world, BIOMES);
+  growSettlements(world, true);
+  markRefuges(
+    world,
+    SPECIES.map((s) => ({ name: s.kind.name, habitat: s.habitat })),
+  );
   return world;
 }
 
@@ -355,6 +375,8 @@ function placeVillages(world: World, rng: Rng, top: number): void {
       if (centers.some((o) => Math.hypot(o.x - c.x, o.y - c.y) < Math.min(w, h) / spread)) continue;
       centers.push(c);
       buildVillage(world, c.x, c.y, rng);
+      // 4.4.5: each village's look and extras start from its center.
+      world.settlements.push({ x: c.x, y: c.y, style: 0, level: 1 });
     }
   }
 }

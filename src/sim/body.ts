@@ -31,6 +31,8 @@ export interface Build {
   ears?: number;
   tail?: number;
   snout?: number;
+  // A camel's hump (4.4.5).
+  hump?: number;
 }
 
 // How a model box moves: legs and arms swing (leg2 and arm2 in the other
@@ -194,6 +196,15 @@ export const BUILDS: Record<string, Build> = {
   small: { legs: 0.8, bulk: 0.85, head: 1.3 },
   stout: { legs: 0.75, bulk: 1.4, head: 1 },
   thin: { bulk: 0.7, legs: 1.1 },
+  // Animals of their region (4.4.5).
+  camel: { legs: 1.6, long: 1.15, bulk: 1.0, neck: 1.9, head: 0.95, snout: 1.25, ears: 0.6, tail: 0.5, hump: 1 },
+  fox: { legs: 0.8, long: 0.9, bulk: 0.72, snout: 1.45, ears: 1.35, tail: 1.6 },
+  hare: { legs: 0.72, long: 0.85, bulk: 1.0, head: 1.2, ears: 2.6, snout: 0.4, tail: 0.25, neck: 0.3 },
+  frog: { legs: 0.42, long: 0.62, bulk: 1.3, head: 1.4, ears: 0.15, snout: 0.25, tail: 0.1, neck: 0.1 },
+  lizard: { legs: 0.34, long: 1.05, bulk: 0.6, head: 0.9, ears: 0.15, snout: 1.25, tail: 2.1, neck: 0.3 },
+  monkey: { legs: 0.75, bulk: 0.75, head: 1.25 },
+  // Wading birds stand on long legs.
+  wader: { legs: 2.2, neck: 2 },
 };
 
 interface Guess {

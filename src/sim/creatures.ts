@@ -6,6 +6,8 @@ import { daylight } from "./daylight";
 import type { World } from "./world";
 import { body, type BodySpec } from "./body";
 import { SPECIES, habitatCell, targetOf } from "./wildlife";
+import { keepBalance, stepMovers } from "./balance";
+import { growSettlements, wearPaths } from "./ecology";
 import { packLook, randomLook, shirtOf, sizeOf, unpackLook } from "./villagers";
 import { denDown, goalOfCreature, hasNeeds, kindGoal, needsTick, pursue, stepGoals } from "./goals";
 import { abilitiesFromName, useAbilities } from "./abilities";
@@ -1204,7 +1206,14 @@ export function lifeCycle(world: World, dt: number): void {
   for (let k = world.creatures.length - 1; k >= 0; k--) {
     if (world.creatures[k].dead && world.creatures[k].deadFor > 40) world.creatures.splice(k, 1);
   }
-  if (Math.random() < dt * 0.2) keepWild(world);
+  if (world.flora) {
+    // 4.4.5: numbers that follow food, arrivals, refuges; paths worn in,
+    // villages that grow.
+    if (Math.random() < dt * 0.2) keepBalance(world, makeCreature);
+    if (world.tick % 60 === 7) stepMovers(world);
+    if (world.tick % 30 === 11) wearPaths(world);
+    if (world.tick % 600 === 13) growSettlements(world);
+  } else if (Math.random() < dt * 0.2) keepWild(world);
   if (Math.random() > dt * 0.15) return;
   let houses = 0;
   for (let i = 0; i < world.n; i++) if (world.cover[i] === C.HOUSE) houses++;

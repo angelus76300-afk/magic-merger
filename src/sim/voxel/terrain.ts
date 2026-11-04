@@ -5,6 +5,7 @@ import { FACE_LIGHT } from "./models";
 import { mixColor, scaleColor } from "../colors";
 import { GRAPHICS } from "./graphics";
 import { LOOKS, biomeAt } from "../land";
+import { DAMP, R as RARE } from "../ecology";
 
 // The island as voxel columns. Each cell is one column whose top sits at its
 // height (half a unit per height unit, rounded to whole voxels). Walls are
@@ -265,9 +266,15 @@ export class Terrain {
             continue;
           }
           // Layers from the top: the surface color for one voxel, then soil, then stone.
-          const soil = this.soilColor(i);
+          let soil = this.soilColor(i);
+          let edge = this.sideTopColor(i, surface);
+          // Moss on the north faces of damp ground (4.4.5).
+          if (d === 3 && world.flora && world.flora[i] & DAMP && (world.ground[i] === G.GRASS || world.ground[i] === G.ROCK || world.ground[i] === G.DIRT)) {
+            edge = mixColor(edge, MOSS, 0.5);
+            soil = mixColor(soil, MOSS, 0.4);
+          }
           const strata = this.strataAt(i);
-          band(out, d, X, Z, Math.max(low, top - 1), top, top, this.sideTopColor(i, surface), light, low, foot);
+          band(out, d, X, Z, Math.max(low, top - 1), top, top, edge, light, low, foot);
           if (top - 1 > low) band(out, d, X, Z, Math.max(low, top - 3), top - 1, top, soil, light, low, foot);
           if (top - 3 > low) band(out, d, X, Z, Math.max(low, BOTTOM + 2), top - 3, top, strata.stone, light, low, foot);
           if (BOTTOM + 2 > low) band(out, d, X, Z, low, Math.min(top - 3, BOTTOM + 2), top, strata.deep, light, low, foot);
@@ -371,6 +378,8 @@ export class Terrain {
   // (4.4.1): the world's table holds the main biome's.
   private colorsAt(i: number, id: number, m: LandMaterial): number[] {
     const { world } = this;
+    // 4.4.5: salt flats are white.
+    if (id === G.SAND && world.rare?.[i] === RARE.SALT) return SALT;
     if (!world.biomeMap || id >= BUILTIN.ground.length) return m.colors;
     return LOOKS[biomeAt(world, i)].palette[m.name] ?? BUILTIN.ground[id].colors;
   }
@@ -643,3 +652,6 @@ function band(
   if (hi <= lo) return;
   out.face(dir, X, Z, lo, hi, color, light * (1 - Math.min(0.25, (top - hi) * 0.03)), 1, 0, lo === low ? foot : 1);
 }
+
+const SALT = [0xf2efe6, 0xebe7dc, 0xf7f5ef, 0xe6e1d4];
+const MOSS = 0x4f7a3a;

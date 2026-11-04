@@ -214,6 +214,7 @@ function fourLegs(B: Builder, build: Build): Anchors {
       B.c(R.BODY, cx, 0, cz, lw, Lg + 0.06, lw, { p, anim });
       B.c(R.DARK, cx, 0, cz, lw + 0.02, 0.06, lw + 0.02, { p, anim, lod: 1 });
     }
+  if (build.hump) B.c(R.BODY, 0, Lg + Bh - 0.02, -0.04, Bw * 0.7, 0.16 * build.hump, Bl * 0.36);
   const nl = 0.22 * b(build, "neck");
   const pivot: V3 = [0, Lg + Bh - 0.05, Bl / 2 - 0.1];
   const head: Attach = { p: pivot, anim: A.HEAD, seg: 0 };
@@ -248,28 +249,40 @@ function fourLegs(B: Builder, build: Build): Anchors {
   };
 }
 
-function bird(B: Builder): Anchors {
+function bird(B: Builder, build: Build): Anchors {
   const beak = 0xe0a030;
-  for (const side of [1, -1]) B.c(R.FIXED, side * 0.06, 0, 0, 0.04, 0.16, 0.04, { color: beak, lod: 1 });
-  B.box(R.BODY, -0.15, 0.14, -0.24, 0.3, 0.28, 0.46);
-  B.c(R.BODY2, 0, 0.18, 0.22, 0.2, 0.18, 0.02, { lod: 1 });
-  const head: Attach = { p: [0, 0.38, 0.15], anim: A.HEAD, seg: 0 };
-  B.box(R.BODY, -0.1, 0.36, 0.12, 0.2, 0.2, 0.2, head);
-  B.box(R.FIXED, -0.035, 0.41, 0.31, 0.07, 0.06, 0.11, { ...head, color: beak });
-  for (const side of [1, -1]) {
-    const p: V3 = [side * 0.15, 0.39, 0];
-    B.box(R.BODY2, side > 0 ? 0.14 : -0.56, 0.37, -0.18, 0.42, 0.04, 0.34, { p, anim: side > 0 ? A.WING_L : A.WING_R });
+  // A wading bird (4.4.5) stands on long legs with its head on a long neck;
+  // every other bird sits low, as before (L and N are 0).
+  const L = build.legs ? 0.2 * build.legs : 0;
+  const N = L && build.neck ? 0.12 * build.neck : 0;
+  if (L) {
+    for (const side of [1, -1]) {
+      const p: V3 = [side * 0.06, L + 0.1, 0];
+      B.c(R.DARK, side * 0.06, 0, 0, 0.035, L + 0.16, 0.035, { p, anim: side > 0 ? A.LEG_A : A.LEG_B });
+    }
+    if (N) B.c(R.BODY, 0, L + 0.32, 0.17, 0.08, N + 0.1, 0.08);
   }
-  const tp: V3 = [0, 0.32, -0.22];
-  B.box(R.BODY, -0.09, 0.3, -0.44, 0.18, 0.035, 0.24, { p: tp, anim: A.TAIL });
+  const H = L + N;
+  for (const side of [1, -1]) B.c(R.FIXED, side * 0.06, 0, 0, 0.04, 0.16, 0.04, { color: beak, lod: 1 });
+  B.box(R.BODY, -0.15, L + 0.14, -0.24, 0.3, 0.28, 0.46);
+  B.c(R.BODY2, 0, L + 0.18, 0.22, 0.2, 0.18, 0.02, { lod: 1 });
+  const head: Attach = { p: [0, H + 0.38, 0.15], anim: A.HEAD, seg: 0 };
+  B.box(R.BODY, -0.1, H + 0.36, 0.12, 0.2, 0.2, 0.2, head);
+  B.box(R.FIXED, -0.035, H + 0.41, 0.31, 0.07, 0.06, 0.11, { ...head, color: beak });
+  for (const side of [1, -1]) {
+    const p: V3 = [side * 0.15, L + 0.39, 0];
+    B.box(R.BODY2, side > 0 ? 0.14 : -0.56, L + 0.37, -0.18, 0.42, 0.04, 0.34, { p, anim: side > 0 ? A.WING_L : A.WING_R });
+  }
+  const tp: V3 = [0, L + 0.32, -0.22];
+  B.box(R.BODY, -0.09, L + 0.3, -0.44, 0.18, 0.035, 0.24, { p: tp, anim: A.TAIL });
   return {
-    head: { ...head, cx: 0, bottom: 0.36, top: 0.56, front: 0.32, back: 0.12, half: 0.1 },
-    face: { ...head, cx: 0, y: 0.5, z: 0.32, half: 0.1, eyes: 2, scale: 1 },
-    torso: { x0: -0.15, y0: 0.14, z0: -0.24, w: 0.3, h: 0.28, d: 0.46 },
-    back: { p: ZERO, anim: A.NONE, seg: 0, y: 0.42, z: 0, half: 0.15 },
-    rear: { p: tp, anim: A.TAIL, seg: 0, y: 0.32, z: -0.24 },
-    hand: { ...head, x: 0, y: 0.4, z: 0.42 },
-    hand2: { ...head, x: 0, y: 0.4, z: 0.42 },
+    head: { ...head, cx: 0, bottom: H + 0.36, top: H + 0.56, front: 0.32, back: 0.12, half: 0.1 },
+    face: { ...head, cx: 0, y: H + 0.5, z: 0.32, half: 0.1, eyes: 2, scale: 1 },
+    torso: { x0: -0.15, y0: L + 0.14, z0: -0.24, w: 0.3, h: 0.28, d: 0.46 },
+    back: { p: ZERO, anim: A.NONE, seg: 0, y: L + 0.42, z: 0, half: 0.15 },
+    rear: { p: tp, anim: A.TAIL, seg: 0, y: L + 0.32, z: -0.24 },
+    hand: { ...head, x: 0, y: H + 0.4, z: 0.42 },
+    hand2: { ...head, x: 0, y: H + 0.4, z: 0.42 },
     has: ["wings", "tail"],
   };
 }
@@ -929,6 +942,14 @@ const SIZE_BY_BUILD = new Map<Build, Natural>([
   [BUILDS.small, { height: 0.7, radius: 0.55, grow: 0.25, max: 1 }],
   [BUILDS.stout, { height: 1.3, radius: 0.7 }],
   [BUILDS.thin, { height: 1, radius: 0.55, grow: 0.25, max: 1.3 }],
+  // 4.4.5.
+  [BUILDS.camel, { height: 0.93, radius: 0.75 }],
+  [BUILDS.fox, { height: 0.34, radius: 0.45 }],
+  [BUILDS.hare, { height: 0.26, radius: 0.4 }],
+  [BUILDS.frog, { height: 0.12, radius: 0.3 }],
+  [BUILDS.lizard, { height: 0.1, radius: 0.34 }],
+  [BUILDS.monkey, { height: 0.42, radius: 0.4 }],
+  [BUILDS.wader, { height: 0.62, radius: 0.4 }],
 ]);
 const SIZE_BY_PLAN: Record<Plan, Natural> = {
   "two legs": { height: 1, radius: 0.55, grow: 0.25, max: 1.3 },

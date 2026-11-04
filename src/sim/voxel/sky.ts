@@ -174,6 +174,10 @@ export class Sky {
     });
     this.drops = new Points(dropGeometry, this.dropMaterial);
     this.drops.frustumCulled = false;
+    // After the water (terrain.ts draws it at 2): drops write no depth, so
+    // water drawn after them covered the ones in front of it (4.4.5, seen
+    // by the owner: rain behind the sea).
+    this.drops.renderOrder = 4;
     this.drops.visible = false;
     this.group.add(this.sun, this.moon, this.stars);
     scene.add(this.group, this.drops);
