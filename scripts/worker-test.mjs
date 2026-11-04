@@ -1361,7 +1361,8 @@ console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at st
     .run();
   const logBefore = workerLog.length;
   const cron = await fetch(`${BASE}/__scheduled?cron=*/10+*+*+*+*`);
-  await new Promise((r) => setTimeout(r, 1500));
+  // The cron's jobs finish after its answer: its log line is waited for.
+  for (let k = 0; k < 40 && !/poll batches|Uncaught/.test(workerLog.slice(logBefore)); k++) await new Promise((r) => setTimeout(r, 250));
   const logged = workerLog.slice(logBefore);
   check(
     "L7: a batch error in the cron is a log line named after its job, not the cron's failure",
