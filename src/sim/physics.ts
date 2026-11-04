@@ -32,6 +32,7 @@ export function stepPhysics(world: World, dt: number): void {
     tempNext = new Float32Array(world.n);
   }
   stepWards(world);
+  if (world.springs.length) stepSprings(world, dt);
   stepFluids(world, dt);
   stepFire(world, dt);
   // Every other tick each, on alternate ticks: together on the same tick they
@@ -40,6 +41,37 @@ export function stepPhysics(world: World, dt: number): void {
   else stepGas(world, dt * 2);
   stepGrowth(world);
   stepVoxels(world, dt);
+}
+
+// Rivers (4.4, land.ts): springs keep river heads, lakes and a volcano's
+// crater at their level, and water above the
+// sea leaves the island over its edge (the waterfalls), so the rivers keep
+// running and the sea does not rise. A spell can still dam, drain or boil a
+// river: a spring under lava, ice or another fluid stops, and starts again
+// once the cell is clear.
+function stepSprings(world: World, dt: number): void {
+  const { w, h, depth, fluid, height } = world;
+  for (const s of world.springs) {
+    const i = s.i;
+    const f = s.lava ? F.LAVA : F.WATER;
+    if (fluid[i] !== F.NONE && fluid[i] !== f) continue;
+    const want = s.level - height[i];
+    if (depth[i] >= want) continue;
+    world.setFluid(i, f, Math.min(want, depth[i] + dt * (s.rate ?? 1.2)));
+  }
+  const spill = (i: number) => {
+    if (fluid[i] !== F.WATER) return;
+    const over = height[i] + depth[i] - world.seaLevel;
+    if (over > 0.01) depth[i] = Math.max(0.0005, depth[i] - Math.min(over, dt * 0.8));
+  };
+  for (let x = 0; x < w; x++) {
+    spill(x);
+    spill((h - 1) * w + x);
+  }
+  for (let y = 1; y < h - 1; y++) {
+    spill(y * w);
+    spill(y * w + w - 1);
+  }
 }
 
 function stepFluids(world: World, dt: number): void {
@@ -130,7 +162,7 @@ function fluidSurface(world: World, i: number, f: number, x: number, y: number, 
       }
     }
     const thin = depth[i] < 0.25 ? 0.5 : 0;
-    if (rng.next() < dt * (0.02 + thin)) {
+    if (rng.next() < dt * (0.02 + thin) && !nearVent(world, x, y)) {
       world.height[i] += depth[i] * 0.9;
       world.ground[i] = G.BASALT;
       world.setFluid(i, F.NONE, 0);
@@ -156,6 +188,18 @@ function fluidSurface(world: World, i: number, f: number, x: number, y: number, 
   } else if (f === F.OIL) {
     if (world.fire[i] > 0) depth[i] -= dt * 0.05;
   }
+}
+
+// A volcano's crater (4.4): lava within a few cells of a lava spring stays
+// molten, so the crater does not fill with basalt.
+function nearVent(world: World, x: number, y: number): boolean {
+  for (const s of world.springs) {
+    if (!s.lava) continue;
+    const dx = (s.i % world.w) - x;
+    const dy = Math.floor(s.i / world.w) - y;
+    if (dx * dx + dy * dy < 30) return true;
+  }
+  return false;
 }
 
 // Two different fluids touch.
