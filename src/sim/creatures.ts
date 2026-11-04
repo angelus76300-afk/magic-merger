@@ -13,7 +13,7 @@ import { stepArtifacts } from "./artifacts";
 import { meter } from "./motion";
 import { steer } from "./steer";
 import { alarm, calmDown, fleeing } from "./flight";
-import { pathsOf } from "./paths";
+import { pathsOf, solidCovers } from "./paths";
 import { LOADS, deed, harmed, life, newMind, noteDeath, reborn, storyOn, tell, villageOf, type AbilitySpec, type Goal, type Mind } from "./kin";
 
 // What a spell-made creature does, declared rather than coded, so even a
@@ -386,8 +386,8 @@ function blocked(world: World, x: number, y: number, c: Creature, k: CreatureKin
   if (k.flying || c.levitate > 0 || c.z > 1.5) return false;
   const i = world.idx(x, y);
   if (k.aquatic) return !wet(world, i, 0.6);
-  const cover = world.materials.get("cover", world.cover[i]);
-  if (cover.solid) return true;
+  // Solid covers by id from a table (4.3: steering asks this many times a tick).
+  if (solidCovers(world)[world.cover[i]]) return true;
   // Deep water and any lava are walls for those who would die in them.
   const f = world.fluid[i];
   if (f !== F.NONE && f !== F.ICE && world.depth[i] > 0.05) {
@@ -398,6 +398,8 @@ function blocked(world: World, x: number, y: number, c: Creature, k: CreatureKin
   const here = world.level(world.idx(Math.max(0, Math.min(world.w - 1, fx)), Math.max(0, Math.min(world.h - 1, fy))));
   return world.level(i) - here > 1.6;
 }
+
+const TIMED = ["frozen", "fear", "sleep", "calm", "levitate", "stun"] as const;
 
 export function updateCreature(world: World, c: Creature, dt: number): void {
   const k = kindOf(c);
@@ -416,9 +418,11 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     return;
   }
   // Frightened just now by a spell, an aura or a guard: a turn with a reason.
-  if (meter && c.fear > 0 && !c.data.feared) meter.done(c, "scared");
-  c.data.feared = c.fear > 0 || undefined;
-  for (const s of ["frozen", "fear", "sleep", "calm", "levitate", "stun"] as const) c[s] = Math.max(0, c[s] - dt);
+  if (meter) {
+    if (c.fear > 0 && !c.data.feared) meter.done(c, "scared");
+    c.data.feared = c.fear > 0 || undefined;
+  }
+  for (const s of TIMED) c[s] = Math.max(0, c[s] - dt);
 
   const i = world.idx(Math.max(0, Math.min(world.w - 1, c.x)), Math.max(0, Math.min(world.h - 1, c.y)));
   const onGround = c.z < 0.5 && !k.flying && c.levitate <= 0;
@@ -496,6 +500,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   let mood: Mood = null;
   let plan2: ReturnType<typeof social> = null;
   let flight: { x: number; y: number } | null = null;
+  let socialMood: Mood = null;
   // Which decision drove this tick's step, for the motion meter (4.3).
   let drive = busy ? "asleep" : "idle";
   if (!busy) {
@@ -563,7 +568,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       wantY = plan2.y - c.y;
       pace = plan2.pace;
       mood = plan2.mood;
-      drive = `social:${plan2.mood}`;
+      drive = "social";
+      socialMood = plan2.mood;
       if (c.mind) c.mind.action = plan2.mood === "fear" ? "running for its life" : plan2.mood === "angry" ? "fighting back" : c.mind.action;
     } else if ((flight = (ai?.mode === "flee" && lookOut(world, c, ai, dt), fleeing(world, c)))) {
       // Survival first: a deer runs from people and wolves before it eats,
@@ -580,14 +586,14 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       wantY = plan2.y - c.y;
       pace = plan2.pace;
       mood = plan2.mood;
-      drive = `pursue:${c.mind?.task ?? "none"}`;
+      drive = "pursue";
     } else if (ai && ai.mode !== "wander" && ai.mode !== "flee" && behave(world, c, k, ai, dt)) {
       wantX = c.tx - c.x;
       wantY = c.ty - c.y;
       pace = ai.mode === "hunt" ? 1.3 : 1;
       if (Math.hypot(wantX, wantY) < 0.4) pace = 0;
       if (ai.mode === "hunt" && c.data.target) mood = "hunt";
-      drive = `behave:${ai.mode}`;
+      drive = "behave";
       if (c.mind) c.mind.action = ai.mode === "hunt" ? (c.data.target ? "hunting" : "prowling") : ai.mode === "guard" ? "on guard" : "following";
     } else if (!needs && (plan2 = pursue(world, c, k, dt))) {
       // Older spell creatures take up their goal when their behavior leaves them idle.
@@ -595,7 +601,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       wantY = plan2.y - c.y;
       pace = plan2.pace;
       mood = plan2.mood;
-      drive = `pursue:${c.mind?.task ?? "none"}`;
+      drive = "pursue";
     } else if (needs && c.mind) {
       // Between two tasks it stands and looks around, and thinks again soon,
       // instead of setting off toward a random point for half a second (4.3).
@@ -644,7 +650,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     // The end of the trip, for its flow field: the task's place, when the
     // point asked for is only a bend on the way (goals.ts roamAim).
     const m = c.mind;
-    const trip = drive.startsWith("pursue:") && m && m.task !== "none";
+    const trip = drive === "pursue" && m && m.task !== "none";
     const gx = trip ? (m.target ? m.target.x : m.tx) : c.x + wantX;
     const gy = trip ? (m.target ? m.target.y : m.ty) : c.y + wantY;
     const stepped = steer(world, c, k, c.x + wantX, c.y + wantY, busy ? 0 : speed, arrive, dt, blocked, gx, gy);
@@ -687,11 +693,17 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   if (!busy && (k.abilities?.length || c.kind === "villager")) useAbilities(world, c, k);
   if (c.fear > 0 || c.burning > 0) mood = "fear";
   c.data.mood = busy ? (c.sleep > 0 ? "asleep" : null) : mood;
-  c.data.idle = idleOf(c, busy);
+  const idle = idleOf(c, busy);
+  if (c.data.idle !== idle) c.data.idle = idle;
   if (c.hp <= 0) c.dead = true;
 
   if (k.tick) k.tick(c, dt);
-  if (meter) meter.after(c, world.time, dt, drive, pace > 0 ? wantX : 0, pace > 0 ? wantY : 0, wanted);
+  if (meter) {
+    // The drive in full for the report: which task, which mood, which behavior.
+    const full =
+      drive === "pursue" ? `pursue:${c.mind?.task ?? "none"}` : drive === "social" ? `social:${socialMood}` : drive === "behave" ? `behave:${ai?.mode}` : drive;
+    meter.after(c, world.time, dt, full, pace > 0 ? wantX : 0, pace > 0 ? wantY : 0, wanted);
+  }
 }
 
 // What a creature standing still is doing, for the view (4.3): lying down

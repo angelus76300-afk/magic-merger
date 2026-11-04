@@ -710,10 +710,9 @@ for (const { stream, report: r } of sceneReports.sort((a, b) => a.stream - b.str
     kinds.map(([k, v]) => `${k} ${v.start}>${v.end} (${v.min}-${v.max})`).join(", "),
   );
   // 4.3: deer run better, and wolves must still catch some.
-  const wolvesCaught = (r.catches["wolf caught a deer"] ?? 0) + (r.catches["wolf caught a rabbit"] ?? 0);
   check(
-    `five minute scene, stream ${stream}: wolves still catch deer or rabbits`,
-    wolvesCaught > 0,
+    `five minute scene, stream ${stream}: wolves still catch deer`,
+    (r.catches["wolf caught a deer"] ?? 0) > 0,
     Object.entries(r.catches)
       .map(([k, n]) => `${k} ${n}`)
       .join(", ") || "nobody caught anything",

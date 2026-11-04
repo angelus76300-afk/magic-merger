@@ -21,15 +21,15 @@ export type Mobility = (typeof Mobility)[keyof typeof Mobility];
 
 // Cells filled per tick over all fields: a field of a large island (208 by
 // 208, 43,000 cells) is ready in about half a second.
-const BUDGET = 3000;
-const FIELD_LIFE = 20;
+const BUDGET = 1500;
+const FIELD_LIFE = 30;
 const FIELD_IDLE = 8;
 const MAX_FIELDS = 40;
 // No field reaches further than this many steps from its destination: a trip
 // longer than that walks straight until it is within reach.
-const MAX_STEPS = 90;
+const MAX_STEPS = 64;
 const BLOCK = 4;
-const SHORT_STEPS = 40;
+const SHORT_STEPS = 28;
 const FAR = 0xffff;
 // The steepest step up a field takes: a little less than a creature can
 // climb (1.6), so a step that is just climbable when the field is made (or
@@ -251,22 +251,26 @@ export class Paths {
     const dist = f.dist;
     const q = this.queue;
     const walk = f.mobility !== Mobility.WATER;
+    const limit = f.size === 1 ? SHORT_STEPS : MAX_STEPS;
+    const height = world.height;
+    const depth = world.depth;
+    const solid = solidCovers(world);
     while (this.head < this.tail && budget > 0) {
       const i = q[this.head++];
       budget--;
+      const d = dist[i] + 1;
+      if (d > limit) continue;
       const x = i % w;
       const y = (i - x) / w;
-      const d = dist[i] + 1;
-      if (d > (f.size === 1 ? SHORT_STEPS : MAX_STEPS)) continue;
-      const here = walk ? world.level(i) : 0;
+      const here = height[i] + depth[i];
       for (let k = 0; k < 4; k++) {
         const nx = k === 0 ? x + 1 : k === 1 ? x - 1 : x;
         const ny = k === 2 ? y + 1 : k === 3 ? y - 1 : y;
         if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
         const j = ny * w + nx;
-        if (dist[j] !== FAR || !open(world, j, f.mobility)) continue;
+        if (dist[j] !== FAR || !openFast(world, j, f.mobility, solid)) continue;
         // From j the creature steps onto i.
-        if (walk && here - world.level(j) > CLIMB) continue;
+        if (walk && here - height[j] - depth[j] > CLIMB) continue;
         dist[j] = d;
         q[this.tail++] = j;
       }
@@ -274,6 +278,29 @@ export class Paths {
     if (this.head >= this.tail) f.done = true;
     return budget;
   }
+}
+
+// Which covers are solid, by id, made again when spells add covers.
+const solids = new WeakMap<World, { n: number; flags: Uint8Array }>();
+export function solidCovers(world: World): Uint8Array {
+  const list = world.materials.list.cover;
+  let s = solids.get(world);
+  if (!s || s.n !== list.length) {
+    s = { n: list.length, flags: new Uint8Array(256) };
+    list.forEach((m, id) => (s!.flags[id] = m.solid ? 1 : 0));
+    solids.set(world, s);
+  }
+  return s.flags;
+}
+
+function openFast(world: World, i: number, mobility: Mobility, solid: Uint8Array): boolean {
+  const fluid = world.fluid[i];
+  if (mobility === Mobility.WATER) return (fluid === F.WATER || fluid === F.ICE) && world.depth[i] > 0.6;
+  if (solid[world.cover[i]]) return false;
+  if (fluid === F.NONE || fluid === F.ICE) return true;
+  const depth = world.depth[i];
+  if (fluid === F.LAVA) return depth <= 0.05;
+  return mobility === Mobility.SWIM || depth <= 1;
 }
 
 function open(world: World, i: number, mobility: Mobility): boolean {

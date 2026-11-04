@@ -124,6 +124,8 @@ export interface Mind {
   away: number;
   // In the middle of a meal (4.3): eats from 0.7 hunger until 0.3.
   meal?: boolean;
+  // The tick it last walked to or worked at its task (4.3).
+  acted?: number;
 }
 
 export type Task =

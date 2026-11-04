@@ -370,11 +370,11 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
   // Back to its task after a flight or a fight: how close it came before
   // does not count, or the way back reads as no progress (4.3: it was then
   // hopped three cells toward its goal and the task dropped).
-  if (c.data.actTick !== world.tick - 1) {
+  if (m.acted !== world.tick - 1) {
     m.near = Infinity;
     m.stall = 0;
   }
-  c.data.actTick = world.tick;
+  m.acted = world.tick;
   const reach = strike && t ? life.kindOf(c).radius * c.size + life.kindOf(t).radius * t.size + 0.7 : (REACH[m.task] ?? 1.6);
   OUT.mood = moodOf(m);
   if (d > reach) {
