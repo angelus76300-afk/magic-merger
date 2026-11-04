@@ -7,8 +7,10 @@ import { C, F } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
 import { Runtime } from "../src/sim/runtime";
 import { stepHeadless } from "../src/sim/tick";
-import { SPECIES } from "../src/sim/wildlife";
+import { SPECIES, targetOf } from "../src/sim/wildlife";
 import { generateWorld } from "../src/sim/world";
+
+const REGIONAL = new Set(SPECIES.filter((s) => s.regional).map((s) => s.kind.name));
 
 export interface LandLife {
   // "mixed" (4.4.1): an island of `size` as the game makes it from the seed.
@@ -20,7 +22,7 @@ export interface LandLife {
   // the fewest at any time, at the end, and the share of seconds with at
   // least one alive (a lone bear killed by a mob is born again a little
   // later: one dead animal is an event, a species that stays gone a problem).
-  species: Record<string, { habitat: number; start: number; min: number; end: number; present: number }>;
+  species: Record<string, { habitat: number; target: number; start: number; min: number; end: number; present: number }>;
   villagers: { start: number; end: number };
   houses: { start: number; end: number };
   // Cells of running water above the sea: at the start, at the end.
@@ -87,7 +89,7 @@ export function landLife(biome: Biome | "mixed", shape: Shape, seed: number, sec
     const species: LandLife["species"] = {};
     for (const s of SPECIES) {
       const n = start[s.kind.name] ?? 0;
-      species[s.kind.name] = { habitat: habitatCount(world, s), start: n, min: n, end: n, present: 0 };
+      species[s.kind.name] = { habitat: habitatCount(world, s), target: targetOf(world, s), start: n, min: n, end: n, present: 0 };
     }
     let burning = 0;
     for (let tick = 0; tick < seconds * 30; tick++) {
@@ -128,6 +130,8 @@ export function landLife(biome: Biome | "mixed", shape: Shape, seed: number, sec
 export function landProblems(r: LandLife): string[] {
   const out: string[] = [];
   for (const [name, s] of Object.entries(r.species)) {
+    // An animal of its region (4.4.5) lives only where its land is.
+    if (REGIONAL.has(name) && s.target <= 0) continue;
     if (s.habitat <= 0) out.push(`no habitat for ${name}`);
     else if (s.present < 0.6) out.push(`${name} alive only ${Math.round(s.present * 100)}% of the time (${s.start} at the start, ${s.end} at the end)`);
   }

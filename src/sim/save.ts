@@ -1,11 +1,12 @@
 import { loadedState } from "./artifacts";
 import { dressVillages, restoreCreature, saveMind, KINDS, type Creature, type SavedMind } from "./creatures";
 import { MARKS, MAX_MARKS, MAX_STORY, type Mark, type StoryLine, type Village } from "./kin";
-import { BUILTIN, LAYERS, type Layer } from "./materials";
+import { BUILTIN, BUILTIN_BEFORE_4_4_5, LAYERS, type Layer } from "./materials";
 import { World } from "./world";
 import { BIOMES, applyLand, readLand, type LandOptions } from "./land";
 import type { Landmark } from "./social";
 import { packLook, unpackLook } from "./villagers";
+import { HOUSE_STYLES, type Refuge, type Settlement } from "./ecology";
 
 // A saved world, compact enough for localStorage: each layer is quantized
 // into bytes and base64 encoded. Materials and creatures that spells defined
@@ -35,6 +36,14 @@ export interface SavedWorld {
   // float32 each (cell, level, rate, 1 for lava), base64.
   land?: LandOptions;
   springs?: string;
+  // How many built-in materials each layer had when this was saved (4.4.5):
+  // a spell's materials start after them. Saves without it were written
+  // before 4.4.5 added its covers.
+  builtins?: Record<Layer, number>;
+  // Each village's look and what it has built, and the refuges kept for
+  // wild animals (4.4.5). The flora and the rare variants are layers.
+  settlements?: Settlement[];
+  refuges?: Refuge[];
 }
 
 export function saveWorld(world: World, owners: Map<string, string>): SavedWorld {
@@ -69,8 +78,12 @@ export function saveWorld(world: World, owners: Map<string, string>): SavedWorld
       gasAmt: u8((i) => Math.min(255, world.gasAmt[i] * 255)),
       // A mixed island's regions (4.4.1).
       ...(world.biomeMap ? { biome: toBase64(world.biomeMap) } : {}),
+      // What grows where and the rare variants (4.4.5).
+      ...(world.flora ? { flora: toBase64(world.flora) } : {}),
+      ...(world.rare ? { rare: toBase64(world.rare) } : {}),
     },
     custom,
+    builtins: { ground: BUILTIN.ground.length, fluid: BUILTIN.fluid.length, cover: BUILTIN.cover.length, gas: BUILTIN.gas.length },
     owners: Object.fromEntries(owners),
     decor: [...world.decor.entries()],
     landmarks: world.landmarks,
@@ -87,6 +100,8 @@ export function saveWorld(world: World, owners: Map<string, string>): SavedWorld
     story: world.story,
     storyCounts: world.storyCounts,
     ...(world.land ? { land: world.land, springs: packSprings(world) } : {}),
+    ...(world.settlements.length ? { settlements: world.settlements } : {}),
+    ...(world.refuges.length ? { refuges: world.refuges } : {}),
   };
 }
 
@@ -123,6 +138,24 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
     const regions = fromBase64(data.layers.biome ?? "");
     if (regions.length >= world.n) world.biomeMap = Uint8Array.from(regions.subarray(0, world.n), (b) => Math.min(BIOMES.length - 1, b));
     if (typeof data.springs === "string") world.springs = unpackSprings(data.springs, world.n);
+    const flora = fromBase64(data.layers.flora ?? "");
+    if (flora.length >= world.n) world.flora = flora.slice(0, world.n);
+    const rare = fromBase64(data.layers.rare ?? "");
+    if (rare.length >= world.n) world.rare = Uint8Array.from(rare.subarray(0, world.n), (b) => (b <= 10 ? b : 0));
+    const ok = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+    world.settlements = (Array.isArray(data.settlements) ? data.settlements : [])
+      .filter((t) => t && ok(t.x) && ok(t.y) && ok(t.style) && ok(t.level))
+      .slice(0, 32)
+      .map((t) => ({
+        x: t.x,
+        y: t.y,
+        style: Math.max(0, Math.min(HOUSE_STYLES.length - 1, Math.round(t.style))),
+        level: Math.max(0, Math.min(5, Math.round(t.level))),
+      }));
+    world.refuges = (Array.isArray(data.refuges) ? data.refuges : [])
+      .filter((r) => r && typeof r.kind === "string" && ok(r.x) && ok(r.y) && ok(r.r))
+      .slice(0, 200)
+      .map((r) => ({ kind: r.kind.slice(0, 30), x: r.x, y: r.y, r: Math.max(1, Math.min(8, r.r)) }));
   }
   prepare(world);
   world.time = data.time ?? 0;
@@ -143,7 +176,10 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
   const remap = {} as Record<Layer, (id: number) => number>;
   for (const layer of LAYERS) {
     const names = data.custom?.[layer] ?? [];
-    const base = BUILTIN[layer].length;
+    // Ids under the count the save was written with are built-in ones,
+    // which keep their ids; the spell materials after them map by name.
+    const saved = data.builtins?.[layer];
+    const base = typeof saved === "number" && saved >= BUILTIN_BEFORE_4_4_5[layer] && saved <= BUILTIN[layer].length ? saved : BUILTIN_BEFORE_4_4_5[layer];
     remap[layer] = (id) => {
       if (id < base) return id;
       const name = names[id - base];

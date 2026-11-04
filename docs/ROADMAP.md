@@ -1,6 +1,6 @@
 # Where the game stands, and what comes next
 
-Updated on 2026-11-04, with 4.4.
+Updated on 2026-11-04, with 4.4.5 part A.
 
 ## Done since the first review
 
@@ -235,6 +235,20 @@ Asked for, after 4.4: no choosing a land or a shape from a list; several lands o
 
 Not done: villages do not dress by region yet (a desert village looks like a temperate one); animals keep their habitats, not their regions (no camels, no polar bears).
 
+## Done in 4.4.5, part A: nature that is never the same twice
+
+Asked for: items 1 to 5 of "4.4.5 Every island a surprise" below, and the balance items 13 to 16 for what they add. DESIGN.md, "Nature that is never the same twice (4.4.5, part A)", has the rules; `docs/measurements/nature-4.4.5.md` the numbers and frames.
+
+1. **Variety inside a region**: each cell has its tree by place (willows by fresh water, palms on warm beaches, birches at forest edges, pines up high, cypresses in swamp water, dead trees and giant mushrooms in damp old hearts, acacias in dry land), 17 styles from the structure kit's palettes, and every tree its own height, girth, lean, turn and tint; old hearts grow bigger trees.
+2. **Undergrowth and ground by ecology rules**: reeds, ferns, berry bushes, fallen logs, fungi rings, flowers in drifts of one color and meadows in forest clearings, cacti, tufts of grass, lily pads, moss on north walls; outcrops, scree under cliffs, pebbles on beaches, standing stones, volcanic crystals. Sixteen cover kinds after the old ids and a path ground; old saves load unchanged (`builtins` in the save).
+3. **Rare variants**: ten, by land, one patch in ten: cherry grove, red autumn forest, bamboo, mangroves, glowing mushroom wood, petrified forest, salt flats, crystal desert, glowing shore at night, flamingo lagoon. 33 of 80 medium islands have one.
+4. **Villages of their region**: adobe, snow roofs, stilts, stone or timber by land and by the wood around; a well from the start, then fenced fields, a shrine, a windmill on a rise and a dock as the stores grow (over about ten minutes of play), paths worn where villagers walk.
+5. **Animals of their region**: camels, lizards, polar bears, foxes, hares, frogs, herons, monkeys, parrots, salamanders, flamingos, each a body, a goal and a place in the food web, counted on their habitat.
+6. **Balance (13 to 16)**: births follow food (grazers under their plants, hunters under their prey), arrivals from the edge under a quarter, walking out past twice, a refuge per species and block, succession after fire; checked by half an hour on every land and a mixed large island and a wipe on two islands in `npm test`.
+7. **Found in the frames**: rain, snow, smoke and lightning halos were hidden behind water since 4.4 (drawn before it, writing no depth); now drawn after it.
+
+Not done: tree models are box models with a per-tree shape, not voxel trees grown by the kit (a forest of kit trees would be hundreds of voxels each, past the 20,000 voxel budget spells share); one shape per style (two or three cost a draw call each per style, and lifted a large island from about 45 to 80 calls); monsters and spell creatures rely on the caps they had (part B and C check again); `npm test` takes about ten minutes instead of three and a half, for the half hour runs.
+
 ## Decisions taken
 
 1. **Cosmic spells may ruin the island.** Consequences are part of the fun; the land regrows on its own (ash turns to soil, grass and forests come back) and Reset is one tap away. Revisit if it feels punishing in play.
@@ -265,7 +279,7 @@ Sizes are per Claude Code session: S a few hours, M a full session, L two or mor
 
 **Numbered in the order to run them.** Renumbered on 3 November so the numbers are the order; `docs/REVIEW-4.0.md` and older pull requests use the old numbers (the review's findings were 4.0.2, faster creation 4.0.1, worlds 4.1, sound 4.2, strangers 4.5). Done since: 4.1, 4.2, 4.3, 4.4 and 4.4.1, summed up above; their plans are in the git history of this file. Left: 4.4.5 (three parts), 4.5, 4.6, then 4.7, the daily updates that keep going after the plan. 4.4.5 and 4.5 could swap; nothing public before 4.6.
 
-### 4.4.5 Every island a surprise
+### 4.4.5 Every island a surprise (part A done, see above)
 
 Goal: be amazed at every new island, never feel the same one twice, and have it stay alive and balanced. Checked against main on 4 November: 4.4 gave each biome one tree look among seven models (oak, pine, palm, snowy pine, jungle, willow, juniper) and planted oases where a habitat was missing; a region otherwise has one bush, one flower, crops and boulders (cover kinds unchanged since 3.0), the structure kit (`src/sim/structures.ts`: birch, dead, giant, mushroom and crystal trees, arches, towers) is used only by spells, and 4.4.1 left villages and animals alike in every region. Native numbers are kept up by births in the habitat (`creatures.ts`, `lifeCycle`), with no notion of food, recovery or new species. Three parts, each its own pull request, in this order.
 

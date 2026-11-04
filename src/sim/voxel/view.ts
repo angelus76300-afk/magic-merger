@@ -48,6 +48,9 @@ import { Darkness } from "./darkness";
 import { Domes } from "./domes";
 import { keyLevel, keyX, keyY } from "../voxelkey";
 import { LOOKS, biomeAt } from "../land";
+import { DAMP, HEART, HOUSE_STYLES, R as RARE, STYLE_BITS, TREE_STYLES } from "../ecology";
+import { GLOWING, VARIANTS, floraModels } from "./flora";
+import { valueNoise } from "../noise";
 import { Sky } from "./sky";
 
 // What a spell's darkness pulls the sky toward.
@@ -73,6 +76,11 @@ export class VoxelView {
   private terrain: Terrain;
   private covers = new Map<string, InstancedMesh>();
   private coverCounts = new Map<string, number>();
+  private coverMaterial!: MeshBasicMaterial;
+  // Plants and crystals that shine by themselves (4.4.5): never darkened.
+  private glowMaterial = new MeshBasicMaterial({ vertexColors: true });
+  private sparks: InstancedMesh | null = null;
+  private shoreCells: number[] | null = null;
   private lastCovers = -1;
   // Creatures as figures of boxes (3.5), and what each one was doing at the
   // last frame: where it stood, its heading, its stride.
@@ -195,37 +203,17 @@ export class VoxelView {
     );
 
     const basic = new MeshBasicMaterial({ vertexColors: true });
-    for (const key of [
-      "tree",
-      "pine",
-      "palm",
-      "snowpine",
-      "jungle",
-      "willow",
-      "juniper",
-      "bush",
-      "crop",
-      "house",
-      "rubble",
-      "powder",
-      "stump",
-      "flower",
-      "boulder",
-      "block",
-      "slab",
-    ]) {
-      const mesh = new InstancedMesh(geometryOf(MODELS[key]), basic, 64);
-      withColors(mesh);
-      mesh.count = 0;
-      mesh.frustumCulled = false;
-      this.covers.set(key, mesh);
-      this.scene.add(mesh);
-    }
+    // Cover meshes are made the first time something needs them (4.4.5:
+    // dozens of plant and rock looks, of which an island uses some).
+    this.coverMaterial = basic;
     const figureMats = figureMaterials();
     this.figures = new Figures(this.scene, figureMats);
     this.markMesh = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true }), 900);
     this.flames = this.instanced("flame", new MeshBasicMaterial({ vertexColors: true }), 5000);
     this.puffs = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.22, depthWrite: false }), 4000);
+    // Smoke, steam and a bolt's halo write no depth: drawn after the water
+    // (renderOrder 2), or the water covers the part in front of it.
+    this.puffs.renderOrder = 3;
     this.glowTexture = glowTexture();
     this.glowPoints = pointCloud(world.particles.capacity, true, this.glowTexture);
     this.dullPoints = pointCloud(world.particles.capacity, false, this.glowTexture);
@@ -241,6 +229,7 @@ export class VoxelView {
       new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.35, blending: AdditiveBlending, depthWrite: false }),
       3000,
     );
+    this.boltHalo.renderOrder = 3;
     this.sky = new Sky(this.scene, world, this.glowTexture);
     this.lit = [land, fluid, basic, this.puffs.material as MeshBasicMaterial, this.clouds.material as MeshBasicMaterial, figureMats.lit];
     for (const m of this.lit) this.darkness.apply(m);
@@ -419,57 +408,144 @@ export class VoxelView {
     return this.v.set(x - this.world.w / 2, h, y - this.world.h / 2);
   }
 
+  private coverMesh(key: string, need: number): InstancedMesh {
+    const mesh = this.covers.get(key);
+    if (mesh && need <= mesh.instanceMatrix.count) return mesh;
+    const boxes = MODELS[key] ?? FLORA_MODELS[key] ?? MODELS.block;
+    const geometry = mesh ? mesh.geometry : geometryOf(boxes);
+    const bigger = new InstancedMesh(geometry, GLOWING.has(key) ? this.glowMaterial : this.coverMaterial, Math.max(64, Math.ceil(need * 1.5)));
+    withColors(bigger);
+    bigger.count = 0;
+    bigger.frustumCulled = false;
+    if (mesh) {
+      this.scene.remove(mesh);
+      mesh.dispose();
+    }
+    this.scene.add(bigger);
+    this.covers.set(key, bigger);
+    return bigger;
+  }
+
+  // The model a cover is drawn with in this cell.
+  private coverKey(i: number, c: number, trees: [string, string] | null, builtinCovers: number): string {
+    const { world } = this;
+    if (c >= builtinCovers) return world.materials.get("cover", c).solid ? "block" : "slab";
+    if (c === C.TREE) {
+      // 4.4.5: the cell's own tree, one of its style's shapes.
+      const style = world.flora ? TREE_STYLES[world.flora[i] & STYLE_BITS] : "";
+      if (style) return `tree:${style}:${cellHash(i) % VARIANTS}`;
+      const high = world.shade[i] % 3 === 0 || world.height[i] > 20;
+      const own = world.biomeMap ? LOOKS[biomeAt(world, i)].trees : trees;
+      return own ? own[high ? 1 : 0] : high ? "pine" : "tree";
+    }
+    if (c === C.HOUSE) {
+      const style = this.houseStyle(i);
+      return style && style !== "timber" ? `house-${style}` : "house";
+    }
+    if (world.flora) {
+      if (c === C.FLOWER) return "bloom";
+      if (c === C.FUNGI && world.rare?.[i] === RARE.GLOWWOOD) return "fungi-glow";
+    }
+    if (c === C.FENCE) {
+      const x = i % world.w;
+      const along = (x > 0 && world.cover[i - 1] === C.FENCE) || (x < world.w - 1 && world.cover[i + 1] === C.FENCE);
+      return along ? "fence-x" : "fence-z";
+    }
+    return world.materials.get("cover", c).name;
+  }
+
+  // A house's look: its village's (4.4.5), the nearest one within reach.
+  private houseStyle(i: number): string | null {
+    const list = this.world.settlements;
+    if (!list.length) return null;
+    const x = i % this.world.w;
+    const y = Math.floor(i / this.world.w);
+    let best = -1;
+    let bestD = 40;
+    for (let k = 0; k < list.length; k++) {
+      const d = Math.abs(list[k].x - x) + Math.abs(list[k].y - y);
+      if (d < bestD) {
+        bestD = d;
+        best = k;
+      }
+    }
+    return best >= 0 ? HOUSE_STYLES[list[best].style] : null;
+  }
+
   private placeCovers(): void {
     const { world } = this;
     const lists = new Map<string, number[]>();
     for (const key of this.covers.keys()) lists.set(key, []);
+    const add = (key: string, i: number) => {
+      let list = lists.get(key);
+      if (!list) lists.set(key, (list = []));
+      list.push(i);
+    };
     const builtinCovers = BUILTIN.cover.length;
     // A biome draws its own trees (4.4), a mixed island each region's
-    // (4.4.1); the island before 4.4, oaks and pines.
+    // (4.4.1); the island before 4.4, oaks and pines; since 4.4.5 each
+    // cell its own.
     const trees = world.land ? LOOKS[world.land.biome].trees : null;
+    const flora = world.flora;
     for (let i = 0; i < world.n; i++) {
       const c = world.cover[i];
-      if (c === C.NONE) continue;
-      let key: string;
-      if (c >= builtinCovers) key = world.materials.get("cover", c).solid ? "block" : "slab";
-      else if (c === C.TREE) {
-        const high = world.shade[i] % 3 === 0 || world.height[i] > 20;
-        const own = world.biomeMap ? LOOKS[biomeAt(world, i)].trees : trees;
-        key = own ? own[high ? 1 : 0] : high ? "pine" : "tree";
-      } else key = world.materials.get("cover", c).name;
-      lists.get(key)?.push(i);
-    }
-    this.houseCells = lists.get("house") ?? [];
-    for (const [key, cells] of lists) {
-      let mesh = this.covers.get(key)!;
-      if (cells.length > mesh.instanceMatrix.count) {
-        // Grow the instance buffer.
-        const bigger = new InstancedMesh(mesh.geometry, mesh.material, Math.ceil(cells.length * 1.5));
-        withColors(bigger);
-        bigger.frustumCulled = false;
-        this.scene.remove(mesh);
-        mesh.dispose();
-        this.scene.add(bigger);
-        this.covers.set(key, bigger);
-        mesh = bigger;
+      if (c === C.NONE) {
+        if (!flora) continue;
+        // Tufts of grass on open ground, lily pads on still water (4.4.5).
+        if (world.fluid[i] === FLUID.WATER) {
+          if (flora[i] & DAMP && world.depth[i] > 0.1 && world.depth[i] < 1.5 && LILY_LANDS.has(biomeAt(world, i))) add("lily", i);
+        } else if (world.ground[i] === 0 && world.depth[i] === 0 && cellHash(i) % 100 < 2) add("tuft", i);
+        continue;
       }
+      add(this.coverKey(i, c, trees, builtinCovers), i);
+    }
+    this.houseCells = [];
+    for (const [key, cells] of lists) if (key === "house" || key.startsWith("house-")) for (const i of cells) this.houseCells.push(i);
+    const m = this.m;
+    for (const [key, cells] of lists) {
+      if (!cells.length && !this.covers.has(key)) continue;
+      const mesh = this.coverMesh(key, cells.length);
+      const tree =
+        key.startsWith("tree") || key === "pine" || key === "palm" || key === "snowpine" || key === "jungle" || key === "willow" || key === "juniper";
+      const house = key === "house" || key.startsWith("house-");
+      const tinted = key === "block" || key === "slab" || key === "tuft" || key === "bloom";
       for (let k = 0; k < cells.length; k++) {
         const i = cells[k];
         const x = i % world.w;
         const y = Math.floor(i / world.w);
-        // A little size and turn variety so forests do not look stamped.
-        const s = key === "house" ? 1 : 0.85 + (world.shade[i] % 7) * 0.04;
-        const turn = key === "house" ? 0 : ((world.shade[i] >> 2) % 4) * (Math.PI / 2);
-        this.m.makeRotationY(turn);
-        this.m.scale(new Vector3(s, s, s));
-        const p = this.toScene(x + 0.5, y + 0.5, columnTop(world, i));
-        // Rotation is around the model's corner: shift so it turns around the cell center.
-        const off = new Vector3(-0.5 * s, 0, -0.5 * s).applyMatrix4(new Matrix4().makeRotationY(turn));
-        this.m.setPosition(p.x + off.x, p.y, p.z + off.z);
-        mesh.setMatrixAt(k, this.m);
-        if (key === "block" || key === "slab") {
-          const mat = world.materials.get("cover", world.cover[i]);
-          mesh.setColorAt(k, this.col.setHex(mat.colors[world.shade[i] % mat.colors.length]));
+        const h = cellHash(i);
+        let base = columnTop(world, i);
+        if (key === "lily") base = surfaceY(world, i) + 0.01;
+        else if (key === "dock") base = Math.max(base, surfaceY(world, i)) - 0.24;
+        const p = this.toScene(x + 0.5, y + 0.5, base);
+        if (house) {
+          m.makeTranslation(p.x - 0.5, p.y, p.z - 0.5);
+        } else if (tree && flora) {
+          // Every tree its own (4.4.5): height, girth, a lean and a turn.
+          const old = flora[i] & HEART ? 1.3 : 1;
+          const sh = (0.82 + (((h >> 3) % 32) / 32) * 0.4) * old;
+          const sw = (0.86 + (((h >> 8) % 32) / 32) * 0.26) * old;
+          const lean = (((h >> 13) % 32) / 32) * 0.1;
+          const dir = (((h >> 18) % 64) / 64) * Math.PI * 2;
+          placeLeaning(m, p, (h >> 1) % 4, sw, sh, lean, dir);
+        } else {
+          // A little size and turn variety so forests do not look stamped.
+          const s = 0.85 + (world.shade[i] % 7) * 0.04;
+          placeLeaning(m, p, (world.shade[i] >> 2) % 4, s, s, 0, 0);
+        }
+        mesh.setMatrixAt(k, m);
+        if (tinted) {
+          if (key === "tuft") mesh.setColorAt(k, this.col.setHex(scaleHex(this.groundColor(i), 0.78)));
+          else if (key === "bloom") mesh.setColorAt(k, this.col.setHex(driftColor(x, y, world.seed)));
+          else {
+            const mat = world.materials.get("cover", world.cover[i]);
+            mesh.setColorAt(k, this.col.setHex(mat.colors[world.shade[i] % mat.colors.length]));
+          }
+        } else if (tree && flora) {
+          // A tint within the kind: lighter, darker, a touch warmer or cooler.
+          const t = 0.9 + (((h >> 23) % 16) / 16) * 0.18;
+          const warm = ((((h >> 27) % 8) - 3.5) / 3.5) * 0.04;
+          mesh.setColorAt(k, this.col.setRGB(t * (1 + warm), t, t * (1 - warm)));
         }
       }
       mesh.count = cells.length;
@@ -477,6 +553,57 @@ export class VoxelView {
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       this.coverCounts.set(key, cells.length);
     }
+  }
+
+  // The glowing shore (4.4.5): specks of blue light twinkle in its shallows
+  // at night.
+  private placeSparks(time: number, night: number): void {
+    const { world } = this;
+    if (!this.shoreCells) {
+      this.shoreCells = [];
+      for (let i = 0; i < world.n && this.shoreCells.length < 1500; i++)
+        if (world.rare![i] === RARE.SHORE && world.fluid[i] === FLUID.WATER) this.shoreCells.push(i);
+      if (!this.shoreCells.length) return;
+      this.sparks = new InstancedMesh(geometryOf(FLORA_MODELS.spark), this.glowMaterial, this.shoreCells.length);
+      withColors(this.sparks);
+      this.sparks.frustumCulled = false;
+      this.scene.add(this.sparks);
+    }
+    const sparks = this.sparks;
+    if (!sparks) return;
+    let n = 0;
+    if (night > 0.2) {
+      for (const i of this.shoreCells) {
+        if (world.fluid[i] !== FLUID.WATER) continue;
+        const h = cellHash(i);
+        const glow = Math.sin(time * (0.8 + (h % 7) * 0.2) + (h % 100)) * 0.5 + 0.5;
+        if (glow < 0.35) continue;
+        const x = i % world.w;
+        const y = Math.floor(i / world.w);
+        const p = this.toScene(x + 0.2 + ((h >> 4) % 6) / 10, y + 0.2 + ((h >> 8) % 6) / 10, surfaceY(world, i) + 0.02);
+        const s = 0.12 + glow * 0.16;
+        this.m.makeScale(s, 0.4, s);
+        this.m.setPosition(p.x, p.y, p.z);
+        sparks.setMatrixAt(n, this.m);
+        const k = glow * Math.min(1, night * 1.5);
+        sparks.setColorAt(n, this.col.setRGB(0.25 * k, 0.85 * k, 1.0 * k));
+        n++;
+      }
+    }
+    sparks.count = n;
+    sparks.instanceMatrix.needsUpdate = true;
+    if (sparks.instanceColor) sparks.instanceColor.needsUpdate = true;
+  }
+
+  // A cell's ground color as the terrain draws it, for tufts of grass.
+  private groundColor(i: number): number {
+    const { world } = this;
+    const m = world.materials.get("ground", world.ground[i]);
+    const colors =
+      world.biomeMap && world.ground[i] < BUILTIN.ground.length
+        ? (LOOKS[biomeAt(world, i)].palette[m.name] ?? BUILTIN.ground[world.ground[i]].colors)
+        : m.colors;
+    return colors[world.shade[i] % colors.length];
   }
 
   private placeDecor(time: number): void {
@@ -543,6 +670,7 @@ export class VoxelView {
       }
     }
     this.windows.count = n;
+    if (this.world.rare) this.placeSparks(time, day.night);
     this.windows.instanceMatrix.needsUpdate = true;
     if (this.windows.instanceColor) this.windows.instanceColor.needsUpdate = true;
     // Chimney smoke: a puff now and then from a random house.
@@ -1198,4 +1326,48 @@ function pointCloud(capacity: number, glow: boolean, texture: CanvasTexture): Po
 function withColors(mesh: InstancedMesh): void {
   const white = new Color(0xffffff);
   for (let k = 0; k < mesh.instanceMatrix.count; k++) mesh.setColorAt(k, white);
+}
+
+const FLORA_MODELS = floraModels();
+// Where water that flooded a damp cell may grow lily pads (4.4.5).
+const LILY_LANDS = new Set(["temperate", "swamp", "jungle"]);
+
+// A fixed number per cell, for choosing shapes and tints that stay put.
+function cellHash(i: number): number {
+  let h = Math.imul(i ^ 0x5bd1e995, 0x27d4eb2d);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  return (h ^ (h >>> 13)) >>> 0;
+}
+
+const LEAN = new Matrix4();
+const TURN = new Matrix4();
+const SCALE = new Matrix4();
+const AXIS = new Vector3();
+// A model on its cell: turned by quarter turns around the cell's middle,
+// scaled (wide, tall), leaned a little toward `dir`, standing at p.
+function placeLeaning(m: Matrix4, p: Vector3, quarter: number, sw: number, sh: number, lean: number, dir: number): void {
+  m.makeTranslation(-0.5, 0, -0.5);
+  SCALE.makeScale(sw, sh, sw);
+  m.premultiply(SCALE);
+  TURN.makeRotationY(quarter * (Math.PI / 2));
+  m.premultiply(TURN);
+  if (lean > 0) {
+    AXIS.set(Math.cos(dir), 0, Math.sin(dir));
+    LEAN.makeRotationAxis(AXIS, lean);
+    m.premultiply(LEAN);
+  }
+  m.elements[12] += p.x;
+  m.elements[13] += p.y;
+  m.elements[14] += p.z;
+}
+
+// Flowers grow in drifts of one color (4.4.5): the drift's, by place.
+const DRIFTS = [0xf28ab0, 0xf2c94c, 0xf4f0ea, 0xa98cf0, 0xe8584a, 0x6aa8f0, 0xf09a4a];
+function driftColor(x: number, y: number, seed: number): number {
+  return DRIFTS[Math.floor(valueNoise(x / 6, y / 6, seed + 4517) * DRIFTS.length * 1.6) % DRIFTS.length];
+}
+
+function scaleHex(c: number, k: number): number {
+  const ch = (s: number) => Math.min(255, Math.round(((c >> s) & 255) * k));
+  return (ch(16) << 16) | (ch(8) << 8) | ch(0);
 }

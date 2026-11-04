@@ -1077,7 +1077,8 @@ export function habitatCount(world: World, s: Species, step = 2): number {
 // the forest animals' habitat is missing, and a deep pool for the fish.
 function ensureHabitats(world: World, rng: Rng): void {
   const need = (s: Species) => habitatCount(world, s) < Math.max(40, world.n / 400);
-  const forestKinds = SPECIES.filter((s) => s.kind.name !== "fish");
+  // Animals of their region (4.4.5) live where their land is, or not at all.
+  const forestKinds = SPECIES.filter((s) => s.kind.name !== "fish" && !s.regional);
   for (let attempt = 0; attempt < 4 && forestKinds.some(need); attempt++) grove(world, rng, attempt);
   const fish = SPECIES.find((s) => s.kind.name === "fish")!;
   if (need(fish)) pond(world, rng, 5);

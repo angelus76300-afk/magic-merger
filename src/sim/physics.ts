@@ -3,6 +3,7 @@ import type { World } from "./world";
 import { addGas } from "./cells";
 import { igniteVoxels, stepVoxels } from "./voxels";
 import { WARD, stepWards, wardHit, warded } from "./wards";
+import { SPREADS, sprout, woodland } from "./ecology";
 
 // The rules of the land. Spells set them in motion; these keep them going:
 // water runs downhill and freezes, fire spreads with the wind and leaves ash,
@@ -460,6 +461,11 @@ function stepGrowth(world: World): void {
     if (t < 2 || t > 45) continue;
     const g = ground[i];
     const j = neighbor(world, i);
+    // An island with flora (4.4.5) grows back by succession, its own way.
+    if (world.flora) {
+      floraGrowth(world, i, j, g);
+      continue;
+    }
     if (g === G.DIRT && cover[i] !== C.HOUSE && ground[j] === G.GRASS && rng.next() < 0.5) ground[i] = G.GRASS;
     else if (g === G.ASH && rng.next() < 0.08) ground[i] = G.DIRT;
     else if (g === G.GRASS && cover[i] === C.NONE) {
@@ -469,6 +475,35 @@ function stepGrowth(world: World): void {
     else if (g === G.FIELD && cover[i] === C.NONE && rng.next() < 0.1) world.setCover(i, C.CROP);
     void w;
   }
+}
+
+// Succession on an island with flora (4.4.5): bare ground greens over,
+// undergrowth creeps from its own kind or springs up as the niche says
+// (ferns in damp woods, berries at edges, flowers in the open), shrubs
+// inside a woodland grow into young trees and trees seed the cells around
+// them, so a burnt forest comes back as grass, then shrubs, then forest.
+// Reeds come back along wet banks. A worn path no one walks greens over.
+function floraGrowth(world: World, i: number, j: number, g: number): void {
+  const { rng, ground, cover } = world;
+  const c = cover[i];
+  const r = rng.next();
+  if (g === G.DIRT && c !== C.HOUSE && ground[j] === G.GRASS) {
+    if (r < 0.5) ground[i] = G.GRASS;
+  } else if (g === G.PATH) {
+    if ((!world.wear || world.wear[i] === 0) && r < 0.03) ground[i] = G.GRASS;
+  } else if (g === G.ASH) {
+    if (r < 0.08) ground[i] = G.DIRT;
+  } else if (g === G.GRASS && c === C.NONE) {
+    const cj = cover[j];
+    if (cj === C.TREE && r < (woodland(world, i) ? 0.05 : 0.015)) world.setCover(i, C.TREE);
+    else if (SPREADS.has(cj) && r < 0.03) world.setCover(i, cj);
+    else if (r < 0.003) world.setCover(i, sprout(world, i, rng.next()));
+    else if (r > 0.997 && world.fluid[j] === F.WATER && world.depth[j] > 0.05) world.setCover(i, C.REEDS);
+  } else if (c === C.STUMP) {
+    if (r < 0.01) world.setCover(i, C.TREE);
+  } else if ((c === C.BUSH || c === C.BERRIES) && woodland(world, i)) {
+    if (r < 0.006) world.setCover(i, C.TREE);
+  } else if (g === G.FIELD && c === C.NONE && r < 0.1) world.setCover(i, C.CROP);
 }
 
 function neighbor(world: World, i: number): number {

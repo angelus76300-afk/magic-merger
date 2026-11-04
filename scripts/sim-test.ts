@@ -11,7 +11,7 @@ import { KINDS, makeCreature, populate, resetCreatureIds } from "../src/sim/crea
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
 import { logDeeds, mindOf, remember } from "../src/sim/kin";
-import { C, F } from "../src/sim/materials";
+import { BUILTIN, C, F } from "../src/sim/materials";
 import { Runtime } from "../src/sim/runtime";
 import { loadWorld, saveWorld } from "../src/sim/save";
 import { SCENARIOS } from "../src/sim/scenarios";
@@ -41,7 +41,9 @@ import { body, bodyFrom, BUILDS, EXTRA, FEATURES, ITEMS, MAX_MODEL_BOXES, modelO
 import type { BodySpec, Feature, ModelBox } from "../src/sim/body";
 import { sharedFaces } from "../src/sim/voxel/faces";
 import { FLUID_LIFT, columnTop, surfaceY } from "../src/sim/voxel/terrain";
-import { MODELS } from "../src/sim/voxel/models";
+import { MODELS, type Box } from "../src/sim/voxel/models";
+import { floraModels } from "../src/sim/voxel/flora";
+import { HEART, HOUSE_STYLES, RARE as RARE_NAMES, STYLE_BITS, TREE_STYLES } from "../src/sim/ecology";
 import { easeGround, walkGround, type Footing } from "../src/sim/voxel/walk";
 import { names } from "../src/sim/social";
 import { AGES, JOBS, packLook, unpackLook, type Job as Job3 } from "../src/sim/villagers";
@@ -55,6 +57,7 @@ import { gaitOf, hipHeight } from "../src/sim/voxel/gait";
 import { TICK } from "../src/sim/world";
 import { BIOMES, DEFAULT_LAND, SHAPES, habitatCount, readLand, resolveLand, LOOKS } from "../src/sim/land";
 import { landProblems, type LandLife } from "./land-life";
+import type { Balance } from "./balance-run";
 import { riverShape, riverTrenches } from "./river-metrics";
 import { projectedSim, sizesOffered, SIM_BUDGET_MS } from "../src/headroom";
 import { skyBodies, weatherAt } from "../src/sim/voxel/sky";
@@ -76,7 +79,16 @@ const SEEDS = 8;
 const SCENE_STREAMS = 3;
 const SCENE_SECONDS = 600;
 const LAND_SECONDS = 180;
+// 4.4.5: half an hour per land (112 cells) and on a mixed large island, and
+// a wipe on a medium and a large island: the longest jobs, first.
+const BALANCE_SECONDS = 1800;
+const WIPE_AT = 60;
+const RECOVER_SECONDS = 600;
 const idle: Job[] = [
+  { balance: "mixed", seed: 31, seconds: BALANCE_SECONDS, size: 208, wipeAt: -1 },
+  { balance: "mixed", seed: 33, seconds: WIPE_AT + RECOVER_SECONDS, size: 208, wipeAt: WIPE_AT },
+  ...BIOMES.map((balance, k) => ({ balance, seed: 51 + k, seconds: BALANCE_SECONDS, size: 112, wipeAt: -1 })),
+  { balance: "temperate", seed: 3, seconds: WIPE_AT + RECOVER_SECONDS, size: 152, wipeAt: WIPE_AT },
   ...Array.from({ length: SCENE_STREAMS }, (_, n) => ({ scene: n, seconds: SCENE_SECONDS })),
   // 4.4: every biome left alone for three simulated minutes, each on its
   // own shape (the shapes go round), so every biome and every shape lives.
@@ -99,6 +111,7 @@ const challengeRates = new Map<string, { wins: number; runs: number; need: numbe
 const motion: Record<string, KindMotion> = {};
 const motionErrors: string[] = [];
 const lands: LandLife[] = [];
+const balances: Balance[] = [];
 const nextIdle = new Int32Array(new SharedArrayBuffer(4));
 const idleDone = Promise.all(
   Array.from({ length: Math.min(4, Math.max(2, availableParallelism() - 1)) }, () => {
@@ -114,9 +127,11 @@ const idleDone = Promise.all(
         motion: moved,
         rate,
         land,
+        balance,
       }: {
         job: Job;
         land?: LandLife;
+        balance?: Balance;
         motion?: MotionReport;
         rate?: { wins: number; runs: number; need: number; results: string };
         status: string;
@@ -124,7 +139,8 @@ const idleDone = Promise.all(
         report?: SceneReport;
         verified?: { ok: boolean; wins: number; runs: number };
       }) => {
-        if (land) lands.push(land);
+        if (balance) balances.push(balance);
+        else if (land) lands.push(land);
         else if (rate && "rate" in job) challengeRates.set(job.rate, rate);
         else if (moved) {
           mergeMotion(motion, moved.kinds);
@@ -717,7 +733,7 @@ for (const scenario of SCENARIOS) {
       slowest = Math.max(slowest, performance.now() - t0);
       populate(world);
       const people = world.creatures.filter((c) => c.kind === "villager").length;
-      const lack = SPECIES.filter((sp) => habitatCount(world, sp) <= 0).map((sp) => sp.kind.name);
+      const lack = SPECIES.filter((sp) => !sp.regional && habitatCount(world, sp) <= 0).map((sp) => sp.kind.name);
       if (!people || lack.length) missing.push(`${biome}/${shape}: ${people} villagers${lack.length ? ", no habitat for " + lack.join(" ") : ""}`);
     }
   check(
@@ -780,24 +796,199 @@ for (const scenario of SCENARIOS) {
   );
   const mixedNotes: string[] = [];
   const mixedProblems: string[] = [];
+  const regionalSeen: string[] = [];
   for (const s of [41, 42, 43, 44]) {
     const w = generateWorld(208, 208, s, resolveLand(mid, s, 208));
     populate(w);
     const count = new Map<number, number>();
     for (const b of w.biomeMap ?? []) count.set(b, (count.get(b) ?? 0) + 1);
     const lands = [...count.entries()].filter(([, v]) => v > w.n * 0.05).map(([b]) => BIOMES[b]);
-    const lack = SPECIES.filter((sp) => habitatCount(w, sp) <= 0).map((sp) => sp.kind.name);
+    const lack = SPECIES.filter((sp) => !sp.regional && habitatCount(w, sp) <= 0).map((sp) => sp.kind.name);
+    // 4.4.5: the animals of each land it holds live there too (flamingos
+    // only in a rare lagoon).
+    const regional = SPECIES.filter((sp) => sp.regional && sp.kind.name !== "flamingo" && habitatCount(w, sp) > 0).map((sp) => sp.kind.name);
+    regionalSeen.push(...regional.filter((n) => !regionalSeen.includes(n)));
     const people = w.creatures.filter((c) => c.kind === "villager").length;
     mixedNotes.push(`${s}: ${lands.join("+")}`);
     if (lands.length < 2 || lack.length || !people) mixedProblems.push(`${s}: ${lands.length} lands, ${people} villagers, missing ${lack.join(" ")}`);
   }
   check("large islands mix lands, each species living somewhere", !mixedProblems.length, mixedProblems.join("; ") || mixedNotes.join("; "));
+  check(
+    "4.4.5: the animals of each land live on the mixed islands that hold it",
+    regionalSeen.length >= 6,
+    `with habitat on the four: ${regionalSeen.join(", ")}`,
+  );
   const mixed = generateWorld(208, 208, 42, resolveLand(mid, 42, 208));
   const reload = loadWorld(JSON.parse(JSON.stringify(saveWorld(mixed, new Map()))), () => {});
   let sameClimate = !!reload?.biomeMap;
   for (let i = 0; reload && i < mixed.n && sameClimate; i += 97)
     sameClimate = reload.biomeMap![i] === mixed.biomeMap![i] && Math.abs(reload.ambient(i) - mixed.ambient(i)) < 0.1;
   check("a mixed island's regions and their climates come back with its save", sameClimate);
+
+  // 4.4.5: nature that is never the same twice. Forty medium islands from
+  // forty seeds: several tree looks and undergrowth on each, trees by their
+  // place (birches at forest edges, willows by fresh water), rare variants
+  // on some but never most of an island, and no two islands alike.
+  {
+    const UNDER = new Set<number>([
+      C.REEDS,
+      C.FERN,
+      C.BERRIES,
+      C.LOG,
+      C.FUNGI,
+      C.CACTUS,
+      C.SCREE,
+      C.PEBBLES,
+      C.STONE,
+      C.CRYSTALS,
+      C.PETRIFIED,
+      C.FLOWER,
+      C.BOULDER,
+    ]);
+    const signatures = new Set<string>();
+    const rareSeen = new Set<string>();
+    const poor: string[] = [];
+    let edgeBirch = 0;
+    let edgeTrees = 0;
+    let innerBirch = 0;
+    let innerTrees = 0;
+    let wetWillow = 0;
+    let wetTrees = 0;
+    let dryWillow = 0;
+    let dryTrees = 0;
+    let rareMost = 0;
+    let wells = 0;
+    let villages = 0;
+    const houseStyles = new Map<string, Set<string>>();
+    for (let k = 0; k < 40; k++) {
+      const seed = k * 977 + 5;
+      const land = resolveLand(mid, seed, 152);
+      const w = generateWorld(152, 152, seed, land);
+      const styles = new Map<string, number>();
+      const under = new Set<number>();
+      let rare = 0;
+      for (let i = 0; i < w.n; i++) {
+        const c = w.cover[i];
+        if (UNDER.has(c)) under.add(c);
+        if (w.rare?.[i]) {
+          rare++;
+          rareSeen.add(RARE_NAMES[w.rare[i]]);
+        }
+        if (c === C.WELL) wells++;
+        if (c !== C.TREE) continue;
+        const style = TREE_STYLES[w.flora![i] & STYLE_BITS];
+        styles.set(style, (styles.get(style) ?? 0) + 1);
+        if (land.biome !== "temperate" || w.rare?.[i]) continue;
+        const x = i % w.w;
+        const y = (i / w.w) | 0;
+        let open = 0;
+        let fresh = false;
+        for (let dy = -2; dy <= 2; dy++)
+          for (let dx = -2; dx <= 2; dx++) {
+            if (!w.inside(x + dx, y + dy)) continue;
+            const j = (y + dy) * w.w + x + dx;
+            if (Math.abs(dx) + Math.abs(dy) === 1 && w.cover[j] !== C.TREE) open++;
+            if (w.fluid[j] === 1 && w.depth[j] > 0.05 && w.height[j] + w.depth[j] > w.seaLevel + 0.35) fresh = true;
+          }
+        if (fresh) {
+          wetTrees++;
+          if (style === "willow") wetWillow++;
+        } else {
+          dryTrees++;
+          if (style === "willow") dryWillow++;
+          if (open) {
+            edgeTrees++;
+            if (style === "birch") edgeBirch++;
+          } else if (w.flora![i] & HEART) {
+            innerTrees++;
+            if (style === "birch") innerBirch++;
+          }
+        }
+      }
+      rareMost = Math.max(rareMost, rare / w.n);
+      villages += w.settlements.length;
+      for (const st of w.settlements) {
+        const b = land.biome;
+        if (!houseStyles.has(b)) houseStyles.set(b, new Set());
+        houseStyles.get(b)!.add(HOUSE_STYLES[st.style]);
+      }
+      const top = [...styles.entries()].sort((a, b) => b[1] - a[1]).map(([st]) => st);
+      let wet = 0;
+      let trees = 0;
+      for (let i = 0; i < w.n; i++) {
+        if (w.depth[i] > 0.05) wet++;
+        if (w.cover[i] === C.TREE) trees++;
+      }
+      signatures.add(
+        `${land.biome}/${land.shape}/${top.slice(0, 3).join("+")}/${[...under].sort().join(".")}/${Math.round(rare / 100)}/${Math.round((wet / w.n) * 20)}/${Math.round(trees / 150)}`,
+      );
+      if (styles.size < 2 || under.size < 4) poor.push(`${seed} ${land.biome}: ${styles.size} tree looks, ${under.size} undergrowth kinds`);
+    }
+    check("4.4.5: every island has several tree looks and kinds of undergrowth", !poor.length, poor.slice(0, 4).join("; ") || "40 medium islands");
+    check(
+      "4.4.5: trees by their place: birches at forest edges, willows by fresh water",
+      edgeBirch / Math.max(1, edgeTrees) > (innerBirch / Math.max(1, innerTrees)) * 1.5 &&
+        wetWillow / Math.max(1, wetTrees) > (dryWillow / Math.max(1, dryTrees)) * 3,
+      `birches ${Math.round((edgeBirch / Math.max(1, edgeTrees)) * 100)}% of edge trees, ${Math.round((innerBirch / Math.max(1, innerTrees)) * 100)}% in old hearts; willows ${Math.round((wetWillow / Math.max(1, wetTrees)) * 100)}% by fresh water, ${Math.round((dryWillow / Math.max(1, dryTrees)) * 100)}% elsewhere`,
+    );
+    check(
+      "4.4.5: rare variants appear, on a part of an island only",
+      rareSeen.size >= 3 && rareMost < 0.35,
+      `${[...rareSeen].join(", ")}; at most ${Math.round(rareMost * 100)}% of an island`,
+    );
+    check("4.4.5: no two of forty islands alike", signatures.size === 40, `${signatures.size} different`);
+    check(
+      "4.4.5: every village has a well from the start, and dresses by its land",
+      wells >= villages &&
+        villages > 0 &&
+        [...(houseStyles.get("desert") ?? [])].every((st) => st === "adobe") &&
+        [...(houseStyles.get("tundra") ?? [])].every((st) => st === "snowroof"),
+      `${wells} wells for ${villages} villages; ${[...houseStyles].map(([b, v]) => `${b} ${[...v].join("/")}`).join(", ")}`,
+    );
+    const flat = generateWorld(112, 112, 4);
+    check(
+      "4.4.5: the island before 4.4 has no flora, rare variant, village look or refuge",
+      !flat.flora && !flat.rare && !flat.settlements.length && !flat.refuges.length,
+    );
+    // A save keeps the flora, the rare variants, the villages' looks and the refuges.
+    let rich = generateWorld(152, 152, 5, resolveLand(mid, 5, 152));
+    for (let k = 6; !rich.rare && k < 60; k++) rich = generateWorld(152, 152, k, resolveLand(mid, k, 152));
+    const kept = loadWorld(JSON.parse(JSON.stringify(saveWorld(rich, new Map()))), () => {});
+    check(
+      "4.4.5: a save keeps what grows where, the rare variants, the villages and the refuges",
+      !!kept &&
+        kept.flora!.every((v, i) => v === rich.flora![i]) &&
+        !!kept.rare &&
+        kept.rare.every((v, i) => v === rich.rare![i]) &&
+        JSON.stringify(kept.settlements) === JSON.stringify(rich.settlements) &&
+        JSON.stringify(kept.refuges) === JSON.stringify(rich.refuges) &&
+        kept.cover.every((v, i) => v === rich.cover[i]),
+      `seed ${rich.seed}: ${rich.refuges.length} refuges, ${rich.settlements.length} villages`,
+    );
+    // An old save: its spell's cover was id 10 then, and still loads as that cover.
+    const legacy = generateWorld(64, 64, 2);
+    const data = saveWorld(legacy, new Map());
+    const bytes = Uint8Array.from(atob(data.layers.cover), (ch) => ch.charCodeAt(0));
+    bytes[100] = 10;
+    bytes[101] = 9;
+    let bin = "";
+    for (const b of bytes) bin += String.fromCharCode(b);
+    data.layers.cover = btoa(bin);
+    data.custom.cover = ["goo"];
+    delete data.builtins;
+    const loaded = loadWorld(JSON.parse(JSON.stringify(data)), (w2) => {
+      w2.materials.define(w2.materials.makeMaterial("goo", "cover", [0x33ff33]));
+    });
+    const now = saveWorld(generateWorld(64, 64, 2, resolveLand(mid, 2, 64)), new Map());
+    check(
+      "4.4.5: a save from before keeps its spell's covers; a new one keeps the new covers",
+      !!loaded &&
+        loaded.materials.get("cover", loaded.cover[100]).name === "goo" &&
+        loaded.cover[101] === C.BOULDER &&
+        now.builtins?.cover === BUILTIN.cover.length,
+      `old id 10 is now ${loaded ? loaded.materials.get("cover", loaded.cover[100]).name : "?"}, ${BUILTIN.cover.length} built-in covers`,
+    );
+  }
   check("a small island is one land", generateWorld(112, 112, 5, resolveLand(mid, 5, 112)).biomeMap === null);
   // 4.4.1: rivers wind instead of running straight with right angle turns
   // (main had a run of 26 cells and a quarter of its river in runs of 8 or
@@ -869,8 +1060,10 @@ for (const scenario of SCENARIOS) {
   const midnight = skyBodies(DAY_LENGTH * 0.73);
   check("the sun by day, the moon by night", noon.sun > 0.5 && noon.moon < 0 && midnight.moon > 0.5 && midnight.sun < 0, JSON.stringify({ noon, midnight }));
   const coplanar: string[] = [];
-  for (const key of ["palm", "snowpine", "jungle", "willow", "juniper"]) {
-    const boxes = MODELS[key];
+  // 4.4.5: and every plant, rock, village extra and house of the flora kit.
+  const ALL_MODELS: Record<string, Box[]> = { ...MODELS, ...floraModels() };
+  for (const key of ["palm", "snowpine", "jungle", "willow", "juniper", ...Object.keys(floraModels())]) {
+    const boxes = ALL_MODELS[key];
     for (let a = 0; a < boxes.length; a++)
       for (let b = a + 1; b < boxes.length; b++) {
         const A = boxes[a];
@@ -879,6 +1072,8 @@ for (const scenario of SCENARIOS) {
         const size = (x: { w: number; h: number; d: number }, k: number) => [x.w, x.h, x.d][k];
         for (let k = 0; k < 3; k++)
           for (const side of [0, 1]) {
+            // Bottom faces are never drawn (models.ts).
+            if (k === 1 && side === 0) continue;
             const pa = lo(A, k) + side * size(A, k);
             const pb = lo(B, k) + side * size(B, k);
             if (Math.abs(pa - pb) > 0.002) continue;
@@ -889,7 +1084,11 @@ for (const scenario of SCENARIOS) {
           }
       }
   }
-  check("the biomes' trees have no two faces in one plane", !coplanar.length, coplanar.join(", ") || "palm, snowpine, jungle, willow, juniper");
+  check(
+    "the biomes' trees and the flora kit have no two faces in one plane",
+    !coplanar.length,
+    coplanar.slice(0, 8).join(", ") || `palm, snowpine, jungle, willow, juniper and ${Object.keys(floraModels()).length} flora models`,
+  );
   // Waves: a corner two water tops share moves the same for both.
   const lake = generateWorld(96, 96, 8, { ...DEFAULT_LAND, shape: "lakes", water: 0.8 });
   const meshes: Mesh[] = [];
@@ -944,6 +1143,43 @@ for (const r of lands.sort((x, y) => order(x.biome) - order(y.biome))) {
 check(
   "every biome lived, and a mixed island",
   [...BIOMES, "mixed"].every((b) => lands.some((r) => r.biome === b)),
+);
+// 4.4.5: spawns that keep the island alive. Half an hour alone on every land
+// and on a mixed large island: every wild species, the island's own and its
+// regions', within its band (half to twice its target, which follows food)
+// 80% of the time. A wipe (every animal killed, half the plants and grass
+// burnt): every species back to half its number within ten minutes.
+for (const r of balances.filter((b) => !b.wipe).sort((x, y) => order(x.biome) - order(y.biome))) {
+  const off = Object.entries(r.species).filter(([, v]) => v.band < 0.8);
+  check(
+    `half an hour on a ${r.biome} island (${r.size}): every wild species within its band 80% of the time`,
+    !off.length && !r.errors.length,
+    (off.length ? off : Object.entries(r.species)).map(([k, v]) => `${k} ${Math.round(v.band * 100)}% (target ${v.target}, ${v.min} to ${v.max})`).join(", ") +
+      (r.errors[0] ? `; ${r.errors[0]}` : ""),
+  );
+}
+for (const r of balances.filter((b) => b.wipe)) {
+  const late = Object.entries(r.wipe!).filter(([, v]) => v.back < 0 || v.back > RECOVER_SECONDS);
+  check(
+    `a wiped ${r.biome} island (${r.size}) is back to half its animals within ${RECOVER_SECONDS / 60} minutes`,
+    !late.length,
+    Object.entries(r.wipe!)
+      .map(([k, v]) => `${k} ${v.back < 0 ? "never" : v.back + " s"} (of ${v.target})`)
+      .join(", "),
+  );
+}
+check(
+  "4.4.5: hunters still catch their prey",
+  balances.reduce((n, b) => n + (b.catches["wolf caught a deer"] ?? 0) + (b.catches["wolf caught a rabbit"] ?? 0), 0) >= 2 &&
+    balances.reduce(
+      (n, b) =>
+        n +
+        Object.entries(b.catches)
+          .filter(([k]) => /^(fox|polar bear|heron) caught/.test(k))
+          .reduce((a, [, v]) => a + v, 0),
+      0,
+    ) >= 1,
+  [...new Set(balances.flatMap((b) => Object.keys(b.catches)))].map((k) => `${k} ${balances.reduce((n, b) => n + (b.catches[k] ?? 0), 0)}`).join(", "),
 );
 for (const scenario of SCENARIOS) {
   const runs = idleResults.get(scenario.id) ?? [];
@@ -1519,7 +1755,11 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
       return world.depth[i] > 0.05 || world.materials.get("cover", world.cover[i]).solid;
     });
     const kinds = new Set(world.creatures.map((c) => c.kind));
-    const missing = SPECIES.map((s) => s.kind.name).filter((n) => !kinds.has(n));
+    // The old island has no regions: none of their animals (4.4.5).
+    const missing = SPECIES.filter((s) => !s.regional)
+      .map((s) => s.kind.name)
+      .filter((n) => !kinds.has(n));
+    if (SPECIES.some((s) => s.regional && kinds.has(s.kind.name))) missing.push("an animal of a region on the old island");
     check(
       `wild animals in their habitat (${size})`,
       !wrong.length && !missing.length,

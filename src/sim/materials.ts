@@ -56,6 +56,10 @@ export const BUILTIN: Record<Layer, Material[]> = {
     make("basalt", "ground", [0x3b3836, 0x34312f, 0x433f3c]),
     make("crystal", "ground", [0xb9a4ff, 0xd3c6ff, 0x9f88f5], { glow: true }),
     make("field", "ground", [0xc9b25a, 0xbfa64f, 0xd2bc66], { flammable: 0.6, fuel: 3 }),
+    // 4.4.5: a path villagers wore into the grass. After every older id, so
+    // saves from before keep theirs (save.ts reads the counts a save was
+    // written with).
+    make("path", "ground", [0xa08462, 0x987c5a, 0xa98c68]),
   ],
   fluid: [
     make("none", "fluid", [0]),
@@ -77,6 +81,24 @@ export const BUILTIN: Record<Layer, Material[]> = {
     make("stump", "cover", [0x5b4128, 0x4e3822]),
     make("flower", "cover", [0xe86a9a, 0xf2c94c, 0xa98cf0, 0xffffff], { flammable: 0.4, fuel: 1 }),
     make("boulder", "cover", [0x9a9aa0, 0x8a8a90, 0xa8a8ae], { solid: true }),
+    // 4.4.5, nature that is never the same twice (ecology.ts): undergrowth,
+    // rocks and the things villages add as they grow, all after the older ids.
+    make("reeds", "cover", [0x8a9a4a, 0x7f9042, 0x96a452], { flammable: 0.5, fuel: 1.5 }),
+    make("fern", "cover", [0x3f7f34, 0x47893a, 0x37722e], { flammable: 0.5, fuel: 1 }),
+    make("berries", "cover", [0x3f7a33, 0x46843a, 0x38702e], { flammable: 0.6, fuel: 3 }),
+    make("log", "cover", [0x6a4a2e, 0x5e4228, 0x765234], { flammable: 0.45, fuel: 6 }),
+    make("fungi", "cover", [0xe8dcc8, 0xd8352a, 0xc89a5a], { flammable: 0.2, fuel: 0.5 }),
+    make("cactus", "cover", [0x4f8a3a, 0x5a9642, 0x467e34], { flammable: 0.15, fuel: 2 }),
+    make("scree", "cover", [0x8a8a8e, 0x7e7e84, 0x96969a]),
+    make("pebbles", "cover", [0xb0aaa0, 0x9a948a, 0xc4beb4]),
+    make("standing stone", "cover", [0x8e8e94, 0x7f7f86, 0x9a9aa2], { solid: true }),
+    make("crystals", "cover", [0xb9a4ff, 0xd3c6ff, 0x9f88f5], { glow: true }),
+    make("petrified tree", "cover", [0x9a8a7a, 0x8a7a6c, 0xa89888], { solid: true }),
+    make("well", "cover", [0x9a9aa0, 0x8a8a90], { solid: true }),
+    make("windmill", "cover", [0xe8dcc0, 0xd8ccb0], { flammable: 0.3, fuel: 10, solid: true }),
+    make("shrine", "cover", [0xd8d0c0, 0xc8c0b0], { solid: true }),
+    make("dock", "cover", [0x8a6a44, 0x7f6140], { flammable: 0.4, fuel: 4 }),
+    make("fence", "cover", [0x8a6a44, 0x7f6140], { flammable: 0.5, fuel: 2 }),
   ],
   gas: [
     make("none", "gas", [0]),
@@ -88,10 +110,42 @@ export const BUILTIN: Record<Layer, Material[]> = {
 
 // "none" sits at id 0 for fluid, cover and gas. Ground always has something,
 // so its id 0 is grass.
-export const G = { GRASS: 0, DIRT: 1, SAND: 2, ROCK: 3, SNOW: 4, ASH: 5, BASALT: 6, CRYSTAL: 7, FIELD: 8 } as const;
+export const G = { GRASS: 0, DIRT: 1, SAND: 2, ROCK: 3, SNOW: 4, ASH: 5, BASALT: 6, CRYSTAL: 7, FIELD: 8, PATH: 9 } as const;
 export const F = { NONE: 0, WATER: 1, ICE: 2, LAVA: 3, OIL: 4, ACID: 5, MUD: 6 } as const;
-export const C = { NONE: 0, TREE: 1, BUSH: 2, CROP: 3, HOUSE: 4, RUBBLE: 5, POWDER: 6, STUMP: 7, FLOWER: 8, BOULDER: 9 } as const;
+export const C = {
+  NONE: 0,
+  TREE: 1,
+  BUSH: 2,
+  CROP: 3,
+  HOUSE: 4,
+  RUBBLE: 5,
+  POWDER: 6,
+  STUMP: 7,
+  FLOWER: 8,
+  BOULDER: 9,
+  REEDS: 10,
+  FERN: 11,
+  BERRIES: 12,
+  LOG: 13,
+  FUNGI: 14,
+  CACTUS: 15,
+  SCREE: 16,
+  PEBBLES: 17,
+  STONE: 18,
+  CRYSTALS: 19,
+  PETRIFIED: 20,
+  WELL: 21,
+  WINDMILL: 22,
+  SHRINE: 23,
+  DOCK: 24,
+  FENCE: 25,
+} as const;
 export const S = { NONE: 0, SMOKE: 1, STEAM: 2, POISON: 3 } as const;
+
+// How many built-in materials each layer had before 4.4.5 added its own:
+// a save without counts was written with these, and its spell materials
+// start right after them.
+export const BUILTIN_BEFORE_4_4_5: Record<Layer, number> = { ground: 9, fluid: 7, cover: 10, gas: 4 };
 
 // The full table, built-in first, then whatever spells define.
 export class MaterialTable {

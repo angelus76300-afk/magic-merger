@@ -8,7 +8,7 @@ import { NATIVE_NAMES } from "./wildlife";
 import { goalFrom, goalFromBehavior, goalFromName } from "./goals";
 import { abilitiesFrom, abilitiesFromName } from "./abilities";
 import { CUSTOM_GOALS, LOADS, TRIGGERS, mindOf, remember, tell, type AbilitySpec, type Load, type Trigger } from "./kin";
-import { BUILTIN, C, F, G, LAYERS, type Layer } from "./materials";
+import { BUILTIN, BUILTIN_BEFORE_4_4_5, C, F, G, LAYERS, type Layer } from "./materials";
 import { valueNoise } from "./noise";
 import { addGas } from "./cells";
 import { explode, forDisc, quake } from "./physics";
@@ -266,7 +266,10 @@ export class Runtime {
       if (!m || typeof m.name !== "string") continue;
       const layer = (LAYERS as readonly string[]).includes(m.layer as string) ? (m.layer as Layer) : "ground";
       const name = m.name.toLowerCase().slice(0, 30);
-      if (BUILTIN[layer].some((b) => b.name === name)) continue;
+      // A built-in material is the island's own; one 4.4.5 added (reeds,
+      // crystals, a well...) may share a name with a spell's older material,
+      // and then the spell's keeps its rules in that world.
+      if (BUILTIN[layer].some((b, k) => b.name === name && k < BUILTIN_BEFORE_4_4_5[layer])) continue;
       const colors = (Array.isArray(m.colors) ? m.colors : [m.color]).map(toColor).filter((c): c is number => c !== null);
       const mat = this.world.materials.makeMaterial(name, layer, colors.length ? colors.slice(0, 6) : [0xff00ff], {
         flammable: num(m.flammable, 0, 1, 0),
@@ -612,13 +615,15 @@ export class Runtime {
   private stepRules(dt: number): void {
     if (this.ticks.size === 0) return;
     const { world } = this;
-    const builtin = { ground: BUILTIN.ground.length, fluid: BUILTIN.fluid.length, cover: BUILTIN.cover.length, gas: BUILTIN.gas.length };
+    // Only ids with a rule are looked at: since 4.4.5 the island's own
+    // covers include ids a spell's material may have taken over.
+    const has = ruleMask(this.ticks.keys());
     const found: { rule: string; i: number }[] = [];
     for (let i = 0; i < world.n; i++) {
-      if (world.ground[i] >= builtin.ground) found.push({ rule: `ground:${world.ground[i]}`, i });
-      if (world.fluid[i] >= builtin.fluid) found.push({ rule: `fluid:${world.fluid[i]}`, i });
-      if (world.cover[i] >= builtin.cover) found.push({ rule: `cover:${world.cover[i]}`, i });
-      if (world.gas[i] >= builtin.gas) found.push({ rule: `gas:${world.gas[i]}`, i });
+      if (has.ground[world.ground[i]]) found.push({ rule: `ground:${world.ground[i]}`, i });
+      if (has.fluid[world.fluid[i]]) found.push({ rule: `fluid:${world.fluid[i]}`, i });
+      if (has.cover[world.cover[i]]) found.push({ rule: `cover:${world.cover[i]}`, i });
+      if (has.gas[world.gas[i]]) found.push({ rule: `gas:${world.gas[i]}`, i });
     }
     const budget = 3000;
     const keep = found.length > budget ? budget / found.length : 1;
@@ -642,7 +647,7 @@ export class Runtime {
     if (this.reactions.size === 0) return;
     const w = this.world;
     const arrays = { ground: w.ground, fluid: w.fluid, cover: w.cover, gas: w.gas };
-    const builtin = { ground: BUILTIN.ground.length, fluid: BUILTIN.fluid.length, cover: BUILTIN.cover.length, gas: BUILTIN.gas.length };
+    const has = ruleMask(this.reactions.keys());
     const near = (i: number, test: (j: number) => boolean) => {
       if (test(i)) return true;
       const x = i % w.w;
@@ -655,9 +660,9 @@ export class Runtime {
     let spreads = 0;
     for (const layer of LAYERS) {
       const arr = arrays[layer];
-      const first = builtin[layer];
+      const mask = has[layer];
       for (let i = 0; i < w.n; i++) {
-        if (arr[i] < first) continue;
+        if (!mask[arr[i]]) continue;
         const r = this.reactions.get(`${layer}:${arr[i]}`);
         if (!r) continue;
         const into =
@@ -1887,4 +1892,14 @@ export class SpellApi {
   sound(name: string, size = 0.5) {
     this.rt.world.emit({ kind: "sound", name: String(name), size: num(size, 0, 1, 0.5) });
   }
+}
+
+// Which ids of each layer have a rule, from keys like "cover:12".
+function ruleMask(keys: Iterable<string>): Record<Layer, Uint8Array> {
+  const out = { ground: new Uint8Array(256), fluid: new Uint8Array(256), cover: new Uint8Array(256), gas: new Uint8Array(256) } as Record<Layer, Uint8Array>;
+  for (const key of keys) {
+    const [layer, id] = key.split(":");
+    if (layer in out) out[layer as Layer][Number(id) & 255] = 1;
+  }
+  return out;
 }

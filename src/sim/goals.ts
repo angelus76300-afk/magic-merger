@@ -136,15 +136,50 @@ export function hasNeeds(c: Creature, k: CreatureKind): boolean {
 }
 
 // Seconds from fed to starving.
-const HUNGER_SECONDS: Record<string, number> = { villager: 300, wolf: 220, bear: 260, deer: 200, rabbit: 160, boar: 220 };
-// What each eats: plants (covers) or prey.
-const PLANTS: Record<string, number[]> = {
-  deer: [C.BUSH, C.FLOWER, C.CROP],
-  rabbit: [C.CROP, C.FLOWER],
-  boar: [C.CROP, C.BUSH],
-  bear: [C.BUSH],
+const HUNGER_SECONDS: Record<string, number> = {
+  villager: 300,
+  wolf: 220,
+  bear: 260,
+  deer: 200,
+  rabbit: 160,
+  boar: 220,
+  // 4.4.5, animals of their region.
+  camel: 420,
+  lizard: 220,
+  hare: 170,
+  frog: 220,
+  monkey: 220,
+  flamingo: 280,
+  salamander: 320,
+  fox: 230,
+  "polar bear": 320,
+  heron: 320,
 };
-const PREY: Record<string, string[]> = { wolf: ["deer", "rabbit"], bear: ["deer", "boar", "fish"] };
+// What each eats: plants (covers) or prey. Berries (4.4.5) feed the deer,
+// the boar and the bear too.
+export const PLANTS: Record<string, number[]> = {
+  deer: [C.BUSH, C.FLOWER, C.CROP, C.BERRIES],
+  rabbit: [C.CROP, C.FLOWER],
+  boar: [C.CROP, C.BUSH, C.BERRIES],
+  bear: [C.BUSH, C.BERRIES],
+  camel: [C.BUSH, C.CACTUS, C.REEDS, C.CROP],
+  lizard: [C.FLOWER, C.BUSH, C.CACTUS],
+  hare: [C.BUSH, C.FLOWER, C.BERRIES, C.CROP],
+  frog: [C.REEDS, C.FERN],
+  monkey: [C.BERRIES, C.BUSH, C.FERN, C.CROP],
+  flamingo: [C.REEDS],
+  salamander: [C.CRYSTALS, C.FUNGI],
+};
+export const PREY: Record<string, string[]> = {
+  wolf: ["deer", "rabbit"],
+  bear: ["deer", "boar", "fish"],
+  fox: ["hare", "rabbit", "lizard"],
+  "polar bear": ["hare", "fox", "fish"],
+  heron: ["frog", "fish"],
+};
+// Grounds a grazer makes do with when no plant is near: grass for most; the
+// salamander licks the minerals of its stone, a flamingo sieves the shallows.
+const MAKE_DO: Record<string, number[]> = { salamander: [G.BASALT, G.ASH, G.ROCK], camel: [G.GRASS, G.SAND] };
 const TAMABLE = new Set(["deer", "rabbit", "boar", "wolf"]);
 
 // How long a task takes once there, and how close "there" is.
@@ -317,6 +352,12 @@ export function needsTick(c: Creature, k: CreatureKind, dt: number): void {
   m.hunger = Math.min(1, m.hunger + dt / ((HUNGER_SECONDS[c.kind] ?? 240) * part));
   if (m.hunger >= 1) c.hp -= 0.4 * dt;
   if (c.kind === "villager" && m.task !== "rest") m.tired = Math.min(1, m.tired + dt / 400);
+}
+
+// Sends a creature walking somewhere (4.4.5: animals arriving from the
+// island's edge, or walking out over it).
+export function sendTo(c: Creature, x: number, y: number): void {
+  if (c.mind && (c.mind.task !== "roam" || Math.hypot(c.mind.tx - x, c.mind.ty - y) > 3)) setTask(c.mind, "roam", x, y, 1);
 }
 
 function setTask(m: Mind, task: Task, x: number, y: number, pace = 1, cell = -1, target: Creature | null = null): void {
@@ -631,7 +672,11 @@ function eat(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
     }
     // Grass will do (a boar roots it up).
     const here = world.idx(c.x, c.y);
-    if (world.ground[here] === G.GRASS && world.cover[here] === C.NONE) {
+    if ((MAKE_DO[c.kind] ?? [G.GRASS]).includes(world.ground[here]) && world.cover[here] === C.NONE) {
+      cellTask(world, m, "graze", here);
+      return true;
+    }
+    if (k.native && k.swims && !k.aquatic && world.fluid[here] === F.WATER && world.depth[here] < 0.9) {
       cellTask(world, m, "graze", here);
       return true;
     }

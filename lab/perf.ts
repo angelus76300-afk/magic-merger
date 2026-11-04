@@ -34,6 +34,9 @@ if (q.has("time")) engine.world.time = Number(q.get("time"));
 engine.view.orbit.dist = Math.max(engine.world.w, engine.world.h) * Number(q.get("dist") ?? 0.42);
 if (q.has("phi")) engine.view.orbit.phi = Number(q.get("phi"));
 if (q.has("theta")) engine.view.orbit.theta = Number(q.get("theta"));
+// 4.4.5: "tx=40&ty=60" looks at that cell (a rare variant, a village).
+if (q.has("tx")) engine.view.orbit.tx = Number(q.get("tx"));
+if (q.has("ty")) engine.view.orbit.ty = Number(q.get("ty"));
 if (q.has("dpr")) engine.view.fixedPixelRatio = Number(q.get("dpr"));
 const hud = new Hud(engine.stats);
 hud.show(true);
