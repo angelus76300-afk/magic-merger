@@ -2116,6 +2116,183 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
   await reset();
 }
 
+// 26. Passkeys the 4.0 review could not verify (4.1): a software
+// authenticator (a P-256 key, real WebAuthn bytes, CBOR by hand) through the
+// real register and sign in routes. A counter that goes backwards (a cloned
+// authenticator) or repeats is refused and leaves the stored counter alone;
+// a passkey that keeps 0, as synced ones do, signs in every time. Of the
+// attestation formats, "none" (what the page asks for) and "packed" self
+// attestation are accepted; a forged packed signature, "none" with a
+// statement, "fido-u2f" without its certificate and an unknown format are
+// refused, and a refused passkey claims nothing.
+{
+  await reset();
+  const subtle = globalThis.crypto.subtle;
+  const b64u = (bytes) => Buffer.from(bytes).toString("base64url");
+  const concat = (...parts) => Buffer.concat(parts.map((p) => Buffer.from(p)));
+  const sha = async (bytes) => Buffer.from(await subtle.digest("SHA-256", bytes));
+  // CBOR, the few types WebAuthn uses.
+  const head = (major, n) =>
+    n < 24
+      ? Buffer.from([(major << 5) | n])
+      : n < 256
+        ? Buffer.from([(major << 5) | 24, n])
+        : n < 65536
+          ? Buffer.from([(major << 5) | 25, n >> 8, n & 255])
+          : Buffer.from([(major << 5) | 26, (n >>> 24) & 255, (n >> 16) & 255, (n >> 8) & 255, n & 255]);
+  const cbor = (v) => {
+    if (typeof v === "number") return v >= 0 ? head(0, v) : head(1, -1 - v);
+    if (typeof v === "string") return concat(head(3, Buffer.byteLength(v)), Buffer.from(v));
+    if (v instanceof Uint8Array) return concat(head(2, v.length), v);
+    if (Array.isArray(v)) return concat(head(4, v.length), ...v.map(cbor));
+    const entries = v instanceof Map ? [...v] : Object.entries(v);
+    return concat(head(5, entries.length), ...entries.flatMap(([k, x]) => [cbor(k), cbor(x)]));
+  };
+  // WebCrypto signs P-256 as r || s; WebAuthn wants DER.
+  const der = (raw) => {
+    const int = (b) => {
+      let i = 0;
+      while (i < b.length - 1 && b[i] === 0) i++;
+      b = b.subarray(i);
+      return b[0] & 0x80 ? concat([0x02, b.length + 1, 0], b) : concat([0x02, b.length], b);
+    };
+    const body = concat(int(raw.subarray(0, 32)), int(raw.subarray(32)));
+    return concat([0x30, body.length], body);
+  };
+  const rpID = new URL(BASE).hostname;
+  async function authenticator() {
+    const keys = await subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+    const jwk = await subtle.exportKey("jwk", keys.publicKey);
+    const cose = cbor(
+      new Map([
+        [1, 2],
+        [3, -7],
+        [-1, 1],
+        [-2, Buffer.from(jwk.x, "base64url")],
+        [-3, Buffer.from(jwk.y, "base64url")],
+      ]),
+    );
+    const id = globalThis.crypto.getRandomValues(new Uint8Array(16));
+    const sign = async (bytes) => der(Buffer.from(await subtle.sign({ name: "ECDSA", hash: "SHA-256" }, keys.privateKey, bytes)));
+    const authData = async (count, attested) => {
+      const c = Buffer.alloc(4);
+      c.writeUInt32BE(count);
+      const flags = 0x01 | 0x04 | (attested ? 0x40 : 0);
+      return concat(await sha(Buffer.from(rpID)), [flags], c, attested ? concat(Buffer.alloc(16), [0, id.length], id, cose) : []);
+    };
+    return {
+      id,
+      async register(challenge, { fmt = "none", count = 0, statement } = {}) {
+        const clientDataJSON = Buffer.from(JSON.stringify({ type: "webauthn.create", challenge, origin: BASE, crossOrigin: false }));
+        const data = await authData(count, true);
+        let attStmt = statement ?? new Map();
+        if (fmt === "packed" && !statement)
+          attStmt = new Map([
+            ["alg", -7],
+            ["sig", await sign(concat(data, await sha(clientDataJSON)))],
+          ]);
+        const attestationObject = cbor(
+          new Map([
+            ["fmt", fmt],
+            ["attStmt", attStmt],
+            ["authData", data],
+          ]),
+        );
+        return {
+          id: b64u(id),
+          rawId: b64u(id),
+          type: "public-key",
+          response: { clientDataJSON: b64u(clientDataJSON), attestationObject: b64u(attestationObject), transports: ["internal"] },
+          clientExtensionResults: {},
+        };
+      },
+      async login(challenge, count) {
+        const clientDataJSON = Buffer.from(JSON.stringify({ type: "webauthn.get", challenge, origin: BASE, crossOrigin: false }));
+        const data = await authData(count, false);
+        return {
+          id: b64u(id),
+          rawId: b64u(id),
+          type: "public-key",
+          response: {
+            clientDataJSON: b64u(clientDataJSON),
+            authenticatorData: b64u(data),
+            signature: b64u(await sign(concat(data, await sha(clientDataJSON)))),
+          },
+          clientExtensionResults: {},
+        };
+      },
+    };
+  }
+  const register = async (inv, key, opts) => {
+    const o = await api("/api/account/register/options", { invite: inv.secret, body: {} });
+    return api("/api/account/register/verify", {
+      invite: inv.secret,
+      body: { challengeId: o.data.challengeId, response: await key.register(o.data.options.challenge, opts) },
+    });
+  };
+  const signIn = async (key, count) => {
+    const o = await api("/api/account/login/options", { body: {} });
+    return api("/api/account/login/verify", { body: { challengeId: o.data.challengeId, response: await key.login(o.data.options.challenge, count) } });
+  };
+  const stored = async (key) => (await db.prepare("SELECT counter FROM credentials WHERE id = ?").bind(b64u(key.id)).first())?.counter;
+
+  // Counters.
+  const synced = await authenticator();
+  const kim = await invite("Kim", 5);
+  const made = await register(kim, synced);
+  check("passkey: a software authenticator makes an account (format none)", made.status === 200 && !!made.data.token, JSON.stringify(made.data));
+  const zeros = [await signIn(synced, 0), await signIn(synced, 0)];
+  check(
+    "passkey: a counter that stays 0, as synced passkeys keep it, signs in every time",
+    zeros.every((r) => r.status === 200),
+    zeros.map((r) => r.status).join(" "),
+  );
+  const counted = await authenticator();
+  const lee = await invite("Lee", 5);
+  await register(lee, counted, { count: 1 });
+  const up = await signIn(counted, 5);
+  const back = await signIn(counted, 3);
+  const same = await signIn(counted, 5);
+  const on = await signIn(counted, 6);
+  check(
+    "passkey: a counter that goes backwards (a cloned authenticator) is refused",
+    up.status === 200 && back.status === 403 && /counter/.test(back.data.error),
+    `5: ${up.status}, then 3: ${back.status} ${back.data?.error}`,
+  );
+  check("passkey: the same counter twice is refused too, the next one passes", same.status === 403 && on.status === 200, `${same.status} ${on.status}`);
+  check("passkey: a refused sign in leaves the stored counter as it was", (await stored(counted)) === 6, `stored ${await stored(counted)}`);
+
+  // Attestation formats.
+  const formats = [
+    ["packed self attestation is accepted", { fmt: "packed" }, 200],
+    [
+      "packed with a forged signature is refused",
+      {
+        fmt: "packed",
+        statement: new Map([
+          ["alg", -7],
+          ["sig", der(Buffer.alloc(64, 7))],
+        ]),
+      },
+      400,
+    ],
+    ["none with a statement is refused", { fmt: "none", statement: new Map([["alg", -7]]) }, 400],
+    ["fido-u2f without its certificate is refused", { fmt: "fido-u2f" }, 400],
+    ["an unknown format is refused", { fmt: "made-up" }, 400],
+  ];
+  for (const [what, opts, status] of formats) {
+    const who = await invite(`Fmt ${opts.fmt}`, 5);
+    const r = await register(who, await authenticator(), opts);
+    const row = await db.prepare("SELECT claimed_at FROM invites WHERE id = ?").bind(who.id).first();
+    check(
+      `passkey: ${what}${status === 400 ? ", and claims nothing" : ""}`,
+      r.status === status && (status === 200 ? row.claimed_at > 0 : row.claimed_at === null),
+      `${r.status} ${r.data?.error ?? ""}`,
+    );
+  }
+  await reset();
+}
+
 stop();
 if (failed) {
   console.log(`\n${failed} worker checks failed`);
