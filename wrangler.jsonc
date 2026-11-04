@@ -49,6 +49,19 @@
     // GITHUB_TOKEN, ROUTINE_URL and ROUTINE_TOKEN, the admin can send an idea
     // to Claude from the Feedback tab (docs/FEEDBACK.md). A fork sets its own.
     "GITHUB_REPO": "angelus76300-afk/magic-merger",
+    // 4.2. Dollars a day that writing new items at the merge may spend, for
+    // everyone together (worker/ahead.ts); past it, items are written on
+    // first use, as before. "0" writes nothing ahead.
+    "AHEAD_DAILY_USD": "1.5",
+  },
+  // 4.2: the programs of new items, written at the merge by a background job
+  // that outlives the response (a big model's program can take a minute).
+  // Messages are taken with no wait to fill a batch, ten at a time: a batch
+  // waits for its slowest job (a small program is about 20 s), so with four
+  // the fifth item of a burst waited 34 s before it started (production run).
+  "queues": {
+    "producers": [{ "binding": "WRITES", "queue": "magic-merger-writes" }],
+    "consumers": [{ "queue": "magic-merger-writes", "max_batch_size": 10, "max_batch_timeout": 0, "max_retries": 1 }],
   },
   // Collects the programs the Batch API has written, and reads GitHub for the
   // ideas sent to Claude (3.4.1).

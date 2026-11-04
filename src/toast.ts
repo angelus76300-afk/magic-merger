@@ -6,7 +6,7 @@ export function toast(message: string, tone: "info" | "special" | "error" = "inf
   const node = document.createElement("div");
   node.className = `toast toast-${tone}`;
   node.textContent = message;
-  container.append(node);
+  container.appendChild(node);
   window.setTimeout(
     () => {
       node.classList.add("leaving");

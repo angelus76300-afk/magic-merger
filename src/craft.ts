@@ -2,6 +2,7 @@ import { FilterBar, applyFilters } from "./filters";
 import { elementKey } from "../shared/elements";
 import type { GameElement } from "../shared/types";
 import * as api from "./api";
+import { timeline } from "./timeline";
 import { openCard } from "./card";
 import type { BoardChip, Store } from "./store";
 import { toast } from "./toast";
@@ -46,7 +47,8 @@ export class Craft {
   private hovered: HTMLElement | null = null;
   private tappedChip: number | null = null;
   // Called when this player finds something they did not have yet.
-  onNewElement: (key: string) => void = () => {};
+  // writing: the Worker started its program at the merge (4.2).
+  onNewElement: (key: string, writing: boolean) => void = () => {};
 
   private filters = new FilterBar(
     "mm-craft-filters",
@@ -265,8 +267,16 @@ export class Craft {
     this.place(draggedNode, target.x + 10, target.y + 10);
 
     try {
+      const dropped = Date.now();
       const result = await api.merge(a.name, b.name);
       const newForMe = this.store.discover(result.element, [a.name, b.name]);
+      if (newForMe) {
+        const k = elementKey(result.element.name);
+        timeline.start(k, result.element.name, dropped);
+        timeline.describe(k, result.element.name, result.element.tier, result.element.kind);
+        timeline.step(k, result.element.name, "merged");
+        timeline.server(k, result.element.name, api.serverTiming(result));
+      }
       this.discard(dragged.id, false);
       this.discard(target.id, false);
       const chip = this.store.addChip(elementKey(result.element.name), target.x, target.y);
@@ -281,7 +291,7 @@ export class Craft {
         window.setTimeout(() => openCard(this.store, chip.key, true), 700);
       } else if (newForMe) toast(`New: ${label}`);
       if (newForMe) this.renderInventory();
-      if (newForMe) this.onNewElement(chip.key);
+      if (newForMe) this.onNewElement(chip.key, result.writing === true);
     } catch (err) {
       draggedNode.classList.remove("merging");
       targetNode.classList.remove("merging");

@@ -24,29 +24,9 @@ import { TIERS, type Tier } from "../shared/tiers";
 import { pickExamples, type LibraryEntry } from "../worker/programs";
 // @ts-expect-error plain JavaScript module
 import { factsOf, openLab } from "./lab-browser.mjs";
+import { adminApi } from "./admin-api";
+import { EVAL_SET } from "./eval-set";
 
-export const EVAL_SET = [
-  "Water",
-  "Withering",
-  "Gold",
-  "Fireball",
-  "Darkness",
-  "Vampire",
-  "Golem",
-  "Tornado",
-  "Necromancy",
-  "Holy Light",
-  "Sanctuary",
-  "Earthquake",
-  "Tidal Wave",
-  "Eclipse",
-  "Enchanted Forest",
-  "Great Flood",
-  "Meteor Strike",
-  "Excalibur",
-  "Black Hole",
-  "World Tree",
-];
 const SHOTS = [1, 3, 6];
 const LIBRARY_SIZE = 10;
 
@@ -96,19 +76,7 @@ const stored: Stored[] = (raw[0]?.results ?? raw).map((r: Record<string, unknown
 }));
 const byName = new Map(stored.map((s) => [s.name, s]));
 
-async function api(path: string, body?: unknown): Promise<Record<string, unknown>> {
-  for (let attempt = 0; ; attempt++) {
-    const res = await fetch(new URL(path, url), {
-      method: body ? "POST" : "GET",
-      headers: { "content-type": "application/json", "x-access-token": token! },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-    if (res.ok && data) return data;
-    if (attempt >= 2 || res.status < 500) throw new Error(`${path}: ${data?.error ?? res.status}`);
-    await new Promise((r) => setTimeout(r, 3000));
-  }
-}
+const api = adminApi(url, token!, { retries: 2 });
 
 // Once per step: the answer is kept, so a rerun picks up where it stopped.
 async function once<T>(id: string, fn: () => Promise<T>): Promise<T> {

@@ -53,7 +53,6 @@ Learned from the owner's decisions and comments; the routine adds to it every Su
 ### Content
 
 - **A new challenge each week**, verified solvable like the others before it appears. M, Claude.
-- **Species per biome** once 4.4 exists: camels, penguins, frogs, monkeys, salamanders. M, Claude.
 - **Night events**: a full moon that wakes the undead, a meteor shower to watch. S, Claude.
 
 ### Audio
@@ -63,7 +62,7 @@ Learned from the owner's decisions and comments; the routine adds to it every Su
 
 ### Security
 
-- **Shields that stop meteors and projectiles** (`#2`: "I had a shield from immortality that let a meteor pass through"). A bug players hit; in 4.1 already. S, player.
+- **Shields that stop meteors and projectiles** (`#2`: "I had a shield from immortality that let a meteor pass through"). A bug players hit; planned in 4.4.5. S, player.
 - **A CSP on the game page** itself, not only on the frames (review L3 found `/` has none). S, Claude.
 - **Weekly dependency check**: `npm audit` and outdated packages, one upgrade at a time with the tests. S, Claude.
 - **One route a week audited**: inputs, limits, who may call it, written as tests. S, Claude.

@@ -1,11 +1,13 @@
 import { parseIntents } from "../../shared/promises";
 import { TIERS, TIER_REACH, type Tier } from "../../shared/tiers";
-import { lifeCycle, populate, resetCreatureIds, updateCreature } from "./creatures";
+import { populate, resetCreatureIds } from "./creatures";
 import { C } from "./materials";
 import { unpackLook } from "./villagers";
-import { stepPhysics } from "./physics";
 import { Runtime, type CastRequest } from "./runtime";
 import { isArtifact, resetArtifactIds } from "./artifacts";
+import { logCatches } from "./kin";
+import { seeded } from "./noise";
+import { stepHeadless } from "./tick";
 import { TICK, generateWorld, type World } from "./world";
 
 // The test run a new program goes through before it is stored (3.3). It is
@@ -45,6 +47,10 @@ export interface CheckResult {
     // The five minute test of an artifact (3.7): what it changed after its arrival.
     acted?: number;
   };
+  // Milliseconds of work in each part (4.2, measured, never part of the
+  // verdict): control (the island left alone), cast (the spell's own run),
+  // protect and acts (the probes).
+  phases?: Record<string, number>;
 }
 
 const SIZE = 112;
@@ -142,18 +148,6 @@ function changedCreatures(a: Snapshot, b: Snapshot): number {
   return n;
 }
 
-// Seeded randomness, the same for the control and the spell run.
-function seeded(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 interface Island {
   world: World;
   rt: Runtime;
@@ -203,21 +197,10 @@ function island(errors: string[], streams = 0): Island {
   return { world, rt, target, land, random: seeded(SEED + 1 + streams * 101), life };
 }
 
+// Seeded randomness (noise.ts), the same for the control and the spell run;
+// the lives of the island have their own stream.
 function step(world: World, rt: Runtime, life: () => number): void {
-  world.time += TICK;
-  world.tick++;
-  stepPhysics(world, TICK);
-  const random = Math.random;
-  Math.random = life;
-  try {
-    for (const c of world.creatures) updateCreature(world, c, TICK);
-    lifeCycle(world, TICK);
-  } finally {
-    Math.random = random;
-  }
-  rt.step(TICK);
-  world.particles.update(TICK);
-  world.events.length = 0;
+  stepHeadless(world, rt, { life });
 }
 
 // The control: the same island left alone, one snapshot per second. Kept
@@ -226,6 +209,8 @@ let control: { snaps: Snapshot[]; island: Island } | null = null;
 
 function* controlUpTo(seconds: number): Generator<void, Snapshot[]> {
   const outer = Math.random;
+  const was = phase;
+  phase = "control";
   if (!control) {
     const isl = island([]);
     control = { snaps: [snapshot(isl.world)], island: isl };
@@ -242,6 +227,7 @@ function* controlUpTo(seconds: number): Generator<void, Snapshot[]> {
     c.snaps.push(snapshot(c.island.world));
   }
   Math.random = outer;
+  phase = was;
   return c.snaps;
 }
 
@@ -250,11 +236,34 @@ function* controlUpTo(seconds: number): Generator<void, Snapshot[]> {
 // while it runs (seeded, so a check gives the same answer every time).
 export function* checkProgram(req: CastRequest): Generator<void, CheckResult> {
   const random = Math.random;
+  const phases: Record<string, number> = {};
+  phase = "cast";
   try {
-    return yield* check(req);
+    const it = check(req);
+    for (;;) {
+      const at = phase;
+      const t0 = performance.now();
+      const r = it.next();
+      phases[at] = (phases[at] ?? 0) + performance.now() - t0;
+      if (r.done) {
+        for (const k of Object.keys(phases)) phases[k] = Math.round(phases[k]);
+        return { ...r.value, phases };
+      }
+      yield;
+    }
   } finally {
     Math.random = random;
   }
+}
+
+// Which part of the check is running, for its timing.
+let phase = "cast";
+
+// The control island and the probe runs without the spell are kept between
+// checks; measurements start from nothing with this.
+export function resetCheckCaches(): void {
+  control = null;
+  probeCache.clear();
 }
 
 function* check(req: CastRequest): Generator<void, CheckResult> {
@@ -346,12 +355,14 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
   const detail = `${cells} cells, ${voxels} blocks and ${creatures} creatures changed${bodies ? `, ${bodies} bodies flew` : ""}.`;
   let result: CheckResult = { ok: true, problem: null, detail, stats };
   if (parseIntents(req.intents).includes("protect")) {
+    phase = "protect";
     const probe = yield* protectProbe(req);
     const withSaved = { ...stats, saved: probe.saved };
     if (!probe.ok) return { ok: false, problem: "promise", detail: probe.detail, stats: withSaved };
     result = { ok: true, problem: null, detail: `${detail} ${probe.detail}`, stats: withSaved };
   }
   if (req.kind === "artifact") {
+    phase = "acts";
     const acts = yield* actsProbe(req);
     const withActed = { ...result.stats, acted: acts.acted };
     if (!acts.ok) return { ok: false, problem: "idle", detail: acts.detail, stats: withActed };
@@ -368,6 +379,17 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
 // body of its own still at work. A statue that only stands there fails.
 export const ACT_SECONDS = 300;
 const ACT_FROM = 15;
+
+// 4.2: the five minute test stops as soon as the artifact has acted, since
+// nothing after that can make it fail: once a second it looks at what the
+// end of the test would count (its deeds, its creatures' deeds since the
+// arrival, its material spreading, a body of its own at work for 30 s). An
+// artifact that never acts still runs the full five minutes. `full` runs
+// every test to the end, to compare (scripts/test-run-timing.ts).
+let fullActs = false;
+export function fullActsProbe(on: boolean): void {
+  fullActs = on;
+}
 
 function* actsProbe(req: CastRequest): Generator<void, { ok: boolean; acted: number; detail: string }> {
   const errors: string[] = [];
@@ -391,6 +413,7 @@ function* actsProbe(req: CastRequest): Generator<void, { ok: boolean; acted: num
   let deedsAt = 0;
   let cellsAt = 0;
   let bodySeconds = 0;
+  const ownDeeds = () => world.landmarks.filter(isArtifact).reduce((sum, a) => sum + (a.art.key === key ? a.art.deeds : 0), 0);
   for (let k = 0; k < ACT_SECONDS / TICK && !errors.length; k++) {
     step(world, rt, isl.life);
     if (k === Math.round(ACT_FROM / TICK)) {
@@ -398,6 +421,10 @@ function* actsProbe(req: CastRequest): Generator<void, { ok: boolean; acted: num
       cellsAt = materialCells();
     }
     if (k > ACT_FROM / TICK && k % 30 === 0 && rt.visuals.bodies.some((b) => b.alive && b.look !== "none")) bodySeconds++;
+    if (!fullActs && k % 30 === 29) {
+      const after = k > ACT_FROM / TICK;
+      if (ownDeeds() > 0 || bodySeconds >= 30 || (after && creatureDeeds() - deedsAt > 0) || (after && Math.abs(materialCells() - cellsAt) >= MIN_CELLS)) break;
+    }
     if (k % 5 === 4) {
       yield;
       Math.random = isl.random;
@@ -603,6 +630,8 @@ export interface SceneReport {
   deeds: Record<string, number>;
   // Every placed artifact and what it did (3.7).
   artifacts: { name: string; deeds: number; did: string[] }[];
+  // Who caught whom ("wolf caught a deer": 3), 4.3.
+  catches: Record<string, number>;
   errors: string[];
   worstTickMs: number;
   meanTickMs: number;
@@ -622,6 +651,7 @@ export function* sceneRun(
     const isl = island(errors, streams);
     const { world, rt, target } = isl;
     Math.random = isl.random;
+    const caught = logCatches(true)!;
     rt.cast({ key: "scene", name: "The five minute scene", tier: "major", code: SCENE }, target.x, target.y);
     if (extra) rt.cast({ ...extra, key: `check:${extra.key}` }, target.x, target.y);
     // The scene's creatures come in on the first tick.
@@ -685,12 +715,14 @@ export function* sceneRun(
       marks,
       deeds,
       artifacts,
+      catches: Object.fromEntries(caught),
       errors,
       worstTickMs: Math.round(worst * 10) / 10,
       meanTickMs: Math.round((total / ticks) * 100) / 100,
     };
   } finally {
     Math.random = outer;
+    logCatches(false);
   }
 }
 

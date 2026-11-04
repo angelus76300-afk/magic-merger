@@ -11,6 +11,7 @@
 import { challengeById } from "../shared/challenges";
 import type { Tier } from "../shared/tiers";
 import { solves } from "./challenge-replay";
+import { adminApi } from "./admin-api";
 
 const url = process.env.MM_URL;
 const token = process.env.MM_TOKEN;
@@ -20,16 +21,7 @@ if (!url || !token) {
 }
 const limit = Number(process.argv[2]) || 20;
 
-async function api(path: string, body?: unknown): Promise<unknown> {
-  const res = await fetch(new URL(path, url), {
-    method: body ? "POST" : "GET",
-    headers: { "content-type": "application/json", "x-access-token": token! },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(`${path}: ${(data as { error?: string } | null)?.error ?? res.status}`);
-  return data;
-}
+const api = adminApi(url, token!);
 
 const list = (await api(`/api/admin/challenge-candidates?limit=${limit}`)) as {
   challenge: string;

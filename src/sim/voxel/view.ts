@@ -33,6 +33,7 @@ import { F as FLUID } from "../materials";
 import { Figures, figureMaterials, type Pose } from "./figures";
 import { buildRig, drawScale, paletteOf, ROLES, variantOf, type Rig } from "./rigs";
 import { easeGround, walkGround, type Footing } from "./walk";
+import { gaitOf, hipHeight, lookAround, strideRate } from "./gait";
 import { BUILTIN, C, F, S } from "../materials";
 import { envelope, type Body, type Visuals } from "../visuals";
 import type { World } from "../world";
@@ -46,6 +47,8 @@ import { DecorInstances } from "./decor-instances";
 import { Darkness } from "./darkness";
 import { Domes } from "./domes";
 import { keyLevel, keyX, keyY } from "../voxelkey";
+import { LOOKS, biomeAt } from "../land";
+import { Sky } from "./sky";
 
 // What a spell's darkness pulls the sky toward.
 const NIGHT_SKY = 0x04020f;
@@ -75,7 +78,10 @@ export class VoxelView {
   // last frame: where it stood, its heading, its stride.
   private figures: Figures;
   private rigs = new WeakMap<CreatureKind, Map<number, Rig>>();
-  private gaits = new Map<number, Footing & { x: number; y: number; t: number; speed: number; phase: number; yaw: number; seen: number }>();
+  private gaits = new Map<
+    number,
+    Footing & { x: number; y: number; t: number; speed: number; phase: number; yaw: number; seen: number; graze: number; lie: number; look: number }
+  >();
   private palette: number[] = new Array(ROLES).fill(0);
   private pose: Pose = {
     x: 0,
@@ -119,7 +125,7 @@ export class VoxelView {
   private lit: MeshBasicMaterial[] = [];
   private windows!: InstancedMesh;
   private houseCells: number[] = [];
-  private sky = "";
+  private skyKey = "";
   private skyCanvas = document.createElement("canvas");
   private decorMesh: InstancedMesh;
   // Voxels that shine (crystal, magic, fire) are not darkened at night.
@@ -144,6 +150,9 @@ export class VoxelView {
   private cssW = 1;
   private cssH = 1;
   private firstBuild = true;
+  // Sun, moon, stars and weather (4.4).
+  private sky!: Sky;
+  private waveTime = { value: 0 };
 
   constructor(
     readonly canvas: HTMLCanvasElement,
@@ -173,7 +182,10 @@ export class VoxelView {
     this.decalCtx = this.decal.getContext("2d")!;
     this.decalTexture = new CanvasTexture(this.decal);
     const land = withDecal(new MeshBasicMaterial({ vertexColors: true }), this.decalTexture, world);
-    const fluid = withDecal(new MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false }), this.decalTexture, world);
+    const fluid = withWaves(
+      withDecal(new MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false }), this.decalTexture, world),
+      this.waveTime,
+    );
     this.terrain = new Terrain(
       world,
       land,
@@ -183,7 +195,25 @@ export class VoxelView {
     );
 
     const basic = new MeshBasicMaterial({ vertexColors: true });
-    for (const key of ["tree", "pine", "bush", "crop", "house", "rubble", "powder", "stump", "flower", "boulder", "block", "slab"]) {
+    for (const key of [
+      "tree",
+      "pine",
+      "palm",
+      "snowpine",
+      "jungle",
+      "willow",
+      "juniper",
+      "bush",
+      "crop",
+      "house",
+      "rubble",
+      "powder",
+      "stump",
+      "flower",
+      "boulder",
+      "block",
+      "slab",
+    ]) {
       const mesh = new InstancedMesh(geometryOf(MODELS[key]), basic, 64);
       withColors(mesh);
       mesh.count = 0;
@@ -211,6 +241,7 @@ export class VoxelView {
       new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.35, blending: AdditiveBlending, depthWrite: false }),
       3000,
     );
+    this.sky = new Sky(this.scene, world, this.glowTexture);
     this.lit = [land, fluid, basic, this.puffs.material as MeshBasicMaterial, this.clouds.material as MeshBasicMaterial, figureMats.lit];
     for (const m of this.lit) this.darkness.apply(m);
   }
@@ -346,8 +377,19 @@ export class VoxelView {
     }
   }
 
+  // The Perf Lab pins the pixel density, so two runs draw the same pixels (4.4).
+  fixedPixelRatio: number | null = null;
+
   // Lower the pixel density when frames are slow, raise it back when they are fast.
   private adapt(ms: number, dt: number): void {
+    if (this.fixedPixelRatio !== null) {
+      if (this.pixelRatio !== this.fixedPixelRatio) {
+        this.pixelRatio = this.fixedPixelRatio;
+        this.renderer.setPixelRatio(this.pixelRatio);
+        this.renderer.setSize(this.cssW, this.cssH, false);
+      }
+      return;
+    }
     this.frameTimes.push(dt * 1000);
     this.drawTimes.push(ms);
     if (this.frameTimes.length < 60) return;
@@ -382,13 +424,19 @@ export class VoxelView {
     const lists = new Map<string, number[]>();
     for (const key of this.covers.keys()) lists.set(key, []);
     const builtinCovers = BUILTIN.cover.length;
+    // A biome draws its own trees (4.4), a mixed island each region's
+    // (4.4.1); the island before 4.4, oaks and pines.
+    const trees = world.land ? LOOKS[world.land.biome].trees : null;
     for (let i = 0; i < world.n; i++) {
       const c = world.cover[i];
       if (c === C.NONE) continue;
       let key: string;
       if (c >= builtinCovers) key = world.materials.get("cover", c).solid ? "block" : "slab";
-      else if (c === C.TREE) key = world.shade[i] % 3 === 0 || world.height[i] > 20 ? "pine" : "tree";
-      else key = world.materials.get("cover", c).name;
+      else if (c === C.TREE) {
+        const high = world.shade[i] % 3 === 0 || world.height[i] > 20;
+        const own = world.biomeMap ? LOOKS[biomeAt(world, i)].trees : trees;
+        key = own ? own[high ? 1 : 0] : high ? "pine" : "tree";
+      } else key = world.materials.get("cover", c).name;
       lists.get(key)?.push(i);
     }
     this.houseCells = lists.get("house") ?? [];
@@ -443,19 +491,39 @@ export class VoxelView {
   // gradient hole cut for every light, redrawn every frame.
   private applyDaylight(time: number, dark: number, visuals: Visuals): void {
     const day = daylight(time);
-    for (const m of this.lit) m.color.setRGB(day.r, day.g, day.b);
+    // Sun, moon, stars and the weather (4.4): rain and fog grey the day and
+    // bring the fog in.
+    const o = this.orbit;
+    const target = this.toScene(o.tx, o.ty, this.groundAt(o.tx, o.ty));
+    this.sky.update(time, day.night, o.camera, target, o.dist, this.pixelRatio);
+    this.waveTime.value = time;
+    const grey = this.sky.overcast;
+    const fogK = this.sky.fog;
+    const dim = 1 - grey;
+    for (const m of this.lit) m.color.setRGB(day.r * dim, day.g * dim, day.b * dim);
     this.lightTheDark(Math.min(0.95, dark), visuals);
     // The sky is repainted only when it changes by a visible step.
     const shade = Math.round(Math.min(0.95, dark) * 20) / 20;
-    const top = shade ? hexColor(mixColor(parseInt(day.skyTop.slice(1), 16), NIGHT_SKY, shade)) : day.skyTop;
-    const low = shade ? hexColor(mixColor(parseInt(day.skyLow.slice(1), 16), NIGHT_SKY, shade)) : day.skyLow;
-    const key = top + low;
-    if (key !== this.sky) {
-      this.sky = key;
+    const cloud = Math.round(Math.min(1, Math.max(grey * 2.4, fogK * 0.75)) * 20) / 20;
+    const tone = (c: string) => {
+      let v = parseInt(c.slice(1), 16);
+      if (cloud) v = mixColor(v, mixColor(0x8a949e, NIGHT_SKY, day.night * 0.8), cloud);
+      if (shade) v = mixColor(v, NIGHT_SKY, shade);
+      return hexColor(v);
+    };
+    const top = tone(day.skyTop);
+    const low = tone(day.skyLow);
+    const fogStep = Math.round(fogK * 20) / 20;
+    const key = top + low + fogStep;
+    if (key !== this.skyKey) {
+      this.skyKey = key;
       paintSky(this.skyCanvas, top, low);
       (this.scene.background as CanvasTexture).image = this.skyCanvas;
       (this.scene.background as CanvasTexture).needsUpdate = true;
-      (this.scene.fog as Fog).color.set(low);
+      const fog = this.scene.fog as Fog;
+      fog.color.set(fogStep ? hexColor(mixColor(parseInt(low.slice(1), 16), 0xc4c8cc, fogStep * 0.6)) : low);
+      fog.near = this.world.w * 1.6 * (1 - fogStep * 0.85);
+      fog.far = this.world.w * 5 * (1 - fogStep * 0.8);
     }
     let n = 0;
     if (day.night > 0.15) {
@@ -539,7 +607,21 @@ export class VoxelView {
       const i = Math.max(0, Math.min(world.w - 1, Math.floor(c.x))) + Math.max(0, Math.min(world.h - 1, Math.floor(c.y))) * world.w;
       let g = this.gaits.get(c.id);
       if (!g) {
-        g = { x: c.x, y: c.y, t: time, speed: 0, phase: c.id, yaw: (c.id * 2.4) % (Math.PI * 2), seen: frame, gy: NaN, vy: 0, gt: time };
+        g = {
+          x: c.x,
+          y: c.y,
+          t: time,
+          speed: 0,
+          phase: c.id,
+          yaw: Math.atan2(Math.cos(c.hd), Math.sin(c.hd)),
+          seen: frame,
+          gy: NaN,
+          vy: 0,
+          gt: time,
+          graze: 0,
+          lie: 0,
+          look: 0,
+        };
         this.gaits.set(c.id, g);
       }
       g.seen = frame;
@@ -553,7 +635,10 @@ export class VoxelView {
       this.sphere.radius = Math.max(rig.height, 1.4) * size;
       const seen = this.frustum.intersectsSphere(this.sphere);
 
-      // The stride and heading come from how far it moved since the last tick.
+      // The stride comes from how far it moved since the last tick; the
+      // heading is the simulation's own (4.3, steer.ts), which turns at the
+      // creature's pace and on the spot before it walks off the other way.
+      const walking = k.speed * Math.sqrt(c.size);
       if (time > g.t) {
         const dt = time - g.t;
         const dx = c.x - g.x;
@@ -562,13 +647,19 @@ export class VoxelView {
         if (d > 3) g.speed = 0;
         else {
           g.speed += (d / dt - g.speed) * Math.min(1, dt * 8);
-          if (d > 0.004 && !c.dead) {
-            let turn = Math.atan2(dx, dy) - g.yaw;
+          if (!c.dead) {
+            let turn = Math.atan2(Math.cos(c.hd), Math.sin(c.hd)) - g.yaw;
             turn = Math.atan2(Math.sin(turn), Math.cos(turn));
-            g.yaw += turn * Math.min(1, dt * 10);
+            g.yaw += turn * Math.min(1, dt * 14);
           }
-          g.phase += Math.min(g.speed, 12) * dt * (3.6 / Math.max(0.3, size));
+          g.phase += Math.min(g.speed, 12) * dt * strideRate(gaitOf(g.speed, walking), size);
         }
+        // Standing: head down to its food or work, lying down, looking round.
+        const idle = c.dead ? undefined : (c.data.idle as string | undefined);
+        const ease = Math.min(1, dt * 3);
+        g.graze += ((idle === "graze" ? 1 : 0) - g.graze) * ease;
+        g.lie += ((idle === "lie" && !k.flying && !k.aquatic ? 1 : 0) - g.lie) * Math.min(1, dt * 1.5);
+        g.look += ((idle === "look" ? 1 : 0) - g.look) * ease;
         g.x = c.x;
         g.y = c.y;
         g.t = time;
@@ -596,10 +687,19 @@ export class VoxelView {
       pose.scale = size;
       pose.phase = g.phase;
       pose.moving = still ? 0 : Math.min(1, g.speed / 1.4);
+      // A walk, a trot or a run by its speed: longer strides, a body that
+      // bobs and leans into a run (4.3).
+      const gait = still ? 0 : gaitOf(g.speed, walking) * pose.moving;
+      pose.gait = gait;
+      pose.graze = still ? 0 : g.graze;
+      pose.lie = c.dead ? 0 : g.lie;
+      pose.look = still ? 0 : g.look * lookAround(time, c.id);
       pose.still = still;
       pose.flying = !c.dead && (k.flying || c.levitate > 0) && c.z > 0.5;
       pose.nod = asleep ? 0.35 : 0;
-      pose.pitch = rig.lean + (still ? 0 : pose.moving * 0.05);
+      pose.pitch = rig.lean + (still ? 0 : pose.moving * 0.05 + gait * 0.04 + Math.sin(g.phase * 2) * 0.03 * gait);
+      if (!still && gait > 0) pose.y += Math.abs(Math.sin(g.phase)) * 0.05 * gait * size;
+      if (g.lie > 0.01 && !c.dead) pose.y -= hipHeight(rig) * 0.75 * g.lie * size;
       pose.roll = 0;
       pose.offset = (c.id % 17) * 0.37;
       pose.glowAll = k.glow;
@@ -998,6 +1098,36 @@ function withDecal<T extends MeshBasicMaterial>(material: T, texture: CanvasText
         "#include <dithering_fragment>\nvec2 decalUv = (vWorldPos.xz + worldSize * 0.5) / worldSize;\nvec4 decal = texture2D(decalMap, vec2(decalUv.x, 1.0 - decalUv.y));\ngl_FragColor.rgb = mix(gl_FragColor.rgb, decal.rgb, decal.a * vDecal);",
       );
   };
+  return material;
+}
+
+// Gentle waves on water tops (4.4): each vertex rides a few sine waves by its
+// `wave` weight (terrain.ts: none at the shore, against walls or in the
+// shallows), and the water glints a little as they pass.
+function withWaves<T extends MeshBasicMaterial>(material: T, time: { value: number }): T {
+  const before = material.onBeforeCompile;
+  material.onBeforeCompile = (shader, renderer) => {
+    before.call(material, shader, renderer);
+    shader.uniforms.waveTime = time;
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nattribute float wave;\nuniform float waveTime;\nvarying float vGlint;")
+      .replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>
+vGlint = 0.0;
+if (wave > 0.0) {
+  float s = sin(position.x * 0.9 + waveTime * 1.6) + sin(position.z * 0.7 - waveTime * 1.2 + position.x * 0.3);
+  transformed.y += wave * s * 0.045;
+  vGlint = wave * max(0.0, s - 1.2) * 0.12;
+}`,
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", "#include <common>\nvarying float vGlint;")
+      .replace("#include <dithering_fragment>", "#include <dithering_fragment>\ngl_FragColor.rgb += vGlint;");
+  };
+  // Three caches programs by onBeforeCompile's source, which the darkness
+  // wrapper makes the same for land and water: name this one apart.
+  material.customProgramCacheKey = () => "water-waves";
   return material;
 }
 

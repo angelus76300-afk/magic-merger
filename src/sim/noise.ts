@@ -1,16 +1,22 @@
 // Seeded randomness and smooth noise for terrain.
 
-export class Rng {
-  private s: number;
-  constructor(seed: number) {
-    this.s = seed >>> 0 || 1;
-  }
-  next(): number {
-    this.s = (this.s + 0x6d2b79f5) >>> 0;
-    let t = this.s;
+// The one seeded generator (mulberry32) of the game, its test runs and the
+// scripts (4.1, review L4: it was written seven times).
+export function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export class Rng {
+  readonly next: () => number;
+  constructor(seed: number) {
+    this.next = seeded(seed >>> 0 || 1);
   }
   range(a: number, b: number): number {
     return a + (b - a) * this.next();

@@ -35,6 +35,7 @@ Without an API key the Worker answers with fake, clearly labelled results and st
 ```bash
 npx wrangler login
 npx wrangler d1 create magic-merger          # copy the database_id it prints into wrangler.jsonc
+npx wrangler queues create magic-merger-writes   # 4.2: the queue that writes new items at the merge
 npx wrangler secret put ANTHROPIC_API_KEY
 npx wrangler secret put ADMIN_TOKEN          # a long random string, only for you
 npm run deploy
@@ -142,6 +143,7 @@ Set in `wrangler.jsonc`:
 | `JUDGE_MODEL`        | `claude-haiku-5-5`             | scoring three Spell Lab frames of a program (3.3)                                                                       |
 | `REWRITE_BUDGET_USD` | `0.5`                          | dollars a day for rewrites asked by votes, the judge and failed test runs                                               |
 | `BIG_SPELLS_BATCH`   | `1`                            | legendary and cosmic spells drafted by Haiku at once, written by Opus through the Batch API at half price; `0` for 3.2  |
+| `AHEAD_DAILY_USD`    | `1.5`                          | 4.2: dollars a day that writing every new item at the merge may spend, everyone together; `0` turns it off (DESIGN.md)  |
 | `REFRESH_BUDGET_USD` | `8`                            | dollars a month the refresh of the legacy library may spend (3.7 part E), held before each batch is sent                |
 | `DESIGN_MODEL`       | `SPELL_MODEL`                  | who designs how the World API grows from what spells lacked (3.4.2), one call a day at most                             |
 | `EVOLVE`             | unset                          | `0` stops the API from growing on its own; the admin can still ask with `POST /api/admin/evolve`                        |
@@ -209,5 +211,9 @@ npm run test:worker
 `node scripts/overlap-lab.mjs <out-dir>` casts the cases of 3.4's overlap fixes in the Spell Lab (a waterfall over the cut side, water on terraces, blocks in the land and through houses, a drawing over cliffs and water); compare with `docs/visual-checks`.
 
 `npm test` runs the simulation in Node, without a browser, in about 90 seconds on four cores (measured on 2026-11-03; the five minute scene on three streams is most of it): map generation, the reference spells, the loop guard, a save round trip, every challenge with its solution and, over eight seeds in worker threads, with nothing, the test run on good and bad programs, the five minute scene and the vote rules. GitHub Actions runs lint, the format check, `npm run build`, `npm test` and `npm run test:worker` on every pull request and on every push to `main`.
+
+Both test commands take environment knobs since 4.1: `SLOW_MS=40 npm test` turns the slow cast guard back on at the browser's value (it is off by default, so no verdict depends on the machine), and the Worker test drives a software passkey through the real routes. `npm run typecheck` checks `scripts/` too (`scripts/tsconfig.json`), and `npm run lint` covers the `.mjs` scripts.
+
+`npm run build && node scripts/verify-4.1.mjs` (4.1) runs the 4.0 review's browser findings in a phone sized headless browser against `wrangler dev` with a stub Claude: two tabs of one browser signed in (discoveries, the island, the upload), a full storage, a World frame stuck in spell code, the vote bar over a live challenge (with `shots=<dir>` for the screenshot), Restart and Retry keeping the head start, a spell mended too often. `node node_modules/.cache/drum.mjs` after `npx esbuild scripts/drum-count.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/drum.mjs` counts the sounds a busy island plays by itself.
 
 `node scripts/local-verify.mjs` (4.0 review) runs the built game in a phone sized headless browser against `wrangler dev` with a stub Claude and checks what no Node test can: a check frame that never loads, a test verdict that never reaches the Worker, a challenge win kept for the next visit. It needs `dist/` and Playwright.

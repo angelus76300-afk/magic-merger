@@ -2,7 +2,7 @@ import type { ProgressBoard, ProgressDiscovery, ProgressIsland } from "../shared
 import * as api from "./api";
 import type { Store } from "./store";
 import { toast } from "./toast";
-import { WORLD_AT_KEY, WORLD_KEY } from "./worldhost";
+import { WORLD_AT_KEY, hasIsland, readIslandGz, readIslandText, storeIslandGz } from "./island-store";
 
 // 4.0: the account's progress on the server, kept in step with this device.
 // Discoveries are a union by key (the earliest time wins); the board follows;
@@ -32,20 +32,6 @@ function writeSeen(seen: Seen): void {
   } catch {
     // kept for this page
   }
-}
-
-async function gzip(text: string): Promise<string> {
-  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
-  const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
-  let s = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(s);
-}
-
-async function gunzip(b64: string): Promise<string> {
-  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
-  return new Response(stream).text();
 }
 
 function deviceName(): string {
@@ -87,11 +73,10 @@ export class Sync {
     if (island && island.data) {
       const remote = island.data as ProgressIsland;
       const localAt = Number(localStorage.getItem(WORLD_AT_KEY) ?? 0);
-      const localSave = localStorage.getItem(WORLD_KEY);
-      if (!localSave || remote.at > localAt) {
+      if (!hasIsland() || remote.at > localAt) {
         try {
-          localStorage.setItem(WORLD_KEY, await gunzip(remote.gz));
-          localStorage.setItem(WORLD_AT_KEY, String(remote.at));
+          // Kept as it came, gzipped (4.4): a giant island fits.
+          storeIslandGz(remote.gz, remote.at);
           out.island = "replaced";
         } catch {
           // An island this device cannot unpack: its own stays.
@@ -124,8 +109,20 @@ export class Sync {
     this.discoveriesTimer = window.setTimeout(() => void this.pushDiscoveries(), 5000);
   }
 
+  // What the server holds was last seen by this tab or another tab of this
+  // browser (4.0 review M6): the newest of both, so an upload from one tab
+  // never reads as an older device to the other.
+  private refreshSeen(): void {
+    const stored = readSeen();
+    for (const k of ["discoveries", "board", "island"] as const) {
+      const v = Math.max(this.seen[k] ?? 0, stored[k] ?? 0);
+      if (v) this.seen[k] = v;
+    }
+  }
+
   async pushDiscoveries(): Promise<void> {
     if (!api.hasSession()) return;
+    this.refreshSeen();
     const device = deviceName();
     try {
       const r = await api.account.putProgress({ kind: "discoveries", data: this.store.exportDiscoveries(), since: this.seen.discoveries, force: true, device });
@@ -144,13 +141,17 @@ export class Sync {
     clearTimeout(this.islandTimer);
     this.islandTimer = 0;
     if (!api.hasSession() || this.busy) return;
-    const save = localStorage.getItem(WORLD_KEY);
-    if (!save) return;
+    this.refreshSeen();
+    if (!hasIsland()) return;
     this.busy = true;
     try {
       const at = Number(localStorage.getItem(WORLD_AT_KEY) ?? Date.now());
-      const size = (JSON.parse(save) as { w?: number }).w ?? 0;
-      const data: ProgressIsland = { gz: await gzip(save), size: size >= 200 ? "large" : size >= 140 ? "medium" : "small", at };
+      const text = await readIslandText();
+      const gz = await readIslandGz();
+      if (!text || !gz) return;
+      const w = (JSON.parse(text) as { w?: number }).w ?? 0;
+      const size = w >= 380 ? "giant" : w >= 280 ? "huge" : w >= 200 ? "large" : w >= 140 ? "medium" : "small";
+      const data: ProgressIsland = { gz, size, at };
       const r = await api.account.putProgress({ kind: "island", data, since: this.seen.island, force, device: deviceName() });
       this.seen.island = r.updatedAt;
       this.islandDirty = false;
@@ -173,8 +174,7 @@ export class Sync {
           const island = docs.find((x) => x.kind === "island");
           if (island) {
             const remote = island.data as ProgressIsland;
-            localStorage.setItem(WORLD_KEY, await gunzip(remote.gz));
-            localStorage.setItem(WORLD_AT_KEY, String(remote.at));
+            storeIslandGz(remote.gz, remote.at);
             this.seen.island = island.updatedAt;
             writeSeen(this.seen);
             toast("The other island is loading…");

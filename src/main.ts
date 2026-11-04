@@ -39,11 +39,15 @@ const world = new WorldHost(store, {
   tools: $("#spell-tools"),
   add: $<HTMLButtonElement>("#world-add"),
   reset: $<HTMLButtonElement>("#world-reset"),
-  size: $<HTMLSelectElement>("#world-size"),
   sound: $<HTMLButtonElement>("#world-sound"),
 });
 
 const challenges = new Challenges($("#challenges-view"), store, world);
+// Another tab of this browser found something (4.0 review M6): shown here too.
+store.listen(() => {
+  craft.refresh();
+  world.renderSpells();
+});
 // 4.0: the account's progress follows this device while signed in.
 const sync = new Sync(store);
 world.onSaved = () => sync.islandSaved();
@@ -84,12 +88,13 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
 }
 
 world.init();
-// New discoveries get their program written in the background (cheap tiers only).
-craft.onNewElement = (key) => world.ahead(key);
+// New discoveries: the Worker writes their program from the merge (4.2);
+// this page asks for it at once, and tests it as soon as it arrives.
+craft.onNewElement = (key, writing) => world.ahead(key, writing);
 // What a challenge's board finds joins the main inventory (3.7).
-challenges.onDiscovered = (key) => {
+challenges.onDiscovered = (key, writing) => {
   craft.refresh();
-  world.ahead(key);
+  world.ahead(key, writing);
 };
 
 setCardActions({

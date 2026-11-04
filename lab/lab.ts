@@ -2,6 +2,7 @@
 // Dev only. scripts/spell-lab.mjs loads this page in a headless browser, calls
 // window.runSpell, and saves the frames and numbers, so a spell can be judged
 // by what it does in the world, not by its code.
+import { seeded } from "../src/sim/noise";
 import { TIERS, isTier, type Tier } from "../shared/tiers";
 import { C } from "../src/sim/materials";
 import { Engine, type WorldSize } from "../src/sim/engine";
@@ -60,14 +61,7 @@ function findSpot(world: World, aim: "shore" | "edge"): { x: number; y: number }
 }
 
 function seedRandom(seed: number): void {
-  let a = seed >>> 0;
-  Math.random = () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+  Math.random = seeded(seed);
 }
 
 function census(world: World): Record<string, number> {

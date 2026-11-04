@@ -41,6 +41,8 @@ The API is deliberately high level: a few calls do a lot, so programs stay aroun
 
 The program is untrusted code, so the World runs in an iframe with `sandbox="allow-scripts"` and no `allow-same-origin`: it has an opaque origin, cannot read the game page, its token or its storage. `public/_headers` gives it a CSP with `connect-src 'none'`, so it cannot reach the network either. Everything it needs comes in by `postMessage` (`src/sim/protocol.ts`), and the parent stores its save. Every loop in a program gets a guard (`shared/spellcode.ts`) so an endless loop throws instead of freezing the page; every call into spell code is wrapped, and a spell that keeps a frame busy too long is stopped.
 
+Neither guard covers code that never returns without a loop (a catastrophic regex, a huge sort). Since 4.1 the World frame sends a heartbeat every two seconds and the page replaces a frame that has said nothing for 20 s while the World is on screen, from its last save, with a toast (`src/worldhost.ts`, `watchdog`). Where the frame shares the page's thread (most phones, headless Chromium) the page freezes with it and the watchdog acts when it thaws; the full answer is the simulation in a Worker thread.
+
 ### When a spell crashes
 
 The error goes back to Claude with the program, and the fixed version replaces it: at most twice per session per spell, three times in total unless the admin asks.
@@ -89,7 +91,7 @@ A new program is a trial until a browser has cast it on a practice island (`src/
 2. **nothing visible**: fewer than 3 land cells, 4 blocks and 1 creature differ from the control and no body flew for half a second (particles, flashes and circles alone do not count);
 3. **an island wiped**: more than 60% of the land changed (90% for legendary), or a spell up to grand that leaves fewer than a fifth of the villagers and houses. Cosmic spells may (decision 1 below).
 
-A failed trial is written once more by Haiku with the failing code and what the test found; a second failure keeps the program that was live before, or, for a new spell, keeps the second one (something to cast is better than nothing, and a crash still has the repair loop). The 14 old programs in `lab/legacy` and the 6 reference spells all pass, and 131 of the 132 programs stored on 2026-11-02 (Earth crashes); it takes 0.1 to 1.2 s in Node.
+A failed trial is written once more with the failing code and what the test found, by Haiku, or since 4.2 by Opus for a legendary or cosmic item, so a big item's Opus program is never replaced by a Haiku one (the owner's call: before 4.2 the probes never failed anything in a browser, so it had not come up); a second failure keeps the program that was live before, or, for a new spell, keeps the second one (something to cast is better than nothing, and a crash still has the repair loop). The 14 old programs in `lab/legacy` and the 6 reference spells all pass, and 131 of the 132 programs stored on 2026-11-02 (Earth crashes); it takes 0.1 to 1.2 s in Node.
 
 It runs in the browser because the Worker cannot: Cloudflare Workers forbid `new Function`, and a spell is code. It runs in a second hidden sandboxed iframe (`check.html`, same CSP as the World) so a program under test shares nothing with the player's island, and it works before the World tab is opened. It runs 8 ms at a time between frames. A browser could lie about a result; the worst it can do is one extra Haiku call per trial, since a program written to fix a failed test is never fixed again.
 
@@ -348,7 +350,7 @@ Asked after 3.6: the protection spell in play had not changed. Two causes, both 
 Now:
 
 1. **Intents for every element**, 25 per cron run on the small model, from the stored entry (about $0.0001 each; `POST /api/admin/intents` does 80 at once).
-2. **A live program that never faced the probe of its promise** is flagged in `/api/spells/live`; the next browser that holds it tests it in the check frame. A pass is recorded. A broken promise is written once more by the small model, with what the probe found, as a trial whose parent is the live program (origin `promise`); the live one stays until the trial passes its own test run. Never twice for the same program, and within the rewrite budget. One player's page load at a time, so never in bulk, and only for spells someone plays.
+2. **A live program that never faced the probe of its promise** is flagged in `/api/spells/live`; the next browser that holds it tests it in the check frame. A pass is recorded. A broken promise is written once more (by the small model; since 4.2 by the big one for a legendary or cosmic item), with what the probe found, as a trial whose parent is the live program (origin `promise`); the live one stays until the trial passes its own test run. Never twice for the same program, and within the rewrite budget. One player's page load at a time, so never in bulk, and only for spells someone plays.
 
 `npm run test:worker` checks the backfill, the flag, the rewrite as a trial with the live program kept, and that nothing is rewritten twice.
 
@@ -447,11 +449,164 @@ A one use link signs in an account that exists: the admin's "New link" on a clai
 
 Three documents per account in `progress`, each replaced whole: discoveries (key, time, the pair, and the element as the device knew it, so another device can show it), the board, and the island (the world save gzipped by `CompressionStream` and base64 encoded: a large island is about 700k characters raw and under 200k packed). Each has `updated_at` and a device label. Discoveries merge as a union by key with the earliest time (`shared/account.ts`, `mergeDiscoveries`); they go up five seconds after a change. The island goes up a minute after it changed and when the page is hidden; a device says what it last saw (`since`), and a newer save from another device is refused with when and where, so the page asks before replacing it, and loads the other one if the player says no. A device signing in takes the server's island when it is newer than its own, or has none.
 
+Two tabs of one browser (4.1): each write of the discoveries reads the stored save again and merges by key first (`src/store.ts`, `mergeSaves`), and a `storage` listener shows what the other tab found. The island is written by one tab at a time: the tab that shows the World while visible claims it on a `BroadcastChannel`, the others stop writing it, and a tab that takes it back reloads the island first if another tab saved since; without `BroadcastChannel`, a write is refused over a newer save. Uploads read the "seen" times the tabs share, so one tab's upload never reads as an older device to the other. A full storage, or an island past `MAX_SAVE_CHARS` (1.5M characters), is said once per page (`src/quota.ts`).
+
 The upload has its own limit (2 MB a body, `PROGRESS_LIMITS` a document); every document is checked for shape; a document is only ever read or written through the session's own account.
 
 ### Existing friends, export, deletion
 
 A browser playing with a link is offered the account once, after the welcome; "Later" is an answer, and the `?` button keeps the offer. Nothing changes until they answer: the invite header keeps playing. Export is one JSON of every row keyed by the account. Deletion removes passkeys, sessions, challenges, links, progress, votes, casts, activity, ideas and their votes, wins and reports, sets `elements.invite` to null (the element stays, the First Discovery no longer names anyone), and keeps the invite row as deleted with its spend, so the month's budget stays whole and the id is never reused. The privacy note says all of this.
+
+## Faster creation (4.2)
+
+From a drop to a castable item used to take 27 s for the first small spell in the review's phone sized run, with 2 of 12 chips ready; the measurement (`docs/measurements/creation-4.2.md`) found where it went: about 15 s of Claude (grimoire entry 2 s, intent 1.5 s, program 11 to 17 s for Haiku, 25 s for a draft, 30 s for Opus), then the test run, which the hidden frame ran 7 times slower than its work (a protection cantrip: 3.7 s of work, 27.7 s), and artifacts never finished it at all (passed by the 60 s timeout, so their five minute test decided nothing), all one item after another. The rules, set by the owner: no lower quality (no fast mode, no weaker draft shown to players), and the extra cost of writing items nobody casts is accepted inside a daily cap.
+
+### The test run in a Web Worker
+
+The check frame (`src/sim/checkframe.ts`) is still the sandbox: an iframe with an opaque origin and a CSP with no network. It now makes up to two Web Workers from a blob (`src/sim/checkworker.ts`, built inline by Vite): a blob worker has the frame's opaque origin and inherits its CSP, so the only header that changed is `worker-src blob:` on `/check`. A worker runs the test from start to end, simulation only, off the page's thread, and keeps the control island and the probe runs without a spell between checks. A program that keeps it busy 45 s is stopped by terminating the worker, which the frame could never do; that counts as "did not finish", a pass, as a slow test always has. A browser that cannot make the worker runs the test in the frame, as before.
+
+The five minute test of an artifact stops as soon as the artifact has acted (its own deeds, its creatures' deeds since the arrival, its material spreading, a body of its own at work for 30 s): nothing after that can make it fail. One that never acts still runs five minutes. On the 103 live artifacts the early stop gives the same verdict as the full run every time (`COMPARE=1 scripts/test-run-timing.ts`).
+
+### Every item written at the merge
+
+A merge that makes a new item, or reaches a known item that has no program, records one row in `writes` and sends its key to the `WRITES` Cloudflare Queue (`worker/ahead.ts`). A queue, not `waitUntil`, since a big model's program outlives the response. The consumer writes it with the model its tier calls for, as on first use: Haiku up to grand at once; above, Opus through the Batch API at half price with no Haiku draft, the batch polled every 30 s by delayed queue messages (the ten minute cron stays the fallback). The player whose merge started it pays, from their $5; the burst guard does not count jobs.
+
+Idempotent three times: one row per item ever (its primary key), a claim in one statement (a message delivered twice runs once), and the same in-flight key as a player's own request (`spell:<key>`). A player asking while the job writes gets "writing" with when to ask again (`/api/spell` answers 202) instead of paying a second time; an older page waits, then gets a 503 to retry.
+
+`AHEAD_DAILY_USD` ($1.50) caps these writes for everyone together; past it, past 80% of the month's budget, or when the player's allowance cannot take it, the row says `capped` or `unpaid` and the item is written on first use, exactly as before 4.2. `GET /api/admin/ahead` lists them by day. "0" turns writing ahead off.
+
+Why no draft for big items: a draft is the weaker version shown first (2.80 against 3.80 blind in 3.3; both votes on drafts so far were down), and Opus directly at the merge would cost about twice the batch (one Opus program measured $0.125 direct, $0.062 at batch price), which breaks the rule that the cost of a spell must not rise. A big item picked before its batch ends says "writing" for a few minutes (batches took 2.5 to 4.7 minutes in November).
+
+### Fewer waits
+
+The page asks for the program of every item the merge said is being written, at once, three at a time (one at a time before, each waiting for the last one's test run); its test run starts as soon as it arrives. A program that passed its test here is castable at once and the verdict goes to the Worker in the background; only a failure waits for the rewrite. On the Worker the grimoire entry comes first (the program is written from it), then the intent call, the API library, the first recipe and the library examples side by side.
+
+### The hour's prompt cache
+
+The spell writer's system prompt (8,422 tokens, the same for every program) is cached for an hour on every model and in batches (`worker/oracle.ts`, `SPELL_CACHE`). Until 4.2 the big model skipped the cache as "rare and lone"; November's ledger says otherwise: 100 of 116 big spell calls and 251 of 279 small ones started within five minutes of the previous one, and most of the rest within the hour. An hour's write costs twice the input price and a read a tenth (a twentieth on Opus); hour writes are now priced as such in the ledger. Merges, grimoire entries and intents keep their five minutes: the last two are under the 512 token minimum and are never cached anyway.
+
+The prompt was not trimmed. In the 275 programs written in November some parts are rarely used (floating islands 0, towers 1, custom goals 3, models 0), but a part a few programs reach for may be exactly what makes a World Tree; once cached, the whole prompt costs a tenth of its input price, so a fifth less of it saves under $0.0002 a program; and 20 spells cannot tell a small loss of quality from noise.
+
+### What players see
+
+Chips in the spell bar say "writing" (the Worker writes it, or the page is asking), "testing" (its test run here) or, for a few seconds, "ready"; one toast names the items that became ready together.
+
+### A bug the measurement found
+
+The page read the check frame's answer with only three problems (crash, nothing, wiped), so a broken promise (3.4.2) or an idle artifact (3.7) reached the Worker as "not ok, no problem", and the Worker promoted it like a pass: the probes had decided nothing in players' browsers since they were added. Fifteen live programs carry such a verdict (2 new ones promoted, 12 legacy rechecks that never asked for their rewrite, 1 vote rewrite); they are listed in the measurement and left live (never rewrite in bulk). Every problem is read now, and a failure the frame cannot name is a crash.
+
+## Creatures that move like they mean it (4.3)
+
+Players saw deer going back and forth. Measured first (`docs/measurements/movement-4.3.md`, `npm test` section "motion"), then fixed where the turns came from, with no API call and no prompt change. Everything here runs for villagers, the island's animals and the creatures of spells alike; no stored program was rewritten and the World API did not change (a spell that sets `x` or pushes a creature still does exactly that).
+
+### Measured
+
+`src/sim/motion.ts` is a meter the simulation reports to behind one null check, off outside tests. A **sharp turn** is a change of heading over 150 degrees within half a second, read from the creature's actual step; it is **natural** when the creature finished something in that half second (a task done, a wander or flight point reached, a catch, a delivery, a target someone else took, seeing a danger for the first time), otherwise a **flip-flop**. The same test on the direction the mind asked for gives **intent flips**: once motion has a turn rate, smoothing alone would satisfy the first count while the mind keeps dithering, so `npm test` asserts both. Also counted: seconds stuck (wanted to walk, moved less than a quarter of the step), hops (more than half a cell in one tick: a creature lifted out of a hollow), and changes of the drive per minute.
+
+### Decisions that stick
+
+1. **Fear with memory** (`src/sim/flight.ts`): alarmed at its sense (deer 8 cells from people and wolves, 9 from what hunts it), it calms only past 1.7 times that and after 3 seconds out of sight; it remembers where the danger was. Before, one distance switched fear on and off and a deer orbited it, roam, flee, roam.
+2. **Where it runs**: twelve ways out walked in steps of 0.8 cells, scored by distance gained from the danger, keeping its heading, trees at the end for those that hide (deer, rabbits, boars) and the herd lying that way; chosen about once a second and again when reached, blocked or with the danger ahead, never turning back on a routine look. Before, the way out was chosen every tick from eight directions and a deer by a tree shook.
+3. **Hysteresis everywhere**: a meal from hunger 0.7 to 0.3 (it used to stop after one mouthful at 0.55); the herd joined past 7 cells from its middle and reached at 3; danger from fire kept for 0.8 s after it is out of reach; a herd reconsidered after 2 s at the earliest.
+4. **No gap between two tasks**: a finished task is followed by the next thought in the same tick. Before, for up to 0.85 s the creature walked toward a random point (`plan`), then turned to its real goal.
+5. **Momentum**: wander points mostly ahead (within about 60 degrees), the next mouthful and the next furrow close by and ahead, a short trip whose straight line is blocked routed from the start rather than walked into and turned back from.
+
+### Steering
+
+`src/sim/steer.ts`. A creature has a heading and a speed (`hd`, `sp`, not saved). It speeds up and brakes at its kind's rate, turns at its kind's rate (deer 5 rad/s, rabbits 7, bears 3, golems 2.2; spell kinds by size and speed), a little more than twice as fast when nearly still, and turns on the spot before walking off the other way. It slows to arrive at a destination, and right down when close and facing away, so it does not circle its goal. It keeps apart from its own kind sideways only (a push straight back turned villagers round in lanes). Feelers look ahead along the way in half cell steps, each step climbed from the one before, so a slope is walkable and a cliff is not; when blocked it turns to the side it took last, up to 110 degrees. The right angle side step is gone, and with it most stuck time (deer 15 s a minute before).
+
+### Paths
+
+`src/sim/paths.ts`. A trip longer than 12 cells follows a flow field: walking distance to the destination's block of 4 by 4 cells, shared by everyone bound for it, filled breadth first 1,500 cells a tick over all fields, up to 64 steps, made again after 30 s and forgotten after 8 s unused (40 at most). A short trip whose straight line is blocked takes an exact field of its cell (28 steps). The aim is the furthest of the next six cells down the field that can be walked to in a straight line with a little room either side. A field climbs no step over 1.55 (creatures climb 1.6): a step that is just climbable when the field is made, or with a little water on it, does not stop a creature later. A creature the field cannot reach gives up its task and steps out of its hollow, as the stall did after 5 s before; a chase takes the field once the straight way to its prey is blocked.
+
+### Herds, flocks, packs
+
+A deer that sees a danger alarms its herd within 10 cells, and they run behind it (a place each behind the leader, unless the leader is nearer the danger). A herd roams a little ahead of its middle the way it is going, so nobody wanders off alone and is pulled back. Birds fly with a flock behind the lowest id around and land to sow when their leader does. Wolves hunting one animal take places on a circle around it, starting behind it, and go straight for it when close. Fish keep their schools as before, with separation.
+
+### Gaits and idles
+
+The view takes the simulation's heading, so a creature turns at its own pace and on the spot (`src/sim/voxel/view.ts`). `src/sim/voxel/gait.ts`: a walk, a trot or a run by speed against the kind's walking speed (longer strides, a body that bobs and leans into a run); standing, the head goes down to graze or work, looks around, or the legs fold and the body lies down when asleep or resting. The bestiary has run, graze and lie poses (`docs/visual-checks/gaits.png`); `docs/visual-checks/deer-before-after.jpg` is a deer by a bear on main and on 4.3 (`scripts/deer-clip.mjs`, `lab/clip.html`).
+
+### Measured
+
+`docs/measurements/movement-4.3.md` has every number. Deer flip-flops 16.9 to 0.4 a minute, rabbits 11.2 to 1.1, villagers 4.1 to 0.4; deer stuck 15.2 to 0.0 s a minute; hops (a creature lifted out of a hollow) 4 to 6 a minute to under 2. Cost, `scripts/prof-life.ts`, large island, median of three interleaved runs, ms per tick p50 / p95:
+
+| Scene        | Creatures, main | Creatures, 4.3 | Whole tick, main | Whole tick, 4.3 |
+| ------------ | --------------- | -------------- | ---------------- | --------------- |
+| As generated | 0.36 / 1.02     | 0.69 / 1.52    | 3.13 / 6.40      | 3.18 / 5.00     |
+| With guests  | 0.45 / 1.31     | 0.77 / 1.45    | 3.71 / 7.22      | 3.45 / 5.12     |
+
+The steering costs about 0.3 ms p50 of creature time; `stepTemperature` reading its material tables by id instead of by name three times a cell takes more off the tick than that.
+
+### Guards
+
+`npm test` asserts a deer under 2 flip-flops a minute in its steps and in its mind, every kind under 3 and under 3 s stuck a minute, a herd running behind one leader, wolves closing in from around their prey, birds flying with a flock, and that wolves still catch deer in the five minute scene (2 at least over its three streams: on main the streams caught 0, 3 and 4). Three things the new movement exposed:
+
+1. **Challenges.** A lava challenge is won 9 times in 12 seeds by the wall, on main and on 4.3 alike, and its verdict on seeds 101, 202 and 303 flipped with any change to what creatures do to the land (birds sowing, villagers felling). Replays now give creatures their own random stream, as the test run does, and `npm test` also asks every plain solution to win half of 12 seeds (`winRate`), so a failure on the three seeds with that green is luck, not a weaker solution.
+2. **The wildfire** counts burnt houses as they burn: villagers who got about better rebuilt each house as the next burned, and doing nothing won once in 24 seeds without two houses ever down at once.
+3. **Two test fixtures** passed by luck of the old movement and are now deliberate: the statue is 4 blocks tall, so it is visible and fails as idle; the imp hunter hunts only imps, so the imps always have an enemy near.
+
+## Islands of every kind (4.4)
+
+Asked for: bigger islands where the device can run them, biomes and shapes chosen at reset, and a better looking land, water and sky, each measured on a phone sized browser. Since 4.4.1 the seed and the sliders choose the land, and big islands mix several (below). Everything is in `src/sim/land.ts` (the land), `src/headroom.ts` and `src/island-store.ts` (sizes and saving), `src/sim/voxel/terrain.ts`, `sky.ts` and `graphics.ts` (the view). Numbers: `docs/measurements/view-4.4.md`. Pictures: `docs/visual-checks/biomes-and-shapes.png` (all 42 from above), `biomes-weather-sky.jpg`, `reset-dialog.jpg`, `desert-lakes-phone.jpg`, `giant-mixed-phone.jpg`, `mixed-islands.png`.
+
+### One set of materials, seven biomes
+
+A biome does not add materials: grass is grass in the desert and the tundra, a tree is a tree. Every species' habitat (wildlife.ts), every spell's rules, lures and promises were written against those materials, and they keep working. What a biome changes:
+
+1. **The climate**: degrees added to the ambient temperature, and where and how fast it falls with height (`World.climate`, `lapseFrom`, `lapse`; 0, 24 and 2.5 are the old island's). The desert is 14 degrees warmer; the tundra 10 colder near the sea and falls faster above it, so its sea and lowland lakes stay liquid (the fish need water) while the uplands freeze and snow over.
+2. **Where each material goes**: sand and dunes with grass by the water in the desert, snowfields and frozen uplands in the tundra, dense forest in the jungle, low land with dug pools and mud in the swamp, a volcano with a lava crater and basalt slopes, terraced red rock in the mesa.
+3. **The colors** of the built-in materials (a copy of the table per world, applied at generation and again when a save is loaded: colors are not saved), the island's cut sides, the water, and **the trees drawn**: palms, pines under snow, tall jungle trees, willows, junipers. The models are checked for faces in one plane by `npm test`.
+4. **The weather** it gets (below).
+
+Whatever the biome, every native species must have somewhere to live: where the forest animals' habitat is short (under a 400th of the island), a grove by a small pond is planted (an oasis in the desert), and a deep pool where the fish have none. On the 42 islands of `npm test` (112 cells) every species has habitat.
+
+### Chosen by a seed, mixed on big islands (4.4.1)
+
+The player does not pick a land or a shape from a list: the owner did not want choosing, and the 4.4 ask was "chosen by a seed and a few sliders". The dialog has a size, a seed and four sliders: warmth, water, mountains, forest. `resolveLand` (land-options.ts) turns them into an island:
+
+1. **The shape comes from the seed**: a coast three times in ten, each other shape about one time in nine.
+2. **The land comes from warmth and water**, the way climate makes biomes (a Whittaker diagram, much simplified): cold is tundra; hot is desert when dry, mesa a little wetter, jungle when wet; the middle is temperate forest, swamp when very wet. The seed shifts both a little, so mid sliders still give about one island in six cold and one in six hot (on 400 seeds: temperate 221, tundra 68, volcanic 41, swamp 25, jungle 16, mesa 15, desert 14). One small island in ten is volcanic, whatever the sliders.
+3. **Islands from 200 cells across (large, huge, giant) always mix several lands**, with no option: one land on 500 metres is realistic, one land on a giant island wastes it. Below 200 a region would be too small for a forest, its animals and a village.
+
+A mixed island's regions come from a climate drawn over it: warmth from the slider, a broad noise (a region is about 100 cells), a gradient from a cold side to a warm one picked by the seed, and the cold of high ground; wetness from the slider and another broad noise; one mixed island in three has a volcanic region with its volcano. A little grain at the borders makes them a speckled edge a few cells wide instead of a line. Each cell keeps its biome (`World.biomeMap`, one byte, saved as a layer), and with it its own climate (`ambient` reads the biome's from a table), its own ground, covers and forest, its own colors, cut sides, water and trees in the view. Mesa terraces and the swamp's low land are weighted by how much of the region is around each cell, so they fade at a region's edge instead of ending in a cliff. The weather is the one of the region the camera looks at; moving to another, the old weather eases out before the new one eases in. On 24 large islands at mid sliders every one held at least two lands (4.5 on average): temperate 51%, tundra 15%, swamp 10%, desert, jungle 7% each, mesa 5%, volcanic 4%. A mixed island costs about 0.3 ms more per tick (the climate table) and draws no slower. `docs/visual-checks/mixed-islands.png` shows twelve from above.
+
+`npm test` checks the seed's rules on 400 seeds, that four large islands each mix lands with every species' habitat, that a mixed island's regions and climates come back with its save, that a small island is one land, and leaves a mixed large island alone for three minutes beside the seven single lands.
+
+### Shapes, rescaled from their own distribution
+
+A shape is raw heights where only the order matters: one corner pulled down (coast), soft warped islands (archipelago, lower mountains), terraces with steep risers (plateaus), long warped ranges (ridges), basins higher toward the edge (inland lakes), land falling to one side with a flat plain where the biggest river splits into four to six meandering branches (delta). The heights are then rescaled from their own distribution, as the old island was, so the water slider means a share of the island (5% to 35%, more for an archipelago or a swamp) and the mountains slider the height of the peaks (12 to 36 above the sea), whatever the noise did. Positions are warped by a low noise before the masks are applied, so no island comes out as a circle or a straight line.
+
+### Water that runs and stays
+
+1. **Lakes**: every depression is filled from the island's edge inward (priority flood, Barnes et al. 2014). A cell's filled level says where its water spills; where it is 0.6 deeper than the land and its spill point is above the sea, there is a lake, even if its bottom lies below the sea's level (the first version filled such a basin's bottom to the sea's level and its top to the spill point: a wall of water 13 high that fell at the first tick).
+2. **Rivers**: the same flood gives each cell the way its water drains; the cells it drains (flow accumulation) say where rivers run and how big they are. Only streams that grow into a river (four times the threshold, which wetter biomes lower) are carved, upstream first, so a bed is always lower than the one above it; at most 1.4 deep with 0.9 of water, so walkers ford every river (paths.ts). A river crossing a lake leaves it at its surface, and its outlet is cut at most half a unit below it, so carving a river never drains a lake. The banks of big rivers are lowered, never beside a lake.
+   **Rivers wind (4.4.1).** Carved cell by cell along the drainage, rivers ran straight down smooth slopes and across filled flats and turned at right angles (the owner saw it: a quarter of river steps in straight runs of 8 cells or more, runs of 26). Routing over a noisier surface was tried first and did not help: the noise makes hollows, the flood fills them, and filled flats are where paths line up. Now each river is a path from its head down the drainage to the sea, a lake or the river it joins, and the path is bent the way rivers bend: control points every five cells pushed to either side in turn (wider for a bigger river, little on a steep slope, none in or by a lake, halved until the land there is not more than 0.8 above the river, so it never climbs a valley's side), a Catmull-Rom curve through them, stepped back onto the grid as side by side cells (water flows across edges, not corners), its loops cut out; head and mouth stay where they were. The bed still runs downhill along the bent path, and where a tributary lowers the cell it joins, the river below is lowered with it. A bend can run into a rise, so banks a walker could not climb (1.55) are worn into slopes of 1.3 a cell, two cells either side, never beside a lake. On 36 islands: the longest straight run 13 cells, 3% of steps in runs of 8 or more, 0.2% of river cells with a bank too high to climb (2.7% before the bends, whose bed was cut through rises too). `npm test` checks the runs and the banks; `docs/visual-checks/rivers-before-after.png` shows three islands' rivers before (top) and after.
+3. **Springs** (`World.springs`) keep a cell at a level: twelve at the river heads, one along every river cell (weak, as ground water), one at the deepest cell of each lake (faster for a big lake: the sun takes 0.004 a second from all of it), one at a volcano's vent (lava, and lava within a few cells of it never sets). A spring under another fluid stops, and starts again once the cell is clear, so a spell can still dam, freeze or boil a river. **Water above the sea leaves over the island's edge**, so rivers flowing for hours do not raise the sea. Both only exist on islands made by land.ts: challenges and the old island are unchanged.
+4. **At rest from the start**: once everything is carved, still water is brought down to its spill point, so lakes do not drain in the first seconds of play.
+
+`npm test` leaves one island of each biome (each on a different shape, the shapes going round) alone for three simulated minutes in its worker threads: each species alive at least 60% of the time (a lone bear killed by a mob is born again a little later: one death is an event, a species that stays gone a problem), villagers and houses standing, rivers and lakes still holding water (ice counts: the tundra's freeze), the open sea within 0.3 of its level, no house flooded, nothing burning by itself, the volcano still molten. Over ten minutes on the coast shape the rivers settle at half to two thirds of their first extent, the swamp gains water, the sea rises 0.01 to 0.02.
+
+### What stays as it was
+
+`generateWorld(w, h, seed)` without options is the island before 4.4, to the bit: the test run's practice island, the Spell Lab and every check that used it keep it, so no spell's verdict, judge frame or challenge moves. An island saved before 4.4 keeps its land (a reset gives a new one) and gets a temperate sky and weather.
+
+### Bigger islands where the device can run them
+
+Huge is 288 cells across (1.9 times a large island), giant 384 (3.4 times). The simulation's cost grows with the cells (the ticks measured grow 1.9 and 3.5 times), and nothing about a phone tells whether it can afford that, so the device says it itself: every 30 seconds the World frame sends the HUD's numbers of the island being played (challenges excepted), shown or not; the page keeps the latest. A bigger size is offered when the simulation p95, scaled by the cells, would stay within 12 ms (a third of a frame at 30 a second) and frames are on time now (p95 under 40 ms, at least 300 frames measured). The latest measure wins, so a device that got slower stops being offered more. A size is never chosen by default: a narrow screen starts small, others medium, and a big size stays the default only while the device still has the headroom. The frame runs spell code, which could send these numbers too: the worst it can do is offer this player an island they may decline.
+
+A giant island's save is 2.5M characters of JSON, past what the browser keeps beside the discoveries (1.5M). Saves past 400k characters are kept gzipped (0.64M for a giant island), read back in both forms; the account keeps every island gzipped as before (1.5M limit), and the Worker accepts the two sizes. A giant island is also kept on a device with no account. Saves keep up to 600 creatures (400 before; a giant island holds about 450).
+
+### The view
+
+Each improvement is behind a switch (`graphics.ts`), for the Perf Lab and for a device that cannot afford it.
+
+1. **Ambient occlusion**, baked into the vertex colors when a chunk is built: each corner of a top is darker by how many of its three neighbors there (two sides and the diagonal) stand taller (Mikola Lysenko's voxel occlusion: both sides taller is fully hidden), and the square is split along the diagonal joining its two darker corners, so the shading never shows the triangles. The foot of a wall inside the island sits in a crease (74%).
+2. **Water**: colored by depth from the biome's shallow and deep colors (the square root of depth, so the shallows read clear and depth darkens quickly), more opaque where deep; foam at the corners that touch the shore. Waves are a few sines in the vertex shader of water tops: a corner rides by the smallest weight of the four cells around it, so two tops that share a corner move it the same way and never open a gap (checked by `npm test`), and water against the shore, a wall or the island's edge stays still. The water's program is named apart (`customProgramCacheKey`): three otherwise reused the land's, whose wrappers read the same.
+3. **Weather**: rain, snow and fog, a spell of two minutes easing in and out, picked from the island's seed and the time by the biome's odds (the jungle rains, the tundra snows, the swamp is foggy, the desert almost never rains). It is the view's only: the simulation never knows it rains, so challenges, test runs and spells play the same under any sky, and nothing is saved; two devices with the same island see the same sky. Islands with no land (challenges, the Spell Lab, the test run) have none, so the judge's frames are unchanged. Rain and snow are 2,400 points in a box around the camera's target that fall in the vertex shader (no work per frame on the CPU); rain greys the day and the sky, fog brings the fog in and greys the sky.
+4. **Sun, moon and stars**: the sun crosses the day from dawn to dusk and the moon the night, on a low path a little to the south; 700 stars, more of them low, fade in at night and behind clouds. The camera mostly looks down at the island and even turned level sees only the first few degrees of sky, so a body is drawn no higher than the top of what is on screen: turn toward it and it sits above the horizon. The sky follows the camera inside its far plane, which grows with the island.
+
+Flowing rivers changed the water's level by hundredths and wetted and dried thin films at their edges every tick; each change rebuilt its terrain chunks, and the first version drew in 6.2 ms instead of 2.5. A cell is now drawn wet from a depth of 0.06 and dry below 0.005, a level redrawn when it moved 0.15, and chunks dirtied only by flowing water wait in a slow queue (one every third frame, so an edge may lag a second or two). A spell's flood, lava or new land is drawn at once.
 
 ## Challenges
 

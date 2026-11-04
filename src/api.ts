@@ -166,8 +166,9 @@ export function describe(name: string, regenerate = false): Promise<DescribeResp
   return post<DescribeResponse>("/api/describe", { name, regenerate });
 }
 
+// 4.2: `ahead` says this page understands "still being written" (writing).
 export function spell(name: string, regenerate = false): Promise<SpellResponse> {
-  return post<SpellResponse>("/api/spell", { name, regenerate });
+  return post<SpellResponse>("/api/spell", { name, regenerate, ahead: true });
 }
 
 // The program crashed: Claude gets the error and writes a fixed version.
@@ -271,7 +272,25 @@ async function send<T>(method: string, path: string, body?: unknown): Promise<T>
     if (error?.code === "invite" || error?.code === "revoked") onLockedOut(error.code, message);
     throw new ApiRequestError(message, error?.code, res.status, error?.detail);
   }
+  const timing = readServerTiming(res.headers.get("server-timing"));
+  if (timing && typeof data === "object") TIMINGS.set(data as object, timing);
   return data as T;
+}
+
+// 4.2: what the Worker spent on an answer, step by step (its Server-Timing
+// header: total, and each Claude call such as merge, describe, intent, spell).
+const TIMINGS = new WeakMap<object, Record<string, number>>();
+export function serverTiming(answer: unknown): Record<string, number> {
+  return (answer && typeof answer === "object" ? TIMINGS.get(answer) : undefined) ?? {};
+}
+function readServerTiming(raw: string | null): Record<string, number> | null {
+  if (!raw) return null;
+  const out: Record<string, number> = {};
+  for (const part of raw.split(",")) {
+    const m = /^\s*([a-z-]+)\s*;\s*dur=([\d.]+)/i.exec(part);
+    if (m) out[m[1]] = Math.round(Number(m[2]));
+  }
+  return out;
 }
 
 // Storage can be blocked (private modes): values then live for this page only.

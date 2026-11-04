@@ -25,10 +25,14 @@ import { readDigest } from "../shared/chronicle";
 import { capByDepth } from "../shared/tiers";
 import { joinsBoth } from "../worker/prompts";
 import type { Job } from "./challenge-worker";
+import { MOTION_SEEDS, MOTION_SECONDS, type MotionReport } from "./motion-run";
+import { mergeMotion, motionLines, type KindMotion } from "../src/sim/motion";
 import { runCheck, type SceneReport } from "../src/sim/check";
+import { readResult } from "../src/checkresult";
 import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../shared/votes";
 import { pickExamples, words } from "../worker/programs";
 import { verdict, type LinkedPull } from "../worker/feedback";
+import { cronJobs } from "../worker/cron";
 import { draftBrief } from "../shared/feedback";
 import { programToFetch } from "../shared/sync";
 import { mergeDiscoveries } from "../shared/account";
@@ -36,6 +40,7 @@ import { helperProblem, withLibrary } from "../worker/evolve";
 import { body, bodyFrom, BUILDS, EXTRA, FEATURES, ITEMS, MAX_MODEL_BOXES, modelOf, planOfModel, PLANS, stillModelColor } from "../src/sim/body";
 import type { BodySpec, Feature, ModelBox } from "../src/sim/body";
 import { sharedFaces } from "../src/sim/voxel/faces";
+import { FLUID_LIFT, columnTop, surfaceY } from "../src/sim/voxel/terrain";
 import { MODELS } from "../src/sim/voxel/models";
 import { easeGround, walkGround, type Footing } from "../src/sim/voxel/walk";
 import { names } from "../src/sim/social";
@@ -43,6 +48,23 @@ import { AGES, JOBS, packLook, unpackLook, type Job as Job3 } from "../src/sim/v
 import { buildRig, drawScale, HOUSE_HEIGHT, MAX_HEIGHT, villagerUnits, type Rig } from "../src/sim/voxel/rigs";
 import { SPECIES } from "../src/sim/wildlife";
 import { Store } from "../src/store";
+import { voiceFor } from "../src/sim/sound";
+import { stepWorld } from "../src/sim/tick";
+import { DAY_LENGTH } from "../src/sim/daylight";
+import { gaitOf, hipHeight } from "../src/sim/voxel/gait";
+import { TICK } from "../src/sim/world";
+import { BIOMES, DEFAULT_LAND, SHAPES, habitatCount, readLand, resolveLand, LOOKS } from "../src/sim/land";
+import { landProblems, type LandLife } from "./land-life";
+import { riverShape, riverTrenches } from "./river-metrics";
+import { projectedSim, sizesOffered, SIM_BUDGET_MS } from "../src/headroom";
+import { skyBodies, weatherAt } from "../src/sim/voxel/sky";
+import { Terrain } from "../src/sim/voxel/terrain";
+import { MeshBasicMaterial, type Mesh } from "three";
+
+// No verdict here depends on how fast the machine is (4.1, review M8): the
+// slow cast guard is off unless SLOW_MS is set, and worst ticks are printed,
+// not asserted. Section 3 checks the guard itself.
+Runtime.slowMs = Number(process.env.SLOW_MS) || Infinity;
 
 // Challenges with nothing cast, over several seeds: one seed can pass by
 // luck (Wildfire did, at 3 wins in 16). These replays run in worker threads
@@ -53,15 +75,30 @@ const SEEDS = 8;
 // queue: they are the longest jobs.
 const SCENE_STREAMS = 3;
 const SCENE_SECONDS = 600;
+const LAND_SECONDS = 180;
 const idle: Job[] = [
   ...Array.from({ length: SCENE_STREAMS }, (_, n) => ({ scene: n, seconds: SCENE_SECONDS })),
+  // 4.4: every biome left alone for three simulated minutes, each on its
+  // own shape (the shapes go round), so every biome and every shape lives.
+  ...BIOMES.map((biome, k) => ({ biome, shape: SHAPES[k % SHAPES.length], seed: 11 + k, seconds: LAND_SECONDS })),
+  ...[SHAPES[BIOMES.length % SHAPES.length]].map((shape) => ({ biome: "temperate" as const, shape, seed: 3, seconds: LAND_SECONDS })),
+  // 4.4.1: a large island as the game makes it: several lands.
+  { biome: "mixed" as const, shape: "coast" as const, seed: 31, seconds: LAND_SECONDS, size: 208 },
+  // 4.3: how creatures move, two minutes on each of three seeds.
+  ...MOTION_SEEDS.map((motion) => ({ motion })),
   // 3.7: every challenge solved in the simulation by the plain solution of its hazard.
   ...CHALLENGES.map((c) => ({ challenge: c.id })),
+  // 4.3: and how often, over 12 seeds.
+  ...CHALLENGES.map((c) => ({ rate: c.id })),
   ...SCENARIOS.flatMap((s) => Array.from({ length: SEEDS }, (_, n) => ({ id: s.id, seed: (n + 1) * 7919, magic: false }))),
 ];
 const idleResults = new Map<string, { status: string; errors: string[] }[]>();
 const sceneReports: { stream: number; report: SceneReport }[] = [];
 const verifiedChallenges = new Map<string, { ok: boolean; wins: number; runs: number }>();
+const challengeRates = new Map<string, { wins: number; runs: number; need: number; results: string }>();
+const motion: Record<string, KindMotion> = {};
+const motionErrors: string[] = [];
+const lands: LandLife[] = [];
 const nextIdle = new Int32Array(new SharedArrayBuffer(4));
 const idleDone = Promise.all(
   Array.from({ length: Math.min(4, Math.max(2, availableParallelism() - 1)) }, () => {
@@ -74,14 +111,25 @@ const idleDone = Promise.all(
         errors,
         report,
         verified,
+        motion: moved,
+        rate,
+        land,
       }: {
         job: Job;
+        land?: LandLife;
+        motion?: MotionReport;
+        rate?: { wins: number; runs: number; need: number; results: string };
         status: string;
         errors: string[];
         report?: SceneReport;
         verified?: { ok: boolean; wins: number; runs: number };
       }) => {
-        if (verified && "challenge" in job) verifiedChallenges.set(job.challenge, verified);
+        if (land) lands.push(land);
+        else if (rate && "rate" in job) challengeRates.set(job.rate, rate);
+        else if (moved) {
+          mergeMotion(motion, moved.kinds);
+          motionErrors.push(...moved.errors);
+        } else if (verified && "challenge" in job) verifiedChallenges.set(job.challenge, verified);
         else if (report && "scene" in job) sceneReports.push({ stream: job.scene, report });
         else if ("id" in job) idleResults.set(job.id, [...(idleResults.get(job.id) ?? []), { status, errors }]);
       },
@@ -131,7 +179,7 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   const ok = rt.cast({ key: file, name: file, tier: file.includes("bang") ? "cosmic" : "legendary", code: readFileSync(join(spellDir, file), "utf8") }, 76, 76);
   let worst = 0;
   for (let k = 0; k < 30 * 12; k++) worst = Math.max(worst, step(world, rt));
-  check(`spell ${file}`, ok && errors.length === 0 && worst < 120, `${errors[0] ?? "no errors"}, worst tick ${worst.toFixed(1)}ms`);
+  check(`spell ${file}`, ok && errors.length === 0, `${errors[0] ?? "no errors"}, worst tick ${worst.toFixed(1)} ms (printed, not checked)`);
 }
 
 // 2b. Programs written for older World API versions still run: they are
@@ -171,6 +219,29 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
     errors[0] ?? "no error",
   );
   check("loop guard covers bodiless loops", guardLoops("for(;;) x++;").includes("__g()"));
+  // The slow cast guard, at the browser's 40 ms: a spell that spends 60 ms on
+  // every tick is stopped after five. A slower machine only makes it slower.
+  const slow: string[] = [];
+  const was = Runtime.slowMs;
+  Runtime.slowMs = 40;
+  const rt3 = new Runtime(world, (_k, _n, m) => slow.push(m));
+  rt3.cast(
+    {
+      key: "slow",
+      name: "Slow",
+      tier: "minor",
+      code: "const spell = { *cast(w) { for (;;) { const t = Date.now(); while (Date.now() - t < 60) {} yield 0; } } };",
+    },
+    50,
+    50,
+  );
+  for (let k = 0; k < 8 && !slow.length; k++) rt3.step(1 / 30);
+  Runtime.slowMs = was;
+  check(
+    "a spell slow on every tick is stopped by the slow cast guard",
+    slow.some((e) => e.includes("every frame")),
+    slow[0] ?? "not stopped",
+  );
   const lines: string[] = [];
   const rt2 = new Runtime(world, (_k, _n, m) => lines.push(m));
   rt2.cast({ key: "line", name: "Line", tier: "minor", code: "const spell = {\n  *cast(w) {\n    w.nothing();\n  },\n};" }, 50, 50);
@@ -291,11 +362,13 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
       if (world.cover[i] !== C.NONE) world.setCover(i, C.NONE);
     }
   rt.cast({ key: "totem", name: "Rain Totem", tier: "major", code: art("rain-totem") }, tx, ty);
-  // Fire imps that cast Fireball on whatever comes near: a hunter set on them.
+  // Fire imps that cast Fireball on whatever comes near: a hunter set on them,
+  // and on them only (4.3: hunting villagers too, it ran off after one, and
+  // whether the imps had an enemy near for 40 s was luck of the chase).
   const imps = `const spell = {
     creatures: [
       { name: "fire imp", base: "beast", color: "#d0541a", hp: 2000, abilities: [{ do: "cast", spell: "Fireball", when: "enemy near", every: 20 }] },
-      { name: "imp hunter", base: "beast", color: "#303030", behavior: "hunt", prey: ["fire imp", "villager"], attack: 1, hp: 5000, sense: 40 },
+      { name: "imp hunter", base: "beast", color: "#303030", behavior: "hunt", prey: ["fire imp"], attack: 1, hp: 5000, sense: 40 },
     ],
     *cast(w) { for (let k = 0; k < 4; k++) w.spawn("fire imp", w.x + k, w.y); w.spawn("imp hunter", w.x, w.y + 3); },
   };`;
@@ -374,6 +447,28 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
       '{"version":1,"discoveries":{"steam":{"element":{"name":"Steam","emoji":"x","kind":"spell","depth":1},"discoveredAt":1,"recipe":null}},"descriptions":{},"board":[],"nextChipId":1}',
     ) === 9,
   );
+  // Two tabs of one browser (4.0 review M6): each loaded the save, each
+  // finds something, each writes; neither loses what the other found.
+  mem.clear();
+  (globalThis as { window?: unknown }).window = { setTimeout: () => 0, clearTimeout: () => {} };
+  const tabA = new Store();
+  const tabB = new Store();
+  const el = (name: string) => ({ name, emoji: "x", kind: "spell" as const, depth: 2 });
+  tabA.discover(el("Steam"), ["Fire", "Water"]);
+  tabA.write();
+  tabB.discover(el("Dust"), ["Earth", "Air"]);
+  tabB.addChip("dust", 10, 10);
+  tabB.write();
+  const both = Object.keys((JSON.parse(mem.get("magic-merger.save")!) as { discoveries: object }).discoveries);
+  check("two tabs: each tab's discovery survives the other's write", both.includes("steam") && both.includes("dust"), both.join(", "));
+  tabA.setSpell("steam", { version: 5, code: "old", id: 3 } as never);
+  tabA.write();
+  tabB.setSpell("steam", { version: 5, code: "new", id: 4 } as never);
+  tabB.write();
+  tabA.setSpell("dust", { version: 5, code: "d", id: 1 } as never);
+  tabA.write();
+  check("two tabs: the newer program of a spell is kept", tabA.spell("steam")?.code === "new");
+  delete (globalThis as { window?: unknown }).window;
   delete (globalThis as { localStorage?: unknown }).localStorage;
   check(
     "a challenge that asks for grand magic refuses a major spell",
@@ -407,9 +502,12 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   const killed = d.lines.find((l) => /a villager died, killed by the imp/.test(l));
   check("the story tells who died and what killed them", !!killed, d.lines.slice(-4).join(" | "));
   check("everyday work is counted, not told", d.work.length > 0 && !d.lines.some((l) => /grazed|harvested|picked/.test(l)), d.work.slice(0, 3).join(", "));
+  // Everyone alive who remembers the imp hurting them, the three above and
+  // any survivor of its attacks (4.3: villagers that run better survive more).
+  const hurt = world.creatures.filter((c) => c.kind === "villager" && !c.dead && c.mind?.memory.some((e) => e.kind === "imp" && e.feel <= -0.5)).length;
   check(
     "villagers' memories are gathered",
-    d.memories.some((m) => m === `${alive.length} villagers remember the imp hurt them`),
+    hurt >= alive.length && d.memories.some((m) => m === `${hurt} villagers remember the imp hurt them`),
     d.memories.join("; "),
   );
   const back = loadWorld(JSON.parse(JSON.stringify(saveWorld(world, new Map()))), () => {});
@@ -605,7 +703,248 @@ for (const scenario of SCENARIOS) {
   const { status, errors } = replay({ id: scenario.id, seed: 17, magic: true });
   check(`challenge ${scenario.id} with ${plan.file}`, status === "won" && errors.length === 0, `${status}${errors[0] ? ", " + errors[0] : ""}`);
 }
+// 4.4: islands of every kind. Every biome and shape is generated (112 cells)
+// with houses, villagers and every native species' habitat; the same seed
+// and options give the same island; a save keeps its biome, climate and
+// springs; the island before 4.4 is unchanged when no options are given.
+{
+  const missing: string[] = [];
+  let slowest = 0;
+  for (const biome of BIOMES)
+    for (const shape of SHAPES) {
+      const t0 = performance.now();
+      const world = generateWorld(112, 112, 5, { ...DEFAULT_LAND, biome, shape });
+      slowest = Math.max(slowest, performance.now() - t0);
+      populate(world);
+      const people = world.creatures.filter((c) => c.kind === "villager").length;
+      const lack = SPECIES.filter((sp) => habitatCount(world, sp) <= 0).map((sp) => sp.kind.name);
+      if (!people || lack.length) missing.push(`${biome}/${shape}: ${people} villagers${lack.length ? ", no habitat for " + lack.join(" ") : ""}`);
+    }
+  check(
+    `every biome and shape: villagers and every species' habitat (${BIOMES.length * SHAPES.length} islands)`,
+    !missing.length,
+    missing.slice(0, 4).join("; ") || `slowest ${slowest.toFixed(0)} ms (printed, not checked)`,
+  );
+  const land = { ...DEFAULT_LAND, biome: "mesa" as const, shape: "lakes" as const, water: 0.7, relief: 0.2, forest: 0.9 };
+  const a = generateWorld(112, 112, 21, land);
+  const b = generateWorld(112, 112, 21, land);
+  check("the same seed and options make the same island", a.height.every((v, i) => v === b.height[i]) && a.cover.every((v, i) => v === b.cover[i]));
+  const back = loadWorld(saveWorld(a, new Map()), () => {});
+  check(
+    "a saved island keeps its biome, climate, colors and springs",
+    !!back &&
+      back.land?.biome === "mesa" &&
+      back.climate === LOOKS.mesa.climate &&
+      back.springs.length === a.springs.length &&
+      back.springs.every((s, k) => s.i === a.springs[k].i && Math.abs(s.level - a.springs[k].level) < 0.01) &&
+      back.materials.find("grass") !== null &&
+      back.materials.get("ground", 0).colors[0] === LOOKS.mesa.palette.grass[0],
+  );
+  check(
+    "options read back safely",
+    readLand({ biome: "moon", shape: 3, water: 9, relief: -1, forest: "x" }).biome === "temperate" &&
+      readLand({ water: 9 }).water === 1 &&
+      readLand({ relief: -1 }).relief === 0,
+  );
+  const old = generateWorld(112, 112, 4);
+  check("no options: the island before 4.4, with no springs and the old climate", old.springs.length === 0 && old.climate === 0 && old.land === null);
+
+  // 4.4.1: the land comes from the seed and the sliders, not a list; large
+  // islands and bigger mix several lands, each species living somewhere.
+  const mid = { warmth: 0.5, water: 0.5, relief: 0.5, forest: 0.5 };
+  const tally = (choice: typeof mid, cells: number) => {
+    const out: Record<string, number> = {};
+    for (let s = 0; s < 400; s++) {
+      const l = resolveLand(choice, s * 7919 + 13, cells);
+      out[l.biome] = (out[l.biome] ?? 0) + 1;
+      out[l.shape] = (out[l.shape] ?? 0) + 1;
+      if (l.mixed) out.mixed = (out.mixed ?? 0) + 1;
+    }
+    return out;
+  };
+  const middle = tally(mid, 152);
+  const cold = tally({ ...mid, warmth: 0 }, 152);
+  const hotDry = tally({ ...mid, warmth: 1, water: 0 }, 152);
+  const big = tally(mid, 208);
+  check(
+    "the seed picks the shape and, from the sliders, the land",
+    SHAPES.every((s) => (middle[s] ?? 0) > 20) &&
+      (middle.temperate ?? 0) > 150 &&
+      (middle.tundra ?? 0) > 20 &&
+      (cold.tundra ?? 0) > 300 &&
+      (hotDry.desert ?? 0) > 300 &&
+      !middle.mixed &&
+      big.mixed === 400 &&
+      JSON.stringify(resolveLand(mid, 77, 152)) === JSON.stringify(resolveLand(mid, 77, 152)),
+    `mid sliders on 400 seeds: ${["temperate", "tundra", "swamp", "jungle", "mesa", "desert", "volcanic"].map((b) => `${b} ${middle[b] ?? 0}`).join(", ")}`,
+  );
+  const mixedNotes: string[] = [];
+  const mixedProblems: string[] = [];
+  for (const s of [41, 42, 43, 44]) {
+    const w = generateWorld(208, 208, s, resolveLand(mid, s, 208));
+    populate(w);
+    const count = new Map<number, number>();
+    for (const b of w.biomeMap ?? []) count.set(b, (count.get(b) ?? 0) + 1);
+    const lands = [...count.entries()].filter(([, v]) => v > w.n * 0.05).map(([b]) => BIOMES[b]);
+    const lack = SPECIES.filter((sp) => habitatCount(w, sp) <= 0).map((sp) => sp.kind.name);
+    const people = w.creatures.filter((c) => c.kind === "villager").length;
+    mixedNotes.push(`${s}: ${lands.join("+")}`);
+    if (lands.length < 2 || lack.length || !people) mixedProblems.push(`${s}: ${lands.length} lands, ${people} villagers, missing ${lack.join(" ")}`);
+  }
+  check("large islands mix lands, each species living somewhere", !mixedProblems.length, mixedProblems.join("; ") || mixedNotes.join("; "));
+  const mixed = generateWorld(208, 208, 42, resolveLand(mid, 42, 208));
+  const reload = loadWorld(JSON.parse(JSON.stringify(saveWorld(mixed, new Map()))), () => {});
+  let sameClimate = !!reload?.biomeMap;
+  for (let i = 0; reload && i < mixed.n && sameClimate; i += 97)
+    sameClimate = reload.biomeMap![i] === mixed.biomeMap![i] && Math.abs(reload.ambient(i) - mixed.ambient(i)) < 0.1;
+  check("a mixed island's regions and their climates come back with its save", sameClimate);
+  check("a small island is one land", generateWorld(112, 112, 5, resolveLand(mid, 5, 112)).biomeMap === null);
+  // 4.4.1: rivers wind instead of running straight with right angle turns
+  // (main had a run of 26 cells and a quarter of its river in runs of 8 or
+  // more), and a walker can climb out of every one.
+  let longest = 0;
+  let inRuns = 0;
+  let winding = 0;
+  let trenches = 0;
+  let riverCells = 0;
+  let islands = 0;
+  for (const shape of SHAPES)
+    for (const s of [61, 62]) {
+      const world = generateWorld(152, 152, s, { ...DEFAULT_LAND, biome: BIOMES[(s + SHAPES.indexOf(shape)) % BIOMES.length], shape });
+      const r = riverShape(world);
+      const t = riverTrenches(world);
+      trenches += t.trenches;
+      riverCells += t.cells;
+      if (!r.steps) continue;
+      longest = Math.max(longest, r.longest);
+      inRuns += r.straight;
+      winding += r.winding;
+      islands++;
+    }
+  check(
+    "rivers wind, and every bank can be climbed",
+    longest <= 20 && inRuns / islands < 0.1 && trenches <= riverCells * 0.01,
+    `${islands} islands: longest straight run ${longest}, ${((inRuns / islands) * 100).toFixed(0)}% of steps in runs of 8+, winding ${(winding / islands).toFixed(2)} (printed, not checked), ${trenches} of ${riverCells} river cells in a trench`,
+  );
+}
+
+// 4.4: the headroom rule, the weather, the sun's path, the trees' models, and
+// waves that never open a gap between two water tops.
+{
+  const m = (w: number, simP95: number, frameP95 = 30, frames = 600) => ({ w, simP95, frameP95, frames });
+  check(
+    "bigger islands only with headroom",
+    sizesOffered(null).join() === "small,medium,large" &&
+      sizesOffered(m(208, 3)).join() === "small,medium,large,huge,giant" &&
+      sizesOffered(m(208, 5)).join() === "small,medium,large,huge" &&
+      sizesOffered(m(208, 8)).join() === "small,medium,large" &&
+      sizesOffered(m(208, 3, 55)).join() === "small,medium,large" &&
+      sizesOffered(m(208, 3, 30, 100)).join() === "small,medium,large" &&
+      Math.abs(projectedSim(m(152, 2), "giant") - 2 * (384 / 152) ** 2) < 1e-9,
+    `a large island at 5 ms p95 projects ${projectedSim(m(208, 5), "huge").toFixed(1)} ms on huge, ${projectedSim(m(208, 5), "giant").toFixed(1)} on giant (budget ${SIM_BUDGET_MS})`,
+  );
+  const desert = generateWorld(64, 64, 3, { ...DEFAULT_LAND, biome: "desert" });
+  const tundra = generateWorld(64, 64, 3, { ...DEFAULT_LAND, biome: "tundra" });
+  const old = generateWorld(64, 64, 3);
+  const kinds = (w: World) => {
+    const seen: Record<string, number> = {};
+    for (let t = 0; t < 360 * 40; t += 30) {
+      const now = weatherAt(w, t);
+      if (now.amount > 0) seen[now.kind] = (seen[now.kind] ?? 0) + 1;
+    }
+    return seen;
+  };
+  const tk = kinds(tundra);
+  const dk = kinds(desert);
+  check(
+    "weather comes and goes, by biome, the same for the same island",
+    (tk.snow ?? 0) > 0 &&
+      !dk.snow &&
+      (dk.rain ?? 0) < (tk.snow ?? 0) &&
+      Object.keys(kinds(old)).length === 0 &&
+      weatherAt(tundra, 1234).kind === weatherAt(generateWorld(64, 64, 3, { ...DEFAULT_LAND, biome: "tundra" }), 1234).kind,
+    `tundra ${JSON.stringify(tk)}, desert ${JSON.stringify(dk)} (samples of 30 s over 4 hours); none without a land`,
+  );
+  const noon = skyBodies(DAY_LENGTH * 0.35);
+  const midnight = skyBodies(DAY_LENGTH * 0.73);
+  check("the sun by day, the moon by night", noon.sun > 0.5 && noon.moon < 0 && midnight.moon > 0.5 && midnight.sun < 0, JSON.stringify({ noon, midnight }));
+  const coplanar: string[] = [];
+  for (const key of ["palm", "snowpine", "jungle", "willow", "juniper"]) {
+    const boxes = MODELS[key];
+    for (let a = 0; a < boxes.length; a++)
+      for (let b = a + 1; b < boxes.length; b++) {
+        const A = boxes[a];
+        const B = boxes[b];
+        const lo = (x: { x: number; y: number; z: number }, k: number) => [x.x, x.y, x.z][k];
+        const size = (x: { w: number; h: number; d: number }, k: number) => [x.w, x.h, x.d][k];
+        for (let k = 0; k < 3; k++)
+          for (const side of [0, 1]) {
+            const pa = lo(A, k) + side * size(A, k);
+            const pb = lo(B, k) + side * size(B, k);
+            if (Math.abs(pa - pb) > 0.002) continue;
+            const [u, v] = [(k + 1) % 3, (k + 2) % 3];
+            const ou = Math.min(lo(A, u) + size(A, u), lo(B, u) + size(B, u)) - Math.max(lo(A, u), lo(B, u));
+            const ov = Math.min(lo(A, v) + size(A, v), lo(B, v) + size(B, v)) - Math.max(lo(A, v), lo(B, v));
+            if (ou > 1e-3 && ov > 1e-3) coplanar.push(`${key} ${a}/${b}`);
+          }
+      }
+  }
+  check("the biomes' trees have no two faces in one plane", !coplanar.length, coplanar.join(", ") || "palm, snowpine, jungle, willow, juniper");
+  // Waves: a corner two water tops share moves the same for both.
+  const lake = generateWorld(96, 96, 8, { ...DEFAULT_LAND, shape: "lakes", water: 0.8 });
+  const meshes: Mesh[] = [];
+  const terrain = new Terrain(
+    lake,
+    new MeshBasicMaterial(),
+    new MeshBasicMaterial(),
+    (mm) => meshes.push(mm),
+    () => {},
+  );
+  terrain.scan();
+  terrain.rebuild(true);
+  const corner = new Map<string, number>();
+  let torn = 0;
+  let moving = 0;
+  for (const mesh of meshes) {
+    const wave = mesh.geometry.getAttribute("wave");
+    if (!wave) continue;
+    const pos = mesh.geometry.getAttribute("position");
+    for (let k = 0; k < pos.count; k++) {
+      const key = `${pos.getX(k)},${pos.getY(k).toFixed(3)},${pos.getZ(k)}`;
+      const w = wave.getX(k);
+      if (w > 0) moving++;
+      const was = corner.get(key);
+      if (was === undefined) corner.set(key, w);
+      else if (Math.abs(was - w) > 1e-6) torn++;
+    }
+  }
+  check(
+    "waves never open a gap between water tops, and some water moves",
+    torn === 0 && moving > 0,
+    `${moving} vertices ride the waves, ${torn} corners disagree`,
+  );
+}
+
 await idleDone;
+// 4.4: every biome generated, populated and left alone for three minutes:
+// no species dies out, villages stand, rivers keep running, the sea does not
+// rise, nothing floods or burns by itself, the volcano keeps its lava.
+const order = (b: string) => [...BIOMES, "mixed"].indexOf(b);
+for (const r of lands.sort((x, y) => order(x.biome) - order(y.biome))) {
+  const problems = landProblems(r);
+  check(
+    `a living ${r.biome} island (${r.shape}${r.lands ? `, ${r.lands} lands` : ""}), ${LAND_SECONDS} s`,
+    !problems.length,
+    problems.join("; ") ||
+      `${Object.entries(r.species)
+        .map(([k, v]) => `${k} ${v.start}->${v.end}`)
+        .join(", ")}; river ${r.river.start}->${r.river.end} cells, sea +${r.seaRise}`,
+  );
+}
+check(
+  "every biome lived, and a mixed island",
+  [...BIOMES, "mixed"].every((b) => lands.some((r) => r.biome === b)),
+);
 for (const scenario of SCENARIOS) {
   const runs = idleResults.get(scenario.id) ?? [];
   const tally = (s: string) => runs.filter((r) => r.status === s).length;
@@ -622,10 +961,27 @@ for (const scenario of SCENARIOS) {
 // simulated minutes on three streams of life. Every creature that lived five
 // minutes changed something; no kind of three or more vanished (fell under a
 // third of its number) and none exploded (past two and a half times it).
+// 4.3: deer run better, and wolves must still catch some. Not on every
+// stream: on main, stream 0 has wolves catch no deer in ten minutes and
+// streams 1 and 2 three and four.
+{
+  const deer = sceneReports.map(({ report: r }) => r.catches["wolf caught a deer"] ?? 0);
+  check(
+    "five minute scene: wolves still catch deer",
+    deer.reduce((a, b) => a + b, 0) >= 2,
+    `${deer.join(", ")} deer caught by wolves on the three streams; ${sceneReports
+      .map(({ report: r }) =>
+        Object.entries(r.catches)
+          .map(([k, n]) => `${k} ${n}`)
+          .join(", "),
+      )
+      .join(" | ")}`,
+  );
+}
 for (const { stream, report: r } of sceneReports.sort((a, b) => a.stream - b.stream)) {
   const kinds = Object.entries(r.kinds);
   const vanished = kinds.filter(([, v]) => v.start >= 3 && v.min < Math.ceil(v.start / 3)).map(([k]) => k);
-  const exploded = kinds.filter(([, v]) => v.max > Math.max(v.start * 2.5, v.start + 3)).map(([k]) => `${k} ${v.start} to ${v.max}`);
+  const exploded = kinds.filter(([, v]) => v.max > Math.max(v.start * 2.5, v.start + 3)).map(([k, v]) => `${k} ${v.start} to ${v.max}`);
   const lively = Object.values(r.lively).reduce((a, [d, n]) => [a[0] + d, a[1] + n], [0, 0]);
   check(
     `five minute scene, stream ${stream}: every creature changed something`,
@@ -648,13 +1004,210 @@ for (const { stream, report: r } of sceneReports.sort((a, b) => a.stream - b.str
     r.artifacts.map((a) => `${a.name} ${a.deeds} (${a.did.join(", ")})`).join("; "),
   );
 }
+// 4.3: how creatures move (src/sim/motion.ts), an island of 112 cells for
+// two simulated minutes on seeds 3, 6 and 9: sharp turns (over 150 degrees
+// within half a second) per minute of creature life, natural ones (just
+// after finishing something) apart from flip-flops, where the flip-flops
+// come from, seconds stuck and action changes per minute.
+console.log(`\nmotion, island 112, seeds ${MOTION_SEEDS.join(", ")}, ${MOTION_SECONDS} s each`);
+for (const line of motionLines(motion)) console.log(`  ${line}`);
+check("motion runs without errors", motionErrors.length === 0 && Object.keys(motion).length > 0, motionErrors[0] ?? "");
+// Before 4.3: deer 16.9 flip-flops a minute, rabbits 11.2, villagers 4.1;
+// deer stuck 15 s a minute. A deer now under 2 flip-flops a minute (its
+// mind and its steps both), every kind under 3, and nobody stuck 3 s a minute.
+{
+  const per = (k: KindMotion, v: number) => (v / k.seconds) * 60;
+  const deer = motion.deer;
+  check(
+    "a deer makes under 2 sharp turns a minute outside natural ones, in its steps and in its mind",
+    !!deer && per(deer, deer.turns - deer.natural) < 2 && per(deer, deer.intentFlips) < 2,
+    deer ? `${per(deer, deer.turns - deer.natural).toFixed(1)} flip-flops, ${per(deer, deer.intentFlips).toFixed(1)} intent flips a minute` : "no deer",
+  );
+  const rows = Object.entries(motion).filter(([, k]) => k.seconds >= 180);
+  const bad = rows.filter(([, k]) => per(k, k.turns - k.natural) >= 3 || per(k, k.intentFlips) >= 3 || per(k, k.stuck) >= 3);
+  check(
+    "every kind under 3 flip-flops and 3 s stuck a minute",
+    rows.length >= 5 && bad.length === 0,
+    rows.map(([n, k]) => `${n} ${per(k, k.turns - k.natural).toFixed(1)}/${per(k, k.stuck).toFixed(1)}s`).join(", "),
+  );
+}
+
+// 4.3: herds, flocks and packs. A herd of deer takes the alarm from the one
+// that saw the wolf and runs the same way behind it; wolves hunting one deer
+// close in from around it, not in a line behind; birds fly with a flock.
+// And the gaits the view draws: a walk, a trot, a run by speed.
+{
+  seed(43);
+  resetCreatureIds();
+  const world = generateWorld(112, 112, 5);
+  populate(world);
+  const rt = new Runtime(world, () => {});
+  // Night, so the wolves are awake; a herd of five around the first deer.
+  world.time = DAY_LENGTH * 0.8;
+  const lead = world.creatures.find((c) => c.kind === "deer")!;
+  const herd = [lead];
+  for (const [dx, dy] of [
+    [1, 0],
+    [-1, 0.5],
+    [0.5, 1],
+    [-0.5, -1],
+  ]) {
+    const d = makeCreature("deer", lead.x + dx, lead.y + dy);
+    world.creatures.push(d);
+    herd.push(d);
+  }
+  const wolf = makeCreature("wolf", lead.x + 6, lead.y);
+  world.creatures.push(wolf);
+  // The wolf is seen, by one deer at least: its herd takes the alarm.
+  for (let k = 0; k < 30 * 2; k++) step(world, rt);
+  const alarms = herd.map((d) => d.data.alarm as { leader: number } | undefined);
+  const leaders = new Set(alarms.filter(Boolean).map((a) => a!.leader));
+  // Same way: the mean of their headings is long (1 when all run as one).
+  const mx = herd.reduce((a, d) => a + Math.cos(d.hd), 0) / herd.length;
+  const my = herd.reduce((a, d) => a + Math.sin(d.hd), 0) / herd.length;
+  check(
+    "a herd of deer runs together, behind the one that saw the wolf",
+    alarms.every(Boolean) && leaders.size === 1 && Math.hypot(mx, my) > 0.7,
+    `${alarms.filter(Boolean).length} of 5 alarmed, ${leaders.size} leader(s), heading agreement ${Math.hypot(mx, my).toFixed(2)}`,
+  );
+
+  // Three wolves on one deer: how far round it they spread while closing in.
+  seed(44);
+  resetCreatureIds();
+  const w2 = generateWorld(112, 112, 5);
+  populate(w2);
+  const rt2 = new Runtime(w2, () => {});
+  w2.time = DAY_LENGTH * 0.8;
+  const prey = w2.creatures.find((c) => c.kind === "deer")!;
+  const pack = [0, 1, 2].map((n) => {
+    const p = makeCreature("wolf", prey.x - 9 + n * 0.8, prey.y + n * 0.6);
+    p.homeX = p.x;
+    p.homeY = p.y;
+    mindOf(p).hunger = 0.9;
+    w2.creatures.push(p);
+    return p;
+  });
+  let spread = 0;
+  for (let k = 0; k < 30 * 12 && !prey.dead; k++) {
+    step(w2, rt2);
+    const close = pack.filter((p) => p.mind?.task === "hunt" && p.mind.target === prey && Math.hypot(p.x - prey.x, p.y - prey.y) < 5);
+    if (close.length < 2) continue;
+    const angles = close.map((p) => Math.atan2(p.y - prey.y, p.x - prey.x));
+    for (const a of angles)
+      for (const b of angles) {
+        let d = Math.abs(a - b);
+        if (d > Math.PI) d = Math.PI * 2 - d;
+        spread = Math.max(spread, d);
+      }
+  }
+  check(
+    "wolves close in from around their prey",
+    spread > Math.PI / 2,
+    `widest angle between two wolves round the deer ${((spread * 180) / Math.PI).toFixed(0)} degrees`,
+  );
+
+  // Birds: after a minute and a half, how many fly with a flock.
+  seed(47);
+  resetCreatureIds();
+  const w3 = generateWorld(152, 152, 8);
+  populate(w3);
+  const rt3 = new Runtime(w3, () => {});
+  // A bird on the wing is in a flock when another flies within 8 cells the
+  // same way: over the last second, both flew more than a cell, headings
+  // within 45 degrees. Before 4.3, 6 bird-seconds in 589 were (seven birds,
+  // a minute and a half).
+  let flying = 0;
+  let flocked = 0;
+  const was = new Map<number, [number, number]>();
+  for (let k = 0; k < 30 * 90; k++) {
+    step(w3, rt3);
+    if (k % 30) continue;
+    const birds: { b: (typeof w3.creatures)[number]; a: number }[] = [];
+    for (const b of w3.creatures) {
+      if (b.kind !== "bird" || b.dead) continue;
+      const p = was.get(b.id);
+      was.set(b.id, [b.x, b.y]);
+      if (p && Math.hypot(b.x - p[0], b.y - p[1]) > 1) birds.push({ b, a: Math.atan2(b.y - p[1], b.x - p[0]) });
+    }
+    for (const { b, a } of birds) {
+      flying++;
+      if (birds.some((o) => o.b !== b && Math.hypot(o.b.x - b.x, o.b.y - b.y) < 8 && Math.cos(o.a - a) > 0.7)) flocked++;
+    }
+  }
+  check("birds fly with a flock", flying > 0 && flocked / flying > 0.3, `${flocked} of ${flying} bird-seconds on the wing beside another flying the same way`);
+
+  check(
+    "a walk, a trot and a run by speed; a body lying down sinks by its legs",
+    gaitOf(3, 3) === 0 &&
+      gaitOf(3 * 1.3, 3) > 0.9 &&
+      gaitOf(3 * 1.3, 3) < 1.1 &&
+      gaitOf(3 * 1.6, 3) > 1.95 &&
+      hipHeight(buildRig(KINDS.get("deer")!.body)) > 0.3,
+    `gaits ${gaitOf(3, 3)}, ${gaitOf(3.9, 3).toFixed(2)}, ${gaitOf(4.8, 3).toFixed(2)}; deer hips ${hipHeight(buildRig(KINDS.get("deer")!.body)).toFixed(2)}`,
+  );
+}
+
+// 4.2: no water drawn in the plane of its own land. The land's top is whole
+// voxels and the water's is not, so shallow water lay level with the sand
+// under it and the two flickered through each other on a phone (462 to 3,410
+// wet cells within 0.05 of their land on these islands before the fix).
+{
+  let wet = 0;
+  let flat = 0;
+  for (const [size, seed] of [
+    [112, 11],
+    [112, 3],
+    [160, 7],
+    [208, 5],
+  ]) {
+    const w = generateWorld(size, size, seed);
+    for (let i = 0; i < w.n; i++) {
+      if (w.fluid[i] === F.NONE || w.depth[i] <= 0.02) continue;
+      wet++;
+      if (surfaceY(w, i) - columnTop(w, i) < FLUID_LIFT - 1e-9) flat++;
+    }
+  }
+  check("no water surface lies in the plane of the land under it", wet > 1000 && flat === 0, `${flat} of ${wet} wet cells`);
+}
+
+// 4.2: what the check frame says reaches the Worker as it was meant. Until
+// 4.2 a broken promise or an idle artifact arrived as "not ok, no problem",
+// and the Worker promoted it like a pass.
+{
+  const promise = readResult({ ok: false, problem: "promise", detail: "barely safer", stats: { saved: 0.1 } });
+  const idle = readResult({ ok: false, problem: "idle", detail: "changed nothing", stats: { acted: 0 } });
+  const unnamed = readResult({ ok: false, detail: "?" });
+  const pass = readResult({ ok: true, problem: null, detail: "fine", stats: { cells: 9 }, phases: { cast: 120 } });
+  check("a broken promise from the check frame stays a broken promise", !promise.ok && promise.problem === "promise", JSON.stringify(promise));
+  check("an idle artifact from the check frame stays idle", !idle.ok && idle.problem === "idle", JSON.stringify(idle));
+  check("a failure the frame could not name is a crash, never a pass", !unnamed.ok && unnamed.problem === "crash", JSON.stringify(unnamed));
+  check("a pass stays a pass, with its timings", pass.ok && pass.problem === null && pass.phases?.cast === 120, JSON.stringify(pass));
+}
+
 check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length === SCENE_STREAMS);
 {
+  // The verdict of solves() (two of seeds 101, 202 and 303), and how often
+  // the plain solution wins over 12 seeds (4.3, winRate): the three seed
+  // verdict of a solution that wins 9 times in 12 flips with any change to
+  // what creatures do to the land, so a failure of the first with the
+  // second green is luck of three seeds, not a weaker solution.
   const unsolved = CHALLENGES.filter((c) => !verifiedChallenges.get(c.id)?.ok).map((c) => `${c.id} (${verifiedChallenges.get(c.id)?.wins ?? "?"} wins)`);
   check(
     `every challenge has a solution the simulation verifies (${CHALLENGES.length}, the hazard's plain solution, two seeds of three)`,
     !unsolved.length,
     unsolved.join(", "),
+  );
+  const weak = CHALLENGES.filter((c) => {
+    const r = challengeRates.get(c.id);
+    return !r || r.wins < r.need;
+  });
+  check(
+    `every challenge's plain solution wins at least half of 12 seeds (${CHALLENGES.length})`,
+    !weak.length,
+    CHALLENGES.map((c) => {
+      const r = challengeRates.get(c.id);
+      return `${c.id} ${r ? `${r.wins} of ${r.runs} (${r.results})` : "?"}`;
+    }).join(", "),
   );
 }
 
@@ -1354,6 +1907,56 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
 
   check("feedback: a pull request wins over an old question", verdict(100, asking, [pr(7, 150, "open")]).status === "review");
   check("feedback: the issue closed as done, shipped", verdict(100, { open: false, reason: "completed", labels: [] }, []).status === "shipped");
+}
+
+// 11. The drum players kept hearing (4.1): routine work plays nothing, and a
+// sound name the prompt does not offer is played by the nearest voice in
+// meaning, or not at all, never by the thump.
+{
+  check("a known sound name plays its own voice", voiceFor("chime") === "chime" && voiceFor(" Boom ") === "boom");
+  check("an unknown name plays the nearest voice", voiceFor("hum") === "drone" && voiceFor("thunder") === "rumble" && voiceFor("bell") === "chime");
+  check("a name with no near voice is silent, never a thump", voiceFor("glorp") === null && voiceFor("") === null && voiceFor("constructor") === null);
+  seed(11);
+  resetCreatureIds();
+  const world = generateWorld(120, 120, 11);
+  populate(world);
+  world.time = 20;
+  const rt = new Runtime(world, () => {});
+  const stumps = () => world.cover.reduce((n, v) => n + (v === C.STUMP ? 1 : 0), 0);
+  const before = stumps();
+  let sounds = 0;
+  for (let tick = 0; tick < 60 / TICK; tick++) {
+    stepWorld(world, rt);
+    sounds += world.events.filter((e) => e.kind === "sound").length;
+    world.events.length = 0;
+  }
+  const felled = stumps() - before;
+  check("a busy island plays no sound by itself for a minute", sounds === 0 && felled > 0, `${sounds} sounds, ${felled} trees felled`);
+}
+
+// 12. The cron's jobs (4.0 review L7): one that throws is named in a log
+// line and fails nothing else; the others run to the end.
+{
+  const errors = console.error;
+  const logged: string[] = [];
+  console.error = (...a: unknown[]) => void logged.push(String(a[0]));
+  let swept = false;
+  const failed = await cronJobs({
+    "poll batches": async () => {
+      throw new Error("404 no batch");
+    },
+    sweep: async () => {
+      await new Promise((r) => setTimeout(r, 20));
+      swept = true;
+    },
+    evolve: null,
+  });
+  console.error = errors;
+  check(
+    "a cron job that throws is a log line named after it, and the others finish",
+    failed.join() === "poll batches" && logged.join() === "poll batches" && swept,
+    `failed ${failed.join()}, logged ${logged.join()}, swept ${swept}`,
+  );
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");

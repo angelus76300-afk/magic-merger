@@ -38,7 +38,6 @@ export function tierFromDepth(depth: number): Tier {
   if (depth <= 0) return "minor";
   if (depth <= 1) return "major";
   if (depth <= 3) return "grand";
-  if (depth <= 6) return "legendary";
   return "legendary";
 }
 

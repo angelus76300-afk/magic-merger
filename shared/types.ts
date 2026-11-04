@@ -26,6 +26,8 @@ export interface MergeResponse {
   element: GameElement;
   // True when this merge created the element for the first time ever.
   firstDiscovery: boolean;
+  // 4.2: its program is being written in the background (worker/ahead.ts).
+  writing?: boolean;
   // True when the Worker answered without calling Claude (no API key set).
   mock: boolean;
 }
@@ -49,13 +51,19 @@ export interface SpellRequest {
   // Admin only, for comparing models: who writes it, and how hard it thinks.
   model?: string;
   effort?: string;
+  // 4.2: this page understands "still being written" (writing below).
+  ahead?: boolean;
 }
 
 export interface SpellResponse {
   name: string;
   tier: Tier;
+  // Empty while `writing`.
   program: SpellProgram;
   mock: boolean;
+  // 4.2: a job started at the merge is still writing it: ask again in `retry` ms.
+  writing?: boolean;
+  retry?: number;
 }
 
 // The program crashed in the World: ask Claude to fix it.

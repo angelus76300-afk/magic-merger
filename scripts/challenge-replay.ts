@@ -2,38 +2,36 @@
 // threads replay it. Shared so both run exactly the same loop.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { lifeCycle, resetCreatureIds, updateCreature } from "../src/sim/creatures";
-import { stepPhysics } from "../src/sim/physics";
+import { resetCreatureIds } from "../src/sim/creatures";
+import { seeded } from "../src/sim/noise";
+import { stepHeadless } from "../src/sim/tick";
 import { Runtime } from "../src/sim/runtime";
 import { SCENARIOS } from "../src/sim/scenarios";
-import { TICK, type World } from "../src/sim/world";
+import type { World } from "../src/sim/world";
 import { LIVE_MAX, type ChallengeDef } from "../shared/challenges";
 import type { Tier } from "../shared/tiers";
 
 // Seeded randomness, so a check gives the same answer on every run.
 export function seed(n: number): void {
-  let a = n >>> 0;
-  Math.random = () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+  Math.random = seeded(n);
 }
 
 // One simulation tick, as the engine runs it; returns its cost in ms.
-export function step(world: World, rt: Runtime): number {
+// life: the creatures' own random stream (see lives).
+export function step(world: World, rt: Runtime, life?: () => number): number {
   const t0 = performance.now();
-  world.time += TICK;
-  world.tick++;
-  stepPhysics(world, TICK);
-  for (const c of world.creatures) updateCreature(world, c, TICK);
-  lifeCycle(world, TICK);
-  rt.step(TICK);
-  world.particles.update(TICK);
-  world.events.length = 0;
+  stepHeadless(world, rt, life ? { life } : undefined);
   return performance.now() - t0;
+}
+
+// Creatures draw from a stream of their own in a replay, apart from the
+// hazard's (4.3), as they do in the test run (check.ts): a lava flow or a
+// fire is the same whatever the deer and villagers decide, so a change to
+// how creatures move no longer reshuffles every eruption. Before, the lava
+// challenges' verdicts on their three seeds flipped with any creature change
+// (the wall wins 9 lava roads in 12 seeds on main and on 4.3 alike).
+function lives(n: number): () => number {
+  return seeded(n * 7 + 1);
 }
 
 // The plain spell that solves each challenge, and where it is cast.
@@ -61,13 +59,14 @@ export function replay(job: Replay): { status: string; errors: string[] } {
   const errors: string[] = [];
   const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
   const plan = SOLUTIONS[job.id];
+  const life = lives(job.seed);
   let status = "playing";
   for (let k = 0; k < 30 * 85 && status === "playing"; k++) {
     if (job.magic && k === 150) {
       const code = readFileSync(join("lab/solutions", plan.file), "utf8");
       plan.at.forEach(([x, y], n) => rt.cast({ key: `${plan.file}${n}`, name: plan.file, tier: plan.tier, code }, x, y));
     }
-    step(world, rt);
+    step(world, rt, life);
     run.tick(world);
     if (k % 15 === 0) status = run.check(world).status;
   }
@@ -86,15 +85,38 @@ export function playChallenge(def: ChallengeDef, code: string, tier: Tier, spot:
   const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
   // Two seconds to aim after the island appears, as in play.
   const castAt = def.live ? Math.round((LIVE_MAX + 2) * 30) : 150;
+  const life = lives(seedN);
   let status = "playing";
   for (let k = 0; k < 30 * 85 + castAt && status === "playing"; k++) {
     if (k === castAt) rt.cast({ key: "candidate", name: "candidate", tier, code }, spot[0], spot[1]);
-    step(world, rt);
+    step(world, rt, life);
     run.tick(world);
     if (k % 15 === 0) status = run.check(world).status;
     if (errors.length) break;
   }
   return { status: errors.length ? "crashed" : status, errors };
+}
+
+// How often a program wins a challenge at its first spot, over seeds 101,
+// 202, ... (4.3): npm test asks the plain solutions for half of 12 at least.
+// Their verdict on the three seeds of solves() flips with anything that
+// changes what creatures do to the land (birds sowing, villagers felling),
+// since the lava challenges are won 9 times in 12 by the wall, so not on
+// every three: on main, racing lava wins 6 of these 12 and lost 101.
+// Stops as soon as the answer is known.
+export function winRate(def: ChallengeDef, code: string, tier: Tier, seeds = 12): { wins: number; runs: number; need: number; results: string } {
+  const need = Math.ceil(seeds / 2);
+  let wins = 0;
+  let runs = 0;
+  let results = "";
+  for (let n = 1; n <= seeds; n++) {
+    const won = playChallenge(def, code, tier, def.spots[0], n * 101).status === "won";
+    runs++;
+    if (won) wins++;
+    results += won ? "w" : "l";
+    if (wins >= need || wins + (seeds - n) < need) break;
+  }
+  return { wins, runs, need, results };
 }
 
 // Solved: won on at least two of three seeds at one of its spots.

@@ -2,9 +2,10 @@ import type { ChronicleDigest } from "../shared/chronicle";
 import { elementKey } from "../shared/elements";
 import type { SpellProgram } from "../shared/spellcode";
 import { TIERS, tierFromDepth, type Tier } from "../shared/tiers";
-import type { SpellResponse } from "../shared/types";
+import type { CheckRequest, SpellResponse } from "../shared/types";
 import { DOWN_REASONS, REASON_LABEL, type DownReason } from "../shared/votes";
 import * as api from "./api";
+import { timeline } from "./timeline";
 import { Checker } from "./checker";
 import { chipElement } from "./craft";
 import { FilterBar, applyFilters, lastUsed, markUsed } from "./filters";
@@ -14,21 +15,37 @@ import type { ToWorld } from "./sim/protocol";
 import { SCENARIO_LIST } from "./sim/scenario-list";
 import type { CastRequest } from "./sim/runtime";
 import type { SavedWorld } from "./sim/save";
-import type { WorldSize } from "./sim/engine";
+import { WORLD_SIZES, type WorldSize } from "./sim/sizes";
 import type { Store } from "./store";
 import { toast } from "./toast";
+import { isQuotaError, warnStorageFull } from "./quota";
+import { WORLD_AT_KEY, WORLD_KEY, packIsland, readIslandText } from "./island-store";
+import { BIG_SIZES, readHeadroom, sizesOffered, writeHeadroom } from "./headroom";
+import { DEFAULT_LAND, MIXED_FROM, readChoice as readLandChoice, type LandChoice } from "./sim/land-options";
 
-export const WORLD_KEY = "magic-merger.world2";
-export const WORLD_AT_KEY = "magic-merger.world2.at";
+export { WORLD_AT_KEY, WORLD_KEY } from "./island-store";
 const MUTE_KEY = "magic-merger.muted";
 const HUD_KEY = "magic-merger.hud";
+// A World frame that has said nothing for this long while on screen is stuck
+// in spell code (4.0 review M3): it is replaced by a fresh one from the save.
+const WATCHDOG_MS = 20_000;
 // A crashing spell is sent back to Claude at most this often per session.
 const MAX_REPAIRS = 2;
 // Programs up to this tier are written by the cheap model (see worker/index.ts),
-// so they are written ahead of time, in the background, to skip the wait.
+// so this page asks for them ahead of time, in the background, to skip the
+// wait. Since 4.2 the Worker writes every new item at the merge itself
+// (worker/ahead.ts); this page then asks for any tier it was told is being
+// written, and asks for the cheap ones it was not told about, as before.
 const AHEAD_UP_TO: Tier = "grand";
 // How many of the newest items get written ahead when the World opens.
 const AHEAD_RECENT = 10;
+// 4.2: programs asked for side by side (one at a time before: twelve new
+// items took minutes to be ready, each waiting for the last one's test run).
+const AHEAD_PARALLEL = 3;
+// A program still being written by the Worker is asked for again after this
+// long, for this long at most.
+const WRITING_RETRY_MS = 4000;
+const WRITING_GIVE_UP_MS = 45 * 60_000;
 
 export interface WorldElements {
   stage: HTMLElement;
@@ -41,7 +58,6 @@ export interface WorldElements {
   tools: HTMLElement;
   add: HTMLButtonElement;
   reset: HTMLButtonElement;
-  size: HTMLSelectElement;
   sound: HTMLButtonElement;
 }
 
@@ -62,7 +78,9 @@ export class WorldHost {
   private sessionPrograms = new Map<string, CastRequest>();
   // The challenge being played, if any.
   private challenge: string | null = null;
-  private challengeDialog: HTMLDialogElement | null = null;
+  // Seconds the challenge's hazard ran while the player merged (3.7): kept
+  // for Retry and Restart, so losing on purpose does not buy a calm start.
+  private headStart = 0;
   private filters = new FilterBar(
     "mm-world-filters",
     { kind: "all", tier: "any", sort: "used", query: "" },
@@ -72,10 +90,27 @@ export class WorldHost {
   private expanded = readFlag(EXPAND_KEY);
   private checker = new Checker();
   private testing = new Set<string>();
+  // 4.2: programs the Worker said it is writing, since when.
+  private writing = new Map<string, number>();
+  // Items that went through writing or testing here: their being ready is news.
+  private news = new Set<string>();
+  private readyToast: string[] = [];
+  private readyTimer = 0;
   private voteBar: HTMLElement | null = null;
   private voteTimer = 0;
   private asked = new Set<number>();
   private synced = false;
+  // The World tab is on screen (show() until hide()).
+  private shown = false;
+  // When the frame last said anything (M3).
+  private heard = 0;
+  // The island is written by one tab at a time (4.0 review M6): the tab that
+  // last showed the World while visible owns it and tells the others.
+  private island = islandChannel();
+  private owner = true;
+  // The save this tab last loaded or wrote (its WORLD_AT_KEY): another tab's
+  // newer save is never overwritten by this one's older island.
+  private islandAt: string | null = null;
 
   constructor(
     private store: Store,
@@ -84,6 +119,27 @@ export class WorldHost {
 
   init(): void {
     window.addEventListener("message", (e) => this.onMessage(e));
+    // Another tab shows the World now: this one stops saving its island.
+    this.island?.addEventListener("message", (e: MessageEvent<unknown>) => {
+      if (!e.data || (e.data as { claim?: unknown }).claim === undefined) return;
+      const was = this.owner;
+      this.owner = false;
+      if (was && this.shown && !document.hidden) toast("Your island is open in another tab: this one stops saving until you come back to it.");
+    });
+    // Leaving the page saves the island once; coming back takes it again,
+    // from where another tab left it if one saved since.
+    document.addEventListener("visibilitychange", () => {
+      if (!this.shown) return;
+      if (document.hidden) this.send({ type: "visible", visible: false });
+      else {
+        this.takeIsland();
+        this.send({ type: "visible", visible: true });
+      }
+    });
+    window.addEventListener("focus", () => {
+      if (this.shown) this.takeIsland();
+    });
+    window.setInterval(() => this.watchdog(), 5000);
     // The spell bar: filters, and a button that opens it into a grid.
     const expand = document.createElement("button");
     expand.type = "button";
@@ -106,13 +162,14 @@ export class WorldHost {
       toast("A villager wanders in");
     });
     this.el.reset.addEventListener("click", () => {
-      if (this.challenge) this.send({ type: "reset", size: this.el.size.value as WorldSize });
-      else if (window.confirm("Reset the world? Everything in it will be lost.")) this.send({ type: "reset", size: this.el.size.value as WorldSize });
+      // Restarting a live challenge plays its head start again (4.0 review L6).
+      if (this.challenge) this.startChallenge(this.challenge, this.headStart);
+      else this.openReset();
     });
     this.el.challenges.addEventListener("click", () => this.onChallenges());
     this.el.chronicle.addEventListener("click", () => void this.openChronicle());
     this.el.banner.querySelector(".world-banner-retry")!.addEventListener("click", () => {
-      if (this.challenge) this.startChallenge(this.challenge);
+      if (this.challenge) this.startChallenge(this.challenge, this.headStart);
     });
     this.el.banner.querySelector(".world-banner-leave")!.addEventListener("click", () => this.leaveChallenge());
     const showSound = () => {
@@ -129,6 +186,10 @@ export class WorldHost {
   }
 
   show(): void {
+    this.shown = true;
+    this.heard = Date.now();
+    // A newer island from another tab: the frame was replaced, and shown.
+    if (this.takeIsland()) return;
     if (!this.frame) {
       this.frame = document.createElement("iframe");
       this.frame.className = "world-frame";
@@ -203,29 +264,38 @@ export class WorldHost {
     this.renderSpells();
   }
 
-  // Writes a program in the background if it is cheap and not written yet.
-  // Each program is written once for everyone, so this costs about $0.002
-  // per item, once.
-  ahead(key: string): void {
+  // Asks for a program in the background: one the Worker is writing (any
+  // tier, 4.2), or a cheap one not written yet, which this asks the Worker to
+  // write (each program is written once for everyone, about $0.002, once).
+  ahead(key: string, writing = false): void {
     const element = this.store.get(key)?.element;
-    if (!element || !element.tier || this.request(key)) return;
-    if (TIERS.indexOf(element.tier) > TIERS.indexOf(AHEAD_UP_TO)) return;
-    if (this.aheadQueue.includes(key)) return;
+    if (!element || this.request(key)) return;
+    if (writing) {
+      if (!this.writing.has(key)) this.writing.set(key, Date.now());
+      this.news.add(key);
+    }
+    const cheap = !!element.tier && TIERS.indexOf(element.tier) <= TIERS.indexOf(AHEAD_UP_TO);
+    if (!this.writing.has(key) && !cheap) return;
+    if (this.aheadQueue.includes(key) || this.inflight.has(key)) return;
     this.aheadQueue.push(key);
-    if (!this.aheadRunning) void this.runAhead();
+    this.refreshChips();
+    this.runAhead();
   }
 
   private aheadQueue: string[] = [];
-  private aheadRunning = false;
+  private aheadRunning = 0;
 
-  private async runAhead(): Promise<void> {
-    this.aheadRunning = true;
-    while (this.aheadQueue.length) {
+  private runAhead(): void {
+    while (this.aheadRunning < AHEAD_PARALLEL && this.aheadQueue.length) {
       const key = this.aheadQueue.shift()!;
-      if (!this.request(key)) await this.prepare(key, false, true);
-      this.renderSpells();
+      if (this.request(key)) continue;
+      this.aheadRunning++;
+      void this.prepare(key, false, true).finally(() => {
+        this.aheadRunning--;
+        this.refreshChips();
+        this.runAhead();
+      });
     }
-    this.aheadRunning = false;
   }
 
   private replaceFrame(): void {
@@ -233,6 +303,31 @@ export class WorldHost {
     this.frame = null;
     this.ready = false;
     this.show();
+  }
+
+  // This tab shows the World: it owns the island from now on. If another tab
+  // saved since this one loaded it, the frame starts again from that save
+  // first, so this tab continues the other's island instead of erasing it.
+  private takeIsland(): boolean {
+    if (this.frame && this.ready && !this.challenge && readAt() !== this.islandAt) {
+      toast("Your island continues from where another tab left it");
+      this.replaceFrame();
+      return true;
+    }
+    this.owner = true;
+    this.island?.postMessage({ claim: Date.now() });
+    return false;
+  }
+
+  // A frame stuck in spell code says nothing: no heartbeat, no save. Only
+  // checked while the World is on screen, where the heartbeat runs at full
+  // speed; a hidden tab's timers are slowed, so coming back restarts the count.
+  private watchdog(): void {
+    if (!this.frame || !this.ready || !this.shown || document.hidden) return;
+    if (Date.now() - this.heard < WATCHDOG_MS) return;
+    console.warn("The World said nothing for 20 s: starting it again from its last save");
+    toast("The island froze and was started again from its last save", "error");
+    this.replaceFrame();
   }
 
   deselect(): void {
@@ -243,6 +338,7 @@ export class WorldHost {
   }
 
   hide(): void {
+    this.shown = false;
     this.send({ type: "visible", visible: false });
   }
 
@@ -277,26 +373,61 @@ export class WorldHost {
     if (!discovery) return null;
     this.preparing.add(key);
     this.updateStatus();
+    const name = discovery.element.name;
+    timeline.describe(key, name, discovery.element.tier, discovery.element.kind);
+    timeline.step(key, name, "asked");
     try {
       let res = await api.spell(discovery.element.name, regenerate);
+      timeline.server(key, name, api.serverTiming(res));
+      if (res.writing) {
+        // Still being written by the Worker: asked again shortly, quietly.
+        const since = this.writing.get(key) ?? Date.now();
+        this.writing.set(key, since);
+        this.news.add(key);
+        if (Date.now() - since < WRITING_GIVE_UP_MS) window.setTimeout(() => this.ahead(key, true), res.retry ?? WRITING_RETRY_MS);
+        else this.writing.delete(key);
+        return null;
+      }
+      this.writing.delete(key);
+      timeline.step(key, name, "arrived");
+      if (res.program.trial) this.news.add(key);
       if (res.mock) this.sessionPrograms.set(key, { key, name: res.name, tier: res.tier, code: res.program.code });
       else {
         res = await this.settle(key, res, quiet);
         this.store.setSpell(key, withoutTrial(res.program));
         if (discovery.element.tier !== res.tier) this.store.discover({ ...discovery.element, tier: res.tier }, discovery.recipe ?? ["", ""]);
       }
+      timeline.step(key, name, "ready");
       const req = this.request(key);
+      if (req && this.news.delete(key)) this.sayReady(name);
       // The World keeps the program it was handed: a rewrite, a rollback or a
       // refresh must reach it, or a cast would run old code under a new id.
       if (req) this.send({ type: "spell-updated", spell: req });
       return req;
     } catch (err) {
+      this.writing.delete(key);
       if (!quiet) toast(err instanceof Error ? err.message : "The spell could not be prepared", "error");
       return null;
     } finally {
       this.preparing.delete(key);
       this.updateStatus();
     }
+  }
+
+  // "Fireball is ready", once for items that became ready together.
+  private sayReady(name: string): void {
+    this.readyToast.push(name);
+    clearTimeout(this.readyTimer);
+    this.readyTimer = window.setTimeout(() => {
+      const names = this.readyToast.splice(0);
+      const text =
+        names.length === 1
+          ? `${names[0]} is ready to cast`
+          : names.length <= 3
+            ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]} are ready to cast`
+            : `${names.slice(0, 2).join(", ")} and ${names.length - 2} more are ready to cast`;
+      toast(text, "special");
+    }, 1200);
   }
 
   // A program fresh from Claude is a trial: it gets its test run here, in the
@@ -307,6 +438,7 @@ export class WorldHost {
     this.updateStatus();
     try {
       for (let round = 0; round < 3 && res.program.trial && res.program.id; round++) {
+        const t0 = performance.now();
         const result = await this.checker.check({
           key,
           name: res.name,
@@ -316,7 +448,20 @@ export class WorldHost {
           kind: this.store.get(key)?.element.kind,
         });
         const id = res.program.id;
-        res = await api.checkSpell({ name: res.name, id, ...result });
+        timeline.add(key, res.name, "test", performance.now() - t0);
+        timeline.step(key, res.name, "tested");
+        timeline.phases(key, res.name, result.phases);
+        const { phases: _phases, ...verdict } = result;
+        if (result.ok) {
+          // 4.2: a program that passed here is castable now; the Worker is told
+          // in the background, and if it answers with another program (a
+          // newer one, a rollback), that one replaces it.
+          void this.sendVerdict(key, res, verdict);
+          return { ...res, program: { ...res.program, trial: false } };
+        }
+        res = await api.checkSpell({ name: res.name, id, ...verdict });
+        timeline.step(key, res.name, "verdict");
+        timeline.server(key, res.name, api.serverTiming(res), "check-");
         if (res.program.id !== id && round === 0 && !result.ok && !quiet)
           toast(`${res.name} failed its test run (${result.problem}); the grimoire wrote it again`);
       }
@@ -327,6 +472,21 @@ export class WorldHost {
       this.updateStatus();
     }
     return res;
+  }
+
+  private async sendVerdict(key: string, tested: SpellResponse, verdict: Omit<CheckRequest, "name" | "id">): Promise<void> {
+    try {
+      const res = await api.checkSpell({ name: tested.name, id: tested.program.id!, ...verdict });
+      timeline.step(key, tested.name, "verdict");
+      timeline.server(key, tested.name, api.serverTiming(res), "check-");
+      if (res.program.id === tested.program.id || res.mock) return;
+      const settled = res.program.trial ? await this.settle(key, res, true) : res;
+      this.store.setSpell(key, withoutTrial(settled.program));
+      const req = this.request(key);
+      if (req) this.send({ type: "spell-updated", spell: req });
+    } catch {
+      // Told again by the next browser that tests it; this one casts what passed here.
+    }
   }
 
   private request(key: string): CastRequest | null {
@@ -353,45 +513,27 @@ export class WorldHost {
     if (!this.frame || e.source !== this.frame.contentWindow || e.origin !== "null") return;
     const msg = readFromWorld(e.data);
     if (!msg) return;
+    this.heard = Date.now();
     switch (msg.type) {
-      case "ready": {
-        this.ready = true;
-        const save = readSave();
-        this.frame.contentWindow!.postMessage(
-          {
-            type: "init",
-            save,
-            size: window.innerWidth < 600 ? "small" : "medium",
-            rules: save ? this.rulesFor(save) : [],
-            muted: this.muted,
-          } satisfies ToWorld,
-          "*",
-        );
-        for (const queued of this.queue.splice(0)) this.send(queued);
-        if (this.hud) this.send({ type: "hud", on: true });
-        if (this.selected) {
-          const req = this.request(this.selected);
-          if (req) this.send({ type: "select", spell: req });
-        }
+      case "alive":
         break;
-      }
+      case "ready":
+        void this.initFrame(this.frame);
+        break;
+      case "headroom":
+        // The frame runs spell code, which could send this too: the worst a
+        // spell can do is offer this player a bigger island they may decline.
+        writeHeadroom(msg.sample);
+        break;
       case "save":
-        try {
-          const json = JSON.stringify(msg.data);
-          // A save that would crowd out the player's discoveries is dropped.
-          if (json.length > MAX_SAVE_CHARS) break;
-          localStorage.setItem(WORLD_KEY, json);
-          localStorage.setItem(WORLD_AT_KEY, String(Date.now()));
-          this.onSaved?.();
-        } catch {
-          // Storage full: the world lives on until the page closes.
-        }
+        this.writeIsland(msg.data);
         break;
       case "tap-without-spell":
         toast(this.selected ? "Still preparing this spell…" : "Pick a spell below, or tap a creature to see what it is doing");
         break;
       case "cast":
         if (!this.store.get(msg.key)) break;
+        timeline.step(msg.key, this.store.get(msg.key)!.element.name, "cast");
         this.castInAttempt.push(msg.key);
         markUsed(msg.key);
         void this.afterCast(msg.key);
@@ -425,7 +567,13 @@ export class WorldHost {
         const now = Date.now();
         if (!this.hud || now - this.lastPerf < 20_000) break;
         this.lastPerf = now;
-        api.sendPerf({ ...msg.sample, screen: `${screen.width}x${screen.height}@${window.devicePixelRatio}`, cores: navigator.hardwareConcurrency ?? 0 });
+        api.sendPerf({
+          ...msg.sample,
+          screen: `${screen.width}x${screen.height}@${window.devicePixelRatio}`,
+          cores: navigator.hardwareConcurrency ?? 0,
+          // 4.2: the last items made castable here, step by step.
+          creation: timeline.recent(4).map(compactCreation),
+        });
         break;
       }
       case "objective":
@@ -433,6 +581,174 @@ export class WorldHost {
         if (msg.id === this.challenge) this.showObjective(msg.id, msg.text, msg.status);
         break;
     }
+  }
+
+  // The frame is ready: it gets the island (read back, unpacked if kept
+  // gzipped), then whatever was waiting for it.
+  private async initFrame(frame: HTMLIFrameElement): Promise<void> {
+    this.islandAt = readAt();
+    let save: SavedWorld | null = null;
+    try {
+      const text = await readIslandText();
+      save = text ? (JSON.parse(text) as SavedWorld) : null;
+    } catch {
+      save = null;
+    }
+    if (frame !== this.frame || !frame.contentWindow) return;
+    const choice = readChoice();
+    frame.contentWindow.postMessage(
+      { type: "init", save, size: choice.size, land: choice.land, rules: save ? this.rulesFor(save) : [], muted: this.muted } satisfies ToWorld,
+      "*",
+    );
+    this.ready = true;
+    for (const queued of this.queue.splice(0)) this.send(queued);
+    if (this.hud) this.send({ type: "hud", on: true });
+    if (this.selected) {
+      const req = this.request(this.selected);
+      if (req) this.send({ type: "select", spell: req });
+    }
+  }
+
+  // The island's save, by the tab that owns it, and never over a newer save
+  // where tabs cannot tell each other (no BroadcastChannel). Big saves are
+  // kept gzipped (4.4, island-store.ts); saves are written one at a time.
+  private saving: Promise<void> = Promise.resolve();
+  private writeIsland(data: SavedWorld): void {
+    this.saving = this.saving.then(() => this.writeIslandNow(data));
+  }
+  private async writeIslandNow(data: SavedWorld): Promise<void> {
+    if (!this.owner) return;
+    if (!this.island && readAt() !== this.islandAt) return;
+    let value: string;
+    try {
+      value = await packIsland(JSON.stringify(data));
+    } catch {
+      return;
+    }
+    // A save that would crowd out the player's discoveries is not written,
+    // and the player is told (M13).
+    if (value.length > MAX_SAVE_CHARS) {
+      warnStorageFull();
+      return;
+    }
+    const at = String(Date.now());
+    try {
+      localStorage.setItem(WORLD_KEY, value);
+      localStorage.setItem(WORLD_AT_KEY, at);
+      this.islandAt = at;
+      this.onSaved?.();
+    } catch (err) {
+      // The world lives on until the page closes; a full storage is said once.
+      if (isQuotaError(err)) warnStorageFull();
+    }
+  }
+
+  // A new island (4.4): its size, four sliders and a seed, which picks the
+  // shape and, from the sliders, the land (4.4.1: not chosen from a list;
+  // large islands and bigger mix several lands). The
+  // sizes past Large are offered only where this device's own frame numbers
+  // show the headroom (headroom.ts); none is ever chosen by default.
+  private resetDialog: HTMLDialogElement | null = null;
+  private openReset(): void {
+    const d = (this.resetDialog ??= document.createElement("dialog"));
+    if (!d.isConnected) {
+      d.className = "chronicle reset-island";
+      d.addEventListener("click", (e) => {
+        if (e.target === d) d.close();
+      });
+      document.body.append(d);
+    }
+    const choice = readChoice();
+    const offered = sizesOffered(readHeadroom());
+    const field = (label: string, input: HTMLElement) => {
+      const l = document.createElement("label");
+      const t = document.createElement("span");
+      t.textContent = label;
+      l.append(t, input);
+      return l;
+    };
+    const select = (options: readonly string[], labels: (o: string) => string, value: string, disabled: (o: string) => boolean = () => false) => {
+      const s = document.createElement("select");
+      for (const o of options) {
+        const opt = document.createElement("option");
+        opt.value = o;
+        opt.textContent = labels(o);
+        opt.disabled = disabled(o);
+        s.append(opt);
+      }
+      s.value = value;
+      return s;
+    };
+    const slider = (value: number) => {
+      const r = document.createElement("input");
+      r.type = "range";
+      r.min = "0";
+      r.max = "100";
+      r.value = String(Math.round(value * 100));
+      return r;
+    };
+    const sizeLabel = (o: string) => {
+      const n = WORLD_SIZES[o as WorldSize];
+      const name = o[0].toUpperCase() + o.slice(1);
+      return offered.includes(o as WorldSize) ? `${name} (${n} by ${n})` : `${name}: needs a faster device`;
+    };
+    const size = select(
+      Object.keys(WORLD_SIZES),
+      sizeLabel,
+      offered.includes(choice.size) ? choice.size : defaultSize(),
+      (o) => !offered.includes(o as WorldSize),
+    );
+    const warmth = slider(choice.land.warmth);
+    const water = slider(choice.land.water);
+    const relief = slider(choice.land.relief);
+    const forest = slider(choice.land.forest);
+    const seed = document.createElement("input");
+    seed.type = "text";
+    seed.inputMode = "numeric";
+    seed.placeholder = "a new one";
+    seed.maxLength = 10;
+    const title = document.createElement("h2");
+    title.textContent = "A new island";
+    const hint = document.createElement("p");
+    hint.className = "chronicle-note";
+    hint.textContent =
+      `The seed picks the island's shape and, from warmth and water, its land. Islands from ${MIXED_FROM} cells across mix several lands. ` +
+      (BIG_SIZES.every((s) => offered.includes(s))
+        ? "This device has room for every size."
+        : "Huge and Giant islands are offered once this device shows it can run them: play a few minutes on a Large island first.");
+    const warn = document.createElement("p");
+    warn.className = "chronicle-note";
+    warn.textContent = "Everything on your current island will be lost.";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => d.close());
+    const create = document.createElement("button");
+    create.type = "button";
+    create.className = "primary";
+    create.textContent = "Create the island";
+    create.addEventListener("click", () => {
+      const land = readLandChoice({
+        warmth: Number(warmth.value) / 100,
+        water: Number(water.value) / 100,
+        relief: Number(relief.value) / 100,
+        forest: Number(forest.value) / 100,
+      });
+      const typed = seed.value.trim();
+      const n = /^\d{1,10}$/.test(typed) ? Number(typed) % 2 ** 31 : null;
+      const chosen = size.value as WorldSize;
+      writeChoice({ size: chosen, land });
+      d.close();
+      this.send({ type: "reset", size: chosen, land, seed: n });
+    });
+    const actions = document.createElement("div");
+    actions.className = "reset-actions";
+    actions.append(cancel, create);
+    const grid = document.createElement("div");
+    grid.className = "reset-fields";
+    grid.append(field("Size", size), field("Warmth", warmth), field("Water", water), field("Mountains", relief), field("Forest", forest), field("Seed", seed));
+    d.replaceChildren(title, grid, hint, warn, actions);
+    d.showModal();
   }
 
   // The frame HUD, toggled by a long press on the title. Remembered per browser.
@@ -443,54 +759,11 @@ export class WorldHost {
     return this.hud;
   }
 
-  private openChallenges(): void {
-    if (!this.challengeDialog) {
-      const d = document.createElement("dialog");
-      d.className = "challenges";
-      d.addEventListener("click", (e) => {
-        if (e.target === d) d.close();
-      });
-      document.body.append(d);
-      this.challengeDialog = d;
-    }
-    const d = this.challengeDialog;
-    d.replaceChildren();
-    const title = document.createElement("h2");
-    title.textContent = "Challenges";
-    const intro = document.createElement("p");
-    intro.textContent = "Each challenge is an island with a problem. Find the spells that solve it. Your own island waits for you.";
-    const list = document.createElement("div");
-    list.className = "challenge-list";
-    for (const info of SCENARIO_LIST) {
-      const item = document.createElement("div");
-      item.className = "challenge";
-      const h = document.createElement("h3");
-      h.textContent = info.title;
-      if (this.store.isSolved(info.id)) {
-        const badge = document.createElement("span");
-        badge.className = "solved";
-        badge.textContent = "solved";
-        h.append(badge);
-      }
-      const p = document.createElement("p");
-      p.textContent = info.brief;
-      const go = document.createElement("button");
-      go.textContent = this.store.isSolved(info.id) ? "Play again" : "Play";
-      go.addEventListener("click", () => {
-        d.close();
-        this.startChallenge(info.id);
-      });
-      item.append(h, p, go);
-      list.append(item);
-    }
-    d.append(title, intro, list);
-    d.showModal();
-  }
-
   private startChallenge(id: string, ahead = 0): void {
     const info = SCENARIO_LIST.find((s) => s.id === id);
     if (!info) return;
     this.challenge = id;
+    this.headStart = ahead;
     this.send({ type: "scenario", id, ahead });
     this.showObjective(id, this.attempt?.brief ?? info.brief, "playing");
     this.el.reset.textContent = "Restart";
@@ -578,8 +851,8 @@ export class WorldHost {
     d.showModal();
   }
 
-  // The World's Challenges button opens the Challenges tab (main.ts).
-  onChallenges: () => void = () => this.openChallenges();
+  // The World's Challenges button opens the Challenges tab (main.ts sets it).
+  onChallenges: () => void = () => {};
   // Told after each world save (4.0: the account's island follows).
   onSaved: (() => void) | null = null;
 
@@ -628,7 +901,7 @@ export class WorldHost {
   // A spell crashed in the World: Claude gets the error and fixes the program.
   private async repair(key: string, name: string, error: string): Promise<void> {
     const done = this.repairs.get(key) ?? 0;
-    if (done >= MAX_REPAIRS || this.sessionPrograms.has(key)) {
+    if (done >= MAX_REPAIRS || this.sessionPrograms.has(key) || mendedTooOften(key)) {
       toast(`${name} fizzled: ${error}`, "error");
       return;
     }
@@ -641,6 +914,9 @@ export class WorldHost {
       if (req) this.send({ type: "spell-updated", spell: req });
       toast(`${name} was mended, cast it again`);
     } catch (err) {
+      // The Worker mends a program three times in its life (4.0 review L5):
+      // past that, this session stops asking and the spell just fizzles.
+      if (err instanceof api.ApiRequestError && err.detail?.mended === true) markMended(key);
       toast(err instanceof Error ? err.message : "The spell could not be mended", "error");
     }
   }
@@ -705,7 +981,8 @@ export class WorldHost {
       button("Not good", "vote-down", showReasons),
       dismiss,
     );
-    if (!bar.isConnected) this.el.stage.append(bar);
+    // Above the challenge banner in the same stack (M10).
+    if (!bar.isConnected) this.el.banner.before(bar);
     // Unanswered, it goes away; the next cast asks again.
     this.voteTimer = window.setTimeout(close, 30_000);
   }
@@ -719,8 +996,9 @@ export class WorldHost {
       const chip = chipElement(element, "button");
       chip.classList.add("chip-castable");
       chip.setAttribute("aria-pressed", String(key === this.selected));
-      // Dimmed until its program is written.
-      chip.dataset.ready = this.request(key) ? "1" : "0";
+      // Dimmed until its program is written; 4.2: says why (writing, testing).
+      chip.dataset.key = key;
+      this.chipState(chip, key);
       // A second tap puts the spell away, so a tap on the island inspects a creature (3.6).
       chip.addEventListener("click", () => (key === this.selected ? this.deselect() : this.selectSpell(key)));
       fragment.append(chip);
@@ -737,12 +1015,53 @@ export class WorldHost {
     this.updateStatus();
   }
 
+  // writing (the Worker writes it, or this page is asking for it), testing
+  // (its test run, here), ready; nothing for a spell nobody asked for yet.
+  private stateOf(key: string): "ready" | "testing" | "writing" | "" {
+    if (this.request(key)) return "ready";
+    if (this.testing.has(key)) return "testing";
+    if (this.writing.has(key) || this.preparing.has(key) || this.aheadQueue.includes(key)) return "writing";
+    return "";
+  }
+
+  private chipState(chip: HTMLElement, key: string): void {
+    const state = this.stateOf(key);
+    const was = chip.dataset.state ?? "";
+    chip.dataset.ready = state === "ready" ? "1" : "0";
+    chip.dataset.state = state;
+    let label = chip.querySelector<HTMLElement>(".chip-state");
+    const text =
+      state === "writing" ? "writing" : state === "testing" ? "testing" : state === "ready" && (was === "writing" || was === "testing") ? "ready" : "";
+    if (!text) {
+      // "ready" stays a few seconds after the change, then goes.
+      if (label && state !== "ready") label.remove();
+      return;
+    }
+    if (!label) {
+      label = document.createElement("span");
+      label.className = "chip-state";
+      chip.append(label);
+    }
+    label.textContent = text;
+    if (state === "ready") window.setTimeout(() => label?.remove(), 4000);
+  }
+
+  // The spell bar's chips, updated in place as programs are written and tested.
+  private refreshChips(): void {
+    for (const chip of this.el.list.querySelectorAll<HTMLElement>(".chip-castable")) {
+      const key = chip.dataset.key;
+      if (key) this.chipState(chip, key);
+    }
+  }
+
   private updateStatus(): void {
+    this.refreshChips();
     const key = this.selected;
     const name = key ? this.store.get(key)?.element.name : null;
     let text = "Pick a spell, then tap the island to cast it, or tap a creature to see what it wants. Drag to turn, pinch to zoom, two fingers to pan.";
     if (key && name) {
       if (this.testing.has(key)) text = `Testing ${name} on a practice island…`;
+      else if (this.writing.has(key)) text = `The grimoire is writing ${name}… it will be ready in a moment.`;
       else if (this.preparing.has(key)) text = `Preparing ${name}… the first cast of a spell takes a moment.`;
       else if (this.request(key))
         text = `Tap the island to ${this.store.get(key)?.element.kind === "artifact" ? "place" : "cast"} ${name}. Tap it again to put it away and look at creatures.`;
@@ -754,6 +1073,11 @@ export class WorldHost {
 
 const EXPAND_KEY = "mm-spellbar-expanded";
 
+// One creation in a few dozen characters, for the 4 KB perf sample.
+function compactCreation(c: ReturnType<typeof timeline.recent>[number]) {
+  return { t: c.tier, k: c.kind?.[0], s: c.steps, w: c.server, p: c.phases };
+}
+
 // What the browser keeps: the trial flag is only for the test run.
 function withoutTrial(program: SpellProgram): SpellProgram {
   const { trial: _trial, ...rest } = program;
@@ -764,12 +1088,46 @@ function tierOf(tier: Tier | undefined, depth: number): Tier {
   return tier ?? tierFromDepth(depth);
 }
 
-function readSave(): SavedWorld | null {
+function readAt(): string | null {
   try {
-    const raw = localStorage.getItem(WORLD_KEY);
-    return raw ? (JSON.parse(raw) as SavedWorld) : null;
+    return localStorage.getItem(WORLD_AT_KEY);
   } catch {
     return null;
+  }
+}
+
+function islandChannel(): BroadcastChannel | null {
+  try {
+    return typeof BroadcastChannel === "function" ? new BroadcastChannel("magic-merger.island") : null;
+  } catch {
+    return null;
+  }
+}
+
+// The size and land the player last chose for a new island (4.4).
+const CHOICE_KEY = "magic-merger.new-island";
+
+// Never a big island by default: small on a narrow screen, medium elsewhere.
+function defaultSize(): WorldSize {
+  return window.innerWidth < 600 ? "small" : "medium";
+}
+
+function readChoice(): { size: WorldSize; land: LandChoice } {
+  try {
+    const v = JSON.parse(localStorage.getItem(CHOICE_KEY) ?? "null") as { size?: string; land?: unknown } | null;
+    const size = v?.size && v.size in WORLD_SIZES ? (v.size as WorldSize) : defaultSize();
+    // A big size stays chosen only while this device still has the room.
+    return { size: sizesOffered(readHeadroom()).includes(size) ? size : defaultSize(), land: readLandChoice(v?.land) };
+  } catch {
+    return { size: defaultSize(), land: { ...DEFAULT_LAND } };
+  }
+}
+
+function writeChoice(choice: { size: WorldSize; land: LandChoice }): void {
+  try {
+    localStorage.setItem(CHOICE_KEY, JSON.stringify(choice));
+  } catch {
+    // This choice lasts for this page.
   }
 }
 
@@ -786,6 +1144,26 @@ function writeFlag(key: string, value: boolean): void {
     localStorage.setItem(key, value ? "1" : "0");
   } catch {
     // Storage blocked: the choice lasts for this page.
+  }
+}
+
+// Spells the Worker would not mend again, for this tab's session (L5).
+const MENDED = "mm-mended";
+const mendedHere = new Set<string>();
+function mendedTooOften(key: string): boolean {
+  if (mendedHere.has(key)) return true;
+  try {
+    return (JSON.parse(sessionStorage.getItem(MENDED) ?? "[]") as string[]).includes(key);
+  } catch {
+    return false;
+  }
+}
+function markMended(key: string): void {
+  mendedHere.add(key);
+  try {
+    sessionStorage.setItem(MENDED, JSON.stringify([...mendedHere]));
+  } catch {
+    // this page only
   }
 }
 

@@ -1,8 +1,10 @@
 import { BufferAttribute, BufferGeometry, Mesh, type Material } from "three";
-import { F, G } from "../materials";
+import { BUILTIN, F, G, type Material as LandMaterial } from "../materials";
 import type { World } from "../world";
 import { FACE_LIGHT } from "./models";
 import { mixColor, scaleColor } from "../colors";
+import { GRAPHICS } from "./graphics";
+import { LOOKS, biomeAt } from "../land";
 
 // The island as voxel columns. Each cell is one column whose top sits at its
 // height (half a unit per height unit, rounded to whole voxels). Walls are
@@ -19,11 +21,27 @@ export function columnTop(world: World, i: number): number {
   return Math.max(BOTTOM + 2, Math.round(world.height[i] * V));
 }
 
+// The fluid's top. The land's top is rounded to whole voxels and the fluid's
+// is not, so shallow water came out level with the sand or grass under it:
+// two faces in one plane, which flicker through each other (sand speckled
+// across the shallows on a phone, 4.2; 18 to 40% of wet cells on generated
+// islands). A fluid's top is always at least FLUID_LIFT above its own land.
+export const FLUID_LIFT = 0.06;
 export function surfaceY(world: World, i: number): number {
-  return world.fluid[i] !== F.NONE && world.depth[i] > 0.02 ? (world.height[i] + world.depth[i]) * V : columnTop(world, i);
+  const top = columnTop(world, i);
+  if (world.fluid[i] === F.NONE || world.depth[i] <= 0.02) return top;
+  return Math.max((world.height[i] + world.depth[i]) * V, top + FLUID_LIFT);
 }
 
 const STRATA = { dirt: 0x7a5a3a, clay: 0x8f6a45, stone: 0x6f6f78, deep: 0x4a4752 };
+const WATER: [number, number] = [0x5cc0f0, 0x1d5d9e];
+// Light at a top's corner by how many of its three neighbors there (two
+// sides and the diagonal) stand taller: the usual voxel ambient occlusion
+// (both sides taller counts as fully hidden).
+const AO_LIGHT = [0.62, 0.75, 0.88, 1];
+// The foot of a wall, where it meets the land below, is in its crease.
+const CREASE = 0.74;
+const FOAM = 0xf2f9ff;
 
 interface ChunkMeshes {
   land: Mesh | null;
@@ -36,9 +54,20 @@ export class Terrain {
   private chunks: ChunkMeshes[];
   private landSig: Uint32Array;
   private fluidSig: Uint32Array;
+  // Each wet cell's surface as last drawn, and which cells are drawn wet (4.4).
+  private fluidLevel: Float32Array;
+  private wet: Uint8Array;
   private dirtyLand = new Set<number>();
   private dirtyFluid = new Set<number>();
+  // Chunks to redraw only because water flowed (4.4): one every third frame
+  // at most, so flowing rivers cost a steady fraction of a millisecond.
+  private slowLand = new Set<number>();
+  private slowFluid = new Set<number>();
+  private slowTurn = 0;
   coversChanged = true;
+  // The biome's cut sides and water (4.4); the old island's otherwise.
+  private strata = STRATA;
+  private water = WATER;
 
   constructor(
     private world: World,
@@ -52,6 +81,12 @@ export class Terrain {
     this.chunks = Array.from({ length: this.cols * this.rows }, () => ({ land: null, fluid: null }));
     this.landSig = new Uint32Array(world.n).fill(0xffffffff);
     this.fluidSig = new Uint32Array(world.n).fill(0xffffffff);
+    this.fluidLevel = new Float32Array(world.n).fill(-1e9);
+    this.wet = new Uint8Array(world.n);
+    if (world.land) {
+      this.strata = LOOKS[world.land.biome].strata;
+      this.water = LOOKS[world.land.biome].water;
+    }
   }
 
   // Compares every column with what was last drawn and marks chunks to rebuild.
@@ -60,20 +95,36 @@ export class Terrain {
     const { w, n } = world;
     for (let i = 0; i < n; i++) {
       const f = world.fluid[i];
-      const wet = f !== F.NONE && world.depth[i] > 0.02;
+      // Wet with a margin (4.4): a thin film at a river's edge used to flip
+      // wet and dry every tick, and rebuild its chunks each time.
+      const wet = f !== F.NONE && world.depth[i] > (this.wet[i] ? WET_OFF : WET_ON);
+      this.wet[i] = wet ? 1 : 0;
       // Bit 24: under fluid, where the land top takes no spell drawing (the fluid's top does).
       const land = (((columnTop(world, i) + 64) & 0xff) | (world.ground[i] << 8) | (world.cover[i] << 16) | (wet ? 1 << 24 : 0)) >>> 0;
-      const fluid = !wet ? 0 : (f << 24) | (Math.round(surfaceY(world, i) * 8) & 0xffffff);
-      if (land !== this.landSig[i]) {
-        if ((land & LAND_LOOK) !== (this.landSig[i] & LAND_LOOK)) this.markAround(this.dirtyLand, i % w, Math.floor(i / w));
+      // A fluid's type and wetness; its level is compared with what was last
+      // drawn, with a margin (4.4): a river's surface wobbles by hundredths
+      // as it flows, and rounding it rebuilt its chunks every frame.
+      const fluid = !wet ? 0 : (f << 24) | 1;
+      const moved = wet && Math.abs(surfaceY(world, i) - this.fluidLevel[i]) > LEVEL_STEP;
+      const was = this.landSig[i];
+      if (land !== was) {
+        // Only the wet bit changed: water flowing at a river's edge, redrawn
+        // in the slow queue; anything else at once.
+        const flowOnly = (land ^ was) === 1 << 24 && was !== 0xffffffff;
+        if ((land & LAND_LOOK) !== (was & LAND_LOOK)) this.markAround(flowOnly ? this.slowLand : this.dirtyLand, i % w, Math.floor(i / w));
         if (((land >>> 16) & 0xff) !== ((this.landSig[i] >>> 16) & 0xff) || (land & 0xff) !== (this.landSig[i] & 0xff)) this.coversChanged = true;
         // Water sits on the land: only a new floor height moves its walls.
         if ((land & 0xff) !== (this.landSig[i] & 0xff)) this.markAround(this.dirtyFluid, i % w, Math.floor(i / w));
         this.landSig[i] = land;
       }
-      if (fluid !== this.fluidSig[i]) {
+      if (fluid !== this.fluidSig[i] || moved) {
+        // A new fluid (a spell's lava, a flood) is drawn at once; the same
+        // fluid moving, or a film coming and going, in the slow queue.
+        const same = fluid === this.fluidSig[i] || fluid === 0 || this.fluidSig[i] === 0;
+        const flowOnly = same && this.fluidSig[i] !== 0xffffffff && (f === F.WATER || f === F.NONE);
         this.fluidSig[i] = fluid;
-        this.markAround(this.dirtyFluid, i % w, Math.floor(i / w));
+        this.fluidLevel[i] = wet ? surfaceY(world, i) : -1e9;
+        this.markAround(flowOnly ? this.slowFluid : this.dirtyFluid, i % w, Math.floor(i / w));
       }
     }
   }
@@ -101,6 +152,7 @@ export class Terrain {
       if (!first && performance.now() > until) break;
       first = false;
       this.dirtyLand.delete(c);
+      this.slowLand.delete(c);
       this.swap(c, "land", this.buildLand(c));
     }
     first = true;
@@ -108,7 +160,20 @@ export class Terrain {
       if (!first && performance.now() > until) break;
       first = false;
       this.dirtyFluid.delete(c);
+      this.slowFluid.delete(c);
       this.swap(c, "fluid", this.buildFluid(c));
+    }
+    // One chunk of the slow queue every third frame, land and water in turn,
+    // if time is left.
+    if (performance.now() > until || this.slowTurn++ % 3 !== 0) return;
+    const land = this.slowTurn % 2 === 0;
+    const queue = land ? this.slowLand : this.slowFluid;
+    for (const c of queue) {
+      queue.delete(c);
+      if (land) {
+        if (!this.dirtyLand.has(c)) this.swap(c, "land", this.buildLand(c));
+      } else if (!this.dirtyFluid.has(c)) this.swap(c, "fluid", this.buildFluid(c));
+      break;
     }
   }
 
@@ -165,30 +230,47 @@ export class Terrain {
         const X = x + ox;
         const Z = y + oz;
         const surface = this.topColor(i);
-        // A little ambient occlusion: a top next to a taller column is darker.
-        let ao = 1;
-        if (topAt(x - 1, y) > top && x > 0) ao -= 0.07;
-        if (topAt(x + 1, y) > top && x < w - 1) ao -= 0.07;
-        if (topAt(x, y - 1) > top && y > 0) ao -= 0.07;
-        if (topAt(x, y + 1) > top && y < h - 1) ao -= 0.07;
-        out.face(TOP, X, Z, top, top, surface, FACE_LIGHT.top * ao, 1, world.fluid[i] === F.NONE || world.depth[i] <= 0.02 ? 1 : 0);
+        const decal = this.wet[i] ? 0 : 1;
+        if (GRAPHICS.ao) {
+          // Ambient occlusion per corner (4.4): (x, y) is the corner shared
+          // with the cells up and left of it, and so on round the top.
+          const t = (dx: number, dy: number) => (topAt(x + dx, y + dy) > top ? 1 : 0);
+          const corner = (s1: number, s2: number, c: number) => AO_LIGHT[s1 && s2 ? 0 : 3 - s1 - s2 - c] * FACE_LIGHT.top;
+          const l = CORNERS;
+          l[0] = corner(t(-1, 0), t(0, -1), t(-1, -1));
+          l[1] = corner(t(-1, 0), t(0, 1), t(-1, 1));
+          l[2] = corner(t(1, 0), t(0, 1), t(1, 1));
+          l[3] = corner(t(1, 0), t(0, -1), t(1, -1));
+          out.top(X, Z, top, surface, l, ONES, decal, null);
+        } else {
+          // A little ambient occlusion: a top next to a taller column is darker.
+          let ao = 1;
+          if (topAt(x - 1, y) > top && x > 0) ao -= 0.07;
+          if (topAt(x + 1, y) > top && x < w - 1) ao -= 0.07;
+          if (topAt(x, y - 1) > top && y > 0) ao -= 0.07;
+          if (topAt(x, y + 1) > top && y < h - 1) ao -= 0.07;
+          out.face(TOP, X, Z, top, top, surface, FACE_LIGHT.top * ao, 1, decal);
+        }
         // Walls toward lower neighbors; outside the island counts as the bottom.
         for (let d = 0; d < 4; d++) {
           const low = topAt(x + DX[d], y + DY[d]);
           if (low >= top) continue;
           const light = WALL_LIGHT[d];
+          // The foot of a wall inside the island sits in a crease.
+          const foot = GRAPHICS.ao && low > BOTTOM ? CREASE : 1;
           const built = this.builtColor(i);
           if (built !== null) {
             // A built column (a trunk, a tower, a crystal spire) is its material all the way down.
-            out.face(d, X, Z, low, top, built, light * (1 - Math.min(0.25, 0)), 1);
+            out.face(d, X, Z, low, top, built, light, 1, 0, foot);
             continue;
           }
           // Layers from the top: the surface color for one voxel, then soil, then stone.
           const soil = this.soilColor(i);
-          band(out, d, X, Z, Math.max(low, top - 1), top, top, this.sideTopColor(i, surface), light);
-          if (top - 1 > low) band(out, d, X, Z, Math.max(low, top - 3), top - 1, top, soil, light);
-          if (top - 3 > low) band(out, d, X, Z, Math.max(low, BOTTOM + 2), top - 3, top, STRATA.stone, light);
-          if (BOTTOM + 2 > low) band(out, d, X, Z, low, Math.min(top - 3, BOTTOM + 2), top, STRATA.deep, light);
+          const strata = this.strataAt(i);
+          band(out, d, X, Z, Math.max(low, top - 1), top, top, this.sideTopColor(i, surface), light, low, foot);
+          if (top - 1 > low) band(out, d, X, Z, Math.max(low, top - 3), top - 1, top, soil, light, low, foot);
+          if (top - 3 > low) band(out, d, X, Z, Math.max(low, BOTTOM + 2), top - 3, top, strata.stone, light, low, foot);
+          if (BOTTOM + 2 > low) band(out, d, X, Z, low, Math.min(top - 3, BOTTOM + 2), top, strata.deep, light, low, foot);
         }
       }
     }
@@ -207,12 +289,14 @@ export class Terrain {
       for (let x = x0; x < x1; x++) {
         const i = y * w + x;
         const f = world.fluid[i];
-        if (f === F.NONE || world.depth[i] <= 0.02) continue;
-        const top = surfaceY(world, i);
+        if (f === F.NONE || !this.wet[i]) continue;
+        const top = Math.max(surfaceY(world, i), columnTop(world, i) + FLUID_LIFT);
+        this.fluidLevel[i] = top;
         const { color, alpha } = this.fluidColor(i);
         const X = x + ox;
         const Z = y + oz;
-        out.face(TOP, X, Z, top, top, color, 1, alpha, 1);
+        if (GRAPHICS.water && f === F.WATER) this.waterTop(out, x, y, X, Z, top, color, alpha);
+        else out.face(TOP, X, Z, top, top, color, 1, alpha, 1);
         const floor = columnTop(world, i);
         for (let d = 0; d < 4; d++) {
           const nx = x + DX[d];
@@ -234,15 +318,70 @@ export class Terrain {
         }
       }
     }
-    return out.geometry(4);
+    return out.geometry(4, GRAPHICS.water);
+  }
+
+  // A water top (4.4): foam at the corners that touch the shore, waves away
+  // from it. A corner's wave is the smallest of the four cells around it, so
+  // two tops that share a corner move it the same way and never open a gap,
+  // and water against a wall or the shore stays still.
+  private waterTop(out: Writer, x: number, y: number, X: number, Z: number, top: number, color: number, alpha: number): void {
+    const { world } = this;
+    const foam = FOAMS;
+    const wave = WAVES;
+    const alphas = ALPHAS;
+    for (let k = 0; k < 4; k++) {
+      const [cx, cy] = CORNER_CELLS[k];
+      let shore = 0;
+      let calm = 1;
+      for (const [dx, dy] of CORNER_AROUND[k]) {
+        const nx = x + cx + dx;
+        const ny = y + cy + dy;
+        if (nx < 0 || ny < 0 || nx >= world.w || ny >= world.h) {
+          calm = 0;
+          continue;
+        }
+        const j = ny * world.w + nx;
+        const wet = world.fluid[j] === F.WATER && this.wet[j] === 1;
+        if (!wet) {
+          if (!this.wet[j]) shore = 1;
+          calm = 0;
+          continue;
+        }
+        if (Math.abs(surfaceY(world, j) - top) > 0.02) calm = 0;
+        else calm = Math.min(calm, Math.min(1, Math.max(0, (world.depth[j] - 0.3) / 1.2)));
+      }
+      foam[k] = shore;
+      wave[k] = calm;
+      alphas[k] = shore ? Math.min(0.95, alpha + 0.2) : alpha;
+    }
+    out.topFoam(X, Z, top, color, foam, alphas, wave);
   }
 
   private topColor(i: number): number {
     const { world } = this;
     const m = world.materials.get("ground", world.ground[i]);
-    const base = m.colors[((world.shade[i] * m.colors.length) >> 8) % m.colors.length];
+    const colors = this.colorsAt(i, world.ground[i], m);
+    const base = colors[((world.shade[i] * colors.length) >> 8) % colors.length];
     // Higher land is a touch lighter, so hills read even from above.
     return scaleColor(base, 0.92 + Math.min(0.16, Math.max(0, world.height[i] - 8) * 0.006));
+  }
+
+  // A built-in ground's colors in this cell's region on a mixed island
+  // (4.4.1): the world's table holds the main biome's.
+  private colorsAt(i: number, id: number, m: LandMaterial): number[] {
+    const { world } = this;
+    if (!world.biomeMap || id >= BUILTIN.ground.length) return m.colors;
+    return LOOKS[biomeAt(world, i)].palette[m.name] ?? BUILTIN.ground[id].colors;
+  }
+
+  // The cut sides and water of this cell's region on a mixed island.
+  private strataAt(i: number): typeof STRATA {
+    return this.world.biomeMap ? LOOKS[biomeAt(this.world, i)].strata : this.strata;
+  }
+
+  private waterAt(i: number): [number, number] {
+    return this.world.biomeMap ? LOOKS[biomeAt(this.world, i)].water : this.water;
   }
 
   // The first voxel of a wall: green grass edge, white snow edge, or the surface itself.
@@ -262,9 +401,10 @@ export class Terrain {
 
   private soilColor(i: number): number {
     const g = this.world.ground[i];
-    if (g === G.SAND) return 0xc9b07a;
-    if (g === G.ROCK || g === G.BASALT || g === G.SNOW) return STRATA.stone;
-    return (this.world.shade[i] & 1) === 0 ? STRATA.dirt : STRATA.clay;
+    if (g === G.SAND) return this.world.land ? scaleColor(this.colorsAt(i, G.SAND, this.world.materials.get("ground", G.SAND))[0], 0.9) : 0xc9b07a;
+    const strata = this.strataAt(i);
+    if (g === G.ROCK || g === G.BASALT || g === G.SNOW) return strata.stone;
+    return (this.world.shade[i] & 1) === 0 ? strata.dirt : strata.clay;
   }
 
   private fluidColor(i: number): { color: number; alpha: number } {
@@ -272,6 +412,12 @@ export class Terrain {
     const f = world.fluid[i];
     const d = world.depth[i];
     if (f === F.WATER) {
+      if (GRAPHICS.water) {
+        // Clear and light in the shallows, darker quickly with depth (4.4).
+        const k = Math.sqrt(Math.min(1, d / 6));
+        const water = this.waterAt(i);
+        return { color: mixColor(water[0], water[1], k), alpha: 0.6 + k * 0.32 };
+      }
       const k = Math.min(1, d / 5);
       return { color: mixColor(0x5cc0f0, 0x1d5d9e, k), alpha: 0.72 + k * 0.2 };
     }
@@ -284,6 +430,31 @@ export class Terrain {
   }
 }
 
+// A top's corners in the order Writer.top takes them: (X, Z), (X, Z + 1),
+// (X + 1, Z + 1), (X + 1, Z); for each, the cell offset of the corner point
+// and the four cells around it relative to that.
+const CORNER_CELLS: [number, number][] = [
+  [0, 0],
+  [0, 1],
+  [1, 1],
+  [1, 0],
+];
+const CORNER_AROUND: [number, number][][] = Array.from({ length: 4 }, () => [
+  [-1, -1],
+  [0, -1],
+  [-1, 0],
+  [0, 0],
+]);
+const CORNERS = [1, 1, 1, 1];
+// A top's two triangles, by corner: split along (X, Z) to (X + 1, Z + 1), or
+// along the other diagonal.
+const SQUARE = [0, 1, 2, 0, 2, 3];
+const FLIPPED = [1, 2, 3, 1, 3, 0];
+const ONES = [1, 1, 1, 1];
+const FOAMS = [0, 0, 0, 0];
+const WAVES = [0, 0, 0, 0];
+const ALPHAS = [1, 1, 1, 1];
+
 // Face directions: the four walls, then the top.
 const EAST = 0;
 const SOUTH = 1;
@@ -295,6 +466,12 @@ const DY = [0, 1, 0, -1];
 const WALL_LIGHT = [FACE_LIGHT.east, FACE_LIGHT.south, FACE_LIGHT.west, FACE_LIGHT.north];
 // Height, ground and the wet bit of a column's land signature: what its faces look like.
 const LAND_LOOK = 0x100ffff;
+// How far a fluid's surface moves before it is drawn again (scene units: an
+// eighth of a voxel was the old rounding step).
+const LEVEL_STEP = 0.15;
+// Depths at which a cell starts and stops being drawn wet.
+const WET_ON = 0.06;
+const WET_OFF = 0.005;
 // How far a waterfall hangs in front of the island's cut side, in cells.
 const FALL_GAP = 0.06;
 
@@ -305,6 +482,8 @@ class Writer {
   private col = new Float32Array(4 * 6 * 4096);
   // 1 where spell drawings may show (dry land tops, fluid tops), 0 on walls.
   private mask = new Float32Array(6 * 4096);
+  // How much a vertex rides the waves (water tops, 4.4).
+  private wave = new Float32Array(6 * 4096);
   private n = 0;
 
   reset(): void {
@@ -321,11 +500,15 @@ class Writer {
     const mask = new Float32Array(this.mask.length * 2);
     mask.set(this.mask);
     this.mask = mask;
+    const wave = new Float32Array(this.wave.length * 2);
+    wave.set(this.wave);
+    this.wave = wave;
   }
 
-  private vertex(x: number, y: number, z: number, r: number, g: number, b: number, a: number, m: number): void {
+  private vertex(x: number, y: number, z: number, r: number, g: number, b: number, a: number, m: number, wave = 0): void {
     const n = this.n++;
     this.mask[n] = m;
+    this.wave[n] = wave;
     this.pos[n * 3] = x;
     this.pos[n * 3 + 1] = y;
     this.pos[n * 3 + 2] = z;
@@ -337,12 +520,14 @@ class Writer {
 
   // One square face of the cell at (X, Z): a wall from height lo to hi, or the
   // top at height hi. Two triangles, wound to face outward.
-  face(dir: number, X: number, Z: number, lo: number, hi: number, color: number, light: number, alpha: number, decal = 0): void {
+  // `foot` scales the light of the wall's lower edge (its crease, 4.4).
+  face(dir: number, X: number, Z: number, lo: number, hi: number, color: number, light: number, alpha: number, decal = 0, foot = 1): void {
     if ((this.n + 6) * 4 > this.col.length) this.grow();
     const r = (((color >> 16) & 255) / 255) * light;
     const g = (((color >> 8) & 255) / 255) * light;
     const b = ((color & 255) / 255) * light;
-    const v = (x: number, y: number, z: number) => this.vertex(x, y, z, r, g, b, alpha, decal);
+    const v = (x: number, y: number, z: number) =>
+      foot !== 1 && y === lo ? this.vertex(x, y, z, r * foot, g * foot, b * foot, alpha, decal) : this.vertex(x, y, z, r, g, b, alpha, decal);
     // Corners a, b, c, d; triangles a b c and a c d.
     switch (dir) {
       case EAST:
@@ -387,8 +572,35 @@ class Writer {
     }
   }
 
+  // A top with its own light, alpha and wave at each corner, in the order
+  // (X, Z), (X, Z + 1), (X + 1, Z + 1), (X + 1, Z). The square is split along
+  // the diagonal joining its two darker corners, so shading runs smoothly
+  // whichever way the occlusion lies (Mikola Lysenko's voxel AO).
+  top(X: number, Z: number, y: number, color: number, light: number[], alpha: number[], decal: number, wave: number[] | null): void {
+    if ((this.n + 6) * 4 > this.col.length) this.grow();
+    const r = ((color >> 16) & 255) / 255;
+    const g = ((color >> 8) & 255) / 255;
+    const b = (color & 255) / 255;
+    const px = [X, X, X + 1, X + 1];
+    const pz = [Z, Z + 1, Z + 1, Z];
+    const v = (k: number) => this.vertex(px[k], y, pz[k], r * light[k], g * light[k], b * light[k], alpha[k], decal, wave ? wave[k] : 0);
+    for (const k of light[0] + light[2] > light[1] + light[3] ? FLIPPED : SQUARE) v(k);
+  }
+
+  // A water top: its color mixed toward foam at shore corners.
+  topFoam(X: number, Z: number, y: number, color: number, foam: number[], alpha: number[], wave: number[]): void {
+    if ((this.n + 6) * 4 > this.col.length) this.grow();
+    const px = [X, X, X + 1, X + 1];
+    const pz = [Z, Z + 1, Z + 1, Z];
+    const v = (k: number) => {
+      const c = foam[k] ? mixColor(color, FOAM, 0.55) : color;
+      this.vertex(px[k], y, pz[k], ((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255, alpha[k], 1, wave[k]);
+    };
+    for (const k of SQUARE) v(k);
+  }
+
   // A geometry with copies of what was written (the writer is reused).
-  geometry(colorSize: 3 | 4): BufferGeometry | null {
+  geometry(colorSize: 3 | 4, waves = false): BufferGeometry | null {
     if (this.n === 0) return null;
     const g = new BufferGeometry();
     g.setAttribute("position", new BufferAttribute(this.pos.slice(0, this.n * 3), 3));
@@ -404,6 +616,7 @@ class Writer {
     }
     g.setAttribute("color", new BufferAttribute(col, colorSize));
     g.setAttribute("decalMask", new BufferAttribute(this.mask.slice(0, this.n), 1));
+    if (waves) g.setAttribute("wave", new BufferAttribute(this.wave.slice(0, this.n), 1));
     g.computeBoundingSphere();
     return g;
   }
@@ -413,7 +626,20 @@ const LAND = new Writer();
 const FLUID = new Writer();
 
 // One layer of a wall, a bit darker the deeper it is below the top.
-function band(out: Writer, dir: number, X: number, Z: number, lo: number, hi: number, top: number, color: number, light: number): void {
+// The band that reaches the wall's foot (`low`) takes its crease.
+function band(
+  out: Writer,
+  dir: number,
+  X: number,
+  Z: number,
+  lo: number,
+  hi: number,
+  top: number,
+  color: number,
+  light: number,
+  low = -Infinity,
+  foot = 1,
+): void {
   if (hi <= lo) return;
-  out.face(dir, X, Z, lo, hi, color, light * (1 - Math.min(0.25, (top - hi) * 0.03)), 1);
+  out.face(dir, X, Z, lo, hi, color, light * (1 - Math.min(0.25, (top - hi) * 0.03)), 1, 0, lo === low ? foot : 1);
 }

@@ -1,6 +1,6 @@
 # Where the game stands, and what comes next
 
-Updated on 2026-11-03, during 3.7 (after 3.6).
+Updated on 2026-11-04, with 4.4.
 
 ## Done since the first review
 
@@ -90,7 +90,7 @@ Asked for: send the link to friends and coworkers, $50 of API a month in total w
 6. **A welcome** (what the game is, that Claude writes the spells, the player's month), **a report button** on names and **a privacy note**.
 7. **Checked**: `npm run test:worker` runs the Worker under `wrangler dev` with a stub Claude, in CI (DESIGN.md has what it covers, and the mutation that proves the concurrency test can fail); a phone sized browser went through no link, the admin creating an invite, the friend's welcome, a merge, the cap, the People view and a revoked link.
 
-This takes part of 4.6 "Ready for strangers" early, for a closed circle: quotas, a report button, a privacy note, no shared token. Still missing before anything public: Turnstile, name checks before a name is stored, AI labels on generated content, legal pages, AI Gateway caps.
+This takes part of 4.5 "Ready for strangers" early, for a closed circle: quotas, a report button, a privacy note, no shared token. Still missing before anything public: Turnstile, name checks before a name is stored, AI labels on generated content, legal pages, AI Gateway caps.
 
 ## Done in 3.4.1: ideas from players, built by Claude
 
@@ -161,14 +161,79 @@ Not done: combined hazards (they need a new island); the three lava challenges h
 
 Asked for: an independent review before the link goes beyond close friends, then accounts built on the reviewed code. `docs/REVIEW-4.0.md` has the findings and the numbers; DESIGN.md, "Accounts", has the rules.
 
-1. **The review**: no critical finding; three high (a player's idea could be the routine's task, a challenge win could set par to 0 for everyone, a lost test verdict left a program a trial for good) and seven medium fixed with a check each; the hold proved by mutation; the sandbox headers verified on the live site; a newcomer's first ten minutes at phone size with screenshots; the open items numbered under 4.1 and 4.6.
+1. **The review**: no critical finding; three high (a player's idea could be the routine's task, a challenge win could set par to 0 for everyone, a lost test verdict left a program a trial for good) and seven medium fixed with a check each; the hold proved by mutation; the sandbox headers verified on the live site; a newcomer's first ten minutes at phone size with screenshots; the open items numbered under 4.1 and 4.5.
 2. **The invite becomes the account, with the same id**: a passkey made from the link creates it, the link dies, and spend, First Discoveries, ideas and wins follow with no move; votes and casts are the account's across devices.
 3. **Sign in anywhere** with the passkey, or a one use link: the admin's "New link" on an account, or by email when a sender is set up (`EMAIL_API_URL`, `EMAIL_API_KEY`, `EMAIL_FROM`).
 4. **Progress on the server**: discoveries as a union, the board, the island packed; last saved wins for the island, with a warning before an older device replaces a newer save, and the other island loaded if the player says no.
 5. **The account page**: passkeys, devices (each can be signed out), what is saved, email, export as one file, delete everything.
 6. **Checked**: `npm run test:worker` (one use links opened twice at once, a forged passkey answer, a spent challenge, sessions made up, signed out or deleted, one account reading or writing another's progress, malformed and oversized uploads, email links used twice and rate limited, export, deletion leaving nothing of the person and keeping the library and the spend) and `scripts/account-verify.mjs` in a phone sized browser with a virtual authenticator (a link into an account, a second device signing in and receiving the island, one link on two devices at once, deletion signing both out).
 
-Not done: two tabs of one browser still overwrite each other's local saves (review M6, in 4.1; the server merge limits the damage to the island); the welcome is still long on a phone.
+Not done: two tabs of one browser still overwrite each other's local saves (review M6; the server merge limits the damage to the island); the welcome is still long on a phone.
+
+## Done in 4.1: the 4.0 review's open findings, fixed
+
+Asked for: every open finding of the 4.0 review that code can correct, each reproduced first and shown passing after, no spell rewritten. `docs/REVIEW-4.0.md` says "fixed in 4.1" under each finding with its commit.
+
+1. **Nothing lost without a word**: two tabs of one browser no longer overwrite each other (M6), a full storage says so (M13), a frozen World frame is replaced by a watchdog (M3).
+2. **Server**: the admin token compared in constant time, perf samples rate limited, the cron's jobs caught and logged, pull requests linked to ideas only on `Closes` or `Fixes`, the chronicle digest quoted as data (L1, L2, L7, L8, L10).
+3. **Players**: the vote bar and the challenge banner stacked on a phone (M10), a broken spell stops asking for repairs (L5), Retry keeps the challenge head start (L6), the refresh report says "not sent" (M12); **the drum** players kept hearing is gone (routine villager work is silent, an unknown sound name plays the nearest voice or nothing).
+4. **Tests**: `scripts/` typechecked and linted, Worker test sections for votes, rewrites, rollbacks, repairs, casts, reports, spell info, spend, perf and the admin routes (M7), nothing asserted on wall clock time (M8), passkey counter and attestation checks; one tick loop, one PRNG and one admin helper for the runners (L4).
+
+## Done in 4.2: faster creation, every item written at the merge
+
+Asked for: everything from dropping one item on another to using the result gets faster, and every new item is written as soon as it is created; no lower quality (no fast mode, no weaker drafts), the extra cost of writing items nobody casts accepted inside a daily cap. Measured first, before any change: `docs/measurements/creation-4.2.md`. DESIGN.md, "Faster creation (4.2)", has the rules.
+
+1. **Measured**: Server-Timing on every answer, a creation timeline in the page and in the HUD's perf sample, and three scripts: `creation-timing.mjs` (phone sized browser, real merges), `test-run-timing.ts` (every live program in Node), `quality-20.ts` (the 20 spells: test, probes, judge, cost).
+2. **A bug the measurement found**: the probes (protection, five minutes) decided nothing in browsers since they were added; fixed, 15 live programs listed.
+3. **The test run in a Web Worker** made by the sandboxed check frame, simulation only, run to the end; the five minute test stops once the artifact has acted.
+4. **Every item written at the merge** by a Cloudflare Queue job, idempotent, paid by the merger, within $1.50 a day and 80% of the month; big items by Opus through the Batch API with no draft.
+5. **Fewer waits**: three programs at once, castable on a local pass, independent calls side by side; **the hour's prompt cache** for the spell writer on every model.
+6. **Chips** say writing, testing, ready, with a toast.
+
+Not done: the real phone session (the perf sample now carries the creation steps: turn the HUD on and play a few merges); the prompt was not trimmed (DESIGN.md says why); a burst's later items wait up to 20 s for their job, since Cloudflare Queues adds a consumer only after a whole batch: Cloudflare Workflows, one instance per item, would run them side by side (size S to M). Owner's calls before the deploy: no draft for big items, and a big item's failed test is written again by Opus.
+
+## Done in 4.3: creatures that move like they mean it
+
+Asked for: every creature moves like it means it, with no new API call and no prompt change; measured first. Measured: `docs/measurements/movement-4.3.md`. DESIGN.md, "Creatures that move like they mean it (4.3)", has the rules.
+
+1. **Measured first**: sharp turns (over 150 degrees within half a second) per kind on an island of 112, seeds 3, 6 and 9, natural ones apart from flip-flops, where each flip-flop came from, intent flips, stuck seconds, hops and action changes, printed by `npm test`. Half the deer's flip-flops were fear switching on and off at one distance, a fifth the way out chosen again every tick, a fifth the right angle side step.
+2. **Decisions that stick**: fear with memory and hysteresis (alarmed at its sense, calm past 1.7 times it and 3 s out of sight), a flight way chosen once a second toward cover and the herd, meals from 0.7 to 0.3, the next task thought of in the same tick, wander points ahead.
+3. **Steering**: heading and speed with acceleration and a turn rate per kind, turning on the spot, arriving, sideways separation, feelers that read slopes.
+4. **Paths**: flow fields shared per destination, 1,500 cells a tick, made again after 30 s.
+5. **Gaits and idles** in the rigs: walk, trot, run; grazing, looking around, lying down; the view turns with the simulation.
+6. **Herds, flocks, packs**: a herd runs behind the one that saw the danger and drifts together, birds fly with a flock, wolves close in from around their prey.
+7. **The same for everyone**: villagers, wildlife and spell creatures through one steering, no program rewritten.
+
+Deer flip-flops 16.9 to 0.4 a minute (0.4 to 1.4 on four other sets of seeds), rabbits 11.2 to 1.1, villagers 4.1 to 0.4; deer stuck 15.2 to 0.0 s a minute; hops 4 to 6 a minute to under 2. Wolves still catch deer (10 over the scene's three streams, 7 on main), every challenge passes, the simulation's p95 on a large island is lower than main's.
+
+Not done: real phones (the steering adds about 0.3 ms p50 and 0.4 ms p95 of creature time in Node, paid back by a cheaper temperature step; the HUD will tell); fish school with the herd rule and separation, not true boids; the lava challenges stay a coin flip on any three seeds (owner's call below).
+
+Owner's calls: the challenge guard in `npm test` now also reads each plain solution's win rate over 12 seeds; the wildfire counts houses burnt, not houses standing; replays give creatures their own random stream.
+
+## Done in 4.4: bigger and richer worlds
+
+Asked for: bigger islands for devices that can run them (a huge size and beyond, offered only when the device's own HUD numbers show headroom, never by default on phones, saved on the account); biomes and island shapes with better rivers and coasts, chosen by a seed and sliders at reset, every species' habitat and `npm test` working on each; baked ambient occlusion, better water, visible weather, sun, moon and stars, each measured with the HUD before and after on a phone sized browser. Items 1 to 3 of "4.1 Bigger and richer worlds" below, which 4.1 left for later. DESIGN.md, "Islands of every kind (4.4)", has the rules; `docs/measurements/view-4.4.md` the numbers.
+
+1. **A new island is chosen**: Reset opens a dialog with the size, the land (temperate forest, desert, tundra, jungle, swamp, volcanic, mesa), the shape (coast, archipelago, plateaus, ridges, inland lakes, delta), water, mountains and forest sliders, and a seed. The same seed and choices make the same island. `docs/visual-checks/biomes-and-shapes.png` shows all 42 from above.
+2. **Rivers that run and lakes that stay**: depressions filled from the edge inward (priority flood), rivers where enough of the island drains (flow accumulation), always downhill and fordable, fed by springs at their heads and along their length; lakes keep their level, a volcano its lava; water leaves over the island's edge, so the sea does not rise (0.01 to 0.03 after three minutes on every biome).
+3. **Every species lives on every biome**: the simulation keeps its materials (grass is grass in the desert), a biome brings its climate, colors, trees and weather; where a forest animal would have no habitat, a grove by a pond is planted (an oasis, a stand of pines), and a pool for the fish. `npm test` generates all 42 islands and checks villagers and every habitat, then leaves each biome alone for three simulated minutes in its worker threads (each species alive at least 60% of the time, villages standing, rivers running, nothing flooding or burning).
+4. **Huge (288) and giant (384) islands**, offered when this device's frame numbers on its island project a simulation p95 within 12 ms and frames are on time (p95 under 40 ms); never chosen by default. Saves past 400k characters are kept gzipped (a giant island is 0.6M instead of 2.5M), in the browser and on the account; the Worker accepts the two sizes.
+5. **The view**: ambient occlusion per corner and in the creases of walls; water colored by depth and biome, foam on the shore, waves that stay still at the shore; rain, snow and fog that come and go by biome, from the seed and the time (the simulation never knows); a sun and a moon on a low path, stars at night. Each behind a switch, measured alone: none costs more than the noise (about 0.3 ms of drawing at p50).
+6. **A bug the measure found**: flowing rivers rebuilt terrain chunks every frame (6.2 ms of drawing instead of 2.5); wetness and levels are now redrawn with a margin and, when only water flowed, from a slow queue. And one in the engine: after a restart a frame could step time backwards and hold the simulation still.
+7. **Checked**: `scripts/verify-4.4.mjs` runs the real game in a phone sized browser against `wrangler dev`: no huge or giant without headroom, a desert of lakes from seed 42 saved and loaded, with headroom every size offered and none chosen, a giant tundra kept gzipped and loaded again.
+
+Not done: real phones and a real GPU (the measure is a phone sized browser with software WebGL: the JavaScript side is measured, the GPU is not); the delta's fan of branches is faint at 152 cells; islands saved before 4.4 keep their old land (a reset gives the new one) but get the sky and weather; weather does not touch the simulation (rain does not put out fires): it would change challenges and test runs, so it waits for the owner's call.
+
+## Done in 4.4.1: the seed chooses, big islands mix
+
+Asked for, after 4.4: no choosing a land or a shape from a list; several lands on one island where the island is big enough. DESIGN.md, "Chosen by a seed, mixed on big islands (4.4.1)", has the rules.
+
+1. **The dialog** has a size, a seed and four sliders (warmth, water, mountains, forest). The seed picks the shape; warmth and water pick the land the way climate does, with a little of the seed, so mid sliders still give one island in six cold and one in six hot.
+2. **Large, huge and giant islands always mix lands** in regions about 100 cells across, from a warmth and a wetness drawn over the island (a cold side, the cold of high ground), with speckled borders; one in three has a volcanic region. Each cell has its own climate, ground, forest, colors, trees and water; terraces and swamps fade at a region's edge; the weather is the region's under the camera. 24 large islands of 24 mixed two lands or more (4.5 on average).
+3. **Rivers wind** (the owner's feedback on 4.4: straight runs and right angle turns): each river's route is bent into meanders along a curve and carved along it, banks worn so walkers climb out. Longest straight run 26 to 13 cells, steps in straight runs of 8 or more 25% to 3%, river cells with a bank too high to climb 2.7% to 0.2%.
+4. **Checked**: the seed's rules on 400 seeds, four large islands mixing lands with every habitat, the regions and climates through a save, a mixed island alive for three minutes in `npm test`; `scripts/verify-4.4.mjs` makes a hot dry island from seed 42 (a desert) and a giant mixed island in the real game. A mixed island costs about 0.3 ms more per tick.
+
+Not done: villages do not dress by region yet (a desert village looks like a temperate one); animals keep their habitats, not their regions (no camels, no polar bears).
 
 ## Decisions taken
 
@@ -180,13 +245,15 @@ Not done: two tabs of one browser still overwrite each other's local saves (revi
 
 1. **The judge and the votes.** No vote exists yet, so the judge is uncalibrated and only advises; the library is empty until players vote programs up. Watch `GET /api/admin/judge-stats` after a week of play, and how often a vote leads to a rewrite and a rewrite to a rollback (`rewrites` table).
 2. **Phones.** Still measured only in Node and a headless browser. The HUD sends real numbers to `/api/perf` as soon as someone plays with it on. In steady state the simulation's cost is temperature and fluids (about 40% of a tick in every scene), not voxels or creatures: that is the next lever if phones run hot.
-3. **Sounds** were checked for errors, not listened to. Players now hear a drum that never stops: it is the woodcutters (see 4.1 and 4.5).
+3. **Sounds** were checked for errors, not listened to. Players heard a drum that never stopped (the woodcutters); 4.1 silenced routine work, and 4.5 gives the island real sound.
 4. **Whether Claude uses bodies.** New spells should declare `body` and `features`; models should stay rare. Look at a week of new programs (`programs` table) for how often each appears, and at the bestiary when one looks wrong.
 5. **Creatures on phones.** 375 creatures cost 1.0 ms p50 but 5.1 ms p95 of CPU in the headless browser; the HUD's `parts` count in `/api/perf` will say what a real island costs.
 6. **Challenge balance with real spells.** The checks use simple hand-written solutions; Claude's spells may be stronger or weaker. Wildfire used to be won by doing nothing 1 time in 5: villagers rebuilt the burnt houses while the fire died down, and the end check counted them. It is now lost the moment a second house burns, and `npm test` replays every challenge with nothing over 8 seeds (0 wins in 64 for Wildfire, rain still wins 64 in 64).
 
 7. **The API's growth.** Read `GET /api/admin/evolution` weekly for a month: are gaps honest (the writer saying what it lacked) or noise, does the designer choose helper, hint or engine sensibly, and do live helpers get used. If gaps are mostly noise, raise the three spells to five before anything else.
-8. **Stored protection spells.** Export them (`scripts/replay-stored.ts` has the command), run the probe on each, and rewrite the ones that fail from the admin card, one at a time, never in bulk.
+8. **Big islands and the new view on phones.** The HUD's samples in `/api/perf` now carry the island's width; look for huge and giant islands and how their simulation p95 compares with `headroom.ts`'s projection (12 ms). If a phone's frames suffer from the view, `src/sim/voxel/graphics.ts` turns each improvement off.
+9. **Movement on phones.** The steering and flow fields add about 0.3 ms p50 and 0.4 ms p95 of creature time per tick in Node on a large island (cheaper temperature pays it back). `parts` and the simulation p95 in `/api/perf` will say whether a phone feels it; `BUDGET` in `src/sim/paths.ts` is the first knob.
+10. **Stored protection spells.** Export them (`scripts/replay-stored.ts` has the command), run the probe on each, and rewrite the ones that fail from the admin card, one at a time, never in bulk.
 
 ## What the money taught us
 
@@ -194,72 +261,25 @@ The ledger holds $6.64 (plus about $3.32 before it existed): about $10 of the fi
 
 ## Next versions
 
-Sizes are per Claude Code session: S a few hours, M a full session, L two or more. The roadmap page written after 3.0 has the research behind each item and a ready prompt per version.
+Sizes are per Claude Code session: S a few hours, M a full session, L two or more. The roadmap page has a ready prompt per version.
 
-The plans of 3.2 to 4.0 are done and summed up under their "Done in" sections above; their full text is in the git history of this file.
-
-**Numbered in the order to run them.** Renumbered on 3 November so the numbers are the order: the review's findings (was 4.0.2) are now 4.1, faster creation (was 4.0.1) 4.2, movement stays 4.3, bigger worlds (was 4.1) 4.4, then richer nature 4.4.5 (split out of 4.4), sound and music (was 4.2) 4.5, ready for strangers (was 4.5) 4.6, then 4.7, the daily updates that keep going after the plan. Older documents, `docs/REVIEW-4.0.md` above all, use the old numbers. Why this order: the review's fixes are small and safe and add the tests faster creation needs on spend and repairs; creatures are what players watch most and moving them well costs no API; sound comes after worlds only for weather sounds, so the two could swap; nothing public before 4.6.
-
-### 4.1 The review's findings, fixed
-
-Every open finding of docs/REVIEW-4.0.md that code can correct, in one pull request. Each one is reproduced first (a test, a script or a screenshot that shows it) and the same check is shown passing after the fix; a finding that cannot be reproduced is written down as such, not fixed blind. No spell is rewritten, no prompt changes, no new paid call. Left out on purpose: M9 (in 4.2), M11 (4.6, when strangers come), L9 (UTC months, consistent, not a bug), the simulation in a Worker thread (the real answer to M3, size L, worth doing after 4.2 has moved the test run into a Web Worker and changed the CSP once).
-
-1. **Nothing lost without a word.** Two tabs of one browser: discoveries merged by key on every write (the stored object read again first, a `storage` listener for the other tab's writes), the island saved by one tab at a time through a `BroadcastChannel` lock or refused over a newer save (M6, the last item of 4.0 still open). A toast once when a save hits the storage quota, and `MAX_SAVE_CHARS` at 1.5M (M13). A watchdog that replaces a World frame silent for 20 s while visible (M3, the part that fits in S to M).
-2. **Server hardening.** The admin token compared in constant time on two digests (L1); `/api/perf` one row per invite per 20 s (L2); `pollBatches` caught in `scheduled()` like its siblings (L7); the feedback sync links a pull request to an idea only when it says `Closes #n` or `Fixes #n` (L8); the chronicle digest bounded and passed to Haiku as quoted data, not facts (L10, cheap even if self harm only).
-3. **Small things a player sees.** A shield that lets a meteor through (Ideas tab `#2`: "I had a shield from immortality that let a meteor pass through"): wards must stop projectiles and calamities, with a check in `npm test` that casts a meteor on a warded village. The vote bar and the challenge banner stacked on a phone, checked with a screenshot at phone size (M10); a broken spell remembers the Worker's "mended too often" for the session and stops asking (L5); Retry and Reset of a live challenge keep the head start (L6); the refresh report says "not sent" for rows that never reached a batch (M12). **The drum players keep hearing**: every tree a woodcutter fells plays a "thump" at the same volume wherever it is on the island (`src/sim/goals.ts`, `fell`; about one every 3 s on a busy island, 41 in two simulated minutes in `npm test`), and so does every house built; any unknown sound name falls back to the same thump (`src/sim/sound.ts`, `VOICES[name] ?? VOICES.thump`; two live programs ask for "hum"). The quick fix: no sound for routine villager work until 4.5 gives it a place and a distance, and an unknown name falls back to the nearest voice by meaning ("hum" to drone) or to silence, never to a drum.
-4. **Tests you can trust.** `scripts/` typechecked (`@types/node`, a `scripts/tsconfig.json` in `npm run typecheck`) and `scripts/*.mjs` linted with Node globals (M7). One Worker test section each for votes, rewrites and rollbacks, repairs, casts, reports, spell info, spend and perf, then the admin routes the review listed (M7). `SLOW_MS` injectable, the worst tick printed, not asserted (M8); one scene stream in CI if that brings `npm test` well under the 92 s (L11).
-5. **Less code.** Dead exports removed (`artifactsOf`, `SOUND_NAMES`, `WorldHost.openChallenges`, `Store.markSolved`), one `api()` helper and one PRNG for `scripts/`, one tick loop shared by the engine, the check and the scripts (the engine's missing `world.events` clear decided on purpose, not by accident), the identical branches in `shared/tiers.ts` and the Worker test (L4). Behavior unchanged, proven by `npm test` and the Worker tests before and after.
-6. **What the review could not verify.** A test for a passkey whose counter goes backwards (a cloned authenticator) and for each attestation format the library accepts; the two leftover test accounts (`ccf78a03`, `82a0d421`) deleted with the statements from the 4.0 pull request, by the owner or with the owner's go ahead.
-
-Then the owner's part of the review's section 8, which no session can do: the routine's environment holds no token and `main` requires a pull request; one real phone session with the HUD on the medium island, read back from `/api/perf`; a real passkey made on a real phone; the welcome read on a phone; the refresh report read and its candidates decided.
-
-### 4.2 Faster creation, every spell written at once
-
-The 4.0 review measured 27 s from a discovery to a castable small spell in a phone sized browser, with 2 of 12 spells in the bar ready (M9). Most of that wait is the test run in the hidden frame, not Claude. Goal: everything from dropping one item on another to using the result gets faster, and every new item is written as soon as it is created. Rules set by the owner: **no lower quality** (no weaker drafts shown to players, no fast mode), and the extra cost of writing items nobody casts is accepted because spending has stayed well controlled, inside a daily cap.
-
-1. **Measure first**: time each step of the whole path (merge answer, description, intent, program write, test run, verdict, first cast) for small and big spells and for artifacts, in the perf sample and in a script, on a phone sized browser and on the real phone. Every change below is judged on these numbers, and on cost per spell and quality, measured before and after.
-2. **A faster test run**: simulation only with no rendering, in a Web Worker, as short as the probes allow, started as soon as the program arrives rather than when the World opens.
-3. **Fewer round trips**: intent and program in one call or in parallel where they do not depend on each other; description alongside the merge answer where it is already written by the same call; no call waiting on another without need.
-4. **Cheaper and faster at once**: the 1 hour prompt cache where writes come in bursts (it lowers cost too); shorter prompts where the 3.x additions grew them without effect, checked against the judge and the probes.
-5. **Every item written at the merge**: the Worker starts the program the moment a merge creates a new item, for every tier (Haiku up to grand, Opus above, as today), and for a known item without a program when a player first gets it, in a background job that survives the response (Cloudflare Queues or Workflows; `waitUntil` is too short for a long Opus call), idempotent so two players never pay twice. The discoverer's $5 pays for what their merge starts. A daily cap on these writes (for example $1.50) sends anything beyond it back to being written on first use. Estimate from this month's numbers before shipping: at 50 new items a day, about $26 a month.
-6. **Progress the player can see**: chips say "writing", "testing" and "ready", and a toast when a spell becomes ready.
-7. **Guards**: cost per spell must not rise (the total rises only by the items written ahead, inside the daily cap); the judge's pass rate, the promise probes and votes on new programs must not fall, on a fixed set of 20 spells written before and after.
-
-### 4.3 Movement that looks alive
-
-Players see deer going back and forth. Measured on three seeds of a small island over two simulated minutes (a sharp turn is a heading change over 150 degrees within half a second): **a deer turns around 15.5 times a minute, about every 4 s**, a rabbit 9.3, a bird, a villager and a boar about 6.5, a bear 4.3. Most deer turns happen while "running away", "running for its life" or "keeping with its herd". The cause is in `src/sim/creatures.ts`: every tick picks the first rule that applies from a list (danger, social, flee, eat, behavior, wander) with no memory of the last choice, so a deer that flees past its sense radius (8 cells) stops at once, walks back to graze or to its herd, comes within 8 cells again and flees again; the flee itself is gated on hunger below 0.7, so a hungry deer switches between fleeing and eating as hunger crosses the line. Movement has no inertia either: speed and heading change in one tick, and an obstacle is dodged by a right angle step.
-
-1. **Measure first, and keep measuring.** The turn counter above goes into `npm test` as a number per kind, printed on every run and asserted per kind once fixed (a deer under 2 turns a minute while it is not reaching a goal; turning back after a delivery is not a flip-flop). Also: seconds stuck, and how often each creature changes action.
-2. **Decisions that stick.** Hysteresis on every threshold: a deer starts fleeing at 8 cells and stops only past about 14 and after a few seconds without seeing the danger; hunger starts a meal at 0.7 and ends it at 0.3. A minimum time per action and a small bonus for the current one, so a new reason must be clearly better to take over (the usual fix in game AI: separate start and stop distances, a momentum bonus of about 10 to 25%, a minimum duration). A fleeing animal remembers where the danger was and runs to cover, to its herd or out of sight, not straight away from the nearest point.
-3. **Steering, not teleporting headings.** Velocity with acceleration and a turn rate per species (a deer bounds, a bear lumbers, a rabbit zigzags on purpose when chased), arrival that slows down, wandering toward a target that drifts slowly, separation inside herds instead of every member steering to the center, obstacles avoided by looking ahead rather than the right angle side step.
-4. **Paths for long trips.** A grid path (A\* or a flow field shared per destination: one for a village's houses, one per water source) for trips home, to water, to food and to prey, recomputed rarely and bounded per tick, so nobody walks into a river or a cliff and turns back.
-5. **Gaits and idling.** Walk, trot and run tied to speed in the rigs; grazing with the head down, looking around, lying down to sleep; the body turns before it moves. Standing still is fine; dithering is not.
-6. **Herds and flocks.** Deer flee as a group behind one leader; birds and fish flock (separation, alignment, cohesion); wolves surround rather than chase in a line.
-7. **Everyone gets it.** Villagers, wildlife and spell creatures use the same steering; behaviors spells declare (`hunt`, `guard`, `follow`, goals) go through it with no prompt change and no rewritten program.
-8. **Guards.** The five minute test keeps its populations (wolves must still catch some deer; better fleeing changes the food web), every challenge still passes on its seeds, and the simulation p95 on a large island stays within the HUD numbers of 3.6 (paths and steering are bounded per tick and measured in the HUD).
-
-### 4.4 Bigger and more varied worlds
-
-The land itself: how big, what shape, what climate, and how it looks. 4.4.5 then fills it.
-
-1. **Bigger islands for those who can run them**: a huge size and beyond, offered when the device's own HUD numbers show the headroom (simulation and frame p95 on the current size), never by default on phones. Saved on the account (4.0), since a big island outgrows the browser's storage.
-2. **More varied terrain**: biomes (temperate forest, desert, tundra, jungle, swamp, volcanic, mesa), island shapes (archipelagos, plateaus, ridges, inland lakes, deltas), better rivers and coasts, chosen by a seed and a few sliders at reset.
-3. **Visual improvements**: baked ambient occlusion in the voxel lighting, better water (shore foam, depth color, gentle waves), weather you can see (rain, snow, fog), sun, moon and stars in the sky. Each measured with the HUD on a phone before it ships.
-4. **Measured**: each with the HUD on a phone sized browser (simulation and frame p95, voxel and instance counts) against today's medium and large islands, and frames of three seeds before and after.
+**Numbered in the order to run them.** Renumbered on 3 November so the numbers are the order; `docs/REVIEW-4.0.md` and older pull requests use the old numbers (the review's findings were 4.0.2, faster creation 4.0.1, worlds 4.1, sound 4.2, strangers 4.5). Done since: 4.1, 4.2, 4.3, 4.4 and 4.4.1, summed up above; their plans are in the git history of this file. Left: 4.4.5, 4.5, 4.6, then 4.7, the daily updates that keep going after the plan. 4.4.5 and 4.5 could swap; nothing public before 4.6.
 
 ### 4.4.5 Richer nature, landmarks and villages
 
-What grows and stands on the land 4.4 made, chosen by its biomes.
+What grows and stands on the land 4.4 and 4.4.1 made, chosen by each region's biome. Checked against main on 4 November: 4.4 gave each biome its own tree among seven models (oak, pine, palm, snowy pine, jungle, willow, juniper) and planted oases where a habitat was missing; everything else below is still to do, with what 4.4.1 left open (villages and animals that do not follow their region).
 
-1. **Richer nature at generation.** Today a new island has two tree models (`tree` and `pine`), one bush, one flower, crops and boulders, while spells already have a structure kit with oak, pine, birch, willow, palm, dead, giant, mushroom and crystal trees (`src/sim/structures.ts`) that the generator never uses. Plants by biome and place, from that kit: willows by water, palms on beaches, birches at forest edges, dead trees in swamps, a rare giant tree, mushrooms in damp shade, cacti in deserts. Undergrowth: grass tufts, ferns, reeds and lily pads, several flowers in several colors that grow in meadows, berry bushes. Rocks: outcrops, scree under cliffs, standing stones, crystals in volcanic ground.
+1. **Richer nature at generation.** Today a region has one tree look, one bush, one flower, crops and boulders (cover kinds in `src/sim/materials.ts` unchanged since 3.0), while spells have a structure kit (`src/sim/structures.ts`: birch, dead, giant, mushroom and crystal trees among others) that the generator never uses. Several trees per region chosen by place: willows by water, palms on beaches, birches at forest edges, dead trees in swamps, a rare giant tree, mushrooms in damp shade, cacti in deserts. Undergrowth: grass tufts, ferns, reeds and lily pads, several flowers in several colors that grow in meadows, berry bushes. Rocks: outcrops, scree under cliffs, standing stones, crystals in volcanic ground.
 2. **Natural landmarks**, one or two per island and never the same set twice: a waterfall, a hot spring, a cave mouth, a stone arch (the kit has one), a lone hill tree, ancient ruins, a sinkhole lake.
-3. **Villages that differ.** Several house styles chosen by what grows nearby (timber by forests, stone in the hills, stilts by swamps), wells, fenced fields, paths between houses, a dock on the shore, a shrine, a windmill on a rise; villages that grow these as they get richer.
-4. **Everything placed does something** (the 3.6 rule): berries feed deer and villagers, reeds hide rabbits, mushrooms spread in the dark, a hot spring melts snow and heals, ruins draw explorers and monsters, a well waters fields. Each new kind gets a test in `npm test`, and old saves load unchanged (new cover kinds are added after the existing ids, never renumbered).
-5. **Measured** like 4.4: the HUD numbers on medium and large islands stay within 4.4's, and frames of the same three seeds before and after.
+3. **Villages that differ** (4.4.1: "a desert village looks like a temperate one"). House styles by region and by what grows nearby (timber by forests, adobe in deserts, stone in the hills, stilts by swamps, snow roofs in the tundra), wells, fenced fields, paths between houses, a dock on the shore, a shrine, a windmill on a rise; villages that grow these as they get richer.
+4. **Animals of their region** (4.4.1 left them on their habitats): camels and lizards in deserts, polar bears, foxes and hares in the tundra, frogs and herons in swamps, monkeys and parrots in jungles, salamanders near lava; each a body from the 3.5 plans, a goal, and a place in the food web, so the five minute populations hold.
+5. **Shields that stop meteors** (Ideas tab `#2`, a bug players hit: "I had a shield from immortality that let a meteor pass through"): wards stop projectiles and calamities, with a check in `npm test` that casts a meteor on a warded village.
+6. **Everything placed does something** (the 3.6 rule): berries feed deer and villagers, reeds hide rabbits, mushrooms spread in the dark, a hot spring melts snow and heals, ruins draw explorers and monsters, a well waters fields. Each new kind gets a test in `npm test`, and old saves load unchanged (new cover kinds are added after the existing ids, never renumbered).
+7. **Measured** like 4.4: the HUD numbers on medium and large islands stay within 4.4's, and frames of the same three seeds before and after.
 
 ### 4.5 Sound and music
 
-The island is heard the same way from everywhere: a sound carries no position, routine villager work plays a thump the player cannot place, and 12 voices serve 167 live programs (all of them call `w.sound`; "chime" alone 127 times), so spells sound alike. Goal: the island sounds like a place, each spell sounds like itself, and music follows what happens, all generated in the browser with no audio files and no new paid call.
+The island is heard the same way from everywhere: a sound carries no position, villager work went silent in 4.1 because a thump from across the island could not be placed, and 12 voices serve 167 live programs (all of them call `w.sound`; "chime" alone 127 times), so spells sound alike. Goal: the island sounds like a place, each spell sounds like itself, and music follows what happens, all generated in the browser with no audio files and no new paid call.
 
 1. **Sounds have a place.** Every sound event carries where it happened (a spell's default is its center, so `w.sound(name, size)` stays valid in every stored program). The listener is the camera: distance fades and dulls a sound (a low pass with distance), left and right follow the camera's angle, zoomed out the island is heard as a whole and zoomed in the near things stand out. Equal power panning by default, which is cheap on phones; HRTF only as a setting for headphones, since it costs memory and CPU on low end phones.
 2. **A sound budget.** At most about 24 voices at once; sounds of the same name within 100 ms merge into one louder sound; each name has a cooldown; when the budget is full the quietest at the listener is dropped. Routine work (felling, building, digging) plays only near the camera, quietly, with variation. A test renders a busy island's events offline and checks that no name repeats faster than its cooldown.
