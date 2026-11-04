@@ -49,14 +49,15 @@ export function wonderChecks(check: Check): void {
     ...Array.from({ length: 16 }, (_, k) => [k * 13 + 5, 208] as [number, number]),
   ];
   for (const [seed, size] of sizes) {
-    const choice = { ...MID, warmth: [0.5, 0.25, 0.75][seed % 3], water: [0.5, 0.3, 0.7][seed % 4 % 3] };
+    const choice = { ...MID, warmth: [0.5, 0.25, 0.75][seed % 3], water: [0.5, 0.3, 0.7][(seed % 4) % 3] };
     const w = make(seed, size, [], choice);
     islands++;
     const ws = w.wonders;
     if (ws.length < 2 || ws.length > 4) problems.push(`${seed}: ${ws.length} wonders`);
     if (!ws.some((x) => WONDER_KINDS.get(x.kind)!.rarity !== "common")) problems.push(`${seed}: only common wonders`);
     if (ws.some((x) => WONDER_KINDS.get(x.kind)!.rarity === "legendary")) legendary++;
-    for (let a = 0; a < ws.length; a++) for (let b = a + 1; b < ws.length; b++) if (Math.hypot(ws[a].x - ws[b].x, ws[a].y - ws[b].y) < 20) problems.push(`${seed}: two wonders close`);
+    for (let a = 0; a < ws.length; a++)
+      for (let b = a + 1; b < ws.length; b++) if (Math.hypot(ws[a].x - ws[b].x, ws[a].y - ws[b].y) < 20) problems.push(`${seed}: two wonders close`);
     for (const x of ws) {
       counts.set(x.kind, (counts.get(x.kind) ?? 0) + 1);
       if (!byKind.has(x.kind) && size === 152) byKind.set(x.kind, w);
@@ -70,7 +71,11 @@ export function wonderChecks(check: Check): void {
     if (new Set(ws.map((x) => x.name)).size !== ws.length) problems.push(`${seed}: two wonders share a name`);
     if (new Set(w.settlements.map((s) => s.name)).size !== w.settlements.length) problems.push(`${seed}: two villages share a name`);
   }
-  check("4.4.5 B: every island gets two to four wonders, one uncommon or better, each in its lands", !problems.length, problems.slice(0, 5).join("; ") || `${islands} islands`);
+  check(
+    "4.4.5 B: every island gets two to four wonders, one uncommon or better, each in its lands",
+    !problems.length,
+    problems.slice(0, 5).join("; ") || `${islands} islands`,
+  );
   check(
     "4.4.5 B: wonders by rarity: every kind seen, legendary ones rare",
     counts.size >= 15 && legendary / islands < 0.2 && legendary > 0,
@@ -79,7 +84,11 @@ export function wonderChecks(check: Check): void {
       .map(([k, n]) => `${k} ${n}`)
       .join(", ")}`,
   );
-  check("4.4.5 B: islands named from syllables, short, rarely twice", names.size >= islands * 0.92 && longName.length <= 22, `${names.size} names for ${islands}; longest "${longName}"`);
+  check(
+    "4.4.5 B: islands named from syllables, short, rarely twice",
+    names.size >= islands * 0.92 && longName.length <= 22,
+    `${names.size} names for ${islands}; longest "${longName}"`,
+  );
   const again = make(3 * 7 + 3);
   const first = make(3 * 7 + 3);
   check(
@@ -96,7 +105,11 @@ export function wonderChecks(check: Check): void {
     if (recent.slice(-10).includes(sig)) repeats++;
     recent.push(sig);
   }
-  check("4.4.5 B: never the same set of wonders as one of the last ten islands, even on the same seeds", repeats === 0, `${repeats} repeats in 30 islands on 6 seeds`);
+  check(
+    "4.4.5 B: never the same set of wonders as one of the last ten islands, even on the same seeds",
+    repeats === 0,
+    `${repeats} repeats in 30 islands on 6 seeds`,
+  );
 
   // A save keeps the wonders, the island's name, the villages' buildings and patched roofs.
   {
@@ -114,7 +127,10 @@ export function wonderChecks(check: Check): void {
       `${w.wonders.length} wonders, ${w.settlements.reduce((n, s) => n + (s.jobs?.length ?? 0), 0)} buildings`,
     );
   }
-  check("4.4.5 B: the island before 4.4 and the challenges have no wonders", !generateWorld(112, 112, 4).wonders.length && !generateWorld(112, 112, 4).islandName);
+  check(
+    "4.4.5 B: the island before 4.4 and the challenges have no wonders",
+    !generateWorld(112, 112, 4).wonders.length && !generateWorld(112, 112, 4).islandName,
+  );
 
   // Every wonder does something.
   const did: string[] = [];
@@ -146,7 +162,8 @@ export function wonderChecks(check: Check): void {
   };
   tryKind("hot spring", (w, x) => {
     const deer = put(w, "deer", x.x + 0.5, x.y + 0.5, 20);
-    for (let y = -6; y <= 6; y++) for (let k = -6; k <= 6; k++) if (Math.hypot(k, y) > 3.5 && Math.hypot(k, y) < 6.5) w.ground[(x.y + y) * w.w + x.x + k] = G.SNOW;
+    for (let y = -6; y <= 6; y++)
+      for (let k = -6; k <= 6; k++) if (Math.hypot(k, y) > 3.5 && Math.hypot(k, y) < 6.5) w.ground[(x.y + y) * w.w + x.x + k] = G.SNOW;
     const snow = near(w, x, 6.5, (i) => w.ground[i] === G.SNOW);
     run(w, 20);
     const left = near(w, x, 6.5, (i) => w.ground[i] === G.SNOW);
@@ -163,7 +180,7 @@ export function wonderChecks(check: Check): void {
     });
     return high > 1.5 ? null : `rose to ${high.toFixed(1)}`;
   });
-  tryKind("crater", (w, x) => {
+  tryKind("crater", (w) => {
     let ore = -1;
     for (let i = 0; i < w.n && ore < 0; i++) if (w.cover[i] === C.ORE) ore = i;
     if (ore < 0) return "no ore";
@@ -215,7 +232,9 @@ export function wonderChecks(check: Check): void {
     thief.dead = true;
     run(w, 120);
     const after = w.creatures.filter((c) => !c.dead && c.kind === DRAGON).length;
-    return awake === 1 && (after === 0 || x.state === 2) && KINDS.get(DRAGON)?.tags.includes("dragon") ? null : `awake ${awake}, after two minutes ${after}, state ${x.state}`;
+    return awake === 1 && (after === 0 || x.state === 2) && KINDS.get(DRAGON)?.tags.includes("dragon")
+      ? null
+      : `awake ${awake}, after two minutes ${after}, state ${x.state}`;
   });
   tryKind("frozen waterfall", (w, x) => {
     daytime(w);
@@ -330,7 +349,9 @@ export function wonderChecks(check: Check): void {
     check(
       "4.4.5 B: villages raise buildings with a job as they grow",
       endJobs.every((n, k) => n > startJobs[k]) && told > 0,
-      w.settlements.map((s, k) => `${s.name} ${startJobs[k]} to ${endJobs[k]} buildings, ${startHouses[k]} to ${housesOf(w, s)} houses (${tierOf(housesOf(w, s))})`).join("; "),
+      w.settlements
+        .map((s, k) => `${s.name} ${startJobs[k]} to ${endJobs[k]} buildings, ${startHouses[k]} to ${housesOf(w, s)} houses (${tierOf(housesOf(w, s))})`)
+        .join("; "),
     );
     check(
       "4.4.5 B: monsters and spell creatures stay capped with wonders and buildings",
@@ -366,4 +387,3 @@ export function wonderChecks(check: Check): void {
     );
   }
 }
-

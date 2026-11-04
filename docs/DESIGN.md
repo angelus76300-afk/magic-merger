@@ -650,6 +650,66 @@ On islands with flora (`balance.ts`; the old island and the challenges keep 3.5'
 
 Looking at every frame for the classic glitches (the owner's ask): rain and snow were hidden behind water since 4.4, because the drops write no depth and the water, drawn after them, covered the ones in front of it; smoke and a bolt's halo had the same fault. All three now draw after the water. Lily pads appeared on cells of a dry land that flooded after generation, and petrified trees stood in a lake that rose to its spill point in the first seconds: plants and rocks now keep off the cells the water will reach.
 
+## Wonders, and villages where no two houses are alike (4.4.5, part B)
+
+Asked for: wonders by rarity, each doing something, names from syllables and a first look at every new island; buildings that differ inside a village, with jobs; the balance checks again. Everything is in `src/sim/wonders.ts` (the catalog, placing, shaping, what each does), `src/sim/names.ts`, `src/sim/firstlook.ts`, `src/sim/buildings.ts` (jobs, layout, tiers) and, for the view, `src/sim/voxel/wonders.ts` and `src/sim/voxel/buildings.ts`. Numbers and frames: `docs/measurements/wonders-4.4.5-b.md`.
+
+### Wonders by rarity
+
+Seventeen kinds. Common: a waterfall, a hot spring, a cave mouth, a stone arch, a lone tree on a hill. Uncommon: the ruins of an old village, a sinkhole lake, geysers, sea stacks, a meteor crater with strange ore. Rare: a floating rock, giant bones half buried, a frozen waterfall, a fairy ring. Legendary: a world tree, a sleeping dragon's hoard, a sunken temple. Each names the lands it can stand in and finds its own spot (a drop for a waterfall, the foot of a rise for a cave, shallow sea off a coast for a temple, open high ground for a hoard far from villages), at least 26 cells from another wonder.
+
+Every island made by land.ts gets two to four (large and bigger up to four more often), the first drawn among uncommon and better, the others weighted 55 common, 30 uncommon, 12 rare, 3 legendary: on 96 islands every kind appeared, a legendary one on 6 of them. The page keeps the sets of the player's last ten islands (only the kinds, in `localStorage`) and hands them in with each new island; a set seen among them is drawn again, so a player resetting on the same seed still never meets the same set twice in ten. With no list (tests, the Perf Lab) the same seed always makes the same wonders.
+
+Placed after the villages and before ecology.ts, with their own random stream: the land, the rivers and the villages come out as in part A, and plants grow round the wonders by the same rules.
+
+### What stands, and what it costs
+
+The land part of a wonder is real land: a sinkhole is a hole of deep water kept by a spring, a crater a bowl with a rim, sea stacks columns of rock, a waterfall a spring over a drop with a plunge pool, a hot spring a warm pool. What stands above the land is a box model built from the wonder's own seed (no two arches, trees or temples alike), one mesh per wonder and one more for what shines, so an island's wonders cost two to eight draw calls and none of the 20,000 voxels spells share. Its foot is a solid cover ("wonder", after every older id) that creatures walk round. A blast of radius 5 or more takes a standing wonder away (the story says so); near a hoard it wakes the dragon.
+
+### Every wonder does something
+
+| Wonder           | What it does                                                                                                                                                |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| waterfall        | its mist puts fire out and greens ash around its pool                                                                                                       |
+| hot spring       | heals and thaws whoever bathes, melts the snow round it (a green spot in the tundra), keeps its pool liquid                                                 |
+| cave mouth       | animals run to it from fire and at night, and heal there                                                                                                    |
+| stone arch       | whoever comes near it forgets their fear; villagers walk there on their own                                                                                 |
+| lone tree        | seeds young trees round it, birds come to it                                                                                                                |
+| ruins            | explorers from the nearest village walk there and bring back old coins; monsters that hunt are drawn to it                                                  |
+| sinkhole lake    | deep water that never freezes or runs dry; fish come back to it                                                                                             |
+| geysers          | every half minute a vent throws water, steam and whoever stands on it into the air                                                                          |
+| sea stacks       | seabirds nest on them                                                                                                                                       |
+| crater           | miners take its glowing ore home as gold; the ore grows back slowly                                                                                         |
+| floating rock    | drifts over the island on a slow loop; under it fires go out and the land greens                                                                            |
+| bones            | on a full moon (one night in four, drawn bigger in the sky) up to three of the risen climb out, and burn at dawn                                            |
+| frozen waterfall | keeps the cold round it; heat it for five seconds and it runs as a waterfall from then on                                                                   |
+| fairy ring       | at night creatures near it dance round it till dawn, without fear, sleep or hunger                                                                          |
+| world tree       | heals all round it, frightens monsters away, grows the forest back                                                                                          |
+| hoard            | its gold draws a thief now and then; whoever takes some wakes the dragon, which guards its gold for a minute and sleeps again; killed, its gold is anyone's |
+| sunken temple    | its runes glow at night, fish gather in it, fishers bring up relics                                                                                         |
+
+The dragon is a built-in kind, "old dragon", tagged "dragon" and "monster", so a spell that scares, lures or hunts dragons sees it. Auras soothe fear rather than set "calm": in this engine calm stops a creature where it stands (4.3), and a chapel or a wonder calming everyone twice a second froze whole villages in the first build (found by the new checks).
+
+### Names and the first look
+
+Each island, wonder and village gets a name from syllables of its land, with no API call: "Vael's Hollow", "the Weeping Falls", "Skarvik". A new island opens with its name over the whole island and the list of its wonders, then a short flight from wonder to wonder (about 3.6 seconds each, the camera turning slowly), each with its name, what it is, its rarity and what it does, then down to a village. A tap anywhere or Skip ends it; with reduced motion the card alone says the same and the camera stays. Tapping a wonder later shows its card. The page says "Welcome to" the island's name.
+
+### Buildings that differ inside a village
+
+Every house (a two by two block of house cells) is built from its own seed: a size (hut, cottage, longhouse, two storeys), a roof (thatch, tile, slate, flat, turf) in a color of its kind, walls of its village's style, a door turned to the plaza, windows and shutters, sometimes a porch, a dormer, a chimney, a lean-to once its village has grown, and a patch on a roof rebuilt after a fire. All houses and buildings of an island are merged into one mesh, one draw call, rebuilt only when one appears, burns or is patched; the lit windows at night and the chimneys' smoke come from each one's shape. 200 seeds give 200 different houses.
+
+Ten buildings with a job, each a two by two block of its own cover and its own look, each doing something: a smithy (villagers hit harder), a granary (surplus food put away, given back in a famine), a bakery (a harvest feeds half as many again), a barn (its oxen sow bare fields), a tavern (villagers gather at dusk), a market (trade days one day in two: gold, food to the poorest village), a chapel (heals the village, keeps the risen away), a watchtower (spots monsters 30 cells out: villagers take cover, guards see twice as far), a lumber yard (twice the wood kept, the forest edge replanted), a fisher hut (more fish caught, more food from each). A burnt one is rubble, rebuilt as a house by the builders and turned back into what it was.
+
+A village is laid out round its plaza with a main street along its most open side; new houses are built along the street first, some keep a garden. It starts with one or two buildings its place calls for (a fisher hut by a shore, a lumber yard by a forest), then raises one more every minute and a half at most when its stores allow, one of the next three it wants so two villages grow apart, up to two for a hamlet, five for a village and ten for a town (7 and 15 house blocks). The story tells each one.
+
+### Balance, again
+
+On islands with wonders and buildings: every new creature comes from a capped source (fish in a sinkhole or a temple up to three or four, a bird on sea stacks up to four, at most three of the risen per full moon, one dragon, nothing past 480 creatures on the island); the half hour runs of part A keep every species in its band with them. `npm test` (wonders-test.ts) checks two to four wonders on 96 islands, every kind and its lands, the last ten sets on thirty resets, names, saves, every wonder doing what it says, 200 houses alike in none, buildings raised in fifteen minutes, a granary and a rebuilt building, and the caps.
+
+### Rivers, fish and sizes (the owner's report on part A)
+
+Fish were drawn standing on frozen lakes: the simulation keeps them under the ice, now the view does too. Rivers were one cell wide, a pixel on a huge island seen whole, and froze white within minutes in cold regions: on large islands and bigger, grown rivers are widened by their banks (fed by the river, not by more springs, so lakes keep their size), and running water freezes below -10 instead of 0. Huge and Giant were locked until a measure said the device could run them, which a desktop with a fast GPU never got (the simulation runs on one CPU core, and a Medium island projects Giant at six times its cost): the measure is now a recommendation, every size can be picked.
+
 ## Challenges
 
 Hand-made islands with a hazard and a goal (`src/sim/scenarios.ts`, titles in `scenario-list.ts` so the game page does not load the engine to list them). A challenge builds its own world, runs a `tick` every frame (a volcano vent, a rising sea, the sun drying fields) and a `check` twice a second that returns progress text and playing, won or lost. It never touches the player's island: the iframe keeps the sandbox save in memory and restores it on leaving.

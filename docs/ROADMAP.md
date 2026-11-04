@@ -1,6 +1,6 @@
 # Where the game stands, and what comes next
 
-Updated on 2026-11-04, with 4.4.5 part A.
+Updated on 2026-11-04, with 4.4.5 part B.
 
 ## Done since the first review
 
@@ -249,6 +249,20 @@ Asked for: items 1 to 5 of "4.4.5 Every island a surprise" below, and the balanc
 
 Not done: tree models are box models with a per-tree shape, not voxel trees grown by the kit (a forest of kit trees would be hundreds of voxels each, past the 20,000 voxel budget spells share); one shape per style (two or three cost a draw call each per style, and lifted a large island from about 45 to 80 calls); monsters and spell creatures rely on the caps they had (part B and C check again); `npm test` takes about ten minutes instead of three and a half, for the half hour runs.
 
+## Done in 4.4.5, part B: wonders, and villages where no two houses are alike
+
+Asked for: items 6 to 8 of "4.4.5 Every island a surprise" below, buildings that differ inside a village, and the balance checks again. DESIGN.md, "Wonders, and villages where no two houses are alike (4.4.5, part B)", has the rules; `docs/measurements/wonders-4.4.5-b.md` the numbers and frames.
+
+1. **Wonders by rarity**: seventeen kinds, five common, five uncommon, four rare, three legendary, each in the lands it belongs to. Two to four an island, one uncommon or better, never the set of one of the player's last ten islands (the page keeps the sets). On 96 islands every kind appeared, a legendary one on 6.
+2. **Every wonder does something**: geysers throw whoever stands on them, a hot spring heals and melts the snow, miners take a crater's ore home as gold, the dead rise from giant bones on a full moon (one night in four, the moon drawn bigger), a fairy ring makes creatures dance at night, a dragon wakes when its gold is taken, a frozen waterfall thaws under heat and runs, and the rest (the table in DESIGN.md). Checked one by one in `npm test`.
+3. **Names and a first look**: islands, wonders and villages named from syllables of their land, no API call; a new island opens with a short flight over its wonders, each with its name and what it does, skippable by a tap.
+4. **Buildings that differ inside a village**: every house from its own seed (size, roof and its color, walls, door to the plaza, shutters, porch, chimney, lean-to later, a patched roof after a fire), all in one draw call; ten buildings with a job that each do something; a plaza, a main street, gardens, hamlet to village to town.
+5. **Balance**: every new creature from a wonder comes from a capped source; part A's half hour runs and wipes pass with wonders and buildings on the islands.
+6. **Found on the way**: "calm" stops a creature where it stands, so auras soothe fear instead (the first build froze villages round a chapel); a sinkhole in the tundra froze solid (deep water does not freeze now).
+7. **The owner's report on part A, fixed**: fish drawn on frozen lakes (now under the ice), rivers invisible on big islands (wider on large and bigger, running water freezes only below -10), Huge and Giant locked on fast devices (a recommendation now), and picking a spell still being made cast the previous one (a creation bar, a wait message, the spell in hand once ready).
+
+Not done: wonders are box models, not voxels (they cost no voxel budget, and a spell's blast takes a standing one away rather than breaking it block by block); villagers do not rest under a lone tree or bathe in a hot spring on their own, they get the effect when they pass; no sound of their own for wonders yet (4.5). Part C (a new wonder a day from the API) waits for the owner's look at its prompt and cost.
+
 ## Decisions taken
 
 1. **Cosmic spells may ruin the island.** Consequences are part of the fun; the land regrows on its own (ash turns to soil, grass and forests come back) and Reset is one tap away. Revisit if it feels punishing in play.
@@ -279,7 +293,7 @@ Sizes are per Claude Code session: S a few hours, M a full session, L two or mor
 
 **Numbered in the order to run them.** Renumbered on 3 November so the numbers are the order; `docs/REVIEW-4.0.md` and older pull requests use the old numbers (the review's findings were 4.0.2, faster creation 4.0.1, worlds 4.1, sound 4.2, strangers 4.5). Done since: 4.1, 4.2, 4.3, 4.4 and 4.4.1, summed up above; their plans are in the git history of this file. Left: 4.4.5 (three parts), 4.5, 4.6, then 4.7, the daily updates that keep going after the plan. 4.4.5 and 4.5 could swap; nothing public before 4.6.
 
-### 4.4.5 Every island a surprise (part A done, see above)
+### 4.4.5 Every island a surprise (parts A and B done, see above)
 
 Goal: be amazed at every new island, never feel the same one twice, and have it stay alive and balanced. Checked against main on 4 November: 4.4 gave each biome one tree look among seven models (oak, pine, palm, snowy pine, jungle, willow, juniper) and planted oases where a habitat was missing; a region otherwise has one bush, one flower, crops and boulders (cover kinds unchanged since 3.0), the structure kit (`src/sim/structures.ts`: birch, dead, giant, mushroom and crystal trees, arches, towers) is used only by spells, and 4.4.1 left villages and animals alike in every region. Native numbers are kept up by births in the habitat (`creatures.ts`, `lifeCycle`), with no notion of food, recovery or new species. Three parts, each its own pull request, in this order.
 

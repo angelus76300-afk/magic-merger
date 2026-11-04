@@ -65,12 +65,15 @@ export function firstLook(engine: Engine, card: HTMLElement, reducedMotion: bool
     ...world.wonders.map((w, k) => () => {
       const info = wonders[k];
       const at = w.kind === "floating rock" ? floatAt(world, w, world.time + 2) : { x: w.x, y: w.y };
+      // A cave is seen from its mouth, an arch and bones from the side.
+      const theta = w.kind === "cave mouth" ? Math.atan2(-w.ax, -w.ay) : w.kind === "stone arch" || w.kind === "bones" ? Math.atan2(-w.ay, w.ax) : undefined;
       orbit.flyTo(
         at.x,
         at.y,
         Math.max(16, orbit.distanceFor(Math.max(5, w.r * 1.3))),
         w.kind === "world tree" || w.kind === "floating rock" ? 1.05 : 0.95,
         1.4,
+        theta,
       );
       const rarity = RARITY[info.rarity];
       show(capital(info.name), rarity ? `${capital(info.label)} · ${rarity}` : capital(info.label), capital(info.does) + ".");

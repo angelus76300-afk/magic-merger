@@ -25,6 +25,7 @@ Learned from the owner's decisions and comments; a builder adds to it after the 
 - **Seasons**: a year in an hour of play, with snow, autumn leaves, migrations and harvests. M, Claude.
 - **Time controls**: pause, 2x and 4x. S, Claude.
 - **Rewind ten seconds** after a cosmic mistake, from snapshots the simulation already saves. M, Claude.
+- **Self-merges that climb once, then loop** (the owner, 4 November: "a lot you can do by merging two of the same things, flock to armada, those are not as interesting"). Rule 5 of the merge prompt makes X + X a cheap ladder: every rung is a new item, a new program written (money) and a discovery, with little new in it. Proposal: X + X gives the bigger form once; an input that is already a plural, a crowd, a mass or legendary and up gives itself back (like the prompt's own Inferno + Fire = Inferno), and legendary or cosmic X + X loops in code without a call. Cross merges (A + B) are untouched, so the interesting space is not cut. Measure before: from D1, the share of discoveries made by self-merges and how deep their chains go; after: forty self pairs and forty cross pairs through the merge model, the cross answers unchanged. Recipes already frozen stay. S, owner and Claude.
 
 ### Quality of life
 

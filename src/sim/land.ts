@@ -726,7 +726,8 @@ function water(world: World, land: LandOptions): { river: Uint8Array; area: Floa
   // The cells a big island's rivers were widened by are fed by the river
   // itself, not by springs: the island gets the water it had before.
   const widened = new Set(added);
-  for (const i of carved) if (!headSet.has(i) && !widened.has(i) && height[i] >= world.seaLevel) world.springs.push({ i, level: height[i] + world.depth[i] * 0.8, rate: 0.08 });
+  for (const i of carved)
+    if (!headSet.has(i) && !widened.has(i) && height[i] >= world.seaLevel) world.springs.push({ i, level: height[i] + world.depth[i] * 0.8, rate: 0.08 });
   return { river, area: riverArea };
 }
 

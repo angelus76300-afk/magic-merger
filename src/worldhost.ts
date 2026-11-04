@@ -717,11 +717,7 @@ export class WorldHost {
       // with a big GPU could not open Huge or Giant at all).
       return BIG_SIZES.includes(o as WorldSize) && !offered.includes(o as WorldSize) ? `${name} (${n} by ${n}), may run slowly here` : `${name} (${n} by ${n})`;
     };
-    const size = select(
-      Object.keys(WORLD_SIZES),
-      sizeLabel,
-      choice.size in WORLD_SIZES ? choice.size : defaultSize(),
-    );
+    const size = select(Object.keys(WORLD_SIZES), sizeLabel, choice.size in WORLD_SIZES ? choice.size : defaultSize());
     const warmth = slider(choice.land.warmth);
     const water = slider(choice.land.water);
     const relief = slider(choice.land.relief);

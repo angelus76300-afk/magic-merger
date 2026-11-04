@@ -14,7 +14,7 @@ export class OrbitCamera implements CameraControl {
   theta = Math.PI * 0.25;
   phi = 0.95;
   dist = 90;
-  private goal: { tx: number; ty: number; dist: number; phi: number; speed: number } | null = null;
+  private goal: { tx: number; ty: number; dist: number; phi: number; speed: number; theta?: number } | null = null;
   private saved: { tx: number; ty: number; dist: number; phi: number } | null = null;
   private returnAt = 0;
   private shake = 0;
@@ -68,10 +68,12 @@ export class OrbitCamera implements CameraControl {
 
   // The first look at a new island (4.4.5 part B): a flight from shot to
   // shot that nothing undoes afterwards. The player's first touch ends it.
-  flyTo(tx: number, ty: number, dist: number, phi: number, seconds: number): void {
+  // With `theta`, it also turns to look from that side (the shorter way round).
+  flyTo(tx: number, ty: number, dist: number, phi: number, seconds: number, theta?: number): void {
     this.saved = null;
     this.returnAt = 0;
-    this.goal = { tx, ty, dist: Math.max(this.minDist, Math.min(this.maxDist * 0.5, dist)), phi, speed: 1 / Math.max(0.2, seconds) };
+    const turn = theta === undefined ? undefined : this.theta + Math.atan2(Math.sin(theta - this.theta), Math.cos(theta - this.theta));
+    this.goal = { tx, ty, dist: Math.max(this.minDist, Math.min(this.maxDist * 0.5, dist)), phi, speed: 1 / Math.max(0.2, seconds), theta: turn };
   }
 
   // A slow turn while a shot holds, so the place is seen from more than one side.
@@ -130,6 +132,7 @@ export class OrbitCamera implements CameraControl {
       this.tx += (this.goal.tx - this.tx) * k;
       this.ty += (this.goal.ty - this.ty) * k;
       this.phi += (this.goal.phi - this.phi) * k;
+      if (this.goal.theta !== undefined) this.theta += (this.goal.theta - this.theta) * k;
       this.dist = Math.exp(Math.log(this.dist) + (Math.log(this.goal.dist) - Math.log(this.dist)) * k);
       if (Math.abs(this.dist - this.goal.dist) / this.goal.dist < 0.01 && Math.hypot(this.goal.tx - this.tx, this.goal.ty - this.ty) < 0.2) this.goal = null;
     }
