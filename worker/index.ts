@@ -938,6 +938,14 @@ async function writeWith<T>(env: Env, oracle: Oracle, model: string, effort: str
   }
 }
 
+// Who writes a program again after its test run or its promise failed
+// (4.2, the owner's call): the model its tier calls for, so a legendary or
+// cosmic item's Opus program is never replaced by a Haiku one. Opus directly,
+// not in a batch: the player's browser is waiting for the program to test.
+function rewriterFor(env: Env, tier: Tier): string {
+  return isBig(tier, smallUpTo(env)) ? spellModelFor(env, tier) : smallModel(env);
+}
+
 function smallModel(env: Env): string {
   return env.SPELL_MODEL_SMALL || "claude-haiku-5-5";
 }
@@ -987,7 +995,8 @@ const problemOf = (v: unknown): (typeof PROBLEMS)[number] | null => ((PROBLEMS a
 
 // A live program tested again by a browser against the promise its element
 // now has (3.6). Pass: the result is recorded and nothing else happens. Fail:
-// it is written once more by the small model with what the probe found, as a
+// it is written once more (rewriterFor: Opus for a big item since 4.2, Haiku
+// otherwise) with what the probe found, as a
 // trial whose parent is the live program, which stays until the new one
 // passes its own test run. Never twice for the same program.
 async function handleRecheck(body: CheckRequest, env: Env, oracle: Oracle, element: GameElement, row: ProgramRow): Promise<SpellResponse> {
@@ -1011,7 +1020,7 @@ async function handleRecheck(body: CheckRequest, env: Env, oracle: Oracle, eleme
   if (pending) return { name: element.name, tier, program: programOf(pending)!, mock: false };
   let description: string;
   try {
-    await ensureBudget(env, oracle, "rewrite", ESTIMATE.small);
+    await ensureBudget(env, oracle, "rewrite", spellEstimate(env, rewriterFor(env, tier)));
     description = await ensureDescription(env, oracle, element, false);
   } catch {
     return servedLive();
@@ -1031,24 +1040,25 @@ async function handleRecheck(body: CheckRequest, env: Env, oracle: Oracle, eleme
   };
   let answer;
   try {
-    answer = await writeWith(env, oracle, smallModel(env), undefined, (w) => w.spell(request));
+    answer = await writeWith(env, oracle, rewriterFor(env, tier), undefined, (w) => w.spell(request));
   } catch (err) {
     console.error("recheck rewrite", err);
     return servedLive();
   }
   const program = programFrom(answer, intents, library);
   // A trial like any rewrite: if it fails its own test run it is written once more, and the live program stays.
-  const id = await insertProgram(env.DB, key, JSON.stringify(program), smallModel(env), PROGRAM_VERSION, "promise", "trial", row.id);
+  const id = await insertProgram(env.DB, key, JSON.stringify(program), rewriterFor(env, tier), PROGRAM_VERSION, "promise", "trial", row.id);
   await recordGap(env.DB, key, id, answer.missing);
   await env.DB.prepare("INSERT INTO rewrites (key, from_pid, to_pid, cause, at, status, model) VALUES (?, ?, ?, 'promise', ?, 'done', ?)")
-    .bind(key, row.id, id, Date.now(), smallModel(env))
+    .bind(key, row.id, id, Date.now(), rewriterFor(env, tier))
     .run();
-  return { name: element.name, tier, program: { ...program, model: smallModel(env), id, trial: true }, mock: false };
+  return { name: element.name, tier, program: { ...program, model: rewriterFor(env, tier), id, trial: true }, mock: false };
 }
 
 // The test run of a trial, done in the browser (src/sim/check.ts): pass, and
 // it becomes the live program; fail, and it is written once more with what the
-// test found, by the small model with the failing code in front of it. A
+// test found, with the failing code in front of it, by Haiku, or by Opus for
+// a legendary or cosmic item (4.2, rewriterFor). A
 // second failure keeps the program that was live before, if there is one.
 async function handleCheck(body: CheckRequest, env: Env, oracle: Oracle): Promise<SpellResponse> {
   if (oracle.mock) throw new HttpError(400, "Mock programs are not stored");
@@ -1086,7 +1096,7 @@ async function handleCheck(body: CheckRequest, env: Env, oracle: Oracle): Promis
   if (row.origin === "check") return keep();
   let description: string;
   try {
-    await ensureBudget(env, oracle, "rewrite", ESTIMATE.small);
+    await ensureBudget(env, oracle, "rewrite", spellEstimate(env, rewriterFor(env, tier)));
     description = await ensureDescription(env, oracle, element, false);
   } catch {
     // Over a budget: the program is kept as it is rather than refused.
@@ -1107,19 +1117,19 @@ async function handleCheck(body: CheckRequest, env: Env, oracle: Oracle): Promis
   };
   let answer;
   try {
-    answer = await writeWith(env, oracle, smallModel(env), undefined, (w) => w.spell(request));
+    answer = await writeWith(env, oracle, rewriterFor(env, tier), undefined, (w) => w.spell(request));
   } catch (err) {
     console.error("check rewrite", err);
     return keep();
   }
   await setStatus(env.DB, row.id, "rejected");
   const program = programFrom(answer, intents, library);
-  const id = await insertProgram(env.DB, key, JSON.stringify(program), smallModel(env), PROGRAM_VERSION, "check", "trial", row.parent);
+  const id = await insertProgram(env.DB, key, JSON.stringify(program), rewriterFor(env, tier), PROGRAM_VERSION, "check", "trial", row.parent);
   await recordGap(env.DB, key, id, answer.missing);
   await env.DB.prepare("INSERT INTO rewrites (key, from_pid, to_pid, cause, at, status, model) VALUES (?, ?, ?, 'check', ?, 'done', ?)")
-    .bind(key, row.id, id, Date.now(), smallModel(env))
+    .bind(key, row.id, id, Date.now(), rewriterFor(env, tier))
     .run();
-  return { name: element.name, tier, program: { ...program, model: smallModel(env), id, trial: true }, mock: false };
+  return { name: element.name, tier, program: { ...program, model: rewriterFor(env, tier), id, trial: true }, mock: false };
 }
 
 // The chronicle (3.7): Haiku tells the island's story from what its World

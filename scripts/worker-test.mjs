@@ -2482,6 +2482,27 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     `${JSON.stringify(bigRow)} ${JSON.stringify(bigProgram)}`,
   );
 
+  // A failed test run is written once more by the model the tier calls for:
+  // Opus for a big item (the owner's call in 4.2), Haiku for a small one.
+  const bigTrial = await db.prepare("SELECT id FROM programs WHERE key = 'star forge' AND status = 'trial'").first();
+  const bigFail = await api("/api/spell/check", {
+    invite: bob.secret,
+    body: { name: "Star Forge", id: bigTrial.id, ok: false, problem: "promise", detail: "barely safer", stats: {} },
+  });
+  const bigRewrite = await db.prepare("SELECT model FROM rewrites WHERE key = 'star forge' AND cause = 'check'").first();
+  check(
+    "ahead: a big item whose test fails is written again by Opus, not Haiku",
+    bigFail.status === 200 && bigFail.data.program.trial === true && bigRewrite?.model === "claude-opus-5-5",
+    `${bigFail.status} ${JSON.stringify(bigRewrite)}`,
+  );
+  const smallTrial = await db.prepare("SELECT p.id FROM programs p WHERE p.key = 'ember ward' AND p.status = 'trial'").first();
+  await api("/api/spell/check", {
+    invite: bob.secret,
+    body: { name: "Ember Ward", id: smallTrial.id, ok: false, problem: "nothing", detail: "nothing", stats: {} },
+  });
+  const smallRewrite = await db.prepare("SELECT model FROM rewrites WHERE key = 'ember ward' AND cause = 'check'").first();
+  check("ahead: a small item whose test fails is still written again by Haiku", smallRewrite?.model === "claude-haiku-5-5", JSON.stringify(smallRewrite));
+
   // The burst guard counts players' requests, not the jobs their merges start.
   const eve = await invite("Ahead Eve", 5);
   const items = [];
