@@ -59,6 +59,9 @@ export const SCENARIOS: Scenario[] = [
       const v0 = villagers(world);
       const h0 = houses(world);
       let calm = 0;
+      // House cells burnt so far, whatever was rebuilt since (4.3).
+      let burnt = 0;
+      let lastH = h0;
       return {
         world,
         focus: { x: 50, y: 60, dist: 120 },
@@ -73,8 +76,13 @@ export const SCENARIOS: Scenario[] = [
             const text = `Burning: ${fire} · villagers ${v}/${v0} · houses ${Math.ceil(h / 4)}/${Math.ceil(h0 / 4)}, lose 2 and it falls`;
             // Decided the moment it happens. Villagers rebuild ruins, so a
             // village that burned and was rebuilt while the fire died down
-            // used to count as saved: doing nothing won 1 time in 5.
-            if (h <= h0 - 8) return { text: "The fire took the village.", status: "lost" };
+            // used to count as saved: doing nothing won 1 time in 5. Burnt
+            // houses add up (4.3): villagers who get about better rebuilt
+            // each house as the next one burned, and doing nothing won again,
+            // 1 time in 24, without two houses ever down at once.
+            burnt += Math.max(0, lastH - h);
+            lastH = h;
+            if (burnt >= 8) return { text: "The fire took the village.", status: "lost" };
             if (v < v0 * 0.6) return { text: "The fire took too many villagers.", status: "lost" };
             if (calm >= 3) return { text: "The fire is out and the village stands!", status: "won" };
             return { text, status: "playing" };

@@ -12,6 +12,7 @@ import { KINDS } from "../src/sim/creatures";
 import { JOBS, packLook, STYLES, type Look } from "../src/sim/villagers";
 import { Figures, figureMaterials, type Pose } from "../src/sim/voxel/figures";
 import { buildRig, drawScale, paletteOf, ROLES, type Rig } from "../src/sim/voxel/rigs";
+import { hipHeight, lookAround } from "../src/sim/voxel/gait";
 import { geometryOf, MODELS as COVERS } from "../src/sim/voxel/models";
 import storedCreatures from "./stored-creatures.json";
 
@@ -399,7 +400,12 @@ function draw(): void {
     pose.scale = size;
     // Facing the viewer, three quarters, unless turning.
     pose.yaw = spin.checked ? t * 0.8 + p.id : 0.6;
-    pose.moving = mode === "walk" || mode === "fly" ? 1 : 0;
+    pose.moving = mode === "walk" || mode === "run" || mode === "fly" ? 1 : 0;
+    // 4.3: gaits and what a creature does standing still (gait.ts).
+    pose.gait = mode === "run" ? 2 : 0;
+    pose.graze = mode === "graze" ? 1 : 0;
+    pose.lie = mode === "lie" ? 1 : 0;
+    pose.look = mode === "idle" ? lookAround(t, p.id) : 0;
     pose.phase = t * 9 + p.id;
     pose.time = t;
     pose.flying = mode === "fly";
@@ -415,6 +421,8 @@ function draw(): void {
     // Fallen on its side, a few seconds before it starts to sink.
     if (dead) pose.y += p.rig.halfWidth * size;
     if (mode === "fly") pose.y += 0.6;
+    if (mode === "run") pose.y += Math.abs(Math.sin(pose.phase)) * 0.1 * size;
+    if (mode === "lie") pose.y -= hipHeight(p.rig) * 0.75 * size;
     figures.add(p.rig, paletteOf(palette, p.rig, p.e.spec, p.e.color, p.e.look ?? 0), pose);
   }
   figures.end();

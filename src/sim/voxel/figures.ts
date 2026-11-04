@@ -37,6 +37,14 @@ export interface Pose {
   tintAmount: number;
   // A delay so a flock does not beat its wings as one.
   offset: number;
+  // 4.3: the gait, from 0 (a walk) through 1 (a trot) to 2 (a run): longer
+  // strides, a body that bobs and pitches. Where the head looks: down to
+  // graze (0 to 1) and around (radians to the side). Lying down, 0 to 1:
+  // legs folded under, body on the ground.
+  gait?: number;
+  graze?: number;
+  look?: number;
+  lie?: number;
 }
 
 // The light of each side, as in models.ts: top, east (+x), south (+z), west, north, bottom.
@@ -169,6 +177,27 @@ function turn(out: Float64Array, axis: 0 | 1 | 2, c: number, s: number, px: numb
   out[3] = px;
   out[7] = py;
   out[11] = pz;
+}
+
+// Legs folded under a body lying down: shortened from the hip.
+function fold(out: Float64Array, lie: number): void {
+  const k = 1 - lie * 0.75;
+  out[1] *= k;
+  out[5] *= k;
+  out[9] *= k;
+}
+
+// A head that also looks to the side: the nod, then a turn about the
+// vertical (the head's own axis), applied to the motion already made.
+function yawAfter(out: Float64Array, yaw: number): void {
+  const c = Math.cos(yaw);
+  const s = Math.sin(yaw);
+  for (const r of [0, 4, 8]) {
+    const x = out[r];
+    const z = out[r + 2];
+    out[r] = c * x + s * z;
+    out[r + 2] = -s * x + c * z;
+  }
 }
 
 export class Figures {
@@ -307,11 +336,16 @@ export class Figures {
     }
 
     const t = pose.time + pose.offset;
-    const swing = Math.sin(pose.phase) * pose.moving;
+    const gait = pose.gait ?? 0;
+    const lie = pose.lie ?? 0;
+    // A longer stride as it speeds up; folded legs barely move.
+    const swing = Math.sin(pose.phase) * pose.moving * (0.8 + gait * 0.3) * (1 - lie);
     const live = pose.still ? 0 : 1;
     const flap = live * (pose.flying ? Math.sin(t * rig.flapRate * Math.PI * 2) * 0.85 : 0.12 + 0.06 * Math.sin(t * 2) + swing * 0.15);
     const sway = live * (Math.sin(t * 2.4) * 0.3 + Math.sin(pose.phase * 0.5) * 0.25 * pose.moving);
-    const nod = pose.nod + live * (Math.sin(pose.phase * 2) * 0.05 * pose.moving + Math.sin(t * 0.7) * 0.04);
+    const nod =
+      pose.nod + (pose.graze ?? 0) * 0.95 + live * (Math.sin(pose.phase * 2) * 0.05 * pose.moving + Math.sin(t * 0.7) * 0.04 * (1 - (pose.graze ?? 0)));
+    const look = pose.look ?? 0;
     const squash = live * (Math.abs(Math.sin(pose.phase)) * 0.22 * pose.moving + Math.sin(t * 3) * 0.04);
     const segPhase = pose.phase + t * 1.6 * live;
     const side = Math.sin(pose.phase * 1.6) * pose.moving * 0.45;
@@ -341,9 +375,11 @@ export class Figures {
       switch (anim) {
         case A.LEG_A:
           turn(a, 0, legC, legS, px, py, pz);
+          if (lie) fold(a, lie);
           break;
         case A.LEG_B:
           turn(a, 0, legC, -legS, px, py, pz);
+          if (lie) fold(a, lie);
           break;
         case A.ARM_A:
           turn(a, 0, armC, armS, px, py, pz);
@@ -364,6 +400,7 @@ export class Figures {
         }
         case A.HEAD:
           turn(a, 0, nodC, nodS, px, py, pz);
+          if (look) yawAfter(a, look);
           break;
         case A.SEG: {
           const amp = 0.045 * (0.5 + seg * 0.4) * (0.4 * live + pose.moving);

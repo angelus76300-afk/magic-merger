@@ -30,10 +30,13 @@ mkdirSync(outDir, { recursive: true });
 const browser = await chromium.launch({ args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--ignore-gpu-blocklist"] });
 const page = await browser.newPage({ viewport: { width: 1500, height: 1700 } });
 page.on("pageerror", (err) => console.error("page error:", err.message));
-for (const [name, query] of [
+// GAITS=1 also shoots the gaits and idles of 4.3: a run, grazing, lying down.
+const shots = [
   ["bestiary", "pose=walk&t=0.42"],
   ["bestiary-dead", "pose=dead&t=0.42"],
-]) {
+];
+if (process.env.GAITS) shots.push(["bestiary-run", "pose=run&t=0.42"], ["bestiary-graze", "pose=graze&t=0.42"], ["bestiary-lie", "pose=lie&t=0.42"]);
+for (const [name, query] of shots) {
   await page.goto(`${base}bestiary.html?${query}`);
   await page.waitForFunction(() => window.bestiaryReady === true);
   await page.waitForTimeout(300);

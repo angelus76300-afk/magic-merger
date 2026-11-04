@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Creature clip</title>
+    <style>
+      body {
+        margin: 0;
+        background: #111;
+      }
+      .stage {
+        position: relative;
+        width: 480px;
+        height: 480px;
+      }
+      canvas {
+        position: absolute;
+        inset: 0;
+        width: 480px;
+        height: 480px;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Dev only: not part of the build. Driven by scripts/deer-clip.mjs. -->
+    <div class="stage"><canvas id="world"></canvas><canvas id="overlay"></canvas></div>
+    <script type="module" src="./clip.ts"></script>
+  </body>
+</html>

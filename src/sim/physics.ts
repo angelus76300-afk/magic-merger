@@ -286,6 +286,11 @@ function burnOut(world: World, i: number): void {
 
 function stepTemperature(world: World, dt: number): void {
   const { w, h, temp, materials, rng } = world;
+  // The tables themselves, read by id: materials.get looked its layer up by
+  // name for every cell, three times (4.3, paid for the steering).
+  const fluids = materials.list.fluid;
+  const grounds = materials.list.ground;
+  const covers = materials.list.cover;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
@@ -295,18 +300,18 @@ function stepTemperature(world: World, dt: number): void {
       let pull = 0.03;
       const fl = world.fluid[i];
       if (fl !== F.NONE && world.depth[i] > 0.05) {
-        const heat = materials.get("fluid", fl).heat;
+        const heat = (fluids[fl] ?? fluids[0]).heat;
         if (heat !== null) {
           target = heat;
           pull = 0.3;
         }
       }
-      const groundHeat = materials.get("ground", world.ground[i]).heat;
+      const groundHeat = (grounds[world.ground[i]] ?? grounds[0]).heat;
       if (groundHeat !== null && pull < 0.3) {
         target = Math.min(target, groundHeat);
         pull = 0.08;
       }
-      const coverHeat = materials.get("cover", world.cover[i]).heat;
+      const coverHeat = (covers[world.cover[i]] ?? covers[0]).heat;
       if (coverHeat !== null) {
         target = coverHeat;
         pull = 0.2;

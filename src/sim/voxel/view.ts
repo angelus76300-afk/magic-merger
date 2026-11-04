@@ -33,6 +33,7 @@ import { F as FLUID } from "../materials";
 import { Figures, figureMaterials, type Pose } from "./figures";
 import { buildRig, drawScale, paletteOf, ROLES, variantOf, type Rig } from "./rigs";
 import { easeGround, walkGround, type Footing } from "./walk";
+import { gaitOf, hipHeight, lookAround, strideRate } from "./gait";
 import { BUILTIN, C, F, S } from "../materials";
 import { envelope, type Body, type Visuals } from "../visuals";
 import type { World } from "../world";
@@ -75,7 +76,10 @@ export class VoxelView {
   // last frame: where it stood, its heading, its stride.
   private figures: Figures;
   private rigs = new WeakMap<CreatureKind, Map<number, Rig>>();
-  private gaits = new Map<number, Footing & { x: number; y: number; t: number; speed: number; phase: number; yaw: number; seen: number }>();
+  private gaits = new Map<
+    number,
+    Footing & { x: number; y: number; t: number; speed: number; phase: number; yaw: number; seen: number; graze: number; lie: number; look: number }
+  >();
   private palette: number[] = new Array(ROLES).fill(0);
   private pose: Pose = {
     x: 0,
@@ -539,7 +543,21 @@ export class VoxelView {
       const i = Math.max(0, Math.min(world.w - 1, Math.floor(c.x))) + Math.max(0, Math.min(world.h - 1, Math.floor(c.y))) * world.w;
       let g = this.gaits.get(c.id);
       if (!g) {
-        g = { x: c.x, y: c.y, t: time, speed: 0, phase: c.id, yaw: (c.id * 2.4) % (Math.PI * 2), seen: frame, gy: NaN, vy: 0, gt: time };
+        g = {
+          x: c.x,
+          y: c.y,
+          t: time,
+          speed: 0,
+          phase: c.id,
+          yaw: Math.atan2(Math.cos(c.hd), Math.sin(c.hd)),
+          seen: frame,
+          gy: NaN,
+          vy: 0,
+          gt: time,
+          graze: 0,
+          lie: 0,
+          look: 0,
+        };
         this.gaits.set(c.id, g);
       }
       g.seen = frame;
@@ -553,7 +571,10 @@ export class VoxelView {
       this.sphere.radius = Math.max(rig.height, 1.4) * size;
       const seen = this.frustum.intersectsSphere(this.sphere);
 
-      // The stride and heading come from how far it moved since the last tick.
+      // The stride comes from how far it moved since the last tick; the
+      // heading is the simulation's own (4.3, steer.ts), which turns at the
+      // creature's pace and on the spot before it walks off the other way.
+      const walking = k.speed * Math.sqrt(c.size);
       if (time > g.t) {
         const dt = time - g.t;
         const dx = c.x - g.x;
@@ -562,13 +583,19 @@ export class VoxelView {
         if (d > 3) g.speed = 0;
         else {
           g.speed += (d / dt - g.speed) * Math.min(1, dt * 8);
-          if (d > 0.004 && !c.dead) {
-            let turn = Math.atan2(dx, dy) - g.yaw;
+          if (!c.dead) {
+            let turn = Math.atan2(Math.cos(c.hd), Math.sin(c.hd)) - g.yaw;
             turn = Math.atan2(Math.sin(turn), Math.cos(turn));
-            g.yaw += turn * Math.min(1, dt * 10);
+            g.yaw += turn * Math.min(1, dt * 14);
           }
-          g.phase += Math.min(g.speed, 12) * dt * (3.6 / Math.max(0.3, size));
+          g.phase += Math.min(g.speed, 12) * dt * strideRate(gaitOf(g.speed, walking), size);
         }
+        // Standing: head down to its food or work, lying down, looking round.
+        const idle = c.dead ? undefined : (c.data.idle as string | undefined);
+        const ease = Math.min(1, dt * 3);
+        g.graze += ((idle === "graze" ? 1 : 0) - g.graze) * ease;
+        g.lie += ((idle === "lie" && !k.flying && !k.aquatic ? 1 : 0) - g.lie) * Math.min(1, dt * 1.5);
+        g.look += ((idle === "look" ? 1 : 0) - g.look) * ease;
         g.x = c.x;
         g.y = c.y;
         g.t = time;
@@ -596,10 +623,19 @@ export class VoxelView {
       pose.scale = size;
       pose.phase = g.phase;
       pose.moving = still ? 0 : Math.min(1, g.speed / 1.4);
+      // A walk, a trot or a run by its speed: longer strides, a body that
+      // bobs and leans into a run (4.3).
+      const gait = still ? 0 : gaitOf(g.speed, walking) * pose.moving;
+      pose.gait = gait;
+      pose.graze = still ? 0 : g.graze;
+      pose.lie = c.dead ? 0 : g.lie;
+      pose.look = still ? 0 : g.look * lookAround(time, c.id);
       pose.still = still;
       pose.flying = !c.dead && (k.flying || c.levitate > 0) && c.z > 0.5;
       pose.nod = asleep ? 0.35 : 0;
-      pose.pitch = rig.lean + (still ? 0 : pose.moving * 0.05);
+      pose.pitch = rig.lean + (still ? 0 : pose.moving * 0.05 + gait * 0.04 + Math.sin(g.phase * 2) * 0.03 * gait);
+      if (!still && gait > 0) pose.y += Math.abs(Math.sin(g.phase)) * 0.05 * gait * size;
+      if (g.lie > 0.01 && !c.dead) pose.y -= hipHeight(rig) * 0.75 * g.lie * size;
       pose.roll = 0;
       pose.offset = (c.id % 17) * 0.37;
       pose.glowAll = k.glow;

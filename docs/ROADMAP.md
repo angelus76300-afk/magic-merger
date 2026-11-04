@@ -183,6 +183,24 @@ Asked for: everything from dropping one item on another to using the result gets
 
 Not done: the real phone session (the perf sample now carries the creation steps: turn the HUD on and play a few merges); the prompt was not trimmed (DESIGN.md says why); a burst's later items wait up to 20 s for their job, since Cloudflare Queues adds a consumer only after a whole batch: Cloudflare Workflows, one instance per item, would run them side by side (size S to M). Owner's calls before the deploy: no draft for big items, and a big item's failed test is written again by Opus.
 
+## Done in 4.3: creatures that move like they mean it
+
+Asked for: every creature moves like it means it, with no new API call and no prompt change; measured first. Measured: `docs/measurements/movement-4.3.md`. DESIGN.md, "Creatures that move like they mean it (4.3)", has the rules.
+
+1. **Measured first**: sharp turns (over 150 degrees within half a second) per kind on an island of 112, seeds 3, 6 and 9, natural ones apart from flip-flops, where each flip-flop came from, intent flips, stuck seconds, hops and action changes, printed by `npm test`. Half the deer's flip-flops were fear switching on and off at one distance, a fifth the way out chosen again every tick, a fifth the right angle side step.
+2. **Decisions that stick**: fear with memory and hysteresis (alarmed at its sense, calm past 1.7 times it and 3 s out of sight), a flight way chosen once a second toward cover and the herd, meals from 0.7 to 0.3, the next task thought of in the same tick, wander points ahead.
+3. **Steering**: heading and speed with acceleration and a turn rate per kind, turning on the spot, arriving, sideways separation, feelers that read slopes.
+4. **Paths**: flow fields shared per destination, 1,500 cells a tick, made again after 30 s.
+5. **Gaits and idles** in the rigs: walk, trot, run; grazing, looking around, lying down; the view turns with the simulation.
+6. **Herds, flocks, packs**: a herd runs behind the one that saw the danger and drifts together, birds fly with a flock, wolves close in from around their prey.
+7. **The same for everyone**: villagers, wildlife and spell creatures through one steering, no program rewritten.
+
+Deer flip-flops 16.9 to 0.4 a minute (0.4 to 1.4 on four other sets of seeds), rabbits 11.2 to 1.1, villagers 4.1 to 0.4; deer stuck 15.2 to 0.0 s a minute; hops 4 to 6 a minute to under 2. Wolves still catch deer (10 over the scene's three streams, 7 on main), every challenge passes, the simulation's p95 on a large island is lower than main's.
+
+Not done: real phones (the steering adds about 0.3 ms p50 and 0.4 ms p95 of creature time in Node, paid back by a cheaper temperature step; the HUD will tell); fish school with the herd rule and separation, not true boids; the lava challenges stay a coin flip on any three seeds (owner's call below).
+
+Owner's calls: the challenge guard in `npm test` now also reads each plain solution's win rate over 12 seeds; the wildfire counts houses burnt, not houses standing; replays give creatures their own random stream.
+
 ## Decisions taken
 
 1. **Cosmic spells may ruin the island.** Consequences are part of the fun; the land regrows on its own (ash turns to soil, grass and forests come back) and Reset is one tap away. Revisit if it feels punishing in play.
@@ -198,7 +216,8 @@ Not done: the real phone session (the perf sample now carries the creation steps
 6. **Challenge balance with real spells.** The checks use simple hand-written solutions; Claude's spells may be stronger or weaker. Wildfire used to be won by doing nothing 1 time in 5: villagers rebuilt the burnt houses while the fire died down, and the end check counted them. It is now lost the moment a second house burns, and `npm test` replays every challenge with nothing over 8 seeds (0 wins in 64 for Wildfire, rain still wins 64 in 64).
 
 7. **The API's growth.** Read `GET /api/admin/evolution` weekly for a month: are gaps honest (the writer saying what it lacked) or noise, does the designer choose helper, hint or engine sensibly, and do live helpers get used. If gaps are mostly noise, raise the three spells to five before anything else.
-8. **Stored protection spells.** Export them (`scripts/replay-stored.ts` has the command), run the probe on each, and rewrite the ones that fail from the admin card, one at a time, never in bulk.
+8. **Movement on phones.** The steering and flow fields add about 0.3 ms p50 and 0.4 ms p95 of creature time per tick in Node on a large island (cheaper temperature pays it back). `parts` and the simulation p95 in `/api/perf` will say whether a phone feels it; `BUDGET` in `src/sim/paths.ts` is the first knob.
+9. **Stored protection spells.** Export them (`scripts/replay-stored.ts` has the command), run the probe on each, and rewrite the ones that fail from the admin card, one at a time, never in bulk.
 
 ## What the money taught us
 
