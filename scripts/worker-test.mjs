@@ -48,6 +48,34 @@ function stubAnswer(n, system, user) {
     return JSON.stringify({ summary: "A dome.", code, missing: "a barrier that stops lava: to keep the village safe" });
   }
   if (system.startsWith("You write the chronicle")) return "The mage came, and the village remembered.";
+  // 4.1 (M7): the judge, the tier backfill and the trim scan, asked only by section 25.
+  if (system.startsWith("You judge spells"))
+    return JSON.stringify({ score: 2, reason: "small", note: "A faint ring, far smaller than a village.", alive: "none" });
+  if (system.includes("For each item in the list, one per line, rate"))
+    return JSON.stringify({
+      tiers: user
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => ({ name: line.replace(/ \([a-z]+\)$/, ""), tier: "grand" })),
+    });
+  if (system.startsWith("You tidy the shared recipe book")) {
+    // Two of each: one the Worker can act on, one it must skip (an item or a recipe that does not exist).
+    const seeded = user.includes("\nFrost Wards (spell)");
+    return JSON.stringify({
+      duplicates: seeded
+        ? [
+            { keep: "Frost Ward", alias: "Frost Wards", why: "a plural and its singular" },
+            { keep: "Never Merged", alias: "Frost Ward", why: "not an item" },
+          ]
+        : [],
+      senseless: seeded
+        ? [
+            { a: "Fire", b: "Frost Ward", why: "fire makes no ward of frost" },
+            { a: "Water", b: "Frost Ward", why: "no such recipe" },
+          ]
+        : [],
+    });
+  }
   // 3.7: a pair answered once with its two names joined, then properly.
   if (user.startsWith("Glow Moss + Dusk Fern") && !user.includes("(Not "))
     return JSON.stringify({ name: "Glow Moss Dusk Fern", emoji: "✨", kind: "spell", tier: "cosmic" });
@@ -1396,6 +1424,696 @@ console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at st
   const of = (status) => statuses.filter((r) => r.status === status).reduce((n, r) => n + r.n, 0);
   check("M12: the refresh report says not sent for a failed row with no batch", of("not sent") === 1 && of("failed") >= 1, JSON.stringify(statuses));
   await db.prepare("DELETE FROM rewrites WHERE key IN ('never', 'sent')").run();
+  await reset();
+}
+
+// Helpers for the sections from 18 on (4.1, review M7). A spell element
+// whose grimoire entry and promise are stored already, so that writing its
+// program is one Claude call; that program passes its test run and is live.
+// Returns its id.
+async function liveSpell(name, tier = "minor") {
+  await db
+    .prepare("INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES (?, ?, '✨', 'spell', 2, ?, ?, 'harm', ?)")
+    .bind(name.toLowerCase(), name, tier, `${name}, as its name says.`, Date.now())
+    .run();
+  const made = await api("/api/spell", { admin: true, body: { name } });
+  await api("/api/spell/check", { admin: true, body: { name, id: made.data.program.id, ok: true, problem: null, detail: "ok" } });
+  return made.data.program.id;
+}
+// What a request leaves to run after its answer (ctx.waitUntil: what a vote
+// decides), polled until it shows, five seconds at most. Null if it never does.
+async function until(probe, ms = 5000) {
+  for (const end = Date.now() + ms; ; ) {
+    const v = await probe();
+    if (v) return v;
+    if (Date.now() > end) return null;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+const lookup = (sql, ...args) =>
+  db
+    .prepare(sql)
+    .bind(...args)
+    .first();
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 18. Votes, rewrites and rollbacks (3.3, review M7): only a player who cast
+// a version votes on it, once (a changed mind replaces the vote), and a down
+// vote says why; with one daily player one vote decides. Voted up, a program
+// joins the library; voted down, it is written again as a trial while the
+// live one stays; a rewrite voted worse than the version it replaced goes
+// back to it. What a vote decides runs after the answer, so it is polled.
+{
+  await reset();
+  // One daily player: the casts below are the only activity of the week.
+  await db.prepare("DELETE FROM activity").run();
+  const ann = await invite("Ann V", 5);
+  const cast = (player, name, id) => api("/api/cast", { invite: ann.secret, player, body: { name, id } });
+  const vote = (player, name, id, up, reason) => api("/api/vote", { invite: ann.secret, player, body: { name, id, up, ...(reason ? { reason } : {}) } });
+  const prog = (id) => lookup("SELECT status, origin, parent, library FROM programs WHERE id = ?", id);
+  const livePid = async (key) => (await lookup("SELECT pid FROM spells WHERE key = ?", key))?.pid;
+
+  const p1 = await liveSpell("Ember Rain");
+  const stranger = await vote("player-never-cast", "Ember Rain", p1, true);
+  check("votes: a player who never cast this version cannot vote on it", stranger.status === 403, `status ${stranger.status}`);
+  await cast("player-one-ann", "Ember Rain", p1);
+  const bare = await vote("player-one-ann", "Ember Rain", p1, false);
+  const madeUp = await vote("player-one-ann", "Ember Rain", p1, false, "meh");
+  check("votes: a down vote needs one of the five reasons", bare.status === 400 && madeUp.status === 400, `${bare.status} ${madeUp.status}`);
+  const elsewhere = await vote("player-one-ann", "Ember Rain", 999999, true);
+  check("votes: a vote on a program that is not this spell's is 404", elsewhere.status === 404, `status ${elsewhere.status}`);
+
+  const up = await vote("player-one-ann", "Ember Rain", p1, true);
+  check(
+    "votes: with one daily player, one vote is enough",
+    up.status === 200 && up.data.up === 1 && up.data.down === 0 && up.data.needed === 1,
+    JSON.stringify(up.data),
+  );
+  check("votes: a program voted up joins the library", !!(await until(async () => (await prog(p1)).library === 1)));
+
+  const before = calls;
+  const down = await vote("player-one-ann", "Ember Rain", p1, false, "boring");
+  const rows = (await db.prepare("SELECT up, reason FROM votes WHERE pid = ?").bind(p1).all()).results;
+  check(
+    "votes: a changed mind replaces the vote, one per player per version",
+    down.status === 200 && down.data.up === 0 && down.data.down === 1 && rows.length === 1 && rows[0].up === 0 && rows[0].reason === "boring",
+    JSON.stringify(rows),
+  );
+  const rewrite = await until(() => lookup("SELECT id, status, parent, model FROM programs WHERE key = 'ember rain' AND origin = 'votes'"));
+  check(
+    "votes: one down vote writes the spell again, one Claude call, as a trial whose parent is the live one",
+    rewrite?.status === "trial" && rewrite.parent === p1 && rewrite.model === "claude-haiku-5-5" && calls === before + 1,
+    `${JSON.stringify(rewrite)}, ${calls - before} calls`,
+  );
+  check(
+    "votes: the rewrite is told why players voted it down",
+    /1 player voted it down: it was boring/.test(lastSpell().user),
+    lastSpell()
+      .user.split("\n")
+      .find((l) => l.includes("voted it down")) ?? "no reason in the prompt",
+  );
+  const kept = await prog(p1);
+  check(
+    "votes: the old version stays live until the rewrite passes its test run, and leaves the library",
+    kept.status === "live" && kept.library === 0 && (await livePid("ember rain")) === p1,
+    JSON.stringify(kept),
+  );
+  const logged = await lookup("SELECT from_pid, to_pid, cause, status FROM rewrites WHERE key = 'ember rain'");
+  const paid = await lookup("SELECT COUNT(*) AS n FROM spend WHERE call = 'rewrite' AND invite = ?", ann.id);
+  check(
+    "votes: the rewrite is recorded, and paid by the voter",
+    logged?.cause === "votes" && logged.status === "done" && logged.from_pid === p1 && logged.to_pid === rewrite?.id && paid.n === 1,
+    JSON.stringify({ logged, paid: paid.n }),
+  );
+
+  // The rewrite passes its test run and is voted down too, by the same lone
+  // player: its share down (all) is no larger than its parent's (all), so it
+  // is not rolled back, and the spell was rewritten less than three days ago.
+  await api("/api/spell/check", { admin: true, body: { name: "Ember Rain", id: rewrite.id, ok: true, problem: null, detail: "ok" } });
+  await cast("player-one-ann", "Ember Rain", rewrite.id);
+  const was = calls;
+  const again = await vote("player-one-ann", "Ember Rain", rewrite.id, false, "small");
+  await pause(800);
+  const versions = (await lookup("SELECT COUNT(*) AS n FROM programs WHERE key = 'ember rain'")).n;
+  check(
+    "votes: a rewrite voted down no more than its parent stays, and is not written again within three days",
+    again.status === 200 && (await livePid("ember rain")) === rewrite.id && (await prog(p1)).status === "retired" && versions === 2 && calls === was,
+    `${versions} versions, ${calls - was} calls`,
+  );
+
+  // Three players: one up and two down (two thirds) write it again; the
+  // rewrite then gets a down vote, a larger share down than its parent had.
+  const q1 = await liveSpell("Gale Spire");
+  for (const p of ["player-a-gale", "player-b-gale", "player-c-gale"]) await cast(p, "Gale Spire", q1);
+  await vote("player-b-gale", "Gale Spire", q1, true);
+  await until(async () => (await prog(q1)).library === 1);
+  const between = calls;
+  const half = await vote("player-a-gale", "Gale Spire", q1, false, "small");
+  // The library place is decided before the rewrite: once it shows, so has that.
+  const out = await until(async () => (await prog(q1)).library === 0);
+  const none = await lookup("SELECT COUNT(*) AS n FROM programs WHERE key = 'gale spire'");
+  check(
+    "votes: one up and one down is no majority: out of the library, not written again",
+    !!out && half.data.needed === 1 && none.n === 1 && calls === between,
+    `${JSON.stringify(half.data)}, ${none.n} versions`,
+  );
+  const third = await vote("player-c-gale", "Gale Spire", q1, false, "boring");
+  const q2 = (await until(() => lookup("SELECT id FROM programs WHERE key = 'gale spire' AND origin = 'votes'")))?.id;
+  check(
+    "votes: two down of three (60% or more) write it again",
+    third.data.up === 1 && third.data.down === 2 && !!q2 && calls === between + 1,
+    `${JSON.stringify(third.data)}, ${calls - between} calls`,
+  );
+  await api("/api/spell/check", { admin: true, body: { name: "Gale Spire", id: q2, ok: true, problem: null, detail: "ok" } });
+  const replaced = [await prog(q1), await prog(q2)];
+  check(
+    "votes: a rewrite that passes its test run goes live, the old version kept as retired",
+    replaced[0].status === "retired" && replaced[1].status === "live" && replaced[1].parent === q1 && (await livePid("gale spire")) === q2,
+    JSON.stringify(replaced),
+  );
+  await cast("player-a-gale", "Gale Spire", q2);
+  await vote("player-a-gale", "Gale Spire", q2, false, "wrong");
+  const back = await until(async () => (await livePid("gale spire")) === q1);
+  const after = [await prog(q1), await prog(q2)];
+  const rollback = await lookup("SELECT from_pid, to_pid, status FROM rewrites WHERE key = 'gale spire' AND cause = 'rollback'");
+  check(
+    "votes: a rewrite voted worse than the version it replaced goes back to it",
+    !!back && after[0].status === "live" && after[1].status === "rejected" && rollback?.from_pid === q2 && rollback.to_pid === q1,
+    JSON.stringify({ after, rollback }),
+  );
+  const served = (await api("/api/spells/live", { invite: ann.secret, body: { names: ["Gale Spire"] } })).data.programs["Gale Spire"];
+  check("votes: and the old version is what players get again", served?.id === q1 && !served.trial, JSON.stringify(served));
+  await db.prepare("DELETE FROM gaps WHERE extension IS NULL").run();
+  await reset();
+}
+
+// 19. Repairs (3.3, review M7): a program that crashed in a player's World is
+// mended by the small model from the error, as a trial like any program; at
+// most three times unless the admin asks; two browsers that saw the same
+// crash get one repair.
+{
+  await reset();
+  const bo = await invite("Bo R", 5);
+  const cy = await invite("Cy R", 5);
+  const repair = (who, name, error) => api("/api/spell/repair", { ...(who === "admin" ? { admin: true } : { invite: who.secret }), body: { name, error } });
+  const repairs = async () => (await lookup("SELECT repairs FROM spells WHERE key = 'thorn hedge'"))?.repairs;
+  const error = "TypeError: w.vines is not a function";
+
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('thorn veil', 'Thorn Veil', '🌿', 'spell', 2, 'minor', 'A veil of thorns', 'protect', ?)",
+    )
+    .bind(Date.now())
+    .run();
+  const nothing = await repair(bo, "Thorn Veil", error);
+  check("repairs: a spell with no live program has nothing to repair (404)", nothing.status === 404, `status ${nothing.status}`);
+  const pid = await liveSpell("Thorn Hedge");
+  const noError = await repair(bo, "Thorn Hedge", undefined);
+  const emptyError = await repair(bo, "Thorn Hedge", "");
+  check("repairs: a repair needs the error (400)", noError.status === 400 && emptyError.status === 400, `${noError.status} ${emptyError.status}`);
+
+  const before = calls;
+  const fixed = await repair(bo, "Thorn Hedge", error);
+  const row = await lookup("SELECT status, origin, parent, model FROM programs WHERE id = ?", fixed.data?.program?.id ?? 0);
+  check(
+    "repairs: a repair is a trial with origin repair, written by the small model from the error",
+    fixed.status === 200 &&
+      fixed.data.program.trial === true &&
+      row?.status === "trial" &&
+      row.origin === "repair" &&
+      row.parent === pid &&
+      row.model === "claude-haiku-5-5" &&
+      calls === before + 1 &&
+      lastSpell().user.includes(`crashed in the game with: ${error}`),
+    JSON.stringify(row),
+  );
+  check("repairs: and counts in the spell's repairs", (await repairs()) === 1, `${await repairs()} repairs`);
+  const second = await repair(cy, "Thorn Hedge", error);
+  check(
+    "repairs: a second browser that saw the same crash gets the waiting trial, no second call",
+    second.status === 200 && second.data.program.id === fixed.data.program.id && calls === before + 1 && (await repairs()) === 1,
+    `${calls - before} calls, ${await repairs()} repairs`,
+  );
+  await api("/api/spell/check", { admin: true, body: { name: "Thorn Hedge", id: fixed.data.program.id, ok: true, problem: null, detail: "ok" } });
+  const swapped = await lookup("SELECT pid FROM spells WHERE key = 'thorn hedge'");
+  check("repairs: a repair that passes its test run goes live and keeps the count", swapped.pid === fixed.data.program.id && (await repairs()) === 1);
+
+  // Mended twice already: the third repair is still allowed.
+  await db.prepare("UPDATE spells SET repairs = 2 WHERE key = 'thorn hedge'").run();
+  const deep = "RangeError: too much recursion";
+  const third = await repair(bo, "Thorn Hedge", deep);
+  check("repairs: the third repair is allowed", third.status === 200 && third.data.program.trial === true && (await repairs()) === 3, `status ${third.status}`);
+  // BUG? worker/index.ts:706 refuses at three repairs before :711 looks for
+  // the trial already waiting, so a second browser that saw the crash the
+  // third repair mends is told "mended too often" (and stops asking for the
+  // session, src/worldhost.ts:736) instead of being served that free trial.
+  // Checked as it behaves today.
+  const was = calls;
+  const sameCrash = await repair(cy, "Thorn Hedge", deep);
+  check(
+    "repairs: a second browser with the crash of the third repair is refused, not served the waiting trial (BUG?)",
+    sameCrash.status === 429 && sameCrash.data?.detail?.mended === true && calls === was,
+    JSON.stringify(sameCrash.data),
+  );
+  await api("/api/spell/check", { admin: true, body: { name: "Thorn Hedge", id: third.data.program.id, ok: true, problem: null, detail: "ok" } });
+  const refused = await repair(bo, "Thorn Hedge", "SyntaxError: unexpected end of input");
+  check(
+    "repairs: past three, a player is refused (429) and told it was mended too often",
+    refused.status === 429 && refused.data?.detail?.mended === true && calls === was && (await repairs()) === 3,
+    JSON.stringify(refused.data),
+  );
+  const asAdmin = await repair("admin", "Thorn Hedge", "SyntaxError: unexpected end of input");
+  check(
+    "repairs: the admin is not refused",
+    asAdmin.status === 200 && asAdmin.data.program.trial === true && calls === was + 1 && (await repairs()) === 4,
+    `${asAdmin.status}, ${await repairs()} repairs`,
+  );
+  await reset();
+}
+
+// 20. Casts (3.3, review M7): a cast is recorded with the version cast, the
+// player counts as active today, and the answer says whether they may vote.
+{
+  await reset();
+  const dee = await invite("Dee C", 5);
+  const pid = await liveSpell("Moth Lantern");
+  const other = await liveSpell("Salt Circle");
+  const cast = (body, player = "player-cast-dee") => api("/api/cast", { invite: dee.secret, player, body });
+  const casts = async () => (await lookup("SELECT COUNT(*) AS n FROM casts")).n;
+
+  const first = await cast({ name: "Moth Lantern", id: pid });
+  const row = await lookup("SELECT at FROM casts WHERE player = 'player-cast-dee' AND pid = ?", pid);
+  const active = await lookup("SELECT COUNT(*) AS n FROM activity WHERE player = 'player-cast-dee'");
+  check(
+    "casts: a cast is recorded with its version, counts the player as active, and the player may vote",
+    first.status === 200 && first.data.canVote === true && row?.at > Date.now() - 60_000 && active.n === 1,
+    JSON.stringify(first.data),
+  );
+  const n = await casts();
+  const again = await cast({ name: "Moth Lantern", id: pid });
+  check("casts: the same version cast again is still one row", again.data.canVote === true && (await casts()) === n);
+  await api("/api/vote", { invite: dee.secret, player: "player-cast-dee", body: { name: "Moth Lantern", id: pid, up: true } });
+  await until(async () => (await lookup("SELECT library FROM programs WHERE id = ?", pid)).library === 1);
+  const voted = await cast({ name: "Moth Lantern", id: pid });
+  check("casts: once voted, canVote is false", voted.status === 200 && voted.data.canVote === false, JSON.stringify(voted.data));
+
+  const before = await casts();
+  const wrongId = await cast({ name: "Moth Lantern", id: 999999 });
+  const otherSpell = await cast({ name: "Moth Lantern", id: other });
+  const noPlayer = await cast({ name: "Moth Lantern", id: pid }, "x");
+  check(
+    "casts: a wrong id, another spell's program or no player id: canVote false, nothing recorded",
+    [wrongId, otherSpell, noPlayer].every((r) => r.status === 200 && r.data.canVote === false) && (await casts()) === before,
+    [wrongId, otherSpell, noPlayer].map((r) => `${r.status} ${JSON.stringify(r.data)}`).join(", "),
+  );
+  await db.prepare("DELETE FROM gaps WHERE extension IS NULL").run();
+  await reset();
+}
+
+// 21. Reports (3.4, review M7): a player reports a name; one open report per
+// name and person; the admin sees it in the people view and dismisses it,
+// which a player cannot do.
+{
+  const eli = await invite("Eli R", 5);
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('rude bloom', 'Rude Bloom', '🥀', 'spell', 2, 'minor', 'A flower', 'other', ?)",
+    )
+    .bind(Date.now())
+    .run();
+  const report = (body) => api("/api/report", { invite: eli.secret, body });
+  const mine = async () => (await db.prepare("SELECT id, key, name, reason, status FROM reports WHERE invite = ? ORDER BY id").bind(eli.id).all()).results;
+  const reports = async () => (await api("/api/admin/people", { admin: true })).data.reports;
+
+  const sent = await report({ name: "rude  bloom", reason: `  Not a nice word. ${"x".repeat(300)}` });
+  const [row] = await mine();
+  check(
+    "reports: a report stores the element's name, the reporter and the reason, cut to 200 characters",
+    sent.status === 200 &&
+      row?.key === "rude bloom" &&
+      row.name === "Rude Bloom" &&
+      row.reason.startsWith("Not a nice word.") &&
+      row.reason.length === 200 &&
+      row.status === "open",
+    JSON.stringify(row).slice(0, 200),
+  );
+  await report({ name: "Rude Bloom", reason: "again" });
+  check("reports: one open report per name and person", (await mine()).length === 1);
+  const unknown = await report({ name: "Never Named", reason: "x" });
+  check("reports: a name nobody discovered cannot be reported", unknown.status === 400, `status ${unknown.status}`);
+  const listed = (await reports()).find((r) => r.id === row.id);
+  check("reports: the admin sees it in the people view, with who reported it", listed?.by === "Eli R" && listed.name === "Rude Bloom", JSON.stringify(listed));
+  const byPlayer = await api("/api/admin/report", { invite: eli.secret, body: { id: row.id } });
+  check("reports: a player cannot close a report", byPlayer.status === 404 && (await mine())[0].status === "open", `status ${byPlayer.status}`);
+  const closed = await api("/api/admin/report", { admin: true, body: { id: row.id } });
+  check(
+    "reports: the admin dismisses it, and it leaves the people view",
+    closed.data?.ok === true && (await mine())[0].status === "dismissed" && !(await reports()).some((r) => r.id === row.id),
+  );
+  await report({ name: "Rude Bloom" });
+  const later = await mine();
+  check("reports: once dismissed, the same person may report the name again", later.length === 2 && later[1].status === "open" && later[1].reason === null);
+  await db.prepare("DELETE FROM reports WHERE invite = ?").bind(eli.id).run();
+}
+
+// 22. Spell info (3.3, review M7): the admin sees every version of a spell,
+// newest first, with its votes, its test run and the judge's verdict.
+{
+  const now = Date.now();
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('info orb', 'Info Orb', '🔮', 'spell', 2, 'minor', 'An orb', 'other', ?)",
+    )
+    .bind(now)
+    .run();
+  const insert = (origin, status, parent, at, checked, judged, library) =>
+    db
+      .prepare(
+        "INSERT INTO programs (key, spec, model, version, origin, status, parent, created_at, checked, judged, library) VALUES ('info orb', '{\"code\":\"const spell = {};\"}', 'claude-haiku-5-5', 5, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .bind(origin, status, parent, at, checked, judged, library)
+      .run();
+  const old = Number((await insert("new", "retired", null, now - 2000, null, JSON.stringify({ score: 4, verdict: "up" }), 0)).lastInsertRowid);
+  const cur = Number((await insert("votes", "live", old, now - 1000, JSON.stringify({ ok: true, detail: "ok" }), null, 1)).lastInsertRowid);
+  const vote = (player, pid, up) =>
+    db
+      .prepare("INSERT INTO votes (player, pid, key, up, reason, at) VALUES (?, ?, 'info orb', ?, ?, ?)")
+      .bind(player, pid, up, up ? null : "small", now)
+      .run();
+  await vote("player-info-1", old, 0);
+  await vote("player-info-1", cur, 1);
+  await vote("player-info-2", cur, 1);
+  await vote("player-info-3", cur, 0);
+
+  const info = await api(`/api/spell/info?name=${encodeURIComponent("info orb")}`, { admin: true });
+  const [a, b] = info.data ?? [];
+  check(
+    "spell info: every version, newest first, with its votes, test run, verdict and library place",
+    info.status === 200 &&
+      info.data.length === 2 &&
+      a.id === cur &&
+      a.status === "live" &&
+      a.origin === "votes" &&
+      a.up === 2 &&
+      a.down === 1 &&
+      a.library === true &&
+      a.checked?.ok === true &&
+      a.judged === null &&
+      b.id === old &&
+      b.status === "retired" &&
+      b.up === 0 &&
+      b.down === 1 &&
+      b.library === false &&
+      b.judged?.score === 4,
+    JSON.stringify(info.data),
+  );
+  const nothing = await api("/api/spell/info?name=Never%20Made", { admin: true });
+  check("spell info: a name with no program has no versions", nothing.status === 200 && nothing.data.length === 0);
+  const ann = await invite("Ann I", 5);
+  const player = await api("/api/spell/info?name=Info%20Orb", { invite: ann.secret });
+  check("spell info: a player cannot read it (404)", player.status === 404, `status ${player.status}`);
+  await db.prepare("DELETE FROM votes WHERE key = 'info orb'").run();
+  await db.prepare("DELETE FROM programs WHERE key = 'info orb'").run();
+}
+
+// 23. Spend (3.3, review M7): the admin's month so far, today, and the calls
+// grouped by call and model, from the rows of `spend`.
+{
+  await reset();
+  const now = Date.now();
+  const d = new Date(now);
+  const monthStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+  const todayStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  // A day of this month before today, unless today is the first.
+  const earlier = todayStart > monthStart;
+  const add = (at, call, model, usd) =>
+    db.prepare("INSERT INTO spend (at, call, model, usd, invite) VALUES (?, ?, ?, ?, 'admin')").bind(at, call, model, usd).run();
+  await add(now, "merge", "claude-opus-5-5", 0.01);
+  await add(now, "merge", "claude-opus-5-5", 0.02);
+  await add(now, "spell", "claude-haiku-5-5", 0.005);
+  await add(monthStart - 60_000, "spell", "claude-haiku-5-5", 1);
+  if (earlier) await add(todayStart - 60_000, "spell", "claude-haiku-5-5", 0.1);
+  const near = (x, y) => Math.abs(x - y) < 1e-6;
+
+  const r = await api("/api/spend", { admin: true });
+  const merge = r.data?.calls?.find((c) => c.call === "merge");
+  const spell = r.data?.calls?.find((c) => c.call === "spell");
+  check(
+    "spend: this month's calls grouped by call and model, last month left out",
+    r.status === 200 &&
+      r.data.calls.length === 2 &&
+      merge?.model === "claude-opus-5-5" &&
+      merge.n === 2 &&
+      near(merge.usd, 0.03) &&
+      near(merge.avg, 0.015) &&
+      near(merge.today, 0.03) &&
+      spell?.model === "claude-haiku-5-5" &&
+      spell.n === (earlier ? 2 : 1) &&
+      near(spell.usd, earlier ? 0.105 : 0.005) &&
+      near(spell.today, 0.005),
+    JSON.stringify(r.data),
+  );
+  check(
+    "spend: with the month, today, the budget, the largest call first",
+    near(r.data.month, earlier ? 0.135 : 0.035) && near(r.data.today, 0.035) && r.data.budget === 50 && r.data.calls[0].call === (earlier ? "spell" : "merge"),
+  );
+  const fay = await invite("Fay S", 5);
+  check("spend: a player cannot read it (404)", (await api("/api/spend", { invite: fay.secret })).status === 404);
+  await reset();
+}
+
+// 24. Perf (4.0 review L2, with section 17): a sample over 4000 characters is
+// refused and writes nothing; one under it is kept; only the admin reads them.
+{
+  const gus = await invite("Gus P", 5);
+  const rows = async () => (await lookup("SELECT COUNT(*) AS n FROM perf WHERE invite = ?", gus.id)).n;
+  const big = await api("/api/perf", { invite: gus.secret, body: { frameP50: 16, note: "x".repeat(4100) } });
+  check("perf: a sample over 4000 characters is refused with 413, nothing written", big.status === 413 && (await rows()) === 0, `status ${big.status}`);
+  const fits = await api("/api/perf", { invite: gus.secret, body: { frameP50: 16, note: "x".repeat(3900) } });
+  check("perf: one just under is kept", fits.status === 200 && fits.data.kept === true && (await rows()) === 1, JSON.stringify(fits.data));
+  check("perf: a player cannot read the samples (404)", (await api("/api/perf", { invite: gus.secret })).status === 404);
+  await db.prepare("DELETE FROM perf WHERE invite = ?").bind(gus.id).run();
+}
+
+// 25. The admin's tools (3.3 to 3.7, review M7): none is reachable by a
+// player. Trials store nothing (merge, spell, batch, judge); the judge stores
+// its verdict on a program and is calibrated on votes; the tier backfill,
+// the trim scan, and the API that grows (evolution, engine proposals).
+{
+  await reset();
+  const gil = await invite("Gil A", 5);
+  const routes = [
+    ["POST", "merge-trial"],
+    ["POST", "backfill-tiers"],
+    ["GET", "programs"],
+    ["POST", "judge"],
+    ["POST", "judge-trial"],
+    ["GET", "judge-stats"],
+    ["POST", "spell-trial"],
+    ["POST", "batch-trial"],
+    ["GET", "batch-trial?batch=msgbatch_1"],
+    ["POST", "trim-scan"],
+    ["GET", "evolution"],
+    ["GET", "proposals"],
+    ["POST", "extension"],
+  ];
+  const quiet = calls;
+  const statuses = [];
+  for (const [method, path] of routes)
+    statuses.push(`${method} ${path} ${(await api(`/api/admin/${path}`, { invite: gil.secret, method, ...(method === "POST" ? { body: {} } : {}) })).status}`);
+  check(
+    "admin: a player reaches none of these tools (404), and no Claude call is made",
+    statuses.every((s) => s.endsWith(" 404")) && calls === quiet,
+    statuses.filter((s) => !s.endsWith(" 404")).join(", ") || `${calls - quiet} calls`,
+  );
+  const count = async (sql, ...args) => (await lookup(sql, ...args)).n;
+
+  // merge-trial: what a model would make of a pair; nothing stored, the call paid.
+  const [elements, recipes] = [await count("SELECT COUNT(*) AS n FROM elements"), await count("SELECT COUNT(*) AS n FROM recipes")];
+  const trial = await api("/api/admin/merge-trial", { admin: true, body: { a: "Shadow", b: "Light", model: "claude-haiku-5-5" } });
+  const named = await lookup("SELECT 1 AS x FROM elements WHERE name = ?", trial.data?.answer?.name ?? "");
+  check(
+    "admin: merge-trial answers and stores nothing in elements or recipes, the call paid",
+    trial.status === 200 &&
+      /^Answer \d+$/.test(trial.data.answer.name) &&
+      trial.data.usd > 0 &&
+      !named &&
+      (await count("SELECT COUNT(*) AS n FROM elements")) === elements &&
+      (await count("SELECT COUNT(*) AS n FROM recipes")) === recipes &&
+      (await count("SELECT COUNT(*) AS n FROM spend WHERE call = 'merge' AND invite = 'admin'")) === 1,
+    JSON.stringify(trial.data),
+  );
+
+  // backfill-tiers: every element without a tier gets one, in one call.
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('untiered mist', 'Untiered Mist', '🌫️', 'spell', 2, NULL, 'An old mist', 'weather', ?)",
+    )
+    .bind(Date.now())
+    .run();
+  const untiered = await count("SELECT COUNT(*) AS n FROM elements WHERE tier IS NULL");
+  const tierCalls = calls;
+  const tiers = await api("/api/admin/backfill-tiers", { admin: true, body: {} });
+  const mist = await lookup("SELECT tier FROM elements WHERE key = 'untiered mist'");
+  check(
+    "admin: backfill-tiers gives every element with a null tier its tier, in one call",
+    tiers.status === 200 &&
+      tiers.data.rated === untiered &&
+      tiers.data.missing.length === 0 &&
+      mist?.tier === "grand" &&
+      (await count("SELECT COUNT(*) AS n FROM elements WHERE tier IS NULL")) === 0 &&
+      calls === tierCalls + 1,
+    JSON.stringify(tiers.data),
+  );
+
+  // programs, judge, judge-trial and judge-stats.
+  const pid = await liveSpell("Dim Star");
+  await db
+    .prepare("INSERT INTO votes (player, pid, key, up, reason, at) VALUES ('player-judge-vote', ?, 'dim star', 0, 'small', ?)")
+    .bind(pid, Date.now())
+    .run();
+  const toJudge = async () => (await api("/api/admin/programs?limit=100", { admin: true })).data;
+  const listed = (await toJudge()).find((p) => p.id === pid);
+  check(
+    "admin: programs lists the live programs the judge has not seen, with their code",
+    listed?.name === "Dim Star" && listed.tier === "minor" && listed.kind === "spell" && /cast/.test(listed.code),
+    JSON.stringify(listed),
+  );
+  const frame = "data:image/png;base64,iVBORw0KGgo=";
+  const noFrames = await api("/api/admin/judge", { admin: true, body: { id: pid, frames: [] } });
+  const noProgram = await api("/api/admin/judge", { admin: true, body: { id: 999999, frames: [frame] } });
+  check(
+    "admin: the judge needs frames (400) and a stored program (404)",
+    noFrames.status === 400 && noProgram.status === 404,
+    `${noFrames.status} ${noProgram.status}`,
+  );
+  const judgedRows = () => count("SELECT COUNT(*) AS n FROM programs WHERE judged IS NOT NULL");
+  const judgedBefore = await judgedRows();
+  const tried = await api("/api/admin/judge-trial", { admin: true, body: { name: "Dim Star", frames: [frame, frame, frame], facts: "12 cells lit" } });
+  check(
+    "admin: judge-trial scores a spell by name and stores nothing",
+    tried.status === 200 &&
+      tried.data.score === 2 &&
+      tried.data.verdict === "down" &&
+      tried.data.action === "advice only" &&
+      (await judgedRows()) === judgedBefore,
+    JSON.stringify(tried.data),
+  );
+  check("admin: the judge is told what changed in the world", /What changed in the world: 12 cells lit/.test(seen["You judge spells in "]?.user ?? ""));
+  const judgeCalls = calls;
+  const judged = await api("/api/admin/judge", { admin: true, body: { id: pid, frames: [frame], facts: "a faint ring" } });
+  const stored = JSON.parse((await lookup("SELECT judged FROM programs WHERE id = ?", pid)).judged ?? "null");
+  check(
+    "admin: judge stores its verdict on the program; not yet calibrated, it only advises",
+    judged.status === 200 &&
+      stored?.score === 2 &&
+      stored.verdict === "down" &&
+      stored.threshold === 2 &&
+      stored.model === "claude-haiku-5-5" &&
+      judged.data.action === "advice only" &&
+      judged.data.calibration.trusted === false &&
+      calls === judgeCalls + 1 &&
+      (await count("SELECT COUNT(*) AS n FROM programs WHERE key = 'dim star'")) === 1,
+    JSON.stringify(judged.data),
+  );
+  check("admin: a judged program leaves the judge's list", !(await toJudge()).some((p) => p.id === pid));
+  const stats = await api("/api/admin/judge-stats", { admin: true });
+  check(
+    "admin: judge-stats sets the judge against the votes on what it judged",
+    stats.status === 200 &&
+      stats.data.voted === 1 &&
+      stats.data.confusion.judgeDownVotedDown === 1 &&
+      stats.data.agreement === 1 &&
+      stats.data.threshold === 2 &&
+      stats.data.trusted === false,
+    JSON.stringify(stats.data),
+  );
+
+  // spell-trial and batch-trial: programs written as the game would, stored nowhere.
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('quiet bell', 'Quiet Bell', '🔔', 'spell', 2, 'minor', 'A bell no one hears', 'other', ?)",
+    )
+    .bind(Date.now())
+    .run();
+  const versions = (key) => count("SELECT COUNT(*) AS n FROM programs WHERE key = ?", key);
+  const spellTrial = await api("/api/admin/spell-trial", { admin: true, body: { name: "Quiet Bell", model: "claude-haiku-5-5" } });
+  check(
+    "admin: spell-trial writes a program with the model asked and stores nothing",
+    spellTrial.status === 200 &&
+      spellTrial.data.model === "claude-haiku-5-5" &&
+      /cast/.test(spellTrial.data.program?.code ?? "") &&
+      spellTrial.data.usd > 0 &&
+      (await versions("quiet bell")) === 0,
+    JSON.stringify(spellTrial.data).slice(0, 300),
+  );
+  const batch = await api("/api/admin/batch-trial", { admin: true, body: { names: ["Quiet Bell", "Dim Star"] } });
+  check(
+    "admin: batch-trial sends the names to the Batch API and stores nothing",
+    batch.status === 200 && /^msgbatch_/.test(batch.data.batch) && batch.data.names.join() === "Quiet Bell,Dim Star" && (await versions("quiet bell")) === 0,
+    JSON.stringify(batch.data),
+  );
+  const results = await api(`/api/admin/batch-trial?batch=${batch.data?.batch}`, { admin: true });
+  check(
+    "admin: its GET reads the programs back, one per name",
+    results.status === 200 &&
+      results.data.ended === true &&
+      results.data.outcomes.map((o) => o.id).join() === "trial0,trial1" &&
+      results.data.outcomes.every((o) => /cast/.test(o.answer?.code ?? "")) &&
+      (await versions("quiet bell")) === 0 &&
+      (await versions("dim star")) === 1,
+    JSON.stringify(results.data).slice(0, 300),
+  );
+  const badBatch = await api("/api/admin/batch-trial?batch=not%20a%20batch", { admin: true });
+  check("admin: a batch id that is not one is refused (400)", badBatch.status === 400, `status ${badBatch.status}`);
+
+  // trim-scan: what it is sure of waits for approval; nothing changes yet.
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('frost ward', 'Frost Ward', '❄️', 'spell', 2, 'minor', 'A ward of frost', 'protect', ?), ('frost wards', 'Frost Wards', '❄️', 'spell', 2, 'minor', 'Wards of frost', 'protect', ?)",
+    )
+    .bind(Date.now(), Date.now())
+    .run();
+  await db
+    .prepare("INSERT INTO recipes (pair, a, b, result, created_at) VALUES ('fire+frost ward', 'fire', 'frost ward', 'frost wards', ?)")
+    .bind(Date.now())
+    .run();
+  const lastTrim = (await lookup("SELECT COALESCE(MAX(id), 0) AS id FROM trims")).id;
+  const scan = await api("/api/admin/trim-scan", { admin: true, body: {} });
+  const found = (await db.prepare("SELECT kind, a, b, result, status FROM trims WHERE id > ? ORDER BY id").bind(lastTrim).all()).results;
+  check(
+    "admin: trim-scan records the duplicates and senseless recipes that exist, pending approval, and changes nothing",
+    scan.status === 200 &&
+      scan.data.added === 2 &&
+      found.length === 2 &&
+      found.every((t) => t.status === "pending") &&
+      found.some((t) => t.kind === "duplicate" && t.a === "Frost Ward" && t.b === "Frost Wards") &&
+      found.some((t) => t.kind === "senseless" && t.a === "Fire" && t.b === "Frost Ward" && t.result === "frost wards") &&
+      !(await lookup("SELECT 1 AS x FROM aliases WHERE alias = 'frost wards'")) &&
+      !!(await lookup("SELECT 1 AS x FROM recipes WHERE pair = 'fire+frost ward'")),
+    JSON.stringify({ scan: scan.data, found }),
+  );
+  check("admin: the scan is shown every item with its kind", (seen["You tidy the shared "]?.user ?? "").includes("\nFrost Wards (spell)"));
+  await db.prepare("DELETE FROM trims WHERE id > ?").bind(lastTrim).run();
+  await db.prepare("DELETE FROM recipes WHERE pair = 'fire+frost ward'").run();
+
+  // evolution, proposals and extension.
+  const evo = await api("/api/admin/evolution", { admin: true });
+  const haven = evo.data?.extensions?.find((e) => e.name === "haven");
+  check(
+    "admin: evolution lists the API's extensions with the spells each answered, and the open gaps",
+    evo.status === 200 && haven?.kind === "helper" && haven.status === "live" && haven.spells === 3 && evo.data.open.some((g) => g.key === "dim star"),
+    JSON.stringify({ haven: haven && { ...haven, code: undefined, example: undefined }, open: evo.data?.open?.map((g) => g.key) }),
+  );
+  const proposed = await db
+    .prepare(
+      "INSERT INTO extensions (kind, name, doc, status, model, created_at) VALUES ('engine', 'rivers of lava', 'Lava that flows downhill', 'open', 'claude-opus-5-5', ?)",
+    )
+    .bind(Date.now())
+    .run();
+  const eid = Number(proposed.lastInsertRowid);
+  const proposals = async () => (await api("/api/admin/proposals", { admin: true })).data;
+  const open = await proposals();
+  check(
+    "admin: proposals lists the open engine proposals only",
+    open.some((p) => p.id === eid && p.name === "rivers of lava") && open.every((p) => p.kind === "engine" && p.status === "open"),
+    JSON.stringify(open.map((p) => p.name)),
+  );
+  const noId = await api("/api/admin/extension", { admin: true, body: { status: "done" } });
+  const linked = await api("/api/admin/extension", { admin: true, body: { id: eid, issue: "https://github.com/x/y/issues/9", status: "bogus" } });
+  const done = await api("/api/admin/extension", { admin: true, body: { id: eid, status: "done", issue: "javascript:alert(1)" } });
+  check(
+    "admin: extension records a GitHub issue and a status it knows, nothing else",
+    noId.status === 400 &&
+      linked.data?.issue === "https://github.com/x/y/issues/9" &&
+      linked.data.status === "open" &&
+      done.data?.status === "done" &&
+      done.data.issue === "https://github.com/x/y/issues/9",
+    JSON.stringify([noId.status, linked.data, done.data]),
+  );
+  check("admin: a closed proposal leaves the list", !(await proposals()).some((p) => p.id === eid));
+  await db.prepare("DELETE FROM extensions WHERE id = ?").bind(eid).run();
+  await db.prepare("DELETE FROM gaps WHERE extension IS NULL").run();
   await reset();
 }
 
