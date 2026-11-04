@@ -2,6 +2,7 @@ import { C, F, G, type Material } from "./materials";
 import { Rng, fbm, valueNoise } from "./noise";
 import { SPECIES, type Species } from "./wildlife";
 import type { World } from "./world";
+import type { Biome, LandOptions, Shape } from "./land-options";
 
 // Islands of every kind (4.4): a biome, a shape and three sliders, chosen at
 // reset with a seed. The simulation keeps its one set of materials (grass is
@@ -20,54 +21,7 @@ import type { World } from "./world";
 // at their heads; water leaves the island over its edge, so they keep
 // flowing.
 
-export const BIOMES = ["temperate", "desert", "tundra", "jungle", "swamp", "volcanic", "mesa"] as const;
-export type Biome = (typeof BIOMES)[number];
-export const SHAPES = ["coast", "archipelago", "plateau", "ridges", "lakes", "delta"] as const;
-export type Shape = (typeof SHAPES)[number];
-
-export interface LandOptions {
-  biome: Biome;
-  shape: Shape;
-  // 0 to 1 each: how much of the island is water, how high the mountains
-  // rise, how much of the land is forest.
-  water: number;
-  relief: number;
-  forest: number;
-}
-
-export const DEFAULT_LAND: LandOptions = { biome: "temperate", shape: "coast", water: 0.5, relief: 0.5, forest: 0.5 };
-
-export const BIOME_LABELS: Record<Biome, string> = {
-  temperate: "Temperate forest",
-  desert: "Desert",
-  tundra: "Tundra",
-  jungle: "Jungle",
-  swamp: "Swamp",
-  volcanic: "Volcanic",
-  mesa: "Mesa",
-};
-
-export const SHAPE_LABELS: Record<Shape, string> = {
-  coast: "Coast",
-  archipelago: "Archipelago",
-  plateau: "Plateaus",
-  ridges: "Ridges",
-  lakes: "Inland lakes",
-  delta: "Delta",
-};
-
-// A save, a message or a stored choice, read back safely.
-export function readLand(v: unknown): LandOptions {
-  const o = (v ?? {}) as Partial<Record<keyof LandOptions, unknown>>;
-  const unit = (x: unknown, d: number) => (typeof x === "number" && Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : d);
-  return {
-    biome: BIOMES.includes(o.biome as Biome) ? (o.biome as Biome) : DEFAULT_LAND.biome,
-    shape: SHAPES.includes(o.shape as Shape) ? (o.shape as Shape) : DEFAULT_LAND.shape,
-    water: unit(o.water, DEFAULT_LAND.water),
-    relief: unit(o.relief, DEFAULT_LAND.relief),
-    forest: unit(o.forest, DEFAULT_LAND.forest),
-  };
-}
+export { BIOMES, BIOME_LABELS, DEFAULT_LAND, SHAPES, SHAPE_LABELS, readLand, type Biome, type LandOptions, type Shape } from "./land-options";
 
 export type Weather = "clear" | "rain" | "snow" | "fog";
 

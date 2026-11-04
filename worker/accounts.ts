@@ -433,7 +433,7 @@ function checkShape(kind: ProgressKind, data: unknown): void {
   } else {
     const i = data as { gz?: unknown; size?: unknown; at?: unknown };
     if (!i || typeof i.gz !== "string" || !/^[A-Za-z0-9+/=]*$/.test(i.gz) || typeof i.at !== "number") throw bad("not a packed island");
-    if (i.size !== "small" && i.size !== "medium" && i.size !== "large") throw bad("no size");
+    if (!["small", "medium", "large", "huge", "giant"].includes(i.size as string)) throw bad("no size");
   }
 }
 

@@ -55,6 +55,10 @@ import { gaitOf, hipHeight } from "../src/sim/voxel/gait";
 import { TICK } from "../src/sim/world";
 import { BIOMES, DEFAULT_LAND, SHAPES, habitatCount, readLand, LOOKS } from "../src/sim/land";
 import { landProblems, type LandLife } from "./land-life";
+import { projectedSim, sizesOffered, SIM_BUDGET_MS } from "../src/headroom";
+import { skyBodies, weatherAt } from "../src/sim/voxel/sky";
+import { Terrain } from "../src/sim/voxel/terrain";
+import { MeshBasicMaterial, type Mesh } from "three";
 
 // No verdict here depends on how fast the machine is (4.1, review M8): the
 // slow cast guard is off unless SLOW_MS is set, and worst ticks are printed,
@@ -741,6 +745,103 @@ for (const scenario of SCENARIOS) {
   );
   const old = generateWorld(112, 112, 4);
   check("no options: the island before 4.4, with no springs and the old climate", old.springs.length === 0 && old.climate === 0 && old.land === null);
+}
+
+// 4.4: the headroom rule, the weather, the sun's path, the trees' models, and
+// waves that never open a gap between two water tops.
+{
+  const m = (w: number, simP95: number, frameP95 = 30, frames = 600) => ({ w, simP95, frameP95, frames });
+  check(
+    "bigger islands only with headroom",
+    sizesOffered(null).join() === "small,medium,large" &&
+      sizesOffered(m(208, 3)).join() === "small,medium,large,huge,giant" &&
+      sizesOffered(m(208, 5)).join() === "small,medium,large,huge" &&
+      sizesOffered(m(208, 8)).join() === "small,medium,large" &&
+      sizesOffered(m(208, 3, 55)).join() === "small,medium,large" &&
+      sizesOffered(m(208, 3, 30, 100)).join() === "small,medium,large" &&
+      Math.abs(projectedSim(m(152, 2), "giant") - 2 * (384 / 152) ** 2) < 1e-9,
+    `a large island at 5 ms p95 projects ${projectedSim(m(208, 5), "huge").toFixed(1)} ms on huge, ${projectedSim(m(208, 5), "giant").toFixed(1)} on giant (budget ${SIM_BUDGET_MS})`,
+  );
+  const desert = generateWorld(64, 64, 3, { ...DEFAULT_LAND, biome: "desert" });
+  const tundra = generateWorld(64, 64, 3, { ...DEFAULT_LAND, biome: "tundra" });
+  const old = generateWorld(64, 64, 3);
+  const kinds = (w: World) => {
+    const seen: Record<string, number> = {};
+    for (let t = 0; t < 360 * 40; t += 30) {
+      const now = weatherAt(w, t);
+      if (now.amount > 0) seen[now.kind] = (seen[now.kind] ?? 0) + 1;
+    }
+    return seen;
+  };
+  const tk = kinds(tundra);
+  const dk = kinds(desert);
+  check(
+    "weather comes and goes, by biome, the same for the same island",
+    (tk.snow ?? 0) > 0 &&
+      !dk.snow &&
+      (dk.rain ?? 0) < (tk.snow ?? 0) &&
+      Object.keys(kinds(old)).length === 0 &&
+      weatherAt(tundra, 1234).kind === weatherAt(generateWorld(64, 64, 3, { ...DEFAULT_LAND, biome: "tundra" }), 1234).kind,
+    `tundra ${JSON.stringify(tk)}, desert ${JSON.stringify(dk)} (samples of 30 s over 4 hours); none without a land`,
+  );
+  const noon = skyBodies(DAY_LENGTH * 0.35);
+  const midnight = skyBodies(DAY_LENGTH * 0.73);
+  check("the sun by day, the moon by night", noon.sun > 0.5 && noon.moon < 0 && midnight.moon > 0.5 && midnight.sun < 0, JSON.stringify({ noon, midnight }));
+  const coplanar: string[] = [];
+  for (const key of ["palm", "snowpine", "jungle", "willow", "juniper"]) {
+    const boxes = MODELS[key];
+    for (let a = 0; a < boxes.length; a++)
+      for (let b = a + 1; b < boxes.length; b++) {
+        const A = boxes[a];
+        const B = boxes[b];
+        const lo = (x: { x: number; y: number; z: number }, k: number) => [x.x, x.y, x.z][k];
+        const size = (x: { w: number; h: number; d: number }, k: number) => [x.w, x.h, x.d][k];
+        for (let k = 0; k < 3; k++)
+          for (const side of [0, 1]) {
+            const pa = lo(A, k) + side * size(A, k);
+            const pb = lo(B, k) + side * size(B, k);
+            if (Math.abs(pa - pb) > 0.002) continue;
+            const [u, v] = [(k + 1) % 3, (k + 2) % 3];
+            const ou = Math.min(lo(A, u) + size(A, u), lo(B, u) + size(B, u)) - Math.max(lo(A, u), lo(B, u));
+            const ov = Math.min(lo(A, v) + size(A, v), lo(B, v) + size(B, v)) - Math.max(lo(A, v), lo(B, v));
+            if (ou > 1e-3 && ov > 1e-3) coplanar.push(`${key} ${a}/${b}`);
+          }
+      }
+  }
+  check("the biomes' trees have no two faces in one plane", !coplanar.length, coplanar.join(", ") || "palm, snowpine, jungle, willow, juniper");
+  // Waves: a corner two water tops share moves the same for both.
+  const lake = generateWorld(96, 96, 8, { ...DEFAULT_LAND, shape: "lakes", water: 0.8 });
+  const meshes: Mesh[] = [];
+  const terrain = new Terrain(
+    lake,
+    new MeshBasicMaterial(),
+    new MeshBasicMaterial(),
+    (mm) => meshes.push(mm),
+    () => {},
+  );
+  terrain.scan();
+  terrain.rebuild(true);
+  const corner = new Map<string, number>();
+  let torn = 0;
+  let moving = 0;
+  for (const mesh of meshes) {
+    const wave = mesh.geometry.getAttribute("wave");
+    if (!wave) continue;
+    const pos = mesh.geometry.getAttribute("position");
+    for (let k = 0; k < pos.count; k++) {
+      const key = `${pos.getX(k)},${pos.getY(k).toFixed(3)},${pos.getZ(k)}`;
+      const w = wave.getX(k);
+      if (w > 0) moving++;
+      const was = corner.get(key);
+      if (was === undefined) corner.set(key, w);
+      else if (Math.abs(was - w) > 1e-6) torn++;
+    }
+  }
+  check(
+    "waves never open a gap between water tops, and some water moves",
+    torn === 0 && moving > 0,
+    `${moving} vertices ride the waves, ${torn} corners disagree`,
+  );
 }
 
 await idleDone;

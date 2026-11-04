@@ -7,9 +7,11 @@ import { SpellSound } from "./sound";
 import { stepWorld } from "./tick";
 import { VoxelView } from "./voxel/view";
 import { TICK, generateWorld, type World } from "./world";
+import { DEFAULT_LAND, type LandOptions } from "./land";
 
-export const WORLD_SIZES = { small: 112, medium: 152, large: 208 } as const;
-export type WorldSize = keyof typeof WORLD_SIZES;
+import { WORLD_SIZES, type WorldSize } from "./sizes";
+
+export { WORLD_SIZES, type WorldSize } from "./sizes";
 
 export interface EngineHooks {
   onError: ErrorReporter;
@@ -61,9 +63,11 @@ export class Engine {
     hooks: EngineHooks,
     seed = (Math.random() * 2 ** 31) | 0,
     options: EngineOptions = {},
+    // The player's island (4.4); without, the island before 4.4 (the Spell Lab's).
+    land?: LandOptions,
   ): Engine {
     const n = WORLD_SIZES[size] ?? WORLD_SIZES.medium;
-    const world = generateWorld(n, n, seed);
+    const world = generateWorld(n, n, seed, land);
     populate(world);
     const engine = new Engine(canvas, overlay, world, hooks, undefined, options);
     // Open on a village, a little zoomed in: the people make the world feel alive.
@@ -85,6 +89,9 @@ export class Engine {
       rules(runtime);
     });
     if (!world || !runtime) return null;
+    // An island saved before 4.4 is a temperate island with the old climate:
+    // it gets the sky and weather of one, nothing else changes.
+    world.land ??= { ...DEFAULT_LAND };
     return new Engine(canvas, overlay, world, hooks, runtime);
   }
 

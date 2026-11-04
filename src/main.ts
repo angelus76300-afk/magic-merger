@@ -39,7 +39,6 @@ const world = new WorldHost(store, {
   tools: $("#spell-tools"),
   add: $<HTMLButtonElement>("#world-add"),
   reset: $<HTMLButtonElement>("#world-reset"),
-  size: $<HTMLSelectElement>("#world-size"),
   sound: $<HTMLButtonElement>("#world-sound"),
 });
 

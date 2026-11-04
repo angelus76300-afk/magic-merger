@@ -23,7 +23,8 @@ export interface ProgressBoard {
 export interface ProgressIsland {
   // The world save, gzipped and base64 encoded.
   gz: string;
-  size: "small" | "medium" | "large";
+  // 4.4: huge and giant islands, kept on the account like the others.
+  size: "small" | "medium" | "large" | "huge" | "giant";
   // When the island was saved on the device, for the warning.
   at: number;
 }

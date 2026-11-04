@@ -5,15 +5,26 @@
 // same way before and after.
 import { Engine, type WorldSize } from "../src/sim/engine";
 import { Hud, type PerfSummary } from "../src/sim/hud";
+import { readLand } from "../src/sim/land";
+import { GRAPHICS, type GraphicsFlag } from "../src/sim/voxel/graphics";
+import { LAB_WEATHER } from "../src/sim/voxel/sky";
 
 const q = new URLSearchParams(location.search);
 const canvas = document.getElementById("world") as HTMLCanvasElement;
 const overlay = document.getElementById("overlay") as HTMLCanvasElement;
 const size = (q.get("size") ?? "medium") as WorldSize;
 const seed = Number(q.get("seed") ?? 7);
-const engine = Engine.create(canvas, overlay, size, { onError: () => {}, onTap: () => {} }, seed);
+// 4.4: "off=ao,water" turns improvements off; "biome=desert&shape=lakes" picks
+// the land ("land=old" for the island before 4.4); "weather=rain" holds one.
+for (const f of (q.get("off") ?? "").split(",")) if (f in GRAPHICS) GRAPHICS[f as GraphicsFlag] = false;
+const weather = q.get("weather");
+if (weather === "rain" || weather === "snow" || weather === "fog") LAB_WEATHER.now = { kind: weather, amount: 1 };
+const land = q.get("land") === "old" ? undefined : readLand({ biome: q.get("biome"), shape: q.get("shape") });
+const engine = Engine.create(canvas, overlay, size, { onError: () => {}, onTap: () => {} }, seed, {}, land);
 if (q.has("time")) engine.world.time = Number(q.get("time"));
 engine.view.orbit.dist = Math.max(engine.world.w, engine.world.h) * Number(q.get("dist") ?? 0.42);
+if (q.has("phi")) engine.view.orbit.phi = Number(q.get("phi"));
+if (q.has("theta")) engine.view.orbit.theta = Number(q.get("theta"));
 if (q.has("dpr")) engine.view.fixedPixelRatio = Number(q.get("dpr"));
 const hud = new Hud(engine.stats);
 hud.show(true);

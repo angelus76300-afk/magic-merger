@@ -75,7 +75,7 @@ export function saveWorld(world: World, owners: Map<string, string>): SavedWorld
     wealth: world.wealth,
     creatures: world.creatures
       .filter((c) => !c.dead)
-      .slice(0, 400)
+      .slice(0, 600)
       .map((c) => {
         const { kind, x, y, hp, size, color, homeX, homeY, look } = c;
         return { kind, x, y, hp, size, color, homeX, homeY, look, m: saveMind(c) };
