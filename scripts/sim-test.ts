@@ -29,6 +29,7 @@ import { runCheck, type SceneReport } from "../src/sim/check";
 import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../shared/votes";
 import { pickExamples, words } from "../worker/programs";
 import { verdict, type LinkedPull } from "../worker/feedback";
+import { cronJobs } from "../worker/cron";
 import { draftBrief } from "../shared/feedback";
 import { programToFetch } from "../shared/sync";
 import { mergeDiscoveries } from "../shared/account";
@@ -1432,6 +1433,31 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
   }
   const felled = stumps() - before;
   check("a busy island plays no sound by itself for a minute", sounds === 0 && felled > 0, `${sounds} sounds, ${felled} trees felled`);
+}
+
+// 12. The cron's jobs (4.0 review L7): one that throws is named in a log
+// line and fails nothing else; the others run to the end.
+{
+  const errors = console.error;
+  const logged: string[] = [];
+  console.error = (...a: unknown[]) => void logged.push(String(a[0]));
+  let swept = false;
+  const failed = await cronJobs({
+    "poll batches": async () => {
+      throw new Error("404 no batch");
+    },
+    sweep: async () => {
+      await new Promise((r) => setTimeout(r, 20));
+      swept = true;
+    },
+    evolve: null,
+  });
+  console.error = errors;
+  check(
+    "a cron job that throws is a log line named after it, and the others finish",
+    failed.join() === "poll batches" && logged.join() === "poll batches" && swept,
+    `failed ${failed.join()}, logged ${logged.join()}, swept ${swept}`,
+  );
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");

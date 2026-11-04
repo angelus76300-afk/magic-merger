@@ -1350,8 +1350,11 @@ console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at st
   const read = await api("/api/perf", { admin: true });
   check("L2: the admin reads them back", read.status === 200 && read.data.length === 2);
 
-  // L7: the cron with a batch the API cannot read: logged like its
-  // siblings, the other jobs still run.
+  // L7: the cron with a batch the API cannot read: the failure is a log line
+  // named after its job, and the other jobs still run (the feedback sync
+  // reads the ideas sent to Claude). Through /cdn-cgi/handler/scheduled:
+  // once dist/ is built, as in CI, /__scheduled is answered by the assets
+  // (the page itself) and no cron runs at all.
   const now = Date.now();
   await db
     .prepare(
@@ -1359,15 +1362,18 @@ console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at st
     )
     .bind(now)
     .run();
+  const checkedAt = async () => (await db.prepare("SELECT MAX(COALESCE(checked_at, 0)) AS t FROM suggestions").first()).t;
+  const before = await checkedAt();
   const logBefore = workerLog.length;
-  const cron = await fetch(`${BASE}/__scheduled?cron=*/10+*+*+*+*`);
-  // The cron's jobs finish after its answer: its log line is waited for.
-  for (let k = 0; k < 40 && !/poll batches|Uncaught/.test(workerLog.slice(logBefore)); k++) await new Promise((r) => setTimeout(r, 250));
+  const cron = await fetch(`${BASE}/cdn-cgi/handler/scheduled?cron=*/10+*+*+*+*`);
+  // The cron's jobs finish after its answer.
+  for (let k = 0; k < 40 && ((await checkedAt()) <= before || !/poll batches|Uncaught/.test(workerLog.slice(logBefore))); k++)
+    await new Promise((r) => setTimeout(r, 250));
   const logged = workerLog.slice(logBefore);
   check(
-    "L7: a batch error in the cron is a log line named after its job, not the cron's failure",
-    cron.status === 200 && /poll batches/.test(logged) && !/Uncaught/.test(logged),
-    logged.replace(/\s+/g, " ").slice(0, 200),
+    "L7: a batch error in the cron is a log line named after its job, and the other jobs still run",
+    cron.status === 200 && /poll batches/.test(logged) && !/Uncaught/.test(logged) && (await checkedAt()) > before,
+    `cron ${cron.status}, feedback checked at ${before} then ${await checkedAt()}, log: ${logged.replace(/\s+/g, " ").slice(0, 160) || "nothing in 10 s"}`,
   );
   await db.prepare("DELETE FROM rewrites WHERE batch = 'msgbatch_lost'").run();
 

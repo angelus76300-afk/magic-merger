@@ -76,6 +76,7 @@ import {
 import type { LibraryExample, Rewrite } from "./prompts";
 import { joinsBoth } from "./prompts";
 import { readDigest } from "../shared/chronicle";
+import { cronJobs } from "./cron";
 import {
   ADMIN_PAYER,
   ESTIMATE,
@@ -321,13 +322,13 @@ export default {
   // the ideas sent to Claude.
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
-      Promise.all([
-        pollBatches(env).catch((err) => console.error("poll batches", err)),
-        sweep(env.DB).catch((err) => console.error("sweep", err)),
-        syncFeedback(env).catch((err) => console.error("feedback sync", err)),
-        env.EVOLVE === "0" ? null : evolve(env, false).catch((err) => console.error("evolve", err)),
-        backfillIntents(env).catch((err) => console.error("intents backfill", err)),
-      ]).then(() => undefined),
+      cronJobs({
+        "poll batches": () => pollBatches(env),
+        sweep: () => sweep(env.DB),
+        "feedback sync": () => syncFeedback(env),
+        evolve: env.EVOLVE === "0" ? null : () => evolve(env, false),
+        "intents backfill": () => backfillIntents(env),
+      }),
     );
   },
 } satisfies ExportedHandler<Env>;
