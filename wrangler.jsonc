@@ -56,10 +56,12 @@
   },
   // 4.2: the programs of new items, written at the merge by a background job
   // that outlives the response (a big model's program can take a minute).
-  // Messages are taken one batch at a time with no wait to fill it.
+  // Messages are taken with no wait to fill a batch, ten at a time: a batch
+  // waits for its slowest job (a small program is about 20 s), so with four
+  // the fifth item of a burst waited 34 s before it started (production run).
   "queues": {
     "producers": [{ "binding": "WRITES", "queue": "magic-merger-writes" }],
-    "consumers": [{ "queue": "magic-merger-writes", "max_batch_size": 4, "max_batch_timeout": 0, "max_retries": 1 }],
+    "consumers": [{ "queue": "magic-merger-writes", "max_batch_size": 10, "max_batch_timeout": 0, "max_retries": 1 }],
   },
   // Collects the programs the Batch API has written, and reads GitHub for the
   // ideas sent to Claude (3.4.1).

@@ -2438,6 +2438,22 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
   check("ahead: past 80% of the month's budget, an item is not written ahead", (await writeOf(lk))?.status === "capped", JSON.stringify(await writeOf(lk)));
   await db.prepare("DELETE FROM spend WHERE call = 'seed'").run();
 
+  // A version 1 spec (from before programs) is not a program: written ahead.
+  await db.batch([
+    db
+      .prepare("INSERT INTO elements (key, name, emoji, kind, depth, tier, created_at) VALUES ('old rain', 'Old Rain', '🌧️', 'spell', 2, 'minor', ?)")
+      .bind(now),
+    db.prepare("INSERT INTO spells (key, spec, model, version, created_at) VALUES ('old rain', '{}', 'old', 1, ?)").bind(now),
+    db.prepare("INSERT INTO recipes (pair, a, b, result, created_at) VALUES ('seed a+seed h', 'seed a', 'seed h', 'old rain', ?)").bind(now),
+  ]);
+  const old = await merge(cal, "Seed A", "Seed H");
+  await until(async () => (await writeOf("old rain"))?.status === "done");
+  check(
+    "ahead: an item with only a version 1 spec from before programs is written ahead",
+    old.data.writing === true && (await writeOf("old rain"))?.status === "done",
+    JSON.stringify(await writeOf("old rain")),
+  );
+
   // A player who cannot pay: the job is not billed to anyone, the item waits for first use.
   const dee = await invite("Ahead Dee", 0.003);
   await db.batch([

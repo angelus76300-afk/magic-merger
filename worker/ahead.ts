@@ -1,3 +1,5 @@
+import { FIRST_PROGRAM_VERSION } from "../shared/spellcode";
+
 // 4.2: every new item is written at the merge, in a background job.
 //
 // The merge that makes a new item (or reaches a known item that has no
@@ -61,11 +63,15 @@ export function utcDay(now = Date.now()): string {
 }
 
 // Does the item have a program anyone can be served (live, or a trial
-// waiting for its test run)?
+// waiting for its test run)? A version 1 row of `spells` is a declarative
+// spec from before programs, written again on first use: not a program
+// (found on production: Healing Rain had one and was not written ahead).
 export async function hasProgram(db: D1Database, key: string): Promise<boolean> {
   const row = await db
-    .prepare("SELECT 1 AS n FROM spells WHERE key = ?1 UNION ALL SELECT 1 FROM programs WHERE key = ?1 AND status IN ('live', 'trial') LIMIT 1")
-    .bind(key)
+    .prepare(
+      "SELECT 1 AS n FROM spells WHERE key = ?1 AND version >= ?2 UNION ALL SELECT 1 FROM programs WHERE key = ?1 AND status IN ('live', 'trial') LIMIT 1",
+    )
+    .bind(key, FIRST_PROGRAM_VERSION)
     .first<{ n: number }>();
   return !!row;
 }
