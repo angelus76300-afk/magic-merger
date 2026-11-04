@@ -131,7 +131,12 @@ export interface Spent {
   call: string;
   model: string;
   usd: number;
+  // 4.2: the tokens behind it (input, output, cache read, cache write), for measurements.
+  tokens?: [number, number, number, number];
 }
+
+// How a system prompt is cached: not at all, five minutes, or an hour.
+export type Cache = false | "5m" | "1h";
 
 // Whatever decides what two items make, how an item is described, how strong
 // it is, and writes the program of a spell.
@@ -176,12 +181,16 @@ export interface OracleModels {
   design: string;
 }
 
-// Models whose spell calls are rare and lone: a legendary spell every few
-// hours. Writing their 3,500 token system prompt to the cache costs 1.25 times
-// input and is never read back before the five minutes are over, so those calls
-// skip the cache. Haiku spells come in bursts (written ahead for discoveries)
-// and keep it.
-const LONE_SPELL_MODELS = new Set(["claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5"]);
+// 4.2: the spell writer's system prompt (about 5,600 tokens, the same for
+// every program) is cached for an hour, for every model. Until 4.2 the big
+// model's calls skipped the cache as "rare and lone"; the November ledger says
+// otherwise: 100 of 116 big spell calls started within five minutes of the
+// previous one, and 251 of 279 small ones (8 and 16 more within the hour).
+// Programs are now written at the merge, in a player's bursts. An hour's write
+// costs twice the input price (five minutes: 1.25 times) and each read a tenth
+// (a twentieth on Opus 5.5); on November's gaps the hour is about 15% cheaper
+// than five minutes for the small model and far cheaper than nothing for the big one.
+const SPELL_CACHE: Cache = "1h";
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 const EFFORTS: readonly Effort[] = ["low", "medium", "high", "xhigh", "max"];
@@ -222,7 +231,7 @@ export class ClaudeOracle implements Oracle {
     messages: Anthropic.Beta.BetaMessageParam[],
     schema: Record<string, unknown> | null,
     maxTokens: number,
-    cache = true,
+    cache: Cache = "5m",
   ): Promise<string> {
     const t0 = Date.now();
     const response = await this.client.beta.messages.create({
@@ -368,8 +377,11 @@ export class ClaudeOracle implements Oracle {
     };
   }
 
-  // One request per program, written by the spell model at its effort. The
-  // system prompt is not cached: batch requests are processed out of order.
+  // One request per program, written by the spell model at its effort. 4.2:
+  // the system prompt is cached for an hour, as for direct calls: batch items
+  // may run out of order and later than five minutes, and an hour's entry is
+  // shared with the direct calls of the same prompt (cache hits in a batch
+  // are best effort; a miss costs the write once).
   async submitBatch(items: BatchItem[]): Promise<string> {
     const { spell: model, spellEffort } = this.models;
     const batch = await this.client.beta.messages.batches.create({
@@ -382,7 +394,7 @@ export class ClaudeOracle implements Oracle {
           [{ role: "user", content: spellMessage(item.request) }],
           SPELL_SCHEMA,
           20000,
-          false,
+          SPELL_CACHE,
         ),
       })),
     });
@@ -428,7 +440,7 @@ export class ClaudeOracle implements Oracle {
   // parser's complaint once and takes the second answer.
   private async program(call: string, messages: Anthropic.Beta.BetaMessageParam[], library?: LibraryDoc[]): Promise<ProgramAnswer> {
     const { spell: model, spellEffort } = this.models;
-    const cache = !LONE_SPELL_MODELS.has(model);
+    const cache = SPELL_CACHE;
     const system = spellSystem(library);
     let answer = toProgram(await this.ask(call, model, spellEffort, system, messages, SPELL_SCHEMA, 20000, cache));
     const error = syntaxError(answer.code);
@@ -456,14 +468,15 @@ function requestParams(
   messages: Anthropic.Beta.BetaMessageParam[],
   schema: Record<string, unknown> | null,
   maxTokens: number,
-  cache: boolean,
+  cache: Cache | boolean,
 ) {
+  const control = cache === "1h" ? { type: "ephemeral" as const, ttl: "1h" as const } : cache ? { type: "ephemeral" as const } : null;
   return {
     model,
     max_tokens: maxTokens,
     output_config: schema ? { effort, format: { type: "json_schema" as const, schema } } : { effort },
     // The system prompts never change, so frequent calls cache them.
-    system: [cache ? { type: "text" as const, text: system, cache_control: { type: "ephemeral" as const } } : { type: "text" as const, text: system }],
+    system: [control ? { type: "text" as const, text: system, cache_control: control } : { type: "text" as const, text: system }],
     messages,
   };
 }
@@ -476,7 +489,8 @@ function toProgram(text: string): ProgramAnswer {
   return { summary: summary.slice(0, 240), code: code.slice(0, 40000), missing: typeof missing === "string" ? missing.trim().slice(0, 300) : "" };
 }
 
-// Dollars per million tokens: input, output, cache read, cache write (5 minute TTL).
+// Dollars per million tokens: input, output, cache read, cache write (5 minute
+// TTL; an hour's write costs 2 times input instead of 1.25, read from the usage).
 // Thinking is billed as output. Checked on 2026-11-02 against
 // https://platform.claude.com/docs/en/about-claude/pricing: cache reads are
 // 0.025x input on Fable 5.1, 0.05x on Opus 5.5 and Sonnet 5.5, 0.1x elsewhere.
@@ -494,11 +508,13 @@ function logUsage(call: string, response: Anthropic.Beta.BetaMessage, discount =
   const output = u.output_tokens ?? 0;
   const cacheRead = u.cache_read_input_tokens ?? 0;
   const cacheWrite = u.cache_creation_input_tokens ?? 0;
+  // 4.2: the hour's writes, billed at twice the input price.
+  const hourWrite = Math.min(cacheWrite, (u as { cache_creation?: { ephemeral_1h_input_tokens?: number } }).cache_creation?.ephemeral_1h_input_tokens ?? 0);
   // Unknown models are priced like the most expensive one, so the budget errs on the safe side.
   const price = PRICES[response.model] ?? PRICES["claude-fable-5-1"];
-  const usd = ((input * price[0] + output * price[1] + cacheRead * price[2] + cacheWrite * price[3]) / 1e6) * discount;
+  const usd = ((input * price[0] + output * price[1] + cacheRead * price[2] + (cacheWrite - hourWrite) * price[3] + hourWrite * price[0] * 2) / 1e6) * discount;
   console.log(JSON.stringify({ usage: call, model: response.model, stop: response.stop_reason, input, output, cacheRead, cacheWrite, usd, ms }));
-  return { call, model: response.model, usd };
+  return { call, model: response.model, usd, tokens: [input, output, cacheRead, cacheWrite] };
 }
 
 function parseJson(text: string): unknown {

@@ -77,6 +77,7 @@ import type { LibraryExample, Rewrite } from "./prompts";
 import { joinsBoth } from "./prompts";
 import { readDigest } from "../shared/chronicle";
 import { cronJobs } from "./cron";
+import { AHEAD_ESTIMATE, activeWrite, aheadCap, aheadReport, claimWrite, finishWrite, getWrite, hasProgram, startWrite, type WriteJob } from "./ahead";
 import {
   ADMIN_PAYER,
   ESTIMATE,
@@ -156,6 +157,10 @@ export interface Env {
   EMAIL_API_URL?: string;
   EMAIL_API_KEY?: string;
   EMAIL_FROM?: string;
+  // 4.2: every new item written at the merge (worker/ahead.ts): the queue the
+  // jobs go through, and the dollars a day they may spend together.
+  WRITES?: Queue<WriteJob>;
+  AHEAD_DAILY_USD?: string;
 }
 
 const MAX_NAME_LENGTH = 60;
@@ -221,6 +226,11 @@ export default {
         }
         if (request.method === "POST" && url.pathname === "/api/spell") {
           const body = await readBody<SpellRequest>(request);
+          // A job started at the merge is writing it (4.2): wait for it, never write it twice.
+          if (body.regenerate !== true && !oracle.mock) {
+            const waiting = await waitForWrite(env, body.name, body.ahead === true);
+            if (waiting) return json(waiting, 202);
+          }
           // The admin can try another model or effort for one design.
           const tried = admin && (body.model || body.effort) ? oracleFor(env, { spellModel: body.model, spellEffort: body.effort }, ledger) : oracle;
           try {
@@ -324,6 +334,24 @@ export default {
   // Every ten minutes: collects the big spells the Batch API has written,
   // turns holds of requests that died into spend, and reads what became of
   // the ideas sent to Claude.
+  // 4.2: the programs of new items, written at the merge (worker/ahead.ts).
+  // Each message is acknowledged whatever happens: a job that failed is
+  // written on first use, never retried into a second bill.
+  async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
+    await Promise.all(
+      batch.messages.map(async (m) => {
+        try {
+          const body = m.body as Partial<WriteJob> | null;
+          if (body?.poll) await pollAhead(env, Number(body.poll));
+          else await runAhead(env, String(body?.key ?? ""));
+        } catch (err) {
+          console.error("ahead", m.body, err);
+        }
+        m.ack();
+      }),
+    );
+  },
+
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
       cronJobs({
@@ -575,7 +603,9 @@ async function backfillTiers(env: Env, oracle: Oracle): Promise<{ rated: number;
 async function recordSpend(db: D1Database, oracle: Oracle): Promise<void> {
   if (!oracle.spent.length) return;
   const at = Date.now();
-  const invite = ledgerOf(oracle).payer.invite;
+  const ledger = ledgerOf(oracle);
+  const invite = ledger.payer.invite;
+  ledger.recorded += oracle.spent.reduce((sum, s) => sum + s.usd, 0);
   try {
     await db.batch(
       oracle.spent
@@ -599,7 +629,8 @@ async function handleMerge(body: MergeRequest, env: Env, oracle: Oracle): Promis
     (await env.DB.prepare("SELECT result FROM recipes WHERE pair = ?").bind(pair).first<{ result: string }>());
   if (known) {
     const element = await getElement(env.DB, known.result);
-    if (element) return { element, firstDiscovery: false, mock: oracle.mock };
+    // A known item without a program, got by this merge: written now (4.2).
+    if (element) return { element, firstDiscovery: false, mock: oracle.mock, writing: await writeAhead(env, oracle, element, "first") };
   }
 
   await ensureBudget(env, oracle, "merge", ESTIMATE.merge);
@@ -650,7 +681,20 @@ async function handleMerge(body: MergeRequest, env: Env, oracle: Oracle): Promis
   const [ka, kb] = pair.split("+");
   await env.DB.prepare("INSERT OR IGNORE INTO recipes (pair, a, b, result, created_at) VALUES (?, ?, ?, ?, ?)").bind(pair, ka, kb, key, Date.now()).run();
 
-  return { element, firstDiscovery, mock: false };
+  return { element, firstDiscovery, mock: false, writing: await writeAhead(env, oracle, element, firstDiscovery ? "new" : "first") };
+}
+
+// 4.2: the program of what a merge gave is written now, in the background,
+// unless it has one or is being written; paid by the player who merged.
+// A failure here never fails the merge: the item is written on first use.
+async function writeAhead(env: Env, oracle: Oracle, element: GameElement, cause: "new" | "first"): Promise<boolean> {
+  if (oracle.mock || PRIMITIVES.some((p) => p.name === element.name)) return false;
+  try {
+    return await startWrite(env.DB, env.WRITES, elementKey(element.name), ledgerOf(oracle).payer.invite, cause);
+  } catch (err) {
+    console.error("write ahead", element.name, err);
+    return false;
+  }
 }
 
 // Every element gets its tier in the merge answer; the ones from before tiers
@@ -682,38 +726,170 @@ async function handleSpell(body: SpellRequest, env: Env, oracle: Oracle, admin: 
     if (program) return { name: element.name, tier, program, mock: false };
   }
 
-  // The spell is written from its grimoire entry, so that comes first.
-  const description = await ensureDescription(env, oracle, element, false);
   // Big spells: drafted now by the small model, written later by the big one
   // through the Batch API at half price. The admin's button still asks the
   // big model at once, and says so.
   const batch = !oracle.mock && !regenerate && !(admin && body.model) && isBig(tier, smallUpTo(env)) && batchEnabled(env);
   const model = body.model && admin ? body.model : batch ? smallModel(env) : spellModelFor(env, tier);
-  await ensureBudget(env, oracle, "spell", spellEstimate(env, model));
-  const intents = await ensureIntents(env, oracle, element, description);
-  const library = oracle.mock ? NO_LIBRARY : await liveLibrary(env.DB);
-  const request: OracleSpellRequest = {
-    name: element.name,
-    kind: element.kind,
-    description,
-    recipe: await firstRecipe(env.DB, key),
-    tier,
-    intents,
-    library: library.docs,
-  };
-  if (!oracle.mock && model === smallModel(env)) request.examples = await examplesFor(env, key, request);
-  const answer = await writeWith(env, oracle, model, body.effort, (w) => w.spell(request));
-  const program = programFrom(answer, intents, library);
-  if (oracle.mock) return { name: element.name, tier, program: { ...program, model }, mock: true };
   const origin: ProgramOrigin = regenerate ? "admin" : batch ? "draft" : "new";
-  const id = await insertProgram(env.DB, key, JSON.stringify(program), model, PROGRAM_VERSION, origin, "trial", live?.row.id ?? null);
-  await recordGap(env.DB, key, id, answer.missing);
+  const written = await writeProgram(env, oracle, element, { model, effort: body.effort, origin, liveId: live?.row.id ?? null });
+  if (oracle.mock || !written.id) return { name: element.name, tier, program: { ...written.program, model }, mock: oracle.mock };
   // The Opus version through the Batch API is held once the draft exists: a
   // player near their allowance keeps the draft and skips the upgrade.
   const batchHold = batch ? await holdBatch(env, oracle).catch(() => null) : null;
   if (batchHold !== null)
-    ctx.waitUntil(queueBatch(env, key, request, id, "upgrade", ledgerOf(oracle).payer.invite, batchHold).catch((err) => console.error("batch", err)));
-  return { name: element.name, tier, program: { ...program, model, id, trial: true }, mock: false };
+    ctx.waitUntil(
+      queueBatch(env, key, written.request, written.id, "upgrade", ledgerOf(oracle).payer.invite, batchHold).catch((err) => console.error("batch", err)),
+    );
+  return { name: element.name, tier, program: { ...written.program, model, id: written.id, trial: true }, mock: false };
+}
+
+// Writes a new program for an element and stores it as a trial: the grimoire
+// entry first (the spell is written from it), then, side by side, what it
+// promises, the API's library, its first recipe and the library examples
+// (4.2: these waited on each other before), then the program. Shared by a
+// player's first use (handleSpell) and the job started at the merge (ahead.ts).
+export async function writeProgram(
+  env: Env,
+  oracle: Oracle,
+  element: GameElement,
+  o: { model: string; effort?: string; origin: ProgramOrigin; liveId: number | null },
+): Promise<{ program: SpellProgram; id: number | null; request: OracleSpellRequest }> {
+  const key = elementKey(element.name);
+  await ensureBudget(env, oracle, "spell", spellEstimate(env, o.model));
+  const library = oracle.mock ? NO_LIBRARY : await liveLibrary(env.DB);
+  const request = await buildRequest(env, oracle, element, o.model, library);
+  const intents = request.intents ?? [];
+  const answer = await writeWith(env, oracle, o.model, o.effort, (w) => w.spell(request));
+  const program = programFrom(answer, intents, library);
+  if (oracle.mock) return { program, id: null, request };
+  const id = await insertProgram(env.DB, key, JSON.stringify(program), o.model, PROGRAM_VERSION, o.origin, "trial", o.liveId);
+  await recordGap(env.DB, key, id, answer.missing);
+  return { program, id, request };
+}
+
+// What a program is written from: the grimoire entry first, then side by
+// side (4.2: these waited on each other before) what it promises, the API's
+// library, its first recipe and the library examples the small model sees.
+async function buildRequest(env: Env, oracle: Oracle, element: GameElement, model: string, library?: Library): Promise<OracleSpellRequest> {
+  const key = elementKey(element.name);
+  const tier = tierOf(element);
+  const description = await ensureDescription(env, oracle, element, false);
+  const small = !oracle.mock && model === smallModel(env);
+  const [intents, lib, recipe, entries] = await Promise.all([
+    ensureIntents(env, oracle, element, description),
+    library ?? (oracle.mock ? NO_LIBRARY : liveLibrary(env.DB)),
+    firstRecipe(env.DB, key),
+    small ? libraryEntries(env.DB) : Promise.resolve([]),
+  ]);
+  const request: OracleSpellRequest = { name: element.name, kind: element.kind, description, recipe, tier, intents, library: lib.docs };
+  if (small) request.examples = pickExamples(entries, { key, name: request.name, description, kind: request.kind, tier });
+  return request;
+}
+
+// 4.2: one job of the WRITES queue (worker/ahead.ts): the program of an item
+// a merge just made, or reached without a program, written by the model its
+// tier calls for and paid by the player whose merge started it, within the
+// day's cap for these writes. Big items are written by the big model at
+// once, with no draft: nobody is waiting on this request, and players never
+// see a weaker version first.
+async function runAhead(env: Env, key: string): Promise<void> {
+  const db = env.DB;
+  const row = await getWrite(db, key);
+  if (!row || row.status !== "queued" || !env.ANTHROPIC_API_KEY) return;
+  if (await hasProgram(db, key)) {
+    await finishWrite(db, key, "done");
+    return;
+  }
+  const element = await getElement(db, key);
+  if (!element) {
+    await finishWrite(db, key, "failed", { error: "no such element" });
+    return;
+  }
+  const tier = tierOf(element);
+  const model = spellModelFor(env, tier);
+  const est = isBig(tier, smallUpTo(env)) ? AHEAD_ESTIMATE.big : AHEAD_ESTIMATE.small;
+  if ((await claimWrite(db, key, est, aheadCap(env.AHEAD_DAILY_USD), { start: monthStart(Date.now()), budget: budget(env) })) !== "go") return;
+  const invite = row.invite === ADMIN_PAYER.invite ? null : await db.prepare("SELECT * FROM invites WHERE id = ?").bind(row.invite).first<InviteRow>();
+  if (row.invite !== ADMIN_PAYER.invite && (!invite || invite.status === "revoked")) {
+    await finishWrite(db, key, "unpaid", { error: "no active invite" });
+    return;
+  }
+  const ledger = new Ledger(invite ? payerOf(invite) : ADMIN_PAYER);
+  ledger.burstFree = true;
+  const oracle = oracleFor(env, {}, ledger);
+  const t0 = Date.now();
+  // Big items: the big model through the Batch API, at half price, as their
+  // upgrade always was; no draft first. The queue polls the batch every 30 s
+  // (the cron every ten minutes is the fallback), and the row stays "writing"
+  // until the program comes back as a trial.
+  if (isBig(tier, smallUpTo(env)) && batchEnabled(env)) {
+    try {
+      const request = await buildRequest(env, oracle, element, model);
+      const reservation = await holdBatch(env, oracle);
+      if (reservation === null) throw new Error("no hold");
+      await queueBatch(env, key, request, null, "ahead", ledger.payer.invite, reservation);
+      await db.prepare("UPDATE writes SET model = ? WHERE key = ?").bind(model, key).run();
+      await env.WRITES?.send({ poll: 1 }, { delaySeconds: BATCH_POLL_S });
+      console.log(JSON.stringify({ ahead: key, model, batch: true, ms: Date.now() - t0 }));
+    } catch (err) {
+      const usd = ledger.recorded + oracle.spent.reduce((sum, s) => sum + s.usd, 0);
+      await finishWrite(db, key, err instanceof LedgerError ? "unpaid" : "failed", { usd, model, error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      await closeLedger(db, oracle);
+    }
+    return;
+  }
+  try {
+    // The same in-flight key as a player's own request: whoever comes second
+    // finds the program the first one stored.
+    const written = await once(db, `spell:${key}`, async () =>
+      (await hasProgram(db, key)) ? null : writeProgram(env, oracle, element, { model, origin: "new", liveId: null }),
+    );
+    const usd = ledger.recorded + oracle.spent.reduce((sum, s) => sum + s.usd, 0);
+    await finishWrite(db, key, "done", { usd, pid: written?.id ?? null, model });
+    console.log(JSON.stringify({ ahead: key, model, usd, ms: Date.now() - t0, written: !!written }));
+  } catch (err) {
+    const usd = ledger.recorded + oracle.spent.reduce((sum, s) => sum + s.usd, 0);
+    await finishWrite(db, key, err instanceof LedgerError ? "unpaid" : "failed", { usd, model, error: err instanceof Error ? err.message : String(err) });
+  } finally {
+    await closeLedger(db, oracle);
+  }
+}
+
+// The batches of big items written ahead, collected as soon as they end:
+// every 30 s while any is waiting, for an hour at most (the ten minute cron
+// goes on after that). Collecting twice bills once (pollBatches).
+const BATCH_POLL_S = 30;
+async function pollAhead(env: Env, round: number): Promise<void> {
+  const { waiting } = await pollBatches(env);
+  if (waiting > 0 && round < 120) await env.WRITES?.send({ poll: round + 1 }, { delaySeconds: BATCH_POLL_S });
+}
+
+// A player asks for a program a job is writing (4.2): the answer waits for
+// it, up to 20 s, and then says "still being written" to a page that knows
+// what that means; an older page (no `ahead`) waits longer, then gets an
+// error to try again. Null when no job is writing it, or once it is stored:
+// the usual path then serves it, free.
+async function waitForWrite(env: Env, name: unknown, ahead: boolean): Promise<SpellResponse | null> {
+  const db = env.DB;
+  const element = await resolveInput(db, name, false).catch(() => null);
+  if (!element) return null;
+  const key = elementKey(element.name);
+  const first = await activeWrite(db, key);
+  if (!first) return null;
+  // A big item's batch takes minutes: the page is told at once and asks
+  // again in 15 s; a small one is written in seconds, so the answer waits.
+  const big = first.est >= AHEAD_ESTIMATE.big;
+  const until = Date.now() + (!ahead ? 55_000 : big ? 0 : 20_000);
+  for (let pause = 300; ; pause = Math.min(1000, pause * 1.4)) {
+    if (!(await activeWrite(db, key)) || (await hasProgram(db, key))) return null;
+    if (Date.now() >= until) break;
+    await new Promise((r) => setTimeout(r, pause));
+  }
+  if (!ahead) throw new HttpError(503, `${element.name} is still being written; try again in a moment`);
+  const program = { version: PROGRAM_VERSION, summary: "", code: "" };
+  return { name: element.name, tier: tierOf(element), program, mock: false, writing: true, retry: big ? 15_000 : 3000 };
 }
 
 // The program crashed in a player's World. The fix is a trial like any new
@@ -1534,7 +1710,7 @@ async function queueBatch(
   env: Env,
   key: string,
   request: OracleSpellRequest,
-  fromPid: number,
+  fromPid: number | null,
   cause: string,
   invite: string,
   reservation: number,
@@ -1560,7 +1736,7 @@ async function queueBatch(
 // "up" for a big spell's first real version, "rw" for a rewrite (oracle.ts
 // counts those against the daily rewrite budget).
 function batchItemId(cause: string, id: number): string {
-  return `${cause === "upgrade" ? "up" : cause === "refresh" ? "rf" : "rw"}${id}`;
+  return `${cause === "upgrade" ? "up" : cause === "refresh" ? "rf" : cause === "ahead" ? "ah" : "rw"}${id}`;
 }
 
 // Collects finished batches: each program comes back as a trial, tested by
@@ -1610,6 +1786,8 @@ async function pollBatches(env: Env): Promise<{ done: number; failed: number; wa
       if (!o?.answer) {
         out.failed++;
         console.error("batch item failed", row.key, o?.error ?? "missing");
+        // A big item written ahead (4.2) is then written on first use.
+        if (taken && row.cause === "ahead") await finishWrite(db, row.key, "failed", { usd: o?.usd ?? 0, error: o?.error ?? "missing" });
         continue;
       }
       if (taken) {
@@ -1620,7 +1798,8 @@ async function pollBatches(env: Env): Promise<{ done: number; failed: number; wa
           // An old row without a request: no promise to keep.
         }
         const program = programFrom(o.answer, intents, await liveLibrary(db));
-        const origin: ProgramOrigin = row.cause === "upgrade" ? "batch" : row.cause === "judge" ? "judge" : row.cause === "refresh" ? "refresh" : "votes";
+        const origin: ProgramOrigin =
+          row.cause === "upgrade" ? "batch" : row.cause === "ahead" ? "new" : row.cause === "judge" ? "judge" : row.cause === "refresh" ? "refresh" : "votes";
         // Its parent is what is live now: the draft may have been fixed, or the
         // spell rolled back, while the batch ran. A refresh (3.7) waits as a
         // candidate, served to nobody, for the refresh runner to decide.
@@ -1637,6 +1816,7 @@ async function pollBatches(env: Env): Promise<{ done: number; failed: number; wa
         );
         await db.prepare("UPDATE rewrites SET status = 'done', to_pid = ?, model = ? WHERE id = ?").bind(id, o.model, row.id).run();
         await recordGap(db, row.key, id, o.answer.missing);
+        if (row.cause === "ahead") await finishWrite(db, row.key, "done", { usd: o.usd, pid: id, model: o.model });
         out.done++;
       }
     }
@@ -1796,6 +1976,8 @@ async function handleAdmin(request: Request, url: URL, env: Env, oracle: Oracle,
   if (post && path === "judge") return json(await handleJudge(await readBody<JudgeBody>(request, MAX_ADMIN_BODY), env, oracle, ctx, true));
   if (post && path === "judge-trial") return json(await handleJudge(await readBody<JudgeBody>(request, MAX_ADMIN_BODY), env, oracle, ctx, false));
   if (!post && path === "judge-stats") return json(await calibration(env.DB));
+  // 4.2: what the writes started at the merge did, by day, against their cap.
+  if (!post && path === "ahead") return json(await aheadReport(env.DB, aheadCap(env.AHEAD_DAILY_USD)));
   if (post && path === "poll-batches") return json(await pollBatches(env));
   if (post && path === "spell-trial") return json(await spellTrial(await readBody<SpellTrialBody>(request), env, oracle));
   if (post && path === "batch-trial") return json(await batchTrial(await readBody<SpellTrialBody & { names?: string[] }>(request), env, oracle));
@@ -2185,7 +2367,7 @@ async function spellTrial(body: SpellTrialBody, env: Env, oracle: Oracle) {
       program: { ...answer, code: withLibrary(answer.code, library.helpers) },
       intents,
       examples: (request.examples ?? []).map((e) => e.name),
-      calls: trial.spent.map((x) => ({ call: x.call, usd: x.usd })),
+      calls: trial.spent.map((x) => ({ call: x.call, usd: x.usd, tokens: x.tokens })),
     };
   } finally {
     await recordSpend(env.DB, trial);

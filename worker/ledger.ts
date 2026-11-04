@@ -47,6 +47,12 @@ export class Ledger {
   readonly held: number[] = [];
   // How long each Claude call of this request took (4.2), for Server-Timing.
   readonly timings: { call: string; ms: number }[] = [];
+  // A background job (4.2, ahead.ts) is not a client in a loop: the burst
+  // guard does not count it. Its money is held like any other call.
+  burstFree = false;
+  // Dollars already written to spend by the request's other oracles (a
+  // writer with another model), so a job knows what it cost in all (4.2).
+  recorded = 0;
   constructor(readonly payer: Payer) {}
 }
 
@@ -165,7 +171,7 @@ export async function hold(db: D1Database, ledger: Ledger, call: string, usd: nu
   const p = ledger.payer;
   if (p.status === "paused") throw new LedgerError(402, "paused", "Your invite is paused for now. Everything already discovered still works.");
   const start = monthStart(now);
-  const guarded = p.invite !== "admin";
+  const guarded = p.invite !== "admin" && !ledger.burstFree;
   const r = await db
     .prepare(
       `INSERT INTO reservations (req, invite, call, at, usd)
