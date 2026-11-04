@@ -9,8 +9,10 @@
 //
 // Each program is timed twice: cold (a fresh control island and fresh probe
 // runs, as in a page that just loaded) and warm (what every later check pays).
+// With COMPARE=1, each artifact also runs its five minute test to the end
+// (fullActsProbe), and any verdict that differs from the early stop is listed.
 import { readFileSync, writeFileSync } from "node:fs";
-import { checkProgram, resetCheckCaches } from "../src/sim/check";
+import { checkProgram, fullActsProbe, resetCheckCaches } from "../src/sim/check";
 import { TIERS, type Tier } from "../shared/tiers";
 import { parseIntents } from "../shared/promises";
 
@@ -54,6 +56,12 @@ for (const row of rows) {
   resetCheckCaches();
   const cold = run(row, code);
   const warm = run(row, code);
+  let full: ReturnType<typeof run> | null = null;
+  if (process.env.COMPARE === "1" && row.kind === "artifact") {
+    fullActsProbe(true);
+    full = run(row, code);
+    fullActsProbe(false);
+  }
   const big = TIERS.indexOf(row.tier) >= TIERS.indexOf("legendary");
   const protect = parseIntents(row.intents).includes("protect");
   const group = `${row.kind}${big ? " big" : " small"}${protect ? " protect" : ""}`;
@@ -67,7 +75,10 @@ for (const row of rows) {
     problem: warm.result.problem,
     seconds: warm.result.stats.seconds,
     phases: warm.result.phases,
+    ...(full ? { fullMs: Math.round(full.ms), fullOk: full.result.ok, fullProblem: full.result.problem } : {}),
   });
+  if (full && (full.result.ok !== warm.result.ok || full.result.problem !== warm.result.problem))
+    console.log(`  DIFFERENT: ${row.name} early ${warm.result.ok ? "pass" : warm.result.problem}, full ${full.result.ok ? "pass" : full.result.problem}`);
   console.log(`${row.name} [${group}]: cold ${Math.round(cold.ms)} ms, warm ${Math.round(warm.ms)} ms, ${warm.result.ok ? "pass" : warm.result.problem}`);
 }
 
@@ -87,4 +98,9 @@ for (const g of groups) {
     )}`,
   );
 }
+const compared = results.filter((r) => "fullOk" in r);
+if (compared.length)
+  console.log(
+    `\nfive minute test, early stop against the full run: ${compared.filter((r) => r.fullOk === r.ok && r.fullProblem === r.problem).length} of ${compared.length} verdicts identical`,
+  );
 if (out) writeFileSync(out, JSON.stringify(results, null, 1));

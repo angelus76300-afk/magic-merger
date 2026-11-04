@@ -6,11 +6,14 @@
   Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; worker-src 'none'; webrtc 'block'; frame-ancestors 'self'
 /world.html
   Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; worker-src 'none'; webrtc 'block'; frame-ancestors 'self'
-# The test run of new programs (3.3): spell code again, same rules.
+# The test run of new programs (3.3): spell code again, same rules, except
+# that since 4.2 the frame runs it in a Web Worker it makes from a blob
+# (src/sim/checkframe.ts): a blob worker has the frame's opaque origin and
+# inherits this policy, so it has no network either.
 /check
-  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; worker-src 'none'; webrtc 'block'; frame-ancestors 'self'
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; worker-src blob:; webrtc 'block'; frame-ancestors 'self'
 /check.html
-  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; worker-src 'none'; webrtc 'block'; frame-ancestors 'self'
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; worker-src blob:; webrtc 'block'; frame-ancestors 'self'
 
 # The sandboxed iframe has an opaque origin, so its module scripts are cross
 # origin requests: allow them. These files are public anyway.

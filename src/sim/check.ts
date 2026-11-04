@@ -379,6 +379,17 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
 export const ACT_SECONDS = 300;
 const ACT_FROM = 15;
 
+// 4.2: the five minute test stops as soon as the artifact has acted, since
+// nothing after that can make it fail: once a second it looks at what the
+// end of the test would count (its deeds, its creatures' deeds since the
+// arrival, its material spreading, a body of its own at work for 30 s). An
+// artifact that never acts still runs the full five minutes. `full` runs
+// every test to the end, to compare (scripts/test-run-timing.ts).
+let fullActs = false;
+export function fullActsProbe(on: boolean): void {
+  fullActs = on;
+}
+
 function* actsProbe(req: CastRequest): Generator<void, { ok: boolean; acted: number; detail: string }> {
   const errors: string[] = [];
   const isl = island(errors);
@@ -401,6 +412,7 @@ function* actsProbe(req: CastRequest): Generator<void, { ok: boolean; acted: num
   let deedsAt = 0;
   let cellsAt = 0;
   let bodySeconds = 0;
+  const ownDeeds = () => world.landmarks.filter(isArtifact).reduce((sum, a) => sum + (a.art.key === key ? a.art.deeds : 0), 0);
   for (let k = 0; k < ACT_SECONDS / TICK && !errors.length; k++) {
     step(world, rt, isl.life);
     if (k === Math.round(ACT_FROM / TICK)) {
@@ -408,6 +420,10 @@ function* actsProbe(req: CastRequest): Generator<void, { ok: boolean; acted: num
       cellsAt = materialCells();
     }
     if (k > ACT_FROM / TICK && k % 30 === 0 && rt.visuals.bodies.some((b) => b.alive && b.look !== "none")) bodySeconds++;
+    if (!fullActs && k % 30 === 29) {
+      const after = k > ACT_FROM / TICK;
+      if (ownDeeds() > 0 || bodySeconds >= 30 || (after && creatureDeeds() - deedsAt > 0) || (after && Math.abs(materialCells() - cellsAt) >= MIN_CELLS)) break;
+    }
     if (k % 5 === 4) {
       yield;
       Math.random = isl.random;
