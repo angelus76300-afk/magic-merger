@@ -7,6 +7,7 @@ import { DAMP, HEART, WOODLAND, cellHash, distanceTo, isSea } from "./ecology";
 import { daylight, dayOf, fullMoon } from "./daylight";
 import { deed, tell, villageOf } from "./kin";
 import { sendTo } from "./goals";
+import { calmDown } from "./flight";
 import { islandName, wonderName } from "./names";
 
 // Wonders (4.4.5 part B): a catalog of natural wonders, each with a rarity,
@@ -310,7 +311,7 @@ export const WONDERS: Kind[] = [
     kind: "stone arch",
     rarity: "common",
     label: "a stone arch",
-    does: "the wind sings through it, and whoever rests near it is calm",
+    does: "the wind sings through it, and whoever comes near it forgets their fear",
     lands: ["desert", "mesa", "temperate", "volcanic", "tundra", "swamp"],
     find: (ctx, rng, lands) => {
       const { world } = ctx;
@@ -399,7 +400,7 @@ export const WONDERS: Kind[] = [
     kind: "sinkhole lake",
     rarity: "uncommon",
     label: "a sinkhole lake",
-    does: "its deep water keeps fish through droughts and floods",
+    does: "its deep water never freezes or runs dry, and fish live through any winter in it",
     lands: "any",
     find: (ctx, rng) => {
       const { world } = ctx;
@@ -597,6 +598,8 @@ export const WONDERS: Kind[] = [
       });
       if (!b) return null;
       const d = drop(world, b.x, b.y);
+      // Its foot frozen too, in the same cold land.
+      if (biomeOf(ctx, (b.y + d.dy * 3) * world.w + b.x + d.dx * 3) !== "tundra") return null;
       return { x: b.x + d.dx * 3, y: b.y + d.dy * 3, ax: b.x, ay: b.y, r: 6 };
     },
     shape: (world, w) => carveFall(world, w, true),
@@ -628,7 +631,7 @@ export const WONDERS: Kind[] = [
     kind: "world tree",
     rarity: "legendary",
     label: "a world tree",
-    does: "it heals and calms all around it, keeps monsters away and grows the forest back",
+    does: "it heals all around it, keeps monsters away and grows the forest back",
     lands: ["temperate", "jungle", "swamp", "tundra", "volcanic"],
     find: (ctx, rng, lands) => {
       const { world } = ctx;
@@ -922,15 +925,12 @@ export function stepWonders(world: World, spawn: Spawn, life: WonderLife): void 
         shelter(world, w, kindOf, heal);
         break;
       case "stone arch":
-        aura(world, w.x, w.y, 6, (c) => {
-          c.calm = Math.max(c.calm, 1.5);
-          c.fear = 0;
-        });
+        aura(world, w.x, w.y, 6, (c) => (c.fear = 0));
         visit(world, w, 50, "rested under the stone arch", 0);
         break;
       case "lone tree":
         seedTrees(world, w.x, w.y, 3, 9, 0.12);
-        aura(world, w.x, w.y, 4, (c) => (c.calm = Math.max(c.calm, 1.5)));
+        aura(world, w.x, w.y, 4, (c) => (c.fear = 0));
         if (Math.random() < 0.05) lure(world, w.x, w.y, 40, (c) => c.kind === "bird" || c.kind === "parrot");
         break;
       case "ruins":
@@ -938,6 +938,11 @@ export function stepWonders(world: World, spawn: Spawn, life: WonderLife): void 
         if (Math.random() < 0.1) lure(world, w.x, w.y, 50, (c) => !kindOf(c).native && c.kind !== "villager" && kindOf(c).ai?.mode === "hunt");
         break;
       case "sinkhole lake":
+        // Deep water does not freeze: in the cold it is where fish winter.
+        disc(world, w.x, w.y, 4.4, (i) => {
+          world.temp[i] = Math.max(world.temp[i], 4);
+          if (world.fluid[i] === F.ICE) world.setFluid(i, F.WATER, world.depth[i]);
+        });
         if (w.t <= 0) {
           w.t = 60;
           let fish = 0;
@@ -987,7 +992,6 @@ export function stepWonders(world: World, spawn: Spawn, life: WonderLife): void 
         aura(world, w.x, w.y, 10, (c) => {
           if (kindOf(c).native || c.kind === "villager") {
             heal(c, 2);
-            c.calm = Math.max(c.calm, 1.5);
             c.burning = 0;
           } else if (kindOf(c).ai?.mode === "hunt") {
             c.fear = Math.max(c.fear, 2);
@@ -1015,9 +1019,6 @@ export function stepWonders(world: World, spawn: Spawn, life: WonderLife): void 
             break;
           }
         }
-        aura(world, w.x, w.y, 6, (c) => {
-          if (c.kind === "fish") c.calm = Math.max(c.calm, 1.5);
-        });
         break;
     }
   }
@@ -1058,7 +1059,6 @@ function hotSpring(world: World, w: Wonder, heal: (c: Creature, hp: number) => v
     heal(c, 3);
     c.burning = 0;
     c.frozen = 0;
-    c.calm = Math.max(c.calm, 1.5);
   });
 }
 
@@ -1070,7 +1070,6 @@ function shelter(world: World, w: Wonder, kindOf: (c: Creature) => { native: boo
     if (d < 2.5) {
       heal(c, 2);
       c.burning = 0;
-      c.calm = Math.max(c.calm, 1.5);
     } else if ((c.burning > 0 || c.fear > 0 || night > 0.7) && Math.random() < 0.3) sendTo(c, w.x, w.y);
   }
 }
@@ -1169,12 +1168,26 @@ function erupt(world: World, w: Wonder, first: boolean): void {
   }
 }
 
+// A cell of this cover under a creature or a step from it, or -1: a walker
+// is looked at twice a second and would pass over it unseen.
+function beside(world: World, c: Creature, cover: number): number {
+  const x = Math.round(c.x - 0.5);
+  const y = Math.round(c.y - 0.5);
+  for (let dy = -1; dy <= 1; dy++)
+    for (let dx = -1; dx <= 1; dx++) {
+      if (!world.inside(x + dx, y + dy)) continue;
+      const i = (y + dy) * world.w + x + dx;
+      if (world.cover[i] === cover) return i;
+    }
+  return -1;
+}
+
 function mine(world: World, w: Wonder): void {
   // A miner standing on ore takes it home.
   for (const c of world.crowd.near(world, w.x, w.y, 8)) {
     if (c.dead || c.kind !== "villager") continue;
-    const i = world.idx(c.x, c.y);
-    if (world.cover[i] !== C.ORE) continue;
+    const i = beside(world, c, C.ORE);
+    if (i < 0) continue;
     world.setCover(i, C.NONE);
     const v = villageOf(world, c.homeX, c.homeY);
     if (v) v.gold += 2;
@@ -1241,21 +1254,25 @@ function frozenFall(world: World, w: Wonder): void {
 }
 
 function dance(world: World, w: Wonder, kindOf: (c: Creature) => { native: boolean }): void {
-  const turn = world.time * 0.6;
   let n = 0;
   for (const c of world.crowd.near(world, w.x, w.y, w.r)) {
     if (c.dead || !c.mind || c.kind === "fish" || c.kind === "bird") continue;
     if (!kindOf(c).native && c.kind !== "villager") continue;
-    // Round the ring, each a little apart from the next.
-    const a = turn + ((c.id * 2.399) % (Math.PI * 2));
+    // Round the ring: always a little ahead of where it is, so it never
+    // arrives and wanders off between two looks.
+    const a = Math.atan2(c.y - w.y - 0.5, c.x - w.x - 0.5) + 1.1;
     c.mind.task = "roam";
     c.mind.tx = w.x + 0.5 + Math.cos(a) * 3;
     c.mind.ty = w.y + 0.5 + Math.sin(a) * 3;
     c.mind.action = `dancing round ${w.name}`;
     c.tx = c.mind.tx;
     c.ty = c.mind.ty;
-    c.calm = Math.max(c.calm, 1.5);
+    // The ring's spell: no fear, no alarm, no sleep, no hunger till dawn.
     c.fear = 0;
+    calmDown(c);
+    c.sleep = 0;
+    c.mind.meal = false;
+    c.mind.hunger = Math.min(c.mind.hunger, 0.5);
     n++;
   }
   if (n && w.state !== dayOf(world.time)) {
@@ -1273,7 +1290,9 @@ function hoard(world: World, w: Wonder, spawn: Spawn): void {
   const dragon = world.creatures.find((c) => c.kind === DRAGON && !c.dead && c.data.hoard === w.seed);
   if (w.state === 2) return; // slain: its gold is anyone's.
   if (dragon) {
-    if (w.t <= 0 && Math.hypot(dragon.x - w.x, dragon.y - w.y) < 6) {
+    // Back on its gold, or half a minute after its time is up wherever it is
+    // (it flies home out of sight): asleep again.
+    if (w.t <= 0 && (Math.hypot(dragon.x - w.x, dragon.y - w.y) < 6 || w.t < -30)) {
       // Back to sleep: the creature leaves, the model lies down again.
       dragon.dead = true;
       dragon.deadFor = 999;
@@ -1288,8 +1307,8 @@ function hoard(world: World, w: Wonder, spawn: Spawn): void {
   // Thieves.
   for (const c of world.crowd.near(world, w.x, w.y, 6)) {
     if (c.dead || c.kind !== "villager") continue;
-    const i = world.idx(c.x, c.y);
-    if (world.cover[i] !== C.HOARD) continue;
+    const i = beside(world, c, C.HOARD);
+    if (i < 0) continue;
     world.setCover(i, C.NONE);
     const v = villageOf(world, c.homeX, c.homeY);
     if (v) v.gold += 5;

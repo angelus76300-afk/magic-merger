@@ -166,7 +166,7 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
           .map((b) => ({ kind: Math.round(b.kind), i: Math.round(b.i) })),
         store: ok(t.store) ? Math.max(0, Math.min(200, t.store!)) : 0,
         street: ok(t.street) ? Math.round(t.street!) & 3 : 0,
-        ...(typeof t.name === "string" ? { name: t.name.slice(0, 20) } : {}),
+        name: typeof t.name === "string" ? t.name.slice(0, 20) : "",
       }));
     world.wonders = (Array.isArray(data.wonders) ? data.wonders : [])
       .map(readWonder)

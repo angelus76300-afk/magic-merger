@@ -713,13 +713,14 @@ export class WorldHost {
     const sizeLabel = (o: string) => {
       const n = WORLD_SIZES[o as WorldSize];
       const name = o[0].toUpperCase() + o.slice(1);
-      return offered.includes(o as WorldSize) ? `${name} (${n} by ${n})` : `${name}: needs a faster device`;
+      // A recommendation, never a lock (the owner's ask: a Fold 5 and a desktop
+      // with a big GPU could not open Huge or Giant at all).
+      return BIG_SIZES.includes(o as WorldSize) && !offered.includes(o as WorldSize) ? `${name} (${n} by ${n}), may run slowly here` : `${name} (${n} by ${n})`;
     };
     const size = select(
       Object.keys(WORLD_SIZES),
       sizeLabel,
-      offered.includes(choice.size) ? choice.size : defaultSize(),
-      (o) => !offered.includes(o as WorldSize),
+      choice.size in WORLD_SIZES ? choice.size : defaultSize(),
     );
     const warmth = slider(choice.land.warmth);
     const water = slider(choice.land.water);
@@ -738,7 +739,7 @@ export class WorldHost {
       `The seed picks the island's shape and, from warmth and water, its land. Islands from ${MIXED_FROM} cells across mix several lands. ` +
       (BIG_SIZES.every((s) => offered.includes(s))
         ? "This device has room for every size."
-        : "Huge and Giant islands are offered once this device shows it can run them: play a few minutes on a Large island first.");
+        : "Huge and Giant are for fast devices: this one has not shown yet it runs them smoothly (a few minutes on a Large island tells). They are yours to try.");
     const warn = document.createElement("p");
     warn.className = "chronicle-note";
     warn.textContent = "Everything on your current island will be lost.";
@@ -1211,8 +1212,8 @@ function readChoice(): { size: WorldSize; land: LandChoice } {
   try {
     const v = JSON.parse(localStorage.getItem(CHOICE_KEY) ?? "null") as { size?: string; land?: unknown } | null;
     const size = v?.size && v.size in WORLD_SIZES ? (v.size as WorldSize) : defaultSize();
-    // A big size stays chosen only while this device still has the room.
-    return { size: sizesOffered(readHeadroom()).includes(size) ? size : defaultSize(), land: readLandChoice(v?.land) };
+    // A big size stays chosen (4.4.5 part B: a recommendation, not a lock).
+    return { size, land: readLandChoice(v?.land) };
   } catch {
     return { size: defaultSize(), land: { ...DEFAULT_LAND } };
   }

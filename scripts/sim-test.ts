@@ -58,6 +58,7 @@ import { TICK } from "../src/sim/world";
 import { BIOMES, DEFAULT_LAND, SHAPES, habitatCount, readLand, resolveLand, LOOKS } from "../src/sim/land";
 import { landProblems, type LandLife } from "./land-life";
 import type { Balance } from "./balance-run";
+import { wonderChecks } from "./wonders-test";
 import { riverShape, riverTrenches } from "./river-metrics";
 import { projectedSim, sizesOffered, SIM_BUDGET_MS } from "../src/headroom";
 import { skyBodies, weatherAt } from "../src/sim/voxel/sky";
@@ -989,6 +990,8 @@ for (const scenario of SCENARIOS) {
       `old id 10 is now ${loaded ? loaded.materials.get("cover", loaded.cover[100]).name : "?"}, ${BUILTIN.cover.length} built-in covers`,
     );
   }
+  // 4.4.5 part B: wonders, names, the last ten sets, buildings (wonders-test.ts).
+  wonderChecks(check);
   check("a small island is one land", generateWorld(112, 112, 5, resolveLand(mid, 5, 112)).biomeMap === null);
   // 4.4.1: rivers wind instead of running straight with right angle turns
   // (main had a run of 26 cells and a quarter of its river in runs of 8 or
@@ -1024,7 +1027,7 @@ for (const scenario of SCENARIOS) {
 {
   const m = (w: number, simP95: number, frameP95 = 30, frames = 600) => ({ w, simP95, frameP95, frames });
   check(
-    "bigger islands only with headroom",
+    "bigger islands recommended only with headroom (4.4.5 B: never locked, the dialog offers every size)",
     sizesOffered(null).join() === "small,medium,large" &&
       sizesOffered(m(208, 3)).join() === "small,medium,large,huge,giant" &&
       sizesOffered(m(208, 5)).join() === "small,medium,large,huge" &&

@@ -281,13 +281,13 @@ export function growBuildings(world: World): void {
       } else if (!covers.some((c) => c === C.RUBBLE || c === job.kind || c === C.HOUSE)) {
         // Gone for good (a crater, a flood): it may be raised again elsewhere.
         s.jobs = s.jobs!.filter((j) => j !== job);
-        tell(world, `${s.name ?? "a village"} lost its ${JOB_BY_ID.get(job.kind)?.name ?? "building"}`);
+        tell(world, `${s.name || "a village"} lost its ${JOB_BY_ID.get(job.kind)?.name ?? "building"}`);
       }
     }
     if (!v) return;
     const tier = tierOf(housesOf(world, s));
     const had = tiers.get(s);
-    if (had && had !== tier && tier !== "hamlet" && (had === "hamlet" || tier === "town")) tell(world, `${s.name ?? "a village"} grew into a ${tier}`);
+    if (had && had !== tier && tier !== "hamlet" && (had === "hamlet" || tier === "town")) tell(world, `${s.name || "a village"} grew into a ${tier}`);
     tiers.set(s, tier);
     // A new building: stores to spare, its turn come, room in the tier.
     const built = s.jobs?.length ?? 0;
@@ -299,7 +299,7 @@ export function growBuildings(world: World): void {
       const next = options[Math.floor(rng.next() * options.length)];
       if (next && raise(world, s, next, rng)) {
         v.wood -= 4;
-        tell(world, `${s.name ?? "a village"} built a ${next.name}`);
+        tell(world, `${s.name || "a village"} built a ${next.name}`);
       }
     }
     // The granary: a surplus is put away, and given back when food runs out.
@@ -313,7 +313,7 @@ export function growBuildings(world: World): void {
         const back = Math.min(6, s.store);
         s.store -= back;
         v.food += back;
-        tell(world, `${s.name ?? "a village"} opened its granary`);
+        tell(world, `${s.name || "a village"} opened its granary`);
       }
     }
     // Market days, one day in two: a little gold, and food to the poorest.
@@ -380,8 +380,9 @@ export function stepBuildings(
       for (const c of world.crowd.near(world, x, y, 8)) {
         if (c.dead || Math.hypot(c.x - x, c.y - y) > 8) continue;
         if (c.kind === "villager") {
+          // Healed and soothed (not "calm": that stops a creature where it stands).
           c.hp = Math.min(life.maxHp(c), c.hp + 1.5);
-          c.calm = Math.max(c.calm, 1);
+          c.fear = 0;
         } else if (c.kind === "risen" || /skeleton|zombie|ghoul|wraith|undead|vampire/.test(c.kind)) {
           c.fear = Math.max(c.fear, 3);
           c.fearX = x;
@@ -413,7 +414,7 @@ export function stepBuildings(
       }
       if (world.time - (spotted.get(s) ?? -999) > 60) {
         spotted.set(s, world.time);
-        tell(world, `the watchtower of ${s.name ?? "a village"} spotted a ${foe.kind.split("#")[0]}`);
+        tell(world, `the watchtower of ${s.name || "a village"} spotted a ${foe.kind.split("#")[0]}`);
       }
     }
   }

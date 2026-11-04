@@ -390,7 +390,7 @@ function placeVillages(world: World, rng: Rng, top: number): void {
       centers.push(c);
       buildVillage(world, c.x, c.y, rng);
       // 4.4.5: each village's look and extras start from its center.
-      world.settlements.push({ x: c.x, y: c.y, style: 0, level: 1 });
+      world.settlements.push({ x: c.x, y: c.y, style: 0, level: 1, jobs: [], store: 0, street: 0, name: "" });
     }
   }
 }

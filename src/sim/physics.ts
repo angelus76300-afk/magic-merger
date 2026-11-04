@@ -45,6 +45,18 @@ export function stepPhysics(world: World, dt: number): void {
   stepVoxels(world, dt);
 }
 
+// The cells springs keep flowing, by cell, rebuilt when the springs change.
+let runningFor: { springs: World["springs"]; length: number; cells: Uint8Array } | null = null;
+function runningWater(world: World): Uint8Array | null {
+  if (!world.springs.length) return null;
+  if (runningFor?.springs !== world.springs || runningFor.length !== world.springs.length) {
+    const cells = new Uint8Array(world.n);
+    for (const s of world.springs) if (!s.lava && s.i < world.n) cells[s.i] = 1;
+    runningFor = { springs: world.springs, length: world.springs.length, cells };
+  }
+  return runningFor.cells;
+}
+
 // Rivers (4.4, land.ts): springs keep river heads, lakes and a volcano's
 // crater at their level, and water above the
 // sea leaves the island over its edge (the waterfalls), so the rivers keep
@@ -375,12 +387,15 @@ function stepTemperature(world: World, dt: number): void {
   }
   temp.set(tempNext);
 
-  // Phase changes.
+  // Phase changes. Running water (a river, fed by its springs) freezes only
+  // in a hard cold (4.4.5 part B: rivers of cold regions froze white within
+  // minutes, and from above a big island seemed to have none).
+  const running = runningWater(world);
   for (let i = 0; i < world.n; i++) {
     const t = temp[i];
     const fl = world.fluid[i];
     if (fl === F.WATER) {
-      if (t < 0) world.fluid[i] = F.ICE;
+      if (t < (running && running[i] ? -10 : 0)) world.fluid[i] = F.ICE;
       else if (t > 100) {
         world.depth[i] -= 0.03 * dt;
         addGas(world, i, S.STEAM, 0.2 * dt);

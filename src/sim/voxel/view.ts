@@ -796,9 +796,11 @@ export class VoxelView {
         this.gaits.set(c.id, g);
       }
       g.seen = frame;
-      // Fish swim under the surface; a dead one floats. The rest walk up and
-      // down the island's steps instead of jumping between levels (walk.ts).
-      const underwater = k.aquatic && !c.dead && world.depth[i] > 0.3 && world.fluid[i] === FLUID.WATER;
+      // Fish swim under the surface, also under ice (a frozen lake: they used
+      // to be drawn standing on it, as if on land); a dead one floats. The
+      // rest walk up and down the island's steps instead of jumping between
+      // levels (walk.ts).
+      const underwater = k.aquatic && !c.dead && world.depth[i] > 0.3 && (world.fluid[i] === FLUID.WATER || world.fluid[i] === FLUID.ICE);
       const ground = underwater ? this.groundAt(c.x, c.y) : easeGround(g, walkGround(world, c.x, c.y), time);
       const y = underwater ? ground - Math.min(0.7, world.depth[i] * 0.5) - size * 0.15 : ground + c.z;
       const p = this.toScene(c.x, c.y, y);
