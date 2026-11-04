@@ -12,7 +12,10 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # npm test runs half hour balance scenes (4.4.5 part A) and the wonder
+    # checks (part B): about 14 minutes on a runner since part A, and 15
+    # cancelled green runs. Room to grow, still a stop for a hung job.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
