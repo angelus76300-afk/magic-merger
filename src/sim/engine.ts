@@ -65,9 +65,11 @@ export class Engine {
     options: EngineOptions = {},
     // The player's island (4.4); without, the island before 4.4 (the Spell Lab's).
     land?: LandOptions,
+    // The wonder sets of the player's last islands, not made again (4.4.5 part B).
+    recent: readonly string[] = [],
   ): Engine {
     const n = WORLD_SIZES[size] ?? WORLD_SIZES.medium;
-    const world = generateWorld(n, n, seed, land);
+    const world = generateWorld(n, n, seed, land, recent);
     populate(world);
     const engine = new Engine(canvas, overlay, world, hooks, undefined, options);
     // Open on a village, a little zoomed in: the people make the world feel alive.

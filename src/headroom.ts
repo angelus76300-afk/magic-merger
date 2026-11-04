@@ -2,9 +2,10 @@ import { WORLD_SIZES, type WorldSize } from "./sim/sizes";
 
 // Bigger islands for devices that can run them (4.4). The World frame sends
 // its own frame numbers every 30 seconds (frame.ts, "headroom"); this browser
-// keeps the latest. A bigger size is offered when the simulation's p95, grown
-// with the number of cells, would still fit its budget, and frames are on
-// time now. Never chosen by default: the player picks it.
+// keeps the latest. A bigger size is recommended when the simulation's p95,
+// grown with the number of cells, would still fit its budget, and frames are
+// on time now. Since 4.4.5 part B every size can be picked anyway (the owner:
+// a recommendation, not a lock); never chosen by default.
 
 export interface Headroom {
   // Width of the island measured, its simulation and frame p95 (ms), frames.
@@ -33,6 +34,7 @@ export function projectedSim(m: Headroom, size: WorldSize): number {
   return m.simP95 * ((n * n) / (m.w * m.w));
 }
 
+// The sizes recommended for this device.
 export function sizesOffered(m: Headroom | null): WorldSize[] {
   const sizes: WorldSize[] = ["small", "medium", "large"];
   if (!m || m.frames < MIN_FRAMES || m.frameP95 > FRAME_BUDGET_MS) return sizes;

@@ -315,6 +315,9 @@ export const COVER_MODELS: Record<string, Box[]> = {
   ],
   "fence-x": [B(0.45, 0, 0.45, 0.1, 0.42, 0.1, 0x6a4a2e), B(0, 0.28, 0.47, 1, 0.06, 0.06, 0x8a6a44), B(0, 0.12, 0.475, 1, 0.05, 0.05, 0x8a6a44)],
   "fence-z": [B(0.45, 0, 0.45, 0.1, 0.42, 0.1, 0x6a4a2e), B(0.47, 0.28, 0, 0.06, 0.06, 1, 0x8a6a44), B(0.475, 0.12, 0, 0.05, 0.05, 1, 0x8a6a44)],
+  // 4.4.5 part B: a crater's strange ore and a dragon's gold, both shining.
+  "strange ore": [B(0.3, 0, 0.32, 0.22, 0.32, 0.2, 0x7fe8d8), B(0.55, 0, 0.5, 0.16, 0.22, 0.18, 0x9af0c8), B(0.2, 0, 0.6, 0.14, 0.16, 0.14, 0x5fd0e0)],
+  "dragon hoard": [B(0.1, 0, 0.12, 0.8, 0.22, 0.76, 0xe8b830), B(0.25, 0.2, 0.25, 0.5, 0.16, 0.5, 0xf2c94c), B(0.4, 0.34, 0.38, 0.2, 0.1, 0.22, 0xffd866)],
   // Drawn in their own colors per instance: a tuft of grass in the ground's
   // color, flowers in their drift's.
   tuft: [B(0.34, 0, 0.38, 0.05, 0.24, 0.05, 0xdcdcdc), B(0.5, 0, 0.5, 0.05, 0.3, 0.05, 0xffffff)],
@@ -424,4 +427,11 @@ export function floraModels(): Record<string, Box[]> {
 }
 
 // Models that shine by themselves: never darkened at night.
-export const GLOWING = new Set([...Array.from({ length: VARIANTS }, (_, v) => `tree:glowcap:${v}`), "fungi-glow", "crystals", "spark"]);
+export const GLOWING = new Set([
+  ...Array.from({ length: VARIANTS }, (_, v) => `tree:glowcap:${v}`),
+  "fungi-glow",
+  "crystals",
+  "spark",
+  "strange ore",
+  "dragon hoard",
+]);

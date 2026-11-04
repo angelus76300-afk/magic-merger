@@ -9,13 +9,14 @@ import type { LandChoice } from "./land-options";
 // everything it needs comes in here, everything it says goes out here.
 
 export type ToWorld =
-  | { type: "init"; save: SavedWorld | null; size: WorldSize; land: LandChoice; rules: CastRequest[]; muted: boolean }
+  // recent (4.4.5 part B): the wonder sets of the player's last ten islands.
+  | { type: "init"; save: SavedWorld | null; size: WorldSize; land: LandChoice; rules: CastRequest[]; muted: boolean; recent?: string[] }
   | { type: "select"; spell: CastRequest | null }
   | { type: "spell-updated"; spell: CastRequest }
   | { type: "villager" }
   // 4.4.1: the sliders and the seed (null for a new one); the seed picks
   // the shape and the land.
-  | { type: "reset"; size: WorldSize; land: LandChoice; seed: number | null }
+  | { type: "reset"; size: WorldSize; land: LandChoice; seed: number | null; recent?: string[] }
   | { type: "mute"; muted: boolean }
   | { type: "visible"; visible: boolean }
   // ahead: seconds of the hazard already played while the player merged (3.7).
@@ -61,6 +62,10 @@ export function readFromWorld(data: unknown): FromWorld | null {
       const digest = readDigest(m.digest);
       return digest ? { type: "chronicle", digest } : null;
     }
+    case "island":
+      return str(m.name, 40) && typeof m.signature === "string" && m.signature.length <= 300
+        ? { type: "island", name: m.name as string, signature: m.signature }
+        : null;
     case "need":
       return Array.isArray(m.names) && m.names.length <= 20 && m.names.every((n) => str(n, 120)) ? { type: "need", names: m.names as string[] } : null;
     case "objective":
@@ -91,4 +96,7 @@ export type FromWorld =
   | { type: "headroom"; sample: { w: number; simP95: number; frameP95: number; frames: number } }
   // Names of library spells creatures or artifacts want to cast (3.7).
   | { type: "need"; names: string[] }
-  | { type: "chronicle"; digest: ChronicleDigest };
+  | { type: "chronicle"; digest: ChronicleDigest }
+  // A new island was made (4.4.5 part B): its name and its wonders' set, for
+  // the page to keep with the last ten.
+  | { type: "island"; name: string; signature: string };

@@ -281,3 +281,16 @@ export function habitatCell(world: World, s: Species, tries = 60): number {
   }
   return -1;
 }
+
+// The same, sure to find one if there is any: random tries first, then a
+// scan of the island. For a regional animal whose land is a small corner of
+// a big island, sixty tries over the whole island often missed, and the
+// island started without it (4.4.5 part B: monkeys on a large mixed island
+// came only with the first arrivals, at half the time).
+export function habitatCellSure(world: World, s: Species): number {
+  const i = habitatCell(world, s);
+  if (i >= 0) return i;
+  const found: number[] = [];
+  for (let y = 1; y < world.h; y += 2) for (let x = 1; x < world.w; x += 2) if (s.habitat(world, y * world.w + x)) found.push(y * world.w + x);
+  return found.length ? found[(Math.random() * found.length) | 0] : -1;
+}

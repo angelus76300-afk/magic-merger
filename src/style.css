@@ -564,6 +564,23 @@ input {
   color: var(--muted);
 }
 
+/* The spell in hand being made: asked, written, tested. */
+.creation-bar {
+  height: 4px;
+  margin: -4px 16px 8px;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 10%);
+  overflow: hidden;
+}
+
+.creation-bar > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent, #f4d58d);
+  transition: width 0.25s linear;
+}
+
 .spell-list {
   display: flex;
   gap: 6px;

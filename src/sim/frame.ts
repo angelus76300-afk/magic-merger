@@ -10,6 +10,12 @@ import type { CastRequest, Runtime } from "./runtime";
 import type { SavedWorld } from "./save";
 import { Hud } from "./hud";
 import { SCENARIOS } from "./scenarios";
+import { firstLook } from "./firstlook";
+import { signatureOf, wonderInfo } from "./wonders";
+
+function readRecent(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string" && s.length <= 300).slice(-10) : [];
+}
 
 // Entry point of the World iframe (world.html). It owns the simulation and
 // runs spell programs; the parent page owns the player's data and the API.
@@ -45,8 +51,10 @@ const hooks = {
       // No spell in hand: a tap on a creature shows what it is doing (3.6).
       const c = creatureAt(engine.world, x, y);
       const a = c ? null : artifactAt(engine.world, x, y);
+      const wonder = c || a ? null : engine.world.wonders.find((w) => Math.hypot(w.x - x, w.y - y) <= Math.max(3, w.r * 0.8));
       if (c) showInspect(c);
       else if (a) showInspect(null, a);
+      else if (wonder) showWonder(wonderInfo(wonder));
       else {
         closeInspect();
         send({ type: "tap-without-spell" });
@@ -73,6 +81,20 @@ function showInspect(c: Creature | null, a: Artifact | null = null): void {
   card.hidden = false;
   clearInterval(inspectTimer);
   inspectTimer = window.setInterval(drawInspect, 500);
+}
+
+// A wonder's card (4.4.5 part B): what it is and what it does.
+function showWonder(info: ReturnType<typeof wonderInfo>): void {
+  closeInspect();
+  const close = el("button", "close", "×");
+  close.setAttribute("aria-label", "Close");
+  close.addEventListener("click", closeInspect);
+  const head = el("div", "head");
+  head.append(el("strong", "title", info.name[0].toUpperCase() + info.name.slice(1)), el("span", "sub", info.label), close);
+  const rows = el("dl", "rows");
+  rows.append(el("dt", "", "Rarity"), el("dd", "", info.rarity), el("dt", "", "Does"), el("dd", "", info.does));
+  card.replaceChildren(head, rows);
+  card.hidden = false;
 }
 
 function closeInspect(): void {
@@ -130,6 +152,9 @@ window.setInterval(() => {
 
 function mount(next: Engine): void {
   closeInspect();
+  stopLook?.();
+  stopLook = null;
+  lookCard.hidden = true;
   engine?.dispose();
   unbind?.();
   engine = next;
@@ -151,7 +176,20 @@ function mount(next: Engine): void {
 // land from the sliders (land-options.ts, resolveLand).
 function freshIsland(size: WorldSize, choice: LandChoice, seed: number | null): Engine {
   const s = seed ?? (Math.random() * 2 ** 31) | 0;
-  return Engine.create(canvas, overlay, size, hooks, s, {}, resolveLand(choice, s, WORLD_SIZES[size] ?? WORLD_SIZES.medium));
+  return Engine.create(canvas, overlay, size, hooks, s, {}, resolveLand(choice, s, WORLD_SIZES[size] ?? WORLD_SIZES.medium), recent);
+}
+
+// The wonder sets of the player's last islands (the page keeps them), and
+// the first look at a new one (4.4.5 part B).
+let recent: string[] = [];
+let stopLook: (() => void) | null = null;
+const lookCard = document.getElementById("first-look") as HTMLElement;
+function showFirstLook(): void {
+  if (!engine) return;
+  const world = engine.world;
+  send({ type: "island", name: world.islandName ?? "", signature: signatureOf(world.wonders.map((w) => w.kind)) });
+  if (!world.wonders.length && !world.islandName) return;
+  stopLook = firstLook(engine, lookCard, window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
 }
 
 // Challenge worlds are never saved: only the sandbox is the player's.
@@ -185,6 +223,7 @@ function openSandbox(): void {
     sandbox.save = null;
   }
   mount(restored ?? freshIsland(sandbox.size, sandbox.land, null));
+  if (!restored) showFirstLook();
 }
 
 // The head start of the challenge being played, for a reset (L6).
@@ -248,6 +287,7 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
     case "init": {
       muted = msg.muted;
       sandbox = { save: msg.save, size: msg.size, land: readChoice(msg.land), rules: msg.rules };
+      recent = readRecent(msg.recent);
       openSandbox();
       clearInterval(saveTimer);
       saveTimer = window.setInterval(save, 10_000);
@@ -280,7 +320,9 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       }
       sandbox.size = msg.size;
       sandbox.land = readChoice(msg.land);
+      recent = readRecent(msg.recent);
       mount(freshIsland(msg.size, sandbox.land, msg.seed));
+      showFirstLook();
       save();
       break;
     case "scenario":

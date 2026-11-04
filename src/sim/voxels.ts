@@ -1,7 +1,7 @@
 import { addGas } from "./cells";
 import { FACE_STEPS, keyCell, keyLevel, keyOffset, keyX, keyY } from "./voxelkey";
 import { DecorStore } from "./decor";
-import { C, F, S } from "./materials";
+import { C, F, S, isBuilding } from "./materials";
 import type { World } from "./world";
 import { WARD, wardedAt } from "./wards";
 
@@ -217,7 +217,7 @@ function land(world: World): void {
     for (const [i, n] of hit) {
       const x = i % world.w;
       const y = Math.floor(i / world.w);
-      if (world.cover[i] === C.HOUSE && n >= 2) world.setCover(i, C.RUBBLE);
+      if (isBuilding(world.cover[i]) && n >= 2) world.setCover(i, C.RUBBLE);
       else if (world.cover[i] === C.TREE || world.cover[i] === C.BUSH || world.cover[i] === C.CROP) world.setCover(i, C.NONE);
       if (Math.random() < 0.25)
         world.particles.add({

@@ -58,6 +58,7 @@ import { TICK } from "../src/sim/world";
 import { BIOMES, DEFAULT_LAND, SHAPES, habitatCount, readLand, resolveLand, LOOKS } from "../src/sim/land";
 import { landProblems, type LandLife } from "./land-life";
 import type { Balance } from "./balance-run";
+import { wonderChecks } from "./wonders-test";
 import { riverShape, riverTrenches } from "./river-metrics";
 import { projectedSim, sizesOffered, SIM_BUDGET_MS } from "../src/headroom";
 import { skyBodies, weatherAt } from "../src/sim/voxel/sky";
@@ -989,6 +990,8 @@ for (const scenario of SCENARIOS) {
       `old id 10 is now ${loaded ? loaded.materials.get("cover", loaded.cover[100]).name : "?"}, ${BUILTIN.cover.length} built-in covers`,
     );
   }
+  // 4.4.5 part B: wonders, names, the last ten sets, buildings (wonders-test.ts).
+  wonderChecks(check);
   check("a small island is one land", generateWorld(112, 112, 5, resolveLand(mid, 5, 112)).biomeMap === null);
   // 4.4.1: rivers wind instead of running straight with right angle turns
   // (main had a run of 26 cells and a quarter of its river in runs of 8 or
@@ -1024,7 +1027,7 @@ for (const scenario of SCENARIOS) {
 {
   const m = (w: number, simP95: number, frameP95 = 30, frames = 600) => ({ w, simP95, frameP95, frames });
   check(
-    "bigger islands only with headroom",
+    "bigger islands recommended only with headroom (4.4.5 B: never locked, the dialog offers every size)",
     sizesOffered(null).join() === "small,medium,large" &&
       sizesOffered(m(208, 3)).join() === "small,medium,large,huge,giant" &&
       sizesOffered(m(208, 5)).join() === "small,medium,large,huge" &&
@@ -1166,6 +1169,28 @@ for (const r of balances.filter((b) => b.wipe)) {
     Object.entries(r.wipe!)
       .map(([k, v]) => `${k} ${v.back < 0 ? "never" : v.back + " s"} (of ${v.target})`)
       .join(", "),
+  );
+}
+// 4.4.5 part B (the owner's rule): no population goes extinct. In the half
+// hour runs no kind that belongs is at none for more than a minute; after a
+// wipe every kind has one back within two minutes.
+{
+  const gone = balances
+    .filter((b) => !b.wipe)
+    .flatMap((b) => Object.entries(b.species).map(([k, v]) => ({ where: `${b.biome} ${b.size}`, k, gone: v.gone })))
+    .filter((g) => g.gone > 60);
+  const slow = balances
+    .filter((b) => b.wipe)
+    .flatMap((b) => Object.entries(b.wipe!).map(([k, v]) => ({ where: `${b.biome} ${b.size}`, k, first: v.first })))
+    .filter((g) => g.first < 0 || g.first > 120);
+  const worst = Math.max(0, ...balances.filter((b) => b.wipe).flatMap((b) => Object.values(b.wipe!).map((v) => v.first)));
+  check(
+    "4.4.5 B: no population goes extinct: never at none for more than a minute, back within two after a wipe",
+    !gone.length && !slow.length,
+    [
+      ...gone.map((g) => `${g.k} at none ${g.gone} s on ${g.where}`),
+      ...slow.map((g) => `${g.k} back after ${g.first < 0 ? "never" : g.first + " s"} on ${g.where}`),
+    ].join("; ") || `the slowest kind back ${worst} s after a wipe`,
   );
 }
 check(

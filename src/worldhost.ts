@@ -344,6 +344,9 @@ export class WorldHost {
 
   selectSpell(key: string): void {
     this.selected = key;
+    // A spell not written yet takes the previous one out of the World's
+    // hand at once: a tap meanwhile says to wait, it never casts the old one.
+    if (!this.request(key)) this.send({ type: "select", spell: null });
     this.renderSpells();
     void this.prepare(key).then((req) => {
       if (req && this.selected === key) this.send({ type: "select", spell: req });
@@ -403,6 +406,9 @@ export class WorldHost {
       // The World keeps the program it was handed: a rewrite, a rollback or a
       // refresh must reach it, or a cast would run old code under a new id.
       if (req) this.send({ type: "spell-updated", spell: req });
+      // Picked while it was still being written (asked again later, by
+      // ahead()): it goes into the World's hand as soon as it is ready.
+      if (req && this.selected === key) this.send({ type: "select", spell: req });
       return req;
     } catch (err) {
       this.writing.delete(key);
@@ -529,7 +535,10 @@ export class WorldHost {
         this.writeIsland(msg.data);
         break;
       case "tap-without-spell":
-        toast(this.selected ? "Still preparing this spell…" : "Pick a spell below, or tap a creature to see what it is doing");
+        if (this.selected) {
+          const name = this.store.get(this.selected)?.element.name ?? "This spell";
+          toast(`Wait for the incantation to be ready: ${name} is still being made`);
+        } else toast("Pick a spell below, or tap a creature to see what it is doing");
         break;
       case "cast":
         if (!this.store.get(msg.key)) break;
@@ -546,6 +555,12 @@ export class WorldHost {
         break;
       case "error":
         if (this.store.get(msg.key)) void this.repair(msg.key, msg.name, msg.message);
+        break;
+      case "island":
+        // A new island (4.4.5 part B): its wonder set joins the last ten, so
+        // the next one is never the same; its name is said once.
+        if (msg.signature) writeRecentSet(msg.signature);
+        if (msg.name && this.shown && !this.challenge) toast(`Welcome to ${msg.name}`, "special");
         break;
       case "chronicle":
         this.digestWaiter?.(msg.digest);
@@ -597,7 +612,15 @@ export class WorldHost {
     if (frame !== this.frame || !frame.contentWindow) return;
     const choice = readChoice();
     frame.contentWindow.postMessage(
-      { type: "init", save, size: choice.size, land: choice.land, rules: save ? this.rulesFor(save) : [], muted: this.muted } satisfies ToWorld,
+      {
+        type: "init",
+        save,
+        size: choice.size,
+        land: choice.land,
+        rules: save ? this.rulesFor(save) : [],
+        muted: this.muted,
+        recent: readRecentSets(),
+      } satisfies ToWorld,
       "*",
     );
     this.ready = true;
@@ -690,14 +713,11 @@ export class WorldHost {
     const sizeLabel = (o: string) => {
       const n = WORLD_SIZES[o as WorldSize];
       const name = o[0].toUpperCase() + o.slice(1);
-      return offered.includes(o as WorldSize) ? `${name} (${n} by ${n})` : `${name}: needs a faster device`;
+      // A recommendation, never a lock (the owner's ask: a Fold 5 and a desktop
+      // with a big GPU could not open Huge or Giant at all).
+      return BIG_SIZES.includes(o as WorldSize) && !offered.includes(o as WorldSize) ? `${name} (${n} by ${n}), may run slowly here` : `${name} (${n} by ${n})`;
     };
-    const size = select(
-      Object.keys(WORLD_SIZES),
-      sizeLabel,
-      offered.includes(choice.size) ? choice.size : defaultSize(),
-      (o) => !offered.includes(o as WorldSize),
-    );
+    const size = select(Object.keys(WORLD_SIZES), sizeLabel, choice.size in WORLD_SIZES ? choice.size : defaultSize());
     const warmth = slider(choice.land.warmth);
     const water = slider(choice.land.water);
     const relief = slider(choice.land.relief);
@@ -715,7 +735,7 @@ export class WorldHost {
       `The seed picks the island's shape and, from warmth and water, its land. Islands from ${MIXED_FROM} cells across mix several lands. ` +
       (BIG_SIZES.every((s) => offered.includes(s))
         ? "This device has room for every size."
-        : "Huge and Giant islands are offered once this device shows it can run them: play a few minutes on a Large island first.");
+        : "Huge and Giant are for fast devices: this one has not shown yet it runs them smoothly (a few minutes on a Large island tells). They are yours to try.");
     const warn = document.createElement("p");
     warn.className = "chronicle-note";
     warn.textContent = "Everything on your current island will be lost.";
@@ -739,7 +759,7 @@ export class WorldHost {
       const chosen = size.value as WorldSize;
       writeChoice({ size: chosen, land });
       d.close();
-      this.send({ type: "reset", size: chosen, land, seed: n });
+      this.send({ type: "reset", size: chosen, land, seed: n, recent: readRecentSets() });
     });
     const actions = document.createElement("div");
     actions.className = "reset-actions";
@@ -1068,6 +1088,59 @@ export class WorldHost {
       else text = `${name} is not ready yet.`;
     }
     this.el.status.textContent = text;
+    this.showCreation(key);
+  }
+
+  // The creation bar under the status line, while the spell in hand is not
+  // ready: asked, written, tested. Each stage fills its share of the bar as
+  // its usual time goes by (4.2's measures: about 15 s of writing, a few
+  // seconds of test run) and never claims to be done before it is.
+  private creationBar: HTMLElement | null = null;
+  private creationStage: { key: string; stage: string; since: number; from: number } | null = null;
+  private creationTimer = 0;
+  private showCreation(key: string | null): void {
+    const state = key ? this.stateOf(key) : "ready";
+    // Only while it is on its way: a spell that failed or was given up on says so in the status line.
+    const waiting = key !== null && (state === "writing" || state === "testing");
+    if (!this.creationBar) {
+      if (!waiting) return;
+      const bar = document.createElement("div");
+      bar.className = "creation-bar";
+      bar.setAttribute("role", "progressbar");
+      bar.setAttribute("aria-label", "Making the spell");
+      bar.append(document.createElement("i"));
+      this.el.status.after(bar);
+      this.creationBar = bar;
+    }
+    const bar = this.creationBar;
+    bar.hidden = !waiting;
+    if (!waiting) {
+      this.creationStage = null;
+      clearInterval(this.creationTimer);
+      this.creationTimer = 0;
+      return;
+    }
+    // Shares of the bar: asked 0 to 0.1, writing to 0.75, testing to 0.97.
+    const stage = state === "testing" ? "testing" : this.writing.has(key) || this.preparing.has(key) ? "writing" : "asked";
+    const span = { asked: [0, 0.1, 2], writing: [0.1, 0.75, 16], testing: [0.75, 0.97, 4] }[stage] as [number, number, number];
+    const now = Date.now();
+    const shown = this.creationStage?.key === key ? this.fill(this.creationStage, now) : 0;
+    if (this.creationStage?.key !== key || this.creationStage.stage !== stage) this.creationStage = { key, stage, since: now, from: Math.max(span[0], shown) };
+    const paint = () => {
+      const s = this.creationStage;
+      if (!s) return;
+      const v = this.fill(s, Date.now());
+      (bar.firstChild as HTMLElement).style.width = `${Math.round(v * 100)}%`;
+      bar.setAttribute("aria-valuenow", String(Math.round(v * 100)));
+    };
+    paint();
+    if (!this.creationTimer) this.creationTimer = window.setInterval(paint, 250);
+  }
+
+  private fill(s: { stage: string; since: number; from: number }, now: number): number {
+    const [, to, seconds] = ({ asked: [0, 0.1, 2], writing: [0.1, 0.75, 16], testing: [0.75, 0.97, 4] } as Record<string, number[]>)[s.stage];
+    const t = (now - s.since) / 1000;
+    return s.from + (to - s.from) * (1 - Math.exp(-t / seconds));
   }
 }
 
@@ -1107,6 +1180,25 @@ function islandChannel(): BroadcastChannel | null {
 // The size and land the player last chose for a new island (4.4).
 const CHOICE_KEY = "magic-merger.new-island";
 
+// The wonder sets of the last ten islands (4.4.5 part B): a new island never
+// repeats one. Only kinds, never anything about the player.
+const RECENT_KEY = "magic-merger.wonder-sets";
+function readRecentSets(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]") as unknown;
+    return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string" && s.length <= 300).slice(-10) : [];
+  } catch {
+    return [];
+  }
+}
+function writeRecentSet(signature: string): void {
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify([...readRecentSets().filter((s) => s !== signature), signature].slice(-10)));
+  } catch {
+    // Full or blocked storage: the next island may repeat a set, nothing more.
+  }
+}
+
 // Never a big island by default: small on a narrow screen, medium elsewhere.
 function defaultSize(): WorldSize {
   return window.innerWidth < 600 ? "small" : "medium";
@@ -1116,8 +1208,8 @@ function readChoice(): { size: WorldSize; land: LandChoice } {
   try {
     const v = JSON.parse(localStorage.getItem(CHOICE_KEY) ?? "null") as { size?: string; land?: unknown } | null;
     const size = v?.size && v.size in WORLD_SIZES ? (v.size as WorldSize) : defaultSize();
-    // A big size stays chosen only while this device still has the room.
-    return { size: sizesOffered(readHeadroom()).includes(size) ? size : defaultSize(), land: readLandChoice(v?.land) };
+    // A big size stays chosen (4.4.5 part B: a recommendation, not a lock).
+    return { size, land: readLandChoice(v?.land) };
   } catch {
     return { size: defaultSize(), land: { ...DEFAULT_LAND } };
   }

@@ -1,4 +1,5 @@
-import { C, F, G, S } from "./materials";
+import { C, F, G, S, isBuilding } from "./materials";
+import { blastWonders } from "./wonders";
 import type { World } from "./world";
 import { addGas } from "./cells";
 import { igniteVoxels, stepVoxels } from "./voxels";
@@ -42,6 +43,18 @@ export function stepPhysics(world: World, dt: number): void {
   else stepGas(world, dt * 2);
   stepGrowth(world);
   stepVoxels(world, dt);
+}
+
+// The cells springs keep flowing, by cell, rebuilt when the springs change.
+let runningFor: { springs: World["springs"]; length: number; cells: Uint8Array } | null = null;
+function runningWater(world: World): Uint8Array | null {
+  if (!world.springs.length) return null;
+  if (runningFor?.springs !== world.springs || runningFor.length !== world.springs.length) {
+    const cells = new Uint8Array(world.n);
+    for (const s of world.springs) if (!s.lava && s.i < world.n) cells[s.i] = 1;
+    runningFor = { springs: world.springs, length: world.springs.length, cells };
+  }
+  return runningFor.cells;
 }
 
 // Rivers (4.4, land.ts): springs keep river heads, lakes and a volcano's
@@ -321,7 +334,7 @@ function stepFire(world: World, dt: number): void {
 function burnOut(world: World, i: number): void {
   const c = world.cover[i];
   if (c === C.TREE) world.setCover(i, C.STUMP);
-  else if (c === C.HOUSE) world.setCover(i, C.RUBBLE);
+  else if (isBuilding(c)) world.setCover(i, C.RUBBLE);
   else if (c === C.POWDER) {
     world.setCover(i, C.NONE);
     explode(world, i % world.w, Math.floor(i / world.w), 3.5, 0.7);
@@ -374,12 +387,15 @@ function stepTemperature(world: World, dt: number): void {
   }
   temp.set(tempNext);
 
-  // Phase changes.
+  // Phase changes. Running water (a river, fed by its springs) freezes only
+  // in a hard cold (4.4.5 part B: rivers of cold regions froze white within
+  // minutes, and from above a big island seemed to have none).
+  const running = runningWater(world);
   for (let i = 0; i < world.n; i++) {
     const t = temp[i];
     const fl = world.fluid[i];
     if (fl === F.WATER) {
-      if (t < 0) world.fluid[i] = F.ICE;
+      if (t < (running && running[i] ? -10 : 0)) world.fluid[i] = F.ICE;
       else if (t > 100) {
         world.depth[i] -= 0.03 * dt;
         addGas(world, i, S.STEAM, 0.2 * dt);
@@ -528,7 +544,7 @@ export function explode(world: World, x: number, y: number, r: number, power: nu
     if (k > 0.25) {
       const c = world.cover[i];
       if (c === C.POWDER) world.fire[i] = 1;
-      else if (c === C.HOUSE) world.setCover(i, C.RUBBLE);
+      else if (isBuilding(c)) world.setCover(i, C.RUBBLE);
       else if (c !== C.NONE && c !== C.RUBBLE) world.setCover(i, rng.next() < 0.4 ? C.RUBBLE : C.NONE);
     }
     if (k > 0.55) world.ground[i] = G.ASH;
@@ -582,6 +598,8 @@ export function explode(world: World, x: number, y: number, r: number, power: nu
   // Blasts blow away what spells built close by and set fire to wood further out;
   // whatever loses its support then falls.
   if (world.landmarks.length) world.landmarks = world.landmarks.filter((l) => Math.hypot(l.x - x, l.y - y) > r * 0.6 || shielded(world, l.x, l.y));
+  // 4.4.5 part B: a wonder standing above the land falls; a hoard's dragon wakes.
+  if (world.wonders.length && !blocked) blastWonders(world, x, y, r, blastSpawn ? blastSpawn(world) : null);
   if (world.decor.size) {
     if (!blocked) world.clearVoxels(x, y, r * 0.6);
     igniteVoxels(world, x, y, r * (0.6 + 0.4 * Math.min(1, power)));
@@ -600,7 +618,7 @@ export function quake(world: World, x: number, y: number, r: number, strength: n
     if (warded(world, i, WARD.harm)) return;
     if (rng.next() < 0.3) world.height[i] += (rng.next() - 0.5) * strength * 0.8 * k;
     const c = world.cover[i];
-    if (c === C.HOUSE && rng.next() < strength * k * 0.08) world.setCover(i, C.RUBBLE);
+    if (isBuilding(c) && rng.next() < strength * k * 0.08) world.setCover(i, C.RUBBLE);
     else if (c === C.TREE && rng.next() < strength * k * 0.03) world.setCover(i, C.STUMP);
   });
   for (const c of world.creatures) {
@@ -633,4 +651,11 @@ export function forDisc(world: World, x: number, y: number, r: number, fn: (i: n
       fn(cy * world.w + cx, 1 - Math.sqrt(d2) / (r || 1), cx, cy);
     }
   }
+}
+
+// Set by creatures.ts (which physics.ts cannot import): how a blast puts a
+// woken dragon into the world.
+let blastSpawn: ((world: World) => NonNullable<Parameters<typeof blastWonders>[4]>) | null = null;
+export function setBlastSpawn(f: typeof blastSpawn): void {
+  blastSpawn = f;
 }

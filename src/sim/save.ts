@@ -1,7 +1,8 @@
 import { loadedState } from "./artifacts";
 import { dressVillages, restoreCreature, saveMind, KINDS, type Creature, type SavedMind } from "./creatures";
 import { MARKS, MAX_MARKS, MAX_STORY, type Mark, type StoryLine, type Village } from "./kin";
-import { BUILTIN, BUILTIN_BEFORE_4_4_5, LAYERS, type Layer } from "./materials";
+import { BUILTIN, BUILTIN_BEFORE_4_4_5, FIRST_JOB, LAST_JOB, LAYERS, type Layer } from "./materials";
+import { MAX_WONDERS, readWonder, type Wonder } from "./wonders";
 import { World } from "./world";
 import { BIOMES, applyLand, readLand, type LandOptions } from "./land";
 import type { Landmark } from "./social";
@@ -44,6 +45,11 @@ export interface SavedWorld {
   // wild animals (4.4.5). The flora and the rare variants are layers.
   settlements?: Settlement[];
   refuges?: Refuge[];
+  // Wonders and the island's name, and house cells rebuilt with a patched
+  // roof (4.4.5 part B).
+  wonders?: Wonder[];
+  islandName?: string;
+  patched?: number[];
 }
 
 export function saveWorld(world: World, owners: Map<string, string>): SavedWorld {
@@ -102,6 +108,9 @@ export function saveWorld(world: World, owners: Map<string, string>): SavedWorld
     ...(world.land ? { land: world.land, springs: packSprings(world) } : {}),
     ...(world.settlements.length ? { settlements: world.settlements } : {}),
     ...(world.refuges.length ? { refuges: world.refuges } : {}),
+    ...(world.wonders.length ? { wonders: world.wonders } : {}),
+    ...(world.islandName ? { islandName: world.islandName } : {}),
+    ...(world.patched.size ? { patched: [...world.patched].slice(0, 4000) } : {}),
   };
 }
 
@@ -151,7 +160,20 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
         y: t.y,
         style: Math.max(0, Math.min(HOUSE_STYLES.length - 1, Math.round(t.style))),
         level: Math.max(0, Math.min(5, Math.round(t.level))),
+        jobs: (Array.isArray(t.jobs) ? t.jobs : [])
+          .filter((b) => b && ok(b.kind) && ok(b.i) && b.kind >= FIRST_JOB && b.kind <= LAST_JOB && b.i >= 0 && b.i < world.n)
+          .slice(0, 16)
+          .map((b) => ({ kind: Math.round(b.kind), i: Math.round(b.i) })),
+        store: ok(t.store) ? Math.max(0, Math.min(200, t.store!)) : 0,
+        street: ok(t.street) ? Math.round(t.street!) & 3 : 0,
+        name: typeof t.name === "string" ? t.name.slice(0, 20) : "",
       }));
+    world.wonders = (Array.isArray(data.wonders) ? data.wonders : [])
+      .map(readWonder)
+      .filter((w): w is Wonder => w !== null)
+      .slice(0, MAX_WONDERS);
+    world.islandName = typeof data.islandName === "string" ? data.islandName.slice(0, 40) : null;
+    for (const i of Array.isArray(data.patched) ? data.patched.slice(0, 4000) : []) if (Number.isInteger(i) && i >= 0 && i < world.n) world.patched.add(i);
     world.refuges = (Array.isArray(data.refuges) ? data.refuges : [])
       .filter((r) => r && typeof r.kind === "string" && ok(r.x) && ok(r.y) && ok(r.r))
       .slice(0, 200)

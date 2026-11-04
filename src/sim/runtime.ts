@@ -8,7 +8,7 @@ import { NATIVE_NAMES } from "./wildlife";
 import { goalFrom, goalFromBehavior, goalFromName } from "./goals";
 import { abilitiesFrom, abilitiesFromName } from "./abilities";
 import { CUSTOM_GOALS, LOADS, TRIGGERS, mindOf, remember, tell, type AbilitySpec, type Load, type Trigger } from "./kin";
-import { BUILTIN, BUILTIN_BEFORE_4_4_5, C, F, G, LAYERS, type Layer } from "./materials";
+import { BUILTIN, BUILTIN_BEFORE_4_4_5, C, F, G, LAYERS, isBuilding, type Layer } from "./materials";
 import { valueNoise } from "./noise";
 import { addGas } from "./cells";
 import { explode, forDisc, quake } from "./physics";
@@ -1352,7 +1352,7 @@ export class SpellApi {
     forDisc(w, x, y, num(r, 0, 400, 3), (i, k) => {
       const s = k * k * (3 - 2 * k);
       w.height[i] += h * s;
-      if (h > 4 && s > 0.6 && w.cover[i] === C.HOUSE) w.setCover(i, C.RUBBLE);
+      if (h > 4 && s > 0.6 && isBuilding(w.cover[i])) w.setCover(i, C.RUBBLE);
     });
   }
   // Builds a column `voxels` high at a cell, made of a ground material: trunks,

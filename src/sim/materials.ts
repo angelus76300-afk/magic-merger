@@ -99,6 +99,24 @@ export const BUILTIN: Record<Layer, Material[]> = {
     make("shrine", "cover", [0xd8d0c0, 0xc8c0b0], { solid: true }),
     make("dock", "cover", [0x8a6a44, 0x7f6140], { flammable: 0.4, fuel: 4 }),
     make("fence", "cover", [0x8a6a44, 0x7f6140], { flammable: 0.5, fuel: 2 }),
+    // 4.4.5 part B (wonders.ts): a meteor crater's strange ore and a dragon's
+    // hoard, both taken by villagers; the solid foot of a wonder (an arch's
+    // legs, a world tree's trunk), drawn by the wonder's own model.
+    make("strange ore", "cover", [0x7fe8d8, 0x5fd0e0, 0x9af0c8], { glow: true }),
+    make("dragon hoard", "cover", [0xf2c94c, 0xe8b830, 0xffd866], { glow: true }),
+    make("wonder", "cover", [0x8a8a8e], { solid: true }),
+    // Buildings with a job (4.4.5 part B, ecology.ts): two by two like a
+    // house, each doing something for its village.
+    make("smithy", "cover", [0x6a6a70, 0x5a5a60], { flammable: 0.2, fuel: 12, solid: true }),
+    make("granary", "cover", [0xc8a868, 0xb89858], { flammable: 0.4, fuel: 14, solid: true }),
+    make("bakery", "cover", [0xd8b88a, 0xc8a87a], { flammable: 0.3, fuel: 12, solid: true }),
+    make("barn", "cover", [0xa8402e, 0x983a2a], { flammable: 0.45, fuel: 14, solid: true }),
+    make("tavern", "cover", [0x9a7048, 0x8a6040], { flammable: 0.35, fuel: 14, solid: true }),
+    make("market", "cover", [0xd8c090, 0xc8b080], { flammable: 0.4, fuel: 6, solid: true }),
+    make("chapel", "cover", [0xe0dcd0, 0xd0ccc0], { flammable: 0.15, fuel: 12, solid: true }),
+    make("watchtower", "cover", [0x8a6a44, 0x7a5a3a], { flammable: 0.4, fuel: 10, solid: true }),
+    make("lumber yard", "cover", [0x9a7a50, 0x8a6a44], { flammable: 0.55, fuel: 10, solid: true }),
+    make("fisher hut", "cover", [0x8a7a5a, 0x7a6a4a], { flammable: 0.4, fuel: 8, solid: true }),
   ],
   gas: [
     make("none", "gas", [0]),
@@ -139,7 +157,28 @@ export const C = {
   SHRINE: 23,
   DOCK: 24,
   FENCE: 25,
+  ORE: 26,
+  HOARD: 27,
+  WONDER: 28,
+  SMITHY: 29,
+  GRANARY: 30,
+  BAKERY: 31,
+  BARN: 32,
+  TAVERN: 33,
+  MARKET: 34,
+  CHAPEL: 35,
+  WATCHTOWER: 36,
+  LUMBERYARD: 37,
+  FISHERHUT: 38,
 } as const;
+
+// Covers that are a building: a house or one with a job (4.4.5 part B).
+// They burn down to rubble, which villagers rebuild.
+export const FIRST_JOB = 29;
+export const LAST_JOB = 38;
+export function isBuilding(c: number): boolean {
+  return c === 4 || (c >= FIRST_JOB && c <= LAST_JOB);
+}
 export const S = { NONE: 0, SMOKE: 1, STEAM: 2, POISON: 3 } as const;
 
 // How many built-in materials each layer had before 4.4.5 added its own:

@@ -1,13 +1,15 @@
 import { C, F, G, S } from "./materials";
-import { explode, forDisc } from "./physics";
+import { explode, forDisc, setBlastSpawn } from "./physics";
 import { lull, names, social, stepLandmarks, TAGS, type Mood } from "./social";
 import { WARD, warded } from "./wards";
 import { daylight } from "./daylight";
 import type { World } from "./world";
 import { body, type BodySpec } from "./body";
-import { SPECIES, habitatCell, targetOf } from "./wildlife";
+import { SPECIES, habitatCell, habitatCellSure, targetOf } from "./wildlife";
 import { keepBalance, stepMovers } from "./balance";
 import { growSettlements, wearPaths } from "./ecology";
+import { DRAGON, stepWonders } from "./wonders";
+import { growBuildings, stepBuildings } from "./buildings";
 import { packLook, randomLook, shirtOf, sizeOf, unpackLook } from "./villagers";
 import { denDown, goalOfCreature, hasNeeds, kindGoal, needsTick, pursue, stepGoals } from "./goals";
 import { abilitiesFromName, useAbilities } from "./abilities";
@@ -116,6 +118,41 @@ for (const k of [
   kind({ name: "spirit", speed: 2.5, hp: 60, radius: 0.6, color: 0xc9f6ff, flying: true, fireproof: true, glow: true, body: body("spirit") }),
   kind({ name: "golem", speed: 1.8, hp: 300, radius: 1, color: 0x8d8d96, fireproof: true, body: body("golem", [], { color2: 0x9dfcff }) }),
   ...SPECIES.map((s) => kind(s.kind)),
+  // The dragon of a hoard (4.4.5 part B, wonders.ts): it sleeps on its gold
+  // and wakes for a minute when someone takes some. Tagged "dragon", so
+  // spells that scare, lure or hunt dragons see it as one.
+  kind({
+    name: DRAGON,
+    speed: 4.4,
+    hp: 900,
+    radius: 1.5,
+    color: 0x8a2a1c,
+    flying: true,
+    fireproof: true,
+    altitude: 9,
+    tags: ["dragon", "monster"],
+    body: body("dragon", ["wings", "horns", "tail"], { color2: 0xe0a030 }),
+    goal: "guard",
+    ai: {
+      mode: "guard",
+      prey: [],
+      leader: [],
+      attack: 30,
+      sense: 14,
+      aura: null,
+      auraRadius: 4,
+      auraPower: 1,
+      leaves: null,
+      weak: [],
+      immune: ["fire"],
+      lifespan: 0,
+      onDeath: null,
+      lures: [],
+      scares: ["villager", "beast"],
+      converts: false,
+      active: "always",
+    },
+  }),
   // The dead a necromancer raises (3.6): weak, short lived, burnt by day.
   kind({
     name: "risen",
@@ -1041,6 +1078,7 @@ function plan(world: World, c: Creature, k: CreatureKind, dt: number): void {
         c.data.work = progress;
         if (progress > 5) {
           world.setCover(i, C.HOUSE);
+          if (world.settlements.length) world.patched.add(i);
           c.data.work = 0;
           c.data.ruin = undefined;
         }
@@ -1095,15 +1133,17 @@ export function populate(world: World, wild: readonly string[] | null = null): v
   dressVillages(world, world.creatures);
   // The island's animals, each in its habitat. The generic beast of 2.x is
   // left to spells.
-  for (const s of SPECIES) if (!wild || wild.includes(s.kind.name)) for (let n = targetOf(world, s); n > 0; n--) birth(world, s.kind.name);
+  // On islands made by land.ts, every animal with a target is there from the
+  // start (4.4.5 part B); the old island and the challenges keep their streams.
+  for (const s of SPECIES) if (!wild || wild.includes(s.kind.name)) for (let n = targetOf(world, s); n > 0; n--) birth(world, s.kind.name, !!world.flora);
   world.wild = wild;
 }
 
 // One wild animal born in its habitat, if there is any left.
-function birth(world: World, name: string): boolean {
+function birth(world: World, name: string, sure = false): boolean {
   const s = SPECIES.find((sp) => sp.kind.name === name);
   if (!s) return false;
-  const i = habitatCell(world, s);
+  const i = sure ? habitatCellSure(world, s) : habitatCell(world, s);
   if (i < 0) return false;
   // world.idx rounds: a creature at x stands in cell round(x).
   const c = makeCreature(name, (i % world.w) + (Math.random() - 0.5) * 0.6, Math.floor(i / world.w) + (Math.random() - 0.5) * 0.6);
@@ -1197,6 +1237,20 @@ function keepOut(world: World): void {
   }
 }
 
+// A creature put into the world where a wonder makes one (fish in a
+// sinkhole, birds on sea stacks, the risen from bones, a dragon).
+function spawner(world: World): (kind: string, x: number, y: number) => Creature {
+  return (kind, x, y) => {
+    const c = makeCreature(kind, x, y);
+    c.homeX = x;
+    c.homeY = y;
+    world.creatures.push(c);
+    return c;
+  };
+}
+
+setBlastSpawn(spawner);
+
 export function lifeCycle(world: World, dt: number): void {
   stepGoals(world);
   pathsOf(world).step(world);
@@ -1213,6 +1267,10 @@ export function lifeCycle(world: World, dt: number): void {
     if (world.tick % 60 === 7) stepMovers(world);
     if (world.tick % 30 === 11) wearPaths(world);
     if (world.tick % 600 === 13) growSettlements(world);
+    // 4.4.5 part B: what wonders and buildings with a job do.
+    if (world.tick % 600 === 13) growBuildings(world);
+    if (world.wonders.length) stepWonders(world, spawner(world), { kindOf, maxHp });
+    if (world.settlements.length) stepBuildings(world, { kindOf, maxHp });
   } else if (Math.random() < dt * 0.2) keepWild(world);
   if (Math.random() > dt * 0.15) return;
   let houses = 0;

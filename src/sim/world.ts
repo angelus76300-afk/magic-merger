@@ -10,6 +10,8 @@ import { DecorStore } from "./decor";
 import { BIOMES, buildLand, drainage, type LandOptions, type Spring } from "./land";
 import { dressSettlements, ecology, growSettlements, markRefuges, type Refuge, type Settlement } from "./ecology";
 import { SPECIES } from "./wildlife";
+import { placeWonders, settleWonders, type Wonder } from "./wonders";
+import { layOutVillages } from "./buildings";
 import { CreatureGrid } from "./crowd";
 import type { Landmark, Presence } from "./social";
 import type { Ward } from "./wards";
@@ -111,6 +113,12 @@ export class World {
   settlements: Settlement[] = [];
   // How often villagers walked over each cell lately: paths wear in (not saved).
   wear: Uint8Array | null = null;
+  // Wonders and the island's name (4.4.5 part B, wonders.ts); none on the
+  // old island and the challenges. House cells rebuilt after a fire wear a
+  // patched roof.
+  wonders: Wonder[] = [];
+  islandName: string | null = null;
+  readonly patched = new Set<number>();
 
   constructor(
     readonly w: number,
@@ -246,8 +254,10 @@ export class World {
 // With `land` (4.4), a biome and a shape of the player's choosing (land.ts);
 // without, the island every version before 4.4 made, which the test run's
 // practice island and the checks keep, so no spell's verdict moves.
-export function generateWorld(w: number, h: number, seed: number, land?: LandOptions): World {
-  if (land) return generateLand(w, h, seed, land);
+// `recent`: the wonder sets of the player's last islands, never made again
+// (4.4.5 part B).
+export function generateWorld(w: number, h: number, seed: number, land?: LandOptions, recent: readonly string[] = []): World {
+  if (land) return generateLand(w, h, seed, land, recent);
   const world = new World(w, h, seed);
   const rng = world.rng;
   const { height, ground } = world;
@@ -339,15 +349,19 @@ export function generateWorld(w: number, h: number, seed: number, land?: LandOpt
   return world;
 }
 
-function generateLand(w: number, h: number, seed: number, land: LandOptions): World {
+function generateLand(w: number, h: number, seed: number, land: LandOptions, recent: readonly string[]): World {
   const world = new World(w, h, seed);
   const rng = world.rng;
   const { peak } = buildLand(world, land);
   placeVillages(world, rng, world.seaLevel + Math.max(10, peak * 0.62));
+  // 4.4.5 part B: wonders shape the land before the plants grow round them.
+  placeWonders(world, BIOMES, peak, recent);
   // 4.4.5: what grows where, rare variants, villages' looks, refuges.
   ecology(world, BIOMES, peak, drainage(world).filled);
+  settleWonders(world);
   dressSettlements(world, BIOMES);
   growSettlements(world, true);
+  layOutVillages(world, BIOMES);
   markRefuges(
     world,
     SPECIES.map((s) => ({ name: s.kind.name, habitat: s.habitat })),
@@ -376,7 +390,7 @@ function placeVillages(world: World, rng: Rng, top: number): void {
       centers.push(c);
       buildVillage(world, c.x, c.y, rng);
       // 4.4.5: each village's look and extras start from its center.
-      world.settlements.push({ x: c.x, y: c.y, style: 0, level: 1 });
+      world.settlements.push({ x: c.x, y: c.y, style: 0, level: 1, jobs: [], store: 0, street: 0, name: "" });
     }
   }
 }

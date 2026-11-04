@@ -665,6 +665,30 @@ function water(world: World, land: LandOptions): { river: Uint8Array; area: Floa
       }
     }
   }
+  // 4.4.5 part B: on big islands rivers are wider, so they read from above
+  // (a river one cell across is a pixel on a huge island seen whole): the
+  // cells either side of a grown river become river too, at its bed.
+  const widen = w >= 280 ? 0.6 : w >= 200 ? 1.4 : Infinity;
+  const added: number[] = [];
+  for (const i of carved) {
+    if (size[i] < widen || height[i] < world.seaLevel) continue;
+    const x = i % w;
+    const y = (i / w) | 0;
+    for (const [dx, dy] of N4) {
+      if (!world.inside(x + dx, y + dy)) continue;
+      const j = (y + dy) * w + x + dx;
+      if (river[j] || lake[j] || world.depth[j] > 0 || height[j] < world.seaLevel || height[j] - height[i] > 1.2) continue;
+      // Not into a lake's shore: lowering it would let the lake out.
+      if (N4.some(([ex, ey]) => world.inside(x + dx + ex, y + dy + ey) && lake[(y + dy + ey) * w + x + dx + ex])) continue;
+      height[j] = height[i];
+      world.setFluid(j, F.WATER, world.depth[i]);
+      river[j] = 1;
+      size[j] = size[i];
+      riverArea[j] = riverArea[i];
+      added.push(j);
+    }
+  }
+  for (const j of added) carved.push(j);
   // Next to a lake (not a river): lowering it would let the lake out.
   const byStill = (j: number) => {
     const x = j % w;
@@ -699,7 +723,11 @@ function water(world: World, land: LandOptions): { river: Uint8Array; area: Floa
     .map((p) => p.cells[0]);
   world.springs = [...new Set(sources)].slice(0, 12).map((i) => ({ i, level: height[i] + 0.55 }));
   const headSet = new Set(world.springs.map((s) => s.i));
-  for (const i of carved) if (!headSet.has(i) && height[i] >= world.seaLevel) world.springs.push({ i, level: height[i] + world.depth[i] * 0.8, rate: 0.08 });
+  // The cells a big island's rivers were widened by are fed by the river
+  // itself, not by springs: the island gets the water it had before.
+  const widened = new Set(added);
+  for (const i of carved)
+    if (!headSet.has(i) && !widened.has(i) && height[i] >= world.seaLevel) world.springs.push({ i, level: height[i] + world.depth[i] * 0.8, rate: 0.08 });
   return { river, area: riverArea };
 }
 
