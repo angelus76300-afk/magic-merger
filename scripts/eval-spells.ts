@@ -25,29 +25,8 @@ import { pickExamples, type LibraryEntry } from "../worker/programs";
 // @ts-expect-error plain JavaScript module
 import { factsOf, openLab } from "./lab-browser.mjs";
 import { adminApi } from "./admin-api";
+import { EVAL_SET } from "./eval-set";
 
-export const EVAL_SET = [
-  "Water",
-  "Withering",
-  "Gold",
-  "Fireball",
-  "Darkness",
-  "Vampire",
-  "Golem",
-  "Tornado",
-  "Necromancy",
-  "Holy Light",
-  "Sanctuary",
-  "Earthquake",
-  "Tidal Wave",
-  "Eclipse",
-  "Enchanted Forest",
-  "Great Flood",
-  "Meteor Strike",
-  "Excalibur",
-  "Black Hole",
-  "World Tree",
-];
 const SHOTS = [1, 3, 6];
 const LIBRARY_SIZE = 10;
 

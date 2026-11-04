@@ -5,6 +5,7 @@ import { TIERS, tierFromDepth, type Tier } from "../shared/tiers";
 import type { SpellResponse } from "../shared/types";
 import { DOWN_REASONS, REASON_LABEL, type DownReason } from "../shared/votes";
 import * as api from "./api";
+import { timeline } from "./timeline";
 import { Checker } from "./checker";
 import { chipElement } from "./craft";
 import { FilterBar, applyFilters, lastUsed, markUsed } from "./filters";
@@ -346,14 +347,20 @@ export class WorldHost {
     if (!discovery) return null;
     this.preparing.add(key);
     this.updateStatus();
+    const name = discovery.element.name;
+    timeline.describe(key, name, discovery.element.tier, discovery.element.kind);
+    timeline.step(key, name, "asked");
     try {
       let res = await api.spell(discovery.element.name, regenerate);
+      timeline.step(key, name, "arrived");
+      timeline.server(key, name, api.serverTiming(res));
       if (res.mock) this.sessionPrograms.set(key, { key, name: res.name, tier: res.tier, code: res.program.code });
       else {
         res = await this.settle(key, res, quiet);
         this.store.setSpell(key, withoutTrial(res.program));
         if (discovery.element.tier !== res.tier) this.store.discover({ ...discovery.element, tier: res.tier }, discovery.recipe ?? ["", ""]);
       }
+      timeline.step(key, name, "ready");
       const req = this.request(key);
       // The World keeps the program it was handed: a rewrite, a rollback or a
       // refresh must reach it, or a cast would run old code under a new id.
@@ -376,6 +383,7 @@ export class WorldHost {
     this.updateStatus();
     try {
       for (let round = 0; round < 3 && res.program.trial && res.program.id; round++) {
+        const t0 = performance.now();
         const result = await this.checker.check({
           key,
           name: res.name,
@@ -385,7 +393,13 @@ export class WorldHost {
           kind: this.store.get(key)?.element.kind,
         });
         const id = res.program.id;
-        res = await api.checkSpell({ name: res.name, id, ...result });
+        timeline.add(key, res.name, "test", performance.now() - t0);
+        timeline.step(key, res.name, "tested");
+        timeline.phases(key, res.name, result.phases);
+        const { phases: _phases, ...verdict } = result;
+        res = await api.checkSpell({ name: res.name, id, ...verdict });
+        timeline.step(key, res.name, "verdict");
+        timeline.server(key, res.name, api.serverTiming(res), "check-");
         if (res.program.id !== id && round === 0 && !result.ok && !quiet)
           toast(`${res.name} failed its test run (${result.problem}); the grimoire wrote it again`);
       }
@@ -456,6 +470,7 @@ export class WorldHost {
         break;
       case "cast":
         if (!this.store.get(msg.key)) break;
+        timeline.step(msg.key, this.store.get(msg.key)!.element.name, "cast");
         this.castInAttempt.push(msg.key);
         markUsed(msg.key);
         void this.afterCast(msg.key);
@@ -489,7 +504,13 @@ export class WorldHost {
         const now = Date.now();
         if (!this.hud || now - this.lastPerf < 20_000) break;
         this.lastPerf = now;
-        api.sendPerf({ ...msg.sample, screen: `${screen.width}x${screen.height}@${window.devicePixelRatio}`, cores: navigator.hardwareConcurrency ?? 0 });
+        api.sendPerf({
+          ...msg.sample,
+          screen: `${screen.width}x${screen.height}@${window.devicePixelRatio}`,
+          cores: navigator.hardwareConcurrency ?? 0,
+          // 4.2: the last items made castable here, step by step.
+          creation: timeline.recent(4).map(compactCreation),
+        });
         break;
       }
       case "objective":
@@ -802,6 +823,11 @@ export class WorldHost {
 }
 
 const EXPAND_KEY = "mm-spellbar-expanded";
+
+// One creation in a few dozen characters, for the 4 KB perf sample.
+function compactCreation(c: ReturnType<typeof timeline.recent>[number]) {
+  return { t: c.tier, k: c.kind?.[0], s: c.steps, w: c.server, p: c.phases };
+}
 
 // What the browser keeps: the trial flag is only for the test run.
 function withoutTrial(program: SpellProgram): SpellProgram {

@@ -198,122 +198,126 @@ export default {
 
     const ledger = new Ledger(payer);
     const oracle = oracleFor(env, {}, ledger);
-    try {
-      if (session && invite && url.pathname.startsWith("/api/account")) {
-        const r = await handleAccount(request, url, env, session, invite);
-        if (r) return r;
-      }
-      if (session && url.pathname === "/api/progress") {
-        if (request.method === "GET") return json(await getProgress(env, session.invite));
-        if (request.method === "PUT") return json(await putProgress(env, session.invite, await readBody<ProgressPut>(request, MAX_PROGRESS_BODY)));
-      }
-      if (request.method === "POST" && url.pathname === "/api/merge") {
-        const body = await readBody<MergeRequest>(request);
-        return json(await onceFor(env, oracle, `merge:${pairKey(String(body.a), String(body.b))}`, () => handleMerge(body, env, oracle)));
-      }
-      if (request.method === "POST" && url.pathname === "/api/describe") {
-        const body = await readBody<DescribeRequest>(request);
-        const run = () => handleDescribe(body, env, oracle, admin);
-        return json(body.regenerate === true ? await run() : await onceFor(env, oracle, `describe:${elementKey(String(body.name))}`, run));
-      }
-      if (request.method === "POST" && url.pathname === "/api/spell") {
-        const body = await readBody<SpellRequest>(request);
-        // The admin can try another model or effort for one design.
-        const tried = admin && (body.model || body.effort) ? oracleFor(env, { spellModel: body.model, spellEffort: body.effort }, ledger) : oracle;
-        try {
-          const run = () => handleSpell(body, env, tried, admin, ctx);
-          // A regeneration is asked on purpose; anything else is written once.
-          return json(body.regenerate === true ? await run() : await onceFor(env, oracle, `spell:${elementKey(String(body.name))}`, run));
-        } finally {
-          if (tried !== oracle) await recordSpend(env.DB, tried);
+    const started = Date.now();
+    return withTiming(await route(payer), ledger, started);
+    async function route(payer: Payer): Promise<Response> {
+      try {
+        if (session && invite && url.pathname.startsWith("/api/account")) {
+          const r = await handleAccount(request, url, env, session, invite);
+          if (r) return r;
         }
-      }
-      if (request.method === "POST" && url.pathname === "/api/spell/repair") {
-        const body = await readBody<RepairRequest>(request);
-        return json(await onceFor(env, oracle, `repair:${elementKey(String(body.name))}`, () => handleRepair(body, env, oracle, admin)));
-      }
-      if (request.method === "POST" && url.pathname === "/api/spell/check") {
-        const body = await readBody<CheckRequest>(request);
-        return json(await onceFor(env, oracle, `check:${Number(body.id)}`, () => handleCheck(body, env, oracle)));
-      }
-      if (request.method === "POST" && url.pathname === "/api/report") {
-        return json(await handleReport(await readBody<{ name?: unknown; reason?: unknown }>(request), env, payer));
-      }
-      if (request.method === "POST" && url.pathname === "/api/library") {
-        return json(await handleLibrary(await readBody<{ names?: unknown }>(request), env));
-      }
-      if (request.method === "POST" && url.pathname === "/api/spells/live") {
-        return json(await handleLive(await readBody<{ names?: unknown }>(request), env));
-      }
-      if (request.method === "POST" && url.pathname === "/api/cast") {
-        return json(await handleCast(await readBody<CastRecord>(request), env, player));
-      }
-      if (request.method === "POST" && url.pathname === "/api/vote") {
-        return json(await handleVote(await readBody<VoteRequest>(request), env, player, payer, ctx));
-      }
-      // 3.7: the island's chronicle, once a session, about $0.002.
-      if (request.method === "POST" && url.pathname === "/api/chronicle") {
-        return json(await handleChronicle(await readBody<{ digest?: unknown }>(request), env, oracle));
-      }
-      // 3.7: challenges from nothing. Free: merges go through /api/merge.
-      if (request.method === "GET" && url.pathname === "/api/challenges") return json(await listChallenges(env.DB, payer));
-      if (request.method === "POST" && url.pathname === "/api/challenge/win") {
-        return json(await recordWin(env.DB, payer, await readBody<{ id?: unknown; merges?: unknown; spell?: unknown }>(request)));
-      }
-      // 3.4.1: ideas and their votes, for every invite.
-      if (url.pathname === "/api/feedback") {
-        if (request.method === "GET") return json(await listFeedback(env, payer, admin));
-        if (request.method === "POST") return json(await postFeedback(env, payer, await readBody<{ title?: unknown; body?: unknown }>(request)));
-      }
-      if (request.method === "POST" && url.pathname === "/api/feedback/vote") {
-        return json(await voteFeedback(env, payer, await readBody<{ id?: unknown; up?: unknown }>(request)));
-      }
-      if (request.method === "GET" && url.pathname === "/api/spell/info" && admin) {
-        return json(await programInfo(env, url.searchParams.get("name") ?? ""));
-      }
-      if (request.method === "GET" && url.pathname === "/api/spend" && admin) {
-        return json(await spendReport(env));
-      }
-      if (request.method === "POST" && url.pathname === "/api/perf") {
-        const kept = await recordPerf(env.DB, payer.invite, await readBody<PerfSample>(request), request.headers.get("user-agent") ?? "");
-        return json({ ok: true, kept });
-      }
-      if (request.method === "GET" && url.pathname === "/api/perf" && admin) {
-        const rows = await env.DB.prepare("SELECT at, ua, sample FROM perf ORDER BY at DESC LIMIT 200").all<{ at: number; ua: string; sample: string }>();
-        return json(rows.results.map((r) => ({ at: r.at, ua: r.ua, ...(JSON.parse(r.sample) as object) })));
-      }
-      // Admin tools, for measuring: what another model would answer for a
-      // pair (nothing is stored), and the one-off tier backfill.
-      if (request.method === "POST" && url.pathname === "/api/admin/merge-trial" && admin) {
-        const body = await readBody<MergeTrialRequest>(request);
-        const trial = oracleFor(env, { mergeModel: body.model, mergeEffort: body.effort }, ledger);
-        try {
-          await ensureBudget(env, trial, "merge", ESTIMATE.merge);
-          const t0 = Date.now();
-          const answer = await trial.merge(String(body.a), String(body.b));
-          return json({ answer, ms: Date.now() - t0, usd: trial.spent.reduce((sum, s) => sum + s.usd, 0) });
-        } finally {
-          await recordSpend(env.DB, trial);
+        if (session && url.pathname === "/api/progress") {
+          if (request.method === "GET") return json(await getProgress(env, session.invite));
+          if (request.method === "PUT") return json(await putProgress(env, session.invite, await readBody<ProgressPut>(request, MAX_PROGRESS_BODY)));
         }
+        if (request.method === "POST" && url.pathname === "/api/merge") {
+          const body = await readBody<MergeRequest>(request);
+          return json(await onceFor(env, oracle, `merge:${pairKey(String(body.a), String(body.b))}`, () => handleMerge(body, env, oracle)));
+        }
+        if (request.method === "POST" && url.pathname === "/api/describe") {
+          const body = await readBody<DescribeRequest>(request);
+          const run = () => handleDescribe(body, env, oracle, admin);
+          return json(body.regenerate === true ? await run() : await onceFor(env, oracle, `describe:${elementKey(String(body.name))}`, run));
+        }
+        if (request.method === "POST" && url.pathname === "/api/spell") {
+          const body = await readBody<SpellRequest>(request);
+          // The admin can try another model or effort for one design.
+          const tried = admin && (body.model || body.effort) ? oracleFor(env, { spellModel: body.model, spellEffort: body.effort }, ledger) : oracle;
+          try {
+            const run = () => handleSpell(body, env, tried, admin, ctx);
+            // A regeneration is asked on purpose; anything else is written once.
+            return json(body.regenerate === true ? await run() : await onceFor(env, oracle, `spell:${elementKey(String(body.name))}`, run));
+          } finally {
+            if (tried !== oracle) await recordSpend(env.DB, tried);
+          }
+        }
+        if (request.method === "POST" && url.pathname === "/api/spell/repair") {
+          const body = await readBody<RepairRequest>(request);
+          return json(await onceFor(env, oracle, `repair:${elementKey(String(body.name))}`, () => handleRepair(body, env, oracle, admin)));
+        }
+        if (request.method === "POST" && url.pathname === "/api/spell/check") {
+          const body = await readBody<CheckRequest>(request);
+          return json(await onceFor(env, oracle, `check:${Number(body.id)}`, () => handleCheck(body, env, oracle)));
+        }
+        if (request.method === "POST" && url.pathname === "/api/report") {
+          return json(await handleReport(await readBody<{ name?: unknown; reason?: unknown }>(request), env, payer));
+        }
+        if (request.method === "POST" && url.pathname === "/api/library") {
+          return json(await handleLibrary(await readBody<{ names?: unknown }>(request), env));
+        }
+        if (request.method === "POST" && url.pathname === "/api/spells/live") {
+          return json(await handleLive(await readBody<{ names?: unknown }>(request), env));
+        }
+        if (request.method === "POST" && url.pathname === "/api/cast") {
+          return json(await handleCast(await readBody<CastRecord>(request), env, player));
+        }
+        if (request.method === "POST" && url.pathname === "/api/vote") {
+          return json(await handleVote(await readBody<VoteRequest>(request), env, player, payer, ctx));
+        }
+        // 3.7: the island's chronicle, once a session, about $0.002.
+        if (request.method === "POST" && url.pathname === "/api/chronicle") {
+          return json(await handleChronicle(await readBody<{ digest?: unknown }>(request), env, oracle));
+        }
+        // 3.7: challenges from nothing. Free: merges go through /api/merge.
+        if (request.method === "GET" && url.pathname === "/api/challenges") return json(await listChallenges(env.DB, payer));
+        if (request.method === "POST" && url.pathname === "/api/challenge/win") {
+          return json(await recordWin(env.DB, payer, await readBody<{ id?: unknown; merges?: unknown; spell?: unknown }>(request)));
+        }
+        // 3.4.1: ideas and their votes, for every invite.
+        if (url.pathname === "/api/feedback") {
+          if (request.method === "GET") return json(await listFeedback(env, payer, admin));
+          if (request.method === "POST") return json(await postFeedback(env, payer, await readBody<{ title?: unknown; body?: unknown }>(request)));
+        }
+        if (request.method === "POST" && url.pathname === "/api/feedback/vote") {
+          return json(await voteFeedback(env, payer, await readBody<{ id?: unknown; up?: unknown }>(request)));
+        }
+        if (request.method === "GET" && url.pathname === "/api/spell/info" && admin) {
+          return json(await programInfo(env, url.searchParams.get("name") ?? ""));
+        }
+        if (request.method === "GET" && url.pathname === "/api/spend" && admin) {
+          return json(await spendReport(env));
+        }
+        if (request.method === "POST" && url.pathname === "/api/perf") {
+          const kept = await recordPerf(env.DB, payer.invite, await readBody<PerfSample>(request), request.headers.get("user-agent") ?? "");
+          return json({ ok: true, kept });
+        }
+        if (request.method === "GET" && url.pathname === "/api/perf" && admin) {
+          const rows = await env.DB.prepare("SELECT at, ua, sample FROM perf ORDER BY at DESC LIMIT 200").all<{ at: number; ua: string; sample: string }>();
+          return json(rows.results.map((r) => ({ at: r.at, ua: r.ua, ...(JSON.parse(r.sample) as object) })));
+        }
+        // Admin tools, for measuring: what another model would answer for a
+        // pair (nothing is stored), and the one-off tier backfill.
+        if (request.method === "POST" && url.pathname === "/api/admin/merge-trial" && admin) {
+          const body = await readBody<MergeTrialRequest>(request);
+          const trial = oracleFor(env, { mergeModel: body.model, mergeEffort: body.effort }, ledger);
+          try {
+            await ensureBudget(env, trial, "merge", ESTIMATE.merge);
+            const t0 = Date.now();
+            const answer = await trial.merge(String(body.a), String(body.b));
+            return json({ answer, ms: Date.now() - t0, usd: trial.spent.reduce((sum, s) => sum + s.usd, 0) });
+          } finally {
+            await recordSpend(env.DB, trial);
+          }
+        }
+        if (request.method === "POST" && url.pathname === "/api/admin/backfill-tiers" && admin) {
+          return json(await backfillTiers(env, oracle));
+        }
+        if (url.pathname.startsWith("/api/admin/") && admin) {
+          const handled = await handleAdmin(request, url, env, oracle, ctx);
+          if (handled) return handled;
+        }
+        return json({ error: "Not found" }, 404);
+      } catch (err) {
+        if (err instanceof HttpError) return json({ error: err.message, ...(err.detail ? { detail: err.detail } : {}) }, err.status);
+        if (err instanceof LedgerError) return json({ error: err.message, code: err.code }, err.status);
+        if (err instanceof OracleError) return json({ error: err.message }, 502);
+        console.error(err);
+        return json({ error: "Something went wrong in the Worker" }, 500);
+      } finally {
+        // Every call is written down, even when the request failed after it,
+        // and the money held for it is released in the same batch.
+        await closeLedger(env.DB, oracle);
       }
-      if (request.method === "POST" && url.pathname === "/api/admin/backfill-tiers" && admin) {
-        return json(await backfillTiers(env, oracle));
-      }
-      if (url.pathname.startsWith("/api/admin/") && admin) {
-        const handled = await handleAdmin(request, url, env, oracle, ctx);
-        if (handled) return handled;
-      }
-      return json({ error: "Not found" }, 404);
-    } catch (err) {
-      if (err instanceof HttpError) return json({ error: err.message, ...(err.detail ? { detail: err.detail } : {}) }, err.status);
-      if (err instanceof LedgerError) return json({ error: err.message, code: err.code }, err.status);
-      if (err instanceof OracleError) return json({ error: err.message }, 502);
-      console.error(err);
-      return json({ error: "Something went wrong in the Worker" }, 500);
-    } finally {
-      // Every call is written down, even when the request failed after it,
-      // and the money held for it is released in the same batch.
-      await closeLedger(env.DB, oracle);
     }
   },
 
@@ -352,6 +356,7 @@ function ledgerOf(oracle: Oracle): Ledger {
 function oracleFor(env: Env, o: OracleOverrides, ledger: Ledger): Oracle {
   const oracle = makeOracle(env, o);
   LEDGERS.set(oracle, ledger);
+  oracle.timings = ledger.timings;
   return oracle;
 }
 
@@ -396,6 +401,22 @@ function spellEstimate(env: Env, model: string): number {
 // so there is nothing to wait for).
 function onceFor<T>(env: Env, oracle: Oracle, key: string, fn: () => Promise<T>): Promise<T> {
   return oracle.mock ? fn() : once(env.DB, key, fn);
+}
+
+// 4.2: how long the request and each of its Claude calls took, readable by
+// the page (same origin) through PerformanceResourceTiming.serverTiming. Two
+// calls of one kind (a spell and its retry) are summed.
+function withTiming(res: Response, ledger: Ledger, started: number): Response {
+  const by = new Map<string, number>();
+  for (const t of ledger.timings) by.set(t.call, (by.get(t.call) ?? 0) + t.ms);
+  const parts = [...by].map(([call, ms]) => `${call.replace(/[^a-z-]/gi, "")};dur=${ms}`);
+  parts.push(`total;dur=${Date.now() - started}`);
+  try {
+    res.headers.set("Server-Timing", parts.join(", "));
+    return res;
+  } catch {
+    return res;
+  }
 }
 
 // Records the request's own calls and releases what it held, in one batch.
@@ -2134,7 +2155,19 @@ async function spellTrial(body: SpellTrialBody, env: Env, oracle: Oracle) {
   const description = await ensureDescription(env, oracle, element, false);
   await ensureBudget(env, oracle, "spell", ESTIMATE.big);
   const model = body.model && SPELL_MODELS.has(body.model) ? body.model : spellModelFor(env, tier);
-  const request: OracleSpellRequest = { name: element.name, kind: element.kind, description, recipe: await firstRecipe(env.DB, key), tier };
+  // 4.2: the request a player's write sends (intents, the API's library),
+  // so a measurement of quality measures what players get.
+  const intents = await ensureIntents(env, oracle, element, description);
+  const library = oracle.mock ? NO_LIBRARY : await liveLibrary(env.DB);
+  const request: OracleSpellRequest = {
+    name: element.name,
+    kind: element.kind,
+    description,
+    recipe: await firstRecipe(env.DB, key),
+    tier,
+    intents,
+    library: library.docs,
+  };
   if (body.examples === "library") request.examples = await examplesFor(env, key, request);
   else if (Array.isArray(body.examples)) request.examples = body.examples.slice(0, 3);
   if (body.rewrite && Array.isArray(body.rewrite.reasons)) request.rewrite = body.rewrite;
@@ -2149,8 +2182,10 @@ async function spellTrial(body: SpellTrialBody, env: Env, oracle: Oracle) {
       model,
       ms: Date.now() - t0,
       usd: trial.spent.reduce((s, x) => s + x.usd, 0),
-      program: answer,
+      program: { ...answer, code: withLibrary(answer.code, library.helpers) },
+      intents,
       examples: (request.examples ?? []).map((e) => e.name),
+      calls: trial.spent.map((x) => ({ call: x.call, usd: x.usd })),
     };
   } finally {
     await recordSpend(env.DB, trial);

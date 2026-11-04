@@ -45,6 +45,8 @@ export const ADMIN_PAYER: Payer = { invite: "admin", name: "admin", status: "act
 export class Ledger {
   readonly req = crypto.randomUUID();
   readonly held: number[] = [];
+  // How long each Claude call of this request took (4.2), for Server-Timing.
+  readonly timings: { call: string; ms: number }[] = [];
   constructor(readonly payer: Payer) {}
 }
 

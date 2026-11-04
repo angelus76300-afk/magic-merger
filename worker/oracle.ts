@@ -139,6 +139,8 @@ export interface Oracle {
   readonly mock: boolean;
   // Every call made so far and its cost, for the budget ledger.
   readonly spent: Spent[];
+  // How long each call took (4.2), shared by the oracles of one request.
+  timings: { call: string; ms: number }[];
   // avoid: a name already refused for this pair (3.7: it only joined the two).
   merge(a: string, b: string, avoid?: string): Promise<MergeAnswer>;
   describe(name: string, kind: ElementKind, recipe: [string, string] | null): Promise<string>;
@@ -201,6 +203,7 @@ function fallbackFor(model: string) {
 export class ClaudeOracle implements Oracle {
   readonly mock = false;
   readonly spent: Spent[] = [];
+  timings: { call: string; ms: number }[] = [];
   private client: Anthropic;
 
   constructor(
@@ -221,11 +224,14 @@ export class ClaudeOracle implements Oracle {
     maxTokens: number,
     cache = true,
   ): Promise<string> {
+    const t0 = Date.now();
     const response = await this.client.beta.messages.create({
       ...requestParams(model, effort, system, messages, schema, maxTokens, cache),
       ...fallbackFor(model),
     });
-    this.spent.push(logUsage(call, response));
+    const ms = Date.now() - t0;
+    this.timings.push({ call, ms });
+    this.spent.push(logUsage(call, response, 1, ms));
     return readText(response);
   }
 
@@ -482,7 +488,7 @@ const PRICES: Record<string, [number, number, number, number]> = {
 };
 
 // One JSON line per call, visible with `wrangler tail` and in Workers Logs.
-function logUsage(call: string, response: Anthropic.Beta.BetaMessage, discount = 1): Spent {
+function logUsage(call: string, response: Anthropic.Beta.BetaMessage, discount = 1, ms?: number): Spent {
   const u = response.usage;
   const input = u.input_tokens ?? 0;
   const output = u.output_tokens ?? 0;
@@ -491,7 +497,7 @@ function logUsage(call: string, response: Anthropic.Beta.BetaMessage, discount =
   // Unknown models are priced like the most expensive one, so the budget errs on the safe side.
   const price = PRICES[response.model] ?? PRICES["claude-fable-5-1"];
   const usd = ((input * price[0] + output * price[1] + cacheRead * price[2] + cacheWrite * price[3]) / 1e6) * discount;
-  console.log(JSON.stringify({ usage: call, model: response.model, stop: response.stop_reason, input, output, cacheRead, cacheWrite, usd }));
+  console.log(JSON.stringify({ usage: call, model: response.model, stop: response.stop_reason, input, output, cacheRead, cacheWrite, usd, ms }));
   return { call, model: response.model, usd };
 }
 
@@ -523,6 +529,7 @@ function readText(response: Anthropic.Beta.BetaMessage): string {
 export class MockOracle implements Oracle {
   readonly mock = true;
   readonly spent: Spent[] = [];
+  timings: { call: string; ms: number }[] = [];
 
   async merge(a: string, b: string): Promise<MergeAnswer> {
     const [x, y] = [a, b].sort();
