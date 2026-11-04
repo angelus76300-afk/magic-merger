@@ -27,7 +27,7 @@ const FIELD_IDLE = 8;
 const MAX_FIELDS = 40;
 // No field reaches further than this many steps from its destination: a trip
 // longer than that walks straight until it is within reach.
-const MAX_STEPS = 64;
+export const MAX_STEPS = 64;
 const BLOCK = 4;
 const SHORT_STEPS = 28;
 const FAR = 0xffff;

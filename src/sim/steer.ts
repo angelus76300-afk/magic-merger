@@ -1,5 +1,5 @@
 import type { Creature, CreatureKind } from "./creatures";
-import { Mobility, pathsOf } from "./paths";
+import { MAX_STEPS, Mobility, pathsOf } from "./paths";
 import type { World } from "./world";
 
 // How every creature moves (4.3): villagers, the island's animals and the
@@ -135,7 +135,8 @@ export function steer(
       if (f && !paths.aim(world, f, c.x, c.y, AIM)) {
         // No way there from here: the mind is told (goals.ts drops the task
         // and steps out of the hollow, instead of pacing along the wall).
-        c.data.noWay = world.time;
+        // Further than a field reaches, it only walks on toward it.
+        if (trip < MAX_STEPS * 0.7) c.data.noWay = world.time;
       } else if (f && (AIM.x !== Math.round(c.x) || AIM.y !== Math.round(c.y))) {
         dx = AIM.x - c.x;
         dy = AIM.y - c.y;

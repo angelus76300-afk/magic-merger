@@ -264,9 +264,10 @@ export function pursue(world: World, c: Creature, k: CreatureKind, dt: number): 
     c.hp = Math.min(life.maxHp(c), c.hp + dt * 0.6);
   }
   m.think -= dt;
-  // A task just ended: the next one is thought of at once, not up to 0.85 s
-  // later with the creature drifting toward a random point meanwhile (4.3).
-  if (m.task === "none" && m.think > 0.1) m.think = 0.1;
+  // A task just ended: the next one is thought of at once, in the same tick,
+  // not up to 0.85 s later with the creature drifting toward a random point
+  // meanwhile (4.3); idle for longer, it looks again ten times a second.
+  if (m.task === "none") m.think = (m.acted ?? -9) >= world.tick - 1 ? 0 : Math.min(m.think, 0.1);
   if (m.think <= 0) {
     // Two or three times a second while it hunts or fights, about once and a half otherwise.
     m.think = m.task === "hunt" || m.task === "fight" ? 0.3 + Math.random() * 0.15 : 0.5 + Math.random() * 0.35;
@@ -383,8 +384,13 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
     // out of the hollow, then think again, rather than pace by the wall.
     if (world.time - ((c.data.noWay as number | undefined) ?? -1) < 0.1 && m.task !== "spawn") {
       c.data.noWay = undefined;
+      // A herd across the water is not sought again for a while, and the
+      // next thought waits a little: no task taken up and dropped every tick.
+      if (m.task === "herd") c.data.herdAway = world.time + 8;
       life.free(c, tx, ty);
       drop(m);
+      m.acted = undefined;
+      m.think = 0.5;
       return null;
     }
     if (d < m.near - 0.3) {
@@ -982,12 +988,13 @@ function wander(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
   // back again when it finds itself alone, a leash pulled back and forth.
   const h = HERD;
   const herded = h.n > 0 && !m.tame;
-  const range = herded ? 6 : m.goal === "explore" ? 30 : 14;
+  const range = herded ? 10 : m.goal === "explore" ? 30 : 14;
   const heading = herded && Math.hypot(h.hx, h.hy) > 0.3 ? Math.atan2(h.hy, h.hx) : c.hd;
   for (let tries = 0; tries < 6; tries++) {
     // Mostly on the way it is already going (4.3): a new point anywhere
-    // around it was an about turn one time in three.
-    const a = tries < 4 ? heading + (Math.random() - 0.5) * 2.2 : Math.random() * Math.PI * 2;
+    // around it was an about turn one time in three. A herd's point is well
+    // ahead of its middle, so it walks on rather than stopping every few steps.
+    const a = tries < 4 ? heading + (Math.random() - 0.5) * (herded ? 1.2 : 2.2) : Math.random() * Math.PI * 2;
     const r = range * (0.5 + Math.random() * 0.5);
     const ox = herded ? h.x : m.tame ? (world.villages[m.tame - 1]?.x ?? c.homeX) : c.x;
     const oy = herded ? h.y : m.tame ? (world.villages[m.tame - 1]?.y ?? c.homeY) : c.y;
@@ -1010,6 +1017,7 @@ const HERD = { n: 0, x: 0, y: 0, hx: 0, hy: 0 };
 function herd(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
   HERD.n = 0;
   if (!k.native || c.kind === "bear" || c.kind === "bird") return false;
+  if (world.time < ((c.data.herdAway as number | undefined) ?? 0)) return false;
   let n = 0;
   let sx = 0;
   let sy = 0;

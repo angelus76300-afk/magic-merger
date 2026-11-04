@@ -495,6 +495,57 @@ Chips in the spell bar say "writing" (the Worker writes it, or the page is askin
 
 The page read the check frame's answer with only three problems (crash, nothing, wiped), so a broken promise (3.4.2) or an idle artifact (3.7) reached the Worker as "not ok, no problem", and the Worker promoted it like a pass: the probes had decided nothing in players' browsers since they were added. Fifteen live programs carry such a verdict (2 new ones promoted, 12 legacy rechecks that never asked for their rewrite, 1 vote rewrite); they are listed in the measurement and left live (never rewrite in bulk). Every problem is read now, and a failure the frame cannot name is a crash.
 
+## Creatures that move like they mean it (4.3)
+
+Players saw deer going back and forth. Measured first (`docs/measurements/movement-4.3.md`, `npm test` section "motion"), then fixed where the turns came from, with no API call and no prompt change. Everything here runs for villagers, the island's animals and the creatures of spells alike; no stored program was rewritten and the World API did not change (a spell that sets `x` or pushes a creature still does exactly that).
+
+### Measured
+
+`src/sim/motion.ts` is a meter the simulation reports to behind one null check, off outside tests. A **sharp turn** is a change of heading over 150 degrees within half a second, read from the creature's actual step; it is **natural** when the creature finished something in that half second (a task done, a wander or flight point reached, a catch, a delivery, a target someone else took, seeing a danger for the first time), otherwise a **flip-flop**. The same test on the direction the mind asked for gives **intent flips**: once motion has a turn rate, smoothing alone would satisfy the first count while the mind keeps dithering, so `npm test` asserts both. Also counted: seconds stuck (wanted to walk, moved less than a quarter of the step), hops (more than half a cell in one tick: a creature lifted out of a hollow), and changes of the drive per minute.
+
+### Decisions that stick
+
+1. **Fear with memory** (`src/sim/flight.ts`): alarmed at its sense (deer 8 cells from people and wolves, 9 from what hunts it), it calms only past 1.7 times that and after 3 seconds out of sight; it remembers where the danger was. Before, one distance switched fear on and off and a deer orbited it, roam, flee, roam.
+2. **Where it runs**: twelve ways out walked in steps of 0.8 cells, scored by distance gained from the danger, keeping its heading, trees at the end for those that hide (deer, rabbits, boars) and the herd lying that way; chosen about once a second and again when reached, blocked or with the danger ahead, never turning back on a routine look. Before, the way out was chosen every tick from eight directions and a deer by a tree shook.
+3. **Hysteresis everywhere**: a meal from hunger 0.7 to 0.3 (it used to stop after one mouthful at 0.55); the herd joined past 7 cells from its middle and reached at 3; danger from fire kept for 0.8 s after it is out of reach; a herd reconsidered after 2 s at the earliest.
+4. **No gap between two tasks**: a finished task is followed by the next thought in the same tick. Before, for up to 0.85 s the creature walked toward a random point (`plan`), then turned to its real goal.
+5. **Momentum**: wander points mostly ahead (within about 60 degrees), the next mouthful and the next furrow close by and ahead, a short trip whose straight line is blocked routed from the start rather than walked into and turned back from.
+
+### Steering
+
+`src/sim/steer.ts`. A creature has a heading and a speed (`hd`, `sp`, not saved). It speeds up and brakes at its kind's rate, turns at its kind's rate (deer 5 rad/s, rabbits 7, bears 3, golems 2.2; spell kinds by size and speed), a little more than twice as fast when nearly still, and turns on the spot before walking off the other way. It slows to arrive at a destination, and right down when close and facing away, so it does not circle its goal. It keeps apart from its own kind sideways only (a push straight back turned villagers round in lanes). Feelers look ahead along the way in half cell steps, each step climbed from the one before, so a slope is walkable and a cliff is not; when blocked it turns to the side it took last, up to 110 degrees. The right angle side step is gone, and with it most stuck time (deer 15 s a minute before).
+
+### Paths
+
+`src/sim/paths.ts`. A trip longer than 12 cells follows a flow field: walking distance to the destination's block of 4 by 4 cells, shared by everyone bound for it, filled breadth first 1,500 cells a tick over all fields, up to 64 steps, made again after 30 s and forgotten after 8 s unused (40 at most). A short trip whose straight line is blocked takes an exact field of its cell (28 steps). The aim is the furthest of the next six cells down the field that can be walked to in a straight line with a little room either side. A field climbs no step over 1.55 (creatures climb 1.6): a step that is just climbable when the field is made, or with a little water on it, does not stop a creature later. A creature the field cannot reach gives up its task and steps out of its hollow, as the stall did after 5 s before; a chase takes the field once the straight way to its prey is blocked.
+
+### Herds, flocks, packs
+
+A deer that sees a danger alarms its herd within 10 cells, and they run behind it (a place each behind the leader, unless the leader is nearer the danger). A herd roams a little ahead of its middle the way it is going, so nobody wanders off alone and is pulled back. Birds fly with a flock behind the lowest id around and land to sow when their leader does. Wolves hunting one animal take places on a circle around it, starting behind it, and go straight for it when close. Fish keep their schools as before, with separation.
+
+### Gaits and idles
+
+The view takes the simulation's heading, so a creature turns at its own pace and on the spot (`src/sim/voxel/view.ts`). `src/sim/voxel/gait.ts`: a walk, a trot or a run by speed against the kind's walking speed (longer strides, a body that bobs and leans into a run); standing, the head goes down to graze or work, looks around, or the legs fold and the body lies down when asleep or resting. The bestiary has run, graze and lie poses (`docs/visual-checks/gaits.png`); `docs/visual-checks/deer-before-after.jpg` is a deer by a bear on main and on 4.3 (`scripts/deer-clip.mjs`, `lab/clip.html`).
+
+### Measured
+
+`docs/measurements/movement-4.3.md` has every number. Deer flip-flops 16.9 to 0.4 a minute, rabbits 11.2 to 1.1, villagers 4.1 to 0.4; deer stuck 15.2 to 0.0 s a minute; hops (a creature lifted out of a hollow) 4 to 6 a minute to under 2. Cost, `scripts/prof-life.ts`, large island, median of three interleaved runs, ms per tick p50 / p95:
+
+| Scene        | Creatures, main | Creatures, 4.3 | Whole tick, main | Whole tick, 4.3 |
+| ------------ | --------------- | -------------- | ---------------- | --------------- |
+| As generated | 0.36 / 1.02     | 0.69 / 1.52    | 3.13 / 6.40      | 3.18 / 5.00     |
+| With guests  | 0.45 / 1.31     | 0.77 / 1.45    | 3.71 / 7.22      | 3.45 / 5.12     |
+
+The steering costs about 0.3 ms p50 of creature time; `stepTemperature` reading its material tables by id instead of by name three times a cell takes more off the tick than that.
+
+### Guards
+
+`npm test` asserts a deer under 2 flip-flops a minute in its steps and in its mind, every kind under 3 and under 3 s stuck a minute, a herd running behind one leader, wolves closing in from around their prey, birds flying with a flock, and that wolves still catch deer in the five minute scene (2 at least over its three streams: on main the streams caught 0, 3 and 4). Three things the new movement exposed:
+
+1. **Challenges.** A lava challenge is won 9 times in 12 seeds by the wall, on main and on 4.3 alike, and its verdict on seeds 101, 202 and 303 flipped with any change to what creatures do to the land (birds sowing, villagers felling). Replays now give creatures their own random stream, as the test run does, and `npm test` also asks every plain solution to win half of 12 seeds (`winRate`), so a failure on the three seeds with that green is luck, not a weaker solution.
+2. **The wildfire** counts burnt houses as they burn: villagers who got about better rebuilt each house as the next burned, and doing nothing won once in 24 seeds without two houses ever down at once.
+3. **Two test fixtures** passed by luck of the old movement and are now deliberate: the statue is 4 blocks tall, so it is visible and fails as idle; the imp hunter hunts only imps, so the imps always have an enemy near.
+
 ## Challenges
 
 Hand-made islands with a hazard and a goal (`src/sim/scenarios.ts`, titles in `scenario-list.ts` so the game page does not load the engine to list them). A challenge builds its own world, runs a `tick` every frame (a volcano vent, a rising sea, the sun drying fields) and a `check` twice a second that returns progress text and playing, won or lost. It never touches the player's island: the iframe keeps the sandbox save in memory and restores it on leaving.
