@@ -53,7 +53,7 @@ import { stepWorld } from "../src/sim/tick";
 import { DAY_LENGTH } from "../src/sim/daylight";
 import { gaitOf, hipHeight } from "../src/sim/voxel/gait";
 import { TICK } from "../src/sim/world";
-import { BIOMES, DEFAULT_LAND, SHAPES, habitatCount, readLand, LOOKS } from "../src/sim/land";
+import { BIOMES, DEFAULT_LAND, SHAPES, habitatCount, readLand, resolveLand, LOOKS } from "../src/sim/land";
 import { landProblems, type LandLife } from "./land-life";
 import { projectedSim, sizesOffered, SIM_BUDGET_MS } from "../src/headroom";
 import { skyBodies, weatherAt } from "../src/sim/voxel/sky";
@@ -81,6 +81,8 @@ const idle: Job[] = [
   // own shape (the shapes go round), so every biome and every shape lives.
   ...BIOMES.map((biome, k) => ({ biome, shape: SHAPES[k % SHAPES.length], seed: 11 + k, seconds: LAND_SECONDS })),
   ...[SHAPES[BIOMES.length % SHAPES.length]].map((shape) => ({ biome: "temperate" as const, shape, seed: 3, seconds: LAND_SECONDS })),
+  // 4.4.1: a large island as the game makes it: several lands.
+  { biome: "mixed" as const, shape: "coast" as const, seed: 31, seconds: LAND_SECONDS, size: 208 },
   // 4.3: how creatures move, two minutes on each of three seeds.
   ...MOTION_SEEDS.map((motion) => ({ motion })),
   // 3.7: every challenge solved in the simulation by the plain solution of its hazard.
@@ -722,7 +724,7 @@ for (const scenario of SCENARIOS) {
     !missing.length,
     missing.slice(0, 4).join("; ") || `slowest ${slowest.toFixed(0)} ms (printed, not checked)`,
   );
-  const land = { biome: "mesa" as const, shape: "lakes" as const, water: 0.7, relief: 0.2, forest: 0.9 };
+  const land = { ...DEFAULT_LAND, biome: "mesa" as const, shape: "lakes" as const, water: 0.7, relief: 0.2, forest: 0.9 };
   const a = generateWorld(112, 112, 21, land);
   const b = generateWorld(112, 112, 21, land);
   check("the same seed and options make the same island", a.height.every((v, i) => v === b.height[i]) && a.cover.every((v, i) => v === b.cover[i]));
@@ -745,6 +747,57 @@ for (const scenario of SCENARIOS) {
   );
   const old = generateWorld(112, 112, 4);
   check("no options: the island before 4.4, with no springs and the old climate", old.springs.length === 0 && old.climate === 0 && old.land === null);
+
+  // 4.4.1: the land comes from the seed and the sliders, not a list; large
+  // islands and bigger mix several lands, each species living somewhere.
+  const mid = { warmth: 0.5, water: 0.5, relief: 0.5, forest: 0.5 };
+  const tally = (choice: typeof mid, cells: number) => {
+    const out: Record<string, number> = {};
+    for (let s = 0; s < 400; s++) {
+      const l = resolveLand(choice, s * 7919 + 13, cells);
+      out[l.biome] = (out[l.biome] ?? 0) + 1;
+      out[l.shape] = (out[l.shape] ?? 0) + 1;
+      if (l.mixed) out.mixed = (out.mixed ?? 0) + 1;
+    }
+    return out;
+  };
+  const middle = tally(mid, 152);
+  const cold = tally({ ...mid, warmth: 0 }, 152);
+  const hotDry = tally({ ...mid, warmth: 1, water: 0 }, 152);
+  const big = tally(mid, 208);
+  check(
+    "the seed picks the shape and, from the sliders, the land",
+    SHAPES.every((s) => (middle[s] ?? 0) > 20) &&
+      (middle.temperate ?? 0) > 150 &&
+      (middle.tundra ?? 0) > 20 &&
+      (cold.tundra ?? 0) > 300 &&
+      (hotDry.desert ?? 0) > 300 &&
+      !middle.mixed &&
+      big.mixed === 400 &&
+      JSON.stringify(resolveLand(mid, 77, 152)) === JSON.stringify(resolveLand(mid, 77, 152)),
+    `mid sliders on 400 seeds: ${["temperate", "tundra", "swamp", "jungle", "mesa", "desert", "volcanic"].map((b) => `${b} ${middle[b] ?? 0}`).join(", ")}`,
+  );
+  const mixedNotes: string[] = [];
+  const mixedProblems: string[] = [];
+  for (const s of [41, 42, 43, 44]) {
+    const w = generateWorld(208, 208, s, resolveLand(mid, s, 208));
+    populate(w);
+    const count = new Map<number, number>();
+    for (const b of w.biomeMap ?? []) count.set(b, (count.get(b) ?? 0) + 1);
+    const lands = [...count.entries()].filter(([, v]) => v > w.n * 0.05).map(([b]) => BIOMES[b]);
+    const lack = SPECIES.filter((sp) => habitatCount(w, sp) <= 0).map((sp) => sp.kind.name);
+    const people = w.creatures.filter((c) => c.kind === "villager").length;
+    mixedNotes.push(`${s}: ${lands.join("+")}`);
+    if (lands.length < 2 || lack.length || !people) mixedProblems.push(`${s}: ${lands.length} lands, ${people} villagers, missing ${lack.join(" ")}`);
+  }
+  check("large islands mix lands, each species living somewhere", !mixedProblems.length, mixedProblems.join("; ") || mixedNotes.join("; "));
+  const mixed = generateWorld(208, 208, 42, resolveLand(mid, 42, 208));
+  const reload = loadWorld(JSON.parse(JSON.stringify(saveWorld(mixed, new Map()))), () => {});
+  let sameClimate = !!reload?.biomeMap;
+  for (let i = 0; reload && i < mixed.n && sameClimate; i += 97)
+    sameClimate = reload.biomeMap![i] === mixed.biomeMap![i] && Math.abs(reload.ambient(i) - mixed.ambient(i)) < 0.1;
+  check("a mixed island's regions and their climates come back with its save", sameClimate);
+  check("a small island is one land", generateWorld(112, 112, 5, resolveLand(mid, 5, 112)).biomeMap === null);
 }
 
 // 4.4: the headroom rule, the weather, the sun's path, the trees' models, and
@@ -848,10 +901,11 @@ await idleDone;
 // 4.4: every biome generated, populated and left alone for three minutes:
 // no species dies out, villages stand, rivers keep running, the sea does not
 // rise, nothing floods or burns by itself, the volcano keeps its lava.
-for (const r of lands.sort((x, y) => BIOMES.indexOf(x.biome) - BIOMES.indexOf(y.biome))) {
+const order = (b: string) => [...BIOMES, "mixed"].indexOf(b);
+for (const r of lands.sort((x, y) => order(x.biome) - order(y.biome))) {
   const problems = landProblems(r);
   check(
-    `a living ${r.biome} island (${r.shape}), ${LAND_SECONDS} s`,
+    `a living ${r.biome} island (${r.shape}${r.lands ? `, ${r.lands} lands` : ""}), ${LAND_SECONDS} s`,
     !problems.length,
     problems.join("; ") ||
       `${Object.entries(r.species)
@@ -860,8 +914,8 @@ for (const r of lands.sort((x, y) => BIOMES.indexOf(x.biome) - BIOMES.indexOf(y.
   );
 }
 check(
-  "every biome lived",
-  BIOMES.every((b) => lands.some((r) => r.biome === b)),
+  "every biome lived, and a mixed island",
+  [...BIOMES, "mixed"].every((b) => lands.some((r) => r.biome === b)),
 );
 for (const scenario of SCENARIOS) {
   const runs = idleResults.get(scenario.id) ?? [];

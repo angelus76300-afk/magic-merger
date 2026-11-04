@@ -1,7 +1,8 @@
 // 4.4 in the real game (wrangler dev, a fresh local D1, a stub Claude), in a
-// phone sized browser: the reset dialog, a desert island of lakes from a
-// seed, saved and loaded again; no huge or giant island without headroom;
-// with it, a giant island kept gzipped and loaded again. Screenshots go to
+// phone sized browser: the reset dialog (4.4.1: a size, four sliders and a
+// seed, no list of lands), a hot dry island from seed 42, saved and loaded
+// again; no huge or giant island without headroom; with it, a giant island,
+// mixed, kept gzipped and loaded again. Screenshots go to
 // docs/visual-checks (needs dist/: npm run build).
 import { createRequire } from "node:module";
 
@@ -110,7 +111,7 @@ const unpacked = (page) =>
     const bytes = Uint8Array.from(atob(raw.slice(3)), (c) => c.charCodeAt(0));
     const text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
     const s = JSON.parse(text);
-    return { w: s.w, seed: s.seed, land: s.land, chars: text.length };
+    return { w: s.w, seed: s.seed, land: s.land, regions: !!s.layers.biome, chars: text.length };
   });
 async function openWorld(page) {
   await page.goto(`${BASE}/`);
@@ -149,20 +150,29 @@ try {
   const disabled = await page.$$eval("dialog.reset-island select:first-of-type option", (o) => o.filter((x) => x.disabled).map((x) => x.value));
   check("no huge or giant island without headroom", disabled.join() === "huge,giant", `disabled: ${disabled.join(", ")}`);
   await page.screenshot({ path: `${OUT}/reset-dialog.jpg` });
-  // 2. A desert island of lakes from seed 42.
-  const selects = page.locator("dialog.reset-island select");
-  await selects.nth(1).selectOption("desert");
-  await selects.nth(2).selectOption("lakes");
+  // 2. A hot, dry island from seed 42: one land, picked by the sliders.
+  check(
+    "no list of lands or shapes, a warmth slider",
+    (await page.locator("dialog.reset-island select").count()) === 1 && (await page.locator("dialog.reset-island input[type=range]").count()) === 4,
+  );
+  const sliders = page.locator("dialog.reset-island input[type=range]");
+  const setSlider = (k, v) => sliders.nth(k).evaluate((el, value) => ((el.value = String(value)), el.dispatchEvent(new Event("input"))), v);
+  await setSlider(0, 100);
+  await setSlider(1, 0);
   await page.fill("dialog.reset-island input[type=text]", "42");
   await page.click("dialog.reset-island .primary");
-  const s1 = await waitSave(page, (s) => s.land?.biome === "desert");
-  check("the new island is a desert of lakes from seed 42", s1?.land?.biome === "desert" && s1?.land?.shape === "lakes" && s1?.seed === 42, JSON.stringify(s1));
+  const s1 = await waitSave(page, (s) => s.seed === 42);
+  check(
+    "a hot dry island from seed 42 is a desert, a mesa or a volcano, one land",
+    ["desert", "mesa", "volcanic"].includes(s1?.land?.biome) && s1?.land?.mixed === false && s1?.land?.warmth === 1 && s1?.land?.water === 0,
+    JSON.stringify(s1?.land),
+  );
   await page.waitForTimeout(3000);
   await page.screenshot({ path: `${OUT}/desert-lakes-phone.jpg` });
   // 3. Loaded again.
   await openWorld(page);
   const s2 = await waitSave(page, (s) => s.seed === 42, 20000);
-  check("the desert island comes back after a reload", s2?.seed === 42 && s2?.land?.biome === "desert", JSON.stringify(s2));
+  check("it comes back after a reload", s2?.seed === 42 && s2?.land?.biome === s1?.land?.biome, JSON.stringify(s2?.land));
   // 4. Headroom as a fast computer would report it: giant is offered, kept gzipped, loaded again.
   await page.evaluate(() => localStorage.setItem("magic-merger.headroom", JSON.stringify({ w: 208, simP95: 3, frameP95: 20, frames: 600 })));
   await page.click("#world-reset");
@@ -171,17 +181,18 @@ try {
   const chosen = await page.$eval("dialog.reset-island select", (s) => s.value);
   check("with headroom every size is offered, none chosen by default", disabled2.length === 0 && chosen !== "huge" && chosen !== "giant", `default ${chosen}`);
   await page.locator("dialog.reset-island select").first().selectOption("giant");
-  await page.locator("dialog.reset-island select").nth(1).selectOption("tundra");
+  await setSlider(0, 30);
+  await setSlider(1, 50);
   await page.click("dialog.reset-island .primary");
   const s3 = await waitSave(page, (s) => s.gz === true, 60000);
   const inside = s3?.gz ? await unpacked(page) : null;
   check(
-    "a giant island is kept gzipped",
-    !!inside && inside.w === 384 && inside.land?.biome === "tundra",
-    `${s3?.chars} characters stored for ${inside?.chars} of JSON`,
+    "a giant island mixes lands and is kept gzipped",
+    !!inside && inside.w === 384 && inside.land?.mixed === true && inside.regions,
+    `${s3?.chars} characters stored for ${inside?.chars} of JSON; main land ${inside?.land?.biome}`,
   );
   await page.waitForTimeout(3000);
-  await page.screenshot({ path: `${OUT}/giant-tundra-phone.jpg` });
+  await page.screenshot({ path: `${OUT}/giant-mixed-phone.jpg` });
   await openWorld(page);
   await page.waitForTimeout(6000);
   const s4 = await save(page);

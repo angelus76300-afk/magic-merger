@@ -14,7 +14,7 @@ import {
   Vector3,
 } from "three";
 import { DAY_LENGTH } from "../daylight";
-import { LOOKS, type Weather } from "../land";
+import { LOOKS, biomeAt, type Weather } from "../land";
 import { seeded } from "../noise";
 import type { World } from "../world";
 import { GRAPHICS } from "./graphics";
@@ -40,10 +40,11 @@ export interface WeatherNow {
 // The Perf Lab can hold one weather, to measure and look at it.
 export const LAB_WEATHER: { now: WeatherNow | null } = { now: null };
 
-export function weatherAt(world: World, time: number): WeatherNow {
+// On a mixed island (4.4.1), the weather of the region at `cell`.
+export function weatherAt(world: World, time: number, cell = -1): WeatherNow {
   if (LAB_WEATHER.now) return LAB_WEATHER.now;
   if (!world.land) return { kind: "clear", amount: 0 };
-  const odds = LOOKS[world.land.biome].weather;
+  const odds = LOOKS[cell >= 0 && cell < world.n ? biomeAt(world, cell) : world.land.biome].weather;
   const spell = Math.floor(time / SPELL);
   const roll = seeded((world.seed * 7919 + spell * 104729) >>> 0)();
   let kind: Weather = "clear";
@@ -91,6 +92,7 @@ export class Sky {
   private dropMaterial: ShaderMaterial;
   private starMaterial: ShaderMaterial;
   weather: WeatherNow = { kind: "clear", amount: 0 };
+  private lastTime = 0;
 
   constructor(
     private scene: Scene,
@@ -180,7 +182,23 @@ export class Sky {
   // Places the sky around the camera and the weather around its target.
   // `night` is daylight's (0 to 1); `target` in scene units.
   update(time: number, night: number, camera: PerspectiveCamera, target: { x: number; y: number; z: number }, dist: number, pixels: number): void {
-    this.weather = GRAPHICS.weather ? weatherAt(this.world, time) : { kind: "clear", amount: 0 };
+    // The weather of the region the camera looks at; moving to another
+    // region, the old weather eases out before the new one eases in.
+    const w = this.world;
+    const cx = Math.round(target.x + w.w / 2);
+    const cy = Math.round(target.z + w.h / 2);
+    const cell = cx >= 0 && cy >= 0 && cx < w.w && cy < w.h ? cy * w.w + cx : -1;
+    const goal = GRAPHICS.weather ? weatherAt(w, time, cell) : { kind: "clear" as const, amount: 0 };
+    const dt = Math.min(0.25, Math.max(0, time - this.lastTime));
+    this.lastTime = time;
+    const now = this.weather;
+    if (goal.kind === now.kind || now.amount <= 0.01) {
+      const kind = goal.kind === now.kind || goal.kind !== "clear" ? goal.kind : now.kind;
+      const to = goal.kind === kind ? goal.amount : 0;
+      const step = dt * 0.5;
+      this.weather = { kind, amount: Math.abs(to - now.amount) <= step ? to : now.amount + Math.sign(to - now.amount) * step };
+    } else this.weather = { kind: now.kind, amount: Math.max(0, now.amount - dt * 0.5) };
+    if (LAB_WEATHER.now) this.weather = LAB_WEATHER.now;
     const cover = this.weather.kind === "clear" ? 0 : this.weather.amount;
     const on = GRAPHICS.sky;
     this.group.visible = on;

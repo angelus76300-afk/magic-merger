@@ -201,6 +201,16 @@ Not done: real phones (the steering adds about 0.3 ms p50 and 0.4 ms p95 of crea
 
 Owner's calls: the challenge guard in `npm test` now also reads each plain solution's win rate over 12 seeds; the wildfire counts houses burnt, not houses standing; replays give creatures their own random stream.
 
+## Done in 4.4.1: the seed chooses, big islands mix
+
+Asked for, after 4.4: no choosing a land or a shape from a list; several lands on one island where the island is big enough. DESIGN.md, "Chosen by a seed, mixed on big islands (4.4.1)", has the rules.
+
+1. **The dialog** has a size, a seed and four sliders (warmth, water, mountains, forest). The seed picks the shape; warmth and water pick the land the way climate does, with a little of the seed, so mid sliders still give one island in six cold and one in six hot.
+2. **Large, huge and giant islands always mix lands** in regions about 100 cells across, from a warmth and a wetness drawn over the island (a cold side, the cold of high ground), with speckled borders; one in three has a volcanic region. Each cell has its own climate, ground, forest, colors, trees and water; terraces and swamps fade at a region's edge; the weather is the region's under the camera. 24 large islands of 24 mixed two lands or more (4.5 on average).
+3. **Checked**: the seed's rules on 400 seeds, four large islands mixing lands with every habitat, the regions and climates through a save, a mixed island alive for three minutes in `npm test`; `scripts/verify-4.4.mjs` makes a hot dry island from seed 42 (a desert) and a giant mixed island in the real game. A mixed island costs about 0.3 ms more per tick.
+
+Not done: villages do not dress by region yet (a desert village looks like a temperate one); animals keep their habitats, not their regions (no camels, no polar bears).
+
 ## Done in 4.4: bigger and richer worlds
 
 Asked for: bigger islands for devices that can run them (a huge size and beyond, offered only when the device's own HUD numbers show headroom, never by default on phones, saved on the account); biomes and island shapes with better rivers and coasts, chosen by a seed and sliders at reset, every species' habitat and `npm test` working on each; baked ambient occlusion, better water, visible weather, sun, moon and stars, each measured with the HUD before and after on a phone sized browser. Items 1 to 3 of "4.1 Bigger and richer worlds" below, which 4.1 left for later. DESIGN.md, "Islands of every kind (4.4)", has the rules; `docs/measurements/view-4.4.md` the numbers.

@@ -47,7 +47,7 @@ import { DecorInstances } from "./decor-instances";
 import { Darkness } from "./darkness";
 import { Domes } from "./domes";
 import { keyLevel, keyX, keyY } from "../voxelkey";
-import { LOOKS } from "../land";
+import { LOOKS, biomeAt } from "../land";
 import { Sky } from "./sky";
 
 // What a spell's darkness pulls the sky toward.
@@ -424,7 +424,8 @@ export class VoxelView {
     const lists = new Map<string, number[]>();
     for (const key of this.covers.keys()) lists.set(key, []);
     const builtinCovers = BUILTIN.cover.length;
-    // A biome draws its own trees (4.4); the island before it, oaks and pines.
+    // A biome draws its own trees (4.4), a mixed island each region's
+    // (4.4.1); the island before 4.4, oaks and pines.
     const trees = world.land ? LOOKS[world.land.biome].trees : null;
     for (let i = 0; i < world.n; i++) {
       const c = world.cover[i];
@@ -433,7 +434,8 @@ export class VoxelView {
       if (c >= builtinCovers) key = world.materials.get("cover", c).solid ? "block" : "slab";
       else if (c === C.TREE) {
         const high = world.shade[i] % 3 === 0 || world.height[i] > 20;
-        key = trees ? trees[high ? 1 : 0] : high ? "pine" : "tree";
+        const own = world.biomeMap ? LOOKS[biomeAt(world, i)].trees : trees;
+        key = own ? own[high ? 1 : 0] : high ? "pine" : "tree";
       } else key = world.materials.get("cover", c).name;
       lists.get(key)?.push(i);
     }

@@ -3,7 +3,7 @@ import { dressVillages, restoreCreature, saveMind, KINDS, type Creature, type Sa
 import { MARKS, MAX_MARKS, MAX_STORY, type Mark, type StoryLine, type Village } from "./kin";
 import { BUILTIN, LAYERS, type Layer } from "./materials";
 import { World } from "./world";
-import { applyLand, readLand, type LandOptions } from "./land";
+import { BIOMES, applyLand, readLand, type LandOptions } from "./land";
 import type { Landmark } from "./social";
 import { packLook, unpackLook } from "./villagers";
 
@@ -67,6 +67,8 @@ export function saveWorld(world: World, owners: Map<string, string>): SavedWorld
       temp: u16((i) => clamp16((world.temp[i] + 200) * 20)),
       gas: u8((i) => world.gas[i]),
       gasAmt: u8((i) => Math.min(255, world.gasAmt[i] * 255)),
+      // A mixed island's regions (4.4.1).
+      ...(world.biomeMap ? { biome: toBase64(world.biomeMap) } : {}),
     },
     custom,
     owners: Object.fromEntries(owners),
@@ -118,6 +120,8 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
   // own materials come after.
   if (data.land) {
     applyLand(world, readLand(data.land));
+    const regions = fromBase64(data.layers.biome ?? "");
+    if (regions.length >= world.n) world.biomeMap = Uint8Array.from(regions.subarray(0, world.n), (b) => Math.min(BIOMES.length - 1, b));
     if (typeof data.springs === "string") world.springs = unpackSprings(data.springs, world.n);
   }
   prepare(world);

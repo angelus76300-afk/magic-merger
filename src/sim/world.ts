@@ -92,6 +92,10 @@ export class World {
   climate = 0;
   lapseFrom = 24;
   lapse = 2.5;
+  // A mixed island's regions (4.4.1): each cell's biome, by its index in
+  // BIOMES, and each biome's climate, lapse start and lapse in a row.
+  biomeMap: Uint8Array | null = null;
+  climates = new Float32Array(0);
   // Cells that keep a river flowing (land.ts). With any, water also leaves
   // the island over its edge, so the sea does not rise.
   springs: Spring[] = [];
@@ -133,6 +137,11 @@ export class World {
 
   // Temperature a cell drifts back to: colder up high, so peaks keep their snow.
   ambient(i: number): number {
+    if (this.biomeMap) {
+      const k = this.biomeMap[i] * 3;
+      const c = this.climates;
+      return AMBIENT + c[k] - Math.max(0, this.height[i] - c[k + 1]) * c[k + 2];
+    }
     return AMBIENT + this.climate - Math.max(0, this.height[i] - this.lapseFrom) * this.lapse;
   }
 

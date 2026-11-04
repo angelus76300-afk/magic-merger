@@ -1,6 +1,7 @@
 import { chronicleDigest } from "./chronicle";
 import { Engine, type WorldSize } from "./engine";
-import { DEFAULT_LAND, readLand, type LandOptions } from "./land";
+import { DEFAULT_LAND, readChoice, resolveLand, type LandChoice } from "./land";
+import { WORLD_SIZES } from "./sizes";
 import { kindOf, makeCreature, maxHp, type Creature } from "./creatures";
 import { artifactAt, creatureAt, inspect, inspectArtifact } from "./inspect";
 import type { Artifact } from "./artifacts";
@@ -21,7 +22,7 @@ let muted = false;
 let saveTimer = 0;
 let unbind: (() => void) | null = null;
 // The sandbox world while a challenge is played, to come back to it untouched.
-let sandbox: { save: SavedWorld | null; size: WorldSize; land: LandOptions; rules: CastRequest[] } = {
+let sandbox: { save: SavedWorld | null; size: WorldSize; land: LandChoice; rules: CastRequest[] } = {
   save: null,
   size: "medium",
   land: { ...DEFAULT_LAND },
@@ -146,6 +147,13 @@ function mount(next: Engine): void {
   engine.start();
 }
 
+// A new island (4.4.1): the seed, new or the player's, picks its shape and
+// land from the sliders (land-options.ts, resolveLand).
+function freshIsland(size: WorldSize, choice: LandChoice, seed: number | null): Engine {
+  const s = seed ?? (Math.random() * 2 ** 31) | 0;
+  return Engine.create(canvas, overlay, size, hooks, s, {}, resolveLand(choice, s, WORLD_SIZES[size] ?? WORLD_SIZES.medium));
+}
+
 // Challenge worlds are never saved: only the sandbox is the player's.
 function save(): void {
   if (!engine || scenario) return;
@@ -176,7 +184,7 @@ function openSandbox(): void {
     console.error("The saved world could not be restored", err);
     sandbox.save = null;
   }
-  mount(restored ?? Engine.create(canvas, overlay, sandbox.size, hooks, undefined, {}, sandbox.land));
+  mount(restored ?? freshIsland(sandbox.size, sandbox.land, null));
 }
 
 // The head start of the challenge being played, for a reset (L6).
@@ -239,7 +247,7 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       break;
     case "init": {
       muted = msg.muted;
-      sandbox = { save: msg.save, size: msg.size, land: readLand(msg.land), rules: msg.rules };
+      sandbox = { save: msg.save, size: msg.size, land: readChoice(msg.land), rules: msg.rules };
       openSandbox();
       clearInterval(saveTimer);
       saveTimer = window.setInterval(save, 10_000);
@@ -271,8 +279,8 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
         break;
       }
       sandbox.size = msg.size;
-      sandbox.land = readLand(msg.land);
-      mount(Engine.create(canvas, overlay, msg.size, hooks, msg.seed ?? undefined, {}, sandbox.land));
+      sandbox.land = readChoice(msg.land);
+      mount(freshIsland(msg.size, sandbox.land, msg.seed));
       save();
       break;
     case "scenario":

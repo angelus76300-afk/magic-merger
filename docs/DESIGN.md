@@ -548,7 +548,7 @@ The steering costs about 0.3 ms p50 of creature time; `stepTemperature` reading 
 
 ## Islands of every kind (4.4)
 
-Asked for: bigger islands where the device can run them, biomes and shapes chosen at reset, and a better looking land, water and sky, each measured on a phone sized browser. Everything is in `src/sim/land.ts` (the land), `src/headroom.ts` and `src/island-store.ts` (sizes and saving), `src/sim/voxel/terrain.ts`, `sky.ts` and `graphics.ts` (the view). Numbers: `docs/measurements/view-4.4.md`. Pictures: `docs/visual-checks/biomes-and-shapes.png` (all 42 from above), `biomes-weather-sky.jpg`, `reset-dialog.jpg`, `desert-lakes-phone.jpg`, `giant-tundra-phone.jpg`.
+Asked for: bigger islands where the device can run them, biomes and shapes chosen at reset, and a better looking land, water and sky, each measured on a phone sized browser. Since 4.4.1 the seed and the sliders choose the land, and big islands mix several (below). Everything is in `src/sim/land.ts` (the land), `src/headroom.ts` and `src/island-store.ts` (sizes and saving), `src/sim/voxel/terrain.ts`, `sky.ts` and `graphics.ts` (the view). Numbers: `docs/measurements/view-4.4.md`. Pictures: `docs/visual-checks/biomes-and-shapes.png` (all 42 from above), `biomes-weather-sky.jpg`, `reset-dialog.jpg`, `desert-lakes-phone.jpg`, `giant-mixed-phone.jpg`, `mixed-islands.png`.
 
 ### One set of materials, seven biomes
 
@@ -560,6 +560,18 @@ A biome does not add materials: grass is grass in the desert and the tundra, a t
 4. **The weather** it gets (below).
 
 Whatever the biome, every native species must have somewhere to live: where the forest animals' habitat is short (under a 400th of the island), a grove by a small pond is planted (an oasis in the desert), and a deep pool where the fish have none. On the 42 islands of `npm test` (112 cells) every species has habitat.
+
+### Chosen by a seed, mixed on big islands (4.4.1)
+
+The player does not pick a land or a shape from a list: the owner did not want choosing, and the 4.4 ask was "chosen by a seed and a few sliders". The dialog has a size, a seed and four sliders: warmth, water, mountains, forest. `resolveLand` (land-options.ts) turns them into an island:
+
+1. **The shape comes from the seed**: a coast three times in ten, each other shape about one time in nine.
+2. **The land comes from warmth and water**, the way climate makes biomes (a Whittaker diagram, much simplified): cold is tundra; hot is desert when dry, mesa a little wetter, jungle when wet; the middle is temperate forest, swamp when very wet. The seed shifts both a little, so mid sliders still give about one island in six cold and one in six hot (on 400 seeds: temperate 221, tundra 68, volcanic 41, swamp 25, jungle 16, mesa 15, desert 14). One small island in ten is volcanic, whatever the sliders.
+3. **Islands from 200 cells across (large, huge, giant) always mix several lands**, with no option: one land on 500 metres is realistic, one land on a giant island wastes it. Below 200 a region would be too small for a forest, its animals and a village.
+
+A mixed island's regions come from a climate drawn over it: warmth from the slider, a broad noise (a region is about 100 cells), a gradient from a cold side to a warm one picked by the seed, and the cold of high ground; wetness from the slider and another broad noise; one mixed island in three has a volcanic region with its volcano. A little grain at the borders makes them a speckled edge a few cells wide instead of a line. Each cell keeps its biome (`World.biomeMap`, one byte, saved as a layer), and with it its own climate (`ambient` reads the biome's from a table), its own ground, covers and forest, its own colors, cut sides, water and trees in the view. Mesa terraces and the swamp's low land are weighted by how much of the region is around each cell, so they fade at a region's edge instead of ending in a cliff. The weather is the one of the region the camera looks at; moving to another, the old weather eases out before the new one eases in. On 24 large islands at mid sliders every one held at least two lands (4.5 on average): temperate 51%, tundra 15%, swamp 10%, desert, jungle 7% each, mesa 5%, volcanic 4%. A mixed island costs about 0.3 ms more per tick (the climate table) and draws no slower. `docs/visual-checks/mixed-islands.png` shows twelve from above.
+
+`npm test` checks the seed's rules on 400 seeds, that four large islands each mix lands with every species' habitat, that a mixed island's regions and climates come back with its save, that a small island is one land, and leaves a mixed large island alone for three minutes beside the seven single lands.
 
 ### Shapes, rescaled from their own distribution
 
