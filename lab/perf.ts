@@ -5,7 +5,8 @@
 // same way before and after.
 import { Engine, type WorldSize } from "../src/sim/engine";
 import { Hud, type PerfSummary } from "../src/sim/hud";
-import { readLand } from "../src/sim/land";
+import { readChoice, readLand, resolveLand } from "../src/sim/land";
+import { WORLD_SIZES } from "../src/sim/sizes";
 import { GRAPHICS, type GraphicsFlag } from "../src/sim/voxel/graphics";
 import { LAB_WEATHER } from "../src/sim/voxel/sky";
 
@@ -19,7 +20,15 @@ const seed = Number(q.get("seed") ?? 7);
 for (const f of (q.get("off") ?? "").split(",")) if (f in GRAPHICS) GRAPHICS[f as GraphicsFlag] = false;
 const weather = q.get("weather");
 if (weather === "rain" || weather === "snow" || weather === "fog") LAB_WEATHER.now = { kind: weather, amount: 1 };
-const land = q.get("land") === "old" ? undefined : readLand({ biome: q.get("biome"), shape: q.get("shape") });
+// 4.4.1: "mixed=1" makes the island the game would, from the seed and the
+// sliders ("warmth=0.8&water=0.3").
+const num = (k: string) => (q.has(k) ? Number(q.get(k)) : undefined);
+const land =
+  q.get("land") === "old"
+    ? undefined
+    : q.has("mixed")
+      ? resolveLand(readChoice({ warmth: num("warmth"), water: num("water"), relief: num("relief"), forest: num("forest") }), seed, WORLD_SIZES[size])
+      : readLand({ biome: q.get("biome"), shape: q.get("shape") });
 const engine = Engine.create(canvas, overlay, size, { onError: () => {}, onTap: () => {} }, seed, {}, land);
 if (q.has("time")) engine.world.time = Number(q.get("time"));
 engine.view.orbit.dist = Math.max(engine.world.w, engine.world.h) * Number(q.get("dist") ?? 0.42);

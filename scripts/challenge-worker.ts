@@ -25,13 +25,13 @@ export type Job =
   | { challenge: string }
   | { motion: number }
   | { rate: string }
-  | { biome: Biome; shape: Shape; seed: number; seconds: number };
+  | { biome: Biome | "mixed"; shape: Shape; seed: number; seconds: number; size?: number };
 
 const { jobs, next } = workerData as { jobs: Job[]; next: Int32Array };
 for (let k = Atomics.add(next, 0, 1); k < jobs.length; k = Atomics.add(next, 0, 1)) {
   const job = jobs[k];
   if ("motion" in job) parentPort!.postMessage({ job, motion: measureMotion(job.motion) });
-  else if ("biome" in job) parentPort!.postMessage({ job, land: landLife(job.biome, job.shape, job.seed, job.seconds) });
+  else if ("biome" in job) parentPort!.postMessage({ job, land: landLife(job.biome, job.shape, job.seed, job.seconds, job.size) });
   else if ("rate" in job) {
     const def = challengeById(job.rate)!;
     const plan = SOLUTIONS[def.scenario];

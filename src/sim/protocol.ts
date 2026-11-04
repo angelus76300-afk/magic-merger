@@ -2,19 +2,20 @@ import { readDigest, type ChronicleDigest } from "../../shared/chronicle";
 import type { CastRequest } from "./runtime";
 import type { SavedWorld } from "./save";
 import type { WorldSize } from "./engine";
-import type { LandOptions } from "./land";
+import type { LandChoice } from "./land-options";
 
 // Messages between the game page and the sandboxed World iframe. The iframe
 // runs Claude's spell code, so it has no origin of its own and no network:
 // everything it needs comes in here, everything it says goes out here.
 
 export type ToWorld =
-  | { type: "init"; save: SavedWorld | null; size: WorldSize; land: LandOptions; rules: CastRequest[]; muted: boolean }
+  | { type: "init"; save: SavedWorld | null; size: WorldSize; land: LandChoice; rules: CastRequest[]; muted: boolean }
   | { type: "select"; spell: CastRequest | null }
   | { type: "spell-updated"; spell: CastRequest }
   | { type: "villager" }
-  // 4.4: a biome, a shape and sliders, and the seed (null for a new one).
-  | { type: "reset"; size: WorldSize; land: LandOptions; seed: number | null }
+  // 4.4.1: the sliders and the seed (null for a new one); the seed picks
+  // the shape and the land.
+  | { type: "reset"; size: WorldSize; land: LandChoice; seed: number | null }
   | { type: "mute"; muted: boolean }
   | { type: "visible"; visible: boolean }
   // ahead: seconds of the hazard already played while the player merged (3.7).

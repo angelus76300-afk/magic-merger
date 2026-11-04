@@ -2,7 +2,7 @@
 // for a few simulated minutes. Used by `npm test` (in its worker threads) and
 // by scripts/land-life-run.ts. Nothing here depends on the machine's speed.
 import { populate } from "../src/sim/creatures";
-import { DEFAULT_LAND, habitatCount, type Biome, type Shape } from "../src/sim/land";
+import { DEFAULT_LAND, habitatCount, resolveLand, type Biome, type Shape } from "../src/sim/land";
 import { C, F } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
 import { Runtime } from "../src/sim/runtime";
@@ -11,7 +11,10 @@ import { SPECIES } from "../src/sim/wildlife";
 import { generateWorld } from "../src/sim/world";
 
 export interface LandLife {
-  biome: Biome;
+  // "mixed" (4.4.1): an island of `size` as the game makes it from the seed.
+  biome: Biome | "mixed";
+  // How many lands a mixed island holds (over 5% of it each).
+  lands?: number;
   shape: Shape;
   // Each native species: habitat cells at the start, animals at the start,
   // the fewest at any time, at the end, and the share of seconds with at
@@ -32,11 +35,18 @@ export interface LandLife {
   errors: string[];
 }
 
-export function landLife(biome: Biome, shape: Shape, seed: number, seconds: number, size = 152): LandLife {
+export function landLife(biome: Biome | "mixed", shape: Shape, seed: number, seconds: number, size = 152): LandLife {
   const shared = Math.random;
   Math.random = seeded(seed * 7 + 1);
   try {
-    const world = generateWorld(size, size, seed, { ...DEFAULT_LAND, biome, shape });
+    const land = biome === "mixed" ? resolveLand(DEFAULT_LAND, seed, size) : { ...DEFAULT_LAND, biome, shape };
+    const world = generateWorld(size, size, seed, land);
+    let lands = 0;
+    if (world.biomeMap) {
+      const count = new Map<number, number>();
+      for (const b of world.biomeMap) count.set(b, (count.get(b) ?? 0) + 1);
+      lands = [...count.values()].filter((v) => v > world.n * 0.05).length;
+    }
     populate(world);
     const errors: string[] = [];
     const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
@@ -97,7 +107,8 @@ export function landLife(biome: Biome, shape: Shape, seed: number, seconds: numb
     const t1 = tally();
     return {
       biome,
-      shape,
+      shape: land.shape,
+      lands,
       species,
       villagers: { start: start.villager ?? 0, end: end.villager ?? 0 },
       houses: { start: t0.houses, end: t1.houses },
@@ -128,6 +139,7 @@ export function landProblems(r: LandLife): string[] {
   if (r.wetHouses > 4) out.push(`${r.wetHouses} house cells flooded`);
   if (r.burning > 40) out.push(`${r.burning} cells burning at once`);
   if (r.biome === "volcanic" && r.lava.end <= 0) out.push("the crater's lava is gone");
+  if (r.biome === "mixed" && (r.lands ?? 0) < 2) out.push(`a mixed island of ${r.lands} land`);
   if (r.errors.length) out.push(`errors: ${r.errors[0]}`);
   return out;
 }

@@ -21,7 +21,7 @@ import { toast } from "./toast";
 import { isQuotaError, warnStorageFull } from "./quota";
 import { WORLD_AT_KEY, WORLD_KEY, packIsland, readIslandText } from "./island-store";
 import { BIG_SIZES, readHeadroom, sizesOffered, writeHeadroom } from "./headroom";
-import { BIOMES, BIOME_LABELS, DEFAULT_LAND, SHAPES, SHAPE_LABELS, readLand, type LandOptions } from "./sim/land-options";
+import { DEFAULT_LAND, MIXED_FROM, readChoice as readLandChoice, type LandChoice } from "./sim/land-options";
 
 export { WORLD_AT_KEY, WORLD_KEY } from "./island-store";
 const MUTE_KEY = "magic-merger.muted";
@@ -643,7 +643,9 @@ export class WorldHost {
     }
   }
 
-  // A new island (4.4): its size, land, shape, three sliders and a seed. The
+  // A new island (4.4): its size, four sliders and a seed, which picks the
+  // shape and, from the sliders, the land (4.4.1: not chosen from a list;
+  // large islands and bigger mix several lands). The
   // sizes past Large are offered only where this device's own frame numbers
   // show the headroom (headroom.ts); none is ever chosen by default.
   private resetDialog: HTMLDialogElement | null = null;
@@ -696,8 +698,7 @@ export class WorldHost {
       offered.includes(choice.size) ? choice.size : defaultSize(),
       (o) => !offered.includes(o as WorldSize),
     );
-    const biome = select(BIOMES, (o) => BIOME_LABELS[o as LandOptions["biome"]], choice.land.biome);
-    const shape = select(SHAPES, (o) => SHAPE_LABELS[o as LandOptions["shape"]], choice.land.shape);
+    const warmth = slider(choice.land.warmth);
     const water = slider(choice.land.water);
     const relief = slider(choice.land.relief);
     const forest = slider(choice.land.forest);
@@ -710,9 +711,11 @@ export class WorldHost {
     title.textContent = "A new island";
     const hint = document.createElement("p");
     hint.className = "chronicle-note";
-    hint.textContent = BIG_SIZES.every((s) => offered.includes(s))
-      ? "This device has room for every size."
-      : "Huge and Giant islands are offered once this device shows it can run them: play a few minutes on a Large island first.";
+    hint.textContent =
+      `The seed picks the island's shape and, from warmth and water, its land. Islands from ${MIXED_FROM} cells across mix several lands. ` +
+      (BIG_SIZES.every((s) => offered.includes(s))
+        ? "This device has room for every size."
+        : "Huge and Giant islands are offered once this device shows it can run them: play a few minutes on a Large island first.");
     const warn = document.createElement("p");
     warn.className = "chronicle-note";
     warn.textContent = "Everything on your current island will be lost.";
@@ -725,9 +728,8 @@ export class WorldHost {
     create.className = "primary";
     create.textContent = "Create the island";
     create.addEventListener("click", () => {
-      const land = readLand({
-        biome: biome.value,
-        shape: shape.value,
+      const land = readLandChoice({
+        warmth: Number(warmth.value) / 100,
         water: Number(water.value) / 100,
         relief: Number(relief.value) / 100,
         forest: Number(forest.value) / 100,
@@ -744,15 +746,7 @@ export class WorldHost {
     actions.append(cancel, create);
     const grid = document.createElement("div");
     grid.className = "reset-fields";
-    grid.append(
-      field("Size", size),
-      field("Land", biome),
-      field("Shape", shape),
-      field("Water", water),
-      field("Mountains", relief),
-      field("Forest", forest),
-      field("Seed", seed),
-    );
+    grid.append(field("Size", size), field("Warmth", warmth), field("Water", water), field("Mountains", relief), field("Forest", forest), field("Seed", seed));
     d.replaceChildren(title, grid, hint, warn, actions);
     d.showModal();
   }
@@ -1118,18 +1112,18 @@ function defaultSize(): WorldSize {
   return window.innerWidth < 600 ? "small" : "medium";
 }
 
-function readChoice(): { size: WorldSize; land: LandOptions } {
+function readChoice(): { size: WorldSize; land: LandChoice } {
   try {
     const v = JSON.parse(localStorage.getItem(CHOICE_KEY) ?? "null") as { size?: string; land?: unknown } | null;
     const size = v?.size && v.size in WORLD_SIZES ? (v.size as WorldSize) : defaultSize();
     // A big size stays chosen only while this device still has the room.
-    return { size: sizesOffered(readHeadroom()).includes(size) ? size : defaultSize(), land: readLand(v?.land) };
+    return { size: sizesOffered(readHeadroom()).includes(size) ? size : defaultSize(), land: readLandChoice(v?.land) };
   } catch {
     return { size: defaultSize(), land: { ...DEFAULT_LAND } };
   }
 }
 
-function writeChoice(choice: { size: WorldSize; land: LandOptions }): void {
+function writeChoice(choice: { size: WorldSize; land: LandChoice }): void {
   try {
     localStorage.setItem(CHOICE_KEY, JSON.stringify(choice));
   } catch {

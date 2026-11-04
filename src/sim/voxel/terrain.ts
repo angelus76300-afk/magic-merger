@@ -1,10 +1,10 @@
 import { BufferAttribute, BufferGeometry, Mesh, type Material } from "three";
-import { F, G } from "../materials";
+import { BUILTIN, F, G, type Material as LandMaterial } from "../materials";
 import type { World } from "../world";
 import { FACE_LIGHT } from "./models";
 import { mixColor, scaleColor } from "../colors";
 import { GRAPHICS } from "./graphics";
-import { LOOKS } from "../land";
+import { LOOKS, biomeAt } from "../land";
 
 // The island as voxel columns. Each cell is one column whose top sits at its
 // height (half a unit per height unit, rounded to whole voxels). Walls are
@@ -266,7 +266,7 @@ export class Terrain {
           }
           // Layers from the top: the surface color for one voxel, then soil, then stone.
           const soil = this.soilColor(i);
-          const strata = this.strata;
+          const strata = this.strataAt(i);
           band(out, d, X, Z, Math.max(low, top - 1), top, top, this.sideTopColor(i, surface), light, low, foot);
           if (top - 1 > low) band(out, d, X, Z, Math.max(low, top - 3), top - 1, top, soil, light, low, foot);
           if (top - 3 > low) band(out, d, X, Z, Math.max(low, BOTTOM + 2), top - 3, top, strata.stone, light, low, foot);
@@ -361,9 +361,27 @@ export class Terrain {
   private topColor(i: number): number {
     const { world } = this;
     const m = world.materials.get("ground", world.ground[i]);
-    const base = m.colors[((world.shade[i] * m.colors.length) >> 8) % m.colors.length];
+    const colors = this.colorsAt(i, world.ground[i], m);
+    const base = colors[((world.shade[i] * colors.length) >> 8) % colors.length];
     // Higher land is a touch lighter, so hills read even from above.
     return scaleColor(base, 0.92 + Math.min(0.16, Math.max(0, world.height[i] - 8) * 0.006));
+  }
+
+  // A built-in ground's colors in this cell's region on a mixed island
+  // (4.4.1): the world's table holds the main biome's.
+  private colorsAt(i: number, id: number, m: LandMaterial): number[] {
+    const { world } = this;
+    if (!world.biomeMap || id >= BUILTIN.ground.length) return m.colors;
+    return LOOKS[biomeAt(world, i)].palette[m.name] ?? BUILTIN.ground[id].colors;
+  }
+
+  // The cut sides and water of this cell's region on a mixed island.
+  private strataAt(i: number): typeof STRATA {
+    return this.world.biomeMap ? LOOKS[biomeAt(this.world, i)].strata : this.strata;
+  }
+
+  private waterAt(i: number): [number, number] {
+    return this.world.biomeMap ? LOOKS[biomeAt(this.world, i)].water : this.water;
   }
 
   // The first voxel of a wall: green grass edge, white snow edge, or the surface itself.
@@ -383,9 +401,10 @@ export class Terrain {
 
   private soilColor(i: number): number {
     const g = this.world.ground[i];
-    if (g === G.SAND) return this.world.land ? scaleColor(this.world.materials.get("ground", G.SAND).colors[0], 0.9) : 0xc9b07a;
-    if (g === G.ROCK || g === G.BASALT || g === G.SNOW) return this.strata.stone;
-    return (this.world.shade[i] & 1) === 0 ? this.strata.dirt : this.strata.clay;
+    if (g === G.SAND) return this.world.land ? scaleColor(this.colorsAt(i, G.SAND, this.world.materials.get("ground", G.SAND))[0], 0.9) : 0xc9b07a;
+    const strata = this.strataAt(i);
+    if (g === G.ROCK || g === G.BASALT || g === G.SNOW) return strata.stone;
+    return (this.world.shade[i] & 1) === 0 ? strata.dirt : strata.clay;
   }
 
   private fluidColor(i: number): { color: number; alpha: number } {
@@ -396,7 +415,8 @@ export class Terrain {
       if (GRAPHICS.water) {
         // Clear and light in the shallows, darker quickly with depth (4.4).
         const k = Math.sqrt(Math.min(1, d / 6));
-        return { color: mixColor(this.water[0], this.water[1], k), alpha: 0.6 + k * 0.32 };
+        const water = this.waterAt(i);
+        return { color: mixColor(water[0], water[1], k), alpha: 0.6 + k * 0.32 };
       }
       const k = Math.min(1, d / 5);
       return { color: mixColor(0x5cc0f0, 0x1d5d9e, k), alpha: 0.72 + k * 0.2 };
