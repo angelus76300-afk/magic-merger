@@ -51,6 +51,8 @@ Evidence: `worker/index.ts:1613` called `request.json()` with no limit on every 
 Evidence: the loop guard (`shared/spellcode.ts`, `src/sim/runtime.ts:87`) only counts literal `for`, `while` and `do` loops, and the slow cast guard (`:486`) acts after the tick returns. Reproduced in Node with the real `Runtime` (scratchpad `repro/freeze.ts`): `while (true) {}` throws after 10 ms; `/^(a+)+$/.test("a".repeat(26) + "!")` takes 2.4 s with no error; `new Array(3e7).fill(0).map(...).sort()` 24.8 s; three `forEach` passes over 2e7 elements 0.5 s. On a phone the sandboxed frame shares the tab's process, so the whole page freezes until the browser offers to kill it.
 Impact: bounded to robustness against Claude's own programs (players cannot submit code); a program that does this fails its test run on the admin's machine first only if the test run itself survives it. Fix: a watchdog in the page that replaces the frame when no message arrives for 20 s while visible (`replaceFrame` exists), which helps on desktop where the frame is out of process; a true fix is the simulation in a Worker thread, which the CSP (`worker-src 'none'`) and the view would have to change for. Size M (watchdog), L (worker thread). Roadmap 4.1.
 
+Fixed in 4.1 (`96569b6`), the watchdog part: the World frame sends a heartbeat every 2 s and the page replaces a frame silent for 20 s while the World is on screen, with a toast. `scripts/verify-4.1.mjs` C: on main a frame stuck 25 s in a busy loop was never replaced; here it is replaced after 26 s, and an idle frame left 30 s is kept. In headless Chromium the frame shares the page's thread, so the page froze too and the watchdog acted as it thawed: the simulation in a Worker thread stays the real answer.
+
 **M4. A challenge win was lost when the Worker could not be reached.** Fixed in `8736b6a`.
 Evidence: `src/challenges.ts:241` cleared the attempt before `POST /api/challenge/win`; a network error, a 429 from the burst guard or a 401 left nothing to retry, and the next challenge stays locked by the server's stars. Fix: the win is kept in the browser and sent when the Challenges tab opens; a refusal of the win itself (400, 404) drops it. Checked: scenario C of `scripts/local-verify.mjs` (a pending win is posted once and cleared). Size S.
 
@@ -60,50 +62,86 @@ Evidence: `src/store.ts` `load()` only checked `version === 1`; `{"version":1}` 
 **M6. Two tabs of the same browser overwrite each other's saves.** Not fixed.
 Evidence: `src/store.ts:133` writes the whole save from this tab's memory, no `storage` listener anywhere (`grep -rn '"storage"' src` is empty); the world save from each tab's frame every 10 s, last writer wins (`src/worldhost.ts:376`). A discovery made in tab A is gone after tab B's next chip move. Impact: silent loss of progress; accounts (4.0) make it worse unless the upload is a merge. Fix: for discoveries, merge by key on every write (reload the stored object first); for the world, one tab at a time (a `BroadcastChannel` lock) or a timestamp that refuses to overwrite a newer save. Size M. Roadmap 4.0.
 
+Fixed in 4.1 (`96569b6`). Discoveries are merged by key on every write (the stored save read again first) and a `storage` listener shows the other tab's finds; the island is written by the tab that last showed the World while visible, claimed over a `BroadcastChannel`, and a tab that takes it back reloads it first if another tab saved since (without `BroadcastChannel`, a write is refused over a newer save); the account upload reads the shared "seen" again before each push. `scripts/verify-4.1.mjs` A, two signed in tabs: on main tab 1's discovery was erased, both tabs wrote the island and tab 2's upload got 409 with a warning; here nothing is lost, only the owning tab writes, tab 1 is told, both uploads pass.
+
 **M7. `scripts/` is neither typechecked nor linted; nine Worker routes and twelve admin routes have no test.** Not fixed.
 Evidence: `tsconfig.json:16` includes `src`, `shared`, `lab`; `worker/tsconfig.json` the Worker; `scripts/*.ts` (13 files, the 1,300 line `npm test` included) go through esbuild only; `eslint.config.js:12` ignores `**/*.mjs`, which is the 965 line Worker test and seven lab scripts. Untested routes, by grep of the test against the router: `POST /api/spell/repair`, `/api/report`, `/api/cast`, `/api/vote` (the vote, rewrite and rollback path, `worker/index.ts:1221` to `:1360`, is covered only by the pure rules in `shared/votes.ts`), `GET /api/spell/info`, `/api/spend`, `/api/perf`, `/api/admin/merge-trial`, `/api/admin/backfill-tiers`, and the admin's `programs`, `judge`, `judge-trial`, `judge-stats`, `spell-trial`, `batch-trial`, `report`, `trim-scan`, `evolution`, `proposals`, `extension`. Impact: a type error in a test or runner shows at run time; a regression in votes shows in play. Fix: `@types/node` plus a `scripts/tsconfig.json` in `npm run typecheck` (M), Node globals for `.mjs` in ESLint (S), one Worker test section each for votes and repairs (M). Roadmap 4.1.
+
+Fixed in 4.1: `scripts/` typechecked in `npm run typecheck` and `.mjs` linted with Node globals (`019f5b8`; turning them on found a real latent bug, a check's detail that would have thrown the day a population exploded); Worker test sections 18 to 25 for votes, rewrites and rollbacks, repairs, casts, reports, spell info, spend, perf and the thirteen admin routes (`3dd7e30`, 151 to 217 checks), which found a repair served after the limit instead of before it (fixed in `78d6966`).
 
 **M8. `npm test` asserts on wall clock time.** Not fixed; no failure observed here.
 Evidence: `scripts/sim-test.ts:130` requires the worst tick under 120 ms for each reference spell, and `src/sim/runtime.ts:90` aborts a cast after five ticks over 40 ms, which lands in the `errors` array every spell check asserts on, while two to four worker threads load the same CPU (`sim-test.ts:63`; the CI runner has two cores). Impact: a correct spell can fail CI on a slow runner. Fix: make `SLOW_MS` injectable for tests and print the worst tick instead of asserting on it. Size S. Roadmap 4.1.
 
+Fixed in 4.1 (`d59f78f`). Reproduced after all: on one core shared with two busy loops, `npm test` failed `big-bang.js` on a 180 ms worst tick and nothing else. `Runtime.slowMs` is injectable, off in `npm test` unless `SLOW_MS` is set, the worst tick printed; a new check keeps the guard tested at 40 ms. Same load after the fix: all pass.
+
 **M9. The first spell in the World took 27 s to be castable in the phone sized run; ten of twelve chips were dimmed.** Friction, measured, not fixed.
 Evidence: `docs/review-4.0/phone-log.txt`: "spells in the bar: 12, ready: 2", "spell ready after 26904 ms"; `07-world-first.jpg` shows three ready chips of twelve. The wait is the program's write by Haiku plus its test run in the hidden frame, which on this headless Chromium with software WebGL is slow; on a real phone it is CPU bound too. Not verified: the same number on a real phone (the HUD's `/api/perf` samples hold no spell timing). Fix: show a progress state on the chip ("writing", "testing") instead of dimming, and measure the test run's duration in the perf sample. Size S. Roadmap 4.1.
+
+Not in 4.1: left for 4.2 (faster creation), as the roadmap in pull request #23 plans.
 
 **M10. The vote bar covers the challenge banner and its "Back to my island" button on a phone.** Friction, not fixed.
 Evidence: `docs/review-4.0/14-challenge-island.jpg`. The bar is positioned over the stage (`src/style.css`, `.vote`), the banner too. Fix: stack them, or hold the vote bar while a banner is shown. Size S. Roadmap 4.1.
 
+Fixed in 4.1 (`def95dd`): the vote bar and the banner share one bottom stack. `docs/review-4.1/m10-before.jpg` and `m10-after.jpg`, from `scripts/verify-4.1.mjs` D at iPhone 14 size.
+
 **M11. A browser can lie about a test run and promote a crashing trial for everyone.** Accepted by design (DESIGN.md "The test run"), recorded here because the sharing circle widens.
 Evidence: `worker/index.ts:764` takes `body.ok === true` from any invite for any trial id of that element; `:694` the same for a recheck. Impact: one extra Haiku call per trial and a crashing program served live until the repair loop replaces it; no money past the caps. Fix when strangers come (4.5): the admin's runner, not a browser, decides trials, or two browsers must agree. Size M.
+
+Unchanged in 4.1, by design until strangers come (4.5 in this roadmap, 4.6 in pull request #23).
 
 **M12. The refresh wrote 94 rows as failed before any batch was sent.** Cost finding, nothing to fix in code.
 Evidence: `rewrites` with `cause = 'refresh' AND status = 'failed'`: 59 Haiku and 35 Opus rows at 00:11:52 to 00:12:14 UTC on 11-03, all with `batch IS NULL` (the first `submitBatch` threw and `startRefresh` marked and released them, `worker/index.ts:928`), then the same elements succeeded at 00:12:44 and after. They are excluded from the cap (`refreshSpentThisMonth` ignores failed rows) and cost nothing; `/api/admin/refresh-report` counts them under `statuses`, which reads as if 94 programs failed. Fix: say "not sent" for rows with no batch. Size S.
 
+Fixed in 4.1 (`4f46a52`): the live report read `failed 94` before; failed rows with no batch now read "not sent" (Worker test "M12").
+
 **M13. The save quota is silent and `MAX_SAVE_CHARS` cannot protect what its comment says.** Not fixed.
 Evidence (client audit script, seed 11): a world save is 211k characters small, 379k medium, 712k large (736k after 120 s), layers being 95% of it; the cap of 3,000,000 characters (`src/sim/protocol.ts:64`) is never reached, and would already exceed the usual 5 MB per origin quota as UTF-16. When `setItem` throws, both saves are swallowed (`src/store.ts:136`, `src/worldhost.ts:381`): the player plays on and loses everything since the last write on reload, with no message. Fix: a toast once on `QuotaExceededError`, and a cap of 1.5M. Size S. Accounts (4.0) store the island on the server, which is the real answer.
+
+Fixed in 4.1 (`96569b6`): one toast per page on `QuotaExceededError` (discoveries or island) and on a save past `MAX_SAVE_CHARS`, now 1.5M. `scripts/verify-4.1.mjs` B with the site's storage filled: no word on main, one toast here.
 
 ### Low
 
 **L1.** The admin token is compared with `===` (`worker/index.ts:362`): a timing side channel, impractical across a network with a 64 byte random token, but `crypto.subtle.timingSafeEqual` on two digests costs one line. Size S.
 
+Fixed in 4.1 (`052afe3`): both tokens hashed, `crypto.subtle.timingSafeEqual`. Not reproducible as a timing: in Node, `===` on a 64 character token took 2.4 ns whether the first or the last character differed. The Worker test checks the token still opens the admin routes and one byte off opens nothing.
+
 **L2.** `/api/perf` accepts a row per request from any invite (`worker/index.ts:423` only prunes by age): a client in a loop could write thousands of rows a minute. Fix: one row per invite per 20 s, as the page already does. Size S.
+
+Fixed in 4.1 (`052afe3`): migration 0012 records the invite; one row per invite per 20 s in one statement (Worker test "L2": five samples in a row wrote five rows on main, one here).
 
 **L3.** The sandbox CSP closed `connect-src` but not WebRTC. Fixed in `7f12e50` (`webrtc 'block'`); the frames hold nothing secret, so a path, not a leak. Verified before the fix: the live headers on `/world` and `/check` match `public/_headers` exactly; `/` has no CSP and no `frame-ancestors` (clickjacking of the game page has nothing to take: the invite is in localStorage, not in a form).
 
 **L4.** Dead and duplicated code (quality audit): `hasInvite` (`src/api.ts:53`), `artifactsOf` (`src/sim/artifacts.ts:127`), `SOUND_NAMES` (`src/sim/sound.ts:48`) are exported and never imported; the `api()` fetch helper exists four times in `scripts/` (only `eval-spells.ts` retries), the mulberry32 PRNG four times, the tick loop six times (`engine.ts` does not clear `world.events` in the loop, the others do); `shared/tiers.ts:41` has two identical branches; `scripts/worker-test.mjs:438` a conditional with identical arms. `WorldHost.openChallenges` and `Store.markSolved` are unreachable since `main.ts:58` replaces the handler. Size S each. Roadmap 4.1.
 
+Fixed in 4.1 (`99e9a89`, and `SOUND_NAMES` in `7e5acbd`): one tick loop (`src/sim/tick.ts`; the engine leaves events for its renderer on purpose, headless callers drop them), one PRNG (`seeded` in `src/sim/noise.ts`), one `adminApi` for the TypeScript runners, `artifactsOf` and `WorldHost.openChallenges` removed, the identical branches gone. `hasInvite` was already gone. `Store.markSolved` is not unreachable (a Retry after a win reaches it) and stays. Same seeds before and after: identical `npm test` details, drum count and populations.
+
 **L5.** A permanently broken spell asks for a repair twice every session (`src/worldhost.ts:625` caps per session, the Worker per life at 3 and answers 429 with no code), with the "rewriting it…" toast each time. No cost. Size S.
+
+Fixed in 4.1 (`9ac277d`): the refusal says `mended`, and the page stops asking for the tab's session. `scripts/verify-4.1.mjs` E: three crashing casts asked twice on main, once here.
 
 **L6.** Retry or Reset of a live challenge drops the head start (`src/worldhost.ts:114` restarts with `ahead = 0`): on "racing the lava" a player can lose on purpose, retry with no eruption, and record the same merge count. Size S.
 
+Fixed in 4.1 (`0b1e704`). `scripts/verify-4.1.mjs` D records what the frame is told: on main Restart sent a plain reset and Retry `ahead: 0`; here both send the start's head start.
+
 **L7.** `scheduled()` runs `pollBatches` without a `.catch` (`worker/index.ts:274`), so a batch error reports as the cron's failure instead of a log line like its siblings. Size S.
+
+Fixed in 4.1 (`052afe3`, then `502605b`: every cron job through `cronJobs` in `worker/cron.ts`). Reproduced on main through `/cdn-cgi/handler/scheduled`: the cron answered 500 with an uncaught "404 no batch"; here 200, a "poll batches" log line, and the other jobs still run. The first version of the check called `/__scheduled`, which the assets answer with the page once `dist/` is built (as in CI), so no cron ran at all.
 
 **L8.** The feedback sync treats any pull request in the repository that mentions the issue as the idea's (`worker/feedback.ts:386` matches on the URL only). An unrelated PR that writes "#14" would show as the idea's. Size S.
 
+Fixed in 4.1 (`052afe3`): a pull request is the idea's only when its body says Close(s/d) or Fix(es/ed) #n. The timeline API carries the body (checked on issue #14, which pull request #15 mentions without closing: exactly this case).
+
 **L9.** Month boundaries are UTC everywhere (`monthStart`, `monthKey`, top-ups): the admin in France sees the month roll at 01:00 or 02:00 local, which is consistent and documented here, not a bug.
+
+Unchanged in 4.1: not a bug.
 
 **L10.** The chronicle accepts a digest from any invite as free text (40 lines of 160 characters) into a Haiku prompt that treats it as facts; the output only returns to that player and costs $0.002 at most every 20 minutes. Self harm only.
 
+Fixed in 4.1 (`052afe3`): digest strings lose line breaks and control characters, and each reaches Haiku as a quoted string; the system prompt is unchanged. On main a line of the digest could open its own "The island now:" heading.
+
 **L11.** `npm test` takes 92 s, not the 20 s SETUP.md said (fixed in the docs, `5ef30c4`); the five minute scene is the cost. Consider one stream in CI and three locally.
+
+Not changed in 4.1, measured: `npm test` took 108 s with three scene streams and 105 s with one on four cores here, and in CI's log the worker threads that run the scenes finished 24 s before the main thread. The scenes are not on the critical path, so one stream would cost eight checks for 3 s; CI keeps three. Where the time goes is the main thread's sequential sections (the artifacts' five minute tests alone take about a minute).
 
 ## 3. Re-verified claims
 
@@ -213,6 +251,8 @@ Written by the same session that wrote the accounts code, so each attack is a te
 | Two tabs of one browser                                       | not covered (review M6)                                                                                                                                   | the local saves still race; the server keeps the island of whichever tab uploaded last, with the device warning                                                                       |
 
 Not verified: the WebAuthn library's own checks beyond what a virtual authenticator exercises (attestation formats, the counter for cloned authenticators); a real phone's passkey dialog; a real email provider.
+
+In 4.1 (`c724661`): Worker test section 26 drives the real routes with a software authenticator. A counter that goes backwards or repeats is refused (403) and leaves the stored counter alone; a counter that stays 0, as synced passkeys keep it, always signs in. Attestation "none" and "packed" self attestation are accepted; a forged packed signature, "none" with a statement, "fido-u2f" without its certificate and an unknown format are refused and claim nothing. Formats with a certificate chain are not exercised. Two tabs (the last row of the table) are covered since 4.1 by `scripts/verify-4.1.mjs` A (M6).
 
 ## 11. The accounts flow on the live site
 
