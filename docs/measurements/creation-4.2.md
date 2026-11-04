@@ -55,6 +55,25 @@ Left in each item's time: Claude (12 to 17 s for a small program), which no chan
 
 The same programs in the check frame of a local `wrangler dev` with the production headers: Fire 1.3 s, Arcane 0.3 s, Corona (legendary, protect) 4.7 s, Halo (artifact) 1.4 s, Angel (artifact, protect) 8.1 s, Ley Lines 0.4 s; the frame starts two workers. Chromium's CPU throttling does not slow Web Workers, so a phone's numbers need a real phone: the HUD's perf sample now carries the last four creations step by step (`creation`).
 
+## 2b. After, on production (with the queue)
+
+Deployed on 2026-11-04 (versions `6ea660f0`, then `2880fc54` with the two fixes below). Same script, seven known items with no program and two new pairs; the jobs' own times from the `writes` table.
+
+| Item             | Kind, tier         | Job waited |         Job ran |                          Ready (from the drop) | Cost    |
+| ---------------- | ------------------ | ---------: | --------------: | ---------------------------------------------: | ------- |
+| Illusion         | spell cantrip      |      2.9 s |          15.7 s |                                         21.9 s | $0.0016 |
+| Fireflies        | artifact minor     |      0.9 s |          15.7 s |                                         21.1 s | $0.0016 |
+| Inferno          | spell major        |      1.8 s |          18.8 s |                                         22.5 s | $0.0020 |
+| Hellfire         | spell major        |      4.1 s |          16.5 s |                                         22.7 s | $0.0017 |
+| Glacier          | artifact grand     |     19.6 s |          20.2 s | 20.8 s after it was asked, 40 s from its merge | $0.0021 |
+| Moraine (new)    | artifact grand     |     11.1 s |          16.7 s |                                         35.6 s | $0.0018 |
+| Book of the Dead | artifact legendary |     18.1 s | 142.8 s (batch) |                                        166.6 s | $0.0271 |
+| Blood Moon       | spell cosmic       |     18.9 s | 143.9 s (batch) |                                        167.9 s | $0.0201 |
+
+Every small item was castable 21 to 36 s after its drop, without anyone asking; the big ones came back from the Batch API in about 2.5 minutes with no draft (the first production run: 1.6 to 3.1 minutes; Ascension failed its test and was written again by Opus in 14 s). Opus programs written ahead cost $0.020 to $0.029, against $0.0476 before (the hour's cache).
+
+Two fixes came from the first production run: Healing Rain had a version 1 spec from before programs and was not written ahead (`hasProgram` counted it); and the fifth to seventh items of a burst waited 32 to 36 s before their job started, with four messages a batch. With ten a batch they wait about 19 s: Cloudflare Queues adds a consumer only after a whole batch is done, so a burst's later items still wait for the first batch's slowest job. Per item parallelism needs Cloudflare Workflows (one instance per item, keyed by the item), a change of the job runner left for after this pull request.
+
 ## 3. Cost per spell
 
 `scripts/quality-20.ts` on the 20 spells of `scripts/eval-set.ts`, written as a player's write is (intents, the API's library, library examples for Haiku), big ones by Opus with their cost counted at batch price (half).
@@ -125,5 +144,4 @@ Light (27), Golem (37), Crystal Cavern (68), Sanctuary (84), Holy Sword (85), Ho
 
 ## 7. Not measured yet
 
-1. The queue on production: a new item's program starting at the merge, big items through the Batch API with no draft. Needs the production deploy (Worker test section 27 covers it against the real Worker and a stub Claude).
-2. A real phone: turn the HUD on (long press on the title), merge a few new items, open the World; `GET /api/perf` then shows `creation` with every step.
+1. A real phone: turn the HUD on (long press on the title), merge a few new items, open the World; `GET /api/perf` then shows `creation` with every step.

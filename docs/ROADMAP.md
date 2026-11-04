@@ -181,7 +181,7 @@ Asked for: everything from dropping one item on another to using the result gets
 5. **Fewer waits**: three programs at once, castable on a local pass, independent calls side by side; **the hour's prompt cache** for the spell writer on every model.
 6. **Chips** say writing, testing, ready, with a toast.
 
-Not done: the real phone session (the perf sample now carries the creation steps: turn the HUD on and play a few merges); the prompt was not trimmed (DESIGN.md says why).
+Not done: the real phone session (the perf sample now carries the creation steps: turn the HUD on and play a few merges); the prompt was not trimmed (DESIGN.md says why); a burst's later items wait up to 20 s for their job, since Cloudflare Queues adds a consumer only after a whole batch: Cloudflare Workflows, one instance per item, would run them side by side (size S to M). Owner's calls before the deploy: no draft for big items, and a big item's failed test is written again by Opus.
 
 ## Decisions taken
 
