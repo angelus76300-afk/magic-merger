@@ -78,6 +78,12 @@ export class Checker {
 }
 
 // The frame runs spell code, so its answer is checked for shape.
+// Every problem the test run knows (src/sim/check.ts). Until 4.2 only the
+// first three were read here, so a program that broke its promise (3.4.2) or
+// stood idle for five minutes (3.7) reached the Worker as "not ok, no
+// problem" and was promoted like a pass.
+const PROBLEMS = ["crash", "nothing", "wiped", "promise", "idle"] as const;
+
 function numbers(raw: unknown, max: number): Record<string, number> {
   const out: Record<string, number> = {};
   if (raw && typeof raw === "object") {
@@ -87,10 +93,12 @@ function numbers(raw: unknown, max: number): Record<string, number> {
 }
 
 export function readResult(raw: Record<string, unknown> | undefined): CheckOutcome {
-  const problem = raw?.problem === "crash" || raw?.problem === "nothing" || raw?.problem === "wiped" ? raw.problem : null;
+  const problem = (PROBLEMS as readonly unknown[]).includes(raw?.problem) ? (raw!.problem as CheckOutcome["problem"]) : null;
+  const ok = raw?.ok === true && !problem;
+  // A failure the frame could not name is a crash, never a pass.
   return {
-    ok: raw?.ok === true && !problem,
-    problem,
+    ok,
+    problem: ok ? null : (problem ?? "crash"),
     detail: typeof raw?.detail === "string" ? raw.detail.slice(0, 400) : "",
     stats: numbers(raw?.stats, 20),
     phases: numbers(raw?.phases, 8),

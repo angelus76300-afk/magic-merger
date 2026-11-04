@@ -26,6 +26,7 @@ import { capByDepth } from "../shared/tiers";
 import { joinsBoth } from "../worker/prompts";
 import type { Job } from "./challenge-worker";
 import { runCheck, type SceneReport } from "../src/sim/check";
+import { readResult } from "../src/checker";
 import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../shared/votes";
 import { pickExamples, words } from "../worker/programs";
 import { verdict, type LinkedPull } from "../worker/feedback";
@@ -702,6 +703,20 @@ for (const { stream, report: r } of sceneReports.sort((a, b) => a.stream - b.str
     r.artifacts.map((a) => `${a.name} ${a.deeds} (${a.did.join(", ")})`).join("; "),
   );
 }
+// 4.2: what the check frame says reaches the Worker as it was meant. Until
+// 4.2 a broken promise or an idle artifact arrived as "not ok, no problem",
+// and the Worker promoted it like a pass.
+{
+  const promise = readResult({ ok: false, problem: "promise", detail: "barely safer", stats: { saved: 0.1 } });
+  const idle = readResult({ ok: false, problem: "idle", detail: "changed nothing", stats: { acted: 0 } });
+  const unnamed = readResult({ ok: false, detail: "?" });
+  const pass = readResult({ ok: true, problem: null, detail: "fine", stats: { cells: 9 }, phases: { cast: 120 } });
+  check("a broken promise from the check frame stays a broken promise", !promise.ok && promise.problem === "promise", JSON.stringify(promise));
+  check("an idle artifact from the check frame stays idle", !idle.ok && idle.problem === "idle", JSON.stringify(idle));
+  check("a failure the frame could not name is a crash, never a pass", !unnamed.ok && unnamed.problem === "crash", JSON.stringify(unnamed));
+  check("a pass stays a pass, with its timings", pass.ok && pass.problem === null && pass.phases?.cast === 120, JSON.stringify(pass));
+}
+
 check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length === SCENE_STREAMS);
 {
   const unsolved = CHALLENGES.filter((c) => !verifiedChallenges.get(c.id)?.ok).map((c) => `${c.id} (${verifiedChallenges.get(c.id)?.wins ?? "?"} wins)`);
