@@ -66,6 +66,19 @@ export class OrbitCamera implements CameraControl {
     this.returnAt = 0;
   }
 
+  // The first look at a new island (4.4.5 part B): a flight from shot to
+  // shot that nothing undoes afterwards. The player's first touch ends it.
+  flyTo(tx: number, ty: number, dist: number, phi: number, seconds: number): void {
+    this.saved = null;
+    this.returnAt = 0;
+    this.goal = { tx, ty, dist: Math.max(this.minDist, Math.min(this.maxDist * 0.5, dist)), phi, speed: 1 / Math.max(0.2, seconds) };
+  }
+
+  // A slow turn while a shot holds, so the place is seen from more than one side.
+  spin(radians: number): void {
+    this.theta += radians;
+  }
+
   // True while the camera moves on its own: flying to a spell, coming back,
   // shaking. The engine keeps drawing frames for it.
   animating(): boolean {

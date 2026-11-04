@@ -13,7 +13,7 @@ import {
   type Scene,
   Vector3,
 } from "three";
-import { DAY_LENGTH } from "../daylight";
+import { DAY_LENGTH, MOON_DAYS, dayOf } from "../daylight";
 import { LOOKS, biomeAt, type Weather } from "../land";
 import { seeded } from "../noise";
 import type { World } from "../world";
@@ -227,6 +227,11 @@ export class Sky {
       };
       place(this.sun, b.sun, b.sunAz);
       place(this.moon, b.moon, b.moonAz);
+      // A full moon one night in four (4.4.5 part B), bigger and warmer; a
+      // thin one the night after it.
+      const phase = dayOf(time) % MOON_DAYS;
+      this.moon.scale.setScalar(FAR * (phase === MOON_DAYS - 1 ? 0.085 : phase === 0 ? 0.04 : 0.055));
+      (this.moon.material as SpriteMaterial).color.setHex(phase === MOON_DAYS - 1 ? 0xfff2d0 : 0xdfe8ff);
       (this.sun.material as SpriteMaterial).opacity = Math.max(0, 1 - cover * 0.85);
       (this.moon.material as SpriteMaterial).opacity = 0.9 * night * (1 - cover * 0.8);
       this.starMaterial.uniforms.night.value = Math.max(0, night - 0.3) * 1.4 * (1 - cover);

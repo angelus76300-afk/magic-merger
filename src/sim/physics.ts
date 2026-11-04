@@ -1,4 +1,5 @@
-import { C, F, G, S } from "./materials";
+import { C, F, G, S, isBuilding } from "./materials";
+import { blastWonders } from "./wonders";
 import type { World } from "./world";
 import { addGas } from "./cells";
 import { igniteVoxels, stepVoxels } from "./voxels";
@@ -321,7 +322,7 @@ function stepFire(world: World, dt: number): void {
 function burnOut(world: World, i: number): void {
   const c = world.cover[i];
   if (c === C.TREE) world.setCover(i, C.STUMP);
-  else if (c === C.HOUSE) world.setCover(i, C.RUBBLE);
+  else if (isBuilding(c)) world.setCover(i, C.RUBBLE);
   else if (c === C.POWDER) {
     world.setCover(i, C.NONE);
     explode(world, i % world.w, Math.floor(i / world.w), 3.5, 0.7);
@@ -528,7 +529,7 @@ export function explode(world: World, x: number, y: number, r: number, power: nu
     if (k > 0.25) {
       const c = world.cover[i];
       if (c === C.POWDER) world.fire[i] = 1;
-      else if (c === C.HOUSE) world.setCover(i, C.RUBBLE);
+      else if (isBuilding(c)) world.setCover(i, C.RUBBLE);
       else if (c !== C.NONE && c !== C.RUBBLE) world.setCover(i, rng.next() < 0.4 ? C.RUBBLE : C.NONE);
     }
     if (k > 0.55) world.ground[i] = G.ASH;
@@ -582,6 +583,8 @@ export function explode(world: World, x: number, y: number, r: number, power: nu
   // Blasts blow away what spells built close by and set fire to wood further out;
   // whatever loses its support then falls.
   if (world.landmarks.length) world.landmarks = world.landmarks.filter((l) => Math.hypot(l.x - x, l.y - y) > r * 0.6 || shielded(world, l.x, l.y));
+  // 4.4.5 part B: a wonder standing above the land falls; a hoard's dragon wakes.
+  if (world.wonders.length && !blocked) blastWonders(world, x, y, r, blastSpawn ? blastSpawn(world) : null);
   if (world.decor.size) {
     if (!blocked) world.clearVoxels(x, y, r * 0.6);
     igniteVoxels(world, x, y, r * (0.6 + 0.4 * Math.min(1, power)));
@@ -600,7 +603,7 @@ export function quake(world: World, x: number, y: number, r: number, strength: n
     if (warded(world, i, WARD.harm)) return;
     if (rng.next() < 0.3) world.height[i] += (rng.next() - 0.5) * strength * 0.8 * k;
     const c = world.cover[i];
-    if (c === C.HOUSE && rng.next() < strength * k * 0.08) world.setCover(i, C.RUBBLE);
+    if (isBuilding(c) && rng.next() < strength * k * 0.08) world.setCover(i, C.RUBBLE);
     else if (c === C.TREE && rng.next() < strength * k * 0.03) world.setCover(i, C.STUMP);
   });
   for (const c of world.creatures) {
@@ -633,4 +636,11 @@ export function forDisc(world: World, x: number, y: number, r: number, fn: (i: n
       fn(cy * world.w + cx, 1 - Math.sqrt(d2) / (r || 1), cx, cy);
     }
   }
+}
+
+// Set by creatures.ts (which physics.ts cannot import): how a blast puts a
+// woken dragon into the world.
+let blastSpawn: ((world: World) => NonNullable<Parameters<typeof blastWonders>[4]>) | null = null;
+export function setBlastSpawn(f: typeof blastSpawn): void {
+  blastSpawn = f;
 }

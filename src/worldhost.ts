@@ -556,6 +556,12 @@ export class WorldHost {
       case "error":
         if (this.store.get(msg.key)) void this.repair(msg.key, msg.name, msg.message);
         break;
+      case "island":
+        // A new island (4.4.5 part B): its wonder set joins the last ten, so
+        // the next one is never the same; its name is said once.
+        if (msg.signature) writeRecentSet(msg.signature);
+        if (msg.name && this.shown && !this.challenge) toast(`Welcome to ${msg.name}`, "special");
+        break;
       case "chronicle":
         this.digestWaiter?.(msg.digest);
         this.digestWaiter = null;
@@ -606,7 +612,15 @@ export class WorldHost {
     if (frame !== this.frame || !frame.contentWindow) return;
     const choice = readChoice();
     frame.contentWindow.postMessage(
-      { type: "init", save, size: choice.size, land: choice.land, rules: save ? this.rulesFor(save) : [], muted: this.muted } satisfies ToWorld,
+      {
+        type: "init",
+        save,
+        size: choice.size,
+        land: choice.land,
+        rules: save ? this.rulesFor(save) : [],
+        muted: this.muted,
+        recent: readRecentSets(),
+      } satisfies ToWorld,
       "*",
     );
     this.ready = true;
@@ -748,7 +762,7 @@ export class WorldHost {
       const chosen = size.value as WorldSize;
       writeChoice({ size: chosen, land });
       d.close();
-      this.send({ type: "reset", size: chosen, land, seed: n });
+      this.send({ type: "reset", size: chosen, land, seed: n, recent: readRecentSets() });
     });
     const actions = document.createElement("div");
     actions.className = "reset-actions";
@@ -1168,6 +1182,25 @@ function islandChannel(): BroadcastChannel | null {
 
 // The size and land the player last chose for a new island (4.4).
 const CHOICE_KEY = "magic-merger.new-island";
+
+// The wonder sets of the last ten islands (4.4.5 part B): a new island never
+// repeats one. Only kinds, never anything about the player.
+const RECENT_KEY = "magic-merger.wonder-sets";
+function readRecentSets(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]") as unknown;
+    return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string" && s.length <= 300).slice(-10) : [];
+  } catch {
+    return [];
+  }
+}
+function writeRecentSet(signature: string): void {
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify([...readRecentSets().filter((s) => s !== signature), signature].slice(-10)));
+  } catch {
+    // Full or blocked storage: the next island may repeat a set, nothing more.
+  }
+}
 
 // Never a big island by default: small on a narrow screen, medium elsewhere.
 function defaultSize(): WorldSize {

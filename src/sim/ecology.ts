@@ -118,6 +118,15 @@ export interface Settlement {
   // 0: nothing yet; 1 a well; 2 fenced fields; 3 a shrine; 4 a windmill on a
   // rise; 5 a dock, where there is a shore.
   level: number;
+  // Buildings with a job (4.4.5 part B): each its cover and the top left
+  // cell of its two by two block.
+  jobs?: { kind: number; i: number }[];
+  // Food the granary keeps for hard times.
+  store?: number;
+  // The way its main street runs from the plaza: a quarter turn, 0 to 3.
+  street?: number;
+  // Its name, from the syllables of its land.
+  name?: string;
 }
 
 const N4: readonly [number, number][] = [
@@ -127,7 +136,7 @@ const N4: readonly [number, number][] = [
   [0, -1],
 ];
 
-function cellHash(i: number, seed: number): number {
+export function cellHash(i: number, seed: number): number {
   let h = Math.imul(i, 0x27d4eb2d) ^ Math.imul(seed + 0x165667b1, 0x9e3779b1);
   h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
   return ((h ^ (h >>> 13)) >>> 0) / 4294967296;
@@ -138,7 +147,7 @@ function biomeOf(world: World, i: number, biomes: readonly Biome[]): Biome {
 }
 
 // Steps to the nearest cell passing `seed`, up to r (255 beyond).
-function distanceTo(world: World, r: number, from: (i: number) => boolean, through: (i: number) => boolean = () => true): Uint8Array {
+export function distanceTo(world: World, r: number, from: (i: number) => boolean, through: (i: number) => boolean = () => true): Uint8Array {
   const { w, h, n } = world;
   const dist = new Uint8Array(n).fill(255);
   let frontier: number[] = [];
@@ -209,8 +218,9 @@ interface Site {
   soon: Uint8Array;
 }
 
-const isSea = (world: World, i: number) => world.fluid[i] === F.WATER && world.depth[i] > 0.05 && world.height[i] + world.depth[i] < world.seaLevel + 0.35;
-const isFresh = (world: World, i: number) => world.fluid[i] === F.WATER && world.depth[i] > 0.05 && !isSea(world, i);
+export const isSea = (world: World, i: number) =>
+  world.fluid[i] === F.WATER && world.depth[i] > 0.05 && world.height[i] + world.depth[i] < world.seaLevel + 0.35;
+export const isFresh = (world: World, i: number) => world.fluid[i] === F.WATER && world.depth[i] > 0.05 && !isSea(world, i);
 
 function survey(world: World, biomes: readonly Biome[], peak: number, filled: Float32Array): Site {
   const seed = world.seed;

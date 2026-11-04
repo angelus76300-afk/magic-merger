@@ -1,4 +1,5 @@
 import { C, F, G } from "./materials";
+import { hasJob, settlementNear, tavernFor } from "./buildings";
 import { VK } from "./voxels";
 import { daylight } from "./daylight";
 import { names, type Plan } from "./social";
@@ -482,7 +483,9 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
 
 // A blow in a hunt or a fight.
 function hit(world: World, c: Creature, k: CreatureKind, m: Mind, t: Creature, dt: number): void {
-  const dps = (k.ai?.attack || 0) > 0 ? k.ai!.attack : c.kind === "villager" ? 16 : 20;
+  // 4.4.5 part B: a village with a smithy has armed its people.
+  const dps =
+    (k.ai?.attack || 0) > 0 ? k.ai!.attack : c.kind === "villager" ? (world.settlements.length && hasJob(world, c.homeX, c.homeY, C.SMITHY) ? 26 : 16) : 20;
   const i = world.idx(Math.max(0, Math.min(world.w - 1, t.x)), Math.max(0, Math.min(world.h - 1, t.y)));
   const blow = dps * dt * (warded(world, i, WARD.harm) && t.kind === "villager" ? 0.15 : 1);
   if (m.work === 0) deed(c, `${m.task === "fight" ? "fought" : "attacked"} a ${base(t.kind)}`);
@@ -617,6 +620,15 @@ function urgent(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
       setTask(m, "rest", c.homeX, c.homeY);
       m.action = "asleep at home";
       return true;
+    }
+    // 4.4.5 part B: at dusk the grown-ups of a village with a tavern gather there.
+    if (night > 0.2 && job !== "guard" && world.settlements.length && unpackLook(c.look).age !== "child") {
+      const tavern = tavernFor(world, c);
+      if (tavern) {
+        if (m.task !== "roam" || Math.hypot(m.tx - tavern.x, m.ty - tavern.y) > 3) setTask(m, "roam", tavern.x, tavern.y, 0.9);
+        m.action = "at the tavern";
+        return true;
+      }
     }
     if (m.task !== "feed" && Math.random() < 0.5) {
       const v = villageOf(world, c.homeX, c.homeY);
@@ -786,7 +798,8 @@ function job2(world: World, c: Creature, m: Mind, v: Village, job: Job): void {
     case "farmer":
       return farm(world, c, m, v);
     case "woodcutter":
-      if (v.wood < 12) fellTree(world, c, m, v);
+      // 4.4.5 part B: a lumber yard keeps twice the wood.
+      if (v.wood < (world.settlements.length && hasJob(world, c.homeX, c.homeY, C.LUMBERYARD) ? 24 : 12)) fellTree(world, c, m, v);
       else forage(world, c, m);
       return;
     case "fisher":
@@ -864,7 +877,28 @@ function build(world: World, c: Creature, m: Mind, v: Village): void {
 }
 
 // A 2 by 2 spot of dry, free, flat land near a village; its top left cell.
+// 4.4.5 part B: along the main street first, so houses line the paths.
 function houseSite(world: World, x: number, y: number): number {
+  const s = world.settlements.length ? settlementNear(world, x, y) : null;
+  if (s) {
+    const [dx, dy] = [
+      [1, 0],
+      [0, 1],
+      [-1, 0],
+      [0, -1],
+    ][s.street ?? 0];
+    for (let tries = 0; tries < 16; tries++) {
+      const t = 4 + Math.floor(Math.random() * 12) * (Math.random() < 0.3 ? -0.5 : 1);
+      const side = (Math.random() < 0.5 ? -1 : 1) * (Math.random() < 0.5 ? 2 : 3);
+      const hx = Math.round(s.x + dx * t - dy * side - (side < 0 ? 1 : 0) * Math.abs(dy));
+      const hy = Math.round(s.y + dy * t + dx * side - (side < 0 ? 1 : 0) * Math.abs(dx));
+      if (hx < 1 || hy < 1 || hx + 2 >= world.w || hy + 2 >= world.h) continue;
+      const cells = [hy * world.w + hx, hy * world.w + hx + 1, (hy + 1) * world.w + hx, (hy + 1) * world.w + hx + 1];
+      const h0 = world.height[cells[0]];
+      if (cells.some((i) => !dryFree(world, i) || world.ground[i] === G.FIELD || world.ground[i] === G.PATH || Math.abs(world.height[i] - h0) > 1.2)) continue;
+      return cells[0];
+    }
+  }
   for (let tries = 0; tries < 24; tries++) {
     const hx = Math.round(x + (Math.random() - 0.5) * 20);
     const hy = Math.round(y + (Math.random() - 0.5) * 20);
@@ -878,7 +912,8 @@ function houseSite(world: World, x: number, y: number): number {
 }
 
 function guardVillage(world: World, c: Creature, m: Mind, v: { x: number; y: number }): void {
-  const foe = intruder(world, c, v.x, v.y, 15);
+  // 4.4.5 part B: from a watchtower, guards see twice as far.
+  const foe = intruder(world, c, v.x, v.y, world.settlements.length && hasJob(world, v.x, v.y, C.WATCHTOWER) ? 30 : 15);
   if (foe) {
     setTask(m, "fight", foe.x, foe.y, 1.3, -1, foe);
     m.action = `driving off a ${base(foe.kind)}`;
@@ -1625,7 +1660,7 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
           break;
         }
       }
-      if (caught || Math.random() < 0.4) {
+      if (caught || Math.random() < (world.settlements.length && hasJob(world, c.homeX, c.homeY, C.FISHERHUT) ? 0.7 : 0.4)) {
         m.carry = "fish";
         setTask(m, "carry", c.homeX, c.homeY);
         deed(c, "caught a fish");
@@ -1645,6 +1680,8 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
     case "repair":
       if (world.cover[i] !== C.RUBBLE) return;
       world.setCover(i, C.HOUSE);
+      // 4.4.5 part B: a rebuilt roof shows its patch.
+      if (world.settlements.length) world.patched.add(i);
       deed(c, "rebuilt a house");
       return;
     case "build": {
@@ -1823,7 +1860,9 @@ function unload(world: World, c: Creature, m: Mind, v: Village | null): void {
     if (!v) return;
     if (load === "wood") v.wood += 1;
     else if (load === "gold") v.gold += 1;
-    else v.food += load === "fish" ? 1.5 : 1;
+    // 4.4.5 part B: a bakery makes a harvest go further, a fisher hut a catch.
+    else if (load === "fish") v.food += world.settlements.length && hasJob(world, c.homeX, c.homeY, C.FISHERHUT) ? 2.5 : 1.5;
+    else v.food += load === "food" && world.settlements.length && hasJob(world, c.homeX, c.homeY, C.BAKERY) ? 1.5 : 1;
     deed(c, `brought ${load} home`);
     return;
   }

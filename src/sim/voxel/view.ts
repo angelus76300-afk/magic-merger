@@ -50,6 +50,8 @@ import { keyLevel, keyX, keyY } from "../voxelkey";
 import { LOOKS, biomeAt } from "../land";
 import { DAMP, HEART, HOUSE_STYLES, R as RARE, STYLE_BITS, TREE_STYLES } from "../ecology";
 import { GLOWING, VARIANTS, floraModels } from "./flora";
+import { Buildings } from "./buildings";
+import { WonderModels } from "./wonders";
 import { valueNoise } from "../noise";
 import { Sky } from "./sky";
 
@@ -133,6 +135,10 @@ export class VoxelView {
   private lit: MeshBasicMaterial[] = [];
   private windows!: InstancedMesh;
   private houseCells: number[] = [];
+  // Every house and building with a job, each its own (4.4.5 part B).
+  private buildings!: Buildings;
+  // Wonders above the land (4.4.5 part B).
+  private wonderModels!: WonderModels;
   private skyKey = "";
   private skyCanvas = document.createElement("canvas");
   private decorMesh: InstancedMesh;
@@ -206,6 +212,8 @@ export class VoxelView {
     // Cover meshes are made the first time something needs them (4.4.5:
     // dozens of plant and rock looks, of which an island uses some).
     this.coverMaterial = basic;
+    this.buildings = new Buildings(this.scene, basic);
+    this.wonderModels = new WonderModels(this.scene, basic, this.glowMaterial);
     const figureMats = figureMaterials();
     this.figures = new Figures(this.scene, figureMats);
     this.markMesh = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true }), 900);
@@ -297,6 +305,7 @@ export class VoxelView {
       this.placeCovers();
     }
     this.lap("covers");
+    if (world.wonders.length) this.wonderModels.update(world, time);
     if (world.decorVersion !== this.decorVersion) {
       this.decorVersion = world.decorVersion;
       this.placeDecor(time);
@@ -487,8 +496,11 @@ export class VoxelView {
     // cell its own.
     const trees = world.land ? LOOKS[world.land.biome].trees : null;
     const flora = world.flora;
+    // Villages of 4.4.5 part B: houses and buildings drawn whole, each its own.
+    const whole = world.settlements.length ? this.buildings.update(world) : null;
     for (let i = 0; i < world.n; i++) {
       const c = world.cover[i];
+      if (whole?.has(i) || c === C.WONDER) continue;
       if (c === C.NONE) {
         if (!flora) continue;
         // Tufts of grass on open ground, lily pads on still water (4.4.5).
@@ -653,6 +665,20 @@ export class VoxelView {
       fog.far = this.world.w * 5 * (1 - fogStep * 0.8);
     }
     let n = 0;
+    const lights = this.world.settlements.length ? this.buildings.lights : null;
+    if (day.night > 0.15 && lights) {
+      const glow = 0.4 + 0.6 * day.night;
+      for (const w of lights.windows) {
+        if (n >= 4096) break;
+        const flicker = 0.85 + 0.15 * Math.sin(time * 3 + w.x * 7 + w.z);
+        if (w.axis === 0) this.m.makeScale(0.17, 0.15, 0.04);
+        else this.m.makeScale(0.04, 0.15, 0.17);
+        this.m.setPosition(w.x, w.y, w.z);
+        this.windows.setMatrixAt(n, this.m);
+        this.windows.setColorAt(n, this.col.setRGB(glow * flicker, glow * 0.78 * flicker, glow * 0.35));
+        n++;
+      }
+    }
     if (day.night > 0.15) {
       const glow = 0.4 + 0.6 * day.night;
       for (const i of this.houseCells) {
@@ -673,8 +699,25 @@ export class VoxelView {
     if (this.world.rare) this.placeSparks(time, day.night);
     this.windows.instanceMatrix.needsUpdate = true;
     if (this.windows.instanceColor) this.windows.instanceColor.needsUpdate = true;
-    // Chimney smoke: a puff now and then from a random house.
-    if (this.houseCells.length && Math.random() < Math.min(0.6, this.houseCells.length / 60)) {
+    // Chimney smoke: a puff now and then from a random chimney (4.4.5 part B)
+    // or house.
+    const chimneys = lights?.chimneys ?? [];
+    if (chimneys.length && Math.random() < Math.min(0.6, chimneys.length / 25)) {
+      const ch = chimneys[(Math.random() * chimneys.length) | 0];
+      this.world.particles.add({
+        x: ch.x,
+        y: ch.z,
+        z: ch.y + 0.2,
+        vz: 1.2,
+        vx: this.world.wind.x * 0.6,
+        vy: this.world.wind.y * 0.6,
+        life: 2.5,
+        color: 0xd8d4cc,
+        size: 1.4,
+        drag: 0.4,
+        gravity: -0.3,
+      });
+    } else if (!lights && this.houseCells.length && Math.random() < Math.min(0.6, this.houseCells.length / 60)) {
       const i = this.houseCells[(Math.random() * this.houseCells.length) | 0];
       this.world.particles.add({
         x: (i % this.world.w) + 0.5,
@@ -1175,6 +1218,8 @@ export class VoxelView {
   // next engine reuses the same canvas and so the same WebGL context.
   dispose(): void {
     this.domes.dispose();
+    this.buildings.dispose();
+    this.wonderModels.dispose();
     const seen = new Set<object>();
     const free = (thing: { dispose(): void } | null | undefined) => {
       if (thing && !seen.has(thing)) {

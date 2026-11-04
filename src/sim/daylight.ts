@@ -47,3 +47,13 @@ export function daylight(time: number): Daylight {
     skyLow: hexColor(mixColor(a.low, b.low, s)),
   };
 }
+
+// The moon (4.4.5 part B): full one night in four, so a player sees one in
+// a session of half an hour. Giant bones raise the dead under it.
+export const MOON_DAYS = 4;
+export function dayOf(time: number): number {
+  return Math.floor((time + DAY_LENGTH * 0.1) / DAY_LENGTH);
+}
+export function fullMoon(time: number): boolean {
+  return dayOf(time) % MOON_DAYS === MOON_DAYS - 1 && daylight(time).night > 0.6;
+}

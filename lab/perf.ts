@@ -9,6 +9,7 @@ import { readChoice, readLand, resolveLand } from "../src/sim/land";
 import { WORLD_SIZES } from "../src/sim/sizes";
 import { GRAPHICS, type GraphicsFlag } from "../src/sim/voxel/graphics";
 import { LAB_WEATHER } from "../src/sim/voxel/sky";
+import { firstLook } from "../src/sim/firstlook";
 
 const q = new URLSearchParams(location.search);
 const canvas = document.getElementById("world") as HTMLCanvasElement;
@@ -38,6 +39,20 @@ if (q.has("theta")) engine.view.orbit.theta = Number(q.get("theta"));
 if (q.has("tx")) engine.view.orbit.tx = Number(q.get("tx"));
 if (q.has("ty")) engine.view.orbit.ty = Number(q.get("ty"));
 if (q.has("dpr")) engine.view.fixedPixelRatio = Number(q.get("dpr"));
+// 4.4.5 part B: "look=1" plays the first look at the island, as a new one opens.
+if (q.has("look")) {
+  const card = document.createElement("div");
+  card.id = "first-look";
+  card.hidden = true;
+  card.style.cssText =
+    "position:absolute;left:50%;bottom:18px;transform:translateX(-50%);width:min(360px,calc(100% - 32px));box-sizing:border-box;padding:12px 14px 10px;border-radius:14px;background:rgba(18,14,34,.86);color:#f2eefc;font:13px/1.4 system-ui,sans-serif;text-align:center";
+  const css = document.createElement("style");
+  css.textContent =
+    "#first-look[hidden]{display:none}#first-look .title{margin:0;font-size:19px;font-weight:600}#first-look .what{margin:2px 0 0;color:#f4d58d;font-size:12px}#first-look .does{margin:4px 0 0;color:#b9b0d6}#first-look .skip{margin-top:8px;border:1px solid rgba(255,255,255,.25);border-radius:999px;background:none;color:#f2eefc;padding:3px 14px}";
+  document.head.append(css);
+  document.body.append(card);
+  firstLook(engine, card, false);
+}
 const hud = new Hud(engine.stats);
 hud.show(true);
 engine.start();
