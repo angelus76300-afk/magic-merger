@@ -2179,115 +2179,116 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 // attestation are accepted; a forged packed signature, "none" with a
 // statement, "fido-u2f" without its certificate and an unknown format are
 // refused, and a refused passkey claims nothing.
+// The software authenticator, shared with section 29.
+const subtle = globalThis.crypto.subtle;
+const b64u = (bytes) => Buffer.from(bytes).toString("base64url");
+const concat = (...parts) => Buffer.concat(parts.map((p) => Buffer.from(p)));
+const sha = async (bytes) => Buffer.from(await subtle.digest("SHA-256", bytes));
+// CBOR, the few types WebAuthn uses.
+const head = (major, n) =>
+  n < 24
+    ? Buffer.from([(major << 5) | n])
+    : n < 256
+      ? Buffer.from([(major << 5) | 24, n])
+      : n < 65536
+        ? Buffer.from([(major << 5) | 25, n >> 8, n & 255])
+        : Buffer.from([(major << 5) | 26, (n >>> 24) & 255, (n >> 16) & 255, (n >> 8) & 255, n & 255]);
+const cbor = (v) => {
+  if (typeof v === "number") return v >= 0 ? head(0, v) : head(1, -1 - v);
+  if (typeof v === "string") return concat(head(3, Buffer.byteLength(v)), Buffer.from(v));
+  if (v instanceof Uint8Array) return concat(head(2, v.length), v);
+  if (Array.isArray(v)) return concat(head(4, v.length), ...v.map(cbor));
+  const entries = v instanceof Map ? [...v] : Object.entries(v);
+  return concat(head(5, entries.length), ...entries.flatMap(([k, x]) => [cbor(k), cbor(x)]));
+};
+// WebCrypto signs P-256 as r || s; WebAuthn wants DER.
+const der = (raw) => {
+  const int = (b) => {
+    let i = 0;
+    while (i < b.length - 1 && b[i] === 0) i++;
+    b = b.subarray(i);
+    return b[0] & 0x80 ? concat([0x02, b.length + 1, 0], b) : concat([0x02, b.length], b);
+  };
+  const body = concat(int(raw.subarray(0, 32)), int(raw.subarray(32)));
+  return concat([0x30, body.length], body);
+};
+const rpID = new URL(BASE).hostname;
+async function authenticator() {
+  const keys = await subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+  const jwk = await subtle.exportKey("jwk", keys.publicKey);
+  const cose = cbor(
+    new Map([
+      [1, 2],
+      [3, -7],
+      [-1, 1],
+      [-2, Buffer.from(jwk.x, "base64url")],
+      [-3, Buffer.from(jwk.y, "base64url")],
+    ]),
+  );
+  const id = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  const sign = async (bytes) => der(Buffer.from(await subtle.sign({ name: "ECDSA", hash: "SHA-256" }, keys.privateKey, bytes)));
+  const authData = async (count, attested) => {
+    const c = Buffer.alloc(4);
+    c.writeUInt32BE(count);
+    const flags = 0x01 | 0x04 | (attested ? 0x40 : 0);
+    return concat(await sha(Buffer.from(rpID)), [flags], c, attested ? concat(Buffer.alloc(16), [0, id.length], id, cose) : []);
+  };
+  return {
+    id,
+    async register(challenge, { fmt = "none", count = 0, statement } = {}) {
+      const clientDataJSON = Buffer.from(JSON.stringify({ type: "webauthn.create", challenge, origin: BASE, crossOrigin: false }));
+      const data = await authData(count, true);
+      let attStmt = statement ?? new Map();
+      if (fmt === "packed" && !statement)
+        attStmt = new Map([
+          ["alg", -7],
+          ["sig", await sign(concat(data, await sha(clientDataJSON)))],
+        ]);
+      const attestationObject = cbor(
+        new Map([
+          ["fmt", fmt],
+          ["attStmt", attStmt],
+          ["authData", data],
+        ]),
+      );
+      return {
+        id: b64u(id),
+        rawId: b64u(id),
+        type: "public-key",
+        response: { clientDataJSON: b64u(clientDataJSON), attestationObject: b64u(attestationObject), transports: ["internal"] },
+        clientExtensionResults: {},
+      };
+    },
+    async login(challenge, count) {
+      const clientDataJSON = Buffer.from(JSON.stringify({ type: "webauthn.get", challenge, origin: BASE, crossOrigin: false }));
+      const data = await authData(count, false);
+      return {
+        id: b64u(id),
+        rawId: b64u(id),
+        type: "public-key",
+        response: {
+          clientDataJSON: b64u(clientDataJSON),
+          authenticatorData: b64u(data),
+          signature: b64u(await sign(concat(data, await sha(clientDataJSON)))),
+        },
+        clientExtensionResults: {},
+      };
+    },
+  };
+}
+const register = async (inv, key, opts) => {
+  const o = await api("/api/account/register/options", { invite: inv.secret, body: {} });
+  return api("/api/account/register/verify", {
+    invite: inv.secret,
+    body: { challengeId: o.data.challengeId, response: await key.register(o.data.options.challenge, opts) },
+  });
+};
+const signIn = async (key, count) => {
+  const o = await api("/api/account/login/options", { body: {} });
+  return api("/api/account/login/verify", { body: { challengeId: o.data.challengeId, response: await key.login(o.data.options.challenge, count) } });
+};
 {
   await reset();
-  const subtle = globalThis.crypto.subtle;
-  const b64u = (bytes) => Buffer.from(bytes).toString("base64url");
-  const concat = (...parts) => Buffer.concat(parts.map((p) => Buffer.from(p)));
-  const sha = async (bytes) => Buffer.from(await subtle.digest("SHA-256", bytes));
-  // CBOR, the few types WebAuthn uses.
-  const head = (major, n) =>
-    n < 24
-      ? Buffer.from([(major << 5) | n])
-      : n < 256
-        ? Buffer.from([(major << 5) | 24, n])
-        : n < 65536
-          ? Buffer.from([(major << 5) | 25, n >> 8, n & 255])
-          : Buffer.from([(major << 5) | 26, (n >>> 24) & 255, (n >> 16) & 255, (n >> 8) & 255, n & 255]);
-  const cbor = (v) => {
-    if (typeof v === "number") return v >= 0 ? head(0, v) : head(1, -1 - v);
-    if (typeof v === "string") return concat(head(3, Buffer.byteLength(v)), Buffer.from(v));
-    if (v instanceof Uint8Array) return concat(head(2, v.length), v);
-    if (Array.isArray(v)) return concat(head(4, v.length), ...v.map(cbor));
-    const entries = v instanceof Map ? [...v] : Object.entries(v);
-    return concat(head(5, entries.length), ...entries.flatMap(([k, x]) => [cbor(k), cbor(x)]));
-  };
-  // WebCrypto signs P-256 as r || s; WebAuthn wants DER.
-  const der = (raw) => {
-    const int = (b) => {
-      let i = 0;
-      while (i < b.length - 1 && b[i] === 0) i++;
-      b = b.subarray(i);
-      return b[0] & 0x80 ? concat([0x02, b.length + 1, 0], b) : concat([0x02, b.length], b);
-    };
-    const body = concat(int(raw.subarray(0, 32)), int(raw.subarray(32)));
-    return concat([0x30, body.length], body);
-  };
-  const rpID = new URL(BASE).hostname;
-  async function authenticator() {
-    const keys = await subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
-    const jwk = await subtle.exportKey("jwk", keys.publicKey);
-    const cose = cbor(
-      new Map([
-        [1, 2],
-        [3, -7],
-        [-1, 1],
-        [-2, Buffer.from(jwk.x, "base64url")],
-        [-3, Buffer.from(jwk.y, "base64url")],
-      ]),
-    );
-    const id = globalThis.crypto.getRandomValues(new Uint8Array(16));
-    const sign = async (bytes) => der(Buffer.from(await subtle.sign({ name: "ECDSA", hash: "SHA-256" }, keys.privateKey, bytes)));
-    const authData = async (count, attested) => {
-      const c = Buffer.alloc(4);
-      c.writeUInt32BE(count);
-      const flags = 0x01 | 0x04 | (attested ? 0x40 : 0);
-      return concat(await sha(Buffer.from(rpID)), [flags], c, attested ? concat(Buffer.alloc(16), [0, id.length], id, cose) : []);
-    };
-    return {
-      id,
-      async register(challenge, { fmt = "none", count = 0, statement } = {}) {
-        const clientDataJSON = Buffer.from(JSON.stringify({ type: "webauthn.create", challenge, origin: BASE, crossOrigin: false }));
-        const data = await authData(count, true);
-        let attStmt = statement ?? new Map();
-        if (fmt === "packed" && !statement)
-          attStmt = new Map([
-            ["alg", -7],
-            ["sig", await sign(concat(data, await sha(clientDataJSON)))],
-          ]);
-        const attestationObject = cbor(
-          new Map([
-            ["fmt", fmt],
-            ["attStmt", attStmt],
-            ["authData", data],
-          ]),
-        );
-        return {
-          id: b64u(id),
-          rawId: b64u(id),
-          type: "public-key",
-          response: { clientDataJSON: b64u(clientDataJSON), attestationObject: b64u(attestationObject), transports: ["internal"] },
-          clientExtensionResults: {},
-        };
-      },
-      async login(challenge, count) {
-        const clientDataJSON = Buffer.from(JSON.stringify({ type: "webauthn.get", challenge, origin: BASE, crossOrigin: false }));
-        const data = await authData(count, false);
-        return {
-          id: b64u(id),
-          rawId: b64u(id),
-          type: "public-key",
-          response: {
-            clientDataJSON: b64u(clientDataJSON),
-            authenticatorData: b64u(data),
-            signature: b64u(await sign(concat(data, await sha(clientDataJSON)))),
-          },
-          clientExtensionResults: {},
-        };
-      },
-    };
-  }
-  const register = async (inv, key, opts) => {
-    const o = await api("/api/account/register/options", { invite: inv.secret, body: {} });
-    return api("/api/account/register/verify", {
-      invite: inv.secret,
-      body: { challengeId: o.data.challengeId, response: await key.register(o.data.options.challenge, opts) },
-    });
-  };
-  const signIn = async (key, count) => {
-    const o = await api("/api/account/login/options", { body: {} });
-    return api("/api/account/login/verify", { body: { challengeId: o.data.challengeId, response: await key.login(o.data.options.challenge, count) } });
-  };
   const stored = async (key) => (await db.prepare("SELECT counter FROM credentials WHERE id = ?").bind(b64u(key.id)).first())?.counter;
 
   // Counters.
@@ -2700,6 +2701,179 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
   if ((await api("/api/admin/wonder", { invite: finder.secret, body: { id: 1, status: "retired" } })).status >= 400) refused++;
   if ((await api("/api/admin/wonder-daily", { invite: finder.secret, body: { force: true } })).status >= 400) refused++;
   check("wonders: no admin route answers a player", refused === 5);
+}
+
+// 29. Accounts you can trust (4.4.6), reproduced first. The owner played as
+// the admin on a computer and a phone and the progress was not kept: the
+// admin token was not an account, so nothing went to the server. Now the
+// owner is the account whose id the admin's rows already use ('admin'),
+// made with a passkey from a device that holds the token; its admin flag
+// gives the admin powers to every device signed in to it, with no token.
+// And a device that held account A's progress, signed in as B, never sends
+// it to B.
+{
+  await reset();
+  // The admin's rows from before the account: a First Discovery and its spend, an idea, a win.
+  // Pairs of its own: the eight primal forces' pairs are all merged by now.
+  for (const name of ["Owner Seed A", "Owner Seed B", "Owner Seed C"])
+    await db
+      .prepare(
+        "INSERT OR IGNORE INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES (?, ?, '🌱', 'spell', 2, 'minor', NULL, ?)",
+      )
+      .bind(name.toLowerCase(), name, Date.now())
+      .run();
+  const [a0, b0] = ["Owner Seed A", "Owner Seed B"];
+  const before = await api("/api/merge", { admin: true, body: { a: a0, b: b0 } });
+  const firstName = before.data?.element?.name;
+  await api("/api/feedback", { admin: true, body: { title: "An idea of the owner's" } });
+  await db.prepare("INSERT INTO challenge_wins (challenge, invite, merges, spell, at) VALUES ('owner-test', 'admin', 3, 'steam', ?)").bind(Date.now()).run();
+  const owner = await api("/api/health", { admin: true });
+  check(
+    "owner: the admin token alone is offered the owner's account, the id the admin's rows use",
+    owner.data.admin === true && owner.data.account?.id === "admin" && owner.data.account?.admin === true && owner.data.account?.claimed === false,
+    JSON.stringify(owner.data.account ?? null),
+  );
+  // The computer: the owner makes a passkey from the device that holds the token.
+  const ownerKey = await authenticator();
+  const o1 = await api("/api/account/register/options", { admin: true, body: {} });
+  const made =
+    o1.status === 200
+      ? await api("/api/account/register/verify", {
+          admin: true,
+          body: { challengeId: o1.data.challengeId, response: await ownerKey.register(o1.data.options.challenge) },
+        })
+      : o1;
+  const computer = made.data?.token;
+  check(
+    "owner: a passkey made from the token is the owner's account",
+    made.status === 200 && made.data.id === "admin" && !!computer,
+    `${made.status} ${JSON.stringify(made.data).slice(0, 160)}`,
+  );
+  // The phone: the same passkey, no token.
+  const onPhone = await signIn(ownerKey, 0);
+  const phone = onPhone.data?.token;
+  const hPhone = await api("/api/health", { session: phone });
+  check(
+    "owner: signed in on the phone with no token, the admin powers follow the account",
+    onPhone.status === 200 &&
+      hPhone.data.admin === true &&
+      hPhone.data.account?.signedIn === true &&
+      (await api("/api/admin/people", { session: phone })).status === 200,
+    JSON.stringify(hPhone.data),
+  );
+  // The admin's progress on two devices.
+  const putP = (session, body, extra = {}) => api("/api/progress", { session, method: "PUT", body, ...extra });
+  await putP(computer, { kind: "discoveries", data: [{ key: "steam", at: 1000, recipe: ["Fire", "Water"] }], device: "Windows", force: true });
+  await putP(phone, { kind: "discoveries", data: [{ key: "mist", at: 2000, recipe: ["Air", "Water"] }], device: "iPhone", force: true });
+  const seenOnComputer = (await api("/api/progress", { session: computer })).data?.progress?.find((p) => p.kind === "discoveries")?.data ?? [];
+  check(
+    "owner: what the computer and the phone found is on the account, from either device",
+    ["steam", "mist"].every((k) => seenOnComputer.some((d) => d.key === k)),
+    JSON.stringify(seenOnComputer.map((d) => d.key)),
+  );
+  const both = await api("/api/health", { admin: true, session: phone });
+  const bothPut = await putP(phone, { kind: "board", data: { chips: [], next: 1 }, device: "iPhone", force: true }, { admin: true });
+  check(
+    "owner: a token next to a session never hides the session",
+    both.data.admin === true && both.data.account?.signedIn === true && bothPut.status === 200,
+    `${JSON.stringify(both.data.account ?? null)} put ${bothPut.status}`,
+  );
+  // Nothing moved: the rows the admin wrote are the account's.
+  const exported = await api("/api/account/export", { session: phone });
+  check(
+    "owner: the First Discovery, the idea and the win from before are the account's",
+    exported.status === 200 &&
+      exported.data.firstDiscoveries.some((d) => d.name === firstName) &&
+      exported.data.ideas.some((i) => i.title === "An idea of the owner's") &&
+      exported.data.challengeWins.some((w) => w.challenge === "owner-test"),
+    JSON.stringify({
+      status: exported.status,
+      d: exported.data?.firstDiscoveries?.length,
+      i: exported.data?.ideas?.length,
+      w: exported.data?.challengeWins?.length,
+    }),
+  );
+  await db.prepare("INSERT INTO spend (at, call, model, usd, invite) VALUES (?, 'merge', 'claude-opus-5-5', 6, 'admin')").bind(Date.now()).run();
+  const [a1, b1] = ["Owner Seed A", "Owner Seed C"];
+  const paid = await api("/api/merge", { session: phone, body: { a: a1, b: b1 } });
+  const payer = paid.data?.element ? (await db.prepare("SELECT invite FROM spend WHERE usd < 1 ORDER BY id DESC LIMIT 1").first())?.invite : null;
+  check(
+    "owner: no personal cap, and a merge is paid by 'admin' as before",
+    paid.status === 200 && payer === "admin",
+    `${paid.status} ${paid.data?.error ?? ""} paid by ${payer}`,
+  );
+  check(
+    "owner: the token alone still opens the admin routes, for scripts and the nightly Action",
+    (await api("/api/admin/people", { admin: true })).status === 200 && (await api("/api/spend", { admin: true })).status === 200,
+  );
+  const again = await api("/api/account/register/options", { admin: true, body: {} });
+  const minted = await api("/api/account/claim-link", { admin: true, body: {} });
+  check(
+    "owner: once made, the token cannot make another owner passkey or mint a session",
+    again.status === 409 && minted.status !== 200 && !minted.data?.token,
+    `${again.status} ${minted.status}`,
+  );
+  const kept = [];
+  for (const action of ["pause", "revoke", "delete"]) kept.push((await api("/api/admin/invite", { admin: true, body: { id: "admin", action } })).status);
+  const selfDelete = await api("/api/account", { session: phone, method: "DELETE" });
+  check(
+    "owner: the owner's account cannot be paused, revoked or deleted",
+    kept.every((st) => st === 400) && selfDelete.status === 400 && (await api("/api/health", { session: phone })).data.admin === true,
+    `${kept.join(" ")} self ${selfDelete.status}`,
+  );
+  const ownerPage = await api("/api/account", { session: computer });
+  const devs = ownerPage.data?.devices ?? [];
+  check(
+    "owner: the account page lists both devices with their last sync",
+    devs.length === 2 && devs.every((d) => typeof d.lastSync === "number" && d.lastSync > 0),
+    JSON.stringify(devs.map((d) => ({ device: d.device, lastSync: d.lastSync }))),
+  );
+
+  // Account B signs in on a device that held account A's progress.
+  const ann = await invite("Ann B", 5);
+  const ben = await invite("Ben B", 5);
+  const annKey = await authenticator();
+  const benKey = await authenticator();
+  const annS = (await register(ann, annKey)).data.token;
+  const benS = (await register(ben, benKey)).data.token;
+  const annSave = [{ key: "ann's dragon", at: 3000, recipe: ["Fire", "Earth"] }];
+  await putP(annS, { kind: "discoveries", data: annSave, device: "iPhone", owner: ann.id, force: true });
+  const leaked = await putP(benS, { kind: "discoveries", data: annSave, device: "iPhone", owner: ann.id, force: true });
+  const leakedIsland = await putP(benS, { kind: "island", data: { gz: "QUFB", size: "small", at: 9 }, device: "iPhone", owner: ann.id });
+  const benHas = (await api("/api/progress", { session: benS })).data?.progress ?? [];
+  check(
+    "B on A's device: a save that belongs to A is refused by B's account, and B holds nothing of A's",
+    leaked.status === 409 && leakedIsland.status === 409 && benHas.length === 0,
+    `${leaked.status} ${leakedIsland.status} ${JSON.stringify(benHas.map((p) => p.kind))}`,
+  );
+  const own = await putP(benS, { kind: "discoveries", data: [{ key: "ben's owl", at: 4000, recipe: null }], device: "iPhone", owner: ben.id, force: true });
+  const legacy = await putP(benS, { kind: "board", data: { chips: [], next: 1 }, device: "iPhone" });
+  check(
+    "B on A's device: B's own save, and one from a page before 4.4.6 (no owner), are kept",
+    own.status === 200 && legacy.status === 200,
+    `${own.status} ${legacy.status}`,
+  );
+
+  // Never lost: an island replaced by another device's is kept as the previous one.
+  await putP(computer, { kind: "island", data: { gz: "Q09NUA==", size: "small", at: 10 }, device: "Windows", force: true });
+  const ownerSeen = ((await api("/api/progress", { session: phone })).data?.progress ?? []).find((p) => p.kind === "island")?.updatedAt ?? 0;
+  await putP(computer, { kind: "island", data: { gz: "Q09NUDI=", size: "small", at: 11 }, device: "Windows", since: ownerSeen });
+  const refused = await putP(phone, { kind: "island", data: { gz: "UEhPTkU=", size: "small", at: 12 }, device: "iPhone", since: ownerSeen });
+  const forcedIsland = await putP(phone, { kind: "island", data: { gz: "UEhPTkU=", size: "small", at: 12 }, device: "iPhone", since: ownerSeen, force: true });
+  const prev = await api("/api/progress?kind=island_previous", { session: phone });
+  const plain = await api("/api/progress", { session: phone });
+  const prevDoc = prev.data?.progress?.find((p) => p.kind === "island_previous");
+  check(
+    "island: the newer island from another device is refused with where and when, and once replaced it is kept as the previous one",
+    refused.status === 409 &&
+      refused.data.detail?.device === "Windows" &&
+      forcedIsland.status === 200 &&
+      prevDoc?.data?.gz === "Q09NUDI=" &&
+      prevDoc.device === "Windows" &&
+      !(plain.data?.progress ?? []).some((p) => p.kind === "island_previous"),
+    JSON.stringify({ refused: refused.status, forced: forcedIsland.status, prev: prevDoc ?? prev.status }),
+  );
+  await reset();
 }
 
 stop();
