@@ -7,20 +7,14 @@
 // p50, p95 and max of the whole tick and of the creatures' share, seeded, so
 // two runs of the same code agree to within timer noise. Run on main and on a
 // branch to compare: the scene only uses what both have.
-import { lifeCycle, populate, resetCreatureIds, updateCreature } from "../src/sim/creatures";
-import { stepPhysics } from "../src/sim/physics";
+import { populate, resetCreatureIds } from "../src/sim/creatures";
+import { seeded } from "../src/sim/noise";
+import { stepHeadless } from "../src/sim/tick";
 import { Runtime } from "../src/sim/runtime";
-import { TICK, generateWorld } from "../src/sim/world";
+import { generateWorld } from "../src/sim/world";
 
 function seed(n: number): void {
-  let a = n >>> 0;
-  Math.random = () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+  Math.random = seeded(n);
 }
 
 const SECONDS = Number(process.env.PROF_SECONDS ?? 120);
@@ -60,18 +54,12 @@ for (const guests of [false, true]) {
   const parts = { physics: [] as number[], creatures: [] as number[], life: [] as number[], total: [] as number[] };
   let most = 0;
   for (let tick = 0; tick < 30 * SECONDS; tick++) {
-    world.time += TICK;
-    world.tick++;
+    const at: Partial<Record<"physics" | "creatures" | "life", number>> = {};
     const a = performance.now();
-    stepPhysics(world, TICK);
-    const b = performance.now();
-    for (const c of world.creatures) updateCreature(world, c, TICK);
-    const c = performance.now();
-    lifeCycle(world, TICK);
-    rt.step(TICK);
-    world.particles.update(TICK);
-    world.events.length = 0;
+    stepHeadless(world, rt, { mark: (p) => (at[p] = performance.now()) });
     const d = performance.now();
+    const b = at.physics!;
+    const c = at.creatures!;
     parts.physics.push(b - a);
     parts.creatures.push(c - b);
     parts.life.push(d - c);

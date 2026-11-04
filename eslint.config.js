@@ -1,5 +1,6 @@
 import js from "@eslint/js";
 import importX from "eslint-plugin-import-x";
+import globals from "globals";
 import tseslint from "typescript-eslint";
 
 // The simulation (src/sim, without the host files and the voxel view) must run
@@ -9,7 +10,7 @@ const SIMULATION = ["src/sim/*.ts"];
 const HOST = ["src/sim/engine.ts", "src/sim/frame.ts", "src/sim/hud.ts", "src/sim/protocol.ts"];
 
 export default tseslint.config(
-  { ignores: ["dist", "node_modules", ".wrangler", "lab/legacy", "lab/spells", "lab/solutions", "lab/promises", "lab/artifacts", "**/*.mjs"] },
+  { ignores: ["dist", "node_modules", ".wrangler", "lab/legacy", "lab/spells", "lab/solutions", "lab/promises", "lab/artifacts"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -27,6 +28,12 @@ export default tseslint.config(
       "import-x/parsers": { "@typescript-eslint/parser": [".ts"] },
       "import-x/extensions": [".ts"],
     },
+  },
+  // Scripts run by Node (4.1, review M7). Those that drive a browser pass
+  // functions to page.evaluate, which run there: both sets of globals.
+  {
+    files: ["**/*.mjs"],
+    languageOptions: { globals: { ...globals.node, ...globals.browser } },
   },
   {
     files: SIMULATION,

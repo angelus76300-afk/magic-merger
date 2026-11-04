@@ -1398,7 +1398,8 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       world.setCover(i, world.cover[i] === C.TREE ? C.STUMP : C.NONE);
       m.carry = "wood";
       deed(c, "felled a tree");
-      world.emit({ kind: "sound", name: "thump", size: 0.15 });
+      // Routine work is silent until sounds have a place and a distance
+      // (4.5): every tree used to play a thump at full volume, one every 2 s.
       if (c.kind === "villager") setTask(m, "carry", c.homeX, c.homeY);
       return;
     case "fish": {
@@ -1443,7 +1444,7 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
         world.ground[j] = G.DIRT;
         world.setCover(j, C.HOUSE);
       }
-      world.emit({ kind: "sound", name: "thump", size: 0.4 });
+      // Silent, like felling (4.1).
       deed(c, "built a house");
       return;
     }

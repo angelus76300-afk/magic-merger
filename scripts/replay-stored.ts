@@ -4,10 +4,10 @@
 //   npx esbuild scripts/replay-stored.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/replay.mjs && node node_modules/.cache/replay.mjs spells.json
 import { readFileSync } from "node:fs";
 import { isTier } from "../shared/tiers";
-import { lifeCycle, populate, updateCreature } from "../src/sim/creatures";
-import { stepPhysics } from "../src/sim/physics";
+import { populate } from "../src/sim/creatures";
+import { stepHeadless } from "../src/sim/tick";
 import { Runtime } from "../src/sim/runtime";
-import { TICK, generateWorld } from "../src/sim/world";
+import { generateWorld } from "../src/sim/world";
 
 interface Row {
   key: string;
@@ -45,14 +45,7 @@ for (const row of rows) {
   let worst = 0;
   for (let k = 0; k < 30 * seconds && !errors.length; k++) {
     const t0 = performance.now();
-    world.time += TICK;
-    world.tick++;
-    stepPhysics(world, TICK);
-    for (const c of world.creatures) updateCreature(world, c, TICK);
-    lifeCycle(world, TICK);
-    rt.step(TICK);
-    world.particles.update(TICK);
-    world.events.length = 0;
+    stepHeadless(world, rt);
     worst = Math.max(worst, performance.now() - t0);
   }
   if (cast && !errors.length) stats.ok++;

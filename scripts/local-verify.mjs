@@ -79,7 +79,9 @@ const BASE = `http://127.0.0.1:${port}`;
 for (let i = 0; ; i++) {
   try {
     if ((await fetch(`${BASE}/api/health`)).ok) break;
-  } catch {}
+  } catch {
+    // not up yet
+  }
   if (i > 120) throw new Error("wrangler dev did not start");
   await new Promise((r) => setTimeout(r, 500));
 }
@@ -186,7 +188,9 @@ try {
   await browser.close();
   try {
     process.kill(-dev.pid);
-  } catch {}
+  } catch {
+    // already gone
+  }
   stub.close();
   rmSync(STATE, { recursive: true, force: true });
 }

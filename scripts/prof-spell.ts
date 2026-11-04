@@ -9,21 +9,16 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { isTier } from "../shared/tiers";
-import { lifeCycle, makeCreature, populate, resetCreatureIds, updateCreature } from "../src/sim/creatures";
-import { forDisc, stepPhysics } from "../src/sim/physics";
+import { makeCreature, populate, resetCreatureIds } from "../src/sim/creatures";
+import { seeded } from "../src/sim/noise";
+import { forDisc } from "../src/sim/physics";
+import { stepHeadless } from "../src/sim/tick";
 import { igniteVoxels } from "../src/sim/voxels";
 import { Runtime } from "../src/sim/runtime";
-import { TICK, generateWorld } from "../src/sim/world";
+import { generateWorld } from "../src/sim/world";
 
 function seed(n: number): void {
-  let a = n >>> 0;
-  Math.random = () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+  Math.random = seeded(n);
 }
 
 interface Scene {
@@ -102,19 +97,13 @@ for (const scene of scenes) {
       console.log(`  set alight: ${world.voxels.burning.size} of ${world.decor.size} voxels burning`);
     }
     const measured = !scene.burnAt || tick >= scene.burnAt * 30;
-    world.time += TICK;
-    world.tick++;
+    const at: Partial<Record<"physics" | "creatures" | "life", number>> = {};
     const a = performance.now();
-    stepPhysics(world, TICK);
-    const b = performance.now();
-    for (const c of world.creatures) updateCreature(world, c, TICK);
-    const c = performance.now();
-    lifeCycle(world, TICK);
-    const d = performance.now();
-    rt.step(TICK);
-    world.particles.update(TICK);
-    world.events.length = 0;
+    stepHeadless(world, rt, { mark: (p) => (at[p] = performance.now()) });
     const e = performance.now();
+    const b = at.physics!;
+    const c = at.creatures!;
+    const d = at.life!;
     if (!measured) continue;
     parts.physics.push(b - a);
     parts.creatures.push(c - b);

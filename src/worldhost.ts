@@ -17,11 +17,15 @@ import type { SavedWorld } from "./sim/save";
 import type { WorldSize } from "./sim/engine";
 import type { Store } from "./store";
 import { toast } from "./toast";
+import { isQuotaError, warnStorageFull } from "./quota";
 
 export const WORLD_KEY = "magic-merger.world2";
 export const WORLD_AT_KEY = "magic-merger.world2.at";
 const MUTE_KEY = "magic-merger.muted";
 const HUD_KEY = "magic-merger.hud";
+// A World frame that has said nothing for this long while on screen is stuck
+// in spell code (4.0 review M3): it is replaced by a fresh one from the save.
+const WATCHDOG_MS = 20_000;
 // A crashing spell is sent back to Claude at most this often per session.
 const MAX_REPAIRS = 2;
 // Programs up to this tier are written by the cheap model (see worker/index.ts),
@@ -62,7 +66,9 @@ export class WorldHost {
   private sessionPrograms = new Map<string, CastRequest>();
   // The challenge being played, if any.
   private challenge: string | null = null;
-  private challengeDialog: HTMLDialogElement | null = null;
+  // Seconds the challenge's hazard ran while the player merged (3.7): kept
+  // for Retry and Restart, so losing on purpose does not buy a calm start.
+  private headStart = 0;
   private filters = new FilterBar(
     "mm-world-filters",
     { kind: "all", tier: "any", sort: "used", query: "" },
@@ -76,6 +82,17 @@ export class WorldHost {
   private voteTimer = 0;
   private asked = new Set<number>();
   private synced = false;
+  // The World tab is on screen (show() until hide()).
+  private shown = false;
+  // When the frame last said anything (M3).
+  private heard = 0;
+  // The island is written by one tab at a time (4.0 review M6): the tab that
+  // last showed the World while visible owns it and tells the others.
+  private island = islandChannel();
+  private owner = true;
+  // The save this tab last loaded or wrote (its WORLD_AT_KEY): another tab's
+  // newer save is never overwritten by this one's older island.
+  private islandAt: string | null = null;
 
   constructor(
     private store: Store,
@@ -84,6 +101,27 @@ export class WorldHost {
 
   init(): void {
     window.addEventListener("message", (e) => this.onMessage(e));
+    // Another tab shows the World now: this one stops saving its island.
+    this.island?.addEventListener("message", (e: MessageEvent<unknown>) => {
+      if (!e.data || (e.data as { claim?: unknown }).claim === undefined) return;
+      const was = this.owner;
+      this.owner = false;
+      if (was && this.shown && !document.hidden) toast("Your island is open in another tab: this one stops saving until you come back to it.");
+    });
+    // Leaving the page saves the island once; coming back takes it again,
+    // from where another tab left it if one saved since.
+    document.addEventListener("visibilitychange", () => {
+      if (!this.shown) return;
+      if (document.hidden) this.send({ type: "visible", visible: false });
+      else {
+        this.takeIsland();
+        this.send({ type: "visible", visible: true });
+      }
+    });
+    window.addEventListener("focus", () => {
+      if (this.shown) this.takeIsland();
+    });
+    window.setInterval(() => this.watchdog(), 5000);
     // The spell bar: filters, and a button that opens it into a grid.
     const expand = document.createElement("button");
     expand.type = "button";
@@ -106,13 +144,14 @@ export class WorldHost {
       toast("A villager wanders in");
     });
     this.el.reset.addEventListener("click", () => {
-      if (this.challenge) this.send({ type: "reset", size: this.el.size.value as WorldSize });
+      // Restarting a live challenge plays its head start again (4.0 review L6).
+      if (this.challenge) this.startChallenge(this.challenge, this.headStart);
       else if (window.confirm("Reset the world? Everything in it will be lost.")) this.send({ type: "reset", size: this.el.size.value as WorldSize });
     });
     this.el.challenges.addEventListener("click", () => this.onChallenges());
     this.el.chronicle.addEventListener("click", () => void this.openChronicle());
     this.el.banner.querySelector(".world-banner-retry")!.addEventListener("click", () => {
-      if (this.challenge) this.startChallenge(this.challenge);
+      if (this.challenge) this.startChallenge(this.challenge, this.headStart);
     });
     this.el.banner.querySelector(".world-banner-leave")!.addEventListener("click", () => this.leaveChallenge());
     const showSound = () => {
@@ -129,6 +168,10 @@ export class WorldHost {
   }
 
   show(): void {
+    this.shown = true;
+    this.heard = Date.now();
+    // A newer island from another tab: the frame was replaced, and shown.
+    if (this.takeIsland()) return;
     if (!this.frame) {
       this.frame = document.createElement("iframe");
       this.frame.className = "world-frame";
@@ -235,6 +278,31 @@ export class WorldHost {
     this.show();
   }
 
+  // This tab shows the World: it owns the island from now on. If another tab
+  // saved since this one loaded it, the frame starts again from that save
+  // first, so this tab continues the other's island instead of erasing it.
+  private takeIsland(): boolean {
+    if (this.frame && this.ready && !this.challenge && readAt() !== this.islandAt) {
+      toast("Your island continues from where another tab left it");
+      this.replaceFrame();
+      return true;
+    }
+    this.owner = true;
+    this.island?.postMessage({ claim: Date.now() });
+    return false;
+  }
+
+  // A frame stuck in spell code says nothing: no heartbeat, no save. Only
+  // checked while the World is on screen, where the heartbeat runs at full
+  // speed; a hidden tab's timers are slowed, so coming back restarts the count.
+  private watchdog(): void {
+    if (!this.frame || !this.ready || !this.shown || document.hidden) return;
+    if (Date.now() - this.heard < WATCHDOG_MS) return;
+    console.warn("The World said nothing for 20 s: starting it again from its last save");
+    toast("The island froze and was started again from its last save", "error");
+    this.replaceFrame();
+  }
+
   deselect(): void {
     this.selected = null;
     this.send({ type: "select", spell: null });
@@ -243,6 +311,7 @@ export class WorldHost {
   }
 
   hide(): void {
+    this.shown = false;
     this.send({ type: "visible", visible: false });
   }
 
@@ -353,9 +422,13 @@ export class WorldHost {
     if (!this.frame || e.source !== this.frame.contentWindow || e.origin !== "null") return;
     const msg = readFromWorld(e.data);
     if (!msg) return;
+    this.heard = Date.now();
     switch (msg.type) {
+      case "alive":
+        break;
       case "ready": {
         this.ready = true;
+        this.islandAt = readAt();
         const save = readSave();
         this.frame.contentWindow!.postMessage(
           {
@@ -376,16 +449,7 @@ export class WorldHost {
         break;
       }
       case "save":
-        try {
-          const json = JSON.stringify(msg.data);
-          // A save that would crowd out the player's discoveries is dropped.
-          if (json.length > MAX_SAVE_CHARS) break;
-          localStorage.setItem(WORLD_KEY, json);
-          localStorage.setItem(WORLD_AT_KEY, String(Date.now()));
-          this.onSaved?.();
-        } catch {
-          // Storage full: the world lives on until the page closes.
-        }
+        this.writeIsland(msg.data);
         break;
       case "tap-without-spell":
         toast(this.selected ? "Still preparing this spell…" : "Pick a spell below, or tap a creature to see what it is doing");
@@ -435,6 +499,30 @@ export class WorldHost {
     }
   }
 
+  // The island's save, by the tab that owns it, and never over a newer save
+  // where tabs cannot tell each other (no BroadcastChannel).
+  private writeIsland(data: SavedWorld): void {
+    if (!this.owner) return;
+    if (!this.island && readAt() !== this.islandAt) return;
+    const json = JSON.stringify(data);
+    // A save that would crowd out the player's discoveries is not written,
+    // and the player is told (M13).
+    if (json.length > MAX_SAVE_CHARS) {
+      warnStorageFull();
+      return;
+    }
+    const at = String(Date.now());
+    try {
+      localStorage.setItem(WORLD_KEY, json);
+      localStorage.setItem(WORLD_AT_KEY, at);
+      this.islandAt = at;
+      this.onSaved?.();
+    } catch (err) {
+      // The world lives on until the page closes; a full storage is said once.
+      if (isQuotaError(err)) warnStorageFull();
+    }
+  }
+
   // The frame HUD, toggled by a long press on the title. Remembered per browser.
   toggleHud(): boolean {
     this.hud = !this.hud;
@@ -443,54 +531,11 @@ export class WorldHost {
     return this.hud;
   }
 
-  private openChallenges(): void {
-    if (!this.challengeDialog) {
-      const d = document.createElement("dialog");
-      d.className = "challenges";
-      d.addEventListener("click", (e) => {
-        if (e.target === d) d.close();
-      });
-      document.body.append(d);
-      this.challengeDialog = d;
-    }
-    const d = this.challengeDialog;
-    d.replaceChildren();
-    const title = document.createElement("h2");
-    title.textContent = "Challenges";
-    const intro = document.createElement("p");
-    intro.textContent = "Each challenge is an island with a problem. Find the spells that solve it. Your own island waits for you.";
-    const list = document.createElement("div");
-    list.className = "challenge-list";
-    for (const info of SCENARIO_LIST) {
-      const item = document.createElement("div");
-      item.className = "challenge";
-      const h = document.createElement("h3");
-      h.textContent = info.title;
-      if (this.store.isSolved(info.id)) {
-        const badge = document.createElement("span");
-        badge.className = "solved";
-        badge.textContent = "solved";
-        h.append(badge);
-      }
-      const p = document.createElement("p");
-      p.textContent = info.brief;
-      const go = document.createElement("button");
-      go.textContent = this.store.isSolved(info.id) ? "Play again" : "Play";
-      go.addEventListener("click", () => {
-        d.close();
-        this.startChallenge(info.id);
-      });
-      item.append(h, p, go);
-      list.append(item);
-    }
-    d.append(title, intro, list);
-    d.showModal();
-  }
-
   private startChallenge(id: string, ahead = 0): void {
     const info = SCENARIO_LIST.find((s) => s.id === id);
     if (!info) return;
     this.challenge = id;
+    this.headStart = ahead;
     this.send({ type: "scenario", id, ahead });
     this.showObjective(id, this.attempt?.brief ?? info.brief, "playing");
     this.el.reset.textContent = "Restart";
@@ -578,8 +623,8 @@ export class WorldHost {
     d.showModal();
   }
 
-  // The World's Challenges button opens the Challenges tab (main.ts).
-  onChallenges: () => void = () => this.openChallenges();
+  // The World's Challenges button opens the Challenges tab (main.ts sets it).
+  onChallenges: () => void = () => {};
   // Told after each world save (4.0: the account's island follows).
   onSaved: (() => void) | null = null;
 
@@ -628,7 +673,7 @@ export class WorldHost {
   // A spell crashed in the World: Claude gets the error and fixes the program.
   private async repair(key: string, name: string, error: string): Promise<void> {
     const done = this.repairs.get(key) ?? 0;
-    if (done >= MAX_REPAIRS || this.sessionPrograms.has(key)) {
+    if (done >= MAX_REPAIRS || this.sessionPrograms.has(key) || mendedTooOften(key)) {
       toast(`${name} fizzled: ${error}`, "error");
       return;
     }
@@ -641,6 +686,9 @@ export class WorldHost {
       if (req) this.send({ type: "spell-updated", spell: req });
       toast(`${name} was mended, cast it again`);
     } catch (err) {
+      // The Worker mends a program three times in its life (4.0 review L5):
+      // past that, this session stops asking and the spell just fizzles.
+      if (err instanceof api.ApiRequestError && err.detail?.mended === true) markMended(key);
       toast(err instanceof Error ? err.message : "The spell could not be mended", "error");
     }
   }
@@ -705,7 +753,8 @@ export class WorldHost {
       button("Not good", "vote-down", showReasons),
       dismiss,
     );
-    if (!bar.isConnected) this.el.stage.append(bar);
+    // Above the challenge banner in the same stack (M10).
+    if (!bar.isConnected) this.el.banner.before(bar);
     // Unanswered, it goes away; the next cast asks again.
     this.voteTimer = window.setTimeout(close, 30_000);
   }
@@ -764,6 +813,22 @@ function tierOf(tier: Tier | undefined, depth: number): Tier {
   return tier ?? tierFromDepth(depth);
 }
 
+function readAt(): string | null {
+  try {
+    return localStorage.getItem(WORLD_AT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function islandChannel(): BroadcastChannel | null {
+  try {
+    return typeof BroadcastChannel === "function" ? new BroadcastChannel("magic-merger.island") : null;
+  } catch {
+    return null;
+  }
+}
+
 function readSave(): SavedWorld | null {
   try {
     const raw = localStorage.getItem(WORLD_KEY);
@@ -786,6 +851,26 @@ function writeFlag(key: string, value: boolean): void {
     localStorage.setItem(key, value ? "1" : "0");
   } catch {
     // Storage blocked: the choice lasts for this page.
+  }
+}
+
+// Spells the Worker would not mend again, for this tab's session (L5).
+const MENDED = "mm-mended";
+const mendedHere = new Set<string>();
+function mendedTooOften(key: string): boolean {
+  if (mendedHere.has(key)) return true;
+  try {
+    return (JSON.parse(sessionStorage.getItem(MENDED) ?? "[]") as string[]).includes(key);
+  } catch {
+    return false;
+  }
+}
+function markMended(key: string): void {
+  mendedHere.add(key);
+  try {
+    sessionStorage.setItem(MENDED, JSON.stringify([...mendedHere]));
+  } catch {
+    // this page only
   }
 }
 

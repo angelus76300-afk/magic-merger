@@ -740,11 +740,27 @@ input {
   }
 }
 
-.world-banner {
+/* The bottom of the island: the vote bar above the challenge banner, stacked
+   whatever their heights (4.1, review M10). Empty space lets taps through. */
+.world-bottom {
   position: absolute;
   left: 10px;
   right: 10px;
   bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.world-bottom > * {
+  pointer-events: auto;
+}
+
+.world-banner {
+  align-self: stretch;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -948,22 +964,17 @@ input {
 
 /* The vote after a cast (3.3): small, at the bottom of the island, never in the way of a tap. */
 .vote {
-  position: absolute;
-  left: 50%;
-  bottom: 12px;
-  transform: translateX(-50%);
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   align-items: center;
   gap: 6px;
-  max-width: calc(100% - 32px);
+  max-width: calc(100% - 12px);
   padding: 8px 10px;
   border-radius: 12px;
   border: 1px solid var(--line);
   background: color-mix(in srgb, var(--surface) 92%, transparent);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
-  z-index: 5;
   font-size: 13px;
 }
 

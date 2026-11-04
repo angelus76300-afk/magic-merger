@@ -41,6 +41,8 @@ The API is deliberately high level: a few calls do a lot, so programs stay aroun
 
 The program is untrusted code, so the World runs in an iframe with `sandbox="allow-scripts"` and no `allow-same-origin`: it has an opaque origin, cannot read the game page, its token or its storage. `public/_headers` gives it a CSP with `connect-src 'none'`, so it cannot reach the network either. Everything it needs comes in by `postMessage` (`src/sim/protocol.ts`), and the parent stores its save. Every loop in a program gets a guard (`shared/spellcode.ts`) so an endless loop throws instead of freezing the page; every call into spell code is wrapped, and a spell that keeps a frame busy too long is stopped.
 
+Neither guard covers code that never returns without a loop (a catastrophic regex, a huge sort). Since 4.1 the World frame sends a heartbeat every two seconds and the page replaces a frame that has said nothing for 20 s while the World is on screen, from its last save, with a toast (`src/worldhost.ts`, `watchdog`). Where the frame shares the page's thread (most phones, headless Chromium) the page freezes with it and the watchdog acts when it thaws; the full answer is the simulation in a Worker thread.
+
 ### When a spell crashes
 
 The error goes back to Claude with the program, and the fixed version replaces it: at most twice per session per spell, three times in total unless the admin asks.
@@ -446,6 +448,8 @@ A one use link signs in an account that exists: the admin's "New link" on a clai
 ### Progress
 
 Three documents per account in `progress`, each replaced whole: discoveries (key, time, the pair, and the element as the device knew it, so another device can show it), the board, and the island (the world save gzipped by `CompressionStream` and base64 encoded: a large island is about 700k characters raw and under 200k packed). Each has `updated_at` and a device label. Discoveries merge as a union by key with the earliest time (`shared/account.ts`, `mergeDiscoveries`); they go up five seconds after a change. The island goes up a minute after it changed and when the page is hidden; a device says what it last saw (`since`), and a newer save from another device is refused with when and where, so the page asks before replacing it, and loads the other one if the player says no. A device signing in takes the server's island when it is newer than its own, or has none.
+
+Two tabs of one browser (4.1): each write of the discoveries reads the stored save again and merges by key first (`src/store.ts`, `mergeSaves`), and a `storage` listener shows what the other tab found. The island is written by one tab at a time: the tab that shows the World while visible claims it on a `BroadcastChannel`, the others stop writing it, and a tab that takes it back reloads the island first if another tab saved since; without `BroadcastChannel`, a write is refused over a newer save. Uploads read the "seen" times the tabs share, so one tab's upload never reads as an older device to the other. A full storage, or an island past `MAX_SAVE_CHARS` (1.5M characters), is said once per page (`src/quota.ts`).
 
 The upload has its own limit (2 MB a body, `PROGRESS_LIMITS` a document); every document is checked for shape; a document is only ever read or written through the session's own account.
 

@@ -44,6 +44,11 @@ const world = new WorldHost(store, {
 });
 
 const challenges = new Challenges($("#challenges-view"), store, world);
+// Another tab of this browser found something (4.0 review M6): shown here too.
+store.listen(() => {
+  craft.refresh();
+  world.renderSpells();
+});
 // 4.0: the account's progress follows this device while signed in.
 const sync = new Sync(store);
 world.onSaved = () => sync.islandSaved();

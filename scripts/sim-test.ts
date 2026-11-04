@@ -29,6 +29,7 @@ import { runCheck, type SceneReport } from "../src/sim/check";
 import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../shared/votes";
 import { pickExamples, words } from "../worker/programs";
 import { verdict, type LinkedPull } from "../worker/feedback";
+import { cronJobs } from "../worker/cron";
 import { draftBrief } from "../shared/feedback";
 import { programToFetch } from "../shared/sync";
 import { mergeDiscoveries } from "../shared/account";
@@ -43,6 +44,14 @@ import { AGES, JOBS, packLook, unpackLook, type Job as Job3 } from "../src/sim/v
 import { buildRig, drawScale, HOUSE_HEIGHT, MAX_HEIGHT, villagerUnits, type Rig } from "../src/sim/voxel/rigs";
 import { SPECIES } from "../src/sim/wildlife";
 import { Store } from "../src/store";
+import { voiceFor } from "../src/sim/sound";
+import { stepWorld } from "../src/sim/tick";
+import { TICK } from "../src/sim/world";
+
+// No verdict here depends on how fast the machine is (4.1, review M8): the
+// slow cast guard is off unless SLOW_MS is set, and worst ticks are printed,
+// not asserted. Section 3 checks the guard itself.
+Runtime.slowMs = Number(process.env.SLOW_MS) || Infinity;
 
 // Challenges with nothing cast, over several seeds: one seed can pass by
 // luck (Wildfire did, at 3 wins in 16). These replays run in worker threads
@@ -131,7 +140,7 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   const ok = rt.cast({ key: file, name: file, tier: file.includes("bang") ? "cosmic" : "legendary", code: readFileSync(join(spellDir, file), "utf8") }, 76, 76);
   let worst = 0;
   for (let k = 0; k < 30 * 12; k++) worst = Math.max(worst, step(world, rt));
-  check(`spell ${file}`, ok && errors.length === 0 && worst < 120, `${errors[0] ?? "no errors"}, worst tick ${worst.toFixed(1)}ms`);
+  check(`spell ${file}`, ok && errors.length === 0, `${errors[0] ?? "no errors"}, worst tick ${worst.toFixed(1)} ms (printed, not checked)`);
 }
 
 // 2b. Programs written for older World API versions still run: they are
@@ -171,6 +180,29 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
     errors[0] ?? "no error",
   );
   check("loop guard covers bodiless loops", guardLoops("for(;;) x++;").includes("__g()"));
+  // The slow cast guard, at the browser's 40 ms: a spell that spends 60 ms on
+  // every tick is stopped after five. A slower machine only makes it slower.
+  const slow: string[] = [];
+  const was = Runtime.slowMs;
+  Runtime.slowMs = 40;
+  const rt3 = new Runtime(world, (_k, _n, m) => slow.push(m));
+  rt3.cast(
+    {
+      key: "slow",
+      name: "Slow",
+      tier: "minor",
+      code: "const spell = { *cast(w) { for (;;) { const t = Date.now(); while (Date.now() - t < 60) {} yield 0; } } };",
+    },
+    50,
+    50,
+  );
+  for (let k = 0; k < 8 && !slow.length; k++) rt3.step(1 / 30);
+  Runtime.slowMs = was;
+  check(
+    "a spell slow on every tick is stopped by the slow cast guard",
+    slow.some((e) => e.includes("every frame")),
+    slow[0] ?? "not stopped",
+  );
   const lines: string[] = [];
   const rt2 = new Runtime(world, (_k, _n, m) => lines.push(m));
   rt2.cast({ key: "line", name: "Line", tier: "minor", code: "const spell = {\n  *cast(w) {\n    w.nothing();\n  },\n};" }, 50, 50);
@@ -374,6 +406,28 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
       '{"version":1,"discoveries":{"steam":{"element":{"name":"Steam","emoji":"x","kind":"spell","depth":1},"discoveredAt":1,"recipe":null}},"descriptions":{},"board":[],"nextChipId":1}',
     ) === 9,
   );
+  // Two tabs of one browser (4.0 review M6): each loaded the save, each
+  // finds something, each writes; neither loses what the other found.
+  mem.clear();
+  (globalThis as { window?: unknown }).window = { setTimeout: () => 0, clearTimeout: () => {} };
+  const tabA = new Store();
+  const tabB = new Store();
+  const el = (name: string) => ({ name, emoji: "x", kind: "spell" as const, depth: 2 });
+  tabA.discover(el("Steam"), ["Fire", "Water"]);
+  tabA.write();
+  tabB.discover(el("Dust"), ["Earth", "Air"]);
+  tabB.addChip("dust", 10, 10);
+  tabB.write();
+  const both = Object.keys((JSON.parse(mem.get("magic-merger.save")!) as { discoveries: object }).discoveries);
+  check("two tabs: each tab's discovery survives the other's write", both.includes("steam") && both.includes("dust"), both.join(", "));
+  tabA.setSpell("steam", { version: 5, code: "old", id: 3 } as never);
+  tabA.write();
+  tabB.setSpell("steam", { version: 5, code: "new", id: 4 } as never);
+  tabB.write();
+  tabA.setSpell("dust", { version: 5, code: "d", id: 1 } as never);
+  tabA.write();
+  check("two tabs: the newer program of a spell is kept", tabA.spell("steam")?.code === "new");
+  delete (globalThis as { window?: unknown }).window;
   delete (globalThis as { localStorage?: unknown }).localStorage;
   check(
     "a challenge that asks for grand magic refuses a major spell",
@@ -625,7 +679,7 @@ for (const scenario of SCENARIOS) {
 for (const { stream, report: r } of sceneReports.sort((a, b) => a.stream - b.stream)) {
   const kinds = Object.entries(r.kinds);
   const vanished = kinds.filter(([, v]) => v.start >= 3 && v.min < Math.ceil(v.start / 3)).map(([k]) => k);
-  const exploded = kinds.filter(([, v]) => v.max > Math.max(v.start * 2.5, v.start + 3)).map(([k]) => `${k} ${v.start} to ${v.max}`);
+  const exploded = kinds.filter(([, v]) => v.max > Math.max(v.start * 2.5, v.start + 3)).map(([k, v]) => `${k} ${v.start} to ${v.max}`);
   const lively = Object.values(r.lively).reduce((a, [d, n]) => [a[0] + d, a[1] + n], [0, 0]);
   check(
     `five minute scene, stream ${stream}: every creature changed something`,
@@ -1354,6 +1408,56 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
 
   check("feedback: a pull request wins over an old question", verdict(100, asking, [pr(7, 150, "open")]).status === "review");
   check("feedback: the issue closed as done, shipped", verdict(100, { open: false, reason: "completed", labels: [] }, []).status === "shipped");
+}
+
+// 11. The drum players kept hearing (4.1): routine work plays nothing, and a
+// sound name the prompt does not offer is played by the nearest voice in
+// meaning, or not at all, never by the thump.
+{
+  check("a known sound name plays its own voice", voiceFor("chime") === "chime" && voiceFor(" Boom ") === "boom");
+  check("an unknown name plays the nearest voice", voiceFor("hum") === "drone" && voiceFor("thunder") === "rumble" && voiceFor("bell") === "chime");
+  check("a name with no near voice is silent, never a thump", voiceFor("glorp") === null && voiceFor("") === null && voiceFor("constructor") === null);
+  seed(11);
+  resetCreatureIds();
+  const world = generateWorld(120, 120, 11);
+  populate(world);
+  world.time = 20;
+  const rt = new Runtime(world, () => {});
+  const stumps = () => world.cover.reduce((n, v) => n + (v === C.STUMP ? 1 : 0), 0);
+  const before = stumps();
+  let sounds = 0;
+  for (let tick = 0; tick < 60 / TICK; tick++) {
+    stepWorld(world, rt);
+    sounds += world.events.filter((e) => e.kind === "sound").length;
+    world.events.length = 0;
+  }
+  const felled = stumps() - before;
+  check("a busy island plays no sound by itself for a minute", sounds === 0 && felled > 0, `${sounds} sounds, ${felled} trees felled`);
+}
+
+// 12. The cron's jobs (4.0 review L7): one that throws is named in a log
+// line and fails nothing else; the others run to the end.
+{
+  const errors = console.error;
+  const logged: string[] = [];
+  console.error = (...a: unknown[]) => void logged.push(String(a[0]));
+  let swept = false;
+  const failed = await cronJobs({
+    "poll batches": async () => {
+      throw new Error("404 no batch");
+    },
+    sweep: async () => {
+      await new Promise((r) => setTimeout(r, 20));
+      swept = true;
+    },
+    evolve: null,
+  });
+  console.error = errors;
+  check(
+    "a cron job that throws is a log line named after it, and the others finish",
+    failed.join() === "poll batches" && logged.join() === "poll batches" && swept,
+    `failed ${failed.join()}, logged ${logged.join()}, swept ${swept}`,
+  );
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");

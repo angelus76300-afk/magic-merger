@@ -368,10 +368,18 @@ export function verdict(sentAt: number, issue: IssueState, prs: LinkedPull[]): V
   return { status: "sent", pr: null, note: null };
 }
 
+// "Closes #12", "fixes owner/repo#12", "Fixed #12" (GitHub's own keywords for
+// closing, without "resolves", which the routine's rules never use).
+export function closesIssue(body: string | null | undefined, n: number, repo: string): boolean {
+  if (!body) return false;
+  const escaped = repo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b(?:close[sd]?|fix(?:e[sd])?)\\s*:?\\s+(?:${escaped})?#${n}(?!\\d)`, "i").test(body);
+}
+
 interface TimelineEvent {
   event?: string;
   created_at?: string;
-  source?: { issue?: { number?: number; html_url?: string; state?: string; pull_request?: { merged_at?: string | null } } };
+  source?: { issue?: { number?: number; html_url?: string; state?: string; body?: string | null; pull_request?: { merged_at?: string | null } } };
 }
 
 async function readGitHub(env: FeedbackEnv, n: number): Promise<{ issue: IssueState; prs: LinkedPull[] }> {
@@ -384,6 +392,9 @@ async function readGitHub(env: FeedbackEnv, n: number): Promise<{ issue: IssueSt
   for (const e of Array.isArray(events) ? events : []) {
     const p = e.source?.issue;
     if (e.event !== "cross-referenced" || !p?.pull_request || !p.number || !p.html_url?.toLowerCase().includes(own)) continue;
+    // A pull request is the idea's only when it closes the issue (4.0 review
+    // L8): one that merely mentions #n is someone else's work.
+    if (!closesIssue(p.body, n, env.GITHUB_REPO!)) continue;
     if (prs.has(p.number)) continue;
     prs.set(p.number, {
       number: p.number,

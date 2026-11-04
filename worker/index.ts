@@ -76,6 +76,7 @@ import {
 import type { LibraryExample, Rewrite } from "./prompts";
 import { joinsBoth } from "./prompts";
 import { readDigest } from "../shared/chronicle";
+import { cronJobs } from "./cron";
 import {
   ADMIN_PAYER,
   ESTIMATE,
@@ -274,8 +275,8 @@ export default {
         return json(await spendReport(env));
       }
       if (request.method === "POST" && url.pathname === "/api/perf") {
-        await recordPerf(env.DB, await readBody<PerfSample>(request), request.headers.get("user-agent") ?? "");
-        return json({ ok: true });
+        const kept = await recordPerf(env.DB, payer.invite, await readBody<PerfSample>(request), request.headers.get("user-agent") ?? "");
+        return json({ ok: true, kept });
       }
       if (request.method === "GET" && url.pathname === "/api/perf" && admin) {
         const rows = await env.DB.prepare("SELECT at, ua, sample FROM perf ORDER BY at DESC LIMIT 200").all<{ at: number; ua: string; sample: string }>();
@@ -321,13 +322,13 @@ export default {
   // the ideas sent to Claude.
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
-      Promise.all([
-        pollBatches(env),
-        sweep(env.DB).catch((err) => console.error("sweep", err)),
-        syncFeedback(env).catch((err) => console.error("feedback sync", err)),
-        env.EVOLVE === "0" ? null : evolve(env, false).catch((err) => console.error("evolve", err)),
-        backfillIntents(env).catch((err) => console.error("intents backfill", err)),
-      ]).then(() => undefined),
+      cronJobs({
+        "poll batches": () => pollBatches(env),
+        sweep: () => sweep(env.DB),
+        "feedback sync": () => syncFeedback(env),
+        evolve: env.EVOLVE === "0" ? null : () => evolve(env, false),
+        "intents backfill": () => backfillIntents(env),
+      }),
     );
   },
 } satisfies ExportedHandler<Env>;
@@ -421,7 +422,7 @@ interface Who {
 
 async function authenticate(request: Request, env: Env): Promise<Who | Response> {
   const token = request.headers.get("x-access-token");
-  if (env.ADMIN_TOKEN && token === env.ADMIN_TOKEN) return { admin: true, payer: ADMIN_PAYER };
+  if (env.ADMIN_TOKEN && token && (await sameSecret(token, env.ADMIN_TOKEN))) return { admin: true, payer: ADMIN_PAYER };
   const sessionToken = request.headers.get("x-session");
   if (sessionToken) {
     const found = await sessionByToken(env.DB, sessionToken);
@@ -437,6 +438,14 @@ async function authenticate(request: Request, env: Env): Promise<Who | Response>
   }
   if (!env.ANTHROPIC_API_KEY && !sessionToken && !secret) return { admin: false, payer: { ...ADMIN_PAYER, invite: "local", name: "local" } };
   return { admin: false, payer: null };
+}
+
+// The admin token, compared in constant time (4.0 review L1): both sides are
+// hashed first, so neither the length nor the first differing byte shows.
+async function sameSecret(given: string, expected: string): Promise<boolean> {
+  const enc = new TextEncoder();
+  const [a, b] = await Promise.all([crypto.subtle.digest("SHA-256", enc.encode(given)), crypto.subtle.digest("SHA-256", enc.encode(expected))]);
+  return crypto.subtle.timingSafeEqual(a, b);
 }
 
 // Last visit, written at most every five minutes.
@@ -504,14 +513,21 @@ function round(v: number, digits = 4): number {
 }
 
 // Frame samples sent by the HUD on a real device, kept for a month.
-async function recordPerf(db: D1Database, body: PerfSample, ua: string): Promise<void> {
+// One row per invite every 20 seconds at most (4.0 review L2): the page sends
+// one every 30, so a client in a loop writes no more than an honest one.
+// A sample inside the window is dropped quietly, never an error.
+const PERF_EVERY_MS = 20_000;
+async function recordPerf(db: D1Database, invite: string, body: PerfSample, ua: string): Promise<boolean> {
   const sample = JSON.stringify(body ?? {});
   if (sample.length > 4000) throw new HttpError(413, "The sample is too big");
   const now = Date.now();
-  await db.batch([
-    db.prepare("INSERT INTO perf (at, ua, sample) VALUES (?, ?, ?)").bind(now, ua.slice(0, 300), sample),
+  const [insert] = await db.batch([
+    db
+      .prepare("INSERT INTO perf (at, ua, sample, invite) SELECT ?1, ?2, ?3, ?4 WHERE NOT EXISTS (SELECT 1 FROM perf WHERE invite = ?4 AND at > ?5)")
+      .bind(now, ua.slice(0, 300), sample, invite, now - PERF_EVERY_MS),
     db.prepare("DELETE FROM perf WHERE at < ?").bind(now - 30 * 86400_000),
   ]);
+  return (insert.meta.changes ?? 0) > 0;
 }
 
 // Elements from before tiers: rated once, all in one call (about 100 names).
@@ -688,13 +704,16 @@ async function handleRepair(body: RepairRequest, env: Env, oracle: Oracle, admin
   if (!error) throw new HttpError(400, "A repair needs the error");
   const live = oracle.mock ? null : await liveProgram(env.DB, key);
   if (!oracle.mock && !live) throw new HttpError(404, "There is no program to repair");
-  if (live && live.repairs >= MAX_REPAIRS && !admin) throw new HttpError(429, `${element.name} has been mended too often; ask the admin for a new spell`);
   const tier = tierOf(element);
   // A fix or a rewrite is already waiting for its test run (two browsers saw
-  // the same crash): that one is served, not mended again.
+  // the same crash): that one is served, not mended again, and before the
+  // limit below, since it costs nothing (4.1: the third repair's trial was
+  // refused to a second browser, which then stopped asking for the session).
   const waiting = live ? await newerTrial(env.DB, key, live.row.id) : null;
   const pending = waiting ? programOf(waiting) : null;
   if (pending) return { name: element.name, tier, program: pending, mock: false };
+  if (live && live.repairs >= MAX_REPAIRS && !admin)
+    throw new HttpError(429, `${element.name} has been mended too often; ask the admin for a new spell`, { mended: true });
   const stored = live ? programOf(live.row) : null;
   await ensureBudget(env, oracle, "repair", ESTIMATE.small);
   // Repairs always go to the small model: fixing one error in a program that
@@ -1148,7 +1167,12 @@ async function refreshVerdict(
 async function refreshReport(env: Env) {
   const db = env.DB;
   const statuses = await db
-    .prepare("SELECT status, dry, COUNT(*) AS n FROM rewrites WHERE cause = 'refresh' GROUP BY status, dry")
+    // A row that failed before any batch held it was never sent (4.0 review
+    // M12: 94 rows of a first submitBatch that threw read as 94 failures).
+    .prepare(
+      `SELECT CASE WHEN status = 'failed' AND batch IS NULL THEN 'not sent' ELSE status END AS status, dry, COUNT(*) AS n
+       FROM rewrites WHERE cause = 'refresh' GROUP BY 1, dry`,
+    )
     .all<{ status: string; dry: number; n: number }>();
   const verdicts = await db.prepare("SELECT v.*, e.name FROM refresh_verdicts v JOIN elements e ON e.key = v.key ORDER BY v.at").all<{
     to_pid: number;

@@ -2,6 +2,7 @@ import { PRIMITIVES, elementKey } from "../shared/elements";
 import type { SpellProgram } from "../shared/spellcode";
 import { FIRST_PROGRAM_VERSION } from "../shared/version";
 import type { GameElement } from "../shared/types";
+import { isQuotaError, warnStorageFull } from "./quota";
 
 export interface Discovery {
   element: GameElement;
@@ -17,7 +18,7 @@ export interface BoardChip {
   y: number;
 }
 
-interface SaveData {
+export interface SaveData {
   version: 1;
   discoveries: Record<string, Discovery>;
   descriptions: Record<string, string>;
@@ -173,18 +174,66 @@ export class Store {
     this.save();
   }
 
+  // Another tab of this browser wrote its save (4.0 review M6): what it found
+  // joins this tab's, so this tab's next write cannot erase it.
+  listen(onExternal: () => void): void {
+    window.addEventListener("storage", (e) => {
+      if (e.key !== STORAGE_KEY || !e.newValue) return;
+      const other = parse(e.newValue);
+      if (!other) return;
+      const before = Object.keys(this.data.discoveries).length;
+      this.data = mergeSaves(this.data, other);
+      if (Object.keys(this.data.discoveries).length !== before) onExternal();
+    });
+  }
+
   // Writes are batched: dragging calls moveChip far more often than needed.
   private save(): void {
     clearTimeout(this.saveTimer);
-    this.saveTimer = window.setTimeout(() => {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.data));
-      } catch {
-        // Private mode or full storage: the game still works for this session.
-      }
-      this.onChange?.();
-    }, 200);
+    this.saveTimer = window.setTimeout(() => this.write(), 200);
   }
+
+  // The stored save is read again first and merged by key (M6): another tab
+  // may have found something since this one loaded.
+  write(): void {
+    try {
+      const stored = load();
+      if (stored) this.data = mergeSaves(this.data, stored);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.data));
+    } catch (err) {
+      // Private mode: the game still works for this session. A full storage
+      // is said once (M13).
+      if (isQuotaError(err)) warnStorageFull();
+    }
+    this.onChange?.();
+  }
+}
+
+// Two saves of this browser as one (M6): discoveries are a union by key with
+// the earliest time, descriptions and solved challenges a union, the newest
+// program of each spell (by id) is kept; the board is this tab's own.
+export function mergeSaves(mine: SaveData, theirs: SaveData): SaveData {
+  const discoveries: Record<string, Discovery> = { ...theirs.discoveries, ...mine.discoveries };
+  for (const [key, d] of Object.entries(theirs.discoveries)) {
+    const m = mine.discoveries[key];
+    if (m && d.discoveredAt > 0 && (m.discoveredAt === 0 || d.discoveredAt < m.discoveredAt))
+      discoveries[key] = { ...m, discoveredAt: d.discoveredAt, recipe: d.recipe ?? m.recipe };
+  }
+  const spells: Record<string, SpellProgram> = { ...(theirs.spells ?? {}) };
+  for (const [key, p] of Object.entries(mine.spells ?? {})) {
+    const t = spells[key];
+    if (!t || (p.id ?? 0) >= (t.id ?? 0)) spells[key] = p;
+  }
+  const solved = [...new Set([...(theirs.solved ?? []), ...(mine.solved ?? [])])];
+  return {
+    version: 1,
+    discoveries,
+    descriptions: { ...theirs.descriptions, ...mine.descriptions },
+    spells,
+    board: mine.board,
+    nextChipId: Math.max(mine.nextChipId, theirs.nextChipId),
+    ...(solved.length ? { solved } : {}),
+  };
 }
 
 function fresh(): SaveData {
@@ -194,7 +243,14 @@ function fresh(): SaveData {
 function load(): SaveData | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
+    return raw ? parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function parse(raw: string): SaveData | null {
+  try {
     const data = JSON.parse(raw) as Partial<SaveData>;
     return wellFormed(data) ? data : null;
   } catch {

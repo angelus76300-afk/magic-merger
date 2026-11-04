@@ -40,12 +40,59 @@ export class SpellSound {
   play(name: string, size: number): void {
     const ctx = this.context();
     if (!ctx || !this.out || !this.noise) return;
-    const make = VOICES[name] ?? VOICES.thump;
-    make(this.noise)(ctx, this.out, ctx.currentTime, Math.max(0, Math.min(1, size)));
+    const voice = voiceFor(name);
+    if (!voice) return;
+    VOICES[voice](this.noise)(ctx, this.out, ctx.currentTime, Math.max(0, Math.min(1, size)));
   }
 }
 
-export const SOUND_NAMES = ["boom", "thump", "crackle", "hiss", "whoosh", "rumble", "rise", "fall", "chime", "ping", "drone", "zap"] as const;
+// A name the spell prompt does not offer (live programs ask for "hum") is
+// played by the nearest voice in meaning, or not at all: it used to fall back
+// to the thump, a drum under every unknown word (4.1).
+const NEAREST: Record<string, string> = {
+  hum: "drone",
+  buzz: "drone",
+  choir: "drone",
+  ambient: "drone",
+  bell: "chime",
+  ring: "chime",
+  sparkle: "chime",
+  twinkle: "chime",
+  shimmer: "chime",
+  chirp: "ping",
+  tick: "ping",
+  bang: "boom",
+  blast: "boom",
+  explosion: "boom",
+  explode: "boom",
+  thunder: "rumble",
+  quake: "rumble",
+  roar: "rumble",
+  growl: "rumble",
+  wind: "whoosh",
+  swoosh: "whoosh",
+  gust: "whoosh",
+  sizzle: "hiss",
+  steam: "hiss",
+  splash: "hiss",
+  fire: "crackle",
+  burn: "crackle",
+  spark: "zap",
+  lightning: "zap",
+  shock: "zap",
+  thud: "thump",
+  stomp: "thump",
+  impact: "thump",
+  ascend: "rise",
+  descend: "fall",
+};
+
+// The voice a spell's sound name plays, or null for silence.
+export function voiceFor(name: string): string | null {
+  const n = name.trim().toLowerCase();
+  if (Object.hasOwn(VOICES, n)) return n;
+  return Object.hasOwn(NEAREST, n) ? NEAREST[n] : null;
+}
 
 const VOICES: Record<string, (noise: AudioBuffer) => Voice> = {
   boom: (n) => boom(n),
