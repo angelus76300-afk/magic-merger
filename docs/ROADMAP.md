@@ -239,7 +239,7 @@ Not done: villages do not dress by region yet (a desert village looks like a tem
 
 1. **Cosmic spells may ruin the island.** Consequences are part of the fun; the land regrows on its own (ash turns to soil, grass and forests come back) and Reset is one tap away. Revisit if it feels punishing in play.
 2. **Haiku writes spells up to grand, Opus the legendary and cosmic ones** (see DESIGN.md for the measurement).
-3. **Declined by the owner**, and never built unless the owner reopens them: hints, suggested recipes or any idea handed to players (players are the creative ones; challenges stay "fewest merges from nothing"); village mana; discoveries made in the World; sharing features ("Things worth sharing"); fast mode or weaker drafts shown to players to make spells appear sooner. The daily routine reads this list (`docs/IDEAS.md`, "Declined").
+3. **Declined by the owner**, and never built unless the owner reopens them: hints, suggested recipes or any idea handed to players (players are the creative ones; challenges stay "fewest merges from nothing"); village mana; discoveries made in the World; sharing features ("Things worth sharing"); fast mode or weaker drafts shown to players to make spells appear sooner. The daily planner and builders read this list (`docs/IDEAS.md`, "Declined").
 
 ## What to watch
 
@@ -297,13 +297,13 @@ AI Gateway spend caps, Turnstile, name checks, AI labels, small legal pages. Acc
 
 ### 4.7 Updates that never stop
 
-When the plan runs out, the game keeps changing: one small, finished update a day, from players' ideas and Claude's own, in a good mix of kinds (gameplay, quality of life, visual, living world, content, audio, performance and code quality, security, ready for strangers, accessibility, non invasive monetization, and one wild idea every two weeks). A scheduled Claude Code routine builds it; the owner merges. The rulebook is `docs/DAILY.md`, the backlog `docs/IDEAS.md`, both versioned with the code so the routine's saved prompt never changes. This version builds what the routine needs, then sets it running.
+The game moves forward every day. Since 4 November a scheduled planner session runs every morning (07:43, Paris time): it reads `main`, the pull requests and the backlog, and gives the owner one prompt, the next step of this roadmap while planned versions remain, then one idea a day in a good mix of kinds (gameplay, quality of life, visual, living world, content, audio, performance and code quality, security, ready for strangers, accessibility, non invasive monetization, and one wild idea every fourteen). The owner opens a new session with it; that builder opens a draft pull request; the owner merges. The rules are `docs/DAILY.md`, the backlog `docs/IDEAS.md`. The planner changes nothing itself and never reads the database, so players' text reaches a session only through a builder the owner opened.
 
-1. **The ideas digest**: the Worker's cron keeps one GitHub issue labelled `ideas-digest` up to date with the Ideas tab's open ideas and votes, no names, so the routine reads players without holding any token of the game.
-2. **What's new in the game**: `public/changelog.json`, one line per merged update, shown as a small dot and a list since the player's last visit; a player whose idea was built is told so.
-3. **The Ideas tab follows daily builds**: a pull request that says `Idea #<n>` moves that idea to "Waiting for review" and then "Done", like the feedback sync does with `Closes #<issue>`.
-4. **A preview for each daily pull request**, so the owner tries it on a phone before merging: a staging Worker with its own D1 (a copy refreshed nightly, accounts and invites stripped) and a tiny budget (for example $2 a month), deployed by CI from a token kept in GitHub's secrets with Workers scripts permission only. The routine's environment holds no token of the game, no Cloudflare token and no connector (review section 8).
-5. **The routine**, scheduled once a day at night (Paris time), its saved prompt from DAILY.md, its setup written in SETUP.md ("Daily updates", which DAILY.md already points to), and a first week run with the owner reading every pull request, then the rotation adjusted to what the owner merged and closed.
-6. **Checked**: the digest, the changelog and the idea sync in `npm run test:worker`; one dry run of the routine on a fork of the day's `main` before the schedule is turned on.
+What this version still adds, to make each day cheaper for the owner:
 
-Two limits by design. **The owner's review is the bottleneck, not ideas**: with three daily pull requests open, the routine stops building and only refreshes the backlog, so nothing piles up and a week away costs nothing. **Small and finished beats big and started**: anything larger than a session becomes a roadmap version for the owner instead.
+1. **What's new in the game**: `public/changelog.json`, one line per merged update, shown as a small dot and a list since the player's last visit; a player whose idea was built is told so.
+2. **The Ideas tab follows daily builds**: a pull request that says `Idea #<n>` moves that idea to "Waiting for review" and then "Done", like the feedback sync does with `Closes #<issue>`.
+3. **A preview for each pull request**, so the owner tries it on a phone before merging: a staging Worker with its own D1 (a copy refreshed nightly, accounts, sessions, invites and emails stripped) and a tiny budget (for example $2 a month), deployed by CI from a token kept in GitHub's secrets with Workers scripts permission only.
+4. **Checked** in `npm run test:worker`: the changelog and the idea sync.
+
+Two limits by design. **The owner's review is the bottleneck, not ideas**: with two pull requests waiting, the planner gives only the review list, so nothing piles up and a week away costs nothing. **Small and finished beats big and started**: anything larger than a session is given in parts or becomes a roadmap version for the owner.
