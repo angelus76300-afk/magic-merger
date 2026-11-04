@@ -3,6 +3,7 @@ import { dressVillages, restoreCreature, saveMind, KINDS, type Creature, type Sa
 import { MARKS, MAX_MARKS, MAX_STORY, type Mark, type StoryLine, type Village } from "./kin";
 import { BUILTIN, LAYERS, type Layer } from "./materials";
 import { World } from "./world";
+import { applyLand, readLand, type LandOptions } from "./land";
 import type { Landmark } from "./social";
 import { packLook, unpackLook } from "./villagers";
 
@@ -30,6 +31,10 @@ export interface SavedWorld {
   // The island's story (3.7).
   story?: StoryLine[];
   storyCounts?: Record<string, number>;
+  // The biome, shape and sliders (4.4), and the springs, packed: four
+  // float32 each (cell, level, rate, 1 for lava), base64.
+  land?: LandOptions;
+  springs?: string;
 }
 
 export function saveWorld(world: World, owners: Map<string, string>): SavedWorld {
@@ -70,7 +75,7 @@ export function saveWorld(world: World, owners: Map<string, string>): SavedWorld
     wealth: world.wealth,
     creatures: world.creatures
       .filter((c) => !c.dead)
-      .slice(0, 400)
+      .slice(0, 600)
       .map((c) => {
         const { kind, x, y, hp, size, color, homeX, homeY, look } = c;
         return { kind, x, y, hp, size, color, homeX, homeY, look, m: saveMind(c) };
@@ -79,14 +84,42 @@ export function saveWorld(world: World, owners: Map<string, string>): SavedWorld
     marks: world.marks,
     story: world.story,
     storyCounts: world.storyCounts,
+    ...(world.land ? { land: world.land, springs: packSprings(world) } : {}),
   };
 }
+
+function packSprings(world: World): string {
+  const a = new Float32Array(world.springs.length * 4);
+  world.springs.forEach((s, k) => a.set([s.i, s.level, s.rate ?? 1.2, s.lava ? 1 : 0], k * 4));
+  return toBase64(new Uint8Array(a.buffer));
+}
+
+function unpackSprings(text: string, n: number): World["springs"] {
+  const b = fromBase64(text);
+  const a = new Float32Array(b.buffer, b.byteOffset, Math.floor(b.length / 16) * 4);
+  const out: World["springs"] = [];
+  for (let k = 0; k + 3 < a.length && out.length < MAX_SPRINGS; k += 4) {
+    const [i, level, rate, lava] = [a[k], a[k + 1], a[k + 2], a[k + 3]];
+    if (!Number.isInteger(i) || i < 0 || i >= n || !Number.isFinite(level) || !Number.isFinite(rate)) continue;
+    out.push({ i, level: Math.min(400, Math.max(-60, level)), rate: Math.min(12, Math.max(0, rate)), ...(lava ? { lava: true } : {}) });
+  }
+  return out;
+}
+
+// Rivers fed along their length on the biggest island, with room to spare.
+const MAX_SPRINGS = 40_000;
 
 // Rebuilds a world. Custom materials missing from the table (their spell is
 // gone) fall back to plain ground or nothing.
 export function loadWorld(data: SavedWorld, prepare: (world: World) => void): World | null {
   if (data?.version !== 2) return null;
   const world = new World(data.w, data.h, data.seed);
+  // The biome first: its colors are the built-in materials', which a spell's
+  // own materials come after.
+  if (data.land) {
+    applyLand(world, readLand(data.land));
+    if (typeof data.springs === "string") world.springs = unpackSprings(data.springs, world.n);
+  }
   prepare(world);
   world.time = data.time ?? 0;
   const n = world.n;

@@ -2,17 +2,19 @@ import { readDigest, type ChronicleDigest } from "../../shared/chronicle";
 import type { CastRequest } from "./runtime";
 import type { SavedWorld } from "./save";
 import type { WorldSize } from "./engine";
+import type { LandOptions } from "./land";
 
 // Messages between the game page and the sandboxed World iframe. The iframe
 // runs Claude's spell code, so it has no origin of its own and no network:
 // everything it needs comes in here, everything it says goes out here.
 
 export type ToWorld =
-  | { type: "init"; save: SavedWorld | null; size: WorldSize; rules: CastRequest[]; muted: boolean }
+  | { type: "init"; save: SavedWorld | null; size: WorldSize; land: LandOptions; rules: CastRequest[]; muted: boolean }
   | { type: "select"; spell: CastRequest | null }
   | { type: "spell-updated"; spell: CastRequest }
   | { type: "villager" }
-  | { type: "reset"; size: WorldSize }
+  // 4.4: a biome, a shape and sliders, and the seed (null for a new one).
+  | { type: "reset"; size: WorldSize; land: LandOptions; seed: number | null }
   | { type: "mute"; muted: boolean }
   | { type: "visible"; visible: boolean }
   // ahead: seconds of the hazard already played while the player merged (3.7).
@@ -47,6 +49,13 @@ export function readFromWorld(data: unknown): FromWorld | null {
       return m.sample && typeof m.sample === "object" && JSON.stringify(m.sample).length < 2000
         ? { type: "perf", sample: m.sample as Record<string, number> }
         : null;
+    case "headroom": {
+      const h = m.sample as Record<string, unknown> | null;
+      const num = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v < 1e6;
+      return h && typeof h === "object" && num(h.w) && num(h.simP95) && num(h.frameP95) && num(h.frames)
+        ? { type: "headroom", sample: { w: h.w as number, simP95: h.simP95 as number, frameP95: h.frameP95 as number, frames: h.frames as number } }
+        : null;
+    }
     case "chronicle": {
       const digest = readDigest(m.digest);
       return digest ? { type: "chronicle", digest } : null;
@@ -76,6 +85,9 @@ export type FromWorld =
   | { type: "error"; key: string; name: string; message: string }
   | { type: "objective"; id: string; text: string; status: "playing" | "won" | "lost" }
   | { type: "perf"; sample: Record<string, number> }
+  // 4.4: the frame numbers of the island being played, every 30 seconds,
+  // whether the HUD is shown or not: what bigger islands are offered from.
+  | { type: "headroom"; sample: { w: number; simP95: number; frameP95: number; frames: number } }
   // Names of library spells creatures or artifacts want to cast (3.7).
   | { type: "need"; names: string[] }
   | { type: "chronicle"; digest: ChronicleDigest };

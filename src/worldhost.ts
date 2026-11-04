@@ -15,13 +15,15 @@ import type { ToWorld } from "./sim/protocol";
 import { SCENARIO_LIST } from "./sim/scenario-list";
 import type { CastRequest } from "./sim/runtime";
 import type { SavedWorld } from "./sim/save";
-import type { WorldSize } from "./sim/engine";
+import { WORLD_SIZES, type WorldSize } from "./sim/sizes";
 import type { Store } from "./store";
 import { toast } from "./toast";
 import { isQuotaError, warnStorageFull } from "./quota";
+import { WORLD_AT_KEY, WORLD_KEY, packIsland, readIslandText } from "./island-store";
+import { BIG_SIZES, readHeadroom, sizesOffered, writeHeadroom } from "./headroom";
+import { BIOMES, BIOME_LABELS, DEFAULT_LAND, SHAPES, SHAPE_LABELS, readLand, type LandOptions } from "./sim/land-options";
 
-export const WORLD_KEY = "magic-merger.world2";
-export const WORLD_AT_KEY = "magic-merger.world2.at";
+export { WORLD_AT_KEY, WORLD_KEY } from "./island-store";
 const MUTE_KEY = "magic-merger.muted";
 const HUD_KEY = "magic-merger.hud";
 // A World frame that has said nothing for this long while on screen is stuck
@@ -56,7 +58,6 @@ export interface WorldElements {
   tools: HTMLElement;
   add: HTMLButtonElement;
   reset: HTMLButtonElement;
-  size: HTMLSelectElement;
   sound: HTMLButtonElement;
 }
 
@@ -163,7 +164,7 @@ export class WorldHost {
     this.el.reset.addEventListener("click", () => {
       // Restarting a live challenge plays its head start again (4.0 review L6).
       if (this.challenge) this.startChallenge(this.challenge, this.headStart);
-      else if (window.confirm("Reset the world? Everything in it will be lost.")) this.send({ type: "reset", size: this.el.size.value as WorldSize });
+      else this.openReset();
     });
     this.el.challenges.addEventListener("click", () => this.onChallenges());
     this.el.chronicle.addEventListener("click", () => void this.openChronicle());
@@ -516,28 +517,14 @@ export class WorldHost {
     switch (msg.type) {
       case "alive":
         break;
-      case "ready": {
-        this.ready = true;
-        this.islandAt = readAt();
-        const save = readSave();
-        this.frame.contentWindow!.postMessage(
-          {
-            type: "init",
-            save,
-            size: window.innerWidth < 600 ? "small" : "medium",
-            rules: save ? this.rulesFor(save) : [],
-            muted: this.muted,
-          } satisfies ToWorld,
-          "*",
-        );
-        for (const queued of this.queue.splice(0)) this.send(queued);
-        if (this.hud) this.send({ type: "hud", on: true });
-        if (this.selected) {
-          const req = this.request(this.selected);
-          if (req) this.send({ type: "select", spell: req });
-        }
+      case "ready":
+        void this.initFrame(this.frame);
         break;
-      }
+      case "headroom":
+        // The frame runs spell code, which could send this too: the worst a
+        // spell can do is offer this player a bigger island they may decline.
+        writeHeadroom(msg.sample);
+        break;
       case "save":
         this.writeIsland(msg.data);
         break;
@@ -596,21 +583,57 @@ export class WorldHost {
     }
   }
 
+  // The frame is ready: it gets the island (read back, unpacked if kept
+  // gzipped), then whatever was waiting for it.
+  private async initFrame(frame: HTMLIFrameElement): Promise<void> {
+    this.islandAt = readAt();
+    let save: SavedWorld | null = null;
+    try {
+      const text = await readIslandText();
+      save = text ? (JSON.parse(text) as SavedWorld) : null;
+    } catch {
+      save = null;
+    }
+    if (frame !== this.frame || !frame.contentWindow) return;
+    const choice = readChoice();
+    frame.contentWindow.postMessage(
+      { type: "init", save, size: choice.size, land: choice.land, rules: save ? this.rulesFor(save) : [], muted: this.muted } satisfies ToWorld,
+      "*",
+    );
+    this.ready = true;
+    for (const queued of this.queue.splice(0)) this.send(queued);
+    if (this.hud) this.send({ type: "hud", on: true });
+    if (this.selected) {
+      const req = this.request(this.selected);
+      if (req) this.send({ type: "select", spell: req });
+    }
+  }
+
   // The island's save, by the tab that owns it, and never over a newer save
-  // where tabs cannot tell each other (no BroadcastChannel).
+  // where tabs cannot tell each other (no BroadcastChannel). Big saves are
+  // kept gzipped (4.4, island-store.ts); saves are written one at a time.
+  private saving: Promise<void> = Promise.resolve();
   private writeIsland(data: SavedWorld): void {
+    this.saving = this.saving.then(() => this.writeIslandNow(data));
+  }
+  private async writeIslandNow(data: SavedWorld): Promise<void> {
     if (!this.owner) return;
     if (!this.island && readAt() !== this.islandAt) return;
-    const json = JSON.stringify(data);
+    let value: string;
+    try {
+      value = await packIsland(JSON.stringify(data));
+    } catch {
+      return;
+    }
     // A save that would crowd out the player's discoveries is not written,
     // and the player is told (M13).
-    if (json.length > MAX_SAVE_CHARS) {
+    if (value.length > MAX_SAVE_CHARS) {
       warnStorageFull();
       return;
     }
     const at = String(Date.now());
     try {
-      localStorage.setItem(WORLD_KEY, json);
+      localStorage.setItem(WORLD_KEY, value);
       localStorage.setItem(WORLD_AT_KEY, at);
       this.islandAt = at;
       this.onSaved?.();
@@ -618,6 +641,120 @@ export class WorldHost {
       // The world lives on until the page closes; a full storage is said once.
       if (isQuotaError(err)) warnStorageFull();
     }
+  }
+
+  // A new island (4.4): its size, land, shape, three sliders and a seed. The
+  // sizes past Large are offered only where this device's own frame numbers
+  // show the headroom (headroom.ts); none is ever chosen by default.
+  private resetDialog: HTMLDialogElement | null = null;
+  private openReset(): void {
+    const d = (this.resetDialog ??= document.createElement("dialog"));
+    if (!d.isConnected) {
+      d.className = "chronicle reset-island";
+      d.addEventListener("click", (e) => {
+        if (e.target === d) d.close();
+      });
+      document.body.append(d);
+    }
+    const choice = readChoice();
+    const offered = sizesOffered(readHeadroom());
+    const field = (label: string, input: HTMLElement) => {
+      const l = document.createElement("label");
+      const t = document.createElement("span");
+      t.textContent = label;
+      l.append(t, input);
+      return l;
+    };
+    const select = (options: readonly string[], labels: (o: string) => string, value: string, disabled: (o: string) => boolean = () => false) => {
+      const s = document.createElement("select");
+      for (const o of options) {
+        const opt = document.createElement("option");
+        opt.value = o;
+        opt.textContent = labels(o);
+        opt.disabled = disabled(o);
+        s.append(opt);
+      }
+      s.value = value;
+      return s;
+    };
+    const slider = (value: number) => {
+      const r = document.createElement("input");
+      r.type = "range";
+      r.min = "0";
+      r.max = "100";
+      r.value = String(Math.round(value * 100));
+      return r;
+    };
+    const sizeLabel = (o: string) => {
+      const n = WORLD_SIZES[o as WorldSize];
+      const name = o[0].toUpperCase() + o.slice(1);
+      return offered.includes(o as WorldSize) ? `${name} (${n} by ${n})` : `${name}: needs a faster device`;
+    };
+    const size = select(
+      Object.keys(WORLD_SIZES),
+      sizeLabel,
+      offered.includes(choice.size) ? choice.size : defaultSize(),
+      (o) => !offered.includes(o as WorldSize),
+    );
+    const biome = select(BIOMES, (o) => BIOME_LABELS[o as LandOptions["biome"]], choice.land.biome);
+    const shape = select(SHAPES, (o) => SHAPE_LABELS[o as LandOptions["shape"]], choice.land.shape);
+    const water = slider(choice.land.water);
+    const relief = slider(choice.land.relief);
+    const forest = slider(choice.land.forest);
+    const seed = document.createElement("input");
+    seed.type = "text";
+    seed.inputMode = "numeric";
+    seed.placeholder = "a new one";
+    seed.maxLength = 10;
+    const title = document.createElement("h2");
+    title.textContent = "A new island";
+    const hint = document.createElement("p");
+    hint.className = "chronicle-note";
+    hint.textContent = BIG_SIZES.every((s) => offered.includes(s))
+      ? "This device has room for every size."
+      : "Huge and Giant islands are offered once this device shows it can run them: play a few minutes on a Large island first.";
+    const warn = document.createElement("p");
+    warn.className = "chronicle-note";
+    warn.textContent = "Everything on your current island will be lost.";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => d.close());
+    const create = document.createElement("button");
+    create.type = "button";
+    create.className = "primary";
+    create.textContent = "Create the island";
+    create.addEventListener("click", () => {
+      const land = readLand({
+        biome: biome.value,
+        shape: shape.value,
+        water: Number(water.value) / 100,
+        relief: Number(relief.value) / 100,
+        forest: Number(forest.value) / 100,
+      });
+      const typed = seed.value.trim();
+      const n = /^\d{1,10}$/.test(typed) ? Number(typed) % 2 ** 31 : null;
+      const chosen = size.value as WorldSize;
+      writeChoice({ size: chosen, land });
+      d.close();
+      this.send({ type: "reset", size: chosen, land, seed: n });
+    });
+    const actions = document.createElement("div");
+    actions.className = "reset-actions";
+    actions.append(cancel, create);
+    const grid = document.createElement("div");
+    grid.className = "reset-fields";
+    grid.append(
+      field("Size", size),
+      field("Land", biome),
+      field("Shape", shape),
+      field("Water", water),
+      field("Mountains", relief),
+      field("Forest", forest),
+      field("Seed", seed),
+    );
+    d.replaceChildren(title, grid, hint, warn, actions);
+    d.showModal();
   }
 
   // The frame HUD, toggled by a long press on the title. Remembered per browser.
@@ -973,12 +1110,30 @@ function islandChannel(): BroadcastChannel | null {
   }
 }
 
-function readSave(): SavedWorld | null {
+// The size and land the player last chose for a new island (4.4).
+const CHOICE_KEY = "magic-merger.new-island";
+
+// Never a big island by default: small on a narrow screen, medium elsewhere.
+function defaultSize(): WorldSize {
+  return window.innerWidth < 600 ? "small" : "medium";
+}
+
+function readChoice(): { size: WorldSize; land: LandOptions } {
   try {
-    const raw = localStorage.getItem(WORLD_KEY);
-    return raw ? (JSON.parse(raw) as SavedWorld) : null;
+    const v = JSON.parse(localStorage.getItem(CHOICE_KEY) ?? "null") as { size?: string; land?: unknown } | null;
+    const size = v?.size && v.size in WORLD_SIZES ? (v.size as WorldSize) : defaultSize();
+    // A big size stays chosen only while this device still has the room.
+    return { size: sizesOffered(readHeadroom()).includes(size) ? size : defaultSize(), land: readLand(v?.land) };
   } catch {
-    return null;
+    return { size: defaultSize(), land: { ...DEFAULT_LAND } };
+  }
+}
+
+function writeChoice(choice: { size: WorldSize; land: LandOptions }): void {
+  try {
+    localStorage.setItem(CHOICE_KEY, JSON.stringify(choice));
+  } catch {
+    // This choice lasts for this page.
   }
 }
 

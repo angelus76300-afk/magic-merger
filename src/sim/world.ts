@@ -7,6 +7,7 @@ import { Particles } from "./particles";
 import { VoxelState, packVoxel, VK } from "./voxels";
 import { keyX, keyY, voxelKey } from "./voxelkey";
 import { DecorStore } from "./decor";
+import { buildLand, type LandOptions, type Spring } from "./land";
 import { CreatureGrid } from "./crowd";
 import type { Landmark, Presence } from "./social";
 import type { Ward } from "./wards";
@@ -83,6 +84,17 @@ export class World {
   time = 0;
   tick = 0;
   seaLevel = 8;
+  // The island's biome, shape and sliders (4.4); null for the old island
+  // and the challenges, which keep the old climate.
+  land: LandOptions | null = null;
+  // Degrees added to the ambient temperature, and where and how fast it
+  // falls with height (land.ts, the biome's climate).
+  climate = 0;
+  lapseFrom = 24;
+  lapse = 2.5;
+  // Cells that keep a river flowing (land.ts). With any, water also leaves
+  // the island over its edge, so the sea does not rise.
+  springs: Spring[] = [];
 
   constructor(
     readonly w: number,
@@ -121,7 +133,7 @@ export class World {
 
   // Temperature a cell drifts back to: colder up high, so peaks keep their snow.
   ambient(i: number): number {
-    return AMBIENT - Math.max(0, this.height[i] - 24) * 2.5;
+    return AMBIENT + this.climate - Math.max(0, this.height[i] - this.lapseFrom) * this.lapse;
   }
 
   // Surface height: terrain plus whatever fluid lies on it.
@@ -210,7 +222,11 @@ export class World {
 }
 
 // Builds a fresh land: hills, a sea, a river, forests and a few villages.
-export function generateWorld(w: number, h: number, seed: number): World {
+// With `land` (4.4), a biome and a shape of the player's choosing (land.ts);
+// without, the island every version before 4.4 made, which the test run's
+// practice island and the checks keep, so no spell's verdict moves.
+export function generateWorld(w: number, h: number, seed: number, land?: LandOptions): World {
+  if (land) return generateLand(w, h, seed, land);
   const world = new World(w, h, seed);
   const rng = world.rng;
   const { height, ground } = world;
@@ -302,6 +318,38 @@ export function generateWorld(w: number, h: number, seed: number): World {
   return world;
 }
 
+function generateLand(w: number, h: number, seed: number, land: LandOptions): World {
+  const world = new World(w, h, seed);
+  const rng = world.rng;
+  const { peak } = buildLand(world, land);
+  placeVillages(world, rng, world.seaLevel + Math.max(10, peak * 0.62));
+  return world;
+}
+
+// Villages on the flattest dry land, away from each other and from rivers:
+// score many candidate spots and keep the best ones.
+function placeVillages(world: World, rng: Rng, top: number): void {
+  const { w, h } = world;
+  const villages = Math.max(2, Math.round((w * h) / 12000));
+  const candidates: { x: number; y: number; score: number }[] = [];
+  for (let k = 0; k < Math.max(600, (w * h) / 40); k++) {
+    const x = rng.int(12, w - 13);
+    const y = rng.int(12, h - 13);
+    const score = landScore(world, x, y, 7, top, (world.seaLevel + top) / 2);
+    if (score < Infinity) candidates.push({ x, y, score });
+  }
+  candidates.sort((a, b) => a.score - b.score);
+  const centers: { x: number; y: number }[] = [];
+  for (let spread = 3.2; spread <= 8 && centers.length < villages; spread *= 1.6) {
+    for (const c of candidates) {
+      if (centers.length >= villages) break;
+      if (centers.some((o) => Math.hypot(o.x - c.x, o.y - c.y) < Math.min(w, h) / spread)) continue;
+      centers.push(c);
+      buildVillage(world, c.x, c.y, rng);
+    }
+  }
+}
+
 function carveRiver(world: World, rng: Rng): void {
   const { w, height } = world;
   let best = 0;
@@ -354,20 +402,20 @@ function carveRiver(world: World, rng: Rng): void {
 
 // How rough the land is around a spot (lower is flatter), or Infinity when
 // it is wet, too high or too close to the edge.
-function landScore(world: World, cx: number, cy: number, r: number): number {
+function landScore(world: World, cx: number, cy: number, r: number, top = 24, middle = 14): number {
   const base = world.height[world.idx(cx, cy)];
-  if (base < world.seaLevel + 1 || base > 24) return Infinity;
+  if (base < world.seaLevel + 1 || base > top) return Infinity;
   let rough = 0;
   for (let y = cy - r; y <= cy + r; y++) {
     for (let x = cx - r; x <= cx + r; x++) {
       if (!world.inside(x, y)) return Infinity;
       const i = y * world.w + x;
-      if (world.depth[i] > 0) return Infinity;
+      if (world.depth[i] > 0 || world.fluid[i] === F.LAVA) return Infinity;
       rough += Math.abs(world.height[i] - base);
     }
   }
   // Prefer the middle heights: not on the beach, not on the mountain.
-  return rough + Math.abs(base - 14) * 20;
+  return rough + Math.abs(base - middle) * 20;
 }
 
 // Houses are 2 by 2 blocks around a square, with fields on the outskirts.

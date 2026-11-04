@@ -1,6 +1,6 @@
 # Where the game stands, and what comes next
 
-Updated on 2026-11-04, with 4.2.
+Updated on 2026-11-04, with 4.4.
 
 ## Done since the first review
 
@@ -201,6 +201,20 @@ Not done: real phones (the steering adds about 0.3 ms p50 and 0.4 ms p95 of crea
 
 Owner's calls: the challenge guard in `npm test` now also reads each plain solution's win rate over 12 seeds; the wildfire counts houses burnt, not houses standing; replays give creatures their own random stream.
 
+## Done in 4.4: bigger and richer worlds
+
+Asked for: bigger islands for devices that can run them (a huge size and beyond, offered only when the device's own HUD numbers show headroom, never by default on phones, saved on the account); biomes and island shapes with better rivers and coasts, chosen by a seed and sliders at reset, every species' habitat and `npm test` working on each; baked ambient occlusion, better water, visible weather, sun, moon and stars, each measured with the HUD before and after on a phone sized browser. Items 1 to 3 of "4.1 Bigger and richer worlds" below, which 4.1 left for later. DESIGN.md, "Islands of every kind (4.4)", has the rules; `docs/measurements/view-4.4.md` the numbers.
+
+1. **A new island is chosen**: Reset opens a dialog with the size, the land (temperate forest, desert, tundra, jungle, swamp, volcanic, mesa), the shape (coast, archipelago, plateaus, ridges, inland lakes, delta), water, mountains and forest sliders, and a seed. The same seed and choices make the same island. `docs/visual-checks/biomes-and-shapes.png` shows all 42 from above.
+2. **Rivers that run and lakes that stay**: depressions filled from the edge inward (priority flood), rivers where enough of the island drains (flow accumulation), always downhill and fordable, fed by springs at their heads and along their length; lakes keep their level, a volcano its lava; water leaves over the island's edge, so the sea does not rise (0.01 to 0.03 after three minutes on every biome).
+3. **Every species lives on every biome**: the simulation keeps its materials (grass is grass in the desert), a biome brings its climate, colors, trees and weather; where a forest animal would have no habitat, a grove by a pond is planted (an oasis, a stand of pines), and a pool for the fish. `npm test` generates all 42 islands and checks villagers and every habitat, then leaves each biome alone for three simulated minutes in its worker threads (each species alive at least 60% of the time, villages standing, rivers running, nothing flooding or burning).
+4. **Huge (288) and giant (384) islands**, offered when this device's frame numbers on its island project a simulation p95 within 12 ms and frames are on time (p95 under 40 ms); never chosen by default. Saves past 400k characters are kept gzipped (a giant island is 0.6M instead of 2.5M), in the browser and on the account; the Worker accepts the two sizes.
+5. **The view**: ambient occlusion per corner and in the creases of walls; water colored by depth and biome, foam on the shore, waves that stay still at the shore; rain, snow and fog that come and go by biome, from the seed and the time (the simulation never knows); a sun and a moon on a low path, stars at night. Each behind a switch, measured alone: none costs more than the noise (about 0.3 ms of drawing at p50).
+6. **A bug the measure found**: flowing rivers rebuilt terrain chunks every frame (6.2 ms of drawing instead of 2.5); wetness and levels are now redrawn with a margin and, when only water flowed, from a slow queue. And one in the engine: after a restart a frame could step time backwards and hold the simulation still.
+7. **Checked**: `scripts/verify-4.4.mjs` runs the real game in a phone sized browser against `wrangler dev`: no huge or giant without headroom, a desert of lakes from seed 42 saved and loaded, with headroom every size offered and none chosen, a giant tundra kept gzipped and loaded again.
+
+Not done: real phones and a real GPU (the measure is a phone sized browser with software WebGL: the JavaScript side is measured, the GPU is not); the delta's fan of branches is faint at 152 cells; islands saved before 4.4 keep their old land (a reset gives the new one) but get the sky and weather; weather does not touch the simulation (rain does not put out fires): it would change challenges and test runs, so it waits for the owner's call.
+
 ## Decisions taken
 
 1. **Cosmic spells may ruin the island.** Consequences are part of the fun; the land regrows on its own (ash turns to soil, grass and forests come back) and Reset is one tap away. Revisit if it feels punishing in play.
@@ -216,8 +230,9 @@ Owner's calls: the challenge guard in `npm test` now also reads each plain solut
 6. **Challenge balance with real spells.** The checks use simple hand-written solutions; Claude's spells may be stronger or weaker. Wildfire used to be won by doing nothing 1 time in 5: villagers rebuilt the burnt houses while the fire died down, and the end check counted them. It is now lost the moment a second house burns, and `npm test` replays every challenge with nothing over 8 seeds (0 wins in 64 for Wildfire, rain still wins 64 in 64).
 
 7. **The API's growth.** Read `GET /api/admin/evolution` weekly for a month: are gaps honest (the writer saying what it lacked) or noise, does the designer choose helper, hint or engine sensibly, and do live helpers get used. If gaps are mostly noise, raise the three spells to five before anything else.
-8. **Movement on phones.** The steering and flow fields add about 0.3 ms p50 and 0.4 ms p95 of creature time per tick in Node on a large island (cheaper temperature pays it back). `parts` and the simulation p95 in `/api/perf` will say whether a phone feels it; `BUDGET` in `src/sim/paths.ts` is the first knob.
-9. **Stored protection spells.** Export them (`scripts/replay-stored.ts` has the command), run the probe on each, and rewrite the ones that fail from the admin card, one at a time, never in bulk.
+8. **Big islands and the new view on phones.** The HUD's samples in `/api/perf` now carry the island's width; look for huge and giant islands and how their simulation p95 compares with `headroom.ts`'s projection (12 ms). If a phone's frames suffer from the view, `src/sim/voxel/graphics.ts` turns each improvement off.
+9. **Movement on phones.** The steering and flow fields add about 0.3 ms p50 and 0.4 ms p95 of creature time per tick in Node on a large island (cheaper temperature pays it back). `parts` and the simulation p95 in `/api/perf` will say whether a phone feels it; `BUDGET` in `src/sim/paths.ts` is the first knob.
+10. **Stored protection spells.** Export them (`scripts/replay-stored.ts` has the command), run the probe on each, and rewrite the ones that fail from the admin card, one at a time, never in bulk.
 
 ## What the money taught us
 
@@ -327,7 +342,7 @@ Today an invite link is kept by one browser, and progress lives in that browser 
 8. **Two tabs, one browser** (review M6): discoveries merge by key on every write; the island is saved by one tab at a time (a `BroadcastChannel` lock) or never over a newer save. The server side of 3 and 4 is where this is decided.
 9. **The domain** is chosen before the first passkey (a move means every friend registers again).
 
-### 4.1 Bigger and richer worlds
+### 4.1 Bigger and richer worlds (items 1 to 3 done in 4.4, item 4 in 4.1)
 
 1. **Bigger islands for those who can run them**: a huge size and beyond, offered when the device's own HUD numbers show the headroom (simulation and frame p95 on the current size), never by default on phones. Saved on the account (4.0), since a big island outgrows the browser's storage.
 2. **More varied terrain**: biomes (temperate forest, desert, tundra, jungle, swamp, volcanic, mesa), island shapes (archipelagos, plateaus, ridges, inland lakes, deltas), better rivers and coasts, chosen by a seed and a few sliders at reset.

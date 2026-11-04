@@ -53,6 +53,12 @@ import { stepWorld } from "../src/sim/tick";
 import { DAY_LENGTH } from "../src/sim/daylight";
 import { gaitOf, hipHeight } from "../src/sim/voxel/gait";
 import { TICK } from "../src/sim/world";
+import { BIOMES, DEFAULT_LAND, SHAPES, habitatCount, readLand, LOOKS } from "../src/sim/land";
+import { landProblems, type LandLife } from "./land-life";
+import { projectedSim, sizesOffered, SIM_BUDGET_MS } from "../src/headroom";
+import { skyBodies, weatherAt } from "../src/sim/voxel/sky";
+import { Terrain } from "../src/sim/voxel/terrain";
+import { MeshBasicMaterial, type Mesh } from "three";
 
 // No verdict here depends on how fast the machine is (4.1, review M8): the
 // slow cast guard is off unless SLOW_MS is set, and worst ticks are printed,
@@ -68,8 +74,13 @@ const SEEDS = 8;
 // queue: they are the longest jobs.
 const SCENE_STREAMS = 3;
 const SCENE_SECONDS = 600;
+const LAND_SECONDS = 180;
 const idle: Job[] = [
   ...Array.from({ length: SCENE_STREAMS }, (_, n) => ({ scene: n, seconds: SCENE_SECONDS })),
+  // 4.4: every biome left alone for three simulated minutes, each on its
+  // own shape (the shapes go round), so every biome and every shape lives.
+  ...BIOMES.map((biome, k) => ({ biome, shape: SHAPES[k % SHAPES.length], seed: 11 + k, seconds: LAND_SECONDS })),
+  ...[SHAPES[BIOMES.length % SHAPES.length]].map((shape) => ({ biome: "temperate" as const, shape, seed: 3, seconds: LAND_SECONDS })),
   // 4.3: how creatures move, two minutes on each of three seeds.
   ...MOTION_SEEDS.map((motion) => ({ motion })),
   // 3.7: every challenge solved in the simulation by the plain solution of its hazard.
@@ -84,6 +95,7 @@ const verifiedChallenges = new Map<string, { ok: boolean; wins: number; runs: nu
 const challengeRates = new Map<string, { wins: number; runs: number; need: number; results: string }>();
 const motion: Record<string, KindMotion> = {};
 const motionErrors: string[] = [];
+const lands: LandLife[] = [];
 const nextIdle = new Int32Array(new SharedArrayBuffer(4));
 const idleDone = Promise.all(
   Array.from({ length: Math.min(4, Math.max(2, availableParallelism() - 1)) }, () => {
@@ -98,8 +110,10 @@ const idleDone = Promise.all(
         verified,
         motion: moved,
         rate,
+        land,
       }: {
         job: Job;
+        land?: LandLife;
         motion?: MotionReport;
         rate?: { wins: number; runs: number; need: number; results: string };
         status: string;
@@ -107,7 +121,8 @@ const idleDone = Promise.all(
         report?: SceneReport;
         verified?: { ok: boolean; wins: number; runs: number };
       }) => {
-        if (rate && "rate" in job) challengeRates.set(job.rate, rate);
+        if (land) lands.push(land);
+        else if (rate && "rate" in job) challengeRates.set(job.rate, rate);
         else if (moved) {
           mergeMotion(motion, moved.kinds);
           motionErrors.push(...moved.errors);
@@ -685,7 +700,169 @@ for (const scenario of SCENARIOS) {
   const { status, errors } = replay({ id: scenario.id, seed: 17, magic: true });
   check(`challenge ${scenario.id} with ${plan.file}`, status === "won" && errors.length === 0, `${status}${errors[0] ? ", " + errors[0] : ""}`);
 }
+// 4.4: islands of every kind. Every biome and shape is generated (112 cells)
+// with houses, villagers and every native species' habitat; the same seed
+// and options give the same island; a save keeps its biome, climate and
+// springs; the island before 4.4 is unchanged when no options are given.
+{
+  const missing: string[] = [];
+  let slowest = 0;
+  for (const biome of BIOMES)
+    for (const shape of SHAPES) {
+      const t0 = performance.now();
+      const world = generateWorld(112, 112, 5, { ...DEFAULT_LAND, biome, shape });
+      slowest = Math.max(slowest, performance.now() - t0);
+      populate(world);
+      const people = world.creatures.filter((c) => c.kind === "villager").length;
+      const lack = SPECIES.filter((sp) => habitatCount(world, sp) <= 0).map((sp) => sp.kind.name);
+      if (!people || lack.length) missing.push(`${biome}/${shape}: ${people} villagers${lack.length ? ", no habitat for " + lack.join(" ") : ""}`);
+    }
+  check(
+    `every biome and shape: villagers and every species' habitat (${BIOMES.length * SHAPES.length} islands)`,
+    !missing.length,
+    missing.slice(0, 4).join("; ") || `slowest ${slowest.toFixed(0)} ms (printed, not checked)`,
+  );
+  const land = { biome: "mesa" as const, shape: "lakes" as const, water: 0.7, relief: 0.2, forest: 0.9 };
+  const a = generateWorld(112, 112, 21, land);
+  const b = generateWorld(112, 112, 21, land);
+  check("the same seed and options make the same island", a.height.every((v, i) => v === b.height[i]) && a.cover.every((v, i) => v === b.cover[i]));
+  const back = loadWorld(saveWorld(a, new Map()), () => {});
+  check(
+    "a saved island keeps its biome, climate, colors and springs",
+    !!back &&
+      back.land?.biome === "mesa" &&
+      back.climate === LOOKS.mesa.climate &&
+      back.springs.length === a.springs.length &&
+      back.springs.every((s, k) => s.i === a.springs[k].i && Math.abs(s.level - a.springs[k].level) < 0.01) &&
+      back.materials.find("grass") !== null &&
+      back.materials.get("ground", 0).colors[0] === LOOKS.mesa.palette.grass[0],
+  );
+  check(
+    "options read back safely",
+    readLand({ biome: "moon", shape: 3, water: 9, relief: -1, forest: "x" }).biome === "temperate" &&
+      readLand({ water: 9 }).water === 1 &&
+      readLand({ relief: -1 }).relief === 0,
+  );
+  const old = generateWorld(112, 112, 4);
+  check("no options: the island before 4.4, with no springs and the old climate", old.springs.length === 0 && old.climate === 0 && old.land === null);
+}
+
+// 4.4: the headroom rule, the weather, the sun's path, the trees' models, and
+// waves that never open a gap between two water tops.
+{
+  const m = (w: number, simP95: number, frameP95 = 30, frames = 600) => ({ w, simP95, frameP95, frames });
+  check(
+    "bigger islands only with headroom",
+    sizesOffered(null).join() === "small,medium,large" &&
+      sizesOffered(m(208, 3)).join() === "small,medium,large,huge,giant" &&
+      sizesOffered(m(208, 5)).join() === "small,medium,large,huge" &&
+      sizesOffered(m(208, 8)).join() === "small,medium,large" &&
+      sizesOffered(m(208, 3, 55)).join() === "small,medium,large" &&
+      sizesOffered(m(208, 3, 30, 100)).join() === "small,medium,large" &&
+      Math.abs(projectedSim(m(152, 2), "giant") - 2 * (384 / 152) ** 2) < 1e-9,
+    `a large island at 5 ms p95 projects ${projectedSim(m(208, 5), "huge").toFixed(1)} ms on huge, ${projectedSim(m(208, 5), "giant").toFixed(1)} on giant (budget ${SIM_BUDGET_MS})`,
+  );
+  const desert = generateWorld(64, 64, 3, { ...DEFAULT_LAND, biome: "desert" });
+  const tundra = generateWorld(64, 64, 3, { ...DEFAULT_LAND, biome: "tundra" });
+  const old = generateWorld(64, 64, 3);
+  const kinds = (w: World) => {
+    const seen: Record<string, number> = {};
+    for (let t = 0; t < 360 * 40; t += 30) {
+      const now = weatherAt(w, t);
+      if (now.amount > 0) seen[now.kind] = (seen[now.kind] ?? 0) + 1;
+    }
+    return seen;
+  };
+  const tk = kinds(tundra);
+  const dk = kinds(desert);
+  check(
+    "weather comes and goes, by biome, the same for the same island",
+    (tk.snow ?? 0) > 0 &&
+      !dk.snow &&
+      (dk.rain ?? 0) < (tk.snow ?? 0) &&
+      Object.keys(kinds(old)).length === 0 &&
+      weatherAt(tundra, 1234).kind === weatherAt(generateWorld(64, 64, 3, { ...DEFAULT_LAND, biome: "tundra" }), 1234).kind,
+    `tundra ${JSON.stringify(tk)}, desert ${JSON.stringify(dk)} (samples of 30 s over 4 hours); none without a land`,
+  );
+  const noon = skyBodies(DAY_LENGTH * 0.35);
+  const midnight = skyBodies(DAY_LENGTH * 0.73);
+  check("the sun by day, the moon by night", noon.sun > 0.5 && noon.moon < 0 && midnight.moon > 0.5 && midnight.sun < 0, JSON.stringify({ noon, midnight }));
+  const coplanar: string[] = [];
+  for (const key of ["palm", "snowpine", "jungle", "willow", "juniper"]) {
+    const boxes = MODELS[key];
+    for (let a = 0; a < boxes.length; a++)
+      for (let b = a + 1; b < boxes.length; b++) {
+        const A = boxes[a];
+        const B = boxes[b];
+        const lo = (x: { x: number; y: number; z: number }, k: number) => [x.x, x.y, x.z][k];
+        const size = (x: { w: number; h: number; d: number }, k: number) => [x.w, x.h, x.d][k];
+        for (let k = 0; k < 3; k++)
+          for (const side of [0, 1]) {
+            const pa = lo(A, k) + side * size(A, k);
+            const pb = lo(B, k) + side * size(B, k);
+            if (Math.abs(pa - pb) > 0.002) continue;
+            const [u, v] = [(k + 1) % 3, (k + 2) % 3];
+            const ou = Math.min(lo(A, u) + size(A, u), lo(B, u) + size(B, u)) - Math.max(lo(A, u), lo(B, u));
+            const ov = Math.min(lo(A, v) + size(A, v), lo(B, v) + size(B, v)) - Math.max(lo(A, v), lo(B, v));
+            if (ou > 1e-3 && ov > 1e-3) coplanar.push(`${key} ${a}/${b}`);
+          }
+      }
+  }
+  check("the biomes' trees have no two faces in one plane", !coplanar.length, coplanar.join(", ") || "palm, snowpine, jungle, willow, juniper");
+  // Waves: a corner two water tops share moves the same for both.
+  const lake = generateWorld(96, 96, 8, { ...DEFAULT_LAND, shape: "lakes", water: 0.8 });
+  const meshes: Mesh[] = [];
+  const terrain = new Terrain(
+    lake,
+    new MeshBasicMaterial(),
+    new MeshBasicMaterial(),
+    (mm) => meshes.push(mm),
+    () => {},
+  );
+  terrain.scan();
+  terrain.rebuild(true);
+  const corner = new Map<string, number>();
+  let torn = 0;
+  let moving = 0;
+  for (const mesh of meshes) {
+    const wave = mesh.geometry.getAttribute("wave");
+    if (!wave) continue;
+    const pos = mesh.geometry.getAttribute("position");
+    for (let k = 0; k < pos.count; k++) {
+      const key = `${pos.getX(k)},${pos.getY(k).toFixed(3)},${pos.getZ(k)}`;
+      const w = wave.getX(k);
+      if (w > 0) moving++;
+      const was = corner.get(key);
+      if (was === undefined) corner.set(key, w);
+      else if (Math.abs(was - w) > 1e-6) torn++;
+    }
+  }
+  check(
+    "waves never open a gap between water tops, and some water moves",
+    torn === 0 && moving > 0,
+    `${moving} vertices ride the waves, ${torn} corners disagree`,
+  );
+}
+
 await idleDone;
+// 4.4: every biome generated, populated and left alone for three minutes:
+// no species dies out, villages stand, rivers keep running, the sea does not
+// rise, nothing floods or burns by itself, the volcano keeps its lava.
+for (const r of lands.sort((x, y) => BIOMES.indexOf(x.biome) - BIOMES.indexOf(y.biome))) {
+  const problems = landProblems(r);
+  check(
+    `a living ${r.biome} island (${r.shape}), ${LAND_SECONDS} s`,
+    !problems.length,
+    problems.join("; ") ||
+      `${Object.entries(r.species)
+        .map(([k, v]) => `${k} ${v.start}->${v.end}`)
+        .join(", ")}; river ${r.river.start}->${r.river.end} cells, sea +${r.seaRise}`,
+  );
+}
+check(
+  "every biome lived",
+  BIOMES.every((b) => lands.some((r) => r.biome === b)),
+);
 for (const scenario of SCENARIOS) {
   const runs = idleResults.get(scenario.id) ?? [];
   const tally = (s: string) => runs.filter((r) => r.status === s).length;

@@ -1,5 +1,6 @@
 import { chronicleDigest } from "./chronicle";
 import { Engine, type WorldSize } from "./engine";
+import { DEFAULT_LAND, readLand, type LandOptions } from "./land";
 import { kindOf, makeCreature, maxHp, type Creature } from "./creatures";
 import { artifactAt, creatureAt, inspect, inspectArtifact } from "./inspect";
 import type { Artifact } from "./artifacts";
@@ -20,7 +21,12 @@ let muted = false;
 let saveTimer = 0;
 let unbind: (() => void) | null = null;
 // The sandbox world while a challenge is played, to come back to it untouched.
-let sandbox: { save: SavedWorld | null; size: WorldSize; rules: CastRequest[] } = { save: null, size: "medium", rules: [] };
+let sandbox: { save: SavedWorld | null; size: WorldSize; land: LandOptions; rules: CastRequest[] } = {
+  save: null,
+  size: "medium",
+  land: { ...DEFAULT_LAND },
+  rules: [],
+};
 let scenario: string | null = null;
 let hud: Hud | null = null;
 let hudOn = false;
@@ -170,7 +176,7 @@ function openSandbox(): void {
     console.error("The saved world could not be restored", err);
     sandbox.save = null;
   }
-  mount(restored ?? Engine.create(canvas, overlay, sandbox.size, hooks));
+  mount(restored ?? Engine.create(canvas, overlay, sandbox.size, hooks, undefined, {}, sandbox.land));
 }
 
 // The head start of the challenge being played, for a reset (L6).
@@ -233,7 +239,7 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       break;
     case "init": {
       muted = msg.muted;
-      sandbox = { save: msg.save, size: msg.size, rules: msg.rules };
+      sandbox = { save: msg.save, size: msg.size, land: readLand(msg.land), rules: msg.rules };
       openSandbox();
       clearInterval(saveTimer);
       saveTimer = window.setInterval(save, 10_000);
@@ -265,7 +271,8 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
         break;
       }
       sandbox.size = msg.size;
-      mount(Engine.create(canvas, overlay, msg.size, hooks));
+      sandbox.land = readLand(msg.land);
+      mount(Engine.create(canvas, overlay, msg.size, hooks, msg.seed ?? undefined, {}, sandbox.land));
       save();
       break;
     case "scenario":
@@ -293,6 +300,16 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       break;
   }
 });
+
+// What this device can run (4.4): the frame numbers of the island being
+// played, every 30 seconds once enough frames were drawn. Challenges are
+// smaller islands with their own hazards: not counted.
+window.setInterval(() => {
+  if (!engine || scenario) return;
+  const s = engine.stats.summary();
+  if (s.frames < 300) return;
+  send({ type: "headroom", sample: { w: engine.world.w, simP95: s.simP95, frameP95: s.frameP95, frames: s.frames } });
+}, 30_000);
 
 // A heartbeat for the page's watchdog (4.0 review M3): spell code that never
 // returns stops it, and the page replaces this frame.
