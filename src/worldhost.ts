@@ -344,6 +344,9 @@ export class WorldHost {
 
   selectSpell(key: string): void {
     this.selected = key;
+    // A spell not written yet takes the previous one out of the World's
+    // hand at once: a tap meanwhile says to wait, it never casts the old one.
+    if (!this.request(key)) this.send({ type: "select", spell: null });
     this.renderSpells();
     void this.prepare(key).then((req) => {
       if (req && this.selected === key) this.send({ type: "select", spell: req });
@@ -403,6 +406,9 @@ export class WorldHost {
       // The World keeps the program it was handed: a rewrite, a rollback or a
       // refresh must reach it, or a cast would run old code under a new id.
       if (req) this.send({ type: "spell-updated", spell: req });
+      // Picked while it was still being written (asked again later, by
+      // ahead()): it goes into the World's hand as soon as it is ready.
+      if (req && this.selected === key) this.send({ type: "select", spell: req });
       return req;
     } catch (err) {
       this.writing.delete(key);
@@ -529,7 +535,10 @@ export class WorldHost {
         this.writeIsland(msg.data);
         break;
       case "tap-without-spell":
-        toast(this.selected ? "Still preparing this spell…" : "Pick a spell below, or tap a creature to see what it is doing");
+        if (this.selected) {
+          const name = this.store.get(this.selected)?.element.name ?? "This spell";
+          toast(`Wait for the incantation to be ready: ${name} is still being made`);
+        } else toast("Pick a spell below, or tap a creature to see what it is doing");
         break;
       case "cast":
         if (!this.store.get(msg.key)) break;
@@ -1068,6 +1077,59 @@ export class WorldHost {
       else text = `${name} is not ready yet.`;
     }
     this.el.status.textContent = text;
+    this.showCreation(key);
+  }
+
+  // The creation bar under the status line, while the spell in hand is not
+  // ready: asked, written, tested. Each stage fills its share of the bar as
+  // its usual time goes by (4.2's measures: about 15 s of writing, a few
+  // seconds of test run) and never claims to be done before it is.
+  private creationBar: HTMLElement | null = null;
+  private creationStage: { key: string; stage: string; since: number; from: number } | null = null;
+  private creationTimer = 0;
+  private showCreation(key: string | null): void {
+    const state = key ? this.stateOf(key) : "ready";
+    // Only while it is on its way: a spell that failed or was given up on says so in the status line.
+    const waiting = key !== null && (state === "writing" || state === "testing");
+    if (!this.creationBar) {
+      if (!waiting) return;
+      const bar = document.createElement("div");
+      bar.className = "creation-bar";
+      bar.setAttribute("role", "progressbar");
+      bar.setAttribute("aria-label", "Making the spell");
+      bar.append(document.createElement("i"));
+      this.el.status.after(bar);
+      this.creationBar = bar;
+    }
+    const bar = this.creationBar;
+    bar.hidden = !waiting;
+    if (!waiting) {
+      this.creationStage = null;
+      clearInterval(this.creationTimer);
+      this.creationTimer = 0;
+      return;
+    }
+    // Shares of the bar: asked 0 to 0.1, writing to 0.75, testing to 0.97.
+    const stage = state === "testing" ? "testing" : this.writing.has(key) || this.preparing.has(key) ? "writing" : "asked";
+    const span = { asked: [0, 0.1, 2], writing: [0.1, 0.75, 16], testing: [0.75, 0.97, 4] }[stage] as [number, number, number];
+    const now = Date.now();
+    const shown = this.creationStage?.key === key ? this.fill(this.creationStage, now) : 0;
+    if (this.creationStage?.key !== key || this.creationStage.stage !== stage) this.creationStage = { key, stage, since: now, from: Math.max(span[0], shown) };
+    const paint = () => {
+      const s = this.creationStage;
+      if (!s) return;
+      const v = this.fill(s, Date.now());
+      (bar.firstChild as HTMLElement).style.width = `${Math.round(v * 100)}%`;
+      bar.setAttribute("aria-valuenow", String(Math.round(v * 100)));
+    };
+    paint();
+    if (!this.creationTimer) this.creationTimer = window.setInterval(paint, 250);
+  }
+
+  private fill(s: { stage: string; since: number; from: number }, now: number): number {
+    const [, to, seconds] = ({ asked: [0, 0.1, 2], writing: [0.1, 0.75, 16], testing: [0.75, 0.97, 4] } as Record<string, number[]>)[s.stage];
+    const t = (now - s.since) / 1000;
+    return s.from + (to - s.from) * (1 - Math.exp(-t / seconds));
   }
 }
 
