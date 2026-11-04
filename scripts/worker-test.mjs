@@ -22,6 +22,8 @@ const env = { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.
 // tokens of Opus 5.5: $0.0024, under the merge hold of $0.004. What each kind
 // of call was last sent is kept in `seen`, for the checks.
 let calls = 0;
+// Programs asked of the stub directly (not through a batch), for section 27.
+let spellCalls = 0;
 const STUB_USD = (100 * 4 + 100 * 20) / 1e6;
 const seen = {};
 const lastSpell = () => seen["You write the spells"] ?? { system: "", user: "" };
@@ -196,7 +198,8 @@ const stub = createServer((req, res) => {
     const last = body.messages?.at(-1)?.content;
     const user = typeof last === "string" ? last : Array.isArray(last) ? last.map((b) => b.text ?? "").join("") : "";
     const text = stubAnswer(n, system, user);
-    seen[system.slice(0, 20)] = { system, user };
+    seen[system.slice(0, 20)] = { system, user, cache: body.system?.[0]?.cache_control ?? null };
+    if (system.startsWith("You write the spells")) spellCalls++;
     setTimeout(() => {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
@@ -237,49 +240,61 @@ const vars = {
   EMAIL_API_URL: `${stubUrl}/emails`,
   EMAIL_API_KEY: "email-test",
   EMAIL_FROM: "magic@example.test",
+  // 4.2: no item is written ahead at the merge, so every section before 27
+  // counts the calls it always counted; section 27 starts the Worker again
+  // with a cap.
+  AHEAD_DAILY_USD: "0",
 };
-const dev = spawn(
-  "npx",
-  [
-    "wrangler",
-    "dev",
-    "--port",
-    String(port),
-    "--ip",
-    "127.0.0.1",
-    "--persist-to",
-    STATE,
-    "--show-interactive-dev-session=false",
-    "--log-level",
-    "error",
-    "--test-scheduled",
-    ...Object.entries(vars).flatMap(([k, v]) => ["--var", `${k}:${v}`]),
-  ],
-  { env, stdio: ["ignore", "inherit", "pipe"], detached: true },
-);
 // What the Worker logs, kept for the checks that read it (the cron, 4.1).
 let workerLog = "";
-dev.stderr.on("data", (chunk) => {
-  workerLog += chunk;
-  process.stderr.write(chunk);
-});
 const BASE = `http://127.0.0.1:${port}`;
-for (let i = 0; ; i++) {
-  try {
-    if ((await fetch(`${BASE}/api/health`)).ok) break;
-  } catch {
-    // not up yet
+let dev = null;
+async function startDev(extra = {}) {
+  dev = spawn(
+    "npx",
+    [
+      "wrangler",
+      "dev",
+      "--port",
+      String(port),
+      "--ip",
+      "127.0.0.1",
+      "--persist-to",
+      STATE,
+      "--show-interactive-dev-session=false",
+      "--log-level",
+      "error",
+      "--test-scheduled",
+      ...Object.entries({ ...vars, ...extra }).flatMap(([k, v]) => ["--var", `${k}:${v}`]),
+    ],
+    { env, stdio: ["ignore", "inherit", "pipe"], detached: true },
+  );
+  dev.stderr.on("data", (chunk) => {
+    workerLog += chunk;
+    process.stderr.write(chunk);
+  });
+  for (let i = 0; ; i++) {
+    try {
+      if ((await fetch(`${BASE}/api/health`)).ok) break;
+    } catch {
+      // not up yet
+    }
+    if (i > 120) throw new Error("wrangler dev did not start");
+    await new Promise((r) => setTimeout(r, 500));
   }
-  if (i > 120) throw new Error("wrangler dev did not start");
-  await new Promise((r) => setTimeout(r, 500));
 }
+await startDev();
 
-function stop() {
+function killDev() {
   try {
     process.kill(-dev.pid);
   } catch {
     // already gone
   }
+}
+
+function stop() {
+  killDev();
   stub.close();
   rmSync(STATE, { recursive: true, force: true });
 }
@@ -2296,6 +2311,252 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
       `${r.status} ${r.data?.error ?? ""}`,
     );
   }
+  await reset();
+}
+
+// 27. Every item written at the merge (4.2, worker/ahead.ts): a new item's
+// program is written by a background job the merge starts, paid by the
+// player who merged, once for everyone; a player asking meanwhile waits for
+// it instead of paying again; a known item without a program is written the
+// first time someone gets it; the day's cap sends the rest back to first
+// use; a player who cannot pay is not billed; a big item goes to the big
+// model through the Batch API with no draft; the burst guard does not count
+// the jobs; the spell writer's prompt is cached for an hour.
+{
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev({ AHEAD_DAILY_USD: "1.5" });
+  await reset();
+  await db.prepare("DELETE FROM writes").run();
+  const until = async (fn, ms = 15000) => {
+    const end = Date.now() + ms;
+    for (;;) {
+      const v = await fn();
+      if (v || Date.now() > end) return v;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  };
+  // Inputs nobody merged yet: Seed A to Seed H.
+  const seedAt = Date.now();
+  for (const c of "ABCDEFGH")
+    await db
+      .prepare("INSERT OR IGNORE INTO elements (key, name, emoji, kind, depth, tier, created_at) VALUES (?, ?, '🌱', 'spell', 1, 'cantrip', ?)")
+      .bind(`seed ${c.toLowerCase()}`, `Seed ${c}`, seedAt)
+      .run();
+  const writeOf = (key) => db.prepare("SELECT * FROM writes WHERE key = ?").bind(key).first();
+  const programs = (key) =>
+    db
+      .prepare("SELECT COUNT(*) AS n FROM programs WHERE key = ?")
+      .bind(key)
+      .first()
+      .then((r) => r.n);
+
+  // A new item: the merge says it is being written, and the job writes it.
+  const ann = await invite("Ahead Ann", 5);
+  const before = spellCalls;
+  const m = await merge(ann, "Seed A", "Seed B");
+  const key = m.data.element.name.toLowerCase();
+  check("ahead: a merge that makes a new item says its program is being written", m.status === 200 && m.data.writing === true, JSON.stringify(m.data));
+  const done = await until(async () => (await writeOf(key))?.status === "done");
+  const row = await writeOf(key);
+  check(
+    "ahead: the job writes the new item's program, as a trial, without anyone asking",
+    done && (await programs(key)) === 1 && spellCalls === before + 1,
+    JSON.stringify(row),
+  );
+  const paid = await db
+    .prepare("SELECT COUNT(*) AS n, SUM(usd) AS usd FROM spend WHERE invite = ? AND call IN ('describe', 'intent', 'spell')")
+    .bind(ann.id)
+    .first();
+  check(
+    "ahead: the player whose merge started it pays for it, and the job records what it cost",
+    paid.n === 3 && Math.abs(row.usd - paid.usd) < 1e-9,
+    JSON.stringify(paid),
+  );
+  check(
+    "ahead: the spell writer's prompt is cached for an hour",
+    seen["You write the spells"]?.cache?.ttl === "1h",
+    JSON.stringify(seen["You write the spells"]?.cache),
+  );
+  // Anyone asking now gets that program, free.
+  const bob = await invite("Ahead Bob", 5);
+  const got = await api("/api/spell", { invite: bob.secret, body: { name: m.data.element.name, ahead: true } });
+  check(
+    "ahead: another player gets the program written ahead, with no new call",
+    got.status === 200 && got.data.program.trial === true && spellCalls === before + 1,
+  );
+
+  // A known item without a program, reached by two players at once: one job, one program, one bill.
+  const now = Date.now();
+  await db.batch([
+    db
+      .prepare("INSERT INTO elements (key, name, emoji, kind, depth, tier, created_at) VALUES ('ember ward', 'Ember Ward', '🔥', 'spell', 2, 'minor', ?)")
+      .bind(now),
+    db.prepare("INSERT INTO recipes (pair, a, b, result, created_at) VALUES ('seed d+seed e', 'seed d', 'seed e', 'ember ward', ?)").bind(now),
+    db.prepare("INSERT INTO recipes (pair, a, b, result, created_at) VALUES ('seed d+seed f', 'seed d', 'seed f', 'ember ward', ?)").bind(now),
+  ]);
+  const cal = await invite("Ahead Cal", 5);
+  const calls0 = spellCalls;
+  const [r1, r2] = await Promise.all([merge(ann, "Seed D", "Seed E"), merge(cal, "Seed D", "Seed F")]);
+  check(
+    "ahead: a known item without a program, got by a merge, is written now",
+    r1.data.writing === true || r2.data.writing === true,
+    `${r1.data.writing} ${r2.data.writing}`,
+  );
+  // Asked for while the job writes it: the answer waits for the job.
+  const asked = await api("/api/spell", { invite: cal.secret, body: { name: "Ember Ward", ahead: true } });
+  await until(async () => (await writeOf("ember ward"))?.status === "done");
+  check(
+    "ahead: two players reaching it at once and one asking meanwhile make one program and one call",
+    asked.status === 200 && !!asked.data.program?.code && (await programs("ember ward")) === 1 && spellCalls === calls0 + 1,
+    `${asked.status} ${JSON.stringify(asked.data).slice(0, 120)} calls ${spellCalls - calls0}`,
+  );
+
+  // The day's cap: past it, an item is not written ahead; first use writes it, as before 4.2.
+  await db
+    .prepare("INSERT INTO writes (key, invite, cause, status, day, queued_at, usd) VALUES ('seeded spend', 'admin', 'new', 'done', ?, ?, 1.499)")
+    .bind(new Date().toISOString().slice(0, 10), Date.now())
+    .run();
+  const calls1 = spellCalls;
+  const capped = await merge(ann, "Seed A", "Seed C");
+  const ck = capped.data.element.name.toLowerCase();
+  await until(async () => (await writeOf(ck))?.status === "capped");
+  check(
+    "ahead: past the day's cap, an item is not written ahead",
+    (await writeOf(ck))?.status === "capped" && spellCalls === calls1,
+    JSON.stringify(await writeOf(ck)),
+  );
+  const first = await api("/api/spell", { invite: bob.secret, body: { name: capped.data.element.name, ahead: true } });
+  const bobPaid = await db.prepare("SELECT COUNT(*) AS n FROM spend WHERE invite = ? AND call = 'spell'").bind(bob.id).first();
+  check("ahead: a capped item is written on first use, paid by who uses it", first.status === 200 && first.data.program.trial === true && bobPaid.n === 1);
+  await db.prepare("DELETE FROM writes WHERE key = 'seeded spend'").run();
+  // Past 80% of the month's budget, nothing is written ahead either.
+  await db.prepare("INSERT INTO spend (at, call, model, usd, invite) VALUES (?, 'seed', 'none', 40, 'admin')").bind(Date.now()).run();
+  const late = await merge(ann, "Seed B", "Seed C");
+  const lk = late.data.element.name.toLowerCase();
+  await until(async () => (await writeOf(lk))?.status === "capped");
+  check("ahead: past 80% of the month's budget, an item is not written ahead", (await writeOf(lk))?.status === "capped", JSON.stringify(await writeOf(lk)));
+  await db.prepare("DELETE FROM spend WHERE call = 'seed'").run();
+
+  // A version 1 spec (from before programs) is not a program: written ahead.
+  await db.batch([
+    db
+      .prepare("INSERT INTO elements (key, name, emoji, kind, depth, tier, created_at) VALUES ('old rain', 'Old Rain', '🌧️', 'spell', 2, 'minor', ?)")
+      .bind(now),
+    db.prepare("INSERT INTO spells (key, spec, model, version, created_at) VALUES ('old rain', '{}', 'old', 1, ?)").bind(now),
+    db.prepare("INSERT INTO recipes (pair, a, b, result, created_at) VALUES ('seed a+seed h', 'seed a', 'seed h', 'old rain', ?)").bind(now),
+  ]);
+  const old = await merge(cal, "Seed A", "Seed H");
+  await until(async () => (await writeOf("old rain"))?.status === "done");
+  check(
+    "ahead: an item with only a version 1 spec from before programs is written ahead",
+    old.data.writing === true && (await writeOf("old rain"))?.status === "done",
+    JSON.stringify(await writeOf("old rain")),
+  );
+
+  // A player who cannot pay: the job is not billed to anyone, the item waits for first use.
+  const dee = await invite("Ahead Dee", 0.003);
+  await db.batch([
+    db
+      .prepare("INSERT INTO elements (key, name, emoji, kind, depth, tier, created_at) VALUES ('ash veil', 'Ash Veil', '🌫️', 'spell', 2, 'minor', ?)")
+      .bind(now),
+    db.prepare("INSERT INTO recipes (pair, a, b, result, created_at) VALUES ('seed e+seed f', 'seed e', 'seed f', 'ash veil', ?)").bind(now),
+  ]);
+  await merge(dee, "Seed E", "Seed F");
+  await until(async () => ["unpaid", "done", "failed"].includes((await writeOf("ash veil"))?.status));
+  const deeSpent = await db.prepare("SELECT COALESCE(SUM(usd), 0) AS t FROM spend WHERE invite = ?").bind(dee.id).first();
+  check(
+    "ahead: a player whose allowance cannot take it is not billed, and the item waits for first use",
+    (await writeOf("ash veil"))?.status === "unpaid" && deeSpent.t === 0,
+    JSON.stringify(await writeOf("ash veil")),
+  );
+
+  // A big item: the big model through the Batch API, no draft, collected when the batch ends.
+  await db.batch([
+    db
+      .prepare(
+        "INSERT INTO elements (key, name, emoji, kind, depth, tier, created_at) VALUES ('star forge', 'Star Forge', '🌟', 'artifact', 6, 'legendary', ?)",
+      )
+      .bind(now),
+    db.prepare("INSERT INTO recipes (pair, a, b, result, created_at) VALUES ('seed g+seed h', 'seed g', 'seed h', 'star forge', ?)").bind(now),
+  ]);
+  const calls2 = spellCalls;
+  const big = await merge(ann, "Seed G", "Seed H");
+  await until(async () => (await db.prepare("SELECT COUNT(*) AS n FROM rewrites WHERE key = 'star forge' AND cause = 'ahead'").first()).n === 1);
+  const waiting = await api("/api/spell", { invite: bob.secret, body: { name: "Star Forge", ahead: true } });
+  check(
+    "ahead: a big item goes to the big model through the Batch API, with no draft written",
+    big.data.writing === true && spellCalls === calls2 && waiting.status === 202 && waiting.data.writing === true && waiting.data.retry === 15000,
+    `${waiting.status} ${JSON.stringify(waiting.data).slice(0, 160)}`,
+  );
+  await api("/api/admin/poll-batches", { admin: true, body: {} });
+  const bigRow = await writeOf("star forge");
+  const bigProgram = await db.prepare("SELECT origin, status, model FROM programs WHERE key = 'star forge'").first();
+  check(
+    "ahead: the big item's program comes back as a trial of the big model, billed to the merger",
+    bigRow.status === "done" && bigProgram?.status === "trial" && bigProgram?.origin === "new" && bigRow.usd > 0,
+    `${JSON.stringify(bigRow)} ${JSON.stringify(bigProgram)}`,
+  );
+
+  // A failed test run is written once more by the model the tier calls for:
+  // Opus for a big item (the owner's call in 4.2), Haiku for a small one.
+  const bigTrial = await db.prepare("SELECT id FROM programs WHERE key = 'star forge' AND status = 'trial'").first();
+  const bigFail = await api("/api/spell/check", {
+    invite: bob.secret,
+    body: { name: "Star Forge", id: bigTrial.id, ok: false, problem: "promise", detail: "barely safer", stats: {} },
+  });
+  const bigRewrite = await db.prepare("SELECT model FROM rewrites WHERE key = 'star forge' AND cause = 'check'").first();
+  check(
+    "ahead: a big item whose test fails is written again by Opus, not Haiku",
+    bigFail.status === 200 && bigFail.data.program.trial === true && bigRewrite?.model === "claude-opus-5-5",
+    `${bigFail.status} ${JSON.stringify(bigRewrite)}`,
+  );
+  const smallTrial = await db.prepare("SELECT p.id FROM programs p WHERE p.key = 'ember ward' AND p.status = 'trial'").first();
+  await api("/api/spell/check", {
+    invite: bob.secret,
+    body: { name: "Ember Ward", id: smallTrial.id, ok: false, problem: "nothing", detail: "nothing", stats: {} },
+  });
+  const smallRewrite = await db.prepare("SELECT model FROM rewrites WHERE key = 'ember ward' AND cause = 'check'").first();
+  check("ahead: a small item whose test fails is still written again by Haiku", smallRewrite?.model === "claude-haiku-5-5", JSON.stringify(smallRewrite));
+
+  // The burst guard counts players' requests, not the jobs their merges start.
+  const eve = await invite("Ahead Eve", 5);
+  const items = [];
+  for (let k = 0; k < 6; k++) {
+    const name = `Rune ${k}`;
+    items.push(name.toLowerCase());
+    await db.batch([
+      db
+        .prepare("INSERT INTO elements (key, name, emoji, kind, depth, tier, created_at) VALUES (?, ?, '🔣', 'spell', 2, 'cantrip', ?)")
+        .bind(name.toLowerCase(), name, now),
+      db
+        .prepare("INSERT INTO recipes (pair, a, b, result, created_at) VALUES (?, 'rune base', ?, ?, ?)")
+        .bind(`r${k}+rune base`, `r${k}`, name.toLowerCase(), now),
+    ]);
+  }
+  await db
+    .prepare("INSERT INTO elements (key, name, emoji, kind, depth, tier, created_at) VALUES ('rune base', 'Rune Base', '🔣', 'spell', 1, 'cantrip', ?)")
+    .bind(now)
+    .run();
+  for (let k = 0; k < 6; k++)
+    await db
+      .prepare("INSERT INTO elements (key, name, emoji, kind, depth, tier, created_at) VALUES (?, ?, '🔣', 'spell', 1, 'cantrip', ?)")
+      .bind(`r${k}`, `R${k}`, now)
+      .run();
+  const fast = await Promise.all(items.map((_, k) => merge(eve, "Rune Base", `R${k}`)));
+  await until(
+    async () => (await db.prepare("SELECT COUNT(*) AS n FROM writes WHERE key LIKE 'rune %' AND status != 'queued' AND status != 'writing'").first()).n === 6,
+    30000,
+  );
+  const runes = await db.prepare("SELECT status, COUNT(*) AS n FROM writes WHERE key LIKE 'rune %' GROUP BY status").all();
+  const refusals = await db.prepare("SELECT COUNT(*) AS n FROM refusals WHERE invite = ?").bind(eve.id).first();
+  check(
+    "ahead: six items reached at once are all written, and the burst guard refuses none of the jobs",
+    fast.every((r) => r.status === 200) && runes.results.length === 1 && runes.results[0].status === "done" && refusals.n === 0,
+    JSON.stringify(runes.results),
+  );
+  const report = await api("/api/admin/ahead", { admin: true });
+  check("ahead: the admin sees the day's writes against the cap", report.status === 200 && report.data.cap === 1.5 && report.data.rows.length > 0);
   await reset();
 }
 

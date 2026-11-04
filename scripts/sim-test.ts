@@ -26,6 +26,7 @@ import { capByDepth } from "../shared/tiers";
 import { joinsBoth } from "../worker/prompts";
 import type { Job } from "./challenge-worker";
 import { runCheck, type SceneReport } from "../src/sim/check";
+import { readResult } from "../src/checkresult";
 import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../shared/votes";
 import { pickExamples, words } from "../worker/programs";
 import { verdict, type LinkedPull } from "../worker/feedback";
@@ -37,6 +38,7 @@ import { helperProblem, withLibrary } from "../worker/evolve";
 import { body, bodyFrom, BUILDS, EXTRA, FEATURES, ITEMS, MAX_MODEL_BOXES, modelOf, planOfModel, PLANS, stillModelColor } from "../src/sim/body";
 import type { BodySpec, Feature, ModelBox } from "../src/sim/body";
 import { sharedFaces } from "../src/sim/voxel/faces";
+import { FLUID_LIFT, columnTop, surfaceY } from "../src/sim/voxel/terrain";
 import { MODELS } from "../src/sim/voxel/models";
 import { easeGround, walkGround, type Footing } from "../src/sim/voxel/walk";
 import { names } from "../src/sim/social";
@@ -702,6 +704,43 @@ for (const { stream, report: r } of sceneReports.sort((a, b) => a.stream - b.str
     r.artifacts.map((a) => `${a.name} ${a.deeds} (${a.did.join(", ")})`).join("; "),
   );
 }
+// 4.2: no water drawn in the plane of its own land. The land's top is whole
+// voxels and the water's is not, so shallow water lay level with the sand
+// under it and the two flickered through each other on a phone (462 to 3,410
+// wet cells within 0.05 of their land on these islands before the fix).
+{
+  let wet = 0;
+  let flat = 0;
+  for (const [size, seed] of [
+    [112, 11],
+    [112, 3],
+    [160, 7],
+    [208, 5],
+  ]) {
+    const w = generateWorld(size, size, seed);
+    for (let i = 0; i < w.n; i++) {
+      if (w.fluid[i] === F.NONE || w.depth[i] <= 0.02) continue;
+      wet++;
+      if (surfaceY(w, i) - columnTop(w, i) < FLUID_LIFT - 1e-9) flat++;
+    }
+  }
+  check("no water surface lies in the plane of the land under it", wet > 1000 && flat === 0, `${flat} of ${wet} wet cells`);
+}
+
+// 4.2: what the check frame says reaches the Worker as it was meant. Until
+// 4.2 a broken promise or an idle artifact arrived as "not ok, no problem",
+// and the Worker promoted it like a pass.
+{
+  const promise = readResult({ ok: false, problem: "promise", detail: "barely safer", stats: { saved: 0.1 } });
+  const idle = readResult({ ok: false, problem: "idle", detail: "changed nothing", stats: { acted: 0 } });
+  const unnamed = readResult({ ok: false, detail: "?" });
+  const pass = readResult({ ok: true, problem: null, detail: "fine", stats: { cells: 9 }, phases: { cast: 120 } });
+  check("a broken promise from the check frame stays a broken promise", !promise.ok && promise.problem === "promise", JSON.stringify(promise));
+  check("an idle artifact from the check frame stays idle", !idle.ok && idle.problem === "idle", JSON.stringify(idle));
+  check("a failure the frame could not name is a crash, never a pass", !unnamed.ok && unnamed.problem === "crash", JSON.stringify(unnamed));
+  check("a pass stays a pass, with its timings", pass.ok && pass.problem === null && pass.phases?.cast === 120, JSON.stringify(pass));
+}
+
 check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length === SCENE_STREAMS);
 {
   const unsolved = CHALLENGES.filter((c) => !verifiedChallenges.get(c.id)?.ok).map((c) => `${c.id} (${verifiedChallenges.get(c.id)?.wins ?? "?"} wins)`);

@@ -80,7 +80,7 @@ export class Challenges {
   private attempt: Attempt | null = loadAttempt();
   private picked: string | null = null;
   private busy = false;
-  onDiscovered: (key: string) => void = () => {};
+  onDiscovered: (key: string, writing: boolean) => void = () => {};
   showWorld: () => void = () => {};
   showSelf: () => void = () => {};
 
@@ -225,7 +225,7 @@ export class Challenges {
       const label = `${result.element.emoji} ${result.element.name}`;
       if (result.firstDiscovery) toast(`First discovery: ${label}`, "special");
       else toast(newForMe ? `New: ${label}` : label);
-      if (newForMe) this.onDiscovered(made);
+      if (newForMe) this.onDiscovered(made, result.writing === true);
     } catch (err) {
       toast(err instanceof Error ? err.message : "The merge failed", "error");
     } finally {

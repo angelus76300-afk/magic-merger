@@ -46,6 +46,10 @@ export interface CheckResult {
     // The five minute test of an artifact (3.7): what it changed after its arrival.
     acted?: number;
   };
+  // Milliseconds of work in each part (4.2, measured, never part of the
+  // verdict): control (the island left alone), cast (the spell's own run),
+  // protect and acts (the probes).
+  phases?: Record<string, number>;
 }
 
 const SIZE = 112;
@@ -204,6 +208,8 @@ let control: { snaps: Snapshot[]; island: Island } | null = null;
 
 function* controlUpTo(seconds: number): Generator<void, Snapshot[]> {
   const outer = Math.random;
+  const was = phase;
+  phase = "control";
   if (!control) {
     const isl = island([]);
     control = { snaps: [snapshot(isl.world)], island: isl };
@@ -220,6 +226,7 @@ function* controlUpTo(seconds: number): Generator<void, Snapshot[]> {
     c.snaps.push(snapshot(c.island.world));
   }
   Math.random = outer;
+  phase = was;
   return c.snaps;
 }
 
@@ -228,11 +235,34 @@ function* controlUpTo(seconds: number): Generator<void, Snapshot[]> {
 // while it runs (seeded, so a check gives the same answer every time).
 export function* checkProgram(req: CastRequest): Generator<void, CheckResult> {
   const random = Math.random;
+  const phases: Record<string, number> = {};
+  phase = "cast";
   try {
-    return yield* check(req);
+    const it = check(req);
+    for (;;) {
+      const at = phase;
+      const t0 = performance.now();
+      const r = it.next();
+      phases[at] = (phases[at] ?? 0) + performance.now() - t0;
+      if (r.done) {
+        for (const k of Object.keys(phases)) phases[k] = Math.round(phases[k]);
+        return { ...r.value, phases };
+      }
+      yield;
+    }
   } finally {
     Math.random = random;
   }
+}
+
+// Which part of the check is running, for its timing.
+let phase = "cast";
+
+// The control island and the probe runs without the spell are kept between
+// checks; measurements start from nothing with this.
+export function resetCheckCaches(): void {
+  control = null;
+  probeCache.clear();
 }
 
 function* check(req: CastRequest): Generator<void, CheckResult> {
@@ -324,12 +354,14 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
   const detail = `${cells} cells, ${voxels} blocks and ${creatures} creatures changed${bodies ? `, ${bodies} bodies flew` : ""}.`;
   let result: CheckResult = { ok: true, problem: null, detail, stats };
   if (parseIntents(req.intents).includes("protect")) {
+    phase = "protect";
     const probe = yield* protectProbe(req);
     const withSaved = { ...stats, saved: probe.saved };
     if (!probe.ok) return { ok: false, problem: "promise", detail: probe.detail, stats: withSaved };
     result = { ok: true, problem: null, detail: `${detail} ${probe.detail}`, stats: withSaved };
   }
   if (req.kind === "artifact") {
+    phase = "acts";
     const acts = yield* actsProbe(req);
     const withActed = { ...result.stats, acted: acts.acted };
     if (!acts.ok) return { ok: false, problem: "idle", detail: acts.detail, stats: withActed };
@@ -346,6 +378,17 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
 // body of its own still at work. A statue that only stands there fails.
 export const ACT_SECONDS = 300;
 const ACT_FROM = 15;
+
+// 4.2: the five minute test stops as soon as the artifact has acted, since
+// nothing after that can make it fail: once a second it looks at what the
+// end of the test would count (its deeds, its creatures' deeds since the
+// arrival, its material spreading, a body of its own at work for 30 s). An
+// artifact that never acts still runs the full five minutes. `full` runs
+// every test to the end, to compare (scripts/test-run-timing.ts).
+let fullActs = false;
+export function fullActsProbe(on: boolean): void {
+  fullActs = on;
+}
 
 function* actsProbe(req: CastRequest): Generator<void, { ok: boolean; acted: number; detail: string }> {
   const errors: string[] = [];
@@ -369,6 +412,7 @@ function* actsProbe(req: CastRequest): Generator<void, { ok: boolean; acted: num
   let deedsAt = 0;
   let cellsAt = 0;
   let bodySeconds = 0;
+  const ownDeeds = () => world.landmarks.filter(isArtifact).reduce((sum, a) => sum + (a.art.key === key ? a.art.deeds : 0), 0);
   for (let k = 0; k < ACT_SECONDS / TICK && !errors.length; k++) {
     step(world, rt, isl.life);
     if (k === Math.round(ACT_FROM / TICK)) {
@@ -376,6 +420,10 @@ function* actsProbe(req: CastRequest): Generator<void, { ok: boolean; acted: num
       cellsAt = materialCells();
     }
     if (k > ACT_FROM / TICK && k % 30 === 0 && rt.visuals.bodies.some((b) => b.alive && b.look !== "none")) bodySeconds++;
+    if (!fullActs && k % 30 === 29) {
+      const after = k > ACT_FROM / TICK;
+      if (ownDeeds() > 0 || bodySeconds >= 30 || (after && creatureDeeds() - deedsAt > 0) || (after && Math.abs(materialCells() - cellsAt) >= MIN_CELLS)) break;
+    }
     if (k % 5 === 4) {
       yield;
       Math.random = isl.random;

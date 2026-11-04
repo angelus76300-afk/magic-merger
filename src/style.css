@@ -952,6 +952,46 @@ input {
   opacity: 0.6;
 }
 
+/* 4.2: a chip says why it is not ready yet, and when it becomes ready. */
+.chip-castable[data-state="writing"],
+.chip-castable[data-state="testing"] {
+  opacity: 0.85;
+  border-style: dashed;
+}
+
+.chip-state {
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 15px;
+  letter-spacing: 0.02em;
+  color: var(--muted, #9a93b8);
+  background: rgb(255 255 255 / 8%);
+}
+
+.chip-castable[data-state="writing"] .chip-state,
+.chip-castable[data-state="testing"] .chip-state {
+  animation: chip-state-pulse 1.4s ease-in-out infinite;
+}
+
+.chip-castable[data-state="ready"] .chip-state {
+  color: #1b1530;
+  background: var(--accent, #f4d58d);
+}
+
+@keyframes chip-state-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chip-castable .chip-state {
+    animation: none;
+  }
+}
+
 .card-written {
   flex-basis: 100%;
   font-size: 12px;

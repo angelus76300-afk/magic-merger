@@ -91,7 +91,7 @@ A new program is a trial until a browser has cast it on a practice island (`src/
 2. **nothing visible**: fewer than 3 land cells, 4 blocks and 1 creature differ from the control and no body flew for half a second (particles, flashes and circles alone do not count);
 3. **an island wiped**: more than 60% of the land changed (90% for legendary), or a spell up to grand that leaves fewer than a fifth of the villagers and houses. Cosmic spells may (decision 1 below).
 
-A failed trial is written once more by Haiku with the failing code and what the test found; a second failure keeps the program that was live before, or, for a new spell, keeps the second one (something to cast is better than nothing, and a crash still has the repair loop). The 14 old programs in `lab/legacy` and the 6 reference spells all pass, and 131 of the 132 programs stored on 2026-11-02 (Earth crashes); it takes 0.1 to 1.2 s in Node.
+A failed trial is written once more with the failing code and what the test found, by Haiku, or since 4.2 by Opus for a legendary or cosmic item, so a big item's Opus program is never replaced by a Haiku one (the owner's call: before 4.2 the probes never failed anything in a browser, so it had not come up); a second failure keeps the program that was live before, or, for a new spell, keeps the second one (something to cast is better than nothing, and a crash still has the repair loop). The 14 old programs in `lab/legacy` and the 6 reference spells all pass, and 131 of the 132 programs stored on 2026-11-02 (Earth crashes); it takes 0.1 to 1.2 s in Node.
 
 It runs in the browser because the Worker cannot: Cloudflare Workers forbid `new Function`, and a spell is code. It runs in a second hidden sandboxed iframe (`check.html`, same CSP as the World) so a program under test shares nothing with the player's island, and it works before the World tab is opened. It runs 8 ms at a time between frames. A browser could lie about a result; the worst it can do is one extra Haiku call per trial, since a program written to fix a failed test is never fixed again.
 
@@ -350,7 +350,7 @@ Asked after 3.6: the protection spell in play had not changed. Two causes, both 
 Now:
 
 1. **Intents for every element**, 25 per cron run on the small model, from the stored entry (about $0.0001 each; `POST /api/admin/intents` does 80 at once).
-2. **A live program that never faced the probe of its promise** is flagged in `/api/spells/live`; the next browser that holds it tests it in the check frame. A pass is recorded. A broken promise is written once more by the small model, with what the probe found, as a trial whose parent is the live program (origin `promise`); the live one stays until the trial passes its own test run. Never twice for the same program, and within the rewrite budget. One player's page load at a time, so never in bulk, and only for spells someone plays.
+2. **A live program that never faced the probe of its promise** is flagged in `/api/spells/live`; the next browser that holds it tests it in the check frame. A pass is recorded. A broken promise is written once more (by the small model; since 4.2 by the big one for a legendary or cosmic item), with what the probe found, as a trial whose parent is the live program (origin `promise`); the live one stays until the trial passes its own test run. Never twice for the same program, and within the rewrite budget. One player's page load at a time, so never in bulk, and only for spells someone plays.
 
 `npm run test:worker` checks the backfill, the flag, the rewrite as a trial with the live program kept, and that nothing is rewritten twice.
 
@@ -456,6 +456,44 @@ The upload has its own limit (2 MB a body, `PROGRESS_LIMITS` a document); every 
 ### Existing friends, export, deletion
 
 A browser playing with a link is offered the account once, after the welcome; "Later" is an answer, and the `?` button keeps the offer. Nothing changes until they answer: the invite header keeps playing. Export is one JSON of every row keyed by the account. Deletion removes passkeys, sessions, challenges, links, progress, votes, casts, activity, ideas and their votes, wins and reports, sets `elements.invite` to null (the element stays, the First Discovery no longer names anyone), and keeps the invite row as deleted with its spend, so the month's budget stays whole and the id is never reused. The privacy note says all of this.
+
+## Faster creation (4.2)
+
+From a drop to a castable item used to take 27 s for the first small spell in the review's phone sized run, with 2 of 12 chips ready; the measurement (`docs/measurements/creation-4.2.md`) found where it went: about 15 s of Claude (grimoire entry 2 s, intent 1.5 s, program 11 to 17 s for Haiku, 25 s for a draft, 30 s for Opus), then the test run, which the hidden frame ran 7 times slower than its work (a protection cantrip: 3.7 s of work, 27.7 s), and artifacts never finished it at all (passed by the 60 s timeout, so their five minute test decided nothing), all one item after another. The rules, set by the owner: no lower quality (no fast mode, no weaker draft shown to players), and the extra cost of writing items nobody casts is accepted inside a daily cap.
+
+### The test run in a Web Worker
+
+The check frame (`src/sim/checkframe.ts`) is still the sandbox: an iframe with an opaque origin and a CSP with no network. It now makes up to two Web Workers from a blob (`src/sim/checkworker.ts`, built inline by Vite): a blob worker has the frame's opaque origin and inherits its CSP, so the only header that changed is `worker-src blob:` on `/check`. A worker runs the test from start to end, simulation only, off the page's thread, and keeps the control island and the probe runs without a spell between checks. A program that keeps it busy 45 s is stopped by terminating the worker, which the frame could never do; that counts as "did not finish", a pass, as a slow test always has. A browser that cannot make the worker runs the test in the frame, as before.
+
+The five minute test of an artifact stops as soon as the artifact has acted (its own deeds, its creatures' deeds since the arrival, its material spreading, a body of its own at work for 30 s): nothing after that can make it fail. One that never acts still runs five minutes. On the 103 live artifacts the early stop gives the same verdict as the full run every time (`COMPARE=1 scripts/test-run-timing.ts`).
+
+### Every item written at the merge
+
+A merge that makes a new item, or reaches a known item that has no program, records one row in `writes` and sends its key to the `WRITES` Cloudflare Queue (`worker/ahead.ts`). A queue, not `waitUntil`, since a big model's program outlives the response. The consumer writes it with the model its tier calls for, as on first use: Haiku up to grand at once; above, Opus through the Batch API at half price with no Haiku draft, the batch polled every 30 s by delayed queue messages (the ten minute cron stays the fallback). The player whose merge started it pays, from their $5; the burst guard does not count jobs.
+
+Idempotent three times: one row per item ever (its primary key), a claim in one statement (a message delivered twice runs once), and the same in-flight key as a player's own request (`spell:<key>`). A player asking while the job writes gets "writing" with when to ask again (`/api/spell` answers 202) instead of paying a second time; an older page waits, then gets a 503 to retry.
+
+`AHEAD_DAILY_USD` ($1.50) caps these writes for everyone together; past it, past 80% of the month's budget, or when the player's allowance cannot take it, the row says `capped` or `unpaid` and the item is written on first use, exactly as before 4.2. `GET /api/admin/ahead` lists them by day. "0" turns writing ahead off.
+
+Why no draft for big items: a draft is the weaker version shown first (2.80 against 3.80 blind in 3.3; both votes on drafts so far were down), and Opus directly at the merge would cost about twice the batch (one Opus program measured $0.125 direct, $0.062 at batch price), which breaks the rule that the cost of a spell must not rise. A big item picked before its batch ends says "writing" for a few minutes (batches took 2.5 to 4.7 minutes in November).
+
+### Fewer waits
+
+The page asks for the program of every item the merge said is being written, at once, three at a time (one at a time before, each waiting for the last one's test run); its test run starts as soon as it arrives. A program that passed its test here is castable at once and the verdict goes to the Worker in the background; only a failure waits for the rewrite. On the Worker the grimoire entry comes first (the program is written from it), then the intent call, the API library, the first recipe and the library examples side by side.
+
+### The hour's prompt cache
+
+The spell writer's system prompt (8,422 tokens, the same for every program) is cached for an hour on every model and in batches (`worker/oracle.ts`, `SPELL_CACHE`). Until 4.2 the big model skipped the cache as "rare and lone"; November's ledger says otherwise: 100 of 116 big spell calls and 251 of 279 small ones started within five minutes of the previous one, and most of the rest within the hour. An hour's write costs twice the input price and a read a tenth (a twentieth on Opus); hour writes are now priced as such in the ledger. Merges, grimoire entries and intents keep their five minutes: the last two are under the 512 token minimum and are never cached anyway.
+
+The prompt was not trimmed. In the 275 programs written in November some parts are rarely used (floating islands 0, towers 1, custom goals 3, models 0), but a part a few programs reach for may be exactly what makes a World Tree; once cached, the whole prompt costs a tenth of its input price, so a fifth less of it saves under $0.0002 a program; and 20 spells cannot tell a small loss of quality from noise.
+
+### What players see
+
+Chips in the spell bar say "writing" (the Worker writes it, or the page is asking), "testing" (its test run here) or, for a few seconds, "ready"; one toast names the items that became ready together.
+
+### A bug the measurement found
+
+The page read the check frame's answer with only three problems (crash, nothing, wiped), so a broken promise (3.4.2) or an idle artifact (3.7) reached the Worker as "not ok, no problem", and the Worker promoted it like a pass: the probes had decided nothing in players' browsers since they were added. Fifteen live programs carry such a verdict (2 new ones promoted, 12 legacy rechecks that never asked for their rewrite, 1 vote rewrite); they are listed in the measurement and left live (never rewrite in bulk). Every problem is read now, and a failure the frame cannot name is a crash.
 
 ## Challenges
 

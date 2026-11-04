@@ -89,12 +89,13 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
 }
 
 world.init();
-// New discoveries get their program written in the background (cheap tiers only).
-craft.onNewElement = (key) => world.ahead(key);
+// New discoveries: the Worker writes their program from the merge (4.2);
+// this page asks for it at once, and tests it as soon as it arrives.
+craft.onNewElement = (key, writing) => world.ahead(key, writing);
 // What a challenge's board finds joins the main inventory (3.7).
-challenges.onDiscovered = (key) => {
+challenges.onDiscovered = (key, writing) => {
   craft.refresh();
-  world.ahead(key);
+  world.ahead(key, writing);
 };
 
 setCardActions({
