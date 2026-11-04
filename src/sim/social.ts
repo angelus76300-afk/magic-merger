@@ -2,6 +2,7 @@ import { C, F, G } from "./materials";
 import type { World } from "./world";
 import { unpackLook } from "./villagers";
 import { deed, harmed, remember, villageOf } from "./kin";
+import { meter } from "./motion";
 import type { Creature, CreatureKind } from "./creatures";
 
 // How creatures notice each other and the things spells put in the world.
@@ -287,6 +288,7 @@ function attack(world: World, c: Creature, t: Creature, dps: number, dt: number)
 
 // Picks up the thing at a lure: the cell is cleared and carried home.
 function take(world: World, c: Creature, p: Presence): void {
+  if (meter) meter.done(c, "took");
   const i = Math.round(p.y) * world.w + Math.round(p.x);
   if (i < 0 || i >= world.n) return;
   const custom = world.materials;
@@ -308,6 +310,7 @@ function take(world: World, c: Creature, p: Presence): void {
 
 // A villager brings home what it carried; every few gifts the village builds a house.
 function deposit(world: World, c: Creature): void {
+  if (meter) meter.done(c, "delivered");
   c.data.carry = undefined;
   world.wealth++;
   const village = villageOf(world, c.homeX, c.homeY);

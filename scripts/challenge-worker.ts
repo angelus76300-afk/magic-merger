@@ -9,17 +9,20 @@ import { SOLUTIONS, replay, solves, type Replay } from "./challenge-replay";
 import { runScene } from "../src/sim/check";
 import { challengeById } from "../shared/challenges";
 import { Runtime } from "../src/sim/runtime";
+import { measureMotion } from "./motion-run";
 
 // As in sim-test.ts (review M8): no verdict depends on the machine's speed.
 Runtime.slowMs = Number(process.env.SLOW_MS) || Infinity;
 
 // A challenge of 3.7, verified with the plain solution of its hazard.
-export type Job = Replay | { scene: number; seconds: number } | { challenge: string };
+// 4.3: how creatures move, on one seed (motion-run.ts).
+export type Job = Replay | { scene: number; seconds: number } | { challenge: string } | { motion: number };
 
 const { jobs, next } = workerData as { jobs: Job[]; next: Int32Array };
 for (let k = Atomics.add(next, 0, 1); k < jobs.length; k = Atomics.add(next, 0, 1)) {
   const job = jobs[k];
-  if ("scene" in job) parentPort!.postMessage({ job, report: runScene(job.seconds, null, 300, undefined, job.scene) });
+  if ("motion" in job) parentPort!.postMessage({ job, motion: measureMotion(job.motion) });
+  else if ("scene" in job) parentPort!.postMessage({ job, report: runScene(job.seconds, null, 300, undefined, job.scene) });
   else if ("challenge" in job) {
     const def = challengeById(job.challenge)!;
     const plan = SOLUTIONS[def.scenario];

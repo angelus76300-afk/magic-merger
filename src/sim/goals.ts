@@ -30,6 +30,7 @@ import {
 import type { Behavior, Creature, CreatureKind } from "./creatures";
 import type { World } from "./world";
 import { artifactVisit, useArtifact, type Visit } from "./artifacts";
+import { meter } from "./motion";
 
 // Goals (3.6): nothing on the island just stands there. Every creature has a
 // goal from a small vocabulary (kin.ts, GOALS), needs that come before it
@@ -442,6 +443,7 @@ function hit(world: World, c: Creature, k: CreatureKind, m: Mind, t: Creature, d
     return;
   }
   t.dead = true;
+  if (meter) meter.done(c, "catch");
   deed(c, `${m.task === "fight" ? "killed" : "caught"} a ${base(t.kind)}`);
   if (m.task === "hunt" && hasNeeds(c, k)) setTask(m, "feast", t.x, t.y, 1, -1, t);
   else drop(m);
@@ -1305,6 +1307,7 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
   const t = m.target;
   const v = c.kind === "villager" ? villageOf(world, c.homeX, c.homeY) : null;
   const task = m.task;
+  if (meter) meter.done(c, task);
   drop(m);
   switch (task) {
     case "use": {

@@ -25,6 +25,8 @@ import { readDigest } from "../shared/chronicle";
 import { capByDepth } from "../shared/tiers";
 import { joinsBoth } from "../worker/prompts";
 import type { Job } from "./challenge-worker";
+import { MOTION_SEEDS, MOTION_SECONDS, type MotionReport } from "./motion-run";
+import { mergeMotion, motionLines, type KindMotion } from "../src/sim/motion";
 import { runCheck, type SceneReport } from "../src/sim/check";
 import { readResult } from "../src/checkresult";
 import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../shared/votes";
@@ -66,6 +68,8 @@ const SCENE_STREAMS = 3;
 const SCENE_SECONDS = 600;
 const idle: Job[] = [
   ...Array.from({ length: SCENE_STREAMS }, (_, n) => ({ scene: n, seconds: SCENE_SECONDS })),
+  // 4.3: how creatures move, two minutes on each of three seeds.
+  ...MOTION_SEEDS.map((motion) => ({ motion })),
   // 3.7: every challenge solved in the simulation by the plain solution of its hazard.
   ...CHALLENGES.map((c) => ({ challenge: c.id })),
   ...SCENARIOS.flatMap((s) => Array.from({ length: SEEDS }, (_, n) => ({ id: s.id, seed: (n + 1) * 7919, magic: false }))),
@@ -73,6 +77,8 @@ const idle: Job[] = [
 const idleResults = new Map<string, { status: string; errors: string[] }[]>();
 const sceneReports: { stream: number; report: SceneReport }[] = [];
 const verifiedChallenges = new Map<string, { ok: boolean; wins: number; runs: number }>();
+const motion: Record<string, KindMotion> = {};
+const motionErrors: string[] = [];
 const nextIdle = new Int32Array(new SharedArrayBuffer(4));
 const idleDone = Promise.all(
   Array.from({ length: Math.min(4, Math.max(2, availableParallelism() - 1)) }, () => {
@@ -85,14 +91,19 @@ const idleDone = Promise.all(
         errors,
         report,
         verified,
+        motion: moved,
       }: {
         job: Job;
+        motion?: MotionReport;
         status: string;
         errors: string[];
         report?: SceneReport;
         verified?: { ok: boolean; wins: number; runs: number };
       }) => {
-        if (verified && "challenge" in job) verifiedChallenges.set(job.challenge, verified);
+        if (moved) {
+          mergeMotion(motion, moved.kinds);
+          motionErrors.push(...moved.errors);
+        } else if (verified && "challenge" in job) verifiedChallenges.set(job.challenge, verified);
         else if (report && "scene" in job) sceneReports.push({ stream: job.scene, report });
         else if ("id" in job) idleResults.set(job.id, [...(idleResults.get(job.id) ?? []), { status, errors }]);
       },
@@ -704,6 +715,15 @@ for (const { stream, report: r } of sceneReports.sort((a, b) => a.stream - b.str
     r.artifacts.map((a) => `${a.name} ${a.deeds} (${a.did.join(", ")})`).join("; "),
   );
 }
+// 4.3: how creatures move (src/sim/motion.ts), an island of 112 cells for
+// two simulated minutes on seeds 3, 6 and 9: sharp turns (over 150 degrees
+// within half a second) per minute of creature life, natural ones (just
+// after finishing something) apart from flip-flops, where the flip-flops
+// come from, seconds stuck and action changes per minute.
+console.log(`\nmotion, island 112, seeds ${MOTION_SEEDS.join(", ")}, ${MOTION_SECONDS} s each`);
+for (const line of motionLines(motion)) console.log(`  ${line}`);
+check("motion runs without errors", motionErrors.length === 0 && Object.keys(motion).length > 0, motionErrors[0] ?? "");
+
 // 4.2: no water drawn in the plane of its own land. The land's top is whole
 // voxels and the water's is not, so shallow water lay level with the sand
 // under it and the two flickered through each other on a phone (462 to 3,410

@@ -10,6 +10,7 @@ import { packLook, randomLook, shirtOf, sizeOf, unpackLook } from "./villagers";
 import { denDown, goalOfCreature, hasNeeds, kindGoal, needsTick, pursue, stepGoals } from "./goals";
 import { abilitiesFromName, useAbilities } from "./abilities";
 import { stepArtifacts } from "./artifacts";
+import { meter } from "./motion";
 import { LOADS, deed, harmed, life, newMind, noteDeath, reborn, storyOn, tell, villageOf, type AbilitySpec, type Goal, type Mind } from "./kin";
 
 // What a spell-made creature does, declared rather than coded, so even a
@@ -479,6 +480,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   let pace = 1;
   let mood: Mood = null;
   let plan2: ReturnType<typeof social> = null;
+  // Which decision drove this tick's step, for the motion meter (4.3).
+  let drive = busy ? "asleep" : "idle";
   if (!busy) {
     // Danger is probed every third tick and remembered in between (3.6: goals
     // keep creatures on the move, and this was the dearest part of a tick).
@@ -491,7 +494,9 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       wantX = dx / d;
       wantY = dy / d;
       pace = 1.6;
+      drive = "fear";
     } else if (c.burning > 0) {
+      drive = "burning";
       // Panic: toward water if any is close, otherwise anywhere fast.
       const water = nearest(world, c.x, c.y, 14, (j) => world.fluid[j] === F.WATER);
       if (water) {
@@ -506,19 +511,23 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       wantX = dangerDir.x;
       wantY = dangerDir.y;
       pace = 1.5;
+      drive = "danger";
     } else if (c.calm > 0) {
       pace = 0;
+      drive = "calm";
     } else if (ai && ai.active !== "always" && daylight(world.time).night > 0.5 !== (ai.active === "night")) {
       // Out of its hours it rests where it is; a creature of the night that
       // daylight burns first looks for the shade of the woods (3.6).
       pace = 0;
       mood = "asleep";
+      drive = "asleep";
       const shade = ai.active === "night" && weak("light") && !shaded(world, i) ? shadeNear(world, c) : null;
       if (shade) {
         wantX = shade.x - c.x;
         wantY = shade.y - c.y;
         pace = 1.4;
         mood = null;
+        drive = "shade";
       }
       if (c.mind) {
         c.mind.action = shade ? "hiding from the sun" : `asleep until ${ai.active === "night" ? "night" : "day"}`;
@@ -530,24 +539,28 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       wantY = plan2.y - c.y;
       pace = plan2.pace;
       mood = plan2.mood;
+      drive = `social:${plan2.mood}`;
       if (c.mind) c.mind.action = plan2.mood === "fear" ? "running for its life" : plan2.mood === "angry" ? "fighting back" : c.mind.action;
     } else if (ai?.mode === "flee" && !c.mind?.tame && c.mind?.task !== "beg" && (c.mind?.hunger ?? 0) < 0.7 && behave(world, c, k, ai, dt)) {
       // Survival first: a deer runs from people and wolves before it eats.
       wantX = c.tx - c.x;
       wantY = c.ty - c.y;
       pace = 1.3;
+      drive = "flee";
       if (c.mind) c.mind.action = "running away";
     } else if (needs && (plan2 = pursue(world, c, k, dt))) {
       wantX = plan2.x - c.x;
       wantY = plan2.y - c.y;
       pace = plan2.pace;
       mood = plan2.mood;
+      drive = `pursue:${c.mind?.task ?? "none"}`;
     } else if (ai && ai.mode !== "wander" && ai.mode !== "flee" && behave(world, c, k, ai, dt)) {
       wantX = c.tx - c.x;
       wantY = c.ty - c.y;
       pace = ai.mode === "hunt" ? 1.3 : 1;
       if (Math.hypot(wantX, wantY) < 0.4) pace = 0;
       if (ai.mode === "hunt" && c.data.target) mood = "hunt";
+      drive = `behave:${ai.mode}`;
       if (c.mind) c.mind.action = ai.mode === "hunt" ? (c.data.target ? "hunting" : "prowling") : ai.mode === "guard" ? "on guard" : "following";
     } else if (!needs && (plan2 = pursue(world, c, k, dt))) {
       // Older spell creatures take up their goal when their behavior leaves them idle.
@@ -555,11 +568,17 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       wantY = plan2.y - c.y;
       pace = plan2.pace;
       mood = plan2.mood;
+      drive = `pursue:${c.mind?.task ?? "none"}`;
     } else {
       plan(world, c, k, dt);
       wantX = c.tx - c.x;
       wantY = c.ty - c.y;
-      if (Math.hypot(wantX, wantY) < 0.6) pace = 0;
+      drive = "plan";
+      if (Math.hypot(wantX, wantY) < 0.6) {
+        if (pace > 0 && meter && c.data.arrived !== c.goal) meter.done(c, "wander target");
+        c.data.arrived = c.goal;
+        pace = 0;
+      }
     }
     // Frightened people run for the nearest ward instead of away into the open.
     const scared = c.fear > 0 || c.burning > 0 || !!dangerDir || mood === "fear";
@@ -570,17 +589,20 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
         wantY = shelter.y - c.y;
         pace = Math.hypot(wantX, wantY) < shelter.r * 0.5 ? 0 : 1.6;
         mood = "fear";
+        drive = "shelter";
       }
     }
   }
 
   const len = Math.hypot(wantX, wantY);
+  let wanted = 0;
   if (len > 0 && pace > 0) {
     let speed = k.speed * pace * Math.sqrt(c.size);
     if (onGround && world.depth[i] > 0.3 && world.fluid[i] !== F.ICE) speed *= 0.5;
     if (onGround && world.fluid[i] === F.MUD) speed *= 0.3;
     const sx = (wantX / len) * speed * dt;
     const sy = (wantY / len) * speed * dt;
+    wanted = speed * dt;
     if (!blocked(world, c.x + sx * 3, c.y + sy * 3, c, k)) {
       c.x += sx;
       c.y += sy;
@@ -629,6 +651,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   if (c.hp <= 0) c.dead = true;
 
   if (k.tick) k.tick(c, dt);
+  if (meter) meter.after(c, world.time, dt, drive, pace > 0 ? wantX : 0, pace > 0 ? wantY : 0, wanted);
 }
 
 // A step of up to three cells toward (x, y) onto land it could stand on,
@@ -755,6 +778,7 @@ function behave(world: World, c: Creature, k: CreatureKind, ai: Behavior, dt: nu
           deed(c, "turned its victim into one of its own");
         } else if (target.hp <= 0) {
           target.dead = true;
+          if (meter) meter.done(c, "catch");
           deed(c, `killed a ${target.kind.split("#")[0]}`);
         }
         if (target.kind === "villager" && target.fear <= 0) {
