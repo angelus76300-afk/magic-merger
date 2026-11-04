@@ -1,7 +1,6 @@
-import type { CheckRequest } from "../shared/types";
+import { readResult, type CheckOutcome } from "./checkresult";
 
-// What a test run found, and how long its parts took (4.2, measured only).
-export type CheckOutcome = Omit<CheckRequest, "name" | "id"> & { phases?: Record<string, number> };
+export { readResult, type CheckOutcome };
 import type { CastRequest } from "./sim/runtime";
 
 // The test run of new programs, seen from the game page: a hidden sandboxed
@@ -75,32 +74,4 @@ export class Checker {
       this.frame!.contentWindow!.postMessage({ type: "check", id, spell }, "*");
     });
   }
-}
-
-// The frame runs spell code, so its answer is checked for shape.
-// Every problem the test run knows (src/sim/check.ts). Until 4.2 only the
-// first three were read here, so a program that broke its promise (3.4.2) or
-// stood idle for five minutes (3.7) reached the Worker as "not ok, no
-// problem" and was promoted like a pass.
-const PROBLEMS = ["crash", "nothing", "wiped", "promise", "idle"] as const;
-
-function numbers(raw: unknown, max: number): Record<string, number> {
-  const out: Record<string, number> = {};
-  if (raw && typeof raw === "object") {
-    for (const [k, v] of Object.entries(raw as Record<string, unknown>).slice(0, max)) if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
-  }
-  return out;
-}
-
-export function readResult(raw: Record<string, unknown> | undefined): CheckOutcome {
-  const problem = (PROBLEMS as readonly unknown[]).includes(raw?.problem) ? (raw!.problem as CheckOutcome["problem"]) : null;
-  const ok = raw?.ok === true && !problem;
-  // A failure the frame could not name is a crash, never a pass.
-  return {
-    ok,
-    problem: ok ? null : (problem ?? "crash"),
-    detail: typeof raw?.detail === "string" ? raw.detail.slice(0, 400) : "",
-    stats: numbers(raw?.stats, 20),
-    phases: numbers(raw?.phases, 8),
-  };
 }

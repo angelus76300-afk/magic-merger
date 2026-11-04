@@ -2,7 +2,7 @@ import type { ChronicleDigest } from "../shared/chronicle";
 import { elementKey } from "../shared/elements";
 import type { SpellProgram } from "../shared/spellcode";
 import { TIERS, tierFromDepth, type Tier } from "../shared/tiers";
-import type { SpellResponse } from "../shared/types";
+import type { CheckRequest, SpellResponse } from "../shared/types";
 import { DOWN_REASONS, REASON_LABEL, type DownReason } from "../shared/votes";
 import * as api from "./api";
 import { timeline } from "./timeline";
@@ -30,10 +30,20 @@ const WATCHDOG_MS = 20_000;
 // A crashing spell is sent back to Claude at most this often per session.
 const MAX_REPAIRS = 2;
 // Programs up to this tier are written by the cheap model (see worker/index.ts),
-// so they are written ahead of time, in the background, to skip the wait.
+// so this page asks for them ahead of time, in the background, to skip the
+// wait. Since 4.2 the Worker writes every new item at the merge itself
+// (worker/ahead.ts); this page then asks for any tier it was told is being
+// written, and asks for the cheap ones it was not told about, as before.
 const AHEAD_UP_TO: Tier = "grand";
 // How many of the newest items get written ahead when the World opens.
 const AHEAD_RECENT = 10;
+// 4.2: programs asked for side by side (one at a time before: twelve new
+// items took minutes to be ready, each waiting for the last one's test run).
+const AHEAD_PARALLEL = 3;
+// A program still being written by the Worker is asked for again after this
+// long, for this long at most.
+const WRITING_RETRY_MS = 4000;
+const WRITING_GIVE_UP_MS = 45 * 60_000;
 
 export interface WorldElements {
   stage: HTMLElement;
@@ -79,6 +89,12 @@ export class WorldHost {
   private expanded = readFlag(EXPAND_KEY);
   private checker = new Checker();
   private testing = new Set<string>();
+  // 4.2: programs the Worker said it is writing, since when.
+  private writing = new Map<string, number>();
+  // Items that went through writing or testing here: their being ready is news.
+  private news = new Set<string>();
+  private readyToast: string[] = [];
+  private readyTimer = 0;
   private voteBar: HTMLElement | null = null;
   private voteTimer = 0;
   private asked = new Set<number>();
@@ -247,29 +263,38 @@ export class WorldHost {
     this.renderSpells();
   }
 
-  // Writes a program in the background if it is cheap and not written yet.
-  // Each program is written once for everyone, so this costs about $0.002
-  // per item, once.
-  ahead(key: string): void {
+  // Asks for a program in the background: one the Worker is writing (any
+  // tier, 4.2), or a cheap one not written yet, which this asks the Worker to
+  // write (each program is written once for everyone, about $0.002, once).
+  ahead(key: string, writing = false): void {
     const element = this.store.get(key)?.element;
-    if (!element || !element.tier || this.request(key)) return;
-    if (TIERS.indexOf(element.tier) > TIERS.indexOf(AHEAD_UP_TO)) return;
-    if (this.aheadQueue.includes(key)) return;
+    if (!element || this.request(key)) return;
+    if (writing) {
+      if (!this.writing.has(key)) this.writing.set(key, Date.now());
+      this.news.add(key);
+    }
+    const cheap = !!element.tier && TIERS.indexOf(element.tier) <= TIERS.indexOf(AHEAD_UP_TO);
+    if (!this.writing.has(key) && !cheap) return;
+    if (this.aheadQueue.includes(key) || this.inflight.has(key)) return;
     this.aheadQueue.push(key);
-    if (!this.aheadRunning) void this.runAhead();
+    this.refreshChips();
+    this.runAhead();
   }
 
   private aheadQueue: string[] = [];
-  private aheadRunning = false;
+  private aheadRunning = 0;
 
-  private async runAhead(): Promise<void> {
-    this.aheadRunning = true;
-    while (this.aheadQueue.length) {
+  private runAhead(): void {
+    while (this.aheadRunning < AHEAD_PARALLEL && this.aheadQueue.length) {
       const key = this.aheadQueue.shift()!;
-      if (!this.request(key)) await this.prepare(key, false, true);
-      this.renderSpells();
+      if (this.request(key)) continue;
+      this.aheadRunning++;
+      void this.prepare(key, false, true).finally(() => {
+        this.aheadRunning--;
+        this.refreshChips();
+        this.runAhead();
+      });
     }
-    this.aheadRunning = false;
   }
 
   private replaceFrame(): void {
@@ -352,8 +377,19 @@ export class WorldHost {
     timeline.step(key, name, "asked");
     try {
       let res = await api.spell(discovery.element.name, regenerate);
-      timeline.step(key, name, "arrived");
       timeline.server(key, name, api.serverTiming(res));
+      if (res.writing) {
+        // Still being written by the Worker: asked again shortly, quietly.
+        const since = this.writing.get(key) ?? Date.now();
+        this.writing.set(key, since);
+        this.news.add(key);
+        if (Date.now() - since < WRITING_GIVE_UP_MS) window.setTimeout(() => this.ahead(key, true), res.retry ?? WRITING_RETRY_MS);
+        else this.writing.delete(key);
+        return null;
+      }
+      this.writing.delete(key);
+      timeline.step(key, name, "arrived");
+      if (res.program.trial) this.news.add(key);
       if (res.mock) this.sessionPrograms.set(key, { key, name: res.name, tier: res.tier, code: res.program.code });
       else {
         res = await this.settle(key, res, quiet);
@@ -362,17 +398,35 @@ export class WorldHost {
       }
       timeline.step(key, name, "ready");
       const req = this.request(key);
+      if (req && this.news.delete(key)) this.sayReady(name);
       // The World keeps the program it was handed: a rewrite, a rollback or a
       // refresh must reach it, or a cast would run old code under a new id.
       if (req) this.send({ type: "spell-updated", spell: req });
       return req;
     } catch (err) {
+      this.writing.delete(key);
       if (!quiet) toast(err instanceof Error ? err.message : "The spell could not be prepared", "error");
       return null;
     } finally {
       this.preparing.delete(key);
       this.updateStatus();
     }
+  }
+
+  // "Fireball is ready", once for items that became ready together.
+  private sayReady(name: string): void {
+    this.readyToast.push(name);
+    clearTimeout(this.readyTimer);
+    this.readyTimer = window.setTimeout(() => {
+      const names = this.readyToast.splice(0);
+      const text =
+        names.length === 1
+          ? `${names[0]} is ready to cast`
+          : names.length <= 3
+            ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]} are ready to cast`
+            : `${names.slice(0, 2).join(", ")} and ${names.length - 2} more are ready to cast`;
+      toast(text, "special");
+    }, 1200);
   }
 
   // A program fresh from Claude is a trial: it gets its test run here, in the
@@ -397,6 +451,13 @@ export class WorldHost {
         timeline.step(key, res.name, "tested");
         timeline.phases(key, res.name, result.phases);
         const { phases: _phases, ...verdict } = result;
+        if (result.ok) {
+          // 4.2: a program that passed here is castable now; the Worker is told
+          // in the background, and if it answers with another program (a
+          // newer one, a rollback), that one replaces it.
+          void this.sendVerdict(key, res, verdict);
+          return { ...res, program: { ...res.program, trial: false } };
+        }
         res = await api.checkSpell({ name: res.name, id, ...verdict });
         timeline.step(key, res.name, "verdict");
         timeline.server(key, res.name, api.serverTiming(res), "check-");
@@ -410,6 +471,21 @@ export class WorldHost {
       this.updateStatus();
     }
     return res;
+  }
+
+  private async sendVerdict(key: string, tested: SpellResponse, verdict: Omit<CheckRequest, "name" | "id">): Promise<void> {
+    try {
+      const res = await api.checkSpell({ name: tested.name, id: tested.program.id!, ...verdict });
+      timeline.step(key, tested.name, "verdict");
+      timeline.server(key, tested.name, api.serverTiming(res), "check-");
+      if (res.program.id === tested.program.id || res.mock) return;
+      const settled = res.program.trial ? await this.settle(key, res, true) : res;
+      this.store.setSpell(key, withoutTrial(settled.program));
+      const req = this.request(key);
+      if (req) this.send({ type: "spell-updated", spell: req });
+    } catch {
+      // Told again by the next browser that tests it; this one casts what passed here.
+    }
   }
 
   private request(key: string): CastRequest | null {
@@ -789,8 +865,9 @@ export class WorldHost {
       const chip = chipElement(element, "button");
       chip.classList.add("chip-castable");
       chip.setAttribute("aria-pressed", String(key === this.selected));
-      // Dimmed until its program is written.
-      chip.dataset.ready = this.request(key) ? "1" : "0";
+      // Dimmed until its program is written; 4.2: says why (writing, testing).
+      chip.dataset.key = key;
+      this.chipState(chip, key);
       // A second tap puts the spell away, so a tap on the island inspects a creature (3.6).
       chip.addEventListener("click", () => (key === this.selected ? this.deselect() : this.selectSpell(key)));
       fragment.append(chip);
@@ -807,12 +884,53 @@ export class WorldHost {
     this.updateStatus();
   }
 
+  // writing (the Worker writes it, or this page is asking for it), testing
+  // (its test run, here), ready; nothing for a spell nobody asked for yet.
+  private stateOf(key: string): "ready" | "testing" | "writing" | "" {
+    if (this.request(key)) return "ready";
+    if (this.testing.has(key)) return "testing";
+    if (this.writing.has(key) || this.preparing.has(key) || this.aheadQueue.includes(key)) return "writing";
+    return "";
+  }
+
+  private chipState(chip: HTMLElement, key: string): void {
+    const state = this.stateOf(key);
+    const was = chip.dataset.state ?? "";
+    chip.dataset.ready = state === "ready" ? "1" : "0";
+    chip.dataset.state = state;
+    let label = chip.querySelector<HTMLElement>(".chip-state");
+    const text =
+      state === "writing" ? "writing" : state === "testing" ? "testing" : state === "ready" && (was === "writing" || was === "testing") ? "ready" : "";
+    if (!text) {
+      // "ready" stays a few seconds after the change, then goes.
+      if (label && state !== "ready") label.remove();
+      return;
+    }
+    if (!label) {
+      label = document.createElement("span");
+      label.className = "chip-state";
+      chip.append(label);
+    }
+    label.textContent = text;
+    if (state === "ready") window.setTimeout(() => label?.remove(), 4000);
+  }
+
+  // The spell bar's chips, updated in place as programs are written and tested.
+  private refreshChips(): void {
+    for (const chip of this.el.list.querySelectorAll<HTMLElement>(".chip-castable")) {
+      const key = chip.dataset.key;
+      if (key) this.chipState(chip, key);
+    }
+  }
+
   private updateStatus(): void {
+    this.refreshChips();
     const key = this.selected;
     const name = key ? this.store.get(key)?.element.name : null;
     let text = "Pick a spell, then tap the island to cast it, or tap a creature to see what it wants. Drag to turn, pinch to zoom, two fingers to pan.";
     if (key && name) {
       if (this.testing.has(key)) text = `Testing ${name} on a practice island…`;
+      else if (this.writing.has(key)) text = `The grimoire is writing ${name}… it will be ready in a moment.`;
       else if (this.preparing.has(key)) text = `Preparing ${name}… the first cast of a spell takes a moment.`;
       else if (this.request(key))
         text = `Tap the island to ${this.store.get(key)?.element.kind === "artifact" ? "place" : "cast"} ${name}. Tap it again to put it away and look at creatures.`;

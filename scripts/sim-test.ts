@@ -26,7 +26,7 @@ import { capByDepth } from "../shared/tiers";
 import { joinsBoth } from "../worker/prompts";
 import type { Job } from "./challenge-worker";
 import { runCheck, type SceneReport } from "../src/sim/check";
-import { readResult } from "../src/checker";
+import { readResult } from "../src/checkresult";
 import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../shared/votes";
 import { pickExamples, words } from "../worker/programs";
 import { verdict, type LinkedPull } from "../worker/feedback";

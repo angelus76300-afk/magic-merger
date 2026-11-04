@@ -47,7 +47,8 @@ export class Craft {
   private hovered: HTMLElement | null = null;
   private tappedChip: number | null = null;
   // Called when this player finds something they did not have yet.
-  onNewElement: (key: string) => void = () => {};
+  // writing: the Worker started its program at the merge (4.2).
+  onNewElement: (key: string, writing: boolean) => void = () => {};
 
   private filters = new FilterBar(
     "mm-craft-filters",
@@ -290,7 +291,7 @@ export class Craft {
         window.setTimeout(() => openCard(this.store, chip.key, true), 700);
       } else if (newForMe) toast(`New: ${label}`);
       if (newForMe) this.renderInventory();
-      if (newForMe) this.onNewElement(chip.key);
+      if (newForMe) this.onNewElement(chip.key, result.writing === true);
     } catch (err) {
       draggedNode.classList.remove("merging");
       targetNode.classList.remove("merging");

@@ -166,8 +166,9 @@ export function describe(name: string, regenerate = false): Promise<DescribeResp
   return post<DescribeResponse>("/api/describe", { name, regenerate });
 }
 
+// 4.2: `ahead` says this page understands "still being written" (writing).
 export function spell(name: string, regenerate = false): Promise<SpellResponse> {
-  return post<SpellResponse>("/api/spell", { name, regenerate });
+  return post<SpellResponse>("/api/spell", { name, regenerate, ahead: true });
 }
 
 // The program crashed: Claude gets the error and writes a fixed version.
