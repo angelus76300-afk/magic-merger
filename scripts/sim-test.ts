@@ -44,14 +44,13 @@ import { buildRig, drawScale, HOUSE_HEIGHT, MAX_HEIGHT, villagerUnits, type Rig 
 import { SPECIES } from "../src/sim/wildlife";
 import { Store } from "../src/store";
 import { voiceFor } from "../src/sim/sound";
-import { lifeCycle, updateCreature } from "../src/sim/creatures";
-import { stepPhysics } from "../src/sim/physics";
+import { stepWorld } from "../src/sim/tick";
 import { TICK } from "../src/sim/world";
+
 // No verdict here depends on how fast the machine is (4.1, review M8): the
 // slow cast guard is off unless SLOW_MS is set, and worst ticks are printed,
 // not asserted. Section 3 checks the guard itself.
 Runtime.slowMs = Number(process.env.SLOW_MS) || Infinity;
-
 
 // Challenges with nothing cast, over several seeds: one seed can pass by
 // luck (Wildfire did, at 3 wins in 16). These replays run in worker threads
@@ -1427,12 +1426,7 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
   const before = stumps();
   let sounds = 0;
   for (let tick = 0; tick < 60 / TICK; tick++) {
-    world.time += TICK;
-    world.tick++;
-    stepPhysics(world, TICK);
-    for (const c of world.creatures) updateCreature(world, c, TICK);
-    lifeCycle(world, TICK);
-    rt.step(TICK);
+    stepWorld(world, rt);
     sounds += world.events.filter((e) => e.kind === "sound").length;
     world.events.length = 0;
   }

@@ -5,19 +5,13 @@
 // size (a woodcutter's tree was "thump at 0.15", a house built "thump at 0.4").
 //   npx esbuild scripts/drum-count.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/drum.mjs --log-level=warning
 //   node node_modules/.cache/drum.mjs
-import { lifeCycle, populate, resetCreatureIds, updateCreature } from "../src/sim/creatures";
-import { stepPhysics } from "../src/sim/physics";
+import { populate, resetCreatureIds } from "../src/sim/creatures";
+import { seeded } from "../src/sim/noise";
 import { Runtime } from "../src/sim/runtime";
+import { stepWorld } from "../src/sim/tick";
 import { TICK, generateWorld } from "../src/sim/world";
 
-let a = 11;
-Math.random = () => {
-  a = (a + 0x6d2b79f5) >>> 0;
-  let t = a;
-  t = Math.imul(t ^ (t >>> 15), t | 1);
-  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-};
+Math.random = seeded(11);
 
 const SECONDS = Number(process.env.DRUM_SECONDS ?? 120);
 resetCreatureIds();
@@ -27,13 +21,7 @@ world.time = 20;
 const rt = new Runtime(world, (_k, _n, m) => console.log("  error:", m));
 const heard = new Map<string, { n: number }>();
 for (let tick = 0; tick < SECONDS / TICK; tick++) {
-  world.time += TICK;
-  world.tick++;
-  stepPhysics(world, TICK);
-  for (const c of world.creatures) updateCreature(world, c, TICK);
-  lifeCycle(world, TICK);
-  rt.step(TICK);
-  world.particles.update(TICK);
+  stepWorld(world, rt);
   for (const e of world.events) {
     if (e.kind !== "sound") continue;
     const key = `${e.name} at ${e.size}`;

@@ -480,7 +480,7 @@ const fresh = () => ALL[pairs++];
   const lea = await invite("Lea", 5);
   const other = await merge(lea, ...fresh());
   check("another person is not refused", other.status === 200);
-  const known = await merge(kim, burst.find((r) => r.status === 200) ? "Fire" : "Fire", "Water");
+  const known = await merge(kim, "Fire", "Water");
   check("free requests are not counted", known.status === 200);
   await reset();
 }

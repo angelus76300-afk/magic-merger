@@ -13,6 +13,7 @@
 // Also a step of the daily "Judge" GitHub workflow. Costs nothing: no Claude call.
 import { runCheck } from "../src/sim/check";
 import type { Tier } from "../shared/tiers";
+import { adminApi } from "./admin-api";
 
 const url = process.env.MM_URL;
 const token = process.env.MM_TOKEN;
@@ -21,16 +22,7 @@ if (!url || !token) {
   process.exit(1);
 }
 
-async function api<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(new URL(path, url), {
-    method: body ? "POST" : "GET",
-    headers: { "content-type": "application/json", "x-access-token": token! },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = (await res.json().catch(() => null)) as T & { error?: string };
-  if (!res.ok) throw new Error(`${path}: ${data?.error ?? res.status}`);
-  return data;
-}
+const api = adminApi(url, token!);
 
 // 1. Helpers.
 const helpers = await api<{ id: number; name: string; code: string; intents: string[] }[]>("/api/admin/helpers");

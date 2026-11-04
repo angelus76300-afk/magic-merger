@@ -1,11 +1,12 @@
 import { parseIntents } from "../../shared/promises";
 import { TIERS, TIER_REACH, type Tier } from "../../shared/tiers";
-import { lifeCycle, populate, resetCreatureIds, updateCreature } from "./creatures";
+import { populate, resetCreatureIds } from "./creatures";
 import { C } from "./materials";
 import { unpackLook } from "./villagers";
-import { stepPhysics } from "./physics";
 import { Runtime, type CastRequest } from "./runtime";
 import { isArtifact, resetArtifactIds } from "./artifacts";
+import { seeded } from "./noise";
+import { stepHeadless } from "./tick";
 import { TICK, generateWorld, type World } from "./world";
 
 // The test run a new program goes through before it is stored (3.3). It is
@@ -142,18 +143,6 @@ function changedCreatures(a: Snapshot, b: Snapshot): number {
   return n;
 }
 
-// Seeded randomness, the same for the control and the spell run.
-function seeded(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 interface Island {
   world: World;
   rt: Runtime;
@@ -203,21 +192,10 @@ function island(errors: string[], streams = 0): Island {
   return { world, rt, target, land, random: seeded(SEED + 1 + streams * 101), life };
 }
 
+// Seeded randomness (noise.ts), the same for the control and the spell run;
+// the lives of the island have their own stream.
 function step(world: World, rt: Runtime, life: () => number): void {
-  world.time += TICK;
-  world.tick++;
-  stepPhysics(world, TICK);
-  const random = Math.random;
-  Math.random = life;
-  try {
-    for (const c of world.creatures) updateCreature(world, c, TICK);
-    lifeCycle(world, TICK);
-  } finally {
-    Math.random = random;
-  }
-  rt.step(TICK);
-  world.particles.update(TICK);
-  world.events.length = 0;
+  stepHeadless(world, rt, { life });
 }
 
 // The control: the same island left alone, one snapshot per second. Kept

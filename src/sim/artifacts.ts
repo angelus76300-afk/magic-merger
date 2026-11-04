@@ -124,10 +124,6 @@ export function isArtifact(l: Landmark): l is Artifact {
   return !!(l as Artifact).art;
 }
 
-export function artifactsOf(world: World): Artifact[] {
-  return world.landmarks.filter(isArtifact);
-}
-
 // What the runtime does for artifacts: their code, and library spells.
 export interface ArtHooks {
   run(a: Artifact, fn: string, target: Creature | null): boolean;

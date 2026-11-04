@@ -19,6 +19,7 @@ import { runCheck } from "../src/sim/check";
 import type { Tier } from "../shared/tiers";
 // @ts-expect-error plain JavaScript, shared with the other lab scripts
 import { factsOf, openLab } from "./lab-browser.mjs";
+import { adminApi } from "./admin-api";
 
 const url = process.env.MM_URL;
 const token = process.env.MM_TOKEN;
@@ -31,17 +32,7 @@ const out = process.env.OUT ?? "refresh-frames";
 const limit = Number(process.argv[2]) || 20;
 mkdirSync(out, { recursive: true });
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- JSON from the Worker, read field by field below
-async function api(path: string, body?: unknown): Promise<any> {
-  const res = await fetch(new URL(path, url), {
-    method: body ? "POST" : "GET",
-    headers: { "content-type": "application/json", "x-access-token": token! },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = (await res.json().catch(() => null)) as { error?: string } | null;
-  if (!res.ok) throw new Error(`${path}: ${data?.error ?? res.status}`);
-  return data;
-}
+const api = adminApi(url, token!);
 
 interface Candidate {
   id: number;

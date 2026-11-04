@@ -1,10 +1,10 @@
 import { tell } from "./kin";
-import { lifeCycle, populate, updateCreature } from "./creatures";
+import { populate } from "./creatures";
 import { FrameStats } from "./hud";
-import { stepPhysics } from "./physics";
 import { Runtime, type CastRequest, type ErrorReporter } from "./runtime";
 import { loadWorld, saveWorld, type SavedWorld } from "./save";
 import { SpellSound } from "./sound";
+import { stepWorld } from "./tick";
 import { VoxelView } from "./voxel/view";
 import { TICK, generateWorld, type World } from "./world";
 
@@ -124,15 +124,9 @@ export class Engine {
   private rafId = 0;
 
   // Advances the simulation by one tick. Public for the Spell Lab.
+  // Its events stay for render() to play (tick.ts).
   step(): void {
-    const { world } = this;
-    world.time += TICK;
-    world.tick++;
-    stepPhysics(world, TICK);
-    for (const c of world.creatures) updateCreature(world, c, TICK);
-    lifeCycle(world, TICK);
-    this.runtime.step(TICK);
-    world.particles.update(TICK);
+    stepWorld(this.world, this.runtime);
     this.onTick?.();
   }
 

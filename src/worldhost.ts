@@ -66,7 +66,6 @@ export class WorldHost {
   private sessionPrograms = new Map<string, CastRequest>();
   // The challenge being played, if any.
   private challenge: string | null = null;
-  private challengeDialog: HTMLDialogElement | null = null;
   // Seconds the challenge's hazard ran while the player merged (3.7): kept
   // for Retry and Restart, so losing on purpose does not buy a calm start.
   private headStart = 0;
@@ -532,50 +531,6 @@ export class WorldHost {
     return this.hud;
   }
 
-  private openChallenges(): void {
-    if (!this.challengeDialog) {
-      const d = document.createElement("dialog");
-      d.className = "challenges";
-      d.addEventListener("click", (e) => {
-        if (e.target === d) d.close();
-      });
-      document.body.append(d);
-      this.challengeDialog = d;
-    }
-    const d = this.challengeDialog;
-    d.replaceChildren();
-    const title = document.createElement("h2");
-    title.textContent = "Challenges";
-    const intro = document.createElement("p");
-    intro.textContent = "Each challenge is an island with a problem. Find the spells that solve it. Your own island waits for you.";
-    const list = document.createElement("div");
-    list.className = "challenge-list";
-    for (const info of SCENARIO_LIST) {
-      const item = document.createElement("div");
-      item.className = "challenge";
-      const h = document.createElement("h3");
-      h.textContent = info.title;
-      if (this.store.isSolved(info.id)) {
-        const badge = document.createElement("span");
-        badge.className = "solved";
-        badge.textContent = "solved";
-        h.append(badge);
-      }
-      const p = document.createElement("p");
-      p.textContent = info.brief;
-      const go = document.createElement("button");
-      go.textContent = this.store.isSolved(info.id) ? "Play again" : "Play";
-      go.addEventListener("click", () => {
-        d.close();
-        this.startChallenge(info.id);
-      });
-      item.append(h, p, go);
-      list.append(item);
-    }
-    d.append(title, intro, list);
-    d.showModal();
-  }
-
   private startChallenge(id: string, ahead = 0): void {
     const info = SCENARIO_LIST.find((s) => s.id === id);
     if (!info) return;
@@ -668,8 +623,8 @@ export class WorldHost {
     d.showModal();
   }
 
-  // The World's Challenges button opens the Challenges tab (main.ts).
-  onChallenges: () => void = () => this.openChallenges();
+  // The World's Challenges button opens the Challenges tab (main.ts sets it).
+  onChallenges: () => void = () => {};
   // Told after each world save (4.0: the account's island follows).
   onSaved: (() => void) | null = null;
 
