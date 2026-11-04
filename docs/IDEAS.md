@@ -19,6 +19,7 @@ Learned from the owner's decisions and comments; a builder adds to it after the 
 
 ### Gameplay
 
+- **A Community tab** (the owner's idea, 4 November): who else plays, each friend with their chosen favorite spell, picked from their own discoveries on the account page and changeable any time. Per friend: their name, when they last played ("today", "this week"), how many items they found and their First Discoveries, and the favorite spell's card (emoji, name, tier, its picture once spell cards have one). No recipe is shown, so it never hands anyone an idea (Decisions taken); a friend can hide themselves from the tab on the account page. Before 4.6 brings strangers it needs the name checks and the report button on what it shows. M, owner.
 - **Ride along a creature** (`#3`, 2 votes: "make the characters first person playable characters"). A first step that stands on its own: a camera from a creature's eyes or over its shoulder, following what it does, with its goal and thoughts shown; control comes later if riding along is fun. M, player.
 - **Spells that meet**: two spells cast close together react through their declared reactions (a fire spell into a wind spell makes a firestorm). M, Claude.
 - **Villages ask for things**: in a drought a village's bubble asks for rain; answering builds its trust, ignoring it makes villagers leave. M, Claude.
@@ -104,6 +105,6 @@ Never proposed again unless the owner reopens them. The reason is the owner's.
 - **Hints and suggested recipes**: players must be the creative ones (3.7).
 - **Village mana** as a resource (3.7).
 - **Discoveries made in the World** instead of on the board (3.7).
-- **Sharing features** ("Things worth sharing"): the owner does not like them (3.7).
+- **Sharing features** ("Things worth sharing"): the owner does not like them (3.7). This is about posting outside the game; the owner's own Community tab inside it (above) is wanted.
 - **Fast mode** and **weaker drafts shown to players** to make spells appear sooner (4.2).
 - `#1` "This is a test idea, don't do anything": a test.
