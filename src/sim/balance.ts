@@ -1,7 +1,7 @@
 import { C, F, G } from "./materials";
 import { sprout } from "./ecology";
 import { PLANTS, PREY, sendTo } from "./goals";
-import { SPECIES, habitatCell, habitatCells, targetOf, type Species } from "./wildlife";
+import { SPECIES, habitatCellSure, habitatCells, targetOf, type Species } from "./wildlife";
 import type { Creature } from "./creatures";
 import type { World } from "./world";
 
@@ -11,9 +11,11 @@ import type { World } from "./world";
 // 1. Births follow food: a grazer's number is held under what the plants
 //    of its habitat feed, a hunter's under what its prey feeds, so after a
 //    fire the grazers come back first and the hunters after them.
-// 2. Never empty: a species under a quarter of its number while its habitat
-//    lasts gets arrivals from the island's edge, a pair walking in (birds fly
-//    in); fish come with the water as before.
+// 2. Never empty, never extinct (4.4.5 part B, the owner's rule): every kind
+//    that belongs keeps room for a pair whatever its food, and one with too
+//    few (under two, or under 40% of its number) gets arrivals from the
+//    island's edge, a pair walking in (birds fly in); fish come with the
+//    water as before.
 // 3. Never overrun: past twice its number a species stops being born and one
 //    by one walks out over the edge.
 // 4. Refuges: births fall back to the patch kept for the species
@@ -53,6 +55,10 @@ export function wildTargets(world: World, alive: Map<string, number>): Map<strin
     } else if (plants && !s.kind.flying && !s.kind.aquatic) {
       target = Math.min(base, Math.floor(foodCells(world, s, plants) / FOOD_PER_GRAZER));
     }
+    // Never extinct (the owner, 4.4.5 part B): a kind that belongs on the
+    // island keeps room for a pair, however little food is left. Hunters
+    // and grazers short of food stay few, never none.
+    if (base > 0) target = Math.max(target, Math.min(base, 2));
     targets.set(s.kind.name, { target, base, habitat });
   }
   memo.set(world, { at: world.time, targets });
@@ -103,8 +109,15 @@ export function keepBalance(world: World, make: (kind: string, x: number, y: num
       worst = s;
     }
   }
-  if (worst && world.creatures.length < 500) {
-    if (worstShare < 0.25 && !worst.kind.aquatic) arrive(world, worst, make);
+  // Too few (under two, or under 40% of its number): a pair arrives from
+  // the edge; otherwise one is born. Spell creatures never crowd the island's
+  // own out: only the living are counted against the cap.
+  let living = 0;
+  for (const c of world.creatures) if (!c.dead) living++;
+  if (worst && living < 500) {
+    const n = alive.get(worst.kind.name) ?? 0;
+    const t = targets.get(worst.kind.name)!.target;
+    if ((n < 2 || worstShare < 0.4) && !worst.kind.aquatic && n < t) arrive(world, worst, make);
     else born(world, worst, make);
   }
   tendRefuges(world);
@@ -112,7 +125,7 @@ export function keepBalance(world: World, make: (kind: string, x: number, y: num
 
 // One born in its habitat, or in its refuge when the habitat is gone.
 function born(world: World, s: Species, make: (kind: string, x: number, y: number) => Creature): boolean {
-  let i = habitatCell(world, s);
+  let i = habitatCellSure(world, s);
   if (i < 0) i = refugeCell(world, s.kind.name);
   if (i < 0) return false;
   const c = make(s.kind.name, (i % world.w) + (Math.random() - 0.5) * 0.6, Math.floor(i / world.w) + (Math.random() - 0.5) * 0.6);
@@ -145,7 +158,7 @@ function refugeCell(world: World, kind: string): number {
 // A pair arrives from the island's edge nearest to its habitat and makes
 // for it: walking in over dry land, or flying in.
 function arrive(world: World, s: Species, make: (kind: string, x: number, y: number) => Creature): void {
-  let goal = habitatCell(world, s);
+  let goal = habitatCellSure(world, s);
   if (goal < 0) goal = refugeCell(world, s.kind.name);
   if (goal < 0) return;
   const gx = goal % world.w;

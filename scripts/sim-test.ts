@@ -1171,6 +1171,28 @@ for (const r of balances.filter((b) => b.wipe)) {
       .join(", "),
   );
 }
+// 4.4.5 part B (the owner's rule): no population goes extinct. In the half
+// hour runs no kind that belongs is at none for more than a minute; after a
+// wipe every kind has one back within two minutes.
+{
+  const gone = balances
+    .filter((b) => !b.wipe)
+    .flatMap((b) => Object.entries(b.species).map(([k, v]) => ({ where: `${b.biome} ${b.size}`, k, gone: v.gone })))
+    .filter((g) => g.gone > 60);
+  const slow = balances
+    .filter((b) => b.wipe)
+    .flatMap((b) => Object.entries(b.wipe!).map(([k, v]) => ({ where: `${b.biome} ${b.size}`, k, first: v.first })))
+    .filter((g) => g.first < 0 || g.first > 120);
+  const worst = Math.max(0, ...balances.filter((b) => b.wipe).flatMap((b) => Object.values(b.wipe!).map((v) => v.first)));
+  check(
+    "4.4.5 B: no population goes extinct: never at none for more than a minute, back within two after a wipe",
+    !gone.length && !slow.length,
+    [
+      ...gone.map((g) => `${g.k} at none ${g.gone} s on ${g.where}`),
+      ...slow.map((g) => `${g.k} back after ${g.first < 0 ? "never" : g.first + " s"} on ${g.where}`),
+    ].join("; ") || `the slowest kind back ${worst} s after a wipe`,
+  );
+}
 check(
   "4.4.5: hunters still catch their prey",
   balances.reduce((n, b) => n + (b.catches["wolf caught a deer"] ?? 0) + (b.catches["wolf caught a rabbit"] ?? 0), 0) >= 2 &&

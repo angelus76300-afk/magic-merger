@@ -5,7 +5,7 @@ import { WARD, warded } from "./wards";
 import { daylight } from "./daylight";
 import type { World } from "./world";
 import { body, type BodySpec } from "./body";
-import { SPECIES, habitatCell, targetOf } from "./wildlife";
+import { SPECIES, habitatCell, habitatCellSure, targetOf } from "./wildlife";
 import { keepBalance, stepMovers } from "./balance";
 import { growSettlements, wearPaths } from "./ecology";
 import { DRAGON, stepWonders } from "./wonders";
@@ -1133,15 +1133,17 @@ export function populate(world: World, wild: readonly string[] | null = null): v
   dressVillages(world, world.creatures);
   // The island's animals, each in its habitat. The generic beast of 2.x is
   // left to spells.
-  for (const s of SPECIES) if (!wild || wild.includes(s.kind.name)) for (let n = targetOf(world, s); n > 0; n--) birth(world, s.kind.name);
+  // On islands made by land.ts, every animal with a target is there from the
+  // start (4.4.5 part B); the old island and the challenges keep their streams.
+  for (const s of SPECIES) if (!wild || wild.includes(s.kind.name)) for (let n = targetOf(world, s); n > 0; n--) birth(world, s.kind.name, !!world.flora);
   world.wild = wild;
 }
 
 // One wild animal born in its habitat, if there is any left.
-function birth(world: World, name: string): boolean {
+function birth(world: World, name: string, sure = false): boolean {
   const s = SPECIES.find((sp) => sp.kind.name === name);
   if (!s) return false;
-  const i = habitatCell(world, s);
+  const i = sure ? habitatCellSure(world, s) : habitatCell(world, s);
   if (i < 0) return false;
   // world.idx rounds: a creature at x stands in cell round(x).
   const c = makeCreature(name, (i % world.w) + (Math.random() - 0.5) * 0.6, Math.floor(i / world.w) + (Math.random() - 0.5) * 0.6);
