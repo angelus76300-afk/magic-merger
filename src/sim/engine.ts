@@ -145,8 +145,11 @@ export class Engine {
     this.rafId = 0;
     if (!this.running) return;
     this.rafId = requestAnimationFrame((t) => this.frame(t));
-    const dt = Math.min(0.1, (now - this.last) / 1000);
-    this.last = now;
+    // A frame's time stamp can be older than start(): the frame began before
+    // the call that restarted the loop. Time never runs backwards (4.4: a
+    // negative step held the simulation still until it was paid back).
+    const dt = Math.max(0, Math.min(0.1, (now - this.last) / 1000));
+    this.last = Math.max(this.last, now);
     this.acc += dt;
     let steps = 0;
     const t0 = performance.now();

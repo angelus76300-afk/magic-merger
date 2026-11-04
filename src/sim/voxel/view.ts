@@ -350,8 +350,19 @@ export class VoxelView {
     }
   }
 
+  // The Perf Lab pins the pixel density, so two runs draw the same pixels (4.4).
+  fixedPixelRatio: number | null = null;
+
   // Lower the pixel density when frames are slow, raise it back when they are fast.
   private adapt(ms: number, dt: number): void {
+    if (this.fixedPixelRatio !== null) {
+      if (this.pixelRatio !== this.fixedPixelRatio) {
+        this.pixelRatio = this.fixedPixelRatio;
+        this.renderer.setPixelRatio(this.pixelRatio);
+        this.renderer.setSize(this.cssW, this.cssH, false);
+      }
+      return;
+    }
     this.frameTimes.push(dt * 1000);
     this.drawTimes.push(ms);
     if (this.frameTimes.length < 60) return;
