@@ -55,6 +55,7 @@ import { gaitOf, hipHeight } from "../src/sim/voxel/gait";
 import { TICK } from "../src/sim/world";
 import { BIOMES, DEFAULT_LAND, SHAPES, habitatCount, readLand, resolveLand, LOOKS } from "../src/sim/land";
 import { landProblems, type LandLife } from "./land-life";
+import { riverShape, riverTrenches } from "./river-metrics";
 import { projectedSim, sizesOffered, SIM_BUDGET_MS } from "../src/headroom";
 import { skyBodies, weatherAt } from "../src/sim/voxel/sky";
 import { Terrain } from "../src/sim/voxel/terrain";
@@ -798,6 +799,33 @@ for (const scenario of SCENARIOS) {
     sameClimate = reload.biomeMap![i] === mixed.biomeMap![i] && Math.abs(reload.ambient(i) - mixed.ambient(i)) < 0.1;
   check("a mixed island's regions and their climates come back with its save", sameClimate);
   check("a small island is one land", generateWorld(112, 112, 5, resolveLand(mid, 5, 112)).biomeMap === null);
+  // 4.4.1: rivers wind instead of running straight with right angle turns
+  // (main had a run of 26 cells and a quarter of its river in runs of 8 or
+  // more), and a walker can climb out of every one.
+  let longest = 0;
+  let inRuns = 0;
+  let winding = 0;
+  let trenches = 0;
+  let riverCells = 0;
+  let islands = 0;
+  for (const shape of SHAPES)
+    for (const s of [61, 62]) {
+      const world = generateWorld(152, 152, s, { ...DEFAULT_LAND, biome: BIOMES[(s + SHAPES.indexOf(shape)) % BIOMES.length], shape });
+      const r = riverShape(world);
+      const t = riverTrenches(world);
+      trenches += t.trenches;
+      riverCells += t.cells;
+      if (!r.steps) continue;
+      longest = Math.max(longest, r.longest);
+      inRuns += r.straight;
+      winding += r.winding;
+      islands++;
+    }
+  check(
+    "rivers wind, and every bank can be climbed",
+    longest <= 20 && inRuns / islands < 0.1 && trenches <= riverCells * 0.01,
+    `${islands} islands: longest straight run ${longest}, ${((inRuns / islands) * 100).toFixed(0)}% of steps in runs of 8+, winding ${(winding / islands).toFixed(2)} (printed, not checked), ${trenches} of ${riverCells} river cells in a trench`,
+  );
 }
 
 // 4.4: the headroom rule, the weather, the sun's path, the trees' models, and

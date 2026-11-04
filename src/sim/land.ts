@@ -444,8 +444,13 @@ export interface Drainage {
 }
 
 // Priority flood from the island's edge, then flow accumulation.
-export function drainage(world: World): Drainage {
-  const { w, h, n, height } = world;
+// `surface` is what the water is routed over: the land itself by default.
+// `jitter` (4.4.1): how unevenly the flood crosses a flat. With none it
+// spreads evenly and its paths cross flats in straight lines; with some, each
+// cell takes a random step, so paths branch and wind.
+export function drainage(world: World, surface: Float32Array = world.height, jitter = 0): Drainage {
+  const { w, h, n } = world;
+  const height = surface;
   const filled = new Float32Array(n);
   const to = new Int32Array(n).fill(-1);
   const done = new Uint8Array(n);
@@ -475,7 +480,7 @@ export function drainage(world: World): Drainage {
       done[j] = 1;
       // A cell lower than the one it was reached from is in a depression:
       // raised to just above it, so its water flows out the way it came.
-      filled[j] = Math.max(height[j], filled[i] + 0.0005);
+      filled[j] = Math.max(height[j], filled[i] + 0.0005 + (jitter ? ((Math.imul(j, 2654435761) >>> 8) / 16777216) * jitter : 0));
       to[j] = i;
       heap.push(j);
     }
@@ -537,7 +542,10 @@ function lakeSprings(world: World, max: number): Spring[] {
 // at the river heads. Returns the river cells, for banks and villages.
 function water(world: World, land: LandOptions): { river: Uint8Array; area: Float32Array } {
   const { w, n, height } = world;
-  const { filled, to, area, order } = drainage(world);
+  // Lakes from the exact flood; rivers from one that crosses flats a little
+  // unevenly (4.4.1), so their routes across flats are not rulers.
+  const { filled } = drainage(world);
+  const { to, area, order } = drainage(world, world.height, 0.02);
   const river = new Uint8Array(n);
   // Lakes: water up to the spill point where it is deep enough to see. A
   // lake's bottom may lie below the sea's level: it is a lake when its spill
@@ -561,52 +569,92 @@ function water(world: World, land: LandOptions): { river: Uint8Array; area: Floa
     const i = order[q];
     big[i] = area[i] >= threshold * 4 || (to[i] >= 0 && big[to[i]]) ? 1 : 0;
   }
+  const isRiver = new Uint8Array(n);
   const cells: number[] = [];
-  for (let i = 0; i < n; i++) if (area[i] >= threshold && big[i] && height[i] >= world.seaLevel - 0.5) cells.push(i);
-  cells.sort((a, b) => filled[b] - filled[a]);
-  const bed = new Float32Array(n).fill(Infinity);
-  // The surface of the lake a river last left, for the cells below it.
-  const lakeAbove = new Float32Array(n).fill(-Infinity);
-  const inLake = (i: number) => lake[i] === 1;
-  const heads: number[] = [];
-  for (const i of cells) {
-    const size = Math.log2(area[i] / threshold);
-    // At most 1.4 deep and 0.9 of water: walkers ford every river (paths.ts).
-    const cut = Math.min(1.4, 0.45 + size * 0.28);
-    // A head: no river cell flows into it.
-    if (bed[i] === Infinity) heads.push(i);
-    let b: number;
-    if (inLake(i)) {
-      // Through a lake the river is the lake: it leaves at the surface.
-      b = filled[i] - 0.05;
-      const next = to[i];
-      if (next >= 0) lakeAbove[next] = Math.max(lakeAbove[next], filled[i]);
-    } else {
-      b = Math.min(height[i] - cut, bed[i]);
-      // An outlet is cut at most half a unit below its lake, so carving the
-      // river does not drain the lake it comes from.
-      if (lakeAbove[i] > -Infinity) {
-        b = Math.max(b, lakeAbove[i] - 0.5);
-        const next = to[i];
-        if (next >= 0 && b > lakeAbove[i] - 0.5 - 0.001) lakeAbove[next] = Math.max(lakeAbove[next], lakeAbove[i] - 0.03);
-      }
-      if (world.depth[i] > 0) b = Math.min(b, height[i]);
+  for (let i = 0; i < n; i++)
+    if (area[i] >= threshold && big[i] && height[i] >= world.seaLevel - 0.5) {
+      cells.push(i);
+      isRiver[i] = 1;
     }
-    bed[i] = b;
-    river[i] = 1;
-    const next = to[i];
-    if (next >= 0) bed[next] = Math.min(bed[next], b - 0.03);
+  // 4.4.1: each river is a path from its head down the drainage to the sea,
+  // a lake or the river it joins, bent into meanders (meander() below) and
+  // carved along the bent path. Carved cell by cell along the drainage, rivers
+  // ran straight and turned at right angles.
+  const hasUp = new Uint8Array(n);
+  for (const i of cells) if (to[i] >= 0) hasUp[to[i]] = 1;
+  const heads = cells.filter((i) => !hasUp[i]).sort((a, b) => filled[b] - filled[a] || a - b);
+  const traced = new Uint8Array(n);
+  const paths: { cells: number[]; areas: number[]; head: number; mouthArea: number }[] = [];
+  for (const head of heads) {
+    const route: number[] = [];
+    let c = head;
+    while (c >= 0) {
+      route.push(c);
+      if (!isRiver[c] || traced[c]) break;
+      traced[c] = 1;
+      c = to[c];
+    }
+    if (route.length < 2) continue;
+    const bent = meander(world, route, area, threshold, lake, paths.length);
+    paths.push({ ...bent, head, mouthArea: area[route[route.length - 1]] });
   }
-  for (const i of cells) {
-    if (inLake(i)) continue;
-    const size = Math.log2(area[i] / threshold);
-    const deep = Math.min(0.9, 0.35 + size * 0.16);
+  const bed = new Float32Array(n).fill(Infinity);
+  const size = new Float32Array(n);
+  const riverArea = new Float32Array(n);
+  const inLake = (i: number) => lake[i] === 1;
+  for (const p of paths) {
+    let b = Infinity;
+    // The surface of the lake the river last left: an outlet is cut at most
+    // half a unit below it, so carving a river does not drain its lake.
+    let leftLake = -Infinity;
+    for (let k = 0; k < p.cells.length; k++) {
+      const c = p.cells[k];
+      if (inLake(c)) {
+        b = filled[c] - 0.05;
+        leftLake = filled[c];
+        continue;
+      }
+      if (height[c] < world.seaLevel - 0.5) break;
+      const s = Math.max(0, Math.log2(p.areas[k] / threshold));
+      // At most 1.4 deep and 0.9 of water: walkers ford every river (paths.ts).
+      const cut = Math.min(1.4, 0.45 + s * 0.28);
+      b = Math.min(height[c] - cut, b - 0.03);
+      if (leftLake > -Infinity) {
+        b = Math.max(b, leftLake - 0.5);
+        leftLake -= 0.03;
+      }
+      if (world.depth[c] > 0) b = Math.min(b, height[c]);
+      bed[c] = Math.min(bed[c], b);
+      size[c] = Math.max(size[c], s);
+      riverArea[c] = Math.max(riverArea[c], p.areas[k]);
+      river[c] = 1;
+    }
+  }
+  // A tributary may have lowered the cell where it joins: the river below
+  // is lowered with it, so every bed still runs downhill.
+  for (let pass = 0; pass < 3; pass++)
+    for (const p of paths) {
+      let prev = Infinity;
+      for (const c of p.cells) {
+        if (inLake(c)) {
+          prev = Infinity;
+          continue;
+        }
+        if (!river[c]) break;
+        if (prev < Infinity) bed[c] = Math.min(bed[c], prev - 0.03);
+        prev = bed[c];
+      }
+    }
+  const carved: number[] = [];
+  for (let i = 0; i < n; i++) if (river[i]) carved.push(i);
+  for (const i of carved) {
+    const deep = Math.min(0.9, 0.35 + size[i] * 0.16);
     if (height[i] >= world.seaLevel) {
       height[i] = Math.max(world.seaLevel - 0.6, Math.min(height[i], bed[i]));
       world.setFluid(i, F.WATER, deep);
     }
     // Bigger rivers are wider: the banks either side are lowered a little.
-    if (size > 1.6) {
+    if (size[i] > 1.6) {
       const x = i % w;
       const y = (i / w) | 0;
       for (const [dx, dy] of N4) {
@@ -617,15 +665,145 @@ function water(world: World, land: LandOptions): { river: Uint8Array; area: Floa
       }
     }
   }
+  // Next to a lake (not a river): lowering it would let the lake out.
+  const byStill = (j: number) => {
+    const x = j % w;
+    const y = (j / w) | 0;
+    for (const [dx, dy] of N4) if (world.inside(x + dx, y + dy) && lake[(y + dy) * w + x + dx]) return true;
+    return false;
+  };
+  // Banks a walker could not climb out to (paths.ts, 1.55) are worn into
+  // slopes, two cells either side at most: a bent river can run into a
+  // rise, and its bed has to keep going downhill through it.
+  for (let ring = 1; ring <= 2; ring++)
+    for (const i of carved) {
+      if (height[i] < world.seaLevel) continue;
+      const level = height[i] + world.depth[i];
+      const x = i % w;
+      const y = (i / w) | 0;
+      for (const [dx, dy] of N4) {
+        const nx = x + dx * ring;
+        const ny = y + dy * ring;
+        if (!world.inside(nx, ny)) continue;
+        const j = ny * w + nx;
+        if (river[j] || world.depth[j] > 0 || byStill(j)) continue;
+        height[j] = Math.min(height[j], level + 1.3 * ring);
+      }
+    }
   // Springs keep the heads flowing, and every river cell is fed a little
   // along its length (as ground water does), so rivers stay full however
   // long the island lives.
-  heads.sort((a, b) => area[b] - area[a] || a - b);
-  world.springs = heads.slice(0, 12).map((i) => ({ i, level: height[i] + 0.55 }));
+  const sources = paths
+    .filter((p) => river[p.cells[0]])
+    .sort((a, b) => b.mouthArea - a.mouthArea || a.head - b.head)
+    .map((p) => p.cells[0]);
+  world.springs = [...new Set(sources)].slice(0, 12).map((i) => ({ i, level: height[i] + 0.55 }));
   const headSet = new Set(world.springs.map((s) => s.i));
-  for (const i of cells)
-    if (!inLake(i) && !headSet.has(i) && height[i] >= world.seaLevel) world.springs.push({ i, level: height[i] + world.depth[i] * 0.8, rate: 0.08 });
-  return { river, area };
+  for (const i of carved) if (!headSet.has(i) && height[i] >= world.seaLevel) world.springs.push({ i, level: height[i] + world.depth[i] * 0.8, rate: 0.08 });
+  return { river, area: riverArea };
+}
+
+// A river's route bent into meanders (4.4.1): control points every few cells
+// along the route are pushed to either side in turn (wider for a bigger
+// river, little on a steep slope, none in or by a lake, never up the side of
+// a valley), a Catmull-Rom curve is drawn through them, and the curve is
+// stepped back onto the grid as a path of side by side cells, its loops cut
+// out. The head and the mouth stay where they were.
+const BEND_EVERY = 5;
+function meander(world: World, route: number[], area: Float32Array, threshold: number, lake: Uint8Array, id: number): { cells: number[]; areas: number[] } {
+  const { w, h, height, seed } = world;
+  if (route.length < BEND_EVERY * 2) return { cells: route, areas: route.map((c) => area[c]) };
+  const xy = (c: number) => [c % w, (c / w) | 0];
+  const at: number[] = [];
+  for (let k = 0; k < route.length - 1; k += BEND_EVERY) at.push(k);
+  if (at[at.length - 1] !== route.length - 1) at.push(route.length - 1);
+  const pts = at.map((k) => xy(route[k]));
+  const near = (x: number, y: number, r: number) => {
+    for (let dy = -r; dy <= r; dy++)
+      for (let dx = -r; dx <= r; dx++) {
+        const cx = Math.round(x) + dx;
+        const cy = Math.round(y) + dy;
+        if (cx < 0 || cy < 0 || cx >= w || cy >= h || lake[cy * w + cx]) return true;
+      }
+    return false;
+  };
+  for (let k = 1; k < pts.length - 1; k++) {
+    const [x0, y0] = pts[k - 1];
+    const [x1, y1] = pts[k + 1];
+    const len = Math.hypot(x1 - x0, y1 - y0) || 1;
+    const px = -(y1 - y0) / len;
+    const py = (x1 - x0) / len;
+    const c = route[at[k]];
+    const [cx, cy] = pts[k];
+    if (near(cx, cy, 2)) continue;
+    const s = Math.max(0, Math.log2(area[c] / threshold));
+    const drop = Math.abs(height[route[at[k - 1]]] - height[route[at[k + 1]]]) / len;
+    const flat = Math.min(1, Math.max(0.15, 1 - drop / 0.9));
+    let amp = (1.4 + Math.min(2.2, s * 0.6)) * flat * (k % 2 === 0 ? 1 : -1) * (0.55 + 0.9 * (valueNoise(k * 0.73, id * 1.31, seed + 701) - 0.5) + 0.45);
+    // Never up the side of a valley: halved until the land there is not
+    // much higher than the river.
+    for (let tries = 0; tries < 3; tries++) {
+      const tx = Math.round(cx + px * amp);
+      const ty = Math.round(cy + py * amp);
+      if (tx >= 1 && ty >= 1 && tx < w - 1 && ty < h - 1 && height[ty * w + tx] - height[c] < 0.8 && !near(tx, ty, 1)) break;
+      amp *= 0.5;
+    }
+    if (Math.abs(amp) < 0.5) continue;
+    pts[k] = [cx + px * amp, cy + py * amp];
+  }
+  // The curve, sampled finely, and stepped onto the grid.
+  const cells: number[] = [];
+  const areas: number[] = [];
+  const index = new Map<number, number>();
+  const put = (x: number, y: number, a: number) => {
+    const cx = Math.min(w - 1, Math.max(0, x));
+    const cy = Math.min(h - 1, Math.max(0, y));
+    const c = cy * w + cx;
+    if (cells.length && cells[cells.length - 1] === c) return;
+    const seen = index.get(c);
+    if (seen !== undefined) {
+      // A loop: cut it out.
+      for (let k = seen + 1; k < cells.length; k++) index.delete(cells[k]);
+      cells.length = seen + 1;
+      areas.length = seen + 1;
+      return;
+    }
+    index.set(c, cells.length);
+    cells.push(c);
+    areas.push(a);
+  };
+  const step = (x: number, y: number, a: number) => {
+    const tx = Math.round(x);
+    const ty = Math.round(y);
+    if (!cells.length) return put(tx, ty, a);
+    const last = cells[cells.length - 1];
+    let lx = last % w;
+    let ly = (last / w) | 0;
+    // Side by side cells only: water flows across edges, not corners.
+    while (lx !== tx || ly !== ty) {
+      if (Math.abs(tx - lx) >= Math.abs(ty - ly)) lx += Math.sign(tx - lx);
+      else ly += Math.sign(ty - ly);
+      put(lx, ly, a);
+    }
+  };
+  for (let k = 0; k < pts.length - 1; k++) {
+    const p0 = pts[Math.max(0, k - 1)];
+    const p1 = pts[k];
+    const p2 = pts[k + 1];
+    const p3 = pts[Math.min(pts.length - 1, k + 2)];
+    const a0 = area[route[at[k]]];
+    const a1 = area[route[at[k + 1]]];
+    for (let t = 0; t < 1; t += 0.125) {
+      const t2 = t * t;
+      const t3 = t2 * t;
+      const f = (q: number) =>
+        0.5 * (2 * p1[q] + (-p0[q] + p2[q]) * t + (2 * p0[q] - 5 * p1[q] + 4 * p2[q] - p3[q]) * t2 + (-p0[q] + 3 * p1[q] - 3 * p2[q] + p3[q]) * t3);
+      step(f(0), f(1), a0 + (a1 - a0) * t);
+    }
+  }
+  const [ex, ey] = pts[pts.length - 1];
+  step(ex, ey, area[route[route.length - 1]]);
+  return { cells, areas };
 }
 
 // Next to still water above the sea: lowering it would let a lake out.
