@@ -181,7 +181,7 @@ export interface OracleModels {
   design: string;
 }
 
-// 4.2: the spell writer's system prompt (about 5,600 tokens, the same for
+// 4.2: the spell writer's system prompt (8,422 tokens, the same for
 // every program) is cached for an hour, for every model. Until 4.2 the big
 // model's calls skipped the cache as "rare and lone"; the November ledger says
 // otherwise: 100 of 116 big spell calls started within five minutes of the

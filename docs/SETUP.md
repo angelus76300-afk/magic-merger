@@ -35,6 +35,7 @@ Without an API key the Worker answers with fake, clearly labelled results and st
 ```bash
 npx wrangler login
 npx wrangler d1 create magic-merger          # copy the database_id it prints into wrangler.jsonc
+npx wrangler queues create magic-merger-writes   # 4.2: the queue that writes new items at the merge
 npx wrangler secret put ANTHROPIC_API_KEY
 npx wrangler secret put ADMIN_TOKEN          # a long random string, only for you
 npm run deploy
@@ -142,6 +143,7 @@ Set in `wrangler.jsonc`:
 | `JUDGE_MODEL`        | `claude-haiku-5-5`             | scoring three Spell Lab frames of a program (3.3)                                                                       |
 | `REWRITE_BUDGET_USD` | `0.5`                          | dollars a day for rewrites asked by votes, the judge and failed test runs                                               |
 | `BIG_SPELLS_BATCH`   | `1`                            | legendary and cosmic spells drafted by Haiku at once, written by Opus through the Batch API at half price; `0` for 3.2  |
+| `AHEAD_DAILY_USD`    | `1.5`                          | 4.2: dollars a day that writing every new item at the merge may spend, everyone together; `0` turns it off (DESIGN.md)  |
 | `REFRESH_BUDGET_USD` | `8`                            | dollars a month the refresh of the legacy library may spend (3.7 part E), held before each batch is sent                |
 | `DESIGN_MODEL`       | `SPELL_MODEL`                  | who designs how the World API grows from what spells lacked (3.4.2), one call a day at most                             |
 | `EVOLVE`             | unset                          | `0` stops the API from growing on its own; the admin can still ask with `POST /api/admin/evolve`                        |

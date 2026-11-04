@@ -8,7 +8,7 @@
 //
 //   npx wrangler d1 execute magic-merger --remote --json --command "SELECT name, kind, tier FROM elements" > elements.json
 //   npx esbuild scripts/quality-20.ts --bundle --platform=node --format=esm --external:playwright --outfile=node_modules/.cache/quality-20.mjs
-//   MM_URL=<worker url> MM_TOKEN=<ADMIN_TOKEN> node node_modules/.cache/quality-20.mjs elements.json <out-dir> [drafts]
+//   MM_URL=<worker url> MM_TOKEN=<ADMIN_TOKEN> node node_modules/.cache/quality-20.mjs elements.json <out-dir> [drafts] [only=Gold,Water]
 //
 // Big spells are written by the big model directly; production writes them
 // through the Batch API at half price, so their cost is counted at half. With
@@ -32,6 +32,12 @@ if (!elementsPath || !out || !url || !token) {
   process.exit(1);
 }
 const drafts = flags.includes("drafts");
+// only=Gold,Water: a subset of the 20, to repeat one spell on two builds.
+const only = flags
+  .find((f) => f.startsWith("only="))
+  ?.slice(5)
+  .split(",");
+const SET = only ? EVAL_SET.filter((n) => only.includes(n)) : EVAL_SET;
 const raw = JSON.parse(readFileSync(elementsPath, "utf8"));
 const tierOf = new Map<string, Tier>((raw[0]?.results ?? raw).map((e: { name: string; tier: Tier }) => [e.name, e.tier]));
 mkdirSync(join(out, "frames"), { recursive: true });
@@ -109,7 +115,7 @@ async function judge(id: string, w: Written): Promise<Written> {
 }
 
 const rows: Record<string, Written> = {};
-for (const name of EVAL_SET) {
+for (const name of SET) {
   const id = name.replace(/\W+/g, "-").toLowerCase();
   const big = isBig(tierOf.get(name) ?? "major");
   const first = await once(`main:${name}`, () => write(name, big ? "claude-opus-5-5" : "claude-haiku-5-5", !big));
@@ -126,7 +132,7 @@ for (const name of EVAL_SET) {
 }
 await lab.close();
 
-const main = EVAL_SET.map((n) => rows[n]);
+const main = SET.map((n) => rows[n]);
 const mean = (xs: number[]) => Math.round((xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length)) * 10000) / 10000;
 const small = main.filter((w) => !isBig(w.tier));
 const bigs = main.filter((w) => isBig(w.tier));

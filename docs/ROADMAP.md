@@ -1,6 +1,6 @@
 # Where the game stands, and what comes next
 
-Updated on 2026-11-03, during 3.7 (after 3.6).
+Updated on 2026-11-04, with 4.2.
 
 ## Done since the first review
 
@@ -169,6 +169,19 @@ Asked for: an independent review before the link goes beyond close friends, then
 6. **Checked**: `npm run test:worker` (one use links opened twice at once, a forged passkey answer, a spent challenge, sessions made up, signed out or deleted, one account reading or writing another's progress, malformed and oversized uploads, email links used twice and rate limited, export, deletion leaving nothing of the person and keeping the library and the spend) and `scripts/account-verify.mjs` in a phone sized browser with a virtual authenticator (a link into an account, a second device signing in and receiving the island, one link on two devices at once, deletion signing both out).
 
 Not done: two tabs of one browser still overwrite each other's local saves (review M6; the server merge limits the damage to the island); the welcome is still long on a phone.
+
+## Done in 4.2: faster creation, every item written at the merge
+
+Asked for: everything from dropping one item on another to using the result gets faster, and every new item is written as soon as it is created; no lower quality (no fast mode, no weaker drafts), the extra cost of writing items nobody casts accepted inside a daily cap. Measured first, before any change: `docs/measurements/creation-4.2.md`. DESIGN.md, "Faster creation (4.2)", has the rules.
+
+1. **Measured**: Server-Timing on every answer, a creation timeline in the page and in the HUD's perf sample, and three scripts: `creation-timing.mjs` (phone sized browser, real merges), `test-run-timing.ts` (every live program in Node), `quality-20.ts` (the 20 spells: test, probes, judge, cost).
+2. **A bug the measurement found**: the probes (protection, five minutes) decided nothing in browsers since they were added; fixed, 15 live programs listed.
+3. **The test run in a Web Worker** made by the sandboxed check frame, simulation only, run to the end; the five minute test stops once the artifact has acted.
+4. **Every item written at the merge** by a Cloudflare Queue job, idempotent, paid by the merger, within $1.50 a day and 80% of the month; big items by Opus through the Batch API with no draft.
+5. **Fewer waits**: three programs at once, castable on a local pass, independent calls side by side; **the hour's prompt cache** for the spell writer on every model.
+6. **Chips** say writing, testing, ready, with a toast.
+
+Not done: the real phone session (the perf sample now carries the creation steps: turn the HUD on and play a few merges); the prompt was not trimmed (DESIGN.md says why).
 
 ## Decisions taken
 
