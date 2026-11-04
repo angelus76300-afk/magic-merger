@@ -7,6 +7,7 @@ import { DAMP, HEART, WOODLAND, cellHash, distanceTo, isSea } from "./ecology";
 import { daylight, dayOf, fullMoon } from "./daylight";
 import { deed, tell, villageOf } from "./kin";
 import { sendTo } from "./goals";
+import { SPECIES, habitatCells } from "./wildlife";
 import { calmDown } from "./flight";
 import { islandName, wonderName } from "./names";
 
@@ -958,7 +959,9 @@ export function stepWonders(world: World, spawn: Spawn, life: WonderLife): void 
           w.t = 40;
           let birds = 0;
           for (const c of world.crowd.near(world, w.x, w.y, 14)) if (!c.dead && kindOf(c).native && c.kind === "bird") birds++;
-          if (birds < 4 && world.creatures.length < 480) spawn("bird", w.x + 0.5, w.y + 0.5);
+          // Seabirds nest here while the island still has birds' land to feed on.
+          const bird = SPECIES.find((s) => s.kind.name === "bird");
+          if (birds < 4 && world.creatures.length < 480 && bird && habitatCells(world, bird) >= 30) spawn("bird", w.x + 0.5, w.y + 0.5);
         }
         break;
       case "crater":

@@ -292,13 +292,17 @@ export function growBuildings(world: World): void {
     // A new building: stores to spare, its turn come, room in the tier.
     const built = s.jobs?.length ?? 0;
     const rich = v.food + v.wood + v.gold * 2;
-    if (built < MOST_JOBS[tier] && rich >= 40 + built * 25 && world.time >= (built + 1) * JOB_SECONDS && v.wood >= 4) {
+    // Paid in wood, or in gold where its houses took every log (a poorer
+    // village used to never build at all).
+    const pays = v.wood >= 4 || v.gold >= 3;
+    if (built < MOST_JOBS[tier] && rich >= 30 + built * 20 && world.time >= (built + 1) * JOB_SECONDS && pays) {
       // One of the next three it wants, so two villages grow apart.
       const rng = new Rng((world.seed ^ 0x6a62) + k * 31 + built * 977);
       const options = JOBS.filter((j) => jobAt(s, j.id) < 0 && j.wants(world, s)).slice(0, 3);
       const next = options[Math.floor(rng.next() * options.length)];
       if (next && raise(world, s, next, rng)) {
-        v.wood -= 4;
+        if (v.wood >= 4) v.wood -= 4;
+        else v.gold -= 3;
         tell(world, `${s.name || "a village"} built a ${next.name}`);
       }
     }

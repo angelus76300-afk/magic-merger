@@ -12,6 +12,7 @@ import { DAY_LENGTH, MOON_DAYS, fullMoon } from "../src/sim/daylight";
 import { DRAGON, WONDERS, WONDER_KINDS, floatAt, signatureOf, vents, type Wonder } from "../src/sim/wonders";
 import { JOBS as BUILDING_JOBS, growBuildings, hasJob, housesOf, tierOf } from "../src/sim/buildings";
 import { villageOf } from "../src/sim/kin";
+import { SPECIES, habitatCells } from "../src/sim/wildlife";
 import { houseShape, jobShape } from "../src/sim/voxel/buildings";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
@@ -207,12 +208,18 @@ export function wonderChecks(check: Check): void {
     w.time = DAY_LENGTH * 0.72;
     // Hunters out of the way: a deer chased by wolves runs for its life (the
     // food web), and that is not what this checks.
-    for (const c of w.creatures) if (["wolf", "bear", "fox", "polar bear"].includes(c.kind)) c.dead = true;
+    // (They come back from the edge within seconds since the owner's rule:
+    // kept away for the whole look.)
+    const noHunters = () => {
+      for (const c of w.creatures) if (["wolf", "bear", "fox", "polar bear"].includes(c.kind)) c.dead = true;
+    };
+    noHunters();
     const deer = put(w, "deer", x.x + 5, x.y + 1);
     let round = 0;
     let samples = 0;
     const seen: string[] = [];
     run(w, 25, () => {
+      noHunters();
       samples++;
       const r = Math.hypot(deer.x - x.x - 0.5, deer.y - x.y - 0.5);
       if (Math.abs(r - 3) < 1.6) round++;
@@ -302,6 +309,39 @@ export function wonderChecks(check: Check): void {
     });
   check("4.4.5 B: every wonder does something", !failed.length && did.length === WONDERS.length, failed.join("; ") || did.join(", "));
 
+  // The owner's rule: back only where it can live. A scorched island (every
+  // plant and house gone, the grass burnt, every creature killed): for a
+  // minute and a half no animal is alive while its kind's habitat is gone,
+  // and no villager comes back without a house. (The wipe in the balance
+  // runs is the other side: the habitat stays, and every kind is back.)
+  {
+    const w = make(7);
+    populate(w);
+    run(w, 5);
+    for (let i = 0; i < w.n; i++) {
+      if (w.cover[i] !== 0) w.setCover(i, C.NONE);
+      if (w.ground[i] === G.GRASS || w.ground[i] === G.FIELD || w.ground[i] === G.PATH) w.ground[i] = G.ASH;
+    }
+    w.creatures.length = 0;
+    const wrong: string[] = [];
+    let villagers = 0;
+    let fish = 0;
+    run(w, 90, (t) => {
+      if (t % 5 !== 0) return;
+      for (const sp of SPECIES) {
+        if (sp.kind.aquatic) continue;
+        const alive = w.creatures.filter((c) => !c.dead && c.kind === sp.kind.name).length;
+        if (alive && habitatCells(w, sp) < 30) wrong.push(`${alive} ${sp.kind.name} at ${t} s`);
+      }
+      villagers = Math.max(villagers, w.creatures.filter((c) => !c.dead && c.kind === "villager").length);
+      fish = Math.max(fish, w.creatures.filter((c) => !c.dead && c.kind === "fish").length);
+    });
+    check(
+      "4.4.5 B: back only where it can live: nothing on a scorched island, no villager without a house",
+      !wrong.length && villagers === 0,
+      wrong.slice(0, 4).join(", ") || `no land animal on the ash, ${villagers} villagers, ${fish} fish back in the water that is left`,
+    );
+  }
   // Buildings that differ inside a village.
   {
     const shapes = new Set<string>();
