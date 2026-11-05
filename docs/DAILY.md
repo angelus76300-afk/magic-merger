@@ -18,7 +18,7 @@ One session, "Magic Merger daily planner", woken every morning at 07:36 Toronto 
 ### What it decides, first that applies
 
 1. **CI is red on `main`**: today's prompt fixes it, nothing else.
-2. **A step is already being built** in another session or on a recent branch: it is never proposed again. The message says what is in progress and where it stands, and gives the next step only if it touches other files and does not depend on it (two sessions on the same files, the same Worker or the same migrations collide); otherwise today is "let it finish".
+2. **A step is already being built** in another session or on a recent branch: it is never proposed again. The message says what is in progress and where it stands, and gives instead the day's idea (rule 5), an Interactions fix first, when it touches other files than the version being built and no migration (two sessions on the same files, the same Worker routes or the same migrations collide); otherwise today is "let it finish". This is how the daily fixes move forward while the versions do.
 3. **A builder's pull request waits for the owner**: today starts with reviewing it. The message names it, says what to try (on the phone when it shows something), and what to check before merging. The next prompt follows, to open once that one is merged. Two or more waiting: the message is only the review list, no new prompt, so work never piles up faster than it is read.
 4. **A planned version remains** in "Next versions" and is not built yet: today's prompt is that version's, the lowest number first. A version too big for one session is given in parts (part 1 today, part 2 when it is merged), each part useful on its own.
 5. **Otherwise, one idea**: the highest score in today's category (the rotation below). Score = value to players (1 to 5) × confidence it works (0.5 to 1) ÷ size (1 for a few hours, 2 for a session), plus 1 per player vote, plus 2 for a bug players hit and plus 3 for an idea the owner gave; ties go to the idea that waited longest. An idea too big for one session is split, or proposed as a roadmap version for the owner to approve instead.
@@ -58,15 +58,15 @@ A good mix matters more than the best idea of the day: the rotation decides the 
 
 | Step | Category                                                                                   |
 | ---- | ------------------------------------------------------------------------------------------ |
-| 1    | Gameplay: a new thing to do or a deeper rule                                               |
+| 1    | Interactions: something that does not behave as its name says (the owner's first wish)     |
 | 2    | Quality of life: less friction in something players already do                             |
 | 3    | Visual: the island, creatures, spells or the interface look better                         |
 | 4    | Living world: creatures, villages, nature, the simulation                                  |
 | 5    | Security: a hardening, an audit of one route, a dependency check                           |
 | 6    | Content: a challenge, a species, a hazard, an artifact behavior                            |
 | 7    | Performance or code quality, alternating                                                   |
-| 8    | Gameplay                                                                                   |
-| 9    | Quality of life                                                                            |
+| 8    | Interactions                                                                               |
+| 9    | Gameplay: a new thing to do or a deeper rule                                               |
 | 10   | Audio                                                                                      |
 | 11   | Ready for strangers: onboarding, translation, moderation, legal, limits                    |
 | 12   | Visual                                                                                     |
@@ -89,3 +89,4 @@ Every builder, and the planner on Sundays, looks at the game through a lens, the
 10. **An attacker.** What would a stranger with the link and a script try first?
 11. **A stranger with no context.** What do they need to understand, trust and come back?
 12. **A supporter.** What would make someone happy to give a few euros, with nothing taken from those who do not?
+13. **Audit one item.** Cast a live item from the library on a medium island and compare what happens with its name, description and intents. Every mismatch is an idea for the Interactions category.
