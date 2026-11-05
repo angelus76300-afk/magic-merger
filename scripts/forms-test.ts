@@ -238,6 +238,16 @@ export function formChecks(check: Check): void {
     check("a fine model is kept by a save", back.props.length === 1 && back.props[0].boxes.length === 3 && back.props[0].name === "Lamp");
     cast(world, `const spell = { *cast(w) { w.explode(w.x, w.y, 4, 1); } };`, x, y, 1);
     check("a blast over it takes it away", world.props.length === 0);
+    // The review of #50: the 41st item placed on an island was drawn with nothing.
+    const lantern = FORM_EXAMPLES.object.code;
+    const rt = new Runtime(world, () => {});
+    for (let k = 0; k < 65; k++) rt.cast({ key: `l${k}`, name: "Storm Lantern", tier: "minor", code: lantern }, 20 + (k % 13) * 8, 20 + Math.floor(k / 13) * 8);
+    for (let k = 0; k < 30; k++) stepHeadless(world, rt);
+    check(
+      "the 65th item placed still has its look: the oldest model gives way on a full island",
+      world.props.length === 60 && world.props.some((p) => p.key === "l64") && !world.props.some((p) => p.key === "l0"),
+      `${world.props.length} props, newest ${world.props.at(-1)?.key}`,
+    );
   }
   const fineBook = `const spell = { artifacts: [{ name: "Book", effects: [{ when: "every", every: 20, do: "heal" }] }], *cast(w) {
     w.model(w.x, w.y, [[-0.3, -0.25, 0, 0.6, 0.5, 0.1, "#5a4030"], [-0.08, -0.08, 0.1, 0.16, 0.16, 0.8, "#6a5040"], [-0.35, -0.28, 0.9, 0.7, 0.56, 0.08, "#6a5040"],

@@ -33,7 +33,8 @@ export interface Prop {
   boxes: PropBox[];
 }
 
-export const MAX_PROPS = 40;
+// As many as the landmarks a save keeps (60): every placed item can have its look.
+export const MAX_PROPS = 60;
 export const MAX_PROP_BOXES = 80;
 // A prop reaches 12 cells from its center and 60 voxels up at most.
 const REACH = 12;
@@ -144,8 +145,10 @@ export function shadeParts(p: Prop, amount: number): void {
   }
 }
 
+// The newest is always drawn: on a full island the oldest model gives way
+// (the review of #50: the 41st item placed was drawn with nothing).
 export function addProp(world: World, p: Prop): boolean {
-  if (world.props.length >= MAX_PROPS) return false;
+  while (world.props.length >= MAX_PROPS) world.props.shift();
   world.props.push(p);
   world.propsVersion++;
   return true;
