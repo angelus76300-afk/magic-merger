@@ -25,7 +25,9 @@ concurrency:
   cancel-in-progress: true
 jobs:
   preview:
+    # 4.5.2: no preview for a draft (Actions minutes); the push that marks it ready builds one.
     if: >-
+      !github.event.pull_request.draft &&
       (github.event.action != 'labeled' || github.event.label.name == 'owner-ok') &&
       ((!startsWith(github.head_ref, 'claude/feedback-') && !startsWith(github.event.pull_request.title, 'Feedback:')) || contains(github.event.pull_request.labels.*.name, 'owner-ok'))
     runs-on: ubuntu-latest

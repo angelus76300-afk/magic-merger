@@ -41,6 +41,16 @@ const untouched = merged.filter((p) => !["owner-ok", "owner-yes", "owner-action"
 const foundBy = (who) => merged.filter((p) => new RegExp(`^\\s*Found by:\\s*${who}\\b`, "im").test(p.body ?? "")).length;
 const issues = await gh(`issues?state=all&labels=rollback&since=${since.toISOString()}&per_page=100`);
 const rollbacks = issues.filter((i) => !i.pull_request && new Date(i.created_at) >= since);
+// GitHub Actions minutes this calendar month (2,000 free for a private repository): every
+// completed run's wall time, rounded up per run, an estimate of the billed minutes.
+const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1));
+let actionsMinutes = 0;
+for (let page = 1; page < 20; page++) {
+  const batch = (await gh(`actions/runs?created=>=${monthStart.toISOString().slice(0, 10)}&per_page=100&page=${page}`)).workflow_runs ?? [];
+  for (const r of batch)
+    if (r.status === "completed" && r.conclusion !== "skipped") actionsMinutes += Math.ceil((new Date(r.updated_at) - new Date(r.run_started_at)) / 60_000);
+  if (batch.length < 100) break;
+}
 const messages = Number(arg("owner-messages", 0));
 const minutes = ok * 1 + yes * 3 + other * 2 + messages;
 
@@ -53,5 +63,6 @@ const lines = [
   `| owner's minutes, estimated | ${minutes} |`,
   `| deploys refused or rolled back | ${rollbacks.length}${rollbacks.length ? ": " + rollbacks.map((i) => `#${i.number}`).join(", ") : ""} |`,
   `| bugs found first by the owner / by the AI | ${foundBy("owner")} / ${foundBy("ai")} |`,
+  `| GitHub Actions minutes this month, estimated | ${actionsMinutes} of 2,000 |`,
 ];
 console.log(lines.join("\n"));

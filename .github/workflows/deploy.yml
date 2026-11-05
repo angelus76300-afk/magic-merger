@@ -24,6 +24,9 @@ name: Deploy
 on:
   push:
     branches: [main]
+    # Docs change nothing live: no deploy, no Actions minutes. The next deploy's gate
+    # still judges them, since it checks every merge since the last deploy.
+    paths-ignore: ["docs/**", "**/*.md", ".claude/skills/**", ".claude/settings.json"]
   workflow_dispatch:
 concurrency:
   group: production
