@@ -19,8 +19,8 @@ Learned from the owner's decisions and comments; a builder adds to it after the 
 
 ### Gameplay
 
-- **A Community tab** (the owner's idea, 4 November): who else plays, each friend with their chosen favorite spell, picked from their own discoveries on the account page and changeable any time. Per friend: their name, when they last played ("today", "this week"), how many items they found and their First Discoveries, and the favorite spell's card (emoji, name, tier, its picture once spell cards have one). No recipe is shown, so it never hands anyone an idea (Decisions taken); a friend can hide themselves from the tab on the account page. Before 4.6 brings strangers it needs the name checks and the report button on what it shows. M, owner.
-- **Ride along a creature** (`#3`, 2 votes: "make the characters first person playable characters"). A first step that stands on its own: a camera from a creature's eyes or over its shoulder, following what it does, with its goal and thoughts shown; control comes later if riding along is fun. M, player.
+- **A Community tab** (the owner's idea, 4 November): who else plays, each friend with their chosen favorite spell, picked from their own discoveries on the account page and changeable any time. Per friend: their name, when they last played ("today", "this week"), how many items they found and their First Discoveries, and the favorite spell's card (emoji, name, tier, its picture once spell cards have one). No recipe is shown, so it never hands anyone an idea (Decisions taken); a friend can hide themselves from the tab on the account page. Before 5.2 brings strangers it needs the name checks and the report button on what it shows. M, owner. Planned in 4.7.
+- **Ride along a creature** (`#3`, 2 votes: "make the characters first person playable characters"). A first step that stands on its own: a camera from a creature's eyes or over its shoulder, following what it does, with its goal and thoughts shown; control comes later if riding along is fun. M, player. Planned in 5.0 and 5.1 (select anything, then take control).
 - **Spells that meet**: two spells cast close together react through their declared reactions (a fire spell into a wind spell makes a firestorm). M, Claude.
 - **Villages ask for things**: in a drought a village's bubble asks for rain; answering builds its trust, ignoring it makes villagers leave. M, Claude.
 - **Seasons**: a year in an hour of play, with snow, autumn leaves, migrations and harvests. M, Claude.
@@ -28,7 +28,9 @@ Learned from the owner's decisions and comments; a builder adds to it after the 
 - **Rewind ten seconds** after a cosmic mistake, from snapshots the simulation already saves. M, Claude.
 - **Self-merges that climb once, then loop** (the owner, 4 November: "a lot you can do by merging two of the same things, flock to armada, those are not as interesting"). Rule 5 of the merge prompt makes X + X a cheap ladder: every rung is a new item, a new program written (money) and a discovery, with little new in it. Proposal: X + X gives the bigger form once; an input that is already a plural, a crowd, a mass or legendary and up gives itself back (like the prompt's own Inferno + Fire = Inferno), and legendary or cosmic X + X loops in code without a call. Cross merges (A + B) are untouched, so the interesting space is not cut. Measure before: from D1, the share of discoveries made by self-merges and how deep their chains go; after: forty self pairs and forty cross pairs through the merge model, the cross answers unchanged. Recipes already frozen stay. S, owner and Claude.
 
-- **Daily challenges, a tab of discoveries waiting to be made** (the owner's idea, 5 November, decided): each day one new item waits to be found by merging two items already in the shared pool, a pair nobody has merged yet. Players see its **name, emoji, tier and description**; the only unknown is which two items make it. A Daily challenges tab lists today's and every earlier one not found yet, so a challenge stays open until someone finds it. Whoever merges it first has their name on it, shown in the tab and kept on the item as its First Discovery, with the day it was set and the day it was found. How it would work: the Worker picks the pair each night among items the pool already holds, at tiers that make a good find, makes the merge ahead (one merge call, about $0.001) and keeps the pair secret until someone merges it; the result must be truly new (not an existing item or one of its aliases), and its program is written ahead like any new item (4.2). Merging the pair costs nothing from anyone's $5. Still to decide: what a player who does not own one of the two parents can do (find it first, which makes the hunt longer), and whether an open challenge ever expires. M, owner.
+- **Daily challenges, a tab of discoveries waiting to be made** (the owner's idea, 5 November, decided): each day one new item waits to be found by merging two items already in the shared pool, a pair nobody has merged yet. Players see its **name, emoji, tier and description**; the only unknown is which two items make it. A Daily challenges tab lists today's and every earlier one not found yet, so a challenge stays open until someone finds it. Whoever merges it first has their name on it, shown in the tab and kept on the item as its First Discovery, with the day it was set and the day it was found. How it would work: the Worker picks the pair each night among items the pool already holds, at tiers that make a good find, makes the merge ahead (one merge call, about $0.001) and keeps the pair secret until someone merges it; the result must be truly new (not an existing item or one of its aliases), and its program is written ahead like any new item (4.2). Merging the pair costs nothing from anyone's $5. Still to decide: what a player who does not own one of the two parents can do (find it first, which makes the hunt longer), and whether an open challenge ever expires. M, owner. Planned in 4.7.
+
+- **Tiers that make sense from strong parents**: two legendary items can merge into a cantrip (Miracle and the Philosopher's Stone make the Elixir of Life, a cantrip; Gold from the Philosopher's Stone too), because 3.7 ties the tier to depth. A floor: the result is at most one tier below its weaker parent, unless the merge is a joke worth keeping. S, Claude.
 
 ### Quality of life
 
@@ -47,12 +49,12 @@ Learned from the owner's decisions and comments; a builder adds to it after the 
 - **Spell cards with a picture**: a frame of the spell's own test run as its thumbnail. M, Claude.
 - **Lanterns at night** in villages, and glowing windows. S, Claude.
 
-- **Wonders written by Claude drawn like the built-in ones**: today a daily wonder can only place whole-cell voxels, so it comes out as towers of cubes (`docs/visual-checks/4.4.5-c/program-wonders.jpg`) while the seventeen built-in wonders are box models with fine parts (`src/sim/voxel/wonders.ts`). Give the wonder program a look of up to about 60 boxes of any size and the same helpers the built-ins use (lump, tree, column, arch, ring, crystal cluster, a part that glows at night), drawn by the same renderer for one or two draw calls and no voxel budget; keep voxels for what must burn, fall or be climbed. In the prompt, one built-in wonder as an example and "a clear silhouette, varied proportions, few fine parts" instead of "solid, dense shapes". No new paid call. S, Claude.
+- **Wonders written by Claude drawn like the built-in ones**: today a daily wonder can only place whole-cell voxels, so it comes out as towers of cubes (`docs/visual-checks/4.4.5-c/program-wonders.jpg`) while the seventeen built-in wonders are box models with fine parts (`src/sim/voxel/wonders.ts`). Give the wonder program a look of up to about 60 boxes of any size and the same helpers the built-ins use (lump, tree, column, arch, ring, crystal cluster, a part that glows at night), drawn by the same renderer for one or two draw calls and no voxel budget; keep voxels for what must burn, fall or be climbed. In the prompt, one built-in wonder as an example and "a clear silhouette, varied proportions, few fine parts" instead of "solid, dense shapes". No new paid call. S, Claude. Planned in 4.6.
 
 ### Living world
 
 - **A creature's day**: villagers sleep in houses, wake, eat together, gather at a fire at dusk. M, Claude.
-- **Trade caravans** between villages, which monsters can rob. M, Claude.
+- **Trade caravans** between villages, which monsters can rob. M, Claude. Planned in 4.9.
 - **Population graphs**: how many of each kind lived over the last hour, in the inspect panel. S, Claude.
 - **Dreams**: at night, bubbles over sleeping villagers show the spells they saw that day. S, Claude.
 
@@ -66,9 +68,17 @@ Learned from the owner's decisions and comments; a builder adds to it after the 
 - **A sound per tier on every merge**, until 4.5 brings the rest. S, Claude.
 - **A short sting on a First Discovery** that no other moment uses. S, Claude.
 
+### Interactions
+
+The long tail of things that do not behave as their name says, found mostly through the audit lens of DAILY.md. The systemic fixes (wards with a breaking point, artifact sizes, objects picked up, box looks) are 4.6.
+
+- **Audit the most cast items first**: the twenty most cast live items, each cast on a medium island and compared with its name, description and intents; every mismatch becomes a line here, then one rewrite at a time. S, Claude.
+- **Teleports land somewhere sensible**: the Wormhole sends creatures to the mirror point of the island, which can be the sea or a cliff; land on dry ground near the other end. S, Claude.
+- **What a creature carries shows in its hand** and changes what it does (a villager with a torch lights the way, one with a sword fights back). S, Claude.
+
 ### Security
 
-- **Shields that stop meteors and projectiles** (`#2`: "I had a shield from immortality that let a meteor pass through"). A bug players hit; planned in 4.4.5. S, player.
+- **Shields that stop meteors and projectiles** (`#2`: "I had a shield from immortality that let a meteor pass through"). A bug players hit; planned in 4.4.5. S, player. Planned in 4.6 (shields with a breaking point).
 - **A CSP on the game page** itself, not only on the frames (review L3 found `/` has none). S, Claude.
 - **Weekly dependency check**: `npm audit` and outdated packages, one upgrade at a time with the tests. S, Claude.
 - **One route a week audited**: inputs, limits, who may call it, written as tests. S, Claude.

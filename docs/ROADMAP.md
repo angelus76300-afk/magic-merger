@@ -321,7 +321,7 @@ The ledger holds $6.64 (plus about $3.32 before it existed): about $10 of the fi
 
 Sizes are per Claude Code session: S a few hours, M a full session, L two or more. The roadmap page has a ready prompt per version.
 
-**Numbered in the order to run them.** Renumbered on 3 November so the numbers are the order; `docs/REVIEW-4.0.md` and older pull requests use the old numbers (the review's findings were 4.0.2, faster creation 4.0.1, worlds 4.1, sound 4.2, strangers 4.5). Done since: 4.1, 4.2, 4.3, 4.4, 4.4.1, 4.4.5 (parts A, B and C) and 4.4.6, summed up above; their plans are in the git history of this file. Left: 4.5, 4.6, then 4.7, the daily updates that keep going after the plan. 4.4.5 and 4.5 could swap; nothing public before 4.6.
+**Numbered in the order to run them.** Renumbered on 3 November so the numbers are the order; `docs/REVIEW-4.0.md` and older pull requests use the old numbers (the review's findings were 4.0.2, faster creation 4.0.1, worlds 4.1, sound 4.2, strangers 4.5). Done since: 4.1, 4.2, 4.3, 4.4, 4.4.1, 4.4.5 (parts A, B and C) and 4.4.6, summed up above; their plans are in the git history of this file. Revised on 5 November with the owner's new ideas: 4.5 creatures worth creating, 4.6 things that behave as they should, 4.7 daily challenges, the Community tab and what's new, 4.8 sound and music (was 4.5), 4.9 builders, roads and vehicles, 5.0 look closer and 5.1 take control (the first person update), 5.2 ready for strangers (was 4.6). The daily updates run between them: the planner gives the next version when none is being built, and a small daily fix in other files while one is.
 
 ### 4.4.5 Every island a surprise (done, see above)
 
@@ -378,7 +378,38 @@ The plan, in order:
 6. **What syncs, written down**: discoveries, board, island, challenge wins (already on the server), the recipe book and the favorite spell (once the Community tab exists); settings stay per device (sound, HUD, graphics switches), on purpose.
 7. **Checked**: the tests of item 1 pass; the owner on two devices sees the same discoveries and island within a minute; sign out and sign in with another account leaves no trace of the first; the admin powers work with a passkey and with the token; the attacks of `docs/REVIEW-4.0.md` section 10 still pass. Shown to the owner on the live site before merging, on a phone and a computer.
 
-### 4.5 Sound and music
+### 4.5 Creatures worth creating
+
+The owner, 5 November: creatures made by merges are poor, "just take the serpent or the human". Read in the live programs: **Serpent is not a creature at all**: it is an artifact, twelve stone spheres in a line with a ward around them, "a bog-black living coil" that never moves. **Human** is a villager with glowing eyes that follows other villagers and heals. An item is a spell or an artifact (`elements.kind`), so a living thing becomes either a statue or a recolored base kind; nothing checks that a creature moves, wants something and does it.
+
+1. **A third kind, creature**, beside spell and artifact (a new migration, existing rows untouched): decided at the merge like the other two, placed where the player taps like an artifact, and written as a living thing first: its body plan from what it is (a serpent slithers on the serpent plan, a human walks as a person, not a villager with glowing eyes), its size against a villager, its colors and features, its gait, its needs, a goal of its own, one to three abilities with triggers, whom it is friends with, hunts or fears, and how it breeds or dies.
+2. **The prompt for creatures**, apart from the spell prompt: the 3.5 bodies, the 3.6 goals and abilities and the 4.3 steering as a short reference, two excellent examples written by hand (a serpent, a fox spirit), and the rule that a creature must be watchable for five minutes.
+3. **A creature probe** in the test run, like the promise probes: it moves on its plan, pursues its goal, uses an ability within two simulated minutes, reacts to what it fears or hunts, and the five minute populations still hold. A creature that stands still or does nothing is written again once.
+4. **The judge looks at it**: three frames and the question "does this look and act like a <name>?", advising as today.
+5. **The living things already in the library**, found by the Haiku sort of 4.4.5 part C (creature) and by name: listed for the owner with before and after frames, re-classified and rewritten one batch at a time through the 3.7 refresh path, capped and approved, never all at once.
+6. **Checked**: Serpent and Human rewritten as creatures and shown to the owner on a phone; ten new creatures from new merges watched for five minutes each in a frame strip.
+
+### 4.6 Things that behave as they should
+
+The owner, 5 November: "so many things don't interact in the right way". Systemic causes first; the long tail goes to the daily updates (below), which now have an Interactions category.
+
+1. **Shields with a breaking point**: a ward has health, takes damage from what it stops, shows cracks, and breaks; strong spells break weak wards. It stops projectiles and calamities, not only harm (Ideas tab `#2`: "a shield from immortality let a meteor pass through"): bodies, meteors, fireballs, lightning and lava stop at its edge, each with a check in `npm test`.
+2. **Artifacts the right size**: an object is small (a staff, a ring, a potion, a lantern), a place is large (a temple, a grove); the program says which, and the generator draws it at that scale.
+3. **Objects that are picked up and used**: a creature or villager that reaches an object can take it, carry it in hand (the 3.5 carried items), and gains the object's action as an ability (a staff throws its fireball, a potion heals once, a lantern lights the way); it can be dropped, stolen or lost when its owner dies. The player gets the same actions in 5.1.
+4. **Looks drawn like the built-in wonders**: artifacts and wonders written by Claude get box models with fine parts (the idea in `docs/IDEAS.md`), instead of balls of whole-cell voxels. The Wormhole, a voxel ball with a ring of single voxels, is the first one rewritten.
+5. **An interaction table in `npm test`**: every effect (fire, flood, lightning, projectile, summon, teleport, heal, freeze) against every protection and every material, with what should happen, so a fix in one place cannot break another.
+
+### 4.7 Daily challenges, the Community tab and what's new
+
+The owner's social ideas, together because they share one screen: who plays, what they found, what is new.
+
+1. **Daily challenges** (`docs/IDEAS.md`): a new item each day from two pool items nobody has merged yet, its name, emoji, tier and description shown, the pair hidden; a tab of every challenge not found yet; the first finder's name on it.
+2. **The Community tab** (`docs/IDEAS.md`): who plays, each friend's chosen favorite spell, items found and First Discoveries, no recipe shown, hideable.
+3. **What's new in the game**: `public/changelog.json`, one line per merged update, a dot and a list since the player's last visit; a player whose idea was built is told so.
+4. **The Ideas tab follows daily builds**: a pull request that says `Idea #<n>` moves that idea to "Waiting for review" and then "Done".
+5. **A preview for each pull request**, so the owner tries it on a phone before merging: a staging Worker with its own D1 (a copy refreshed nightly, accounts, sessions, invites and emails stripped) and a $2 budget, deployed by CI from a token kept in GitHub's secrets.
+
+### 4.8 Sound and music
 
 The island is heard the same way from everywhere: a sound carries no position, villager work went silent in 4.1 because a thump from across the island could not be placed, and 12 voices serve 167 live programs (all of them call `w.sound`; "chime" alone 127 times), so spells sound alike. Goal: the island sounds like a place, each spell sounds like itself, and music follows what happens, all generated in the browser with no audio files and no new paid call.
 
@@ -392,19 +423,39 @@ The island is heard the same way from everywhere: a sound carries no position, v
 8. **Settings and manners.** One sound button as today, plus volumes for music, effects and ambience in the menu; music off by default on first visit until the player turns it on; audio paused when the tab is hidden (battery) and resumed on return; a mono option; never a sound before the player's first tap (browsers forbid it, and it should not surprise anyone).
 9. **Measured and tested.** Every voice rendered offline in `npm test` (no NaN, length bounded, peak and loudness within a range so no voice is ten times louder than another); the number of live audio nodes and voices in the HUD and in the perf sample; a ten minute session on a real phone with sound and music on, read back from `/api/perf`, simulation and frame p95 within the numbers of 4.4. Someone listens: the owner, on a phone, before merge.
 
-### 4.6 Ready for strangers
+### 4.9 Builders: villages that grow, roads and vehicles
+
+The owner, 5 November: as people discover things and have the resources, they build. Today a village builds houses from wood and gold (3.1, 4.4.5 part B buildings).
+
+1. **Discoveries a village makes**: from what it has seen and been given (spells cast near it, artifacts it picked up, resources around it), a village learns crafts in a small tree: masonry, the wheel, the forge, the mill, boats, roads, bridges, magic. Each craft unlocks buildings and tools.
+2. **Resources and building**: wood, stone, clay, ore, food and gold gathered by jobs; a plan of what to build next by what the village needs (a granary before a famine, a wall after a raid, a bridge where a river blocks the way); building sites you can watch go up.
+3. **Roads**: paths worn where villagers walk become dirt roads, then stone roads, then bridges; roads join villages and wonders; walking on them is faster, and the flow fields of 4.3 prefer them.
+4. **Vehicles**: carts on roads, boats on rivers and lakes, a ferry, later a flying ship from a spell or a wonder; each a small box model that moves with the 4.3 steering and carries people and goods between villages; trade caravans that monsters can rob.
+5. **Checked**: a village left alone for an hour of simulated time grows from hamlet to town on three seeds; roads join every village that trades; the simulation p95 on a large island stays within the HUD numbers.
+
+### 5.0 Look closer: select anything
+
+The first person update, part 1. When no spell is selected (or after a cast, when the player is back to nothing selected), a tap selects whatever is there: a creature (today's inspect card, 3.6), a villager, a building with a job, a wonder, a landmark, an artifact or object, a tree or plant, water or a road.
+
+1. **One card for everything**: what it is, what it does now, what it wants or holds, its history (who placed it, when, what it did), and actions where they make sense (follow with the camera, name it, set it as favorite).
+2. **Follow cam**: the camera follows the selection smoothly; the selection stays highlighted.
+3. **Checked**: every kind of thing on an island selectable at phone size, with a frame per card.
+
+### 5.1 Take control
+
+The first person update, part 2 (Ideas tab `#3`: "make the characters first person playable characters"). From the card, "take control": the camera moves behind or into the entity and the player plays it.
+
+1. **Controls per kind**: a bird flies, a fish swims, a villager walks and does its jobs (farm, fell, fish, build, trade), a beast hunts or grazes, a creature of a spell uses its own abilities, an object held gives its action (4.6).
+2. **Phone first**: a thumb stick and up to four action buttons from the entity's abilities; a tap to let go, and the entity goes back to its own goal.
+3. **The world goes on**: the simulation does not pause; others react to the player's entity as to any other.
+4. **Checked**: each kind played for two minutes in a phone sized browser with a frame strip; the simulation p95 unchanged while controlling.
+
+### 5.2 Ready for strangers
 
 AI Gateway spend caps, Turnstile, name checks, AI labels, small legal pages. Accounts (4.0) come first, so strangers can keep their progress. From the 4.0 review: trials decided by the admin's runner (or two browsers that agree), not by one browser's word (M11), since a stranger can promote a crashing program for everyone. Quotas, the report button and invite links instead of a shared token came early, in 3.4, for friends. Nothing public before this.
 
-### 4.7 Updates that never stop
+### Daily updates (running since 4 November, between the versions)
 
-The game moves forward every day. Since 4 November a scheduled planner session runs every morning (07:43, Paris time): it reads `main`, the pull requests and the backlog, and gives the owner one prompt, the next step of this roadmap while planned versions remain, then one idea a day in a good mix of kinds (gameplay, quality of life, visual, living world, content, audio, performance and code quality, security, ready for strangers, accessibility, non invasive monetization, and one wild idea every fourteen). The owner opens a new session with it; that builder opens a draft pull request; the owner merges. The rules are `docs/DAILY.md`, the backlog `docs/IDEAS.md`. The planner changes nothing itself and never reads the database, so players' text reaches a session only through a builder the owner opened.
-
-What this version still adds, to make each day cheaper for the owner:
-
-1. **What's new in the game**: `public/changelog.json`, one line per merged update, shown as a small dot and a list since the player's last visit; a player whose idea was built is told so.
-2. **The Ideas tab follows daily builds**: a pull request that says `Idea #<n>` moves that idea to "Waiting for review" and then "Done", like the feedback sync does with `Closes #<issue>`.
-3. **A preview for each pull request**, so the owner tries it on a phone before merging: a staging Worker with its own D1 (a copy refreshed nightly, accounts, sessions, invites and emails stripped) and a tiny budget (for example $2 a month), deployed by CI from a token kept in GitHub's secrets with Workers scripts permission only.
-4. **Checked** in `npm run test:worker`: the changelog and the idea sync.
+The game moves forward every day. Since 4 November a scheduled planner session runs every morning (07:36, Toronto time): it reads `main`, the pull requests and the backlog, and gives the owner one prompt, the next step of this roadmap while planned versions remain, then one idea a day in a good mix of kinds (gameplay, quality of life, visual, living world, content, audio, performance and code quality, security, ready for strangers, accessibility, non invasive monetization, and one wild idea every fourteen). The owner opens a new session with it; that builder opens a draft pull request; the owner merges. The rules are `docs/DAILY.md`, the backlog `docs/IDEAS.md`. The planner changes nothing itself and never reads the database, so players' text reaches a session only through a builder the owner opened.
 
 Two limits by design. **The owner's review is the bottleneck, not ideas**: with two pull requests waiting, the planner gives only the review list, so nothing piles up and a week away costs nothing. **Small and finished beats big and started**: anything larger than a session is given in parts or becomes a roadmap version for the owner.
