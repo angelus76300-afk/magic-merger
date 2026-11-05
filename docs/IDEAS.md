@@ -19,7 +19,7 @@ Learned from the owner's decisions and comments; a builder adds to it after the 
 
 ### Gameplay
 
-- **A Community tab** (the owner's idea, 4 November): who else plays, each friend with their chosen favorite spell, picked from their own discoveries on the account page and changeable any time. Per friend: their name, when they last played ("today", "this week"), how many items they found and their First Discoveries, and the favorite spell's card (emoji, name, tier, its picture once spell cards have one). No recipe is shown, so it never hands anyone an idea (Decisions taken); a friend can hide themselves from the tab on the account page. Before 5.2 brings strangers it needs the name checks and the report button on what it shows. M, owner. Planned in 4.7.
+- **A Community tab** (the owner's idea, 4 November): who else plays, each friend with their chosen favorite spell, picked from their own discoveries on the account page and changeable any time. Per friend: their name, when they last played ("today", "this week"), how many items they found and their First Discoveries, and the favorite spell's card (emoji, name, tier, its picture once spell cards have one). No recipe is shown, so it never hands anyone an idea (Decisions taken); a friend can hide themselves from the tab on the account page. Before 5.4 brings strangers it needs the name checks and the report button on what it shows. M, owner. Planned in 4.7.
 - **Ride along a creature** (`#3`, 2 votes: "make the characters first person playable characters"). A first step that stands on its own: a camera from a creature's eyes or over its shoulder, following what it does, with its goal and thoughts shown; control comes later if riding along is fun. M, player. Planned in 5.0 and 5.1 (select anything, then take control).
 - **Spells that meet**: two spells cast close together react through their declared reactions (a fire spell into a wind spell makes a firestorm). M, Claude.
 - **Villages ask for things**: in a drought a village's bubble asks for rain; answering builds its trust, ignoring it makes villagers leave. M, Claude.
@@ -33,6 +33,8 @@ Learned from the owner's decisions and comments; a builder adds to it after the 
 - **Tiers that make sense from strong parents**: two legendary items can merge into a cantrip (Miracle and the Philosopher's Stone make the Elixir of Life, a cantrip; Gold from the Philosopher's Stone too), because 3.7 ties the tier to depth. A floor: the result is at most one tier below its weaker parent, unless the merge is a joke worth keeping. S, Claude.
 
 ### Quality of life
+
+Most of these are planned together in 5.3.
 
 - **Search the inventory** by name and emoji, most recent first. S, Claude.
 - **Long press a chip** for its recipe, description and first discoverer. S, Claude.
@@ -86,12 +88,14 @@ The long tail of things that do not behave as their name says, found mostly thro
 
 ### Ready for strangers
 
-- **The game in French**, with English kept: every string through one table, the language from the browser. M, Claude.
+- **The game in French** (planned in 5.3), with English kept: every string through one table, the language from the browser. M, Claude.
 - **A two minute first session**: merge, discover, cast, see what it did, then let go. M, Claude.
 - **A moderation queue** for reported names, with one tap to rename or hide. S, Claude.
 - **A status line** when Claude is slow or the month's budget is spent, honest and friendly. S, Claude.
 
 ### Accessibility
+
+Planned in 5.3.
 
 - **Tiers by shape as well as color**, for color blind players. S, Claude.
 - **A switch for flashes and shakes**, apart from the system's reduced motion. S, Claude.

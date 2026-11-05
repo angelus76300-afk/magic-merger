@@ -321,7 +321,7 @@ The ledger holds $6.64 (plus about $3.32 before it existed): about $10 of the fi
 
 Sizes are per Claude Code session: S a few hours, M a full session, L two or more. The roadmap page has a ready prompt per version.
 
-**Numbered in the order to run them.** Renumbered on 3 November so the numbers are the order; `docs/REVIEW-4.0.md` and older pull requests use the old numbers (the review's findings were 4.0.2, faster creation 4.0.1, worlds 4.1, sound 4.2, strangers 4.5). Done since: 4.1, 4.2, 4.3, 4.4, 4.4.1, 4.4.5 (parts A, B and C) and 4.4.6, summed up above; their plans are in the git history of this file. Revised on 5 November with the owner's new ideas: 4.5 creatures worth creating, 4.6 things that behave as they should, 4.7 daily challenges, the Community tab and what's new, 4.7.5 a game that runs itself and a morning brief that makes you want to build, 4.8 sound and music (was 4.5), 4.9 builders, roads and vehicles, 5.0 look closer and 5.1 take control (the first person update), 5.2 ready for strangers (was 4.6). The daily updates run between them: the planner gives the next version when none is being built, and a small daily fix in other files while one is.
+**Numbered in the order to run them.** Renumbered on 3 November so the numbers are the order; `docs/REVIEW-4.0.md` and older pull requests use the old numbers (the review's findings were 4.0.2, faster creation 4.0.1, worlds 4.1, sound 4.2, strangers 4.5). Done since: 4.1, 4.2, 4.3, 4.4, 4.4.1, 4.4.5 (parts A, B and C) and 4.4.6, summed up above; their plans are in the git history of this file. Revised on 5 November with the owner's new ideas: 4.5 creatures worth creating, 4.6 things that behave as they should, 4.7 daily challenges, the Community tab and what's new, 4.7.5 a game that runs itself and a morning brief that makes you want to build, 4.8 sound and music (was 4.5), 4.9 builders, roads and vehicles, 5.0 look closer and 5.1 take control (the first person update), 5.2 looks and speed, 5.3 interface, accessibility and quality of life, 5.4 ready for strangers (was 4.6). The daily updates run between them: the planner gives the next version when none is being built, and a small daily fix in other files while one is.
 
 ### 4.4.5 Every island a surprise (done, see above)
 
@@ -469,7 +469,28 @@ The first person update, part 2 (Ideas tab `#3`: "make the characters first pers
 3. **The world goes on**: the simulation does not pause; others react to the player's entity as to any other.
 4. **Checked**: each kind played for two minutes in a phone sized browser with a frame strip; the simulation p95 unchanged while controlling.
 
-### 5.2 Ready for strangers
+### 5.2 Looks and speed: a visual and performance pass
+
+The owner, 5 November: another visual and performance update down the line. By then 4.5 to 5.1 will have added creatures, objects, buildings, roads, vehicles and a controllable entity, all paid for in frame time. Measured first, on real phones through `/api/perf`, never guessed.
+
+1. **Where the time goes**: a profile of a large island at the end of 5.1 on a phone sized browser and on the owner's phone, split by simulation system (temperature and fluids were 40% of a tick in 3.x) and by draw call; a budget per system written down.
+2. **The simulation in a Worker thread**, the full answer to review M3: since 4.2 the check frame already runs spell code in a blob Worker, so the CSP path exists; the view reads the state the Worker sends.
+3. **Far things cost less**: levels of detail for creatures, buildings and wonders by distance, instancing for every repeated model, updates of far simulation regions at a lower rate.
+4. **Quality presets chosen by the device** (low, medium, high) from its own HUD numbers, with a battery saver that lowers the frame rate when idle or hidden.
+5. **Visuals that the budget then allows**: soft shadows, light and color that follow the hour, glow that blooms at night, water that reflects the sky, more particles where they read (embers, pollen, snow), each behind a switch and measured alone, as in 4.4.
+6. **Checked**: 30 fps on a mid range phone on a large island with everything of 4.5 to 5.1 in play, the simulation p95 within its budget, and frames of three seeds before and after.
+
+### 5.3 Interface, accessibility and quality of life
+
+The owner, 5 November. By then the game has a Craft view, the World, Challenges, Ideas, Community and Daily challenges, and cards for everything: a pass on the whole interface before strangers see it.
+
+1. **An interface audit at phone size**: every screen and card in a frame strip, one thumb, what is too small, too far or too crowded; the tabs and menus regrouped so the main two (Craft and World) stay one tap away.
+2. **Quality of life** from `docs/IDEAS.md`: search in the inventory, a long press for an item's recipe and history, tidy the board, follow a creature, preview a spell's reach, haptics, undo the last merge, a settings page that holds every switch.
+3. **Accessibility**: tiers by shape as well as color, text that scales with the phone's font size, touch targets of at least 44 pixels, a switch for flashes and shakes apart from reduced motion, labels for screen readers on every control, the keyboard on a computer.
+4. **The game in French**, English kept, every string through one table, the language from the browser.
+5. **Checked**: the audit's frames before and after, an automated accessibility check (contrast, labels, target sizes) in CI, and one session with the owner on a phone.
+
+### 5.4 Ready for strangers
 
 AI Gateway spend caps, Turnstile, name checks, AI labels, small legal pages. Accounts (4.0) come first, so strangers can keep their progress. From the 4.0 review: trials decided by the admin's runner (or two browsers that agree), not by one browser's word (M11), since a stranger can promote a crashing program for everyone. Quotas, the report button and invite links instead of a shared token came early, in 3.4, for friends. Nothing public before this.
 
