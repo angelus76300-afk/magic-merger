@@ -317,6 +317,22 @@ Asked for: every claim checked (`docs/AUDIT-2026-11-05.md`, about 760 claims, 25
 
 Not done, waiting for the owner (4.5.1a below): the preview pipeline and the production admin token, branch protection, rewrites of Frost Nova and Light, and a CI job for the browser checks.
 
+## Done in 4.5.2: the AI drives, the owner steers
+
+Asked for: the seven items of "4.5.2" below, with a dry run on three recent pull requests and the brief the owner would have received (`docs/LOOP.md`). The rules are in `docs/DAILY.md`; the reviewer's protocol in `docs/REVIEWER.md`.
+
+1. **Production deploys only from `main`**, by the `Deploy` workflow after CI: the gate's deploy check, migrations, `wrangler deploy` with a `main <sha>` message, a read only smoke test of the live site at 390 by 844 and the health route (`scripts/smoke.mjs live`), the Worker's failed invocations in the minute after, and `wrangler rollback` with an issue labelled `rollback` on any failure or cancellation; a red `main` opens an issue too. `npm run deploy` refuses outside GitHub Actions.
+2. **Risk classes** read from every diff (`scripts/risk.mjs`: 14 red rules, 8 amber; `npm run test:risk`, 144 checks, and the table in `docs/DAILY.md` checked against the script). The `Gate` workflow merges green once CI ran in full, the preview smoke test passed and an independent review of the head commit passed; amber needs the owner's OK, red the owner's yes, each recorded by the planner as a label and an `mm-owner` comment.
+3. **A reviewer that is not the builder**: a separate session, blocking on what it can show, reproducing one claim on the preview; a block or a raised class sticks on its commit. This version itself went through four review rounds by fresh agents (25 findings fixed, among them a deploy that would have shipped untested dependency versions).
+4. **The planner** gets a night run that starts the builder and the Night workflow, and a morning run that looks at the night's frames and sends the brief with questions, options and a recommendation.
+5. **The night** (`.github/workflows/nightly.yml`): the newcomer's path and a ten minute session on a random island on staging, frames for the vision check, the live errors, slow ticks, down votes, open reports and refusals, and drift between production and `main`.
+6. **Three designer ideas a week**, the first three in `docs/IDEAS.md`.
+7. **Measured** in `docs/LOOP.md` (`scripts/loop-metrics.mjs`), with the baseline from the audit.
+
+Also: previews of the Ideas routine's pull requests wait for `owner-ok` (audit risk 1, in part); previews, staging and the night use a staging only admin token once the owner sets `STAGING_ADMIN_TOKEN`; CI skips its two long steps on drafts and docs only changes and cancels superseded runs (Actions minutes ran at about 400 a day in November, of 2,000 free a month).
+
+Not done: what only the owner can change (4.5.1a), and the planner's schedule (a night run and a new prompt), which the owner applies. As long as sessions act as the owner's GitHub account with the Cloudflare token in their environment, the gates hold against mistakes, not against a session that sets out to break them (`docs/DAILY.md`, "What holds").
+
 ## Decisions taken
 
 1. **Cosmic spells may ruin the island.** Consequences are part of the fun; the land regrows on its own (ash turns to soil, grass and forests come back) and Reset is one tap away. Revisit if it feels punishing in play.
@@ -427,15 +443,15 @@ Before more is built on top, and before the AI is trusted to merge on its own (4
 
 From the audit's risks 1 and 4 (`docs/AUDIT-2026-11-05.md`, sections 5 and 6). Each item is a setting, a credential or a running cost, so the owner decides; the code part is small once decided.
 
-1. **Previews stop running unreviewed code with production credentials**: today every pull request from a branch of this repository is built with the account wide `CLOUDFLARE_API_TOKEN`, and the staging Worker holds the production admin token (MM_TOKEN). Options: a `preview` label the owner adds before CI builds it (free, a one line change), or a GitHub environment with a required reviewer (needs GitHub Pro for a private repository). Recommended: the label now.
-2. **Staging gets its own admin token**, a new repository secret the owner creates; previews then open with it, not with production's.
+1. **Previews stop running unreviewed code with production credentials**: today every pull request from a branch of this repository is built with the account wide `CLOUDFLARE_API_TOKEN`, and the staging Worker holds the production admin token (MM_TOKEN). Options: a `preview` label the owner adds before CI builds it (free, a one line change), or a GitHub environment with a required reviewer (needs GitHub Pro for a private repository). Recommended: the label now. Since 4.5.2 the Ideas routine's pull requests already wait for `owner-ok`; the label for every pull request would also stop the Gate from merging green work at night, so the better fix is item 2 plus a Cloudflare token for CI scoped to the staging Worker and database.
+2. **Staging gets its own admin token**, a new repository secret the owner creates; previews then open with it, not with production's. Since 4.5.2 every workflow uses `STAGING_ADMIN_TOKEN` when it exists: the owner only creates the secret (and gives sessions the same value instead of the production `ADMIN_TOKEN`).
 3. **Rotate ADMIN_TOKEN and MM_TOKEN**, then list the owner's passkeys on the account page and remove any not recognised: since 4.4.6 the admin token can make a lasting owner passkey, and it has been reachable from preview code.
 4. **Branch protection on `main`**, needed before 4.5.2 lets sessions merge alone: GitHub Pro (a running cost) or a public repository.
 5. **The nightly Judge job** casts live spells and trial wonders in Node next to MM_TOKEN; move the casting into a worker thread with an empty environment (code, small) once item 3 is done.
 6. **Frost Nova** (its thaw sets the village on fire) and **Light** (it promises protection and fails its test) rewritten one at a time from the admin card, a few cents each.
 7. **The browser checks in CI** (`account-verify.mjs`, `verify-4.1.mjs`): about 10 more Actions minutes per pull request; the private repository's free minutes are limited.
 
-### 4.5.2 The AI drives, the owner steers
+### 4.5.2 The AI drives, the owner steers (done, see above)
 
 The owner, 5 November: the owner wants to touch three things only: questions from the sessions building an update, the morning brief, and the game with its Ideas tab. All the creation and coding is done by AI already, and the admin is there for steering, showing bugs and bringing ideas, yet the admin is still driving when the AI should be driving, asking questions and bringing ideas as a game design expert; so many things should just be checked and corrected without anyone asking, and having to say "merge" and "deploy" all the time should not be needed. Today: the planner proposes one prompt and changes nothing; the owner opens every session, pastes the prompt, and says when to merge; production is deployed by hand from the building session, before the merge, so the live game can run code that is not on `main` and two sessions deploying the same day overwrite each other. Since 4.5, a pull request gets a preview and `main` deploys to staging. Built on the audit's loop map (4.5.1), in this order:
 
@@ -564,6 +580,6 @@ AI Gateway spend caps, Turnstile, name checks, AI labels, small legal pages. Acc
 
 ### Daily updates (running since 4 November, between the versions)
 
-The game moves forward every day. Since 4 November a scheduled planner session runs every morning (07:36, Toronto time): it reads `main`, the pull requests and the backlog, and gives the owner one prompt, the next step of this roadmap while planned versions remain, then one idea a day in a good mix of kinds (gameplay, quality of life, visual, living world, content, audio, performance and code quality, security, ready for strangers, accessibility, non invasive monetization, and one wild idea every fourteen). The owner opens a new session with it; that builder opens a pull request, then merges and deploys it itself once every check is green (`CLAUDE.md`). The rules are `docs/DAILY.md`, the backlog `docs/IDEAS.md`. The planner changes nothing itself and never reads the database, so players' text reaches a session only through a builder the owner opened.
+The game moves forward every day. Since 4.5.2 the scheduled planner session runs twice: at night (01:13, Toronto time) it starts the day's builder itself, the next step of this roadmap while planned versions remain, then the night's fixes and one idea a day in a good mix of kinds (gameplay, quality of life, visual, living world, content, audio, performance and code quality, security, ready for strangers, accessibility, non invasive monetization, and one wild idea every fourteen); in the morning (07:36) it sends the owner the brief. The Gate merges what is green, the Deploy workflow deploys `main`, and the owner answers the amber and red questions. The rules are `docs/DAILY.md`, the backlog `docs/IDEAS.md`. The planner never edits the repository and never reads the database.
 
-Two limits by design. **The owner's review is the bottleneck, not ideas**: with two pull requests waiting, the planner gives only the review list, so nothing piles up and a week away costs nothing. **Small and finished beats big and started**: anything larger than a session is given in parts or becomes a roadmap version for the owner.
+Two limits by design. **The owner's answers are the bottleneck, not ideas**: at most five questions a brief, and green work does not wait for them, so a week away costs only the amber and red items. **Small and finished beats big and started**: anything larger than a session is given in parts or becomes a roadmap version for the owner.
