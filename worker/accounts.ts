@@ -535,7 +535,26 @@ export async function exportAccount(env: AccountEnv, invite: InviteRow): Promise
         .bind(...binds)
         .all<T>()
     ).results;
-  const [credentials, sessions, progress, discoveries, votes, casts, ideas, ideaVotes, wins, reports, spend] = await Promise.all([
+  const [
+    credentials,
+    sessions,
+    progress,
+    discoveries,
+    votes,
+    casts,
+    ideas,
+    ideaVotes,
+    wins,
+    reports,
+    spend,
+    days,
+    dailyFinds,
+    community,
+    wonders,
+    perf,
+    refusals,
+    writes,
+  ] = await Promise.all([
     all<object>("SELECT id, device_type, backed_up, created_at, last_used FROM credentials WHERE invite = ?", id),
     all<object>("SELECT created_at, expires_at, last_seen, device FROM sessions WHERE invite = ?", id),
     (await getProgress(env, id, [...PROGRESS_KINDS, "island_previous"])).progress,
@@ -550,6 +569,14 @@ export async function exportAccount(env: AccountEnv, invite: InviteRow): Promise
       "SELECT strftime('%Y-%m', at / 1000, 'unixepoch') AS month, call, COUNT(*) AS n, ROUND(SUM(usd), 4) AS usd FROM spend WHERE invite = ? GROUP BY month, call",
       id,
     ),
+    // 4.5.1 (audit, A.A11, C.R40-8): every other row keyed by the account.
+    all<object>("SELECT day FROM activity WHERE player = ? ORDER BY day", id),
+    all<object>("SELECT day, result, found_at, found_pair FROM daily_challenges WHERE found_by = ?", id),
+    all<object>("SELECT favorite, community_hidden, last_seen FROM invites WHERE id = ?", id),
+    all<object>("SELECT kind, status, created_at FROM wonders WHERE source = 'player' AND key IN (SELECT key FROM elements WHERE invite = ?)", id),
+    all<object>("SELECT at, ua, sample FROM perf WHERE invite = ?", id),
+    all<object>("SELECT at, path, reason FROM refusals WHERE invite = ?", id),
+    all<object>("SELECT key, cause, status, day, usd FROM writes WHERE invite = ?", id),
   ]);
   return {
     exportedAt: Date.now(),
@@ -573,6 +600,13 @@ export async function exportAccount(env: AccountEnv, invite: InviteRow): Promise
     challengeWins: wins,
     reports,
     spend,
+    daysPlayed: days,
+    dailyFinds,
+    community: community[0] ?? null,
+    wondersFromYourFinds: wonders,
+    frameTimes: perf,
+    refusals,
+    itemsWrittenAhead: writes,
   };
 }
 
@@ -600,9 +634,15 @@ export async function deleteAccount(env: AccountEnv, invite: InviteRow): Promise
     db.prepare("DELETE FROM suggestions WHERE invite = ?").bind(id),
     db.prepare("DELETE FROM challenge_wins WHERE invite = ?").bind(id),
     db.prepare("DELETE FROM reports WHERE invite = ?").bind(id),
+    // 4.5.1 (audit, E.S10-19): the name copied on a wonder grown from their find, before the find loses its finder.
+    db.prepare("UPDATE wonders SET by_name = NULL WHERE source = 'player' AND key IN (SELECT key FROM elements WHERE invite = ?)").bind(id),
+    db.prepare("DELETE FROM perf WHERE invite = ?").bind(id),
+    db.prepare("DELETE FROM refusals WHERE invite = ?").bind(id),
     db.prepare("UPDATE elements SET invite = NULL WHERE invite = ?").bind(id),
     db.prepare("UPDATE daily_challenges SET found_by = NULL WHERE found_by = ?").bind(id),
-    db.prepare("UPDATE invites SET deleted_at = ?, status = 'revoked', email = NULL, token_hash = ? WHERE id = ?").bind(now, await sha256(newSecret(32)), id),
+    db
+      .prepare("UPDATE invites SET deleted_at = ?, status = 'revoked', email = NULL, favorite = NULL, token_hash = ? WHERE id = ?")
+      .bind(now, await sha256(newSecret(32)), id),
   ]);
   return { ok: true };
 }

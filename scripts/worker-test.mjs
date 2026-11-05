@@ -27,10 +27,22 @@ let spellCalls = 0;
 const STUB_USD = (100 * 4 + 100 * 20) / 1e6;
 const seen = {};
 const lastSpell = () => seen["You write the spells"] ?? { system: "", user: "" };
+// 4.5.1: the grimoire refuses items named Refusenik, and every secret entry while `refuseSecret` is on.
+let refuseSecret = false;
+let grimoireCalls = 0;
+// 4.5.1: the designer answers "none" while `designNone` is on.
+let designNone = false;
+let designCalls = 0;
 function stubAnswer(n, system, user) {
-  if (system.startsWith("You write the grimoire")) return "A clear dome rises over the village and keeps fire and lava out.";
+  if (system.startsWith("You write the grimoire")) {
+    grimoireCalls++;
+    if (/Refusenik/.test(user ?? "") || (refuseSecret && /secret/.test(user ?? ""))) return "I can't write this one as stated. Here's a safer entry instead.";
+    return "A clear dome rises over the village and keeps fire and lava out.";
+  }
   if (system.includes("Say what this item promises")) return JSON.stringify({ intents: ["protect"] });
   if (system.startsWith("You maintain the World API")) {
+    designCalls++;
+    if (designNone) return JSON.stringify({ decision: "none", answers: [], name: "", signature: "", doc: "", code: "", example: "", spec: "" });
     const answers = [...user.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1]));
     return JSON.stringify({
       decision: "helper",
@@ -111,6 +123,10 @@ function stubAnswer(n, system, user) {
   // 3.7: a pair answered once with its two names joined, then properly.
   if (user.startsWith("Glow Moss + Dusk Fern") && !user.includes("(Not "))
     return JSON.stringify({ name: "Glow Moss Dusk Fern", emoji: "✨", kind: "spell", tier: "cosmic" });
+  // Section 30 merges Spiral Left and Right to land on an open challenge's item: a fixed
+  // answer, since a program written ahead in the background may take a call
+  // number in between (4.5.1: "Answer ${calls + 1}" was a race).
+  if (/Spiral Left/.test(user) && /Spiral Right/.test(user)) return JSON.stringify({ name: "Daily Spiral", emoji: "🌀", kind: "spell", tier: "minor" });
   return JSON.stringify({ name: `Answer ${n}`, emoji: "✨", kind: "spell", tier: user.startsWith("Glow Moss") ? "cosmic" : "minor" });
 }
 
@@ -1304,6 +1320,18 @@ console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at st
   check("at most three links an hour", emails.length === 3, `${emails.length} mails`);
   check("the account page masks the email", (await api("/api/account", { session: danSession })).data.email === "d…@example.test");
 
+  // 4.5.1 (audit): a wonder grown from Dan's find names him on islands; his frame times and refusals are his.
+  const dansFind = (await db.prepare("SELECT key, name FROM elements WHERE invite = ? LIMIT 1").bind(dan.id).first()).key;
+  await db
+    .prepare(
+      "INSERT INTO wonders (source, key, kind, rarity, status, model, by_name, created_at, live_at) VALUES ('player', ?, 'dans find', 'rare', 'live', '', 'Dan', ?, ?)",
+    )
+    .bind(dansFind, Date.now(), Date.now())
+    .run();
+  await db.prepare("INSERT INTO perf (at, ua, sample, invite) VALUES (?, 'phone', '{}', ?)").bind(Date.now(), dan.id).run();
+  await db.prepare("INSERT INTO refusals (at, invite, path, reason) VALUES (?, ?, 'merge', 'burst')").bind(Date.now(), dan.id).run();
+  const poolBefore = await api("/api/wonders", { session: danSession });
+
   // Export, logout, deletion.
   const exported = await api("/api/account/export", { session: danSession });
   check(
@@ -1313,6 +1341,14 @@ console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at st
       exported.data.votes.length === 1 &&
       exported.data.progress.length === 2 &&
       exported.data.spend.length >= 1,
+    JSON.stringify(Object.keys(exported.data)),
+  );
+  check(
+    "export also holds the days played, daily finds, community settings, wonders, frame times, refusals and items written ahead (4.5.1)",
+    ["daysPlayed", "dailyFinds", "community", "wondersFromYourFinds", "frameTimes", "refusals", "itemsWrittenAhead"].every((k) => k in exported.data) &&
+      exported.data.wondersFromYourFinds.length === 1 &&
+      exported.data.frameTimes.length === 1 &&
+      exported.data.refusals.length === 1,
     JSON.stringify(Object.keys(exported.data)),
   );
   const extra = claimedByMail.data.token;
@@ -1350,6 +1386,21 @@ console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at st
       row.status === "revoked" &&
       row.email === null,
     JSON.stringify({ counts, named, spent, row }),
+  );
+  const poolAfter = await api("/api/wonders", { invite: (await invite("Wren")).secret });
+  const copy = await db.prepare("SELECT by_name FROM wonders WHERE key = ?").bind(dansFind).first();
+  const leftover = {
+    perf: (await db.prepare("SELECT COUNT(*) AS n FROM perf WHERE invite = ?").bind(dan.id).first()).n,
+    refusals: (await db.prepare("SELECT COUNT(*) AS n FROM refusals WHERE invite = ?").bind(dan.id).first()).n,
+  };
+  check(
+    "after deletion no island names the person, and their frame times and refusals are gone (4.5.1)",
+    poolBefore.data.wonders.some((w) => w.by === "Dan") &&
+      !poolAfter.data.wonders.some((w) => w.by === "Dan") &&
+      copy?.by_name === null &&
+      leftover.perf === 0 &&
+      leftover.refusals === 0,
+    JSON.stringify({ before: poolBefore.data.wonders.map((w) => w.by), after: poolAfter.data.wonders.map((w) => w.by), copy, leftover }),
   );
   check("a deleted account gets no new link", (await api("/api/admin/invite", { admin: true, body: { id: dan.id, action: "relink" } })).status === 400);
   // The admin can delete a revoked (or test) account's data too.
@@ -2913,6 +2964,7 @@ const signIn = async (key, count) => {
   const item = row ? await lookup("SELECT * FROM elements WHERE key = ?", row.result) : null;
   const described = Object.entries(seen).find(([k]) => k.startsWith("You write the grim"))?.[1]?.user ?? "";
   const [pa, pb] = (row?.pair ?? "+").split("+");
+  const named = (text, key) => new RegExp(`\\b${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text);
   check(
     "daily: the night's challenge is merged ahead, new, with no finder and a description that keeps its recipe secret",
     asked.status === 200 &&
@@ -2921,7 +2973,10 @@ const signIn = async (key, count) => {
       item.invite === null &&
       !!item.description &&
       described.includes("secret") &&
-      !described.includes(pa) &&
+      // 4.5.1 (audit): the key is lowercase and the prompt holds the name, so compare without case, as
+      // whole words (the stub names items "Answer n": "Answer 16" is a parent, "Answer 167" the new item).
+      !named(described, pa) &&
+      !named(described, pb) &&
       !(await lookup("SELECT 1 AS n FROM recipes WHERE pair = ?", row.pair)),
     JSON.stringify({ asked: asked.data, row, described }),
   );
@@ -2971,7 +3026,7 @@ const signIn = async (key, count) => {
   );
 
   // Another merge that lands on an open challenge's item finds it too.
-  const next = `Answer ${calls + 1}`;
+  const next = "Daily Spiral";
   await db
     .prepare(
       "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at, invite) VALUES (?, ?, '🌀', 'spell', 3, 'major', 'A spiral.', ?, NULL)",
@@ -2982,7 +3037,13 @@ const signIn = async (key, count) => {
     .prepare("INSERT INTO daily_challenges (day, pair, result, created_at) VALUES ('2026-01-01', 'never one+never two', ?, ?)")
     .bind(next.toLowerCase(), Date.now())
     .run();
-  const other = await merge(ben, "Daily Seed C", "Daily Seed A");
+  await db
+    .prepare(
+      "INSERT OR IGNORE INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES ('spiral left', 'Spiral Left', '🌀', 'spell', 2, 'minor', 'Left.', ?), ('spiral right', 'Spiral Right', '🌀', 'spell', 2, 'minor', 'Right.', ?)",
+    )
+    .bind(Date.now(), Date.now())
+    .run();
+  const other = await merge(ben, "Spiral Left", "Spiral Right");
   const second = await lookup("SELECT * FROM daily_challenges WHERE result = ?", next.toLowerCase());
   check(
     "daily: any merge that reaches the item finds it",
@@ -3044,6 +3105,301 @@ const signIn = async (key, count) => {
     JSON.stringify({ refused: refused.status, inReview, back, shipped }),
   );
   await reset();
+}
+
+// 31. The audit's fixes (4.5.1, docs/AUDIT-2026-11-05.md): each check fails
+// when its fix is taken out.
+{
+  await reset();
+  const now = Date.now();
+  // D.M14: a failed test run writes again only within the daily rewrite budget.
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES ('ash cloak', 'Ash Cloak', '🧥', 'spell', 3, 'minor', 'A cloak of ash.', ?)",
+    )
+    .bind(now)
+    .run();
+  const made = await api("/api/spell", { admin: true, body: { name: "Ash Cloak" } });
+  await db.prepare("INSERT INTO spend (at, call, model, usd, invite) VALUES (?, 'rewrite', 'claude-haiku-5-5', 0.5, 'admin')").bind(now).run();
+  const before = spellCalls;
+  const failedRun = await api("/api/spell/check", {
+    admin: true,
+    body: { name: "Ash Cloak", id: made.data.program.id, ok: false, problem: "crash", detail: "It crashed: x is not defined" },
+  });
+  const cloak = await db.prepare("SELECT status FROM programs WHERE id = ?").bind(made.data.program.id).first();
+  check(
+    "a failed test run past the day's rewrite budget is not written again, and not made live: it waits as a trial",
+    failedRun.status === 200 &&
+      failedRun.data.program.id === made.data.program.id &&
+      failedRun.data.program.trial === true &&
+      cloak?.status === "trial" &&
+      spellCalls === before,
+    `${failedRun.status} program ${failedRun.data?.program?.id} (was ${made.data?.program?.id}) ${cloak?.status}, ${spellCalls - before} spell calls`,
+  );
+  // The blue team's B10: a broken promise found past the budget is not recorded as faced.
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES ('old ward', 'Old Ward', '🛡️', 'spell', 3, 'minor', 'A ward.', ?)",
+    )
+    .bind(now)
+    .run();
+  const ward = await api("/api/spell", { admin: true, body: { name: "Old Ward" } });
+  await db.prepare("DELETE FROM spend WHERE call = 'rewrite'").run();
+  await api("/api/spell/check", { admin: true, body: { name: "Old Ward", id: ward.data.program.id, ok: true, problem: null, detail: "3 cells changed." } });
+  await db.prepare("UPDATE elements SET intents = 'protect' WHERE key = 'old ward'").run();
+  await db.prepare("INSERT INTO spend (at, call, model, usd, invite) VALUES (?, 'rewrite', 'claude-haiku-5-5', 0.5, 'admin')").bind(now).run();
+  const broken = { name: "Old Ward", id: ward.data.program.id, ok: false, problem: "promise", detail: "the village burned", recheck: true };
+  const calls0 = spellCalls;
+  await api("/api/spell/check", { admin: true, body: broken });
+  const unrecorded = JSON.parse((await db.prepare("SELECT checked FROM programs WHERE id = ?").bind(ward.data.program.id).first())?.checked ?? "{}");
+  await db.prepare("DELETE FROM spend WHERE call = 'rewrite'").run();
+  const later = await api("/api/spell/check", { admin: true, body: broken });
+  check(
+    "a broken promise found past the budget is written again on a later day, not marked as faced",
+    !unrecorded.recheck && spellCalls === calls0 + 1 && later.data.program.trial === true && later.data.program.id !== ward.data.program.id,
+    JSON.stringify({ unrecorded: unrecorded.recheck ?? null, calls: spellCalls - calls0, later: later.data?.program?.id }),
+  );
+  await db.prepare("INSERT INTO spend (at, call, model, usd, invite) VALUES (?, 'rewrite', 'claude-haiku-5-5', 0.5, 'admin')").bind(now).run();
+  await db.prepare("DELETE FROM spend WHERE call = 'rewrite'").run();
+
+  await db.prepare("DELETE FROM spend WHERE call = 'rewrite'").run();
+  // C.R42-5: a failure that names no problem is a crash, never promoted.
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES ('mute bell', 'Mute Bell', '🔔', 'spell', 3, 'minor', 'A bell.', ?)",
+    )
+    .bind(now)
+    .run();
+  const bell = await api("/api/spell", { admin: true, body: { name: "Mute Bell" } });
+  const unnamed = await api("/api/spell/check", { admin: true, body: { name: "Mute Bell", id: bell.data.program.id, ok: false, problem: null, detail: "?" } });
+  const bellRow = await db.prepare("SELECT status, checked FROM programs WHERE id = ?").bind(bell.data.program.id).first();
+  check(
+    "a failed test run with no named problem is not promoted",
+    unnamed.status === 200 && bellRow?.status !== "live" && JSON.parse(bellRow?.checked ?? "{}").problem === "crash",
+    `${unnamed.status} ${bellRow?.status} ${bellRow?.checked?.slice(0, 80)}`,
+  );
+
+  // Section 2 of the audit: a refusal stored as a description is written again.
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES ('hamlet', 'Hamlet', '🏘️', 'artifact', 3, 'major', ?, ?)",
+    )
+    .bind("I can't write this one as stated. Here's a safer entry you could use instead: a lantern.", now)
+    .run();
+  const described = await api("/api/describe", { admin: true, body: { name: "Hamlet" } });
+  const stored = await db.prepare("SELECT description FROM elements WHERE key = 'hamlet'").first();
+  check(
+    "a refusal stored as a description is written again",
+    described.status === 200 && !/can't write/.test(described.data.description) && !/can't write/.test(stored?.description ?? ""),
+    `${described.status} ${described.data?.description?.slice(0, 80)} | stored ${stored?.description?.slice(0, 60)}`,
+  );
+  // B5, B6: a fresh refusal is asked once more, then the stand in is stored, and not asked again.
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES ('refusenik', 'Refusenik', '🙅', 'spell', 3, 'minor', NULL, ?)",
+    )
+    .bind(now)
+    .run();
+  const g0 = grimoireCalls;
+  const refused = await api("/api/describe", { admin: true, body: { name: "Refusenik" } });
+  const g1 = grimoireCalls;
+  const refusedAgain = await api("/api/describe", { admin: true, body: { name: "Refusenik" } });
+  const keptRow = await db.prepare("SELECT description FROM elements WHERE key = 'refusenik'").first();
+  check(
+    "a refused description is asked once more, then the plain stand in is kept and not paid for again",
+    refused.data.description === "Refusenik: no description yet." &&
+      refusedAgain.data.description === "Refusenik: no description yet." &&
+      keptRow?.description === "Refusenik: no description yet." &&
+      g1 - g0 === 2 &&
+      grimoireCalls === g1,
+    JSON.stringify({ first: refused.data?.description, calls: g1 - g0, after: grimoireCalls - g1, stored: keptRow?.description }),
+  );
+  // B5: a daily challenge whose description is a refusal is not set.
+  for (const name of ["Quiet Seed A", "Quiet Seed B", "Quiet Seed C"])
+    await db
+      .prepare(
+        "INSERT OR IGNORE INTO elements (key, name, emoji, kind, depth, tier, description, created_at, invite) VALUES (?, ?, '🌿', 'spell', 2, 'minor', 'A seed.', ?, 'admin')",
+      )
+      .bind(name.toLowerCase(), name, now)
+      .run();
+  await db.prepare("DELETE FROM daily_challenges").run();
+  refuseSecret = true;
+  const refusedNight = await api("/api/admin/daily", { admin: true, body: {} });
+  refuseSecret = false;
+  const nightRows = (await db.prepare("SELECT COUNT(*) AS n FROM daily_challenges").first()).n;
+  check(
+    "a night whose description is a refusal sets no challenge",
+    refusedNight.status === 200 && refusedNight.data.set === null && nightRows === 0 && refusedNight.data.tried.length >= 1,
+    JSON.stringify(refusedNight.data),
+  );
+  // B5 (E.H2a at the call site): an honest win below the greedy count is accepted.
+  // drizzle has two recipes of two merges; only the one through mist shares a
+  // merge with cloud, so thunderhead takes 4 merges and the greedy count says 5.
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES
+       ('mist', 'Mist', '🌫️', 'spell', 1, 'minor', 'Mist', ?), ('puddle', 'Puddle', '💧', 'spell', 1, 'minor', 'A puddle', ?),
+       ('drizzle', 'Drizzle', '🌦️', 'spell', 2, 'minor', 'Drizzle', ?), ('cloud', 'Cloud', '☁️', 'spell', 2, 'minor', 'A cloud', ?),
+       ('thunderhead', 'Thunderhead', '⛈️', 'spell', 3, 'major', 'A storm cloud', ?)`,
+    )
+    .bind(now, now, now, now, now)
+    .run();
+  for (const [pair, a, b, result] of [
+    ["air+water", "air", "water", "mist"],
+    ["water+water", "water", "water", "puddle"],
+    ["air+puddle", "air", "puddle", "drizzle"],
+    ["mist+water", "mist", "water", "drizzle"],
+    ["air+mist", "air", "mist", "cloud"],
+    ["cloud+drizzle", "cloud", "drizzle", "thunderhead"],
+  ])
+    await db.prepare("INSERT OR IGNORE INTO recipes (pair, a, b, result, created_at) VALUES (?, ?, ?, ?, ?)").bind(pair, a, b, result, now).run();
+  const storm = await api("/api/spell", { admin: true, body: { name: "Thunderhead" } });
+  await api("/api/spell/check", { admin: true, body: { name: "Thunderhead", id: storm.data.program.id, ok: true, problem: null, detail: "It rained." } });
+  const tess = await invite("Tess");
+  const honest = await api("/api/challenge/win", { invite: tess.secret, body: { id: "first-fire", merges: 4, spell: "Thunderhead" } });
+  const tooFew = await api("/api/challenge/win", { invite: tess.secret, body: { id: "first-fire", merges: 2, spell: "Thunderhead" } });
+  // T1: a claim the graph cannot check (at the chain floor, 3) may win, but the cards keep the graph's par.
+  const lowClaim = await api("/api/challenge/win", { invite: tess.secret, body: { id: "high-water", merges: 3, spell: "Thunderhead" } });
+  const hwCard = (await api("/api/challenges", { invite: tess.secret })).data.challenges.find((c) => c.id === "high-water");
+  check(
+    "a low claim wins but never sets par on everyone's card",
+    lowClaim.status === 200 && lowClaim.data.par === 5 && hwCard?.par === 5 && hwCard.best?.merges === 3,
+    JSON.stringify({ answer: lowClaim.data, card: hwCard }),
+  );
+  check(
+    "an honest win in fewer merges than the greedy count is accepted, and a count below the chain is refused",
+    honest.status === 200 && tooFew.status === 400,
+    `${honest.status} ${JSON.stringify(honest.data).slice(0, 100)} | ${tooFew.status}`,
+  );
+
+  // B.DC15: a player who hides from the Community tab is not named on islands either.
+  const hana = await invite("Hana");
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at, invite) VALUES ('moon moss', 'Moon Moss', '🌙', 'artifact', 3, 'minor', 'Moss.', ?, ?)",
+    )
+    .bind(now, hana.id)
+    .run();
+  await db
+    .prepare(
+      "INSERT INTO wonders (source, key, kind, rarity, status, model, by_name, created_at, live_at) VALUES ('player', 'moon moss', 'moon moss', 'rare', 'live', '', 'Hana', ?, ?)",
+    )
+    .bind(now, now)
+    .run();
+  const shown = (await api("/api/wonders", { invite: hana.secret })).data.wonders.find((w) => w.kind === "moon moss")?.by;
+  await db.prepare("UPDATE invites SET community_hidden = 1 WHERE id = ?").bind(hana.id).run();
+  const hidden = (await api("/api/wonders", { invite: hana.secret })).data.wonders.find((w) => w.kind === "moon moss")?.by;
+  check("a finder who hides from the Community tab is not named on wonders", shown === "Hana" && hidden === undefined, JSON.stringify({ shown, hidden }));
+
+  // Risk 2 of the audit, end to end through the cron: a design answered
+  // "none" stores nothing; the next ten minute run must not ask Opus again.
+  await db.prepare("DELETE FROM extensions").run();
+  await db.prepare("DELETE FROM job_runs WHERE job = 'design'").run();
+  for (const key of ["gap one", "gap two", "gap three"])
+    await db.prepare("INSERT INTO gaps (key, missing, at) VALUES (?, 'a way to stop wind', ?)").bind(key, now).run();
+  designNone = true;
+  const d0 = designCalls;
+  const fire = async () => {
+    const before = (await db.prepare("SELECT COALESCE(SUM(runs), 0) AS n FROM job_runs WHERE job = 'design'").first()).n;
+    await fetch(`${BASE}/cdn-cgi/handler/scheduled?cron=*/10+*+*+*+*`);
+    for (let k = 0; k < 40; k++) {
+      await new Promise((r) => setTimeout(r, 250));
+      if ((await db.prepare("SELECT COALESCE(SUM(runs), 0) AS n FROM job_runs WHERE job = 'design'").first()).n > before) break;
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  };
+  await fire();
+  const afterOne = designCalls - d0;
+  await fire();
+  designNone = false;
+  check(
+    'a design answered "none" is not asked again at the next cron run',
+    afterOne === 1 && designCalls - d0 === 1,
+    `design calls after one run ${afterOne}, after two ${designCalls - d0}`,
+  );
+
+  // A.C2, A.C4: "items found" leaves out the eight primal forces, and the last play is to the hour.
+  const ivo = await invite("Ivo");
+  const keys = ["fire", "water", "earth", "air", "light", "shadow", "life", "arcane", "steam", "mud"].map((key) => ({ key, at: 0, recipe: null }));
+  await db.prepare("INSERT INTO progress (invite, kind, data, updated_at) VALUES (?, 'discoveries', ?, ?)").bind(ivo.id, JSON.stringify(keys), now).run();
+  await db
+    .prepare("UPDATE invites SET last_seen = ? WHERE id = ?")
+    .bind(now - 123_456, ivo.id)
+    .run();
+  const ivoRow = (await api("/api/community", { invite: ivo.secret })).data.friends.find((f) => f.name === "Ivo");
+  check(
+    "the Community tab counts what a friend found, not the primal forces, and says when to the hour",
+    ivoRow?.found === 2 && ivoRow.lastPlayed % 3_600_000 === 0 && now - ivoRow.lastPlayed < 2 * 3_600_000,
+    JSON.stringify(ivoRow),
+  );
+  await reset();
+}
+
+// 31a. Through the real cron (4.5.1, the adjudication's P1): a night whose
+// tries find nothing new stops after three runs; a paused player's failing
+// verdict leaves a new item's trial a trial.
+{
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev({ DAILY_CHALLENGES: "1" });
+  await db.prepare("DELETE FROM daily_challenges").run();
+  await db.prepare("DELETE FROM job_runs WHERE job = 'daily'").run();
+  const runs = async () => (await db.prepare("SELECT COALESCE(SUM(runs), 0) AS n FROM job_runs WHERE job = 'daily'").first()).n;
+  refuseSecret = true;
+  for (let k = 0; k < 4; k++) {
+    const before = await runs();
+    await fetch(`${BASE}/cdn-cgi/handler/scheduled?cron=*/10+*+*+*+*`);
+    for (let t = 0; t < 40 && (await runs()) === before; t++) await new Promise((r) => setTimeout(r, 250));
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  refuseSecret = false;
+  const set = (await db.prepare("SELECT COUNT(*) AS n FROM daily_challenges").first()).n;
+  check("four cron runs on a night with nothing new: three runs, then none", (await runs()) === 3 && set === 0, `${await runs()} runs, ${set} challenges`);
+
+  const pia = await invite("Pia");
+  await api("/api/admin/invite", { admin: true, body: { id: pia.id, action: "pause" } });
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES ('still bell', 'Still Bell', '🔕', 'spell', 3, 'minor', 'A bell.', ?)",
+    )
+    .bind(Date.now())
+    .run();
+  const bell = await api("/api/spell", { admin: true, body: { name: "Still Bell" } });
+  const verdict = await api("/api/spell/check", {
+    invite: pia.secret,
+    body: { name: "Still Bell", id: bell.data.program.id, ok: false, problem: "crash", detail: "It crashed." },
+  });
+  const status = (await db.prepare("SELECT status FROM programs WHERE id = ?").bind(bell.data.program.id).first())?.status;
+  check(
+    "a paused player's failing verdict does not make a new item's program live",
+    verdict.status === 200 && status === "trial",
+    `${verdict.status} ${status}`,
+  );
+  await reset();
+}
+
+// 31b. A.P4: the staging Worker lets nobody in without the token, even with
+// no API key (mock mode is open only for local development).
+{
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev({ ANTHROPIC_API_KEY: "", STAGING: "1" });
+  const stagingHealth = await api("/api/health");
+  const stagingMerge = await api("/api/merge", { body: { a: "Fire", b: "Water" } });
+  const stagingAdmin = await api("/api/health", { admin: true });
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev({ ANTHROPIC_API_KEY: "" });
+  const localHealth = await api("/api/health");
+  check(
+    "staging in mock mode lets nobody in without the token; local mock mode stays open",
+    stagingHealth.data?.invited === false &&
+      stagingMerge.status === 401 &&
+      stagingAdmin.data?.admin === true &&
+      localHealth.data?.mock === true &&
+      localHealth.data?.invited === true,
+    JSON.stringify({ staging: stagingHealth.data, merge: stagingMerge.status, admin: stagingAdmin.data?.admin, local: localHealth.data }),
+  );
 }
 
 stop();

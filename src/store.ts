@@ -4,6 +4,7 @@ import { FIRST_PROGRAM_VERSION } from "../shared/version";
 import type { GameElement } from "../shared/types";
 import { isQuotaError, warnStorageFull } from "./quota";
 import { isFrozen } from "./device-save";
+import { isPlaceholderDescription } from "../shared/refusal";
 
 export interface Discovery {
   element: GameElement;
@@ -73,11 +74,15 @@ export class Store {
     return true;
   }
 
+  // 4.5.1 (audit, B3): a refusal cached before the fix, or the "no
+  // description yet" stand in, is no description: the card asks again.
   description(key: string): string | undefined {
-    return this.data.descriptions[key];
+    const text = this.data.descriptions[key];
+    return text && !isPlaceholderDescription(text, key) ? text : undefined;
   }
 
   setDescription(key: string, text: string): void {
+    if (isPlaceholderDescription(text, key)) return;
     this.data.descriptions[key] = text;
     this.save();
   }

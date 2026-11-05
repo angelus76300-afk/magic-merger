@@ -75,6 +75,9 @@ const stripped = {
 run("UPDATE invites SET token_hash = lower(hex(randomblob(32))), email = NULL, claimed_at = NULL WHERE id = 'admin'");
 // Who found what stays as an id with no name behind it; the ideas lose their author.
 run("UPDATE suggestions SET invite = 'someone', session_url = NULL WHERE invite != 'admin'");
+// 4.5.1 (audit, A.V8): and their words. A player's idea is free text that may
+// say who they are; a preview only needs that an idea exists and its status.
+run("UPDATE suggestions SET title = 'An idea from a player (#' || id || ')', body = '', note = NULL, brief = NULL WHERE invite != 'admin'");
 // The friend named on a wonder grown from their discovery.
 run("UPDATE wonders SET by_name = NULL");
 // The money: staging's own month, not production's.

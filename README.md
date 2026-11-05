@@ -2,7 +2,7 @@
 
 An Infinite Craft style game about merging magic. Start with eight primal forces, drop one onto another, and Claude decides what they make. Every answer is frozen the first time, so the world has stable rules.
 
-Every spell can then be cast in the World tab: a falling sand pixel world with tiny villagers, where Claude designs how each spell looks and what it does, once.
+Every spell can then be cast in the World tab: a floating voxel island with villages, wildlife and wonders, where Claude writes each spell as a small program, tested before anyone casts it.
 
 1. Setup, API credit and deployment: [docs/SETUP.md](docs/SETUP.md)
 2. Design decisions, the spell format and the world rules: [docs/DESIGN.md](docs/DESIGN.md)

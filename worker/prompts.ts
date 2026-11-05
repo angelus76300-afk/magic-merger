@@ -588,3 +588,6 @@ export const TRIM_SCHEMA = {
   required: ["duplicates", "senseless"],
   additionalProperties: false,
 } as const;
+
+// 4.5.1 (audit): shared with the page, which must not cache a refusal either.
+export { looksLikeRefusal } from "../shared/refusal";

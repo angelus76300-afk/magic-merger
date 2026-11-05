@@ -303,7 +303,19 @@ Asked for: the five items of "4.5" below, with the owner's answers on the two op
 4. **Ideas follow pull requests**: the `Ideas` workflow moves `Idea #<n>` to "Waiting for review", then "Done".
 5. **Previews**: a staging Worker with its own D1 (copied nightly, accounts stripped), its own queue and $2 a month; each pull request gets `pr-<n>-magic-merger-staging.angelus76300.workers.dev`. Staging lets nobody in without the admin token.
 
-Not done: the previews need the repository secret `CLOUDFLARE_API_TOKEN` before CI deploys them (SETUP.md, "Previews"; staging itself is deployed and holds tonight's copy); without `STAGING_ANTHROPIC_API_KEY` they run in mock mode; the Community tab has no name checks or report button yet (needed before 5.4); "items found" is unknown for friends who play with a link and no account.
+Not done: without `STAGING_ANTHROPIC_API_KEY` the previews run in mock mode (the `CLOUDFLARE_API_TOKEN` secret is set since 5 November and previews upload); the Community tab has no name checks or report button yet (needed before 5.4); "items found" is unknown for friends who play with a link and no account.
+
+## Done in 4.5.1: an audit, and the fixes that needed no owner
+
+Asked for: every claim checked (`docs/AUDIT-2026-11-05.md`, about 760 claims, 25 live items cast in Node, five guards broken on purpose, the newcomer's path at phone size, the development loop), then the fixes that do not need the owner, merged and deployed. Section 31 of `scripts/worker-test.mjs` and `scripts/fixes-test.ts` (run by `npm test`) hold the checks; each was seen to fail with its fix taken out (an adversarial review by fresh subagents broke them on purpose). The three attempt gates and the page's call sites in `src/worldhost.ts` and `src/whatsnew.ts` are covered through the one function each calls (`takeRun`, `reportable`, `whatIsNew`), not one by one.
+
+1. **No paid loop**: the API designer, the daily challenge and the daily wonder record every attempt (`job_runs`, migration 0017), so a design answered "none", a night with nothing new or a wonder that failed its checks waits for the next day instead of calling Opus every ten minutes. The daily rewrite budget now covers failed test runs and broken promises too. The sweep waits for a wonder's batch and frees the hold of a rewrite that never got a batch.
+2. **Promises**: `w.body()` keeps a copy of the `data` a program gives it (Starfall Rain heals again; up to 32 live programs used it); a refusal is never stored as a description, nor kept in a device's cache (Village's is written again the next time its card is opened; one refused twice gets a plain "no description yet", stored so it is not paid for again); a test run that times out is no pass for everyone; a failure with no named problem is a crash, not a pass; past the day's rewrite budget a failed trial waits as a trial instead of going live; a challenge win is checked against a true lower bound, so an honest one is no longer refused, and a claim the graph cannot check never lowers par.
+3. **Players' data**: a wonder grown from a find shows its finder only while the account exists and is not hidden, on new islands and on islands already saved (the name stays inside islands saved before, unseen; taking it out of other players' saves would rewrite their data, the owner's call); deletion also clears that name, frame times and refusals; export adds the days played, daily finds, community settings, wonders, frame times, refusals and items written ahead (rewrites and holds keep the id for the budget and are left out); a challenge attempt and a win not yet recorded belong to the account on the device; the staging copy drops players' idea text.
+4. **Tests that can fail**: fire spreading into a ward, the staging guard in mock mode, the CSP and the iframes' sandbox, the daily description that keeps its recipe secret.
+5. **Small things players saw**: "1 new since your last visit" no longer comes back after reading, and an update or a built idea later the same day still shows; the Daily tab no longer says every challenge was found when none existed; the Community tab's items found leave out the eight forces and its last play is to the hour.
+
+Not done, waiting for the owner (4.5.1a below): the preview pipeline and the production admin token, branch protection, rewrites of Frost Nova and Light, and a CI job for the browser checks.
 
 ## Decisions taken
 
@@ -313,7 +325,7 @@ Not done: the previews need the repository secret `CLOUDFLARE_API_TOKEN` before 
 
 ## What to watch
 
-1. **The judge and the votes.** No vote exists yet, so the judge is uncalibrated and only advises; the library is empty until players vote programs up. Watch `GET /api/admin/judge-stats` after a week of play, and how often a vote leads to a rewrite and a rewrite to a rollback (`rewrites` table).
+1. **The judge and the votes.** 69 votes by 5 November, still too few to calibrate the judge, which only advises; the library is empty until players vote programs up. Watch `GET /api/admin/judge-stats` after a week of play, and how often a vote leads to a rewrite and a rewrite to a rollback (`rewrites` table).
 2. **Phones.** Still measured only in Node and a headless browser. The HUD sends real numbers to `/api/perf` as soon as someone plays with it on. In steady state the simulation's cost is temperature and fluids (about 40% of a tick in every scene), not voxels or creatures: that is the next lever if phones run hot.
 3. **Sounds** were checked for errors, not listened to. Players heard a drum that never stopped (the woodcutters); 4.1 silenced routine work, and 4.5 gives the island real sound.
 4. **Whether Claude uses bodies.** New spells should declare `body` and `features`; models should stay rare. Look at a week of new programs (`programs` table) for how often each appears, and at the bestiary when one looks wrong.
@@ -327,7 +339,7 @@ Not done: the previews need the repository secret `CLOUDFLARE_API_TOKEN` before 
 
 ## What the money taught us
 
-The ledger holds $6.64 (plus about $3.32 before it existed): about $10 of the first $25 budget (since 3.4 the cap is $50 a month, $48 for the game since 4.5 with $2 for the previews; November so far: $7.26). Opus spells are 88% of it. Opus spell calls went from 43 to 96 in one day because the program version bump to 4 rewrote every big spell on its next cast. **Never rewrite spells in bulk again**: new API features stay backward compatible, and spells are rewritten one at a time (an admin button in 3.2, player votes in 3.3).
+The ledger holds $15.41 for November by the morning of 5 November (read in the live `spend` table by the 4.5.1 audit; plus about $3.32 in October before it existed). Since 3.4 the cap is $50 a month, $48 for the game since 4.5 with $2 for the previews. Opus spells are 88% of it. Opus spell calls went from 43 to 96 in one day because the program version bump to 4 rewrote every big spell on its next cast. **Never rewrite spells in bulk again**: new API features stay backward compatible, and spells are rewritten one at a time (an admin button in 3.2, player votes in 3.3).
 
 ## Next versions
 
@@ -400,7 +412,7 @@ The owner's social ideas, together because they share one screen: who plays, wha
 4. **The Ideas tab follows daily builds**: a pull request that says `Idea #<n>` moves that idea to "Waiting for review" and then "Done".
 5. **A preview for each pull request**, so the owner tries it on a phone before merging: a staging Worker with its own D1 (a copy refreshed nightly, accounts, sessions, invites and emails stripped) and a $2 budget, deployed by CI from a token kept in GitHub's secrets.
 
-### 4.5.1 An audit: every claim checked, and how much the AI can drive
+### 4.5.1 An audit: every claim checked, and how much the AI can drive (done, see above)
 
 Before more is built on top, and before the AI is trusted to merge on its own (4.5.2): an independent session, ideally a different model from the one that built 4.1 to 4.5, checks that what the docs, pull requests and the game's own items promise is true. Read only: no deploy, no write to the live database, no paid call; its only output is `docs/AUDIT-<date>.md` in a draft pull request. The full prompt is on the roadmap page.
 
@@ -410,6 +422,18 @@ Before more is built on top, and before the AI is trusted to merge on its own (4
 4. **The game played** locally at phone size against `wrangler dev` with no API key: the newcomer's path, every tab, a reset, signing in and out, with screenshots.
 5. **The development loop**: every step from an idea to a live change (idea, plan, session started, built, tested, reviewed, merged, deployed, watched, rolled back) and who does it today (the owner, an AI session, CI, or nobody), counted from the last 15 pull requests and the session history (how often the owner had to say "merge", "deploy", "check where we are"); which human gates protect a real risk (money, players' data, accounts, a prompt that changes every spell, going public) and which are habit; what automated guard would replace each one that is habit.
 6. **The report**: a table of claims with severity (critical: money, players' data or the game for everyone; high: a promise players see is false, or a guard with no failing test), the library sample, test and mutation results, the five biggest risks with the smallest fix, a fix order mapped to the planned versions, the loop map with a recommendation, and what could not be verified.
+
+### 4.5.1a Safety before autonomy (waits for the owner's answers)
+
+From the audit's risks 1 and 4 (`docs/AUDIT-2026-11-05.md`, sections 5 and 6). Each item is a setting, a credential or a running cost, so the owner decides; the code part is small once decided.
+
+1. **Previews stop running unreviewed code with production credentials**: today every pull request from a branch of this repository is built with the account wide `CLOUDFLARE_API_TOKEN`, and the staging Worker holds the production admin token (MM_TOKEN). Options: a `preview` label the owner adds before CI builds it (free, a one line change), or a GitHub environment with a required reviewer (needs GitHub Pro for a private repository). Recommended: the label now.
+2. **Staging gets its own admin token**, a new repository secret the owner creates; previews then open with it, not with production's.
+3. **Rotate ADMIN_TOKEN and MM_TOKEN**, then list the owner's passkeys on the account page and remove any not recognised: since 4.4.6 the admin token can make a lasting owner passkey, and it has been reachable from preview code.
+4. **Branch protection on `main`**, needed before 4.5.2 lets sessions merge alone: GitHub Pro (a running cost) or a public repository.
+5. **The nightly Judge job** casts live spells and trial wonders in Node next to MM_TOKEN; move the casting into a worker thread with an empty environment (code, small) once item 3 is done.
+6. **Frost Nova** (its thaw sets the village on fire) and **Light** (it promises protection and fails its test) rewritten one at a time from the admin card, a few cents each.
+7. **The browser checks in CI** (`account-verify.mjs`, `verify-4.1.mjs`): about 10 more Actions minutes per pull request; the private repository's free minutes are limited.
 
 ### 4.5.2 The AI drives, the owner steers
 
@@ -540,6 +564,6 @@ AI Gateway spend caps, Turnstile, name checks, AI labels, small legal pages. Acc
 
 ### Daily updates (running since 4 November, between the versions)
 
-The game moves forward every day. Since 4 November a scheduled planner session runs every morning (07:36, Toronto time): it reads `main`, the pull requests and the backlog, and gives the owner one prompt, the next step of this roadmap while planned versions remain, then one idea a day in a good mix of kinds (gameplay, quality of life, visual, living world, content, audio, performance and code quality, security, ready for strangers, accessibility, non invasive monetization, and one wild idea every fourteen). The owner opens a new session with it; that builder opens a draft pull request; the owner merges. The rules are `docs/DAILY.md`, the backlog `docs/IDEAS.md`. The planner changes nothing itself and never reads the database, so players' text reaches a session only through a builder the owner opened.
+The game moves forward every day. Since 4 November a scheduled planner session runs every morning (07:36, Toronto time): it reads `main`, the pull requests and the backlog, and gives the owner one prompt, the next step of this roadmap while planned versions remain, then one idea a day in a good mix of kinds (gameplay, quality of life, visual, living world, content, audio, performance and code quality, security, ready for strangers, accessibility, non invasive monetization, and one wild idea every fourteen). The owner opens a new session with it; that builder opens a pull request, then merges and deploys it itself once every check is green (`CLAUDE.md`). The rules are `docs/DAILY.md`, the backlog `docs/IDEAS.md`. The planner changes nothing itself and never reads the database, so players' text reaches a session only through a builder the owner opened.
 
 Two limits by design. **The owner's review is the bottleneck, not ideas**: with two pull requests waiting, the planner gives only the review list, so nothing piles up and a week away costs nothing. **Small and finished beats big and started**: anything larger than a session is given in parts or becomes a roadmap version for the owner.

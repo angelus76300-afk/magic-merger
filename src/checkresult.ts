@@ -5,7 +5,10 @@ import type { CheckRequest } from "../shared/types";
 // read it the same way (scripts/sim-test.ts).
 
 // What a test run found, and how long its parts took (4.2, measured only).
-export type CheckOutcome = Omit<CheckRequest, "name" | "id"> & { phases?: Record<string, number> };
+// `unfinished` (4.5.1, audit): the run timed out or never started. This
+// browser may cast the program, but no verdict goes to the Worker, so an
+// untested program is never made live for everyone.
+export type CheckOutcome = Omit<CheckRequest, "name" | "id"> & { phases?: Record<string, number>; unfinished?: boolean };
 
 // Every problem the test run knows (src/sim/check.ts). Until 4.2 only the
 // first three were read here, so a program that broke its promise (3.4.2) or
@@ -31,5 +34,21 @@ export function readResult(raw: Record<string, unknown> | undefined): CheckOutco
     detail: typeof raw?.detail === "string" ? raw.detail.slice(0, 400) : "",
     stats: numbers(raw?.stats, 20),
     phases: numbers(raw?.phases, 8),
+    ...(ok && raw?.unfinished === true ? { unfinished: true } : {}),
   };
+}
+
+// A test run that did not finish (it timed out, or the frame never opened):
+// the one shape every caller answers with (src/checker.ts, src/sim/checkframe.ts).
+export function unfinishedRun(detail: string): CheckOutcome {
+  return { ok: true, problem: null, detail, stats: {}, unfinished: true };
+}
+
+// What the Worker is told about a run, or null when it must be told nothing:
+// an unfinished run is no verdict (4.5.1), so it never makes a program live
+// for everyone. Timings stay on the page.
+export function reportable(result: CheckOutcome): Omit<CheckOutcome, "phases" | "unfinished"> | null {
+  if (result.unfinished) return null;
+  const { phases: _phases, unfinished: _unfinished, ...verdict } = result;
+  return verdict;
 }
