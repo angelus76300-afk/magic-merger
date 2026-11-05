@@ -16,6 +16,7 @@ import { Sync } from "./sync";
 import { openMenu } from "./menu";
 import { followOtherTabs } from "./device-save";
 import type { GateActions } from "./welcome";
+import type { HealthResponse } from "../shared/types";
 
 // An invite link (/#invite=...) is kept by this browser before anything else;
 // a sign in link by email (/#signin=...) is used once, below.
@@ -94,10 +95,38 @@ $("#admin-badge").addEventListener("click", () => {
 // The ? button (4.4.6): who is signed in, whether the progress is saved,
 // sign in, sync now, switch account, sign out; the welcome and the privacy
 // note one tap further.
-$("#help").addEventListener(
-  "click",
-  () => void api.health().then((h) => openMenu(h, sync, () => void showWelcome(h, h?.account?.signedIn ? openAccount : null))),
-);
+const menu = () => void api.health().then((h) => openMenu(h, sync, () => void showWelcome(h, h?.account?.signedIn ? openAccount : null)));
+$("#help").addEventListener("click", menu);
+$("#account-chip").addEventListener("click", menu);
+
+// The account chip, always in sight: who this device is signed in as and
+// whether the progress is saved, or "Sign in" when it is not signed in, so a
+// device that keeps its progress to itself says so.
+let chipStatus: HealthResponse | null = null;
+function showChip(status: HealthResponse | null): void {
+  if (status) chipStatus = status;
+  const chip = $("#account-chip");
+  const account = chipStatus?.account;
+  if (!chipStatus?.invited || chipStatus.mock) {
+    chip.hidden = true;
+    return;
+  }
+  chip.hidden = false;
+  if (account?.signedIn) {
+    const state = sync.state();
+    chip.className = `account-chip account-chip-${state}`;
+    chip.textContent = account.name;
+    chip.title = `Signed in as ${account.name}. ${sync.status()}`;
+    chip.setAttribute("aria-label", chip.title);
+  } else {
+    chip.className = "account-chip account-chip-out";
+    chip.textContent = "Sign in";
+    chip.title = "Not signed in: your progress stays on this device only";
+    chip.setAttribute("aria-label", chip.title);
+  }
+}
+sync.listen(() => showChip(null));
+window.setInterval(() => showChip(null), 30_000);
 
 for (const tab of document.querySelectorAll<HTMLButtonElement>(".tab")) {
   tab.addEventListener("click", () => showTab(tab.dataset.view!));
@@ -145,7 +174,20 @@ async function refreshSession(): Promise<void> {
   const badge = $("#admin-badge");
   badge.hidden = !session.admin;
   if (session.admin) void showSpend(badge);
+  showChip(status);
   if (!status) return;
+  // The admin by token on a device not signed in to the owner's account: its
+  // progress is not shared, said once a visit (4.4.6, the owner's report).
+  if (status.admin && status.account?.admin && status.account.claimed && !status.account.signedIn) {
+    try {
+      if (!sessionStorage.getItem("mm-not-signed-in")) {
+        sessionStorage.setItem("mm-not-signed-in", "1");
+        toast(`This device is not signed in to ${status.account.name}'s account: what you find here is not shared. Tap Sign in at the top.`, "error");
+      }
+    } catch {
+      // said again next visit
+    }
+  }
   if (status.account?.claimed && !status.account.signedIn && !status.invited) {
     if (await claimLink("link")) return;
   }

@@ -161,6 +161,8 @@ export class WorldHost {
     });
     this.el.tools.append(this.filters.el, expand);
     showExpand();
+    this.showExpand = showExpand;
+    this.makeGrip();
     this.el.add.addEventListener("click", () => {
       this.send({ type: "villager" });
       toast("A villager wanders in");
@@ -551,11 +553,11 @@ export class WorldHost {
         this.castInAttempt.push(msg.key);
         markUsed(msg.key);
         void this.afterCast(msg.key);
-        // In a grid the bar covers the island: fold it once a spell is used.
-        if (this.expanded && window.innerWidth < 700) {
+        // In a grid the bar covers the island: fold it once a spell is used,
+        // unless the player sized it by hand (the grip, below).
+        if (this.expanded && window.innerWidth < 700 && !readHeight()) {
           this.expanded = false;
-          this.el.bar.classList.remove("expanded");
-          (this.el.tools.querySelector(".spellbar-expand") as HTMLButtonElement).textContent = "Grid";
+          this.showExpand();
         }
         break;
       case "error":
@@ -641,6 +643,70 @@ export class WorldHost {
   // The island's save, by the tab that owns it, and never over a newer save
   // where tabs cannot tell each other (no BroadcastChannel). Big saves are
   // kept gzipped (4.4, island-store.ts); saves are written one at a time.
+  private showExpand: () => void = () => undefined;
+
+  // The spell bar's grip: dragged up it shows more spells, down to one row.
+  // The height is a setting of this device (docs/DESIGN.md, "What syncs").
+  private makeGrip(): void {
+    const bar = this.el.bar;
+    const list = this.el.list;
+    const grip = document.createElement("div");
+    grip.className = "spellbar-grip";
+    grip.tabIndex = 0;
+    grip.setAttribute("role", "separator");
+    grip.setAttribute("aria-orientation", "horizontal");
+    grip.setAttribute("aria-label", "Drag to show more or fewer spells");
+    grip.title = "Drag to show more or fewer spells";
+    bar.prepend(grip);
+    const ROW = 56;
+    const most = () => Math.round(window.innerHeight * 0.7);
+    const apply = (h: number, save: boolean) => {
+      const height = Math.max(0, Math.min(most(), Math.round(h)));
+      const open = height >= ROW;
+      if (open) bar.style.setProperty("--spells-h", `${height}px`);
+      else bar.style.removeProperty("--spells-h");
+      if (this.expanded !== open) {
+        this.expanded = open;
+        this.showExpand();
+      }
+      grip.setAttribute("aria-valuenow", String(open ? height : 0));
+      if (save) {
+        writeFlag(EXPAND_KEY, open);
+        writeHeight(open ? height : 0);
+      }
+    };
+    const saved = readHeight();
+    if (saved && this.expanded) apply(saved, false);
+    let startY = 0;
+    let startH = 0;
+    let dragging = false;
+    grip.addEventListener("pointerdown", (e) => {
+      dragging = true;
+      startY = e.clientY;
+      startH = this.expanded ? list.getBoundingClientRect().height : 0;
+      grip.setPointerCapture(e.pointerId);
+      grip.classList.add("dragging");
+      e.preventDefault();
+    });
+    grip.addEventListener("pointermove", (e) => {
+      if (dragging) apply(startH + (startY - e.clientY), false);
+    });
+    const end = (e: PointerEvent) => {
+      if (!dragging) return;
+      dragging = false;
+      grip.classList.remove("dragging");
+      apply(startH + (startY - e.clientY), true);
+    };
+    grip.addEventListener("pointerup", end);
+    grip.addEventListener("pointercancel", end);
+    grip.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      e.preventDefault();
+      const now = this.expanded ? list.getBoundingClientRect().height : 0;
+      apply(now + (e.key === "ArrowUp" ? 60 : -60), true);
+    });
+  }
+
   private saving: Promise<void> = Promise.resolve();
   private writeIsland(data: SavedWorld): void {
     this.saving = this.saving.then(() => this.writeIslandNow(data));
@@ -1176,6 +1242,24 @@ export class WorldHost {
 }
 
 const EXPAND_KEY = "mm-spellbar-expanded";
+// The spell bar's height in pixels when opened by its grip, 0 for none.
+const HEIGHT_KEY = "mm-spellbar-height";
+function readHeight(): number {
+  try {
+    const v = Number(localStorage.getItem(HEIGHT_KEY) ?? 0);
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  } catch {
+    return 0;
+  }
+}
+function writeHeight(h: number): void {
+  try {
+    if (h) localStorage.setItem(HEIGHT_KEY, String(h));
+    else localStorage.removeItem(HEIGHT_KEY);
+  } catch {
+    // kept for this page
+  }
+}
 
 // One creation in a few dozen characters, for the 4 KB perf sample.
 function compactCreation(c: ReturnType<typeof timeline.recent>[number]) {

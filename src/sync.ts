@@ -114,7 +114,15 @@ export class Sync {
   islandNews: { device: string | null; updatedAt: number } | null = null;
   // Told when discoveries came down from another device, and when the status changed.
   onPulled: (() => void) | null = null;
-  onStatus: (() => void) | null = null;
+  private listeners = new Set<() => void>();
+  // Told when the status changed (the ? menu, the account chip); returns the way to stop.
+  listen(fn: () => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+  private notify(): void {
+    for (const fn of this.listeners) fn();
+  }
 
   constructor(private store: Store) {
     window.addEventListener("online", () => {
@@ -132,13 +140,20 @@ export class Sync {
     this.refused = false;
     this.seen.savedAt = Date.now();
     writeSeen(this.seen);
-    this.onStatus?.();
+    this.notify();
   }
 
   private failed(err: unknown): void {
     if (err instanceof api.ApiRequestError && err.status === 0) this.offline = true;
     if (err instanceof api.ApiRequestError && err.status === 409 && (err.detail as { owner?: string } | undefined)?.owner) this.refused = true;
-    this.onStatus?.();
+    this.notify();
+  }
+
+  // The account chip's dot: saved, saving, or not saved.
+  state(): "saved" | "pending" | "unsaved" {
+    if (!api.hasSession() || this.refused || this.offline || (this.account && owner() !== this.account)) return "unsaved";
+    if (this.islandDirty || !!this.discoveriesTimer || !this.seen.savedAt) return "pending";
+    return "saved";
   }
 
   // What the ? menu says.
@@ -203,7 +218,7 @@ export class Sync {
     if (!hasIsland() || unchanged) return this.storeRemote(island, remote) ? "replaced" : "kept";
     if (!ask) {
       this.islandNews = { device: island.device, updatedAt: island.updatedAt };
-      this.onStatus?.();
+      this.notify();
       return "kept";
     }
     const choice = await chooseIsland(island.device, island.updatedAt);
@@ -334,7 +349,7 @@ export class Sync {
         }
       }
       this.offline = false;
-      this.onStatus?.();
+      this.notify();
     } catch (err) {
       this.failed(err);
     }
@@ -346,7 +361,7 @@ export class Sync {
       this.discoveriesTimer = 0;
       void this.pushDiscoveries();
     }, 5000);
-    this.onStatus?.();
+    this.notify();
   }
 
   // What the server holds was last seen by this tab or another tab of this
