@@ -85,8 +85,10 @@ async function perf(hours) {
 /** What production runs against main: the live deploy's message names the commit it came from. */
 async function drift() {
   const { execFileSync } = await import("node:child_process");
+  // The version the game locks, so the night never runs a wrangler nobody tested.
+  const version = JSON.parse(readFileSync("package-lock.json", "utf8")).packages["node_modules/wrangler"].version;
   const list = JSON.parse(
-    execFileSync("npx", ["--yes", "wrangler", "deployments", "list", "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }),
+    execFileSync("npx", ["--yes", `wrangler@${version}`, "deployments", "list", "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }),
   );
   const live = list[list.length - 1];
   const message = live?.annotations?.["workers/message"] ?? "";
@@ -143,7 +145,10 @@ if (cmd === "errors") {
     e = await errorsSince(since, Date.now(), { outcomesOnly: true });
   } catch (err) {
     // Not being able to read the errors is not an error of the deploy: the smoke test passed.
-    console.log(`could not read production's errors (${String(err.message ?? err).slice(0, 200)}); not counted`);
+    const line = `Could not read production's errors (${String(err.message ?? err).slice(0, 200)}); not counted. Check the token's Observability access.`;
+    console.log(line);
+    // Said where the planner reads, so a check that cannot see is not mistaken for a clean one.
+    if (process.env.GITHUB_STEP_SUMMARY) writeFileSync(process.env.GITHUB_STEP_SUMMARY, `\n**Warning**: ${line}\n`, { flag: "a" });
     process.exit(0);
   }
   console.log(`${e.count} failed invocations in production since ${new Date(since).toISOString()}${e.first.length ? ": " + e.first.join(" | ") : ""}`);

@@ -52,7 +52,9 @@ jobs:
           npm run evolve
           npm run wonders
           npm run challenges -- 10
-          npm install --no-save playwright
-          npx playwright install --with-deps chromium
+          # 4.5.2: in its own folder, so the game's locked dependencies stay as tested.
+          npm install --prefix "$RUNNER_TEMP/pw" --no-save --no-package-lock playwright
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+          export NODE_PATH="$RUNNER_TEMP/pw/node_modules"
           node scripts/judge-runner.mjs ${{ inputs.limit || '30' }}
           node scripts/judge-runner.mjs wonders

@@ -73,7 +73,7 @@ const isBulkSpells = (line) => {
   for (let i = 0; i < 5; i++) rest = rest.replace(/\([^()]*\)/g, "");
   const where = /\bWHERE\b(.*)$/i.exec(rest);
   if (!where) return true;
-  if (/^\s*(?:1\s*=\s*1|1|TRUE)\b/i.test(where[1])) return true;
+  if (/^\s*(?:1\s*=\s*1|1|TRUE)\b/i.test(where[1]) || /\bOR\b/i.test(where[1])) return true;
   if (/^\s*DELETE/i.test(line.slice(m.index))) return !/\b(?:id|pid|key)\s*=\s*\?/i.test(where[1]);
   return /\bSET\b[^]*\b(?:code|version)\s*=/i.test(rest) && !/\b(?:id|pid)\s*=\s*\?/i.test(where[1]);
 };
@@ -151,7 +151,7 @@ export const RULES = [
   {
     id: "R9",
     cls: "red",
-    what: "spells in bulk: PROGRAM_VERSION or FIRST_PROGRAM_VERSION anywhere, the refresh of the library (shared/version.ts, scripts/refresh-runner.ts, startRefresh), an UPDATE or DELETE on spells or programs with no WHERE",
+    what: "spells in bulk: PROGRAM_VERSION or FIRST_PROGRAM_VERSION anywhere, the refresh of the library (shared/version.ts, scripts/refresh-runner.ts, startRefresh), an UPDATE or DELETE on spells or programs with no WHERE of its own, a WHERE that is always true or has an OR, code or version rewritten by a range, the rewrites history deleted",
     file: (f) =>
       any(["shared/version.ts", "scripts/refresh-runner.ts"])(f) ||
       added(f, /\b(?:FIRST_)?PROGRAM_VERSION\s*=/).length > 0 ||
@@ -231,8 +231,8 @@ export const RULES = [
       /^scripts\/.*test.*\.(ts|mjs)$/.test(f.path) &&
       (count(f.removed, /\bcheck\(/g) > count(f.added, /\bcheck\(/g) ||
         touched(f, /process\.exit\(/) ||
-        touched(f, /\b(?:const|let|function)\s+check\b|\bfail(?:ed|ures)\s*(?:\+\+|\+=|=)/) ||
-        inFunction(f, /\b(?:const|let|function)\s+check\b/)),
+        // The helper's own line, or the failure count it keeps (failures++, failed += 1), changed.
+        touched(f, /\b(?:const|let|function)\s+check\b|\bfail(?:ed|ures)\s*(?:\+\+|\+=)|\+\+\s*fail(?:ed|ures)\b/)),
   },
   {
     id: "A7",
