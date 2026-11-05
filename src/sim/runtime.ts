@@ -145,6 +145,9 @@ export class Runtime {
   }
   // Which spell defined each custom material and creature, for saving the world.
   readonly owners = new Map<string, string>();
+  // 4.6: the cells of the buildings each program raised (w.building), for
+  // its test run: what it stacks on them hides what the builder draws. Not saved.
+  readonly raised = new Map<string, number[]>();
   // A spell's creature named like one of the island's animals ("wolf") is
   // kept as its own kind ("wolf#<spell>"), so summoning wolves that hunt
   // villagers does not turn the island's wolves against them. Per spell:
@@ -1528,7 +1531,13 @@ export class SpellApi {
   building(x: number, y: number, o: Record<string, unknown> | string = {}) {
     if (!this.inside(x, y)) return null;
     const job = typeof o === "string" ? o : typeof o.job === "string" ? o.job : "house";
-    return makeBuilding(this.rt.world, x, y, job.toLowerCase().trim());
+    const made = makeBuilding(this.rt.world, x, y, job.toLowerCase().trim());
+    if (made) {
+      const W = this.rt.world.w;
+      const i = (made.y - 1) * W + made.x - 1;
+      this.rt.raised.set(this.req.key, [...(this.rt.raised.get(this.req.key) ?? []), i, i + 1, i + W, i + W + 1]);
+    }
+    return made;
   }
   // The terrain reshaped: {shape, r, height}.
   land(x: number, y: number, o: Record<string, unknown> | string = {}) {

@@ -197,6 +197,18 @@ export function formChecks(check: Check): void {
     check(`the ${form} example (${ex.name}) passes its test run as a ${form}`, r.ok, `${r.problem}: ${r.detail}`);
   }
 
+  // A settlement that also promises protection is judged by the village it makes, not by the probe's village.
+  const guarded = runCheck({
+    key: "ex:guarded",
+    name: "Walled Town",
+    tier: "major",
+    code: FORM_EXAMPLES.settlement.code,
+    kind: "artifact",
+    form: "settlement",
+    intents: ["protect"],
+  });
+  check("a settlement that promises protection passes by the village it makes", guarded.ok, `${guarded.problem}: ${guarded.detail}`);
+
   // Sizes: a giant book fails unless it says so; a statue of a serpent is no
   // creature; a charm is no village (the live Serpent and Village, 5 November).
   const book = `const spell = { artifacts: [{ name: "Book", effects: [{ when: "every", every: 20, do: "heal" }] }], *cast(w) {
@@ -207,6 +219,22 @@ export function formChecks(check: Check): void {
   check("a book eight voxels tall fails as an object (size)", plain.problem === "size", `${plain.problem}: ${plain.detail}`);
   check("the same book passes when the item says it is giant", giant.ok, `${giant.problem}: ${giant.detail}`);
   check("a program written before 4.6 (no kind in it) is not held to a size", legacy.ok, `${legacy.problem}: ${legacy.detail}`);
+  // One block that strays far (knocked away after the cast) does not make an object big.
+  const stray = `const spell = { artifacts: [{ name: "Charm", effects: [{ when: "every", every: 20, do: "heal" }] }], *cast(w) {
+    w.box(w.x, w.y, 0, 1, 1, 2, ["#5a4030"], "wood"); w.voxel(w.x, w.y, 2, "#ffd36a", "glow"); w.voxel(w.x + 11, w.y + 3, 1, "#ffd36a", "magic");
+    w.artifact(w.x, w.y, "Charm"); } };`;
+  const strayed = runCheck({ key: "stray", name: "Charm", tier: "minor", code: stray, kind: "artifact", form: "object" });
+  check("one stray block eleven cells away does not fail a small object", strayed.ok, `${strayed.problem}: ${strayed.detail}`);
+  // A tower stacked on the building's own cells hides what the builder draws (the preview's first Lighthouse).
+  const stacked = `const spell = { artifacts: [{ name: "Lighthouse", effects: [{ when: "night", do: "light" }] }], *cast(w) {
+    const b = w.building(w.x, w.y, { job: "watchtower" }); if (!b) return;
+    w.box(b.x - 1, b.y - 1, 0, 2, 2, 12, ["#8f8a7a"], "stone"); w.artifact(b.x, b.y, "Lighthouse"); } };`;
+  const hidden = runCheck({ key: "stacked", name: "Lighthouse", tier: "minor", code: stacked, kind: "artifact", form: "building" });
+  check(
+    "a tower stacked on its own building's cells fails (size)",
+    hidden.problem === "size" && hidden.detail.includes("beside"),
+    `${hidden.problem}: ${hidden.detail}`,
+  );
   const spheres = `const spell = { artifacts: [{ name: "Serpent", effects: [{ when: "every", every: 10, do: "heal" }] }], *cast(w) {
     for (let k = 0; k < 12; k++) w.sphere(w.x - 3 + k * 0.5, w.y + Math.sin(k * 0.7) * 1.2, 1, 1, ["#1c2a1a"], 0.8, "stone");
     w.artifact(w.x, w.y, "Serpent"); } };`;

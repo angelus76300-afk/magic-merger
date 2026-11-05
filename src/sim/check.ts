@@ -359,12 +359,14 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
   }
   // 4.6: an item is the size of its kind, and is that kind of thing at all.
   if (isForm(req.form) && req.form !== "spell") {
-    const found = formCheck(req.form, req.name, req.giant === true, before, world, ref, rt.owners, `check:${req.key}`);
+    const found = formCheck(req.form, req.name, req.giant === true, before, world, ref, rt.owners, `check:${req.key}`, rt.raised.get(`check:${req.key}`));
     if (found) return { ok: false, problem: found.problem, detail: found.detail, stats };
   }
   const detail = `${cells} cells, ${voxels} blocks and ${creatures} creatures changed${bodies ? `, ${bodies} bodies flew` : ""}.`;
   let result: CheckResult = { ok: true, problem: null, detail, stats };
-  if (parseIntents(req.intents).includes("protect")) {
+  // 4.6: a settlement is made on open ground away from the village the probe
+  // attacks; what it promises is the village it makes, checked above.
+  if (parseIntents(req.intents).includes("protect") && req.form !== "settlement") {
     phase = "protect";
     const probe = yield* protectProbe(req);
     const withSaved = { ...stats, saved: probe.saved };
@@ -423,27 +425,41 @@ export interface Made {
   settlements: number;
   wonders: number;
   creatures: number;
+  onBuilding: number;
 }
 
-function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Map<string, string>, key: string): Made {
-  let voxels = 0;
+function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Map<string, string>, key: string, raised: number[]): Made {
+  // Its voxels, measured round their middle: the farthest tenth is left out,
+  // so one block that strays (a lantern's voxel knocked eleven cells away
+  // after the cast) does not make an object a building; a giant stays giant.
+  const mine: { x: number; y: number; tall: number }[] = [];
+  for (const [k] of world.decor) {
+    if (before.decor.has(k)) continue;
+    const x = keyX(k);
+    const y = keyY(k);
+    mine.push({ x, y, tall: world.inside(x, y) ? keyLevel(k) + 1 - Math.round(world.height[y * world.w + x] * 0.5) : 0 });
+  }
+  const voxels = mine.length;
+  const mid = (list: number[]) => list.sort((a, b) => a - b)[Math.floor(list.length / 2)] ?? 0;
+  const mx = mid(mine.map((v) => v.x));
+  const my = mid(mine.map((v) => v.y));
+  const kept = mine.sort((a, b) => Math.hypot(a.x - mx, a.y - my) - Math.hypot(b.x - mx, b.y - my)).slice(0, Math.max(1, Math.floor(voxels * 0.9)));
   let x0 = Infinity;
   let x1 = -Infinity;
   let y0 = Infinity;
   let y1 = -Infinity;
   let tall = 0;
-  for (const [k] of world.decor) {
-    if (before.decor.has(k)) continue;
-    voxels++;
-    const x = keyX(k);
-    const y = keyY(k);
-    x0 = Math.min(x0, x);
-    x1 = Math.max(x1, x);
-    y0 = Math.min(y0, y);
-    y1 = Math.max(y1, y);
-    if (world.inside(x, y)) tall = Math.max(tall, keyLevel(k) + 1 - Math.round(world.height[y * world.w + x] * 0.5));
+  for (const v of kept) {
+    x0 = Math.min(x0, v.x);
+    x1 = Math.max(x1, v.x);
+    y0 = Math.min(y0, v.y);
+    y1 = Math.max(y1, v.y);
+    tall = Math.max(tall, v.tall);
   }
   const across = voxels ? Math.max(x1 - x0, y1 - y0) + 1 : 0;
+  // Voxels it stacked on the cells of a building it raised, which the builder draws.
+  const blocks = new Set(raised);
+  const onBuilding = mine.filter((v) => world.inside(v.x, v.y) && blocks.has(v.y * world.w + v.x)).length;
   let reshaped = 0;
   let buildings = 0;
   let lx0 = Infinity;
@@ -483,6 +499,7 @@ function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Ma
     settlements: world.settlements.length - before.settlements,
     wonders: world.wonders.length - before.wonders,
     creatures,
+    onBuilding,
   };
 }
 
@@ -505,8 +522,9 @@ export function formCheck(
   ref: Snapshot,
   owners: Map<string, string>,
   key: string,
+  raised: number[] = [],
 ): { problem: "size" | "kind"; detail: string } | null {
-  const m = measureMade(before, world, ref, owners, key);
+  const m = measureMade(before, world, ref, owners, key, raised);
   return judgeMade(form, name, giant, m);
 }
 
@@ -547,6 +565,11 @@ export function judgeMade(form: Exclude<Form, "spell">, name: string, giant: boo
     return {
       problem: "size",
       detail: `${name} is an object, something a hand holds or a table bears, but it built ${m.buildings ? "a building" : m.settlements ? "a village" : `over ${m.reshaped} cells of land`}. Keep its look to a small thing on a pedestal at most, and let what it does reach further through w.artifact.${giantNote} ${measured}`,
+    };
+  if (m.onBuilding >= 4)
+    return {
+      problem: "size",
+      detail: `${name} stacked ${m.onBuilding} voxels on the cells of the building it raised, which the island's builder draws: build what is special at b.beside, next to it, never on it. ${measured}`,
     };
   if ((form === "creature" || form === "building") && m.settlements > 0)
     return { problem: "size", detail: `${name} is ${LABEL[form]}, but it founded a whole village. ${measured}` };

@@ -144,6 +144,10 @@ export interface BuildingMade {
   y: number;
   job: string;
   village: string | null;
+  // A free cell next to it, toward open ground: where what makes it this
+  // building goes (a chimney, a spire, a sign). Its own four cells are drawn
+  // by the island's builder and stay clear.
+  beside: { x: number; y: number };
 }
 
 // A house or a building with a job, two by two cells, near (x, y). Its look
@@ -180,7 +184,28 @@ export function makeBuilding(world: World, x: number, y: number, job: string): B
   const s = settlementNear(world, bx, by);
   if (s && id !== C.HOUSE) (s.jobs ??= []).push({ kind: id, i: at });
   if (id !== C.HOUSE) tell(world, s?.name ? `${s.name} raised a ${name}` : `a ${name} was raised`);
-  return { x: bx + 1, y: by + 1, job: name, village: s?.name || null };
+  // Beside it: the first open cell of the ring round its block.
+  let beside = { x: bx + 2, y: by };
+  for (const [dx, dy] of [
+    [2, 0],
+    [2, 1],
+    [-1, 0],
+    [-1, 1],
+    [0, 2],
+    [1, 2],
+    [0, -1],
+    [1, -1],
+  ]) {
+    const x = bx + dx;
+    const y = by + dy;
+    if (!world.inside(x, y)) continue;
+    const j = y * world.w + x;
+    if (world.depth[j] === 0 && !isBuilding(world.cover[j])) {
+      beside = { x, y };
+      break;
+    }
+  }
+  return { x: bx + 1, y: by + 1, job: name, village: s?.name || null, beside };
 }
 
 // The shapes land can take, each from the generator's own rules: water kept

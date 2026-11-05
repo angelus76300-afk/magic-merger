@@ -423,8 +423,9 @@ export const FORM_RULES: Record<Exclude<Form, "spell">, FormRule> = {
   object: { across: 3, tall: 4, voxels: 40 },
   // A creature is its body, not a statue: what it builds stays small.
   creature: { across: 6, tall: 6, voxels: 120 },
-  // A house is two by two cells; a temple, a tower or a castle a few houses.
-  building: { across: 12, tall: 30, voxels: 2500 },
+  // A house is two by two cells and two voxels tall; a temple, a tower or a
+  // castle a few houses wide, a lighthouse ten houses tall at most.
+  building: { across: 10, tall: 20, voxels: 1500 },
   // Houses, a plaza, fields: a village is about thirty cells across.
   settlement: { across: 48, tall: 30, voxels: 3000 },
   // A grove, a spring, a ruin, a wonder: the wonders' reach, 4 to 14 cells.
