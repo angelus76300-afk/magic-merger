@@ -17,7 +17,22 @@ import { classify, readGit } from "./risk.mjs";
 const ORDER = { green: 0, amber: 1, red: 2 };
 export const LABELS = { amber: "owner-ok", red: "owner-yes", hold: "hold", pause: "pause" };
 // A marker counts only at the start of a line, never quoted inside prose.
-const REVIEW = /^<!--\s*mm-review\s+verdict=(pass|block)\s+sha=([0-9a-f]{7,40})(?:\s+raise=(amber|red))?\s*-->/gm;
+// tests=pass: the reviewer ran npm test on that commit in its session and it passed (4.5.2: the
+// simulation's tests left GitHub Actions to save its minutes).
+// Its fields may come in any order: verdict and sha are needed, raise and tests are optional.
+const REVIEW = /^<!--\s*mm-review\s+((?:[a-z]+=[0-9a-z]+\s*)+)-->/gm;
+const reviewFields = (text) => {
+  const pairs = [...text.matchAll(/([a-z]+)=([0-9a-z]+)/g)].map((m) => [m[1], m[2]]);
+  // A field written twice is a malformed marker (tests=fail tests=pass must not read as a pass).
+  if (new Set(pairs.map(([k]) => k)).size !== pairs.length) return null;
+  const f = Object.fromEntries(pairs);
+  const ok = /^(pass|block)$/.test(f.verdict ?? "") && /^[0-9a-f]{7,40}$/.test(f.sha ?? "");
+  const raise = /^(amber|red)$/.test(f.raise ?? "") ? f.raise : null;
+  const tests = /^(pass|fail)$/.test(f.tests ?? "") ? f.tests : null;
+  // An unknown value in a known field is a malformed marker, not a missing one: it does not count.
+  const bad = (f.raise && !raise) || (f.tests && !tests);
+  return ok && !bad ? [null, f.verdict, f.sha, raise, tests] : null;
+};
 // The record the planner writes next to the owner's label: who said what, when.
 const OWNER = /^<!--\s*mm-owner\s+(ok|yes)\s*-->/m;
 
@@ -28,10 +43,13 @@ const OWNER = /^<!--\s*mm-owner\s+(ok|yes)\s*-->/m;
 export function reviewFor(comments, sha) {
   let found = null;
   for (const c of comments) {
-    for (const m of (c.body ?? "").matchAll(REVIEW)) {
-      if (!sha.startsWith(m[2])) continue;
+    for (const match of (c.body ?? "").matchAll(REVIEW)) {
+      const m = reviewFields(match[1]);
+      if (!m || !sha.startsWith(m[2])) continue;
       const raise = [found?.raise, m[3]].filter(Boolean).sort((a, b) => ORDER[b] - ORDER[a])[0] ?? null;
-      found = { verdict: found?.verdict === "block" ? "block" : m[1], raise, at: c.created_at, url: c.html_url };
+      // A failed run sticks like a block: a later comment cannot turn it into a pass.
+      const tests = found?.tests === "fail" || m[4] === "fail" ? "fail" : (m[4] ?? found?.tests ?? null);
+      found = { verdict: found?.verdict === "block" ? "block" : m[1], raise, tests, at: c.created_at, url: c.html_url };
     }
   }
   return found;
@@ -64,12 +82,16 @@ export function decide(s) {
   if (s.smoke !== "pass" && !s.docsOnly) reasons.push(`preview smoke test not passed (${s.smoke})`);
   if (!s.review) reasons.push("no independent review of the head commit");
   else if (s.review.verdict !== "pass") reasons.push("the review blocks it");
+  if (!s.docsOnly && s.review?.tests !== "pass") reasons.push("npm test not reported passing on the head commit (the reviewer's tests=pass)");
   const records = s.records ?? new Set();
   const yes = s.labels.includes(LABELS.red) && records.has("yes");
   const ok = yes || (s.labels.includes(LABELS.amber) && records.has("ok"));
   if (cls === "amber" && !ok) reasons.push("amber: waits for the owner's OK in the morning brief (label owner-ok and the planner's mm-owner record)");
   if (cls === "red" && !yes) reasons.push("red: waits for the owner's explicit yes (label owner-yes and the planner's mm-owner record)");
   if (s.mergeable === false) reasons.push("conflicts with main");
+  // npm test runs in sessions on the head commit, not in Actions on what main becomes: the head must
+  // already contain main, or two pull requests tested apart could deploy together untested.
+  if (s.upToDate === false && !s.docsOnly) reasons.push("behind main: merge main into the branch, then the reviewer runs npm test on the new head");
   if (s.workflows) reasons.push("changes .github/workflows: the Gate's token cannot merge it; the planner merges it by hand after the owner's yes");
   return { cls, ready: reasons.length === 0, reasons };
 }
@@ -111,7 +133,18 @@ async function paused() {
   return (open ?? []).length > 0;
 }
 
-const DOCS_ONLY = (path) => /^(docs\/|\.claude\/skills\/)|\.md$|^public\/changelog\.json$/.test(path);
+// Nothing here runs in the game: docs, the skills, the changelog, the sessions' permission rules.
+// (Not the changelog: players read public/changelog.json in the live game.)
+/**
+ * Whether a branch counts as containing main: it does, or main moved since only by docs (nothing
+ * npm test sees changed). moved: the paths main changed since the branch's base, null if unknown.
+ */
+export function upToDateFrom(ancestor, moved) {
+  if (ancestor) return true;
+  return Array.isArray(moved) && moved.every((p) => DOCS_ONLY(p));
+}
+
+const DOCS_ONLY = (path) => /^(docs\/|\.claude\/skills\/)|\.md$|^\.claude\/settings\.json$/.test(path);
 
 /** CI on a commit: "full" when the check job ran every step, "docs" when it ran the light ones on a docs only change. */
 async function ciOn(sha) {
@@ -122,7 +155,7 @@ async function ciOn(sha) {
   if (ci.conclusion !== "success") return ci.conclusion;
   const jobs = (await gh(`actions/runs/${ci.id}/jobs`))?.jobs ?? [];
   const check = jobs.find((j) => j.name === "check");
-  const test = check?.steps?.find((st) => st.name === "npm test");
+  const test = check?.steps?.find((st) => st.name === "test:worker");
   return test?.conclusion === "success" ? "full" : "docs";
 }
 
@@ -171,6 +204,21 @@ export async function prState(n) {
       smoke: await smokeOn(sha),
       review: reviewFor(comments, sha),
       mergeable: pr.mergeable,
+      upToDate: (() => {
+        let ancestor = false;
+        let moved = null;
+        try {
+          git("merge-base", "--is-ancestor", `origin/${pr.base.ref}`, `pr/${n}`);
+          ancestor = true;
+        } catch {
+          try {
+            moved = git("diff", "--name-only", `pr/${n}...origin/${pr.base.ref}`).split("\n").filter(Boolean);
+          } catch {
+            moved = null;
+          }
+        }
+        return upToDateFrom(ancestor, moved);
+      })(),
       workflows: files.some((f) => f.path.startsWith(".github/workflows/")),
       docsOnly: files.every((f) => DOCS_ONLY(f.path)),
     },
@@ -255,7 +303,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       });
       summary(`Merged #${arg} (${d.cls}).`);
       console.log("merged=true");
-      if (process.env.GITHUB_OUTPUT) execFileSync("sh", ["-c", `echo merged=true >> "$GITHUB_OUTPUT"`]);
+      // A docs only merge changes nothing live: the Gate starts no deploy for it.
+      if (process.env.GITHUB_OUTPUT) execFileSync("sh", ["-c", `echo merged=true >> "$GITHUB_OUTPUT"; echo docs=${state.docsOnly} >> "$GITHUB_OUTPUT"`]);
     }
   } else if (cmd === "deploy") {
     const s = await deployState(arg, process.argv[4]);

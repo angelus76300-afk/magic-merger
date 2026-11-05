@@ -78,5 +78,5 @@ jobs:
           node scripts/gate.mjs pr "$PR" --merge
       # A merge made with this workflow's token starts no push workflow: start the deploy here.
       - name: deploy
-        if: steps.gate.outputs.merged == 'true'
+        if: steps.gate.outputs.merged == 'true' && steps.gate.outputs.docs != 'true'
         run: gh workflow run deploy.yml --ref main
