@@ -2993,6 +2993,15 @@ const signIn = async (key, count) => {
   );
   const asInput = await merge(ann, item.name, "Fire");
   check("daily: an open challenge is no ingredient", asInput.status === 400, `${asInput.status}`);
+  // The night's item has its program written ahead through the WRITES queue
+  // (AHEAD_DAILY_USD is on since section 27), paid by the admin: wait for it,
+  // or on a slow runner its call lands during the merge counted below (CI on
+  // #45, 45c4aed: "calls":1, "paid":{"n":0}).
+  for (let t = 0; t < 80; t++) {
+    const w = await lookup("SELECT status FROM writes WHERE key = ?", row.result);
+    if (!w || !["queued", "writing"].includes(w.status)) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
   const before = calls;
   const parentA = (await lookup("SELECT name FROM elements WHERE key = ?", pa)).name;
   const parentB = (await lookup("SELECT name FROM elements WHERE key = ?", pb)).name;
