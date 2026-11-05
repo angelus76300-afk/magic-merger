@@ -249,6 +249,32 @@ export function formChecks(check: Check): void {
       `${world.props.length} props, newest ${world.props.at(-1)?.key}`,
     );
   }
+  // The review of #50: one item calling w.model 64 times took every other item's look away.
+  {
+    const world = generateWorld(152, 152, 11, resolveLand(MID, 11, 152));
+    populate(world);
+    const rt = new Runtime(world, () => {});
+    for (let k = 0; k < 5; k++) rt.cast({ key: "storm lantern", name: "Storm Lantern", tier: "minor", code: FORM_EXAMPLES.object.code }, 30 + k * 6, 40);
+    for (let k = 0; k < 30; k++) stepHeadless(world, rt);
+    const garden = `const spell = { artifacts: [{ name: "Fairy Garden", effects: [{ when: "every", every: 20, do: "heal" }] }], *cast(w) {
+      for (let k = 0; k < 64; k++) w.model(w.x + (k % 8) * 0.6, w.y + Math.floor(k / 8) * 0.6, [[-0.05, -0.05, 0, 0.1, 0.1, 0.3, "#3a7a3a"], [-0.1, -0.1, 0.3, 0.2, 0.2, 0.1, "#f2a6d6"]]);
+      w.artifact(w.x, w.y, "Fairy Garden"); } };`;
+    rt.cast({ key: "fairy garden", name: "Fairy Garden", tier: "minor", code: garden }, 90, 90);
+    for (let k = 0; k < 30; k++) stepHeadless(world, rt);
+    const lanterns = world.props.filter((p) => p.key === "storm lantern").length;
+    const flowers = world.props.filter((p) => p.key === "fairy garden").length;
+    check(
+      "one item cannot take the others' looks: five lanterns keep theirs after a garden of 64 models",
+      lanterns === 5 && flowers === 4,
+      `${lanterns} lanterns, ${flowers} garden models`,
+    );
+    const judged = runCheck({ key: "garden", name: "Fairy Garden", tier: "minor", code: garden, kind: "artifact", form: "place" });
+    check(
+      "an item calling w.model more than 4 times fails its look",
+      judged.problem === "look" && judged.detail.includes("64 times"),
+      `${judged.problem}: ${judged.detail}`,
+    );
+  }
   const fineBook = `const spell = { artifacts: [{ name: "Book", effects: [{ when: "every", every: 20, do: "heal" }] }], *cast(w) {
     w.model(w.x, w.y, [[-0.3, -0.25, 0, 0.6, 0.5, 0.1, "#5a4030"], [-0.08, -0.08, 0.1, 0.16, 0.16, 0.8, "#6a5040"], [-0.35, -0.28, 0.9, 0.7, 0.56, 0.08, "#6a5040"],
       [-0.2, -0.15, 0.98, 0.4, 0.3, 0.05, "#6b3a2a"], [-0.19, -0.14, 1.03, 0.38, 0.28, 0.06, "#efe6cf"], [-0.2, -0.15, 1.09, 0.4, 0.3, 0.05, "#6b3a2a"],

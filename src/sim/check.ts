@@ -13,7 +13,7 @@ import { FORM_RULES, GIANT_FACTOR, bigBeing, isForm, type Form } from "../../sha
 import { isBuilding } from "./materials";
 import { keyLevel, keyX, keyY } from "./voxelkey";
 import { settlementNear } from "./buildings";
-import { propBounds } from "./props";
+import { MODELS_PER_ITEM, propBounds } from "./props";
 
 // The test run a new program goes through before it is stored (3.3). It is
 // cast near a village on a small seeded island, and the island is compared,
@@ -362,7 +362,18 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
   }
   // 4.6: an item is the size of its kind, and is that kind of thing at all.
   if (isForm(req.form) && req.form !== "spell") {
-    const found = formCheck(req.form, req.name, req.giant === true, before, world, ref, rt.owners, `check:${req.key}`, rt.raised.get(`check:${req.key}`));
+    const found = formCheck(
+      req.form,
+      req.name,
+      req.giant === true,
+      before,
+      world,
+      ref,
+      rt.owners,
+      `check:${req.key}`,
+      rt.raised.get(`check:${req.key}`),
+      rt.modelCalls.get(`check:${req.key}`),
+    );
     if (found) return { ok: false, problem: found.problem, detail: found.detail, stats };
   }
   const detail = `${cells} cells, ${voxels} blocks and ${creatures} creatures changed${bodies ? `, ${bodies} bodies flew` : ""}.`;
@@ -432,11 +443,12 @@ export interface Made {
   // Cells raised or sunk, the land's shape itself (paint and water are effects), and how far across.
   lifted: number;
   liftAcross: number;
-  // Boxes of its fine models.
+  // Boxes of its fine models, and how many times it called w.model.
   fine: number;
+  models: number;
 }
 
-function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Map<string, string>, key: string, raised: number[]): Made {
+function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Map<string, string>, key: string, raised: number[], modelCalls = 0): Made {
   // What it built, measured round its middle: its voxels (each a cell) and
   // the parts of its fine models (props.ts), the farthest tenth left out, so
   // one block that strays (a lantern's voxel knocked eleven cells away after
@@ -554,6 +566,7 @@ function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Ma
     buildings: Math.round(blocks.size / 4),
     lifted,
     fine,
+    models: modelCalls,
     settlements: world.settlements.length - before.settlements,
     wonders: world.wonders.length - before.wonders,
     creatures,
@@ -581,8 +594,9 @@ export function formCheck(
   owners: Map<string, string>,
   key: string,
   raised: number[] = [],
+  modelCalls = 0,
 ): { problem: "size" | "kind" | "look"; detail: string } | null {
-  const m = measureMade(before, world, ref, owners, key, raised);
+  const m = measureMade(before, world, ref, owners, key, raised, modelCalls);
   return judgeMade(form, name, giant, m);
 }
 
@@ -622,6 +636,11 @@ export function judgeMade(form: Exclude<Form, "spell">, name: string, giant: boo
   if (kind) return { problem: "kind", detail: `${kind} ${measured}` };
   // Its look, at the detail of the island's own wonders (12 to 70 parts, half
   // under a cell, each its own shade: docs/measurements/forms-4.6.md).
+  if (m.models > MODELS_PER_ITEM)
+    return {
+      problem: "look",
+      detail: `${name} called w.model ${m.models} times: an item has ${MODELS_PER_ITEM} models at most, and past that its own oldest is taken away. Draw it as one model of up to 80 parts (a garden's flowers in one model), or a few. ${measured}`,
+    };
   if (form === "object" && m.fine < 6)
     return {
       problem: "look",

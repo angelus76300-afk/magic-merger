@@ -149,6 +149,8 @@ export class Runtime {
   // 4.6: the cells of the buildings each program raised (w.building), for
   // its test run: what it stacks on them hides what the builder draws. Not saved.
   readonly raised = new Map<string, number[]>();
+  // 4.6: how many times each program called w.model (props.ts). Not saved.
+  readonly modelCalls = new Map<string, number>();
   // A spell's creature named like one of the island's animals ("wolf") is
   // kept as its own kind ("wolf#<spell>"), so summoning wolves that hunt
   // villagers does not turn the island's wolves against them. Per spell:
@@ -1158,6 +1160,7 @@ export class CellHandle {
 // lot, so programs stay short (and cheap to write).
 export class SpellApi {
   readonly r: number;
+  private readonly owner: string;
   readonly tier: Tier;
   readonly width: number;
   readonly height: number;
@@ -1170,6 +1173,8 @@ export class SpellApi {
     readonly y: number,
   ) {
     this.tier = req.tier;
+    // One placing of one item: its models share this (props.ts, MODELS_PER_ITEM).
+    this.owner = `${req.key}#${castId}@${Math.round(rt.world.time * 30)}`;
     this.width = rt.world.w;
     this.height = rt.world.h;
     this.r = req.reach ?? Math.max(2, Math.round(TIER_REACH[req.tier] * Math.min(rt.world.w, rt.world.h)));
@@ -1566,8 +1571,11 @@ export class SpellApi {
   // up from the ground, as small as a twentieth of a cell. {name, turn, vary}.
   model(x: number, y: number, boxes: unknown, o: Record<string, unknown> = {}) {
     if (!this.inside(x, y)) return null;
+    // Calls by program, for its test run (more than MODELS_PER_ITEM fails its look).
+    this.rt.modelCalls.set(this.req.key, (this.rt.modelCalls.get(this.req.key) ?? 0) + 1);
     const p = readProp({
       key: this.req.key,
+      owner: this.owner,
       name: typeof o.name === "string" ? o.name : this.req.name,
       x: Math.round(x * 20) / 20,
       y: Math.round(y * 20) / 20,

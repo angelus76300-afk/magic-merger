@@ -25,6 +25,9 @@ export interface PropBox {
 
 export interface Prop {
   key: string;
+  // The placing it belongs to (one cast of one item): an item has
+  // MODELS_PER_ITEM at most, so it cannot crowd out the others' looks.
+  owner?: string;
   name: string;
   x: number;
   y: number;
@@ -94,6 +97,7 @@ export function readProp(v: unknown): Prop | null {
   if (!boxes.length) return null;
   return {
     key: typeof o.key === "string" ? o.key.slice(0, 80) : "",
+    ...(typeof o.owner === "string" ? { owner: o.owner.slice(0, 120) } : {}),
     name: typeof o.name === "string" ? o.name.slice(0, 40) : "",
     x: o.x,
     y: o.y,
@@ -147,7 +151,16 @@ export function shadeParts(p: Prop, amount: number): void {
 
 // The newest is always drawn: on a full island the oldest model gives way
 // (the review of #50: the 41st item placed was drawn with nothing).
+// At most this many models for one placed item (the review of #50: a
+// garden of 64 one-flower models took every other item's look away); past
+// it, that item's own oldest gives way.
+export const MODELS_PER_ITEM = 4;
+
 export function addProp(world: World, p: Prop): boolean {
+  if (p.owner) {
+    const own = world.props.filter((q) => q.owner === p.owner);
+    if (own.length >= MODELS_PER_ITEM) world.props.splice(world.props.indexOf(own[0]), 1);
+  }
   while (world.props.length >= MAX_PROPS) world.props.shift();
   world.props.push(p);
   world.propsVersion++;
