@@ -9,8 +9,11 @@ const OPENING =
 const OFFER =
   /\b(?:here(?:'|’)s|here is) a (?:safer|gentler)\b|\bas an ai\b|\bi (?:can(?:'|’)?t|cannot) (?:help|write|create|describe) (?:with )?(?:this|that)\b/i;
 
-export function looksLikeRefusal(text: string): boolean {
-  return OPENING.test(text) || OFFER.test(text);
+// `name`, when known: an entry that opens with the item's own name ("I Can't
+// Stop Dancing is a ...") is judged on the rest of it, not on its opening.
+export function looksLikeRefusal(text: string, name?: string): boolean {
+  const own = !!name && text.trimStart().toLowerCase().startsWith(name.toLowerCase());
+  return (!own && OPENING.test(text)) || OFFER.test(text);
 }
 
 // What the Worker answers when the model refused twice: shown, never kept.
@@ -19,6 +22,6 @@ export function noDescription(name: string): string {
 }
 
 // Text a card must not keep: a refusal, or the stand in for one.
-export function isPlaceholderDescription(text: string): boolean {
-  return looksLikeRefusal(text) || /: no description yet\.$/.test(text);
+export function isPlaceholderDescription(text: string, name?: string): boolean {
+  return looksLikeRefusal(text, name) || /: no description yet\.$/.test(text);
 }

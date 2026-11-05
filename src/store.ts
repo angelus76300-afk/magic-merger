@@ -78,11 +78,11 @@ export class Store {
   // description yet" stand in, is no description: the card asks again.
   description(key: string): string | undefined {
     const text = this.data.descriptions[key];
-    return text && !isPlaceholderDescription(text) ? text : undefined;
+    return text && !isPlaceholderDescription(text, key) ? text : undefined;
   }
 
   setDescription(key: string, text: string): void {
-    if (isPlaceholderDescription(text)) return;
+    if (isPlaceholderDescription(text, key)) return;
     this.data.descriptions[key] = text;
     this.save();
   }

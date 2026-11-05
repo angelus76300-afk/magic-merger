@@ -43,3 +43,10 @@ export async function lastRunAt(db: D1Database, job: string): Promise<number | n
   const row = await db.prepare("SELECT MAX(last_at) AS at FROM job_runs WHERE job = ?").bind(job).first<{ at: number | null }>();
   return row?.at ?? null;
 }
+
+// A paid job's turn (4.5.1): counted first, then allowed only while the
+// count, as the increment itself answers it, is within `max` a day. Two runs
+// that overlap cannot both take the last turn.
+export async function takeRun(db: D1Database, job: string, day: string, max: number, now = Date.now()): Promise<boolean> {
+  return (await noteRun(db, job, day, now)) <= max;
+}

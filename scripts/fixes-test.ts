@@ -1,11 +1,12 @@
 import { memoryD1 } from "./d1-memory";
-import { noteRun, runsOn } from "../worker/cron";
+import { noteRun, runsOn, takeRun } from "../worker/cron";
 import { RUNS_A_DAY, due as dailyDue } from "../worker/daily";
 import { designDue, DESIGN_EVERY_MS } from "../worker/evolve";
 import { sweep } from "../worker/ledger";
 import { looksLikeRefusal } from "../worker/prompts";
 import { fewestMerges, leastMerges } from "../shared/challenges";
 import { readResult, reportable, unfinishedRun } from "../src/checkresult";
+import { Store } from "../src/store";
 import { Runtime } from "../src/sim/runtime";
 import { stepHeadless } from "../src/sim/tick";
 import { TICK, generateWorld } from "../src/sim/world";
@@ -18,8 +19,9 @@ import { isPlaceholderDescription, noDescription } from "../shared/refusal";
 
 // The audit's fixes (4.5.1, docs/AUDIT-2026-11-05.md), run by npm test
 // (scripts/sim-test.ts, section 13). Each check was seen to fail with its fix
-// taken out. Not reached from Node: the page's call sites in src/worldhost.ts and src/whatsnew.ts,
-// which use the functions tested here (reportable, whatIsNew).
+// taken out. Covered through the one function they call, not each call site:
+// the three attempt gates (takeRun) and the page's src/worldhost.ts and
+// src/whatsnew.ts (reportable, whatIsNew), which no Node test reaches.
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
 export async function fixesChecks(check: Check): Promise<void> {
@@ -153,8 +155,14 @@ export async function fixesChecks(check: Check): Promise<void> {
     const ink = "Ink of the Unwritten is a jar of black ink that cannot be spilled; I can see why scribes prize it.";
     check(
       "a refusal is not taken for a description, and a description is not taken for a refusal",
-      looksLikeRefusal(village) && looksLikeRefusal(sorry) && !looksLikeRefusal(water) && !looksLikeRefusal(ink),
-      JSON.stringify([village, sorry, water, ink].map(looksLikeRefusal)),
+      looksLikeRefusal(village) &&
+        looksLikeRefusal(sorry) &&
+        !looksLikeRefusal(water) &&
+        !looksLikeRefusal(ink) &&
+        // T4: an entry that opens with the item's own name is judged on the rest.
+        !looksLikeRefusal("I Can't Stop Dancing is a jig that never ends.", "I Can't Stop Dancing") &&
+        looksLikeRefusal("I can't write this one.", "Village"),
+      JSON.stringify([village, sorry, water, ink].map((t) => looksLikeRefusal(t))),
     );
   }
 
@@ -299,6 +307,74 @@ export async function fixesChecks(check: Check): Promise<void> {
       "an unfinished test run sends no verdict; a finished one does",
       late === null && !!done && !("phases" in done) && done.ok,
       JSON.stringify({ late, done }),
+    );
+  }
+
+  // The third party's T2: the attempt gate itself. Two runs that both read
+  // "two of three used" before either writes: only one takes the last turn.
+  {
+    const db = memoryD1();
+    const day = "2026-11-06";
+    await noteRun(db, "daily", day);
+    await noteRun(db, "daily", day);
+    const [a, b] = await Promise.all([takeRun(db, "daily", day, 3), takeRun(db, "daily", day, 3)]);
+    const design = [await takeRun(db, "design", day, 1), await takeRun(db, "design", day, 1)];
+    check("two overlapping runs cannot both take the last turn of a paid job", a !== b && design[0] && !design[1], JSON.stringify({ a, b, design }));
+  }
+  // T2 (B12): bodies made from one options object each get their own data.
+  {
+    const world = generateWorld(48, 48, 3);
+    const rt = new Runtime(world, () => {});
+    rt.cast(
+      {
+        key: "twins",
+        name: "Twins",
+        tier: "minor",
+        code: "const spell = { *cast(w) { const o = { x: w.x, y: w.y, look: 'none', life: 2, data: { n: 0 }, tick(b) { b.data.n++; } }; w.body(o); w.body(o); yield 1; } };",
+      },
+      24,
+      24,
+    );
+    for (let k = 0; k < 12; k++) stepHeadless(world, rt);
+    const counts = rt.visuals.bodies.map((b) => (b.data as { n?: number }).n);
+    check(
+      "two bodies made from one options object keep their own data",
+      counts.length === 2 && counts.every((n) => (n ?? 0) >= 10 && (n ?? 0) <= 13),
+      JSON.stringify(counts),
+    );
+  }
+  // T2 (B3): the device cache never holds a refusal or the stand in.
+  {
+    const mem = new Map<string, string>();
+    const before = (globalThis as { localStorage?: unknown }).localStorage;
+    (globalThis as { localStorage?: unknown }).localStorage = {
+      getItem: (k: string) => mem.get(k) ?? null,
+      setItem: (k: string, v: string) => void mem.set(k, v),
+      removeItem: (k: string) => void mem.delete(k),
+    };
+    mem.set(
+      "magic-merger.save",
+      JSON.stringify({
+        version: 1,
+        discoveries: {},
+        descriptions: { village: "I can't write this one as stated. Here's a safer entry.", water: "Water is a primal spell." },
+        spells: {},
+        board: [],
+        nextChipId: 1,
+      }),
+    );
+    const store = new Store();
+    store.setDescription("refusenik", noDescription("Refusenik"));
+    const kept = {
+      village: store.description("village") ?? null,
+      water: store.description("water") ?? null,
+      refusenik: store.description("refusenik") ?? null,
+    };
+    (globalThis as { localStorage?: unknown }).localStorage = before;
+    check(
+      "a refusal cached before the fix is asked again, the stand in is never cached, a description is kept",
+      kept.village === null && kept.refusenik === null && kept.water === "Water is a primal spell.",
+      JSON.stringify(kept),
     );
   }
 }

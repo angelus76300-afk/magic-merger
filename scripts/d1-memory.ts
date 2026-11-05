@@ -10,6 +10,7 @@ type Arg = string | number | bigint | null;
 
 export function memoryD1(dir = "migrations"): D1Database {
   const db = new DatabaseSync(":memory:");
+  let depth = 0;
   for (const f of readdirSync(dir)
     .filter((f) => f.endsWith(".sql"))
     .sort())
@@ -28,16 +29,21 @@ export function memoryD1(dir = "migrations"): D1Database {
   });
   return {
     prepare: (sql: string) => statement(sql),
-    // As D1: a batch is one transaction, rolled back whole when a statement fails.
+    // As D1: a batch is one transaction, rolled back whole when a statement
+    // fails. A batch started while another runs joins it (T8): D1 would run
+    // both; one connection here cannot nest a transaction.
     batch: async (list: { run: () => Promise<unknown> }[]) => {
       const out = [];
-      db.exec("BEGIN");
+      const outer = depth++ === 0;
+      if (outer) db.exec("BEGIN");
       try {
         for (const s of list) out.push(await s.run());
-        db.exec("COMMIT");
+        if (outer) db.exec("COMMIT");
       } catch (err) {
-        db.exec("ROLLBACK");
+        if (outer) db.exec("ROLLBACK");
         throw err;
+      } finally {
+        depth--;
       }
       return out;
     },

@@ -77,7 +77,7 @@ import type { LibraryExample, Rewrite } from "./prompts";
 import { joinsBoth, looksLikeRefusal } from "./prompts";
 import { noDescription } from "../shared/refusal";
 import { readDigest } from "../shared/chronicle";
-import { cronJobs, noteRun } from "./cron";
+import { cronJobs, takeRun } from "./cron";
 import { community, setProfile } from "./community";
 import { dayIn as dayInZone } from "../shared/daily";
 import { RUNS_A_DAY, claim as claimDaily, due as dailyChallengeDue, freePairs, listDaily, openByPair, openByResult, type DailyRow } from "./daily";
@@ -810,7 +810,7 @@ async function setDailyChallenge(env: Env, force: boolean): Promise<{ day: strin
   // Counted before any call, so a run that finds nothing new (or throws) uses
   // one of the day's runs. The count is the increment's own answer, so two
   // runs that overlap cannot both pass the last slot.
-  if (!force && (await noteRun(db, "daily", day, now)) > RUNS_A_DAY) return { ...out, day: null };
+  if (!force && !(await takeRun(db, "daily", day, RUNS_A_DAY, now))) return { ...out, day: null };
   const ledger = new Ledger(ADMIN_PAYER);
   ledger.burstFree = true;
   const oracle = oracleFor(env, {}, ledger);
@@ -847,7 +847,7 @@ async function setDailyChallenge(env: Env, force: boolean): Promise<{ day: strin
       await ensureBudget(env, oracle, "describe", ESTIMATE.describe);
       const description = await oracle.describe(element.name, element.kind, "secret");
       // A refusal is no description of a challenge (4.5.1): the next pair is tried.
-      if (looksLikeRefusal(description)) continue;
+      if (looksLikeRefusal(description, element.name)) continue;
       const usd = oracle.spent.reduce((sum, s) => sum + s.usd, 0);
       const results = await db.batch([
         db
@@ -2105,19 +2105,19 @@ async function ensureDescription(env: Env, oracle: Oracle, element: GameElement,
   if (!oracle.mock && !regenerate) {
     const cached = await db.prepare("SELECT description FROM elements WHERE key = ?").bind(key).first<{ description: string | null }>();
     // A refusal stored before 4.5.1 counts as no description: it is written again.
-    if (cached?.description && !looksLikeRefusal(cached.description)) return cached.description;
+    if (cached?.description && !looksLikeRefusal(cached.description, element.name)) return cached.description;
   }
 
   await ensureBudget(env, oracle, "describe", ESTIMATE.describe);
   const recipe = await firstRecipe(db, key);
   let description = await oracle.describe(element.name, element.kind, recipe);
-  if (!oracle.mock && looksLikeRefusal(description)) {
+  if (!oracle.mock && looksLikeRefusal(description, element.name)) {
     await ensureBudget(env, oracle, "describe", ESTIMATE.describe);
     description = await oracle.describe(element.name, element.kind, recipe);
     // Twice refused: the plain stand in is stored, so no request pays twice
     // again (the admin's "New description" asks anew); the page never caches
     // it (src/store.ts), so a later description reaches every device.
-    if (looksLikeRefusal(description)) description = noDescription(element.name);
+    if (looksLikeRefusal(description, element.name)) description = noDescription(element.name);
   }
   if (!oracle.mock) {
     // Primitives have no row until they are first described.
@@ -2364,39 +2364,42 @@ async function wonderDaily(env: Env, mode: "collect" | "due" | "force") {
   if (mode === "due" && !(await dailyDue(db, now))) return out;
   // 4.5.1 (audit, B13): a wonder whose answer failed its checks left no live
   // row, so `dailyDue` asked again at the next run; one attempt a day now.
-  if (mode === "due" && (await noteRun(db, "wonder", dayInZone(now), now)) > 1) return out;
-  // 2. Today's wonder, within its cap.
+  // Only the wonder waits: the day's sort of players' artifacts (step 3) runs.
+  const ask = mode !== "due" || (await takeRun(db, "wonder", dayInZone(now), 1, now));
   const cap = wonderBudget(env.WONDER_BUDGET_USD);
-  const draw = await drawWonder(db);
-  const rarity = draw.rarity as WonderRow["rarity"];
-  const model = modelFor(rarity, { big: env.SPELL_MODEL, small: smallModel(env) });
-  const estimate = model === smallModel(env) ? WONDER_ESTIMATE.small : WONDER_ESTIMATE.big;
-  const spent = await wonderSpent(db, monthStart(now));
-  if (!oracle.mock && spent + estimate > cap) {
-    out.skipped = `the month's wonders have $${(cap - spent).toFixed(3)} left of $${cap}, and one costs up to $${estimate}`;
-  } else {
-    let reservation: number | null = null;
-    if (!oracle.mock) {
-      reservation = await hold(db, ledger, "wonder", estimate, budget(env));
-      ledger.held.splice(ledger.held.indexOf(reservation), 1);
-    }
-    const ins = await db
-      .prepare(
-        "INSERT INTO wonders (source, kind, rarity, lands, change, status, model, reservation, estimate, created_at) VALUES ('daily', '', ?, ?, ?, 'pending', ?, ?, ?, ?)",
-      )
-      .bind(draw.rarity, draw.land, draw.change, model, reservation, estimate, now)
-      .run();
-    const id = Number(ins.meta.last_row_id);
-    try {
-      const batch = await oracle.submitWonders([{ id: `wd${id}`, model, user: await dailyMessage(db, draw) }]);
-      await db.prepare("UPDATE wonders SET batch = ? WHERE id = ?").bind(batch, id).run();
-      out.asked = `${draw.rarity} ${draw.land} ${draw.change} (${model})`;
-    } catch (err) {
-      await db.batch([
-        db.prepare("UPDATE wonders SET status = 'failed', estimate = 0 WHERE id = ?").bind(id),
-        db.prepare("UPDATE reservations SET settled = 1 WHERE id = ?").bind(reservation ?? 0),
-      ]);
-      throw err;
+  // 2. Today's wonder, within its cap.
+  if (ask) {
+    const draw = await drawWonder(db);
+    const rarity = draw.rarity as WonderRow["rarity"];
+    const model = modelFor(rarity, { big: env.SPELL_MODEL, small: smallModel(env) });
+    const estimate = model === smallModel(env) ? WONDER_ESTIMATE.small : WONDER_ESTIMATE.big;
+    const spent = await wonderSpent(db, monthStart(now));
+    if (!oracle.mock && spent + estimate > cap) {
+      out.skipped = `the month's wonders have $${(cap - spent).toFixed(3)} left of $${cap}, and one costs up to $${estimate}`;
+    } else {
+      let reservation: number | null = null;
+      if (!oracle.mock) {
+        reservation = await hold(db, ledger, "wonder", estimate, budget(env));
+        ledger.held.splice(ledger.held.indexOf(reservation), 1);
+      }
+      const ins = await db
+        .prepare(
+          "INSERT INTO wonders (source, kind, rarity, lands, change, status, model, reservation, estimate, created_at) VALUES ('daily', '', ?, ?, ?, 'pending', ?, ?, ?, ?)",
+        )
+        .bind(draw.rarity, draw.land, draw.change, model, reservation, estimate, now)
+        .run();
+      const id = Number(ins.meta.last_row_id);
+      try {
+        const batch = await oracle.submitWonders([{ id: `wd${id}`, model, user: await dailyMessage(db, draw) }]);
+        await db.prepare("UPDATE wonders SET batch = ? WHERE id = ?").bind(batch, id).run();
+        out.asked = `${draw.rarity} ${draw.land} ${draw.change} (${model})`;
+      } catch (err) {
+        await db.batch([
+          db.prepare("UPDATE wonders SET status = 'failed', estimate = 0 WHERE id = ?").bind(id),
+          db.prepare("UPDATE reservations SET settled = 1 WHERE id = ?").bind(reservation ?? 0),
+        ]);
+        throw err;
+      }
     }
   }
   // 3. Players' discoveries: a day's new artifacts sorted in one small call.
@@ -2911,7 +2914,7 @@ async function evolve(env: Env, force: boolean): Promise<Record<string, unknown>
   if (new Set(gaps.map((g) => g.key)).size < 3) return { skipped: "fewer than three spells lacked anything" };
   // Before the call: whatever it answers, or if it throws, the next is a day
   // away. One a Toronto day, by the increment's own answer (two overlapping runs cannot both go).
-  if (!force && (await noteRun(env.DB, "design", dayInZone(Date.now()))) > 1) return { skipped: "already tried today" };
+  if (!force && !(await takeRun(env.DB, "design", dayInZone(Date.now()), 1))) return { skipped: "already tried today" };
   const oracle = oracleFor(env, {}, new Ledger(ADMIN_PAYER));
   try {
     await ensureBudget(env, oracle, "design", ESTIMATE.design);

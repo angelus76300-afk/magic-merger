@@ -128,7 +128,8 @@ export function openNews(): void {
   d.addEventListener("cancel", close);
   document.body.append(d);
   d.showModal();
-  markSeen(n.entries);
+  // Only with the list loaded: an empty one stored here would make every entry new next time (T3).
+  if (news) markSeen(news.entries);
   if (news) {
     news.fresh = [];
     news.ideas = [];

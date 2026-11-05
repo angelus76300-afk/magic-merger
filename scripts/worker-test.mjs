@@ -30,6 +30,9 @@ const lastSpell = () => seen["You write the spells"] ?? { system: "", user: "" }
 // 4.5.1: the grimoire refuses items named Refusenik, and every secret entry while `refuseSecret` is on.
 let refuseSecret = false;
 let grimoireCalls = 0;
+// 4.5.1: the designer answers "none" while `designNone` is on.
+let designNone = false;
+let designCalls = 0;
 function stubAnswer(n, system, user) {
   if (system.startsWith("You write the grimoire")) {
     grimoireCalls++;
@@ -38,6 +41,8 @@ function stubAnswer(n, system, user) {
   }
   if (system.includes("Say what this item promises")) return JSON.stringify({ intents: ["protect"] });
   if (system.startsWith("You maintain the World API")) {
+    designCalls++;
+    if (designNone) return JSON.stringify({ decision: "none", answers: [], name: "", signature: "", doc: "", code: "", example: "", spec: "" });
     const answers = [...user.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1]));
     return JSON.stringify({
       decision: "helper",
@@ -118,6 +123,10 @@ function stubAnswer(n, system, user) {
   // 3.7: a pair answered once with its two names joined, then properly.
   if (user.startsWith("Glow Moss + Dusk Fern") && !user.includes("(Not "))
     return JSON.stringify({ name: "Glow Moss Dusk Fern", emoji: "✨", kind: "spell", tier: "cosmic" });
+  // Section 30 merges Spiral Left and Right to land on an open challenge's item: a fixed
+  // answer, since a program written ahead in the background may take a call
+  // number in between (4.5.1: "Answer ${calls + 1}" was a race).
+  if (/Spiral Left/.test(user) && /Spiral Right/.test(user)) return JSON.stringify({ name: "Daily Spiral", emoji: "🌀", kind: "spell", tier: "minor" });
   return JSON.stringify({ name: `Answer ${n}`, emoji: "✨", kind: "spell", tier: user.startsWith("Glow Moss") ? "cosmic" : "minor" });
 }
 
@@ -3017,7 +3026,7 @@ const signIn = async (key, count) => {
   );
 
   // Another merge that lands on an open challenge's item finds it too.
-  const next = `Answer ${calls + 1}`;
+  const next = "Daily Spiral";
   await db
     .prepare(
       "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at, invite) VALUES (?, ?, '🌀', 'spell', 3, 'major', 'A spiral.', ?, NULL)",
@@ -3028,7 +3037,13 @@ const signIn = async (key, count) => {
     .prepare("INSERT INTO daily_challenges (day, pair, result, created_at) VALUES ('2026-01-01', 'never one+never two', ?, ?)")
     .bind(next.toLowerCase(), Date.now())
     .run();
-  const other = await merge(ben, "Daily Seed C", "Daily Seed A");
+  await db
+    .prepare(
+      "INSERT OR IGNORE INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES ('spiral left', 'Spiral Left', '🌀', 'spell', 2, 'minor', 'Left.', ?), ('spiral right', 'Spiral Right', '🌀', 'spell', 2, 'minor', 'Right.', ?)",
+    )
+    .bind(Date.now(), Date.now())
+    .run();
+  const other = await merge(ben, "Spiral Left", "Spiral Right");
   const second = await lookup("SELECT * FROM daily_challenges WHERE result = ?", next.toLowerCase());
   check(
     "daily: any merge that reaches the item finds it",
@@ -3243,6 +3258,14 @@ const signIn = async (key, count) => {
   const tess = await invite("Tess");
   const honest = await api("/api/challenge/win", { invite: tess.secret, body: { id: "first-fire", merges: 4, spell: "Thunderhead" } });
   const tooFew = await api("/api/challenge/win", { invite: tess.secret, body: { id: "first-fire", merges: 2, spell: "Thunderhead" } });
+  // T1: a claim the graph cannot check (at the chain floor, 3) may win, but the cards keep the graph's par.
+  const lowClaim = await api("/api/challenge/win", { invite: tess.secret, body: { id: "high-water", merges: 3, spell: "Thunderhead" } });
+  const hwCard = (await api("/api/challenges", { invite: tess.secret })).data.challenges.find((c) => c.id === "high-water");
+  check(
+    "a low claim wins but never sets par on everyone's card",
+    lowClaim.status === 200 && lowClaim.data.par === 5 && hwCard?.par === 5 && hwCard.best?.merges === 3,
+    JSON.stringify({ answer: lowClaim.data, card: hwCard }),
+  );
   check(
     "an honest win in fewer merges than the greedy count is accepted, and a count below the chain is refused",
     honest.status === 200 && tooFew.status === 400,
@@ -3267,6 +3290,33 @@ const signIn = async (key, count) => {
   await db.prepare("UPDATE invites SET community_hidden = 1 WHERE id = ?").bind(hana.id).run();
   const hidden = (await api("/api/wonders", { invite: hana.secret })).data.wonders.find((w) => w.kind === "moon moss")?.by;
   check("a finder who hides from the Community tab is not named on wonders", shown === "Hana" && hidden === undefined, JSON.stringify({ shown, hidden }));
+
+  // Risk 2 of the audit, end to end through the cron: a design answered
+  // "none" stores nothing; the next ten minute run must not ask Opus again.
+  await db.prepare("DELETE FROM extensions").run();
+  await db.prepare("DELETE FROM job_runs WHERE job = 'design'").run();
+  for (const key of ["gap one", "gap two", "gap three"])
+    await db.prepare("INSERT INTO gaps (key, missing, at) VALUES (?, 'a way to stop wind', ?)").bind(key, now).run();
+  designNone = true;
+  const d0 = designCalls;
+  const fire = async () => {
+    const before = (await db.prepare("SELECT COALESCE(SUM(runs), 0) AS n FROM job_runs WHERE job = 'design'").first()).n;
+    await fetch(`${BASE}/cdn-cgi/handler/scheduled?cron=*/10+*+*+*+*`);
+    for (let k = 0; k < 40; k++) {
+      await new Promise((r) => setTimeout(r, 250));
+      if ((await db.prepare("SELECT COALESCE(SUM(runs), 0) AS n FROM job_runs WHERE job = 'design'").first()).n > before) break;
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  };
+  await fire();
+  const afterOne = designCalls - d0;
+  await fire();
+  designNone = false;
+  check(
+    'a design answered "none" is not asked again at the next cron run',
+    afterOne === 1 && designCalls - d0 === 1,
+    `design calls after one run ${afterOne}, after two ${designCalls - d0}`,
+  );
 
   // A.C2, A.C4: "items found" leaves out the eight primal forces, and the last play is to the hour.
   const ivo = await invite("Ivo");

@@ -65,7 +65,10 @@ export async function listChallenges(db: D1Database, payer: Payer): Promise<{ ch
     const keys = solvers.get(def.id) ?? [];
     if (!keys.length) continue;
     const b = best.get(def.id) ?? null;
-    const { par } = parOf(graph, def.start.map(elementKey), keys, b?.merges ?? null);
+    // 4.5.1 (audit B8, T1): par is what the recipe graph says a verified
+    // solver takes. A claimed count is shown as the best, but the floor a
+    // claim must pass is only the chain's length, so it never sets par.
+    const { par } = parOf(graph, def.start.map(elementKey), keys, null);
     const m = myBest.get(def.id) ?? null;
     out.push({
       id: def.id,
@@ -121,10 +124,10 @@ export async function recordWin(
       .bind(def.id, key, row.pid, now),
   ]);
   const solvers = (await verified(db)).get(def.id) ?? [key];
-  // 4.5.1 (audit B8): a claim between the floor and the graph's own count
+  // 4.5.1 (audit B8, T1): par from the graph alone, as the cards read it
+  // (listChallenges): a claim between the floor and the graph's own count
   // cannot be checked, so it may win but never lowers par for everyone.
-  const greedy = fewestMerges(graph, def.start.map(elementKey)).get(key)?.size ?? least;
-  const { par } = parOf(graph, def.start.map(elementKey), solvers, Math.max(Math.min(merges, before ?? merges), greedy));
+  const { par } = parOf(graph, def.start.map(elementKey), solvers, null);
   return { stars: starsFor(merges, par), par, best: before === null || merges < before };
 }
 
