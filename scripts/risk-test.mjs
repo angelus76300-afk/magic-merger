@@ -127,6 +127,19 @@ check("A5 an admin route", rules([file("worker/index.ts", ['if (url.pathname ===
 check("A5 the headers", rules([file("public/_headers", ["  X-Frame-Options: SAMEORIGIN"])]) === "A5");
 check("A6 checks taken out", rules([file("scripts/worker-test.mjs", [], ['check("the cap holds", ok);'])]) === "A6");
 check("A6 an exit at the top of a test", rules([file("scripts/worker-test.mjs", ["process.exit(0);"])]) === "A6");
+check("A6 an exit that can no longer fail", rules([file("scripts/sim-test.ts", ["process.exit(0);"], ["process.exit(failures ? 1 : 0);"])]) === "A6");
+check("A6 the failure count taken out of check", rules([file("scripts/worker-test.mjs", [], ["  if (!ok) failures++;"])]) === "A6");
+check("A6 the failure count reset", rules([file("scripts/worker-test.mjs", ["failures = 0;"])]) === "A6");
+check(
+  "A6 a test variable named failed is not a failure count",
+  rules([file("scripts/sim-test.ts", ["  const failed = await cronJobs({});", 'check("cron", failed === 0);'])]) === "",
+);
+check(
+  "A6 a line git labels as inside the helper is not the helper",
+  rules([file("scripts/worker-test.mjs", ["async function api(path, init) {"], [], { contexts: ["const check = (name, ok, detail) => {"] })]) === "",
+);
+check("R9 an OR that widens a WHERE", rules([file("worker/x.ts", ["DELETE FROM spells WHERE id = ? OR 1 = 1"])]) === "R9");
+check("R9 an or inside a string is not an OR", rules([file("worker/x.ts", ["UPDATE programs SET status = 'win or lose' WHERE id = ?"])]) === "");
 check(
   "A6 the check helper changed",
   rules([file("scripts/sim-test.ts", ["const check = () => undefined;"], ["const check = (name, ok) => { if (!ok) failed++; };"])]) === "A6",

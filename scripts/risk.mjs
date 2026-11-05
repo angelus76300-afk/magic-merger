@@ -226,13 +226,16 @@ export const RULES = [
   {
     id: "A6",
     cls: "amber",
-    what: "checks taken out of the tests (more check( calls removed than added, a process.exit line added or changed, the check helper or a failure count changed)",
+    what: "checks taken out of the tests (more check( calls removed than added, a process.exit line added or changed, the check helper's line changed, the failure count incremented differently or reset)",
     file: (f) =>
       /^scripts\/.*test.*\.(ts|mjs)$/.test(f.path) &&
       (count(f.removed, /\bcheck\(/g) > count(f.added, /\bcheck\(/g) ||
         touched(f, /process\.exit\(/) ||
         // The helper's own line, or the failure count it keeps (failures++, failed += 1), changed.
-        touched(f, /\b(?:const|let|function)\s+check\b|\bfail(?:ed|ures)\s*(?:\+\+|\+=)|\+\+\s*fail(?:ed|ures)\b/)),
+        touched(
+          f,
+          /\b(?:const|let|function)\s+check\b|\bfail(?:ed|ures)\s*(?:\+\+|\+=)|\+\+\s*fail(?:ed|ures)\b|(?<!\b(?:const|let|var)\s+)\bfail(?:ed|ures)\s*=(?!=)/,
+        )),
   },
   {
     id: "A7",
