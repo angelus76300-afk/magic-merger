@@ -22,7 +22,10 @@ export const LABELS = { amber: "owner-ok", red: "owner-yes", hold: "hold", pause
 // Its fields may come in any order: verdict and sha are needed, raise and tests are optional.
 const REVIEW = /^<!--\s*mm-review\s+((?:[a-z]+=[0-9a-z]+\s*)+)-->/gm;
 const reviewFields = (text) => {
-  const f = Object.fromEntries([...text.matchAll(/([a-z]+)=([0-9a-z]+)/g)].map((m) => [m[1], m[2]]));
+  const pairs = [...text.matchAll(/([a-z]+)=([0-9a-z]+)/g)].map((m) => [m[1], m[2]]);
+  // A field written twice is a malformed marker (tests=fail tests=pass must not read as a pass).
+  if (new Set(pairs.map(([k]) => k)).size !== pairs.length) return null;
+  const f = Object.fromEntries(pairs);
   const ok = /^(pass|block)$/.test(f.verdict ?? "") && /^[0-9a-f]{7,40}$/.test(f.sha ?? "");
   const raise = /^(amber|red)$/.test(f.raise ?? "") ? f.raise : null;
   const tests = /^(pass|fail)$/.test(f.tests ?? "") ? f.tests : null;
@@ -132,6 +135,15 @@ async function paused() {
 
 // Nothing here runs in the game: docs, the skills, the changelog, the sessions' permission rules.
 // (Not the changelog: players read public/changelog.json in the live game.)
+/**
+ * Whether a branch counts as containing main: it does, or main moved since only by docs (nothing
+ * npm test sees changed). moved: the paths main changed since the branch's base, null if unknown.
+ */
+export function upToDateFrom(ancestor, moved) {
+  if (ancestor) return true;
+  return Array.isArray(moved) && moved.every((p) => DOCS_ONLY(p));
+}
+
 const DOCS_ONLY = (path) => /^(docs\/|\.claude\/skills\/)|\.md$|^\.claude\/settings\.json$/.test(path);
 
 /** CI on a commit: "full" when the check job ran every step, "docs" when it ran the light ones on a docs only change. */
@@ -193,12 +205,19 @@ export async function prState(n) {
       review: reviewFor(comments, sha),
       mergeable: pr.mergeable,
       upToDate: (() => {
+        let ancestor = false;
+        let moved = null;
         try {
           git("merge-base", "--is-ancestor", `origin/${pr.base.ref}`, `pr/${n}`);
-          return true;
+          ancestor = true;
         } catch {
-          return false;
+          try {
+            moved = git("diff", "--name-only", `pr/${n}...origin/${pr.base.ref}`).split("\n").filter(Boolean);
+          } catch {
+            moved = null;
+          }
         }
+        return upToDateFrom(ancestor, moved);
       })(),
       workflows: files.some((f) => f.path.startsWith(".github/workflows/")),
       docsOnly: files.every((f) => DOCS_ONLY(f.path)),

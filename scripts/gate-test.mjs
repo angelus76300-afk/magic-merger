@@ -1,5 +1,5 @@
 // Checks for the merge and deploy gate (scripts/gate.mjs): each condition alone holds a pull request back.
-import { decide, deployable, lastDeployedFrom, ownerRecords, reviewFor } from "./gate.mjs";
+import { decide, deployable, lastDeployedFrom, ownerRecords, reviewFor, upToDateFrom } from "./gate.mjs";
 
 let failed = 0;
 const check = (name, ok, detail = "") => {
@@ -54,7 +54,13 @@ check(
     return r?.verdict === "block" && r.raise === "red" && r.tests === "pass";
   })(),
 );
+check("a field written twice does not count", reviewFor([{ body: `<!-- mm-review verdict=pass sha=${SHA} tests=fail tests=pass -->` }], SHA) === null);
 check("a marker with an unknown value does not count", reviewFor([{ body: `<!-- mm-review verdict=pass sha=${SHA} tests=maybe -->` }], SHA) === null);
+check("containing main is up to date", upToDateFrom(true, null));
+check("behind main only by docs is up to date", upToDateFrom(false, ["docs/DAILY.md", "README.md"]));
+check("behind main by code is not", !upToDateFrom(false, ["docs/DAILY.md", "worker/index.ts"]));
+check("behind main by the changelog is not", !upToDateFrom(false, ["public/changelog.json"]));
+check("unknown is not", !upToDateFrom(false, null));
 check("behind main waits", !decide({ ...ready, upToDate: false }).ready);
 check(
   "docs only behind main is ready",

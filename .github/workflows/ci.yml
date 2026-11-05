@@ -46,7 +46,7 @@ jobs:
           full=true
           if [ "$EVENT" = "pull_request" ]; then
             changed=$(git diff --name-only "origin/$BASE...HEAD")
-            other=$(printf '%s\n' "$changed" | grep -vE '^(docs/|\.claude/skills/)|\.md$|^public/changelog\.json$|^\.claude/settings\.json$' || true)
+            other=$(printf '%s\n' "$changed" | grep -vE '^(docs/|\.claude/skills/)|\.md$|^\.claude/settings\.json$' || true)
             if [ "$DRAFT" = "true" ] || [ -z "$other" ]; then full=false; fi
           fi
           echo "full=$full" >> "$GITHUB_OUTPUT"
