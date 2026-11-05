@@ -120,7 +120,7 @@ Planned in 5.3.
 
 Newest first, one line each: the date, the idea, its category (the planner reads it to find today's place in the rotation), the lens the builder used, and the pull request.
 
-- 2026-11-05: **Spells shown broken are written again, one a day** (rewrites by evidence, ROADMAP 4.7.5 item 3, the part for failed test runs and reviewed findings: Frost Nova and Light first). Interactions, the owner's idea (4.5.1a item 6). Lens 13, audit one item. PR to come.
+- 2026-11-05: **Spells shown broken are written again, one a day** (rewrites by evidence, ROADMAP 4.7.5 item 3, the part for failed test runs and reviewed findings: Frost Nova and Light first). Interactions, the owner's idea (4.5.1a item 6). Lens 13, audit one item. PR #45.
 
 - 2026-11-05: **Daily challenges** (decided: whoever reaches the item first wins, owned parents or not; never expires, no cap) and **a Community tab**, built in version 4.5, not a daily update. Gameplay, the owner's ideas. PR #40.
 
