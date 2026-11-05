@@ -5,7 +5,10 @@ import type { CheckRequest } from "../shared/types";
 // read it the same way (scripts/sim-test.ts).
 
 // What a test run found, and how long its parts took (4.2, measured only).
-export type CheckOutcome = Omit<CheckRequest, "name" | "id"> & { phases?: Record<string, number> };
+// `unfinished` (4.5.1, audit): the run timed out or never started. This
+// browser may cast the program, but no verdict goes to the Worker, so an
+// untested program is never made live for everyone.
+export type CheckOutcome = Omit<CheckRequest, "name" | "id"> & { phases?: Record<string, number>; unfinished?: boolean };
 
 // Every problem the test run knows (src/sim/check.ts). Until 4.2 only the
 // first three were read here, so a program that broke its promise (3.4.2) or
@@ -31,5 +34,6 @@ export function readResult(raw: Record<string, unknown> | undefined): CheckOutco
     detail: typeof raw?.detail === "string" ? raw.detail.slice(0, 400) : "",
     stats: numbers(raw?.stats, 20),
     phases: numbers(raw?.phases, 8),
+    ...(ok && raw?.unfinished === true ? { unfinished: true } : {}),
   };
 }

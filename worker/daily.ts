@@ -2,6 +2,7 @@ import { PRIMITIVES, elementKey, pairKey } from "../shared/elements";
 import { dayIn, type DailyChallenge, type DailyResponse } from "../shared/daily";
 import { TIERS, isTier } from "../shared/tiers";
 import type { ElementKind } from "../shared/types";
+import { runsOn } from "./cron";
 
 // 4.5: daily challenges (docs/DESIGN.md, "Daily challenges").
 //
@@ -61,11 +62,19 @@ export async function claim(db: D1Database, row: DailyRow, invite: string, pair:
   return true;
 }
 
-// Is a challenge due? The first run after midnight in Toronto sets the day's.
+// Runs of the cron a Toronto day may spend looking for a challenge (TRIES
+// pairs each). 4.5.1 (audit): without this, a night whose tries all land on
+// existing items wrote no row, so every ten minute run tried three more pairs,
+// up to 144 runs a day.
+export const RUNS_A_DAY = 3;
+
+// Is a challenge due? The first run after midnight in Toronto sets the day's;
+// if it finds nothing new, two more runs may try that day, no more.
 export async function due(db: D1Database, now = Date.now()): Promise<string | null> {
   const day = dayIn(now);
   const row = await db.prepare("SELECT 1 AS n FROM daily_challenges WHERE day = ?").bind(day).first<{ n: number }>();
-  return row ? null : day;
+  if (row) return null;
+  return (await runsOn(db, "daily", day)) < RUNS_A_DAY ? day : null;
 }
 
 export interface Parent {

@@ -256,7 +256,16 @@ export class WorldHost {
       const tier = d.element.tier;
       if (!now?.recheck?.length || !program || program.id !== now.id || !tier) continue;
       try {
-        const result = await this.checker.check({ key, name: d.element.name, tier, code: program.code, intents: now.recheck, kind: d.element.kind });
+        const { unfinished, ...result } = await this.checker.check({
+          key,
+          name: d.element.name,
+          tier,
+          code: program.code,
+          intents: now.recheck,
+          kind: d.element.kind,
+        });
+        // A recheck that did not finish says nothing; the next visit tries again.
+        if (unfinished) continue;
         let res = await api.checkSpell({ name: d.element.name, id: now.id, ...result, recheck: true });
         if (res.program.trial) {
           res = await this.settle(key, res, true);
@@ -464,12 +473,14 @@ export class WorldHost {
         timeline.add(key, res.name, "test", performance.now() - t0);
         timeline.step(key, res.name, "tested");
         timeline.phases(key, res.name, result.phases);
-        const { phases: _phases, ...verdict } = result;
+        const { phases: _phases, unfinished, ...verdict } = result;
         if (result.ok) {
           // 4.2: a program that passed here is castable now; the Worker is told
           // in the background, and if it answers with another program (a
-          // newer one, a rollback), that one replaces it.
-          void this.sendVerdict(key, res, verdict);
+          // newer one, a rollback), that one replaces it. 4.5.1: a run that
+          // timed out is cast here but not reported, so it stays a trial for
+          // the next browser to test.
+          if (!unfinished) void this.sendVerdict(key, res, verdict);
           return { ...res, program: { ...res.program, trial: false } };
         }
         res = await api.checkSpell({ name: res.name, id, ...verdict });

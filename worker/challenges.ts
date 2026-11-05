@@ -1,4 +1,4 @@
-import { CHALLENGES, challengeById, fewestMerges, parOf, starsFor, strongEnough, type ChallengeDef, type Recipe } from "../shared/challenges";
+import { CHALLENGES, challengeById, fewestMerges, leastMerges, parOf, starsFor, strongEnough, type ChallengeDef, type Recipe } from "../shared/challenges";
 import { HttpError } from "./http";
 import { elementKey } from "../shared/elements";
 import { isTier, tierFromDepth, type Tier } from "../shared/tiers";
@@ -105,9 +105,9 @@ export async function recordWin(
   // recipe graph says that spell takes from this start set, and the spell
   // must be reachable at all, or one client could set par to 0 for everyone.
   const graph = await recipes(db);
-  const fewest = fewestMerges(graph, def.start.map(elementKey)).get(key);
-  if (!fewest) throw new HttpError(400, "That spell cannot be made from this challenge's start set");
-  if (merges < fewest.size) throw new HttpError(400, `That spell takes at least ${fewest.size} merges from this start set`);
+  const least = leastMerges(graph, def.start.map(elementKey), key);
+  if (least === null) throw new HttpError(400, "That spell cannot be made from this challenge's start set");
+  if (merges < least) throw new HttpError(400, `That spell takes at least ${least} merges from this start set`);
   const before = (await bestWins(db)).get(def.id)?.merges ?? null;
   const now = Date.now();
   await db.batch([

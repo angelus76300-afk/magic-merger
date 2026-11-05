@@ -162,6 +162,33 @@ export function fewestMerges(recipes: Recipe[], start: string[]): Map<string, Se
   return best;
 }
 
+// The fewest merges a win may claim (4.5.1, audit E.H2a). `fewestMerges` is a
+// greedy relaxation: it keeps the first smallest set it finds for each item,
+// which can be larger than the true minimum (5 where 4 suffice on a six recipe
+// graph), so using it as a floor refused honest wins. The floor is the length
+// of the item's shortest chain of merges instead: each merge on a chain makes
+// a new item, so no derivation is shorter. Null when the start set cannot
+// reach the item at all.
+export function leastMerges(recipes: Recipe[], start: string[], key: string): number | null {
+  const depth = new Map<string, number>(start.map((s) => [s, 0]));
+  for (let round = 0; round < 200; round++) {
+    let changed = false;
+    for (const r of recipes) {
+      const a = depth.get(r.a);
+      const b = depth.get(r.b);
+      if (a === undefined || b === undefined || start.includes(r.result)) continue;
+      const d = Math.max(a, b) + 1;
+      const known = depth.get(r.result);
+      if (known === undefined || d < known) {
+        depth.set(r.result, d);
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  return depth.get(key) ?? null;
+}
+
 // Par: the fewest merges to any verified solver, or what a player did better.
 export function parOf(recipes: Recipe[], start: string[], solvers: string[], bestWin: number | null): { par: number | null; via: string | null } {
   const best = fewestMerges(recipes, start);

@@ -49,8 +49,12 @@ export async function community(db: D1Database, invite: string): Promise<Communi
     .map(({ r, played }) => ({
       name: r.admin && r.name === "admin" ? "The owner" : r.name,
       me: r.id === invite,
-      lastPlayed: played,
-      found: r.found ?? null,
+      // 4.5.1 (audit, A.C4): to the hour, not to the five minutes a session
+      // is seen: the tab says "today" or "this week", and friends need no more.
+      lastPlayed: played ? Math.floor(played / 3_600_000) * 3_600_000 : null,
+      // 4.5.1 (audit, A.C2): the synced list starts with the eight primal
+      // forces, which nobody found.
+      found: r.found === null || r.found === undefined ? null : Math.max(0, r.found - PRIMITIVES.length),
       firsts: r.firsts,
       daily: r.daily,
       favorite: r.favorite ? favoriteCard(r) : null,

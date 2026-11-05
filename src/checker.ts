@@ -56,16 +56,17 @@ export class Checker {
     return this.ready;
   }
 
-  // Never rejects: a frame that does not answer in a minute counts as a pass,
-  // so a slow phone cannot get a good program rewritten.
+  // Never rejects: a frame that does not answer in a minute is "unfinished",
+  // so a slow phone cannot get a good program rewritten, and (4.5.1) cannot
+  // make an untested one live for everyone either.
   async check(spell: CastRequest): Promise<CheckOutcome> {
     await this.open();
-    if (!this.frame) return { ok: true, problem: null, detail: "The test run could not start" };
+    if (!this.frame) return { ok: true, problem: null, detail: "The test run could not start", unfinished: true };
     const id = this.nextId++;
     return new Promise((resolve) => {
       const timer = window.setTimeout(() => {
         this.waiting.delete(id);
-        resolve({ ok: true, problem: null, detail: "The test run did not finish in time" });
+        resolve({ ok: true, problem: null, detail: "The test run did not finish in time", unfinished: true });
       }, 60_000);
       this.waiting.set(id, (r) => {
         clearTimeout(timer);

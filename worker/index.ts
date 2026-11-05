@@ -74,9 +74,9 @@ import {
   type ProgramRow,
 } from "./programs";
 import type { LibraryExample, Rewrite } from "./prompts";
-import { joinsBoth } from "./prompts";
+import { joinsBoth, looksLikeRefusal } from "./prompts";
 import { readDigest } from "../shared/chronicle";
-import { cronJobs } from "./cron";
+import { cronJobs, noteRun } from "./cron";
 import { community, setProfile } from "./community";
 import { dayIn as dayInZone } from "../shared/daily";
 import { claim as claimDaily, due as dailyChallengeDue, freePairs, listDaily, openByPair, openByResult, type DailyRow } from "./daily";
@@ -806,6 +806,8 @@ async function setDailyChallenge(env: Env, force: boolean): Promise<{ day: strin
   const day = force ? `${dayInZone(now)}${await forcedSuffix(db, dayInZone(now))}` : await dailyChallengeDue(db, now);
   if (!day) return out;
   out.day = day;
+  // Counted before any call, so a run that finds nothing new (or throws) uses one of the day's runs.
+  if (!force) await noteRun(db, "daily", day, now);
   const ledger = new Ledger(ADMIN_PAYER);
   ledger.burstFree = true;
   const oracle = oracleFor(env, {}, ledger);
@@ -841,6 +843,8 @@ async function setDailyChallenge(env: Env, force: boolean): Promise<{ day: strin
       };
       await ensureBudget(env, oracle, "describe", ESTIMATE.describe);
       const description = await oracle.describe(element.name, element.kind, "secret");
+      // A refusal is no description of a challenge (4.5.1): the next pair is tried.
+      if (looksLikeRefusal(description)) continue;
       const usd = oracle.spent.reduce((sum, s) => sum + s.usd, 0);
       const results = await db.batch([
         db
@@ -1210,6 +1214,7 @@ async function handleRecheck(body: CheckRequest, env: Env, oracle: Oracle, eleme
   if (verdict.ok || problem !== "promise") return servedLive();
   const pending = await newerTrial(env.DB, key, row.id);
   if (pending) return { name: element.name, tier, program: programOf(pending)!, mock: false };
+  if (await overRewriteBudget(env, tier)) return servedLive();
   let description: string;
   try {
     await ensureBudget(env, oracle, "rewrite", spellEstimate(env, rewriterFor(env, tier)));
@@ -1270,10 +1275,13 @@ async function handleCheck(body: CheckRequest, env: Env, oracle: Oracle): Promis
   // Someone else's browser got there first.
   if (row.status !== "trial") return served();
   const detail = String(body.detail ?? "").slice(0, 400);
-  const problem = problemOf(body.problem);
-  const verdict = { ok: body.ok === true, problem, detail, stats: body.stats ?? {}, at: Date.now() };
+  // 4.5.1 (audit, C.R42-5): a failure that names no problem is a crash, as
+  // the page reads it (src/checkresult.ts); only `ok: true` promotes.
+  const ok = body.ok === true;
+  const problem = ok ? null : (problemOf(body.problem) ?? "crash");
+  const verdict = { ok, problem, detail, stats: body.stats ?? {}, at: Date.now() };
   await env.DB.prepare("UPDATE programs SET checked = ? WHERE id = ?").bind(JSON.stringify(verdict).slice(0, 2000), row.id).run();
-  if (verdict.ok || !problem) {
+  if (verdict.ok) {
     await promote(env.DB, row);
     return served();
   }
@@ -1286,6 +1294,7 @@ async function handleCheck(body: CheckRequest, env: Env, oracle: Oracle): Promis
   };
   // Rewrite once: a program written to fix a failed test is not fixed again.
   if (row.origin === "check") return keep();
+  if (await overRewriteBudget(env, tier)) return keep();
   let description: string;
   try {
     await ensureBudget(env, oracle, "rewrite", spellEstimate(env, rewriterFor(env, tier)));
@@ -1820,6 +1829,14 @@ function rewriteBudget(env: Env): number {
 // Measured: a Haiku program costs about $0.002, an Opus one $0.076 (half in a batch).
 const REWRITE_ESTIMATE = { small: 0.003, batch: 0.04, big: 0.08 };
 
+// 4.5.1 (audit, D.M14): the daily rewrite budget covered votes and the judge
+// only; a failed test run and a broken promise found by a recheck wrote again
+// without it. Every path that writes a program again now asks this first.
+async function overRewriteBudget(env: Env, tier: Tier): Promise<boolean> {
+  const estimate = isBig(tier, smallUpTo(env)) ? REWRITE_ESTIMATE.big : REWRITE_ESTIMATE.small;
+  return (await rewriteSpendToday(env.DB, REWRITE_ESTIMATE.batch)) + estimate > rewriteBudget(env);
+}
+
 // Writes a live program again because of votes or the judge: at most once per
 // spell every three days, within the daily rewrite budget. Small spells are
 // written at once; big ones go to the Batch API, and the live version stays
@@ -2072,11 +2089,19 @@ async function ensureDescription(env: Env, oracle: Oracle, element: GameElement,
   const key = elementKey(element.name);
   if (!oracle.mock && !regenerate) {
     const cached = await db.prepare("SELECT description FROM elements WHERE key = ?").bind(key).first<{ description: string | null }>();
-    if (cached?.description) return cached.description;
+    // A refusal stored before 4.5.1 counts as no description: it is written again.
+    if (cached?.description && !looksLikeRefusal(cached.description)) return cached.description;
   }
 
   await ensureBudget(env, oracle, "describe", ESTIMATE.describe);
-  const description = await oracle.describe(element.name, element.kind, await firstRecipe(db, key));
+  const recipe = await firstRecipe(db, key);
+  let description = await oracle.describe(element.name, element.kind, recipe);
+  if (!oracle.mock && looksLikeRefusal(description)) {
+    await ensureBudget(env, oracle, "describe", ESTIMATE.describe);
+    description = await oracle.describe(element.name, element.kind, recipe);
+    // Twice refused: nothing is stored, and the card says so plainly.
+    if (looksLikeRefusal(description)) return `${element.name}: no description yet.`;
+  }
   if (!oracle.mock) {
     // Primitives have no row until they are first described.
     await db
@@ -2864,6 +2889,8 @@ async function evolve(env: Env, force: boolean): Promise<Record<string, unknown>
   if (!force && !(await designDue(env.DB))) return { skipped: "not due" };
   const gaps = await openGaps(env.DB);
   if (new Set(gaps.map((g) => g.key)).size < 3) return { skipped: "fewer than three spells lacked anything" };
+  // Before the call: whatever it answers, or if it throws, the next is a day away.
+  if (!force) await noteRun(env.DB, "design", dayInZone(Date.now()));
   const oracle = oracleFor(env, {}, new Ledger(ADMIN_PAYER));
   try {
     await ensureBudget(env, oracle, "design", ESTIMATE.design);

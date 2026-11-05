@@ -1304,6 +1304,18 @@ console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at st
   check("at most three links an hour", emails.length === 3, `${emails.length} mails`);
   check("the account page masks the email", (await api("/api/account", { session: danSession })).data.email === "d…@example.test");
 
+  // 4.5.1 (audit): a wonder grown from Dan's find names him on islands; his frame times and refusals are his.
+  const dansFind = (await db.prepare("SELECT key, name FROM elements WHERE invite = ? LIMIT 1").bind(dan.id).first()).key;
+  await db
+    .prepare(
+      "INSERT INTO wonders (source, key, kind, rarity, status, model, by_name, created_at, live_at) VALUES ('player', ?, 'dans find', 'rare', 'live', '', 'Dan', ?, ?)",
+    )
+    .bind(dansFind, Date.now(), Date.now())
+    .run();
+  await db.prepare("INSERT INTO perf (at, ua, sample, invite) VALUES (?, 'phone', '{}', ?)").bind(Date.now(), dan.id).run();
+  await db.prepare("INSERT INTO refusals (at, invite, path, reason) VALUES (?, ?, 'merge', 'burst')").bind(Date.now(), dan.id).run();
+  const poolBefore = await api("/api/wonders", { session: danSession });
+
   // Export, logout, deletion.
   const exported = await api("/api/account/export", { session: danSession });
   check(
@@ -1313,6 +1325,14 @@ console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at st
       exported.data.votes.length === 1 &&
       exported.data.progress.length === 2 &&
       exported.data.spend.length >= 1,
+    JSON.stringify(Object.keys(exported.data)),
+  );
+  check(
+    "export also holds the days played, daily finds, community settings, wonders, frame times, refusals and items written ahead (4.5.1)",
+    ["daysPlayed", "dailyFinds", "community", "wondersFromYourFinds", "frameTimes", "refusals", "itemsWrittenAhead"].every((k) => k in exported.data) &&
+      exported.data.wondersFromYourFinds.length === 1 &&
+      exported.data.frameTimes.length === 1 &&
+      exported.data.refusals.length === 1,
     JSON.stringify(Object.keys(exported.data)),
   );
   const extra = claimedByMail.data.token;
@@ -1350,6 +1370,21 @@ console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at st
       row.status === "revoked" &&
       row.email === null,
     JSON.stringify({ counts, named, spent, row }),
+  );
+  const poolAfter = await api("/api/wonders", { invite: (await invite("Wren")).secret });
+  const copy = await db.prepare("SELECT by_name FROM wonders WHERE key = ?").bind(dansFind).first();
+  const leftover = {
+    perf: (await db.prepare("SELECT COUNT(*) AS n FROM perf WHERE invite = ?").bind(dan.id).first()).n,
+    refusals: (await db.prepare("SELECT COUNT(*) AS n FROM refusals WHERE invite = ?").bind(dan.id).first()).n,
+  };
+  check(
+    "after deletion no island names the person, and their frame times and refusals are gone (4.5.1)",
+    poolBefore.data.wonders.some((w) => w.by === "Dan") &&
+      !poolAfter.data.wonders.some((w) => w.by === "Dan") &&
+      copy?.by_name === null &&
+      leftover.perf === 0 &&
+      leftover.refusals === 0,
+    JSON.stringify({ before: poolBefore.data.wonders.map((w) => w.by), after: poolAfter.data.wonders.map((w) => w.by), copy, leftover }),
   );
   check("a deleted account gets no new link", (await api("/api/admin/invite", { admin: true, body: { id: dan.id, action: "relink" } })).status === 400);
   // The admin can delete a revoked (or test) account's data too.
@@ -2921,7 +2956,9 @@ const signIn = async (key, count) => {
       item.invite === null &&
       !!item.description &&
       described.includes("secret") &&
-      !described.includes(pa) &&
+      // 4.5.1 (audit): the key is lowercase and the prompt holds the name, so compare without case.
+      !described.toLowerCase().includes(pa) &&
+      !described.toLowerCase().includes(pb) &&
       !(await lookup("SELECT 1 AS n FROM recipes WHERE pair = ?", row.pair)),
     JSON.stringify({ asked: asked.data, row, described }),
   );
@@ -3044,6 +3081,123 @@ const signIn = async (key, count) => {
     JSON.stringify({ refused: refused.status, inReview, back, shipped }),
   );
   await reset();
+}
+
+// 31. The audit's fixes (4.5.1, docs/AUDIT-2026-11-05.md): each check fails
+// when its fix is taken out.
+{
+  await reset();
+  const now = Date.now();
+  // D.M14: a failed test run writes again only within the daily rewrite budget.
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES ('ash cloak', 'Ash Cloak', '🧥', 'spell', 3, 'minor', 'A cloak of ash.', ?)",
+    )
+    .bind(now)
+    .run();
+  const made = await api("/api/spell", { admin: true, body: { name: "Ash Cloak" } });
+  await db.prepare("INSERT INTO spend (at, call, model, usd, invite) VALUES (?, 'rewrite', 'claude-haiku-5-5', 0.5, 'admin')").bind(now).run();
+  const before = spellCalls;
+  const failedRun = await api("/api/spell/check", {
+    admin: true,
+    body: { name: "Ash Cloak", id: made.data.program.id, ok: false, problem: "crash", detail: "It crashed: x is not defined" },
+  });
+  check(
+    "a failed test run past the day's rewrite budget is kept, not written again",
+    failedRun.status === 200 && failedRun.data.program.id === made.data.program.id && spellCalls === before,
+    `${failedRun.status} program ${failedRun.data?.program?.id} (was ${made.data?.program?.id}), ${spellCalls - before} spell calls`,
+  );
+  await db.prepare("DELETE FROM spend WHERE call = 'rewrite'").run();
+
+  // C.R42-5: a failure that names no problem is a crash, never promoted.
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES ('mute bell', 'Mute Bell', '🔔', 'spell', 3, 'minor', 'A bell.', ?)",
+    )
+    .bind(now)
+    .run();
+  const bell = await api("/api/spell", { admin: true, body: { name: "Mute Bell" } });
+  const unnamed = await api("/api/spell/check", { admin: true, body: { name: "Mute Bell", id: bell.data.program.id, ok: false, problem: null, detail: "?" } });
+  const bellRow = await db.prepare("SELECT status, checked FROM programs WHERE id = ?").bind(bell.data.program.id).first();
+  check(
+    "a failed test run with no named problem is not promoted",
+    unnamed.status === 200 && bellRow?.status !== "live" && JSON.parse(bellRow?.checked ?? "{}").problem === "crash",
+    `${unnamed.status} ${bellRow?.status} ${bellRow?.checked?.slice(0, 80)}`,
+  );
+
+  // Section 2 of the audit: a refusal stored as a description is written again.
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES ('hamlet', 'Hamlet', '🏘️', 'artifact', 3, 'major', ?, ?)",
+    )
+    .bind("I can't write this one as stated. Here's a safer entry you could use instead: a lantern.", now)
+    .run();
+  const described = await api("/api/describe", { admin: true, body: { name: "Hamlet" } });
+  const stored = await db.prepare("SELECT description FROM elements WHERE key = 'hamlet'").first();
+  check(
+    "a refusal stored as a description is written again",
+    described.status === 200 && !/can't write/.test(described.data.description) && !/can't write/.test(stored?.description ?? ""),
+    `${described.status} ${described.data?.description?.slice(0, 80)} | stored ${stored?.description?.slice(0, 60)}`,
+  );
+
+  // B.DC15: a player who hides from the Community tab is not named on islands either.
+  const hana = await invite("Hana");
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at, invite) VALUES ('moon moss', 'Moon Moss', '🌙', 'artifact', 3, 'minor', 'Moss.', ?, ?)",
+    )
+    .bind(now, hana.id)
+    .run();
+  await db
+    .prepare(
+      "INSERT INTO wonders (source, key, kind, rarity, status, model, by_name, created_at, live_at) VALUES ('player', 'moon moss', 'moon moss', 'rare', 'live', '', 'Hana', ?, ?)",
+    )
+    .bind(now, now)
+    .run();
+  const shown = (await api("/api/wonders", { invite: hana.secret })).data.wonders.find((w) => w.kind === "moon moss")?.by;
+  await db.prepare("UPDATE invites SET community_hidden = 1 WHERE id = ?").bind(hana.id).run();
+  const hidden = (await api("/api/wonders", { invite: hana.secret })).data.wonders.find((w) => w.kind === "moon moss")?.by;
+  check("a finder who hides from the Community tab is not named on wonders", shown === "Hana" && hidden === undefined, JSON.stringify({ shown, hidden }));
+
+  // A.C2, A.C4: "items found" leaves out the eight primal forces, and the last play is to the hour.
+  const ivo = await invite("Ivo");
+  const keys = ["fire", "water", "earth", "air", "light", "shadow", "life", "arcane", "steam", "mud"].map((key) => ({ key, at: 0, recipe: null }));
+  await db.prepare("INSERT INTO progress (invite, kind, data, updated_at) VALUES (?, 'discoveries', ?, ?)").bind(ivo.id, JSON.stringify(keys), now).run();
+  await db
+    .prepare("UPDATE invites SET last_seen = ? WHERE id = ?")
+    .bind(now - 123_456, ivo.id)
+    .run();
+  const ivoRow = (await api("/api/community", { invite: ivo.secret })).data.friends.find((f) => f.name === "Ivo");
+  check(
+    "the Community tab counts what a friend found, not the primal forces, and says when to the hour",
+    ivoRow?.found === 2 && ivoRow.lastPlayed % 3_600_000 === 0 && now - ivoRow.lastPlayed < 2 * 3_600_000,
+    JSON.stringify(ivoRow),
+  );
+  await reset();
+}
+
+// 31b. A.P4: the staging Worker lets nobody in without the token, even with
+// no API key (mock mode is open only for local development).
+{
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev({ ANTHROPIC_API_KEY: "", STAGING: "1" });
+  const stagingHealth = await api("/api/health");
+  const stagingMerge = await api("/api/merge", { body: { a: "Fire", b: "Water" } });
+  const stagingAdmin = await api("/api/health", { admin: true });
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev({ ANTHROPIC_API_KEY: "" });
+  const localHealth = await api("/api/health");
+  check(
+    "staging in mock mode lets nobody in without the token; local mock mode stays open",
+    stagingHealth.data?.invited === false &&
+      stagingMerge.status === 401 &&
+      stagingAdmin.data?.admin === true &&
+      localHealth.data?.mock === true &&
+      localHealth.data?.invited === true,
+    JSON.stringify({ staging: stagingHealth.data, merge: stagingMerge.status, admin: stagingAdmin.data?.admin, local: localHealth.data }),
+  );
 }
 
 stop();

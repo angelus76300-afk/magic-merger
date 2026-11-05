@@ -152,10 +152,10 @@ Set in `wrangler.jsonc`:
 | `SPELL_MODEL`        | `claude-opus-5-5`              | writing legendary and cosmic spells                                                                                     |
 | `REPAIR_MODEL`       | `claude-haiku-5-5`             | mending a program that crashed, whatever its tier                                                                       |
 | `SPELL_EFFORT`       | `medium`                       | how long the spell writer thinks                                                                                        |
-| `BUDGET_USD`         | `50`                           | Claude spend allowed per calendar month, everyone together (set the Console workspace limit to the same)                |
+| `BUDGET_USD`         | `48`                           | Claude spend allowed per calendar month, everyone together; the staging Worker has $2 and the Console workspace $50     |
 | `INVITE_CAP_USD`     | `5`                            | what each invite may spend per calendar month, unless the admin tops it up (3.4)                                        |
 | `JUDGE_MODEL`        | `claude-haiku-5-5`             | scoring three Spell Lab frames of a program (3.3)                                                                       |
-| `REWRITE_BUDGET_USD` | `0.5`                          | dollars a day for rewrites asked by votes, the judge and failed test runs                                               |
+| `REWRITE_BUDGET_USD` | `0.5`                          | dollars a day for rewrites asked by votes, the judge, failed test runs and broken promises (all four since 4.5.1)       |
 | `BIG_SPELLS_BATCH`   | `1`                            | legendary and cosmic spells drafted by Haiku at once, written by Opus through the Batch API at half price; `0` for 3.2  |
 | `AHEAD_DAILY_USD`    | `1.5`                          | 4.2: dollars a day that writing every new item at the merge may spend, everyone together; `0` turns it off (DESIGN.md)  |
 | `REFRESH_BUDGET_USD` | `8`                            | dollars a month the refresh of the legacy library may spend (3.7 part E), held before each batch is sent                |
@@ -176,7 +176,7 @@ Measured on the live Worker in November 2026:
 | Legendary or cosmic spell (Opus) | $0.076  | 20 to 40 s |
 | Sonnet, for reference            | $0.021  |            |
 
-A spell is written for everyone the first time a player picks it in the World tab, tested in that player's browser, and written again only when players vote it down (DESIGN.md, "Spells that get better").
+A spell is written for everyone when a merge first makes or reaches it (4.2, written ahead), tested in the first browser that holds it, and written again one at a time: when players vote it down, when the judge scores it low, when its test run fails or its promise breaks, when it crashes in play (a repair), or from the admin's card (DESIGN.md, "Spells that get better"). Never in bulk.
 
 **Budget:** every call is written to the `spend` table in D1 with the invite that triggered it (votes that ask for a rewrite, and Batch API items collected later, included). Before a call, its expected cost is held in `reservations` by one statement that only succeeds while the month and the invite's allowance can afford it, so two requests at the last dollar cannot both pass (DESIGN.md, "Sharing with friends"). When this month's total reaches `BUDGET_USD`, the Worker stops calling Claude and says so in the game; known recipes, descriptions and spells keep working. The admin can read the month and today's totals, grouped by call and model, at `/api/spend`, and in the admin badge. Also set a spend limit on the Console workspace: it is the safety net that does not depend on this code.
 
@@ -226,7 +226,7 @@ npm run test:worker
 
 `node scripts/overlap-lab.mjs <out-dir>` casts the cases of 3.4's overlap fixes in the Spell Lab (a waterfall over the cut side, water on terraces, blocks in the land and through houses, a drawing over cliffs and water); compare with `docs/visual-checks`.
 
-`npm test` runs the simulation in Node, without a browser, in about 90 seconds on four cores (measured on 2026-11-03; the five minute scene on three streams is most of it): map generation, the reference spells, the loop guard, a save round trip, every challenge with its solution and, over eight seeds in worker threads, with nothing, the test run on good and bad programs, the five minute scene and the vote rules. GitHub Actions runs lint, the format check, `npm run build`, `npm test` and `npm run test:worker` on every pull request and on every push to `main`.
+`npm test` runs the simulation in Node, without a browser, in about 4 to 6 minutes on four cores and 13 to 23 minutes on a CI runner (measured on 2026-11-05; the half hour balance scenes are most of it): map generation, the reference spells, the loop guard, a save round trip, every challenge with its solution and, over eight seeds in worker threads, with nothing, the test run on good and bad programs, the five minute scene and the vote rules. GitHub Actions runs lint, the format check, `npm run build`, `npm test` and `npm run test:worker` on every pull request and on every push to `main`.
 
 Both test commands take environment knobs since 4.1: `SLOW_MS=40 npm test` turns the slow cast guard back on at the browser's value (it is off by default, so no verdict depends on the machine), and the Worker test drives a software passkey through the real routes. `npm run typecheck` checks `scripts/` too (`scripts/tsconfig.json`), and `npm run lint` covers the `.mjs` scripts.
 

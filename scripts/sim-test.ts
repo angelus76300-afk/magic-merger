@@ -65,6 +65,7 @@ import { projectedSim, sizesOffered, SIM_BUDGET_MS } from "../src/headroom";
 import { skyBodies, weatherAt } from "../src/sim/voxel/sky";
 import { Terrain } from "../src/sim/voxel/terrain";
 import { MeshBasicMaterial, type Mesh } from "three";
+import { fixesChecks } from "./fixes-test";
 
 // No verdict here depends on how fast the machine is (4.1, review M8): the
 // slow cast guard is off unless SLOW_MS is set, and worst ticks are printed,
@@ -2225,6 +2226,9 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
     `failed ${failed.join()}, logged ${logged.join()}, swept ${swept}`,
   );
 }
+
+// 13. The audit's fixes (4.5.1): scripts/fixes-test.ts.
+await fixesChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);

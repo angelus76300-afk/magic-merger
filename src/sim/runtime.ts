@@ -859,6 +859,11 @@ function shortHash(s: string): string {
   return h.toString(36);
 }
 
+// A plain object a program handed over as a body's own state.
+function isPlainData(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
 function num(v: unknown, min: number, max: number, fallback: number): number {
   return typeof v === "number" && Number.isFinite(v) ? Math.max(min, Math.min(max, v)) : fallback;
 }
@@ -1556,7 +1561,11 @@ export class SpellApi {
       alive: true,
       gravity: num(o.gravity, -200, 200, 0),
       drag: num(o.drag, 0, 20, 0),
-      data: {},
+      // 4.5.1 (audit): the prompt teaches `data` as a body field and programs
+      // pass it here (Starfall Rain's `data: { h: 0 }`); it was dropped, so
+      // their ticks read undefined and never healed. Bodies are never saved
+      // or sent across frames, so the program's own object is kept.
+      data: isPlainData(o.data) ? o.data : {},
       owner: this.castId,
       trail: o.trail === false ? null : o.trail === undefined ? (o.look === "meteor" ? 0xff8a2a : null) : colorOr(o.trail, colorOr(o.color, 0xffffff)),
     };

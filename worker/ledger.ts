@@ -255,26 +255,36 @@ export async function monthTotals(db: D1Database, now = Date.now()): Promise<{ s
 // may have been made), and old settled holds are dropped. Batch holds wait for
 // their batch; one no pending batch refers to after two days (the Batch API
 // gives up after one) was never submitted and is released. Run by the cron.
+//
+// 4.5.1 (audit): a rewrite left `pending` with no batch (the request died
+// between its insert and its submission) held its money for good, and counted
+// against every later day's rewrite budget; after two days it is failed and
+// its hold released. A daily wonder's hold (call 'wonder') waits for its
+// batch like a batch hold, for two days at most, instead of being billed
+// after an hour and billed again when the wonder is collected.
 export async function sweep(db: D1Database, now = Date.now()): Promise<void> {
   const stale = now - 3600_000;
+  const old = now - 2 * 86400_000;
+  const waiting = "id NOT IN (SELECT reservation FROM rewrites WHERE reservation IS NOT NULL AND status = 'pending')";
   await db.batch([
+    db.prepare("UPDATE rewrites SET status = 'failed' WHERE status = 'pending' AND batch IS NULL AND at < ?").bind(old),
     db
       .prepare(
         `UPDATE reservations SET settled = 1
-         WHERE settled = 0 AND call = 'batch' AND at < ? AND id NOT IN (SELECT reservation FROM rewrites WHERE reservation IS NOT NULL AND status = 'pending')`,
+         WHERE settled = 0 AND call IN ('batch', 'wonder') AND at < ? AND ${waiting}`,
       )
-      .bind(now - 2 * 86400_000),
+      .bind(old),
     db
       .prepare(
         `INSERT INTO spend (at, call, model, usd, invite)
          SELECT at, call || '-unsettled', 'unknown', usd, invite FROM reservations
-         WHERE settled = 0 AND at < ? AND call != 'batch' AND id NOT IN (SELECT reservation FROM rewrites WHERE reservation IS NOT NULL AND status = 'pending')`,
+         WHERE settled = 0 AND at < ? AND call NOT IN ('batch', 'wonder') AND ${waiting}`,
       )
       .bind(stale),
     db
       .prepare(
         `UPDATE reservations SET settled = 1
-         WHERE settled = 0 AND at < ? AND call != 'batch' AND id NOT IN (SELECT reservation FROM rewrites WHERE reservation IS NOT NULL AND status = 'pending')`,
+         WHERE settled = 0 AND at < ? AND call NOT IN ('batch', 'wonder') AND ${waiting}`,
       )
       .bind(stale),
     db.prepare("DELETE FROM reservations WHERE settled = 1 AND at < ?").bind(now - 2 * 86400_000),

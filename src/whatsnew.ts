@@ -6,14 +6,9 @@ import { toast } from "./toast";
 // it, puts a dot on the ? button while something is newer, and lists what
 // came since. A player whose idea was built is told so, by its title.
 
-export interface ChangelogEntry {
-  date: string;
-  text: string;
-  pr?: number;
-  version?: string;
-  // The Ideas tab id it built, when it came from one.
-  idea?: number;
-}
+import { entryTime, seenStamp, type ChangelogEntry } from "../shared/changelog";
+
+export type { ChangelogEntry };
 
 const SEEN_KEY = "mm-whatsnew-seen";
 
@@ -43,10 +38,6 @@ function markSeen(at = Date.now()): void {
   }
 }
 
-// The day an entry was merged, as a time: the end of that day, so an entry
-// of today counts as new for someone who last looked this morning.
-const entryTime = (e: ChangelogEntry) => Date.parse(`${e.date}T23:59:59`);
-
 export async function loadNews(): Promise<News | null> {
   let entries: ChangelogEntry[] = [];
   try {
@@ -58,7 +49,7 @@ export async function loadNews(): Promise<News | null> {
   }
   const seen = seenAt();
   // A new player starts here: the game's history is not news to them.
-  if (seen === null) markSeen();
+  if (seen === null) markSeen(seenStamp(entries));
   const since = seen ?? Date.now();
   const feedback = await api.feedback();
   const ideas = (feedback?.suggestions ?? [])
@@ -126,7 +117,7 @@ export function openNews(): void {
   d.addEventListener("cancel", close);
   document.body.append(d);
   d.showModal();
-  markSeen();
+  markSeen(seenStamp(n.entries));
   if (news) {
     news.fresh = [];
     news.ideas = [];

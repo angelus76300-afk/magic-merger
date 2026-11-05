@@ -588,3 +588,16 @@ export const TRIM_SCHEMA = {
   required: ["duplicates", "senseless"],
   additionalProperties: false,
 } as const;
+
+// 4.5.1 (audit): a refusal is not a description. Village's card read "I can't
+// write this one as stated ... Here's a safer entry", and its program was then
+// written from that text. A description that opens like a refusal, or offers
+// a "safer" stand in, is asked once more and never stored.
+const REFUSAL_OPENING =
+  /^\W*(?:i\s*(?:can(?:'|’)?t|cannot|can not|won(?:'|’)?t|will not|am (?:not able|unable)|(?:'|’)m (?:not able|unable|sorry))|sorry\b|i apologi[sz]e|unfortunately\b)/i;
+const REFUSAL_ANYWHERE =
+  /\b(?:here(?:'|’)s a safer|a safer (?:entry|version|alternative)|as an ai\b|i (?:can(?:'|’)?t|cannot) (?:help|write|create|describe) (?:with )?(?:this|that))/i;
+
+export function looksLikeRefusal(text: string): boolean {
+  return REFUSAL_OPENING.test(text) || REFUSAL_ANYWHERE.test(text);
+}

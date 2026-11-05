@@ -164,13 +164,20 @@ export async function takenKinds(db: D1Database): Promise<Set<string>> {
   return new Set([...BUILT_IN_WONDERS.map((w) => w.kind), ...rows.results.map((r) => r.kind.toLowerCase())]);
 }
 
-// The live pool, newest first, for islands.
+// The live pool, newest first, for islands. 4.5.1 (audit, B.RC4c, DC15): the
+// finder's name is read from the account now, not from the copy made when the
+// wonder grew, so a player who deleted their account, or hid from the
+// Community tab, is not named on everyone's islands, and the owner never is.
 export async function livePool(db: D1Database, now = Date.now()): Promise<{ wonders: PoolWonder[]; week: PoolWonder[] }> {
   const rows = await db
-    .prepare("SELECT * FROM wonders WHERE status = 'live' ORDER BY COALESCE(live_at, created_at) DESC, id DESC LIMIT ?")
+    .prepare(
+      `SELECT w.*, CASE WHEN w.source = 'player' AND i.deleted_at IS NULL AND i.community_hidden = 0 AND i.admin = 0 THEN i.name END AS finder
+       FROM wonders w LEFT JOIN elements e ON e.key = w.key LEFT JOIN invites i ON i.id = e.invite
+       WHERE w.status = 'live' ORDER BY COALESCE(w.live_at, w.created_at) DESC, w.id DESC LIMIT ?`,
+    )
     .bind(POOL_SIZE)
-    .all<WonderRow>();
-  const wonders = rows.results.map(poolOf);
+    .all<WonderRow & { finder: string | null }>();
+  const wonders = rows.results.map((r) => poolOf({ ...r, by_name: r.finder ? r.finder.slice(0, 40) : null }));
   return { wonders, week: wonders.filter((w) => now - w.at < WEEK_MS) };
 }
 

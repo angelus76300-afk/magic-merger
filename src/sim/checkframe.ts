@@ -97,7 +97,7 @@ function pump(): void {
     s.timer = window.setTimeout(() => {
       // Stuck in spell code: the worker goes, the test counts as not finished.
       drop(s);
-      reply(job.id, { ok: true, problem: null, detail: "The test run did not finish in time", stats: {} });
+      reply(job.id, { ok: true, problem: null, detail: "The test run did not finish in time", stats: {}, unfinished: true });
       pump();
     }, WORKER_MS);
     slot.worker.postMessage(job);
