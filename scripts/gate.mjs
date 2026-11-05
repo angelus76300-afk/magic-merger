@@ -67,7 +67,7 @@ export function ownerRecords(comments) {
 
 /**
  * Pure decision for one pull request.
- * s: { cls, labels, records, draft, paused, ci, smoke, review, mergeable, workflows, docsOnly }
+ * s: { cls, labels, records, draft, paused, headFetched, ci, smoke, review, mergeable, upToDate, workflows, docsOnly }
  *   ci: "full" (lint to test:worker passed), "docs" (docs only, light checks passed), or anything else
  *   smoke: "pass" | other; review: reviewFor(...) result
  */
@@ -127,7 +127,8 @@ async function gh(path, init = {}) {
   if (!res.ok && res.status !== 404) throw new Error(`${init.method ?? "GET"} ${path}: ${res.status} ${(await res.text()).slice(0, 300)}`);
   return res.status === 204 || res.status === 404 ? null : res.json();
 }
-const git = (...args) => execFileSync("git", args, { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 }).trim();
+// stderr is kept with the error, not printed: a refused fetch is expected and handled.
+const git = (...args) => execFileSync("git", args, { encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] }).trim();
 
 async function paused() {
   const open = await gh(`issues?state=open&labels=${LABELS.pause}&per_page=1`);
@@ -190,7 +191,7 @@ export async function prState(n) {
   // The head commit itself, by its sha: refs/pull/<n>/head can lag behind it for minutes, and the
   // class must be the class of the commit the merge call pins (sha: pr.head.sha below).
   git("fetch", "--quiet", "origin", `+refs/heads/${pr.base.ref}:refs/remotes/origin/${pr.base.ref}`);
-  for (const ref of [sha, `+refs/heads/${pr.head.ref}:refs/remotes/pr/${n}`, `+refs/pull/${n}/head:refs/remotes/pr/${n}`]) {
+  for (const ref of [sha, `+refs/heads/${pr.head.ref}:refs/remotes/pr/${n}`, `+refs/pull/${n}/head:refs/remotes/pull/${n}`]) {
     try {
       git("fetch", "--quiet", "origin", ref);
     } catch {
