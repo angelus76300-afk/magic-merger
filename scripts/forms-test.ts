@@ -191,6 +191,43 @@ export function formChecks(check: Check): void {
     check(`w.wonder: each of the ${WONDER_LIST.length} built-in wonders stands where the item asks, and is kept by a save`, !bad.length, bad.join("; "));
   }
 
+  // w.model: fine boxes, kept by a save, blown away by a blast, measured by the size check.
+  {
+    const world = generateWorld(152, 152, 4242, resolveLand(MID, 4242, 152));
+    populate(world);
+    const x = world.settlements[0].x + 10;
+    const y = world.settlements[0].y;
+    cast(
+      world,
+      `const spell = { *cast(w) { w.model(w.x, w.y, [[-0.1, -0.1, 0, 0.2, 0.2, 1.5, "#4a3324"], [0.05, -0.05, 1.2, 0.3, 0.1, 0.08, "#2b2b30"], [0.2, -0.1, 0.8, 0.2, 0.2, 0.3, "#ffd36a", "glow"], [0, 0, 0, 0.01, 0.5, 0.5, "#fff"]], { name: "Lamp" }); } };`,
+      x,
+      y,
+      1,
+    );
+    const p = world.props[0];
+    check(
+      "w.model keeps boxes as fine as a twentieth of a cell, drops a box with no size, marks what glows",
+      world.props.length === 1 && p.boxes.length === 3 && p.boxes[1].h === 0.08 && p.boxes[2].glow && !p.boxes[0].glow,
+      JSON.stringify(p?.boxes),
+    );
+    const back = loadWorld(JSON.parse(JSON.stringify(saveWorld(world, new Map()))), () => {})!;
+    check("a fine model is kept by a save", back.props.length === 1 && back.props[0].boxes.length === 3 && back.props[0].name === "Lamp");
+    cast(world, `const spell = { *cast(w) { w.explode(w.x, w.y, 4, 1); } };`, x, y, 1);
+    check("a blast over it takes it away", world.props.length === 0);
+  }
+  const fineBook = `const spell = { artifacts: [{ name: "Book", effects: [{ when: "every", every: 20, do: "heal" }] }], *cast(w) {
+    w.model(w.x, w.y, [[-0.4, -0.3, 0, 0.8, 0.6, 1.1, "#6a5040"], [-0.2, -0.15, 1.1, 0.34, 0.26, 0.06, "#6b3a2a"]]); w.artifact(w.x, w.y, "Book"); } };`;
+  const onLectern = runCheck({ key: "fine-book", name: "Book of Ages", tier: "minor", code: fineBook, kind: "artifact", form: "object" });
+  check(
+    "a book in fine boxes on a lectern passes as an object, a model alone counting as something visible",
+    onLectern.ok,
+    `${onLectern.problem}: ${onLectern.detail}`,
+  );
+  const hugeFine = `const spell = { artifacts: [{ name: "Book", effects: [{ when: "every", every: 20, do: "heal" }] }], *cast(w) {
+    w.model(w.x, w.y, [[-2, -1.5, 0, 4, 3, 7, "#6b3a2a"]]); w.artifact(w.x, w.y, "Book"); } };`;
+  const tooBig = runCheck({ key: "fine-giant", name: "Book of Ages", tier: "minor", code: hugeFine, kind: "artifact", form: "object" });
+  check("a fine model seven voxels tall is still too big for an object", tooBig.problem === "size", `${tooBig.problem}: ${tooBig.detail}`);
+
   // Each kind's example, through the real test run with its kind: it passes.
   for (const [form, ex] of Object.entries(FORM_EXAMPLES)) {
     const r = runCheck({ key: `ex:${form}`, name: ex.name, tier: ex.tier as "minor", code: ex.code, kind: "artifact", form });

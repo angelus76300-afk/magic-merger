@@ -3,6 +3,7 @@ import { dressVillages, restoreCreature, saveMind, KINDS, type Creature, type Sa
 import { MARKS, MAX_MARKS, MAX_STORY, type Mark, type StoryLine, type Village } from "./kin";
 import { BUILTIN, BUILTIN_BEFORE_4_4_5, FIRST_JOB, LAST_JOB, LAYERS, type Layer } from "./materials";
 import { MAX_WONDERS, readWonder, type Wonder } from "./wonders";
+import { MAX_PROPS, readProp, type Prop } from "./props";
 import { World } from "./world";
 import { BIOMES, applyLand, readLand, type LandOptions } from "./land";
 import type { Landmark } from "./social";
@@ -48,6 +49,7 @@ export interface SavedWorld {
   // Wonders and the island's name, and house cells rebuilt with a patched
   // roof (4.4.5 part B).
   wonders?: Wonder[];
+  props?: Prop[];
   islandName?: string;
   patched?: number[];
 }
@@ -109,6 +111,7 @@ export function saveWorld(world: World, owners: Map<string, string>): SavedWorld
     ...(world.settlements.length ? { settlements: world.settlements } : {}),
     ...(world.refuges.length ? { refuges: world.refuges } : {}),
     ...(world.wonders.length ? { wonders: world.wonders } : {}),
+    ...(world.props.length ? { props: world.props } : {}),
     ...(world.islandName ? { islandName: world.islandName } : {}),
     ...(world.patched.size ? { patched: [...world.patched].slice(0, 4000) } : {}),
   };
@@ -181,6 +184,10 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
     .map(readWonder)
     .filter((w): w is Wonder => w !== null)
     .slice(0, MAX_WONDERS);
+  world.props = (Array.isArray(data.props) ? data.props : [])
+    .map(readProp)
+    .filter((p): p is Prop => p !== null)
+    .slice(0, MAX_PROPS);
   prepare(world);
   world.time = data.time ?? 0;
   const n = world.n;

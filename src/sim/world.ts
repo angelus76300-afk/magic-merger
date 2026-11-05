@@ -15,6 +15,7 @@ import { layOutVillages } from "./buildings";
 import { CreatureGrid } from "./crowd";
 import type { Landmark, Presence } from "./social";
 import type { Ward } from "./wards";
+import type { Prop } from "./props";
 import type { Death, Mark, Village } from "./kin";
 
 export const TICK = 1 / 30;
@@ -117,6 +118,9 @@ export class World {
   // old island and the challenges. House cells rebuilt after a fire wear a
   // patched roof.
   wonders: Wonder[] = [];
+  // 4.6: fine box models of what items look like (props.ts), and a counter the view rebuilds them on.
+  props: Prop[] = [];
+  propsVersion = 0;
   islandName: string | null = null;
   readonly patched = new Set<number>();
 

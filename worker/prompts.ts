@@ -206,6 +206,7 @@ Structures (options in braces are all optional; grow: seconds raises it from its
 w.tree(x, y, {style, height, trunk, leaves, accent, accentShare, glow, z, grow}) with style oak, pine, birch, willow, palm, dead, giant, mushroom or crystal; trunk and leaves are color lists, accent colors are sprinkled in the leaves (blossoms, fruit, autumn), glow makes the leaves shine.
 The engine's own makers, for items that are such things (each returns what it made, or null): w.village(x, y, {houses, name, villagers}) lays out a real village near (x, y), as the island's own: houses round a plaza, a main street, fields, a well, its first buildings with a job and its villagers, dressed alike. w.building(x, y, {job}) raises one building of two by two cells in its village's style, drawn by the island's builder (build nothing on its cells; it returns beside, an open cell next to it), with job house, smithy, granary, bakery, barn, tavern, market, chapel, watchtower, lumber yard or fisher hut (it does that job for the nearest village). w.land(x, y, {shape, r, height}) reshapes the land within r cells: hill, mountain, volcano (with a vent of lava), lake or pond (kept by a spring), canyon, valley, crater, oasis, swamp, mesa, island (out of the sea), glacier, dunes, or floating island (with z, its height). w.wonder(x, y, kind) raises one of the island's wonders there, with its land, its look and what it does: waterfall, hot spring, cave mouth, stone arch, lone tree, ruins, sinkhole lake, geysers, sea stacks, crater, floating rock, bones, frozen waterfall, fairy ring, world tree, hoard or sunken temple.
 w.spire(x, y, {height, radius, colors, kind, lean, angle, grow}), w.tower(x, y, {height, radius, colors, roof, windows, grow}), w.wall(x0, y0, x1, y1, {height, thick, colors, kind, grow}), w.arch(x0, y0, x1, y1, {height, thick, colors, kind, grow}), w.island(x, y, {z, r, top, rock, grow}) (a floating island; put trees on it with z).
+Fine models, for the look of a thing at the detail of the island's own wonders (a lantern's frame, a sword's hilt, a shrine's steps, a statue's face): w.model(x, y, boxes, {name, turn}) with up to 80 boxes [x, y, z, width, depth, height, color, "glow"] in cells from (x, y) and voxels up from the ground (a villager is about 1.2 tall, a house 2), as small as 0.05; "glow" shines at night; turn in radians. Build loops of boxes for rings, steps and courses. It is a look only: what the thing does is its artifact, landmark or creature.
 Free voxels for anything else (z in voxels above the ground at that cell; at most 20000 in the world): w.voxel(x, y, z, color, kind), w.sphere(x, y, z, r, colors, density, kind), w.box(x, y, z, sx, sy, sz, colors, kind), w.unvoxel(x, y, r), w.burnVoxels(x, y, r). kind: stone (default), wood, leaf, ice, glow (shines at night): all of these fall if nothing holds them up; magic (shines) and float stay where they are put. Use magic or float only for things that really float.
 Creatures: w.creatures(x, y, r), w.corpses(x, y, r), w.spawn(kind, x, y). Each has x, y, z, kind, hp, alive, data and hurt(n), heal(n), kill(), revive(), push(dx, dy, up), status(name, seconds, fromX, fromY), transform(kind), resize(factor), tint(color), teleport(x, y).
 Bodies, the moving parts of a spell, drawn in voxels: w.body({x, y, z, vx, vy, vz, r, look, color, color2, glow, trail, life, gravity, drag, tick(b, w, dt), land(b, w), end(b, w)}). look: orb, flame, cloud, ring, shard, vortex, star, meteor, swarm, none. trail: a color it leaves behind. A body with z above 0 and gravity falls and calls land on touching the ground; a body that leaves the island near the ground disappears. r is its radius in cells: 0.5 to 3 for most, up to 8 for the biggest. A body has the same fields plus age, data, kill(), seek(x, y, speed).
@@ -468,9 +469,15 @@ export const FORM_EXAMPLES: Record<Exclude<Form, "spell">, { name: string; tier:
     grants: [{ what: "heal", cost: 1 }], charges: 3, recharge: 60 }],
   *cast(w) {
     w.sound("chime", 0.25);
-    // A post of dark wood and the lantern on it: three voxels, the size of a villager.
-    w.box(w.x, w.y, 0, 1, 1, 2, ["#5a4030"], "wood");
-    w.voxel(w.x, w.y, 2, "#ffd36a", "glow");
+    // A post with an arm, and the lantern hanging from it: a frame of iron round a glowing glass.
+    const iron = "#2b2b30", parts = [
+      [-0.3, -0.3, 0, 0.6, 0.6, 0.15, "#5a4030"], [-0.12, -0.12, 0, 0.24, 0.24, 2.5, "#4a3324"],
+      [-0.06, -0.06, 2.4, 0.75, 0.12, 0.12, "#3a2a20"], [0.52, -0.02, 2.05, 0.04, 0.04, 0.35, iron],
+      [0.36, -0.16, 1.62, 0.36, 0.36, 0.06, iron], [0.36, -0.16, 2.0, 0.36, 0.36, 0.06, iron], [0.44, -0.08, 2.06, 0.2, 0.2, 0.06, iron],
+      [0.41, -0.11, 1.68, 0.26, 0.26, 0.32, "#ffd36a", "glow"],
+    ];
+    for (const [x, y] of [[0.36, -0.16], [0.67, -0.16], [0.36, 0.15], [0.67, 0.15]]) parts.push([x, y, 1.68, 0.05, 0.05, 0.32, iron]);
+    w.model(w.x, w.y, parts, { name: "Storm Lantern" });
     w.light(w.x, w.y, 6, "#ffd36a", 2);
     w.artifact(w.x, w.y, "Storm Lantern");
   },
@@ -485,11 +492,13 @@ export const FORM_EXAMPLES: Record<Exclude<Form, "spell">, { name: string; tier:
     w.sound("thump", 0.4);
     const b = w.building(w.x, w.y, { job: "smithy" });
     if (!b) return;
-    // What makes it this forge, beside the smithy: a stone chimney and the glow of its fire.
-    const c = b.beside;
-    w.box(c.x, c.y, 0, 1, 1, 4, ["#4a4446", "#3a3436"]);
-    w.voxel(c.x, c.y, 4, "#ff8a2a", "glow");
-    w.gas(c.x, c.y, 1, "smoke", 0.4);
+    // What makes it this forge, beside the smithy: a chimney of brick courses
+    // with the fire's glow at its mouth, and an anvil in front.
+    const c = b.beside, parts = [];
+    for (let k = 0; k < 8; k++) parts.push([-0.4, -0.4, k * 0.45, 0.8, 0.8, 0.45, k % 2 ? "#6a5a52" : "#7a685e"]);
+    parts.push([-0.5, -0.5, 3.6, 1, 1, 0.15, "#4a4446"], [-0.25, -0.46, 0.3, 0.5, 0.06, 0.4, "#ff8a2a", "glow"]);
+    parts.push([0.6, -0.15, 0, 0.3, 0.3, 0.35, "#3a3a40"], [0.45, -0.22, 0.35, 0.6, 0.44, 0.16, "#4a4a52"]);
+    w.model(c.x, c.y, parts, { name: "Forge" });
     w.artifact(b.x, b.y, "Forge");
   },
 };`,
@@ -541,13 +550,13 @@ const FORM_RULES_TEXT: Record<Exclude<Form, "spell">, string> = {
   creature: `CREATURE
 It is alive: a creature kind in spell.creatures, spawned by cast (one, or a few for a pack or a swarm), never a statue, a ring of spheres or a voxel model of it. Its body plan is what it is (a serpent slithers on the serpent plan, a human walks on two legs as a person), with its own colors and features; it has a goal of its own, needs, prey or food, what it fears, and one or two abilities with a trigger. It is drawn beside a villager: radius is its reach, not its size. Its test run fails it if no creature of its own is alive after it arrives, or if what it builds is more than a few voxels.`,
   object: `OBJECT
-A thing a hand holds or a table bears: a book, a sword, a potion, a lantern, a gem. Its look is small: a voxel or two, on a pedestal, a post, an altar or a lectern at most, 5 cells across and 5 voxels tall at the very most; it never becomes a statue, a tower or a giant of itself unless its name or entry says it is giant. What it does reaches further through w.artifact: effects, grants villagers come for, uses, pairs. Its test run fails it when it is bigger than that, or builds a building, a village or land.`,
+A thing a hand holds or a table bears: a book, a sword, a potion, a lantern, a gem. Draw it with w.model, in fine boxes at its real size (a book about 0.3 across, a sword 1 long, a lantern 0.4 tall), on what bears it if anything (a pedestal, a post, an altar, a lectern), 5 cells across and 5 voxels tall at the very most; a whole voxel is as big as a villager's body, too coarse for a thing in a hand; it never becomes a statue, a tower or a giant of itself unless its name or entry says it is giant. What it does reaches further through w.artifact: effects, grants villagers come for, uses, pairs. Its test run fails it when it is bigger than that, or builds a building, a village or land.`,
   building: `BUILDING
-One structure people raise. Make it with w.building(x, y, {job}): the island's builder draws it, two by two cells, in its village's style, and its job works for the nearest village; choose the job nearest to what it is (a temple a chapel, a forge a smithy, a tower a watchtower, an inn a tavern, a mill a granary, a library or a wizard's house a house). It returns {x, y, beside}: its four cells are drawn by the builder, so never build on them; add what makes it this building at b.beside, the open cell next to it, with the structures (a chimney, a spire, a bell, a beacon, a sign of its magic), and what it does with w.artifact or w.hire. At most 10 cells across and 20 voxels tall: a few houses, not a mountain.`,
+One structure people raise. Make it with w.building(x, y, {job}): the island's builder draws it, two by two cells, in its village's style, and its job works for the nearest village; choose the job nearest to what it is (a temple a chapel, a forge a smithy, a tower a watchtower, an inn a tavern, a mill a granary, a library or a wizard's house a house). It returns {x, y, beside}: its four cells are drawn by the builder, so never build on them; add what makes it this building at b.beside, the open cell next to it, drawn with w.model in fine boxes (a chimney in brick courses, a bell, a beacon, a sign of its magic), voxels and structures only for a great mass (a tall spire, a wall), and what it does with w.artifact or w.hire. At most 10 cells across and 20 voxels tall: a few houses, not a mountain.`,
   settlement: `SETTLEMENT
 Where people live together. Make it with w.village(x, y, {houses}): it lays out houses round a plaza, a main street, fields, a well and the first buildings with a job, and brings its villagers, the way the island's own villages are made; it finds open ground near the spot by itself, away from the other villages. houses: a camp or a hamlet 3 to 5, a village 6 to 9, a town 10 to 14. Add what is special about this one (a building with w.building, a wall, a shrine, its own people's work with w.hire), never a token of it: a charm, a lantern or a model of houses is not a village.`,
   place: `PLACE
-A spot of nature or old magic, as the island's wonders are, 4 to 14 cells. When it is one of the wonders, raise it with w.wonder(x, y, kind), which shapes its land, draws it and gives it what it does; otherwise shape it from the land up (w.land, w.terraform, w.paint, w.flood, trees and structures) with what it does through w.artifact or w.landmark. At most 32 cells across and 60 voxels tall.`,
+A spot of nature or old magic, as the island's wonders are, 4 to 14 cells. When it is one of the wonders, raise it with w.wonder(x, y, kind), which shapes its land, draws it and gives it what it does; otherwise shape it from the land up (w.land, w.terraform, w.paint, w.flood, trees and structures) and draw what stands there with w.model in fine boxes, as the wonders' own stones and arches are, with what it does through w.artifact or w.landmark. At most 32 cells across and 60 voxels tall.`,
   land: `LAND
 It changes the land itself. Reshape it with w.land(x, y, {shape, r, height}) (a volcano, a lake, a canyon, an oasis, a swamp, a mountain, a floating island), or w.terraform, w.flood and w.paint over its reach for a land no shape fits, then add what is special. The land is the point: water and lava keep running by themselves once there. Its test run fails it when fewer than 25 cells of land changed.`,
 };

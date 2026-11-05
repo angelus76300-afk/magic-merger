@@ -13,6 +13,7 @@ import { FORM_RULES, GIANT_FACTOR, bigBeing, isForm, type Form } from "../../sha
 import { isBuilding } from "./materials";
 import { keyLevel, keyX, keyY } from "./voxelkey";
 import { settlementNear } from "./buildings";
+import { propBounds } from "./props";
 
 // The test run a new program goes through before it is stored (3.3). It is
 // cast near a village on a small seeded island, and the island is compared,
@@ -336,7 +337,9 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
   if (!started || errors.length) {
     return { ok: false, problem: "crash", detail: `It crashed: ${errors[0] ?? "the cast did not start"}`, stats };
   }
-  const moved = cells >= MIN_CELLS || voxels >= MIN_VOXELS || creatures >= MIN_CREATURES || bodySeconds >= 0.5 || wards > 0;
+  // 4.6: a fine model (props.ts) is something visible too.
+  const props = world.props.filter((p) => p.key === `check:${req.key}`).length;
+  const moved = cells >= MIN_CELLS || voxels >= MIN_VOXELS || creatures >= MIN_CREATURES || bodySeconds >= 0.5 || wards > 0 || props > 0;
   if (!moved) {
     return {
       ok: false,
@@ -428,6 +431,8 @@ export interface Made {
   onBuilding: number;
   // Cells raised or sunk, the land's shape itself (paint and water are effects).
   lifted: number;
+  // Boxes of its fine models.
+  fine: number;
 }
 
 function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Map<string, string>, key: string, raised: number[]): Made {
@@ -458,7 +463,20 @@ function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Ma
     y1 = Math.max(y1, v.y);
     tall = Math.max(tall, v.tall);
   }
-  const across = voxels ? Math.max(x1 - x0, y1 - y0) + 1 : 0;
+  // Its fine models (props.ts), measured exactly, with the voxels.
+  let fine = 0;
+  for (const p of world.props) {
+    if (p.key !== key) continue;
+    fine += p.boxes.length;
+    const b = propBounds(p);
+    x0 = Math.min(x0, b.x0 - 0.5);
+    x1 = Math.max(x1, b.x1 - 0.5);
+    y0 = Math.min(y0, b.y0 - 0.5);
+    y1 = Math.max(y1, b.y1 - 0.5);
+    tall = Math.max(tall, b.tall);
+  }
+  const across = voxels || fine ? Math.round((Math.max(x1 - x0, y1 - y0) + (voxels ? 1 : 0)) * 10) / 10 : 0;
+  tall = Math.round(tall * 10) / 10;
   // Voxels it stacked on the cells of a building it raised, which the builder draws.
   const blocks = new Set(raised);
   const onBuilding = mine.filter((v) => world.inside(v.x, v.y) && blocks.has(v.y * world.w + v.x)).length;
@@ -500,6 +518,7 @@ function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Ma
     // Raised with w.building: a house a village builds from an item's gold is not the item's.
     buildings: Math.round(blocks.size / 4),
     lifted,
+    fine,
     settlements: world.settlements.length - before.settlements,
     wonders: world.wonders.length - before.wonders,
     creatures,
@@ -540,7 +559,7 @@ export function judgeMade(form: Exclude<Form, "spell">, name: string, giant: boo
   const tall = rule.tall * f * big;
   const most = rule.voxels * (giant ? GIANT_FACTOR * GIANT_FACTOR : 1) * big;
   const giantNote = giant ? "" : ` Only an item whose name or entry says it is giant may be bigger.`;
-  const measured = `(${m.voxels} voxels, ${m.across} cells across, ${m.tall} tall; land reshaped on ${m.reshaped} cells, ${m.landAcross} across; ${m.buildings} buildings, ${m.settlements} settlements, ${m.wonders} wonders, ${m.creatures} creatures)`;
+  const measured = `(${m.voxels} voxels and ${m.fine} fine boxes, ${m.across} cells across, ${m.tall} tall; land reshaped on ${m.reshaped} cells, ${m.landAcross} across; ${m.buildings} buildings, ${m.settlements} settlements, ${m.wonders} wonders, ${m.creatures} creatures)`;
   // Is it that kind of thing at all?
   const kind = (() => {
     switch (form) {
@@ -549,7 +568,7 @@ export function judgeMade(form: Exclude<Form, "spell">, name: string, giant: boo
           ? null
           : `${name} is a creature, but no living creature of its own was on the island after it arrived: spawn it with w.spawn, from spell.creatures.`;
       case "building":
-        return m.buildings > 0 || m.voxels >= 20
+        return m.buildings > 0 || m.voxels >= 20 || m.fine >= 12
           ? null
           : `${name} is a building, but nothing was built: use w.building(x, y, {job}) for the building itself, then add what is special with the structures.`;
       case "settlement":

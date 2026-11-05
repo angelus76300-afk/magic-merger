@@ -22,6 +22,7 @@ import { baseName, type Landmark, type Presence } from "./social";
 import { hexColor, toColor } from "./colors";
 import { DOME_SQUASH, WARD, addWard, ownWard, wardBits, wardHit, warded } from "./wards";
 import { makeBuilding, makeVillage, makeWonder, shapeLand } from "./makers";
+import { addProp, propBounds, readProp } from "./props";
 
 // Runs spell programs. A program is JavaScript that defines `spell`:
 //
@@ -1554,6 +1555,24 @@ export class SpellApi {
   wonder(x: number, y: number, kind: string) {
     const w = makeWonder(this.rt.world, String(kind), x, y, this.seedAt(x, y));
     return w ? { kind: w.kind, name: w.name, x: w.x, y: w.y, r: w.r } : null;
+  }
+
+  // 4.6: a fine box model of what the item looks like (props.ts): up to 80
+  // boxes [x, y, z, w, d, h, color, "glow"], in cells from (x, y) and voxels
+  // up from the ground, as small as a twentieth of a cell. {name, turn}.
+  model(x: number, y: number, boxes: unknown, o: Record<string, unknown> = {}) {
+    if (!this.inside(x, y)) return null;
+    const p = readProp({
+      key: this.req.key,
+      name: typeof o.name === "string" ? o.name : this.req.name,
+      x: Math.round(x * 20) / 20,
+      y: Math.round(y * 20) / 20,
+      turn: o.turn,
+      boxes: Array.isArray(boxes) ? boxes : [],
+    });
+    if (!p || !addProp(this.rt.world, p)) return null;
+    const b = propBounds(p);
+    return { x: p.x, y: p.y, boxes: p.boxes.length, across: Math.round(b.across * 100) / 100, tall: Math.round(b.tall * 100) / 100 };
   }
 
   // Grass, then trees, bushes and flowers.

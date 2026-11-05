@@ -9,6 +9,8 @@ import { Engine, type WorldSize } from "../src/sim/engine";
 import { LAYERS } from "../src/sim/materials";
 import { TICK, type World } from "../src/sim/world";
 import { SCENARIOS } from "../src/sim/scenarios";
+import { resolveLand } from "../src/sim/land-options";
+import { WORLD_SIZES } from "../src/sim/engine";
 
 interface LabOptions {
   tier?: Tier;
@@ -35,6 +37,10 @@ interface LabOptions {
   // 4.4.5 part C: a wonder is cast as an artifact with its own reach.
   kind?: "spell" | "artifact";
   reach?: number;
+  // 4.6: a player's island (land.ts, with its seeded villages), not the island before 4.4.
+  land?: boolean;
+  // 4.6: the kind it is written as, for its fine models and makers. The lab ignores it.
+  form?: string;
 }
 
 // A water cell on the island's border, or one next to land at least two
@@ -129,9 +135,10 @@ async function runSpell(code: string, options: LabOptions = {}) {
   const overlay = document.getElementById("overlay") as HTMLCanvasElement;
   const errors: string[] = [];
   current?.dispose();
-  const engine = Engine.create(canvas, overlay, options.size ?? "medium", { onError: (_k, _n, m) => errors.push(m), onTap: () => {} }, seed, {
-    preserveDrawingBuffer: true,
-  });
+  const size = options.size ?? "medium";
+  const cells = WORLD_SIZES[size] ?? WORLD_SIZES.medium;
+  const land = options.land ? resolveLand({ warmth: 0.5, water: 0.5, relief: 0.5, forest: 0.5 }, seed, cells) : undefined;
+  const engine = Engine.create(canvas, overlay, size, { onError: (_k, _n, m) => errors.push(m), onTap: () => {} }, seed, { preserveDrawingBuffer: true }, land);
   current = engine;
   (window as unknown as { labEngine: Engine }).labEngine = engine;
   const world = engine.world;
