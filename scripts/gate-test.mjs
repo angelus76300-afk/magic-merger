@@ -7,7 +7,7 @@ const check = (name, ok, detail = "") => {
   if (!ok) failed++;
 };
 const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
-const pass = { verdict: "pass", raise: null };
+const pass = { verdict: "pass", raise: null, tests: "pass" };
 const ready = {
   cls: "green",
   labels: [],
@@ -33,6 +33,18 @@ check(
 );
 check("no smoke test waits", !decide({ ...ready, smoke: "failure" }).ready);
 check("no review waits", !decide({ ...ready, review: null }).ready);
+check("a review without npm test waits", !decide({ ...ready, review: { verdict: "pass", raise: null, tests: null } }).ready);
+check("npm test failed waits", !decide({ ...ready, review: { verdict: "pass", raise: null, tests: "fail" } }).ready);
+check(
+  "docs only need no npm test",
+  decide({ ...ready, ci: "docs", smoke: "missing", docsOnly: true, review: { verdict: "pass", raise: null, tests: null } }).ready,
+);
+const t = reviewFor(
+  [{ body: `<!-- mm-review verdict=pass sha=${SHA} tests=fail -->` }, { body: `<!-- mm-review verdict=pass sha=${SHA} tests=pass -->` }],
+  SHA,
+);
+check("a failed npm test sticks after a later pass", t?.tests === "fail", JSON.stringify(t));
+check("tests=pass is read", reviewFor([{ body: `<!-- mm-review verdict=pass sha=${SHA} tests=pass -->` }], SHA)?.tests === "pass");
 check("a blocking review waits", !decide({ ...ready, review: { verdict: "block" } }).ready);
 check("amber without OK waits", !decide({ ...ready, cls: "amber" }).ready);
 const OK = new Set(["ok"]);

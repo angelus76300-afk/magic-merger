@@ -19,9 +19,12 @@
 # solves it, and one whose solver was rewritten is verified again. No
 # Claude call.
 name: Judge
+# 4.5.2: the planner's night run does the same steps every night in its own
+# session (no Actions minutes, docs/DAILY.md); this schedule is the weekly
+# fallback, on Sundays.
 on:
   schedule:
-    - cron: "17 4 * * *"
+    - cron: "17 4 * * 0"
   workflow_dispatch:
     inputs:
       limit:

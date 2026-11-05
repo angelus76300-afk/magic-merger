@@ -10,10 +10,12 @@
 #    refusals of the last 24 hours, read only (scripts/live-signals.mjs).
 # 4. On Sundays and by hand, the loop's numbers (scripts/loop-metrics.mjs).
 # Frames and reports are kept 14 days as the run's artifact "night-<date>".
+#
+# Since the Actions minutes ran short (November 2026): the planner's night run
+# does all of this in its own session, which costs no Actions minutes
+# (docs/DAILY.md, "The night run"). This workflow stays for a run by hand.
 name: Night
 on:
-  schedule:
-    - cron: "23 6 * * *"
   workflow_dispatch:
     inputs:
       minutes:

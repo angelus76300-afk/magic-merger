@@ -95,6 +95,7 @@ check(
   rules([file("worker/x.ts", ["UPDATE spells SET pid = (SELECT MAX(id) FROM programs p WHERE p.key = spells.key)"])]) === "R9",
 );
 check("R9 FIRST_PROGRAM_VERSION", rules([file("shared/spellcode.ts", ["export const FIRST_PROGRAM_VERSION = 3;"])]) === "R9");
+check("R9 the one spell rewrite tool", rules([file("scripts/rewrite-one.mjs", ["for (const name of names)"])]) === "R9");
 check("R9 the refresh started from elsewhere", rules([file("worker/cron.ts", ["await startRefresh(env, oracle, { limit: 5000 });"])]) === "R9");
 check("R9 programs rewritten by a range", rules([file("worker/x.ts", ["UPDATE programs SET code = ?, version = ? WHERE version < ?"])]) === "R9");
 check("R9 a WHERE that is always true", rules([file("worker/x.ts", ["DELETE FROM spells WHERE 1 = 1"])]) === "R9");
