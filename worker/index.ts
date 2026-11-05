@@ -77,7 +77,7 @@ import type { LibraryExample, Rewrite } from "./prompts";
 import { joinsBoth, looksLikeRefusal } from "./prompts";
 import { noDescription } from "../shared/refusal";
 import { readDigest } from "../shared/chronicle";
-import { cronJobs, takeRun } from "./cron";
+import { cronJobs, runsOn, takeRun } from "./cron";
 import { nextEvidence } from "./evidence";
 import { community, setProfile } from "./community";
 import { dayIn as dayInZone } from "../shared/daily";
@@ -1193,6 +1193,22 @@ function faced(checked: string | null, kind: string | null | undefined, intents:
   return promise && (kind !== "artifact" || actsTested(checked));
 }
 
+// A verdict as stored, whole JSON within 2000 characters. Its `stats` come
+// from the browser unbounded, and the cut string it was stored as before was
+// not JSON, which a query reading it with json_extract throws on (the review
+// of #45). The other fields are bounded (detail at 400). Real verdicts are
+// far shorter (671 characters at most on production): only a hand made body
+// is trimmed, its stats down to `saved` and `acted` (what promiseTested and
+// actsTested read).
+function storedVerdict(verdict: { stats?: unknown } & Record<string, unknown>): string {
+  const text = JSON.stringify(verdict);
+  if (text.length <= 2000) return text;
+  const all = verdict.stats && typeof verdict.stats === "object" ? (verdict.stats as Record<string, unknown>) : {};
+  const kept: Record<string, number> = {};
+  for (const k of ["saved", "acted"]) if (typeof all[k] === "number") kept[k] = all[k];
+  return JSON.stringify({ ...verdict, stats: { ...kept, cut: 1 } });
+}
+
 const PROBLEMS = ["crash", "nothing", "wiped", "promise", "idle"] as const;
 const problemOf = (v: unknown): (typeof PROBLEMS)[number] | null => ((PROBLEMS as readonly unknown[]).includes(v) ? (v as (typeof PROBLEMS)[number]) : null);
 
@@ -1215,7 +1231,7 @@ async function handleRecheck(body: CheckRequest, env: Env, oracle: Oracle, eleme
   // Past the day's rewrite budget (4.5.1), a broken promise is not recorded
   // yet: recorded, it would count as faced and never be written again.
   if (!verdict.ok && problem === "promise" && (await overRewriteBudget(env, tier))) return servedLive();
-  await env.DB.prepare("UPDATE programs SET checked = ? WHERE id = ?").bind(JSON.stringify(verdict).slice(0, 2000), row.id).run();
+  await env.DB.prepare("UPDATE programs SET checked = ? WHERE id = ?").bind(storedVerdict(verdict), row.id).run();
   // Only a broken promise asks for a rewrite here; anything else is the old
   // test's business. An old artifact that does nothing in its five minute
   // test (3.7) is recorded and not written again: the refresh of the legacy
@@ -1291,7 +1307,7 @@ async function handleCheck(body: CheckRequest, env: Env, oracle: Oracle): Promis
   const ok = body.ok === true;
   const problem = ok ? null : (problemOf(body.problem) ?? "crash");
   const verdict = { ok, problem, detail, stats: body.stats ?? {}, at: Date.now() };
-  await env.DB.prepare("UPDATE programs SET checked = ? WHERE id = ?").bind(JSON.stringify(verdict).slice(0, 2000), row.id).run();
+  await env.DB.prepare("UPDATE programs SET checked = ? WHERE id = ?").bind(storedVerdict(verdict), row.id).run();
   if (verdict.ok) {
     await promote(env.DB, row);
     return served();
@@ -2934,6 +2950,8 @@ async function rewriteByEvidence(env: Env, now = Date.now()): Promise<Record<str
   // database is copied from production every night, so it would pay each day
   // for the same rewrite.
   if (env.STAGING === "1") return { skipped: "staging" };
+  // A day already tried costs one row read, not the picker's scan, on the 143 runs after it.
+  if ((await runsOn(env.DB, "evidence", dayInZone(now))) >= 1) return { skipped: "already tried today" };
   const found = await nextEvidence(env.DB, undefined, now);
   if (!found) return { skipped: "no evidence" };
   const element = await getElement(env.DB, found.row.key);

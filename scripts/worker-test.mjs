@@ -3521,6 +3521,32 @@ const signIn = async (key, count) => {
   const again = (await db.prepare("SELECT COUNT(*) AS n FROM rewrites WHERE key = 'dim lamp' AND cause = 'evidence'").first()).n;
   check("a program written again by evidence is never the one chosen again", again === 1, `${again} rewrites of Dim Lamp, ${spellCalls - s4} calls that day`);
 
+  // The review of #45: a verdict whose stats do not fit its 2000 characters
+  // was stored cut, not JSON, and a query with json_extract threw on it. It is
+  // stored whole now, with the numbers the readers use kept.
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('long note', 'Long Note', '📜', 'spell', 2, 'minor', 'A note that sings.', 'other', ?)",
+    )
+    .bind(Date.now())
+    .run();
+  const note = await api("/api/spell", { admin: true, body: { name: "Long Note" } });
+  const noteId = note.data?.program?.id ?? 0;
+  const bigStats = { saved: 0.5, acted: 3, ...Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`c${i}`, `c${i}`])) };
+  await api("/api/spell/check", { admin: true, body: { name: "Long Note", id: noteId, ok: true, problem: null, detail: "It sang.", stats: bigStats } });
+  const stored = (await db.prepare("SELECT checked FROM programs WHERE id = ?").bind(noteId).first())?.checked ?? "";
+  let parsed = null;
+  try {
+    parsed = JSON.parse(stored);
+  } catch {
+    // stays null: not JSON
+  }
+  check(
+    "a verdict with stats too long for 2000 characters is stored as whole JSON, saved and acted kept",
+    noteId > 0 && stored.length <= 2000 && parsed?.ok === true && parsed.stats?.saved === 0.5 && parsed.stats?.acted === 3,
+    `${stored.length} characters, ends ${stored.slice(-60)}`,
+  );
+
   // Staging rewrites nothing on its own, as it sets no wonder or challenge.
   killDev();
   await new Promise((r) => setTimeout(r, 1500));

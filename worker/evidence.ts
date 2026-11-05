@@ -17,8 +17,9 @@ import type { ProgramRow } from "./programs";
 //      2 November refresh showed that writing those again without a reason
 //      gave worse programs as often as better ones.
 //
-// Never twice from the same program: a rewrite that started from it counts,
-// and at most three attempts that failed before storing anything.
+// Never twice from the same program: for a reviewed finding, a rewrite by
+// evidence that started from it; for a failed test, a rewrite of any kind.
+// At most three attempts that failed before storing anything.
 
 export interface Evidence {
   key: string;
@@ -55,10 +56,11 @@ export interface EvidenceCandidate {
   source: "reviewed" | "test";
 }
 
-// A program the job may start from: still the live one, no rewrite started
-// from it, no trial of its element waiting for its test, and no rewrite of
-// that element in the cooldown.
+// A program the job may start from: still the live one, of an element that
+// exists, no rewrite started from it, no trial of its element waiting for its
+// test, and no rewrite of that element in the cooldown.
 const FREE = `p.status = 'live'
+  AND EXISTS (SELECT 1 FROM elements e WHERE e.key = p.key)
   AND NOT EXISTS (SELECT 1 FROM rewrites r WHERE r.from_pid = p.id AND r.status != 'failed' AND (r.cause = 'evidence' OR ?))
   AND (SELECT COUNT(*) FROM rewrites r WHERE r.from_pid = p.id AND r.cause = 'evidence') < 3
   AND NOT EXISTS (SELECT 1 FROM programs t WHERE t.key = p.key AND t.status IN ('trial', 'candidate') AND t.id > p.id)
@@ -70,11 +72,13 @@ export async function nextEvidence(db: D1Database, entries: Evidence[] = EVIDENC
     const row = await db.prepare(`SELECT p.* FROM programs p WHERE p.id = ? AND p.key = ? AND ${FREE}`).bind(e.pid, e.key, 0, cooled).first<ProgramRow>();
     if (row) return { row, reasons: e.reasons, source: "reviewed" };
   }
-  // The most cast first: the one players meet most.
+  // The most cast first: the one players meet most. A stored verdict that is
+  // not JSON (one cut at 2000 characters before the review of #45) is read
+  // as no verdict: json_extract would throw on it, for every row it scans.
   const row = await db
     .prepare(
       `SELECT p.* FROM programs p
-       WHERE json_extract(p.checked, '$.ok') = 0 AND ${FREE}
+       WHERE CASE WHEN json_valid(p.checked) THEN json_extract(p.checked, '$.ok') END = 0 AND ${FREE}
        ORDER BY (SELECT COUNT(*) FROM casts c WHERE c.pid = p.id) DESC, p.id
        LIMIT 1`,
     )

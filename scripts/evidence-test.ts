@@ -15,8 +15,13 @@ const PASS = JSON.stringify({ ok: true, problem: null, detail: "" });
 
 export async function evidenceChecks(check: Check): Promise<void> {
   const db = memoryD1();
-  const program = async (key: string, status: string, checked: string | null, origin = "new") =>
-    Number(
+  const program = async (key: string, status: string, checked: string | null, origin = "new", element = true) => {
+    if (element)
+      await db
+        .prepare("INSERT OR IGNORE INTO elements (key, name, emoji, kind, depth, created_at) VALUES (?, ?, '✨', 'spell', 2, ?)")
+        .bind(key, key, NOW)
+        .run();
+    return Number(
       (
         await db
           .prepare("INSERT INTO programs (key, spec, model, version, origin, status, parent, created_at, checked) VALUES (?, ?, 'm', 6, ?, ?, NULL, ?, ?)")
@@ -24,15 +29,31 @@ export async function evidenceChecks(check: Check): Promise<void> {
           .run()
       ).meta.last_row_id,
     );
+  };
   const casts = async (pid: number, n: number) => {
     for (let i = 0; i < n; i++) await db.prepare("INSERT INTO casts (player, pid, at) VALUES (?, ?, ?)").bind(`player-${pid}-${i}`, pid, NOW).run();
   };
   const rewrite = (key: string, from: number, cause: string, status: string, at = NOW - 10 * 86400_000) =>
     db.prepare("INSERT INTO rewrites (key, from_pid, cause, at, status) VALUES (?, ?, ?, ?, ?)").bind(key, from, cause, at, status).run();
   const pick = async (entries: Evidence[] = []) => {
-    const c = await nextEvidence(db, entries, NOW);
-    return c ? `${c.source}:${c.row.key}` : "none";
+    try {
+      const c = await nextEvidence(db, entries, NOW);
+      return c ? `${c.source}:${c.row.key}` : "none";
+    } catch (err) {
+      return `threw ${String(err)}`;
+    }
   };
+
+  // A verdict stored cut at 2000 characters before the review of #45, not
+  // JSON: json_extract throws on it, whatever the row's status.
+  const cut = JSON.stringify({ ok: false, problem: "crash", stats: Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`c${i}`, `c${i}`])) }).slice(
+    0,
+    2000,
+  );
+  await program("old lamp", "retired", cut);
+  await program("cut lamp", "live", cut);
+  // An older trial than the live program is stale: newerTrial never serves it.
+  await program("twin", "trial", null);
 
   const frost = await program("frost nova", "live", PASS);
   const light = await program("light", "live", FAIL, "legacy");
@@ -41,6 +62,9 @@ export async function evidenceChecks(check: Check): Promise<void> {
   const wisp = await program("wisp", "live", FAIL);
   await program("ember", "live", PASS);
   await program("moss", "live", null);
+  // A program whose element is gone, however much it was cast, has nothing to write from.
+  const ghost = await program("ghost", "live", FAIL, "new", false);
+  await casts(ghost, 20);
   await casts(twin, 5);
   await casts(volcano, 2);
   // The 2 November refresh tried Light already: a rewrite started from it.
@@ -70,11 +94,11 @@ export async function evidenceChecks(check: Check): Promise<void> {
 
   // A failed test run: the most cast first; a program some rewrite already
   // started from is left to a reviewed finding (Light here).
-  const t1 = await nextEvidence(db, [], NOW);
+  const t1 = await nextEvidence(db, [], NOW).catch((err: unknown) => String(err));
   check(
-    "without a finding, the most cast live program whose test failed, never one a rewrite already started from",
-    t1?.source === "test" && t1.row.key === "twin" && /changed nothing\. \(idle\)$/.test(t1.reasons[0]),
-    JSON.stringify(t1 && { key: t1.row.key, reasons: t1.reasons }),
+    "without a finding, the most cast live program whose test failed, never one a rewrite already started from, nor one with no element, and an older trial or a verdict that is not JSON in the table stops nothing",
+    typeof t1 === "object" && t1?.source === "test" && t1.row.key === "twin" && /changed nothing\. \(idle\)$/.test(t1.reasons[0]),
+    JSON.stringify(typeof t1 === "object" ? t1 && { key: t1.row.key, reasons: t1.reasons } : t1),
   );
 
   // A version that is no longer live is never chosen, however much it was cast.
@@ -111,11 +135,13 @@ export async function evidenceChecks(check: Check): Promise<void> {
     .prepare("UPDATE rewrites SET at = ? WHERE key = 'volcano'")
     .bind(NOW - REWRITE_COOLDOWN_MS - 3600_000)
     .run();
+  // A rewrite in the cooldown that failed before storing anything holds nothing back.
+  await rewrite("volcano", volcano + 2000, "votes", "failed", NOW - 3600_000);
   const cooled = await pick();
   await rewrite("volcano", volcano, "evidence", "done", NOW - REWRITE_COOLDOWN_MS - 3600_000);
   const done = await pick();
   check(
-    "after the cooldown it is written; once written, nothing that passed or was never tested is taken",
+    "after the cooldown (a failed rewrite in it does not count) it is written; once written, nothing that passed or was never tested is taken",
     cooled === "test:volcano" && done === "none",
     `${cooled} then ${done}`,
   );
