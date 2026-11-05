@@ -419,8 +419,8 @@ export interface FormRule {
   voxels: number;
 }
 export const FORM_RULES: Record<Exclude<Form, "spell">, FormRule> = {
-  // In a hand, or on a lectern: the smallest the island draws, a pedestal and the thing.
-  object: { across: 3, tall: 4, voxels: 40 },
+  // In a hand, or on a pedestal, an altar or a lectern: the thing and what bears it.
+  object: { across: 5, tall: 5, voxels: 50 },
   // A creature is its body, not a statue: what it builds stays small.
   creature: { across: 6, tall: 6, voxels: 120 },
   // A house is two by two cells and two voxels tall; a temple, a tower or a

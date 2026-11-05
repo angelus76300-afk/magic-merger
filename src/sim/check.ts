@@ -426,6 +426,8 @@ export interface Made {
   wonders: number;
   creatures: number;
   onBuilding: number;
+  // Cells raised or sunk, the land's shape itself (paint and water are effects).
+  lifted: number;
 }
 
 function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Map<string, string>, key: string, raised: number[]): Made {
@@ -461,12 +463,13 @@ function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Ma
   const blocks = new Set(raised);
   const onBuilding = mine.filter((v) => world.inside(v.x, v.y) && blocks.has(v.y * world.w + v.x)).length;
   let reshaped = 0;
-  let buildings = 0;
   let lx0 = Infinity;
   let lx1 = -Infinity;
   let ly0 = Infinity;
   let ly1 = -Infinity;
+  let lifted = 0;
   for (let i = 0; i < world.n; i++) {
+    if (Math.abs(world.height[i] - ref.height[i]) > 0.4) lifted++;
     const land = Math.abs(world.height[i] - ref.height[i]) > 0.4 || world.ground[i] !== ref.ground[i] || world.fluid[i] !== ref.fluid[i];
     if (land) {
       reshaped++;
@@ -477,7 +480,6 @@ function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Ma
       ly0 = Math.min(ly0, y);
       ly1 = Math.max(ly1, y);
     }
-    if (!before.buildings[i] && isBuilding(world.cover[i])) buildings++;
   }
   // Its own creatures alive at the end, and built-in ones it brought: more
   // new ones of a kind than the island left alone had (rabbits are born in both).
@@ -495,7 +497,9 @@ function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Ma
     tall,
     reshaped,
     landAcross: reshaped ? Math.max(lx1 - lx0, ly1 - ly0) + 1 : 0,
-    buildings: Math.round(buildings / 4),
+    // Raised with w.building: a house a village builds from an item's gold is not the item's.
+    buildings: Math.round(blocks.size / 4),
+    lifted,
     settlements: world.settlements.length - before.settlements,
     wonders: world.wonders.length - before.wonders,
     creatures,
@@ -561,12 +565,12 @@ export function judgeMade(form: Exclude<Form, "spell">, name: string, giant: boo
     }
   })();
   if (kind) return { problem: "kind", detail: `${kind} ${measured}` };
-  if (form === "object" && (m.buildings > 0 || m.settlements > 0 || m.reshaped > 12 * f))
+  if (form === "object" && (m.buildings > 0 || m.settlements > 0 || m.lifted > 12 * f))
     return {
       problem: "size",
-      detail: `${name} is an object, something a hand holds or a table bears, but it built ${m.buildings ? "a building" : m.settlements ? "a village" : `over ${m.reshaped} cells of land`}. Keep its look to a small thing on a pedestal at most, and let what it does reach further through w.artifact.${giantNote} ${measured}`,
+      detail: `${name} is an object, something a hand holds or a table bears, but it built ${m.buildings ? "a building" : m.settlements ? "a village" : `land: ${m.lifted} cells raised or sunk`}. Keep its look to a small thing on a pedestal at most, and let what it does reach further through w.artifact.${giantNote} ${measured}`,
     };
-  if (m.onBuilding >= 4)
+  if (m.onBuilding >= 6)
     return {
       problem: "size",
       detail: `${name} stacked ${m.onBuilding} voxels on the cells of the building it raised, which the island's builder draws: build what is special at b.beside, next to it, never on it. ${measured}`,
@@ -583,7 +587,7 @@ export function judgeMade(form: Exclude<Form, "spell">, name: string, giant: boo
           : "";
   if (over) {
     const scale: Record<Exclude<Form, "spell">, string> = {
-      object: "an object fits in a hand: a voxel or two on a small pedestal, never a statue of itself",
+      object: "an object fits in a hand: a voxel or two on a pedestal, an altar or a lectern, never a statue of itself",
       creature: "a creature is its body, drawn beside a villager; what it builds stays small",
       building: "a building stands beside a house (two by two cells, two voxels tall); a temple or a tower is a few houses, not a mountain",
       settlement: "a village is about thirty cells across",
