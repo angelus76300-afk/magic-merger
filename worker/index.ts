@@ -2356,7 +2356,7 @@ async function handleAdmin(request: Request, url: URL, env: Env, oracle: Oracle,
     const body = await readBody<{ limit?: unknown; again?: unknown }>(request);
     // again: proposals nobody applied or declined are asked anew (a better prompt).
     if (body.again === true) await env.DB.prepare("DELETE FROM forms WHERE status = 'proposed'").run();
-    return json(await proposeForms(env.DB, oracle, () => ensureBudget(env, oracle, "forms", ESTIMATE.trim), Number(body.limit) || 240));
+    return json(await proposeForms(env.DB, oracle, () => ensureBudget(env, oracle, "forms", ESTIMATE.trim), Number(body.limit) || 180));
   }
   if (!post && path === "forms") return json(await formList(env.DB));
   if (post && path === "forms-apply") {

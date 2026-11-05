@@ -22,7 +22,8 @@ interface ElementRow {
   description: string | null;
 }
 
-// Sorts up to `limit` elements that have no proposal yet. `hold` holds the
+// Sorts up to `limit` elements that have no proposal yet, 180 at most: three
+// calls, about a minute, so the answer comes back before the edge's 100 s. `hold` holds the
 // budget for one page before its call.
 export async function proposeForms(
   db: D1Database,
@@ -35,7 +36,7 @@ export async function proposeForms(
       .prepare(
         "SELECT e.key, e.name, e.kind, e.form, e.description FROM elements e WHERE NOT EXISTS (SELECT 1 FROM forms f WHERE f.key = e.key) ORDER BY e.depth, e.key LIMIT ?",
       )
-      .bind(Math.max(1, Math.min(600, limit)))
+      .bind(Math.max(1, Math.min(180, limit)))
       .all<ElementRow>()
   ).results;
   let stored = 0;

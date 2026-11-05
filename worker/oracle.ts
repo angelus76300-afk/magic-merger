@@ -539,7 +539,7 @@ export class ClaudeOracle implements Oracle {
   async forms(items: { name: string; kind: ElementKind; description: string }[]): Promise<FormAnswer[]> {
     if (!items.length) return [];
     const list = items.map((i) => `${i.name} (${i.kind}): ${i.description.replace(/\s+/g, " ").slice(0, 240)}`).join("\n");
-    const text = await this.ask("forms", this.models.describe, "low", FORMS_SYSTEM, [{ role: "user", content: list }], FORMS_SCHEMA, 16000, false);
+    const text = await this.ask("forms", this.models.describe, "medium", FORMS_SYSTEM, [{ role: "user", content: list }], FORMS_SCHEMA, 16000, false);
     const raw = (parseJson(text) as { items?: unknown }).items;
     return (Array.isArray(raw) ? raw : [])
       .filter((x): x is FormAnswer => !!x && typeof x === "object" && typeof (x as FormAnswer).name === "string" && isForm((x as FormAnswer).form))
