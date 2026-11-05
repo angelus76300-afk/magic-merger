@@ -1,0 +1,88 @@
+# 4.5.2: the night's checks, read by the planner's night run and turned into
+# the next day's fixes (docs/DAILY.md, "The night"). Nothing here messages the
+# owner: findings reach the owner only through the morning brief.
+#
+# 1. The newcomer's path on staging (main's code on last night's copy of the
+#    live database), at 390 by 844: scripts/smoke.mjs preview.
+# 2. A long session on a random island: scripts/nightly-play.mjs, a frame every
+#    30 s for the vision check the planner's night session does on them.
+# 3. What the live game says: errors, slow ticks, down votes, open reports and
+#    refusals of the last 24 hours, read only (scripts/live-signals.mjs).
+# 4. On Sundays and by hand, the loop's numbers (scripts/loop-metrics.mjs).
+# Frames and reports are kept 14 days as the run's artifact "night-<date>".
+name: Night
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Minutes of the long session"
+        default: "10"
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+jobs:
+  night:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Production's admin token, for read only routes; staging's own when it exists (audit 4.5.1, risk 1).
+      MM_TOKEN: ${{ secrets.MM_TOKEN }}
+      STAGING_TOKEN: ${{ secrets.STAGING_ADMIN_TOKEN || secrets.MM_TOKEN }}
+      MINUTES: ${{ inputs.minutes || '10' }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      GITHUB_TOKEN: ${{ github.token }}
+      STAGING: https://magic-merger-staging.angelus76300.workers.dev
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: install the browser
+        # In its own folder: installing it here without the lock would move the game's own
+        # dependencies (wrangler, the Anthropic SDK) to versions CI never tested.
+        run: |
+          npm install --prefix "$RUNNER_TEMP/pw" --no-save --no-package-lock playwright
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+          echo "NODE_PATH=$RUNNER_TEMP/pw/node_modules" >> "$GITHUB_ENV"
+      - name: date
+        id: date
+        run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: the newcomer's path
+        continue-on-error: true
+        run: MM_TOKEN="$STAGING_TOKEN" node scripts/smoke.mjs preview "$STAGING" --out night/newcomer 2>&1 | tee night-newcomer.log
+      - name: a long session on a random island
+        continue-on-error: true
+        run: |
+          case "$MINUTES" in ''|*[!0-9]*) MINUTES=10;; esac
+          MM_TOKEN="$STAGING_TOKEN" node scripts/nightly-play.mjs "$STAGING" --minutes "$MINUTES" --out night/long 2>&1 | tee night-long.log
+      - name: the live game
+        continue-on-error: true
+        run: node scripts/live-signals.mjs --hours 24 --out night/live.json > /dev/null
+      - name: the loop's numbers
+        continue-on-error: true
+        run: |
+          if [ "$(date -u +%u)" = "7" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then node scripts/loop-metrics.mjs --days 7 | tee night/loop.md; fi
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### Night of ${{ steps.date.outputs.day }}"
+            echo
+            echo "Newcomer's path:"; tail -n 1 night-newcomer.log 2>/dev/null || echo "did not run"
+            grep '^FAIL' night-newcomer.log 2>/dev/null | head -n 10 || true
+            echo; echo "Long session:"; grep -E '^(finding|cast|seed)' night-long.log 2>/dev/null | head -n 20 || echo "did not run"
+            echo; echo "Live game (last 24 h):"
+            node -e 'const s=require("./night/live.json");console.log(`production runs: ${s.drift?.state ?? "?"} (${s.drift?.message || "no message"}), errors ${s.errors?.count ?? s.errors?.error}, slow perf samples ${s.perf?.slow ?? "?"} of ${s.perf?.samples ?? "?"}, down votes ${Array.isArray(s.downVotes)?s.downVotes.length:"?"}, open reports ${Array.isArray(s.reports)?s.reports.length:"?"}, refusals ${Array.isArray(s.refusals)?s.refusals.length:"?"}, spend today $${s.spend?.today ?? "?"} of $${s.spend?.budget ?? "?"} a month`)' 2>/dev/null || echo "did not run"
+            if [ -f night/loop.md ]; then echo; cat night/loop.md; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: night-${{ steps.date.outputs.day }}
+          path: night
+          retention-days: 14

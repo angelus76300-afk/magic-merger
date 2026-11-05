@@ -1,0 +1,167 @@
+# 4.5.2: production is deployed only from main, only here (docs/DAILY.md, "Deploys").
+#
+# On every push to main (a merge), and when the Gate merges (it dispatches this
+# workflow, since a merge made with the workflow token starts nothing else):
+#   1. CI in full on main's commit (the CI workflow, called).
+#   2. Only main's newest commit deploys; an older one waiting here stops.
+#   3. The gate's deploy check, before anything is installed: nothing paused,
+#      and every pull request merged since the last deploy made here has the
+#      owner's recorded OK (amber) or yes (red) its class needs
+#      (scripts/gate.mjs deploy, which reads the last deploy from Cloudflare's
+#      own record, the "main <sha>" message each deploy below carries).
+#   4. The browser for the smoke test, installed before anything changes.
+#   5. The live database's migrations, then the Worker.
+#   6. The smoke test on the live site at 390 by 844, read only
+#      (scripts/smoke.mjs live), then the Worker's failed invocations since the
+#      deploy (scripts/live-signals.mjs errors).
+#   7. If anything fails or is cancelled after the deploy started:
+#      wrangler rollback to the version that was live before, the smoke test
+#      again on it, and an issue that says what failed. A migration cannot be
+#      rolled back: that is why a migration is amber or red.
+#   8. A red main (CI failed) or any failure here opens an issue too.
+# The Cloudflare token is given only to the steps that need it.
+name: Deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+concurrency:
+  group: production
+  cancel-in-progress: false
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  actions: read
+jobs:
+  check:
+    uses: ./.github/workflows/ci.yml
+  # Only main's newest commit deploys: an older one that waited behind another
+  # stops here, and the newer one checks every merge since the last deploy.
+  tip:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      newest: ${{ steps.tip.outputs.newest }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: tip
+        run: |
+          git fetch --quiet origin main
+          if [ "$(git rev-parse origin/main)" = "${{ github.sha }}" ]; then echo "newest=true" >> "$GITHUB_OUTPUT"
+          else echo "main moved on to $(git rev-parse --short origin/main); that commit deploys instead." | tee -a "$GITHUB_STEP_SUMMARY"; fi
+  deploy:
+    needs: tip
+    if: needs.tip.outputs.newest == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MM_URL: https://magic-merger.angelus76300.workers.dev
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Before npm ci: no install script runs with the token before the gate has spoken.
+      - name: gate
+        id: gate
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          version=$(node -p "require('./package-lock.json').packages['node_modules/wrangler'].version")
+          npx --yes "wrangler@$version" deployments list --json > deployments.json
+          prev=$(node -e 'const l=require("./deployments.json");console.log(l[l.length-1]?.versions?.[0]?.version_id ?? "")')
+          echo "Live before: $prev" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "version=$prev" >> "$GITHUB_OUTPUT"
+          node scripts/gate.mjs deploy "$SHA" deployments.json > gate.log 2>&1 || { cat gate.log; exit 1; }
+          cat gate.log
+      - run: npm ci
+      - name: build
+        run: npm run build
+      - name: install the browser
+        # In its own folder: installing it here without the lock would move the game's own
+        # dependencies (wrangler, the Anthropic SDK) to versions CI never tested.
+        run: |
+          npm install --prefix "$RUNNER_TEMP/pw" --no-save --no-package-lock playwright
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+          echo "NODE_PATH=$RUNNER_TEMP/pw/node_modules" >> "$GITHUB_ENV"
+      - name: migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler d1 migrations apply magic-merger --remote
+      - name: deploy
+        id: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          echo "at=$(($(date +%s) * 1000))" >> "$GITHUB_OUTPUT"
+          npx wrangler deploy --message "main ${SHA::7} (Deploy workflow run ${{ github.run_id }})"
+      - name: smoke test
+        env:
+          MM_TOKEN: ${{ secrets.MM_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DEPLOYED_AT: ${{ steps.deploy.outputs.at }}
+        run: |
+          sleep 10
+          node scripts/smoke.mjs live "$MM_URL" --out smoke-live
+          # Invocations that failed since the deploy, after a minute of cron and players.
+          sleep 60
+          node scripts/live-signals.mjs errors --since "$DEPLOYED_AT" --max 2
+      - name: rollback
+        id: rollback
+        if: (failure() || cancelled()) && steps.deploy.outcome != 'skipped' && steps.gate.outputs.version != ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          MM_TOKEN: ${{ secrets.MM_TOKEN }}
+          PREV: ${{ steps.gate.outputs.version }}
+        run: |
+          npx wrangler rollback "$PREV" --message "smoke test failed on main ${SHA::7}" --yes
+          sleep 10
+          node scripts/smoke.mjs live "$MM_URL" --out smoke-after-rollback && echo "ok=true" >> "$GITHUB_OUTPUT" || true
+      - name: open an issue
+        if: failure() || cancelled()
+        env:
+          STAGE: ${{ steps.gate.outcome == 'failure' && 'refused by the gate, not deployed' || steps.deploy.outcome == 'skipped' && 'failed before the deploy (build, browser or migrations), not deployed' || steps.deploy.outcome != 'success' && 'the deploy itself failed' || 'smoke test or errors failed after the deploy' }}
+          ROLLED: ${{ steps.rollback.outcome == 'success' && (steps.rollback.outputs.ok == 'true' && 'rolled back, and the smoke test passes on the version before' || 'rolled back, but the smoke test still fails on the version before') || 'no rollback' }}
+        run: |
+          gh label create rollback --color B60205 --description "Deploy failed, refused or rolled back" --force >/dev/null 2>&1 || true
+          {
+            echo "Deploy of main ${SHA::7}: $STAGE; $ROLLED."
+            echo
+            echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo
+            if [ -f gate.log ]; then echo '```'; tail -n 30 gate.log; echo '```'; fi
+            if [ -f smoke-live/report.json ]; then echo '```'; node -e 'const r=require("./smoke-live/report.json");for(const c of r.checks.filter(c=>!c.ok))console.log("FAIL",c.name,c.detail)'; echo '```'; fi
+            echo
+            echo "The planner reads this issue in the morning brief; the next session fixes forward. Close it once fixed."
+          } > issue.md
+          gh issue create --title "Deploy ${SHA::7}: $STAGE" --label rollback --body-file issue.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-live-${{ github.sha }}
+          path: |
+            smoke-live
+            smoke-after-rollback
+          if-no-files-found: ignore
+          retention-days: 14
+  # A red main deploys nothing and would otherwise be silent.
+  report:
+    needs: [check, tip]
+    if: always() && (needs.check.result == 'failure' || needs.tip.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ github.sha }}
+    steps:
+      - run: |
+          gh label create rollback --color B60205 --description "Deploy failed, refused or rolled back" --force --repo "${{ github.repository }}" >/dev/null 2>&1 || true
+          gh issue create --repo "${{ github.repository }}" --label rollback --title "Deploy ${SHA::7}: CI failed on main, not deployed" \
+            --body "CI failed on main at ${SHA::7}, so nothing was deployed. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. The next session fixes main first (docs/DAILY.md, the night run, rule 1)."

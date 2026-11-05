@@ -4,11 +4,23 @@
 # challenge both ways (doing nothing must not win, the right magic must win).
 # Then the Worker itself under wrangler dev with a stub Claude: invites, the
 # budget caps and the bug guard.
+#
+# 4.5.2: on pull requests only; main is checked by the Deploy workflow, which
+# calls this one before it deploys. To save Actions minutes (the free 2,000 a
+# month ran at about 400 a day in November), a draft or a docs only change
+# runs the light steps (lint, format, build, the risk checks) and skips the
+# two long ones; the Gate merges only after the full run on a ready pull
+# request. A newer push cancels the run it replaces.
 name: CI
 on:
-  push:
-    branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_call:
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+permissions:
+  contents: read
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -18,13 +30,50 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run lint
-      - run: npm run format:check
-      - run: npm run build
-      - run: npm test
-      - run: npm run test:worker
+      # Full on main and on a ready pull request that changes more than docs.
+      - name: scope
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          full=true
+          if [ "$EVENT" = "pull_request" ]; then
+            changed=$(git diff --name-only "origin/$BASE...HEAD")
+            other=$(printf '%s\n' "$changed" | grep -vE '^(docs/|\.claude/skills/)|\.md$|^public/changelog\.json$' || true)
+            if [ "$DRAFT" = "true" ] || [ -z "$other" ]; then full=false; fi
+          fi
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "Full run: $full" >> "$GITHUB_STEP_SUMMARY"
+      - name: risk class
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+        run: |
+          # main's copy classifies the pull request, so it cannot grade itself.
+          if git show "origin/$BASE:scripts/risk.mjs" > "$RUNNER_TEMP/risk.mjs" 2>/dev/null; then cp "$RUNNER_TEMP/risk.mjs" scripts/.risk-main.mjs; else cp scripts/risk.mjs scripts/.risk-main.mjs; fi
+          node scripts/.risk-main.mjs --base "origin/$BASE" --head HEAD | tee -a "$GITHUB_STEP_SUMMARY"
+          rm -f scripts/.risk-main.mjs
+      - name: lint
+        run: npm run lint
+      - name: format
+        run: npm run format:check
+      - name: build
+        run: npm run build
+      - name: risk and gate checks
+        run: npm run test:risk
+      - name: npm test
+        if: steps.scope.outputs.full == 'true'
+        run: npm test
+      - name: test:worker
+        if: steps.scope.outputs.full == 'true'
+        run: npm run test:worker

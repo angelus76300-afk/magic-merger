@@ -5,20 +5,33 @@
 # staging D1 (a nightly copy of the live one, accounts stripped) and $2 a
 # month. Production is never touched. Needs one repository secret,
 # CLOUDFLARE_API_TOKEN; without it the job does nothing.
+#
+# 4.5.2: the pull request's own code runs here with the Cloudflare token, so a
+# pull request from the Ideas tab's routine (players' words, branch
+# claude/feedback-*) gets a preview only once the owner labels it owner-ok
+# (audit 4.5.1, risk 1). Then the smoke job plays the newcomer's path on the
+# preview at 390 by 844 with main's copy of scripts/smoke.mjs, never the pull
+# request's, since it holds the admin token; the Gate waits for it.
 name: Preview
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
 permissions:
   contents: read
   deployments: write
 concurrency:
-  group: preview-${{ github.event.pull_request.number }}
+  # A label other than owner-ok must not cancel a preview being built.
+  group: preview-${{ github.event.pull_request.number }}${{ github.event.action == 'labeled' && github.event.label.name != 'owner-ok' && format('-{0}', github.event.label.name) || '' }}
   cancel-in-progress: true
 jobs:
   preview:
+    if: >-
+      (github.event.action != 'labeled' || github.event.label.name == 'owner-ok') &&
+      ((!startsWith(github.head_ref, 'claude/feedback-') && !startsWith(github.event.pull_request.title, 'Feedback:')) || contains(github.event.pull_request.labels.*.name, 'owner-ok'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      url: ${{ steps.upload.outputs.url }}
     environment:
       name: preview
       url: ${{ steps.upload.outputs.url }}
@@ -46,3 +59,38 @@ jobs:
           url="https://pr-${{ github.event.pull_request.number }}-magic-merger-staging.angelus76300.workers.dev"
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Preview: $url (the admin token, five taps on the title, lets you in)" >> "$GITHUB_STEP_SUMMARY"
+  smoke:
+    needs: preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      # Staging's own admin token when it exists (audit 4.5.1, risk 1), production's until then.
+      MM_TOKEN: ${{ secrets.STAGING_ADMIN_TOKEN || secrets.MM_TOKEN }}
+      URL: ${{ needs.preview.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: install the browser
+        # In its own folder: installing it here without the lock would move the game's own
+        # dependencies (wrangler, the Anthropic SDK) to versions CI never tested.
+        run: |
+          npm install --prefix "$RUNNER_TEMP/pw" --no-save --no-package-lock playwright
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+          echo "NODE_PATH=$RUNNER_TEMP/pw/node_modules" >> "$GITHUB_ENV"
+      - name: the newcomer's path on the preview
+        run: |
+          # The version takes a few seconds to answer at its alias.
+          for i in $(seq 1 12); do curl -sf "$URL/api/health" >/dev/null && break; sleep 5; done
+          node scripts/smoke.mjs preview "$URL" --out smoke-preview
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-preview-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: smoke-preview
+          retention-days: 14

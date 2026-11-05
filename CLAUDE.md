@@ -6,7 +6,7 @@ Every Claude Code session on this repository reads this first. All creation and 
 2. **The morning brief** of the daily planner (`docs/DAILY.md`): what happened, what to try, what to decide.
 3. **The game itself and its Ideas tab.**
 
-Everything else is yours: checking, building, testing, reviewing, merging, deploying, watching, rolling back, and finding bugs and ideas before the owner does.
+Everything else is the AI's: checking, building, testing, reviewing, and finding bugs and ideas before the owner does. Merging and deploying are done by workflows (the Gate and Deploy); the one exception, a red workflow change the owner said yes to, is merged by the planner (`docs/DAILY.md`).
 
 ## Before anything: check where we are
 
@@ -14,11 +14,11 @@ Read `main`'s latest commits, the open pull requests, the branches with commits 
 
 ## Finish the work yourself
 
-1. Work on a new branch from `main`; open a pull request early.
-2. Prove what you built: the repo's checks (`npm run lint && npm run format:check && npm run typecheck && npm run build && npm test && npm run test:worker`), a test that fails without your change, and for anything visible, frames at phone size (390 by 844) and a look at the pull request's preview.
-3. Get it reviewed by someone who is not you: for anything beyond docs or a small fix, run the `adversarial-review` skill with fresh subagents (never a fork of yourself); fix what they can show.
-4. When CI and all of the above are green: **merge it yourself** (squash), then **deploy from up to date `main`** (`npm run deploy`), open the live site at phone size and check what you changed. Never deploy production from a branch. If the live site breaks, roll back (`npx wrangler rollback`), then fix forward.
-5. Say in the pull request what you did, what you checked, and what the owner can try.
+1. Work on a new branch from `main`; open a pull request early. Run `node scripts/risk.mjs` to see its class (green, amber or red, `docs/DAILY.md` "Risk classes"); split a small red part into its own pull request so the rest stays green.
+2. Prove what you built: the repo's checks (`npm run lint && npm run format:check && npm run typecheck && npm run build && npm test && npm run test:worker && npm run test:risk`), a test that fails without your change, and for anything visible, frames at phone size (390 by 844) and a look at the pull request's preview.
+3. Mark it ready and get it reviewed by a session that is not you: start the reviewer as `docs/REVIEWER.md` says (a fresh session, never a fork of yourself). It reproduces one claim on the preview and blocks on anything it can show. Fix it, and ask for the review again.
+4. **Do not merge and do not deploy.** The Gate workflow merges a green pull request once CI, the preview smoke test and the review pass; amber waits for the owner's OK and red for the owner's yes, both asked in the morning brief. The Deploy workflow deploys `main` after each merge, checks the live site at phone size and rolls back on its own. Watch the Deploy run for your merge and fix forward if it fails. `npm run deploy` refuses to run outside GitHub Actions.
+5. Say in the pull request what you did, what you checked, its class, and what the owner can try. A bug fix says `Found by: owner` or `Found by: ai`.
 
 ## Ask the owner first, only for these
 
@@ -29,11 +29,11 @@ Keep working on everything that does not depend on the answer while you wait.
 3. **Spells in bulk**: rewriting stored programs in bulk or bumping `PROGRAM_VERSION` (it once doubled the month's Opus spend in a day).
 4. **Anything public**: a link, a post, a listing, a domain.
 
-Pull requests opened by the feedback routine from the Ideas tab carry players' words into code; they still wait for the owner, as `docs/FEEDBACK.md` says.
+They are among the red classes of `docs/DAILY.md`, checked on every diff by `scripts/risk.mjs`; the full list of what is red or amber (the pipeline, dependencies, saves, the admin surface, tests taken out) is there. Pull requests opened by the feedback routine from the Ideas tab carry players' words into code; they are amber and wait for the owner, as `docs/FEEDBACK.md` says. "Pause" from the owner, in any session: open an issue labelled `pause`; it stops every merge and deploy until it is closed.
 
 ## Habits
 
 1. **Find bugs before the owner does**: play what you changed and what it touches, at phone size, for a few minutes; check that items do what their names and descriptions promise. A bug the owner finds first is a miss.
 2. **Bring ideas as the game's designer**: add at least one idea of your own to `docs/IDEAS.md` per session, with the reasoning (what the player feels, what it adds, what it costs).
-3. **Skills in `.claude/skills`** (sources and review in `docs/SKILLS.md`): `frontend-design` for any interface or page, so it has character instead of looking generated; `zero-slop` for text players read and for docs; `adversarial-review` before merging anything beyond docs; `decision-matrix` when choosing between options or scoring ideas; `ai-claim-checker` when verifying claims, as in audits.
+3. **Skills in `.claude/skills`** (sources and review in `docs/SKILLS.md`): `frontend-design` for any interface or page, so it has character instead of looking generated; `zero-slop` for text players read and for docs; `adversarial-review` for the reviewer's fresh subagents (`docs/REVIEWER.md`); `decision-matrix` when choosing between options or scoring ideas; `ai-claim-checker` when verifying claims, as in audits.
 4. **Write plainly**: short sentences, no em dashes, no emojis in prose, numbers and evidence over adjectives.

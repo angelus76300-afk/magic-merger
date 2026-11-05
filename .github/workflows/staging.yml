@@ -26,7 +26,9 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       STAGING_ANTHROPIC_API_KEY: ${{ secrets.STAGING_ANTHROPIC_API_KEY }}
-      MM_TOKEN: ${{ secrets.MM_TOKEN }}
+      # 4.5.2: staging's own admin token once the owner sets STAGING_ADMIN_TOKEN (audit 4.5.1,
+      # risk 1: production's token on staging can become a lasting owner passkey); until then, MM_TOKEN.
+      MM_TOKEN: ${{ secrets.STAGING_ADMIN_TOKEN || secrets.MM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         if: env.CLOUDFLARE_API_TOKEN != ''
