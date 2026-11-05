@@ -76,6 +76,7 @@ export function decide(s) {
   let cls = s.cls;
   if (s.review?.raise && ORDER[s.review.raise] > ORDER[cls]) cls = s.review.raise;
   if (s.paused) reasons.push("paused by the owner (an open issue labelled pause)");
+  if (s.headFetched === false) reasons.push("the head commit could not be fetched yet: nothing is judged on an older diff");
   if (s.labels.includes(LABELS.hold)) reasons.push("labelled hold");
   if (s.draft) reasons.push("still a draft");
   if (!(s.ci === "full" || (s.ci === "docs" && s.docsOnly))) reasons.push(`CI not passed in full on the head commit (${s.ci})`);
@@ -186,8 +187,24 @@ async function allComments(n) {
 export async function prState(n) {
   const pr = await gh(`pulls/${n}`);
   const sha = pr.head.sha;
-  git("fetch", "--quiet", "origin", `+refs/pull/${n}/head:refs/remotes/pr/${n}`, `+refs/heads/${pr.base.ref}:refs/remotes/origin/${pr.base.ref}`);
-  const files = readGit(`origin/${pr.base.ref}`, `pr/${n}`);
+  // The head commit itself, by its sha: refs/pull/<n>/head can lag behind it for minutes, and the
+  // class must be the class of the commit the merge call pins (sha: pr.head.sha below).
+  git("fetch", "--quiet", "origin", `+refs/heads/${pr.base.ref}:refs/remotes/origin/${pr.base.ref}`);
+  for (const ref of [sha, `+refs/heads/${pr.head.ref}:refs/remotes/pr/${n}`, `+refs/pull/${n}/head:refs/remotes/pr/${n}`]) {
+    try {
+      git("fetch", "--quiet", "origin", ref);
+    } catch {
+      // a ref GitHub does not serve yet: try the next
+    }
+  }
+  const headFetched = (() => {
+    try {
+      return git("rev-parse", "--verify", `${sha}^{commit}`) === sha;
+    } catch {
+      return false;
+    }
+  })();
+  const files = headFetched ? readGit(`origin/${pr.base.ref}`, sha) : [];
   const { cls, hits } = classify(files, { branch: pr.head.ref, title: pr.title });
   const comments = await allComments(n);
   return {
@@ -195,6 +212,7 @@ export async function prState(n) {
     hits,
     state: {
       open: pr.state === "open" && !pr.merged,
+      headFetched,
       cls,
       labels: pr.labels.map((l) => l.name),
       records: ownerRecords(comments),
@@ -208,11 +226,11 @@ export async function prState(n) {
         let ancestor = false;
         let moved = null;
         try {
-          git("merge-base", "--is-ancestor", `origin/${pr.base.ref}`, `pr/${n}`);
+          git("merge-base", "--is-ancestor", `origin/${pr.base.ref}`, sha);
           ancestor = true;
         } catch {
           try {
-            moved = git("diff", "--name-only", `pr/${n}...origin/${pr.base.ref}`).split("\n").filter(Boolean);
+            moved = git("diff", "--name-only", `${sha}...origin/${pr.base.ref}`).split("\n").filter(Boolean);
           } catch {
             moved = null;
           }
@@ -220,7 +238,7 @@ export async function prState(n) {
         return upToDateFrom(ancestor, moved);
       })(),
       workflows: files.some((f) => f.path.startsWith(".github/workflows/")),
-      docsOnly: files.every((f) => DOCS_ONLY(f.path)),
+      docsOnly: headFetched && files.every((f) => DOCS_ONLY(f.path)),
     },
   };
 }
