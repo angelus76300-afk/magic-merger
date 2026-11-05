@@ -96,6 +96,15 @@ check(
 );
 check("R9 FIRST_PROGRAM_VERSION", rules([file("shared/spellcode.ts", ["export const FIRST_PROGRAM_VERSION = 3;"])]) === "R9");
 check("R9 the refresh started from elsewhere", rules([file("worker/cron.ts", ["await startRefresh(env, oracle, { limit: 5000 });"])]) === "R9");
+check("R9 programs rewritten by a range", rules([file("worker/x.ts", ["UPDATE programs SET code = ?, version = ? WHERE version < ?"])]) === "R9");
+check("R9 a WHERE that is always true", rules([file("worker/x.ts", ["DELETE FROM spells WHERE 1 = 1"])]) === "R9");
+check("R9 the rewrites' history deleted", rules([file("worker/x.ts", ["DELETE FROM rewrites"])]) === "R9");
+check("R9 one program by id is not bulk", rules([file("worker/x.ts", ["UPDATE programs SET code = ? WHERE id = ?"])]) === "");
+check("R14 a share of the month", rules([file("worker/ahead.ts", ["const AHEAD_MONTH_SHARE = 1;"], ["const AHEAD_MONTH_SHARE = 0.8;"])]) === "R14");
+check("R14 a count per day", rules([file("worker/wonders.ts", ["const SORT_PER_DAY = 2500;"], ["const SORT_PER_DAY = 25;"])]) === "R14");
+check("R14 a count per run", rules([file("worker/x.ts", ["const INTENTS_PER_RUN = 2500;"])]) === "R14");
+check("R14 the repairs' limit", rules([file("worker/x.ts", ["const MAX_REPAIRS = 30;"])]) === "R14");
+check("a game constant in shared is not money", rules([file("shared/elements.ts", ["export const MAX_TIER = 6;"])]) === "");
 check("R11 .gitattributes", rules([file(".gitattributes", ["worker/** -diff"])]) === "R11");
 
 // Amber, one per rule.
@@ -163,6 +172,12 @@ const tricky = parseDiff(
   ].join("\n"),
 );
 check("a path with a space and b/ in it", tricky[0].path === "worker/a b/c.ts", tricky[0].path);
+const spaced = parseDiff(["diff --git a/worker/x y.ts b/worker/x y.ts", "--- a/worker/x y.ts\t", "+++ b/worker/x y.ts\t", "@@ -1 +1 @@", "+x"].join("\n"));
+check("the tab git adds after a spaced path is dropped", spaced[0].path === "worker/x y.ts", JSON.stringify(spaced[0].path));
+const quoted = parseDiff(
+  ['diff --git "a/worker/a\\"b.ts" "b/worker/a\\"b.ts"', '--- "a/worker/a\\"b.ts"', '+++ "b/worker/a\\"b.ts"', "@@ -1 +1 @@", "+x"].join("\n"),
+);
+check("a quoted path is unquoted", quoted[0].path === 'worker/a"b.ts', JSON.stringify(quoted[0].path));
 check("an added line that starts with ++ is kept", tricky[0].added.length === 1 && tricky[0].added[0].startsWith("++count"));
 check("a removed line that starts with -- is kept", tricky[0].removed.length === 1);
 check("the hunk's function is kept", tricky[0].contexts[0]?.startsWith("async function authenticate"));

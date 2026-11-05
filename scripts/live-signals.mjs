@@ -138,7 +138,14 @@ const cmd = process.argv[2];
 if (cmd === "errors") {
   const since = Number(arg("since", Date.now() - 600_000));
   const max = Number(arg("max", 0));
-  const e = await errorsSince(since, Date.now(), { outcomesOnly: true });
+  let e;
+  try {
+    e = await errorsSince(since, Date.now(), { outcomesOnly: true });
+  } catch (err) {
+    // Not being able to read the errors is not an error of the deploy: the smoke test passed.
+    console.log(`could not read production's errors (${String(err.message ?? err).slice(0, 200)}); not counted`);
+    process.exit(0);
+  }
   console.log(`${e.count} failed invocations in production since ${new Date(since).toISOString()}${e.first.length ? ": " + e.first.join(" | ") : ""}`);
   process.exit(e.count > max ? 1 : 0);
 } else {

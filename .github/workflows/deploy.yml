@@ -85,9 +85,12 @@ jobs:
       - name: build
         run: npm run build
       - name: install the browser
+        # In its own folder: installing it here without the lock would move the game's own
+        # dependencies (wrangler, the Anthropic SDK) to versions CI never tested.
         run: |
-          npm install --no-save --no-package-lock playwright
-          npx playwright install --with-deps chromium
+          npm install --prefix "$RUNNER_TEMP/pw" --no-save --no-package-lock playwright
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+          echo "NODE_PATH=$RUNNER_TEMP/pw/node_modules" >> "$GITHUB_ENV"
       - name: migrations
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

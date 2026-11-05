@@ -59,14 +59,23 @@ const WRITE_PLAYERS = new RegExp(
   `\\b(?:UPDATE|DELETE\\s+FROM|REPLACE\\s+INTO|INSERT\\s+OR\\s+REPLACE\\s+INTO)\\s+(${PLAYER_TABLES.join("|")})\\b|\\b(?:UPDATE|DELETE\\s+FROM)\\s+\\$\\{`,
   "gi",
 );
-// An UPDATE or DELETE on the spells or their programs with no WHERE of its own (sub-queries
-// and strings set aside) on its line: every spell at once.
+// The worker's own limits, in worker/ only (shared/ holds the game's MAX_ constants): a share,
+// a cap or a count per day, run or month bounds what a night can spend.
+const WORKER_LIMIT = /\b[A-Z][A-Z0-9_]*(?:_SHARE|_CAP|_LIMIT|PER_DAY|PER_RUN|PER_MONTH|PER_NIGHT)\b|\bMAX_(?:REPAIRS|RETRIES|TRIES|CALLS|BATCH\w*)\b/;
+// Spells in bulk: an UPDATE or DELETE on the spells or their programs with no WHERE of its own
+// (sub-queries and strings set aside) or a WHERE that is always true; a program's code or version
+// rewritten by a range rather than by id; the rollback history of rewrites deleted.
 const isBulkSpells = (line) => {
+  if (/\bDELETE\s+FROM\s+(?:rewrites|refresh_verdicts)\b/i.test(line)) return true;
   const m = /\b(?:UPDATE|DELETE\s+FROM)\s+(?:spells|programs)\b(.*)$/i.exec(line);
   if (!m) return false;
   let rest = m[1].replace(/'[^']*'|"[^"]*"/g, "''");
   for (let i = 0; i < 5; i++) rest = rest.replace(/\([^()]*\)/g, "");
-  return !/\bWHERE\b/i.test(rest);
+  const where = /\bWHERE\b(.*)$/i.exec(rest);
+  if (!where) return true;
+  if (/^\s*(?:1\s*=\s*1|1|TRUE)\b/i.test(where[1])) return true;
+  if (/^\s*DELETE/i.test(line.slice(m.index))) return !/\b(?:id|pid|key)\s*=\s*\?/i.test(where[1]);
+  return /\bSET\b[^]*\b(?:code|version)\s*=/i.test(rest) && !/\b(?:id|pid)\s*=\s*\?/i.test(where[1]);
 };
 
 const any = (paths) => (f) => paths.some((p) => (p.endsWith("/") ? f.path.startsWith(p) : f.path === p));
@@ -109,8 +118,9 @@ export const RULES = [
   {
     id: "R14",
     cls: "red",
-    what: "the money knobs in code: budgets, holds, caps, prices and the choice of model (a touched line that names one, or a change inside oracleFor, makeOracle, budget, ensureBudget, writeWith, smallModel, refreshBudget, rewriteBudget, spellModelFor, wonderBudget)",
-    file: (f) => /^(worker|shared)\//.test(f.path) && (touched(f, MONEY_FN) || inFunction(f, MONEY_FN)),
+    what: "the money knobs in code: budgets, holds, caps, prices and the choice of model (a touched line that names one, or a change inside oracleFor, makeOracle, budget, ensureBudget, writeWith, smallModel, refreshBudget, rewriteBudget, spellModelFor, wonderBudget), and in worker/ a limit per day, run or month, a share or a cap",
+    file: (f) =>
+      /^(worker|shared)\//.test(f.path) && (touched(f, MONEY_FN) || inFunction(f, MONEY_FN) || (f.path.startsWith("worker/") && touched(f, WORKER_LIMIT))),
   },
   // Red: players' data.
   {
@@ -216,12 +226,13 @@ export const RULES = [
   {
     id: "A6",
     cls: "amber",
-    what: "checks taken out of the tests (more check( calls removed than added, an exit added, the check helper changed)",
+    what: "checks taken out of the tests (more check( calls removed than added, a process.exit line added or changed, the check helper or a failure count changed)",
     file: (f) =>
       /^scripts\/.*test.*\.(ts|mjs)$/.test(f.path) &&
       (count(f.removed, /\bcheck\(/g) > count(f.added, /\bcheck\(/g) ||
-        added(f, /process\.exit\(/).length > count(f.removed, /process\.exit\(/g) ||
-        touched(f, /\b(?:const|let|function)\s+check\b/)),
+        touched(f, /process\.exit\(/) ||
+        touched(f, /\b(?:const|let|function)\s+check\b|\bfail(?:ed|ures)\s*(?:\+\+|\+=|=)/) ||
+        inFunction(f, /\b(?:const|let|function)\s+check\b/)),
   },
   {
     id: "A7",
@@ -257,6 +268,20 @@ export function classify(files, pr = {}) {
 // --- reading a git diff ---
 
 /** Parses `git diff -U0 --no-color --no-renames` output into changed files with their lines. */
+// A path in a ---/+++ header: git adds a tab after a path with a space, and quotes one with
+// unusual characters (core.quotePath=false keeps UTF-8 as is).
+function headerPath(raw, prefix) {
+  let p = raw.replace(/\t$/, "");
+  if (p.startsWith('"') && p.endsWith('"')) {
+    try {
+      p = JSON.parse(p);
+    } catch {
+      p = p.slice(1, -1);
+    }
+  }
+  return p.startsWith(prefix) ? p.slice(prefix.length) : p;
+}
+
 export function parseDiff(text) {
   const files = [];
   let f = null;
@@ -272,9 +297,9 @@ export function parseDiff(text) {
     else if (!inHunk && line.startsWith("new file mode")) f.status = "A";
     else if (!inHunk && line.startsWith("deleted file mode")) f.status = "D";
     else if (!inHunk && line.startsWith("+++ ")) {
-      if (line !== "+++ /dev/null") f.path = line.slice(4).replace(/^b\//, "");
+      if (line !== "+++ /dev/null") f.path = headerPath(line.slice(4), "b/");
     } else if (!inHunk && line.startsWith("--- ")) {
-      if (line !== "--- /dev/null") f.path = line.slice(4).replace(/^a\//, "");
+      if (line !== "--- /dev/null") f.path = headerPath(line.slice(4), "a/");
     } else if (line.startsWith("@@")) {
       inHunk = true;
       const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@ ?(.*)$/.exec(line);
