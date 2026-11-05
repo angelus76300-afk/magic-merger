@@ -321,7 +321,7 @@ The ledger holds $6.64 (plus about $3.32 before it existed): about $10 of the fi
 
 Sizes are per Claude Code session: S a few hours, M a full session, L two or more. The roadmap page has a ready prompt per version.
 
-**Numbered in the order to run them.** Renumbered on 3 November so the numbers are the order; `docs/REVIEW-4.0.md` and older pull requests use the old numbers (the review's findings were 4.0.2, faster creation 4.0.1, worlds 4.1, sound 4.2, strangers 4.5). Done since: 4.1, 4.2, 4.3, 4.4, 4.4.1, 4.4.5 (parts A, B and C) and 4.4.6, summed up above; their plans are in the git history of this file. Revised on 5 November with the owner's new ideas: 4.5 creatures worth creating, 4.6 things that behave as they should, 4.7 daily challenges, the Community tab and what's new, 4.8 sound and music (was 4.5), 4.9 builders, roads and vehicles, 5.0 look closer and 5.1 take control (the first person update), 5.2 ready for strangers (was 4.6). The daily updates run between them: the planner gives the next version when none is being built, and a small daily fix in other files while one is.
+**Numbered in the order to run them.** Renumbered on 3 November so the numbers are the order; `docs/REVIEW-4.0.md` and older pull requests use the old numbers (the review's findings were 4.0.2, faster creation 4.0.1, worlds 4.1, sound 4.2, strangers 4.5). Done since: 4.1, 4.2, 4.3, 4.4, 4.4.1, 4.4.5 (parts A, B and C) and 4.4.6, summed up above; their plans are in the git history of this file. Revised on 5 November with the owner's new ideas: 4.5 creatures worth creating, 4.6 things that behave as they should, 4.7 daily challenges, the Community tab and what's new, 4.7.5 a game that runs itself and a morning brief that makes you want to build, 4.8 sound and music (was 4.5), 4.9 builders, roads and vehicles, 5.0 look closer and 5.1 take control (the first person update), 5.2 ready for strangers (was 4.6). The daily updates run between them: the planner gives the next version when none is being built, and a small daily fix in other files while one is.
 
 ### 4.4.5 Every island a surprise (done, see above)
 
@@ -408,6 +408,25 @@ The owner's social ideas, together because they share one screen: who plays, wha
 3. **What's new in the game**: `public/changelog.json`, one line per merged update, a dot and a list since the player's last visit; a player whose idea was built is told so.
 4. **The Ideas tab follows daily builds**: a pull request that says `Idea #<n>` moves that idea to "Waiting for review" and then "Done".
 5. **A preview for each pull request**, so the owner tries it on a phone before merging: a staging Worker with its own D1 (a copy refreshed nightly, accounts, sessions, invites and emails stripped) and a $2 budget, deployed by CI from a token kept in GitHub's secrets.
+
+### 4.7.5 A game that runs itself, and a morning that makes you want to build
+
+The owner, 5 November: a much more advanced daily routine, one that updates the game on its own for everything it needs (the daily challenge, the new wonder, badly rated spells, and the rest), and one that encourages the owner to make more updates. Today the Worker's cron already runs some of this on its own (the daily wonder of 4.4.5 part C, the API's growth of 3.4.2, the judge, votes that rewrite a spell in 3.3), each with its own cap, but nothing ties them together, says what happened, or asks players the right question.
+
+**Part A. The game's own day, on the server, inside caps**
+
+1. **One daily job list**, run by the cron in a fixed order with a total daily cap (for example $1.50 a day, apart from the 4.2 cap for new items) and a log line each: set the day's challenge (4.7), write the day's wonder (4.4.5), rewrite the spells players voted down, retire wonders and challenges that failed their checks, refresh the "new this week" list, and keep a seasonal or moon calendar (a full moon night, a solstice, a festival a village holds) that islands read.
+2. **Better votes on spells**: more reasons than today's five (`shared/votes.ts`: nothing happened, too small, looked wrong, broke the island, boring): "it does not do what its name says", "too strong", "too weak", "it lags", "the creature or object looks wrong", "I love it" with what was best. Each reason goes into the rewrite prompt, and "does not do what its name says" weighs most, since it is what the owner sees most.
+3. **Rewrites by evidence, not only by votes**: a spell the promise probe fails, the judge scores low twice, or the audit of 4.6 flags is queued for a rewrite too, one at a time, within the daily cap, the old version kept for rollback as in 3.3.
+4. **The library audits itself**: every night a few of the most cast items are cast in Node and compared with their name, description and intents (the audit lens of DAILY.md, automated); mismatches become rewrite candidates for the next night or lines in `docs/IDEAS.md` through a pull request the owner reviews.
+5. **A report the owner can read in one minute**: what the game did overnight, what it cost, what players did (new discoveries, casts, votes, challenges found, wonders seen), what failed and what is waiting for a decision, at `/api/admin/day` and on the admin badge.
+
+**Part B. The owner's morning brief, so the game moves every day**
+
+6. **The planner's message reads the night's report** first: "while you slept: 3 spells rewritten, today's challenge is the Dodo Lantern, 12 merges by 4 friends, one wonder rejected". Players' activity is the best reason to build.
+7. **Three choices, not one**: a quick fix of under an hour (an Interactions item), a daily idea of a session, and the next version, each with its prompt ready to paste, so there is always something the size of the time the owner has.
+8. **Momentum, not pressure**: a streak of days with something merged, what the last week shipped in one line each, and what players asked for that is still open; on a day with nothing waiting, the brief says so and gives the next version.
+9. **Checked**: a dry run of the job list on a copy of the database for seven simulated days (costs, what it changed, nothing left half done); the brief written from that week and shown to the owner before the schedule changes.
 
 ### 4.8 Sound and music
 
