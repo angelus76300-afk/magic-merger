@@ -12,14 +12,21 @@ import type { ProgramRow } from "./programs";
 //      break its name or description. Each one names the program it was seen
 //      on, so it is spent once that program is no longer the live one.
 //   2. The program's own stored test run failed (`checked.ok` false), and no
-//      rewrite of any kind has started from it yet. A program the refresh or
-//      a failed trial already tried to replace needs a reviewed finding: the
-//      2 November refresh showed that writing those again without a reason
-//      gave worse programs as often as better ones.
+//      rewrite has started from it yet, or only a refresh one that missed
+//      (the owner's idea, 5 November: a second attempt, told why the first
+//      was rejected). A refresh rewrite misses when its candidate failed its
+//      own test, or was superseded unjudged; the rewrite by evidence is then
+//      told what that candidate's test found. A refresh candidate that passed
+//      its test and lost on the judge still keeps the program out: the judge
+//      is the doubt there, not the writer (docs/IDEAS.md, "When the test and
+//      the judge disagree"). Any other rewrite from it (votes, the judge, a
+//      broken promise, evidence) was already told why, and its failed trial
+//      written once more by the "rewrite once" rule: it needs a reviewed
+//      finding.
 //
 // Never twice from the same program: for a reviewed finding, a rewrite by
-// evidence that started from it; for a failed test, a rewrite of any kind.
-// At most three attempts that failed before storing anything.
+// evidence that started from it; for a failed test, any rewrite but a refresh
+// that missed. At most three attempts that failed before storing anything.
 
 export interface Evidence {
   key: string;
@@ -59,9 +66,13 @@ export interface EvidenceCandidate {
 // A program the job may start from: still the live one, of an element that
 // exists, no rewrite started from it, no trial of its element waiting for its
 // test, and no rewrite of that element in the cooldown.
+// A refresh rewrite that missed: its candidate failed its own test, or was superseded unjudged.
+const MISSED = `r.cause = 'refresh' AND (r.status = 'superseded'
+  OR EXISTS (SELECT 1 FROM programs x WHERE x.id = r.to_pid AND CASE WHEN json_valid(x.checked) THEN json_extract(x.checked, '$.ok') END = 0))`;
+
 const FREE = `p.status = 'live'
   AND EXISTS (SELECT 1 FROM elements e WHERE e.key = p.key)
-  AND NOT EXISTS (SELECT 1 FROM rewrites r WHERE r.from_pid = p.id AND r.status != 'failed' AND (r.cause = 'evidence' OR ?))
+  AND NOT EXISTS (SELECT 1 FROM rewrites r WHERE r.from_pid = p.id AND r.status != 'failed' AND (r.cause = 'evidence' OR (? AND NOT (${MISSED}))))
   AND (SELECT COUNT(*) FROM rewrites r WHERE r.from_pid = p.id AND r.cause = 'evidence') < 3
   AND NOT EXISTS (SELECT 1 FROM programs t WHERE t.key = p.key AND t.status IN ('trial', 'candidate') AND t.id > p.id)
   AND NOT EXISTS (SELECT 1 FROM rewrites c WHERE c.key = p.key AND c.at > ? AND c.cause IN ('votes', 'judge', 'evidence') AND c.status != 'failed')`;
@@ -85,7 +96,21 @@ export async function nextEvidence(db: D1Database, entries: Evidence[] = EVIDENC
     .bind(1, cooled)
     .first<ProgramRow>();
   if (!row) return null;
-  return { row, reasons: [`its own test run found: ${detailOf(row.checked)}`], source: "test" };
+  const reasons = [`its own test run found: ${detailOf(row.checked)}`];
+  // The refresh's candidate that failed its test, if there was one: what not to do again.
+  const missed = await db
+    .prepare(
+      `SELECT x.id, x.checked FROM rewrites r JOIN programs x ON x.id = r.to_pid
+       WHERE r.from_pid = ? AND r.cause = 'refresh' AND CASE WHEN json_valid(x.checked) THEN json_extract(x.checked, '$.ok') END = 0
+       ORDER BY r.at DESC LIMIT 1`,
+    )
+    .bind(row.id)
+    .first<{ id: number; checked: string | null }>();
+  if (missed)
+    reasons.push(
+      `an earlier rewrite of it (program ${missed.id}) was rejected, because its own test run found: ${detailOf(missed.checked)}; do not repeat that mistake`,
+    );
+  return { row, reasons, source: "test" };
 }
 
 function detailOf(checked: string | null): string {

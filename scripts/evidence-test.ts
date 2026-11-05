@@ -145,4 +145,77 @@ export async function evidenceChecks(check: Check): Promise<void> {
     cooled === "test:volcano" && done === "none",
     `${cooled} then ${done}`,
   );
+
+  await informedRetry(check);
+}
+
+// The owner's idea (5 November): a program the 2 November refresh tried
+// without a reason gets one more attempt when that attempt missed (its
+// candidate failed its own test, or was superseded unjudged), told what the
+// candidate's test found. One that lost only on the judge stays out.
+async function informedRetry(check: Check): Promise<void> {
+  const db = memoryD1();
+  const live = async (key: string, checked: string | null, casts = 0) => {
+    await db.prepare("INSERT INTO elements (key, name, emoji, kind, depth, created_at) VALUES (?, ?, '✨', 'spell', 2, ?)").bind(key, key, NOW).run();
+    const pid = Number(
+      (
+        await db
+          .prepare(
+            "INSERT INTO programs (key, spec, model, version, origin, status, created_at, checked) VALUES (?, '{\"code\":\"\"}', 'm', 4, 'legacy', 'live', ?, ?)",
+          )
+          .bind(key, NOW - 9 * 86400_000, checked)
+          .run()
+      ).meta.last_row_id,
+    );
+    for (let i = 0; i < casts; i++) await db.prepare("INSERT INTO casts (player, pid, at) VALUES (?, ?, ?)").bind(`p-${key}-${i}`, pid, NOW).run();
+    return pid;
+  };
+  // A refresh candidate of `from`, rejected, with its own test verdict; its rewrites row says how it ended.
+  const refresh = async (key: string, from: number, checked: string | null, status = "done") => {
+    const to = Number(
+      (
+        await db
+          .prepare(
+            "INSERT INTO programs (key, spec, model, version, origin, status, parent, created_at, checked) VALUES (?, '{\"code\":\"\"}', 'm', 6, 'refresh', 'rejected', ?, ?, ?)",
+          )
+          .bind(key, from, NOW - 3 * 86400_000, checked)
+          .run()
+      ).meta.last_row_id,
+    );
+    await db
+      .prepare("INSERT INTO rewrites (key, from_pid, to_pid, cause, at, status) VALUES (?, ?, ?, 'refresh', ?, ?)")
+      .bind(key, from, to, NOW - 3 * 86400_000, status)
+      .run();
+    return to;
+  };
+  const crashed = JSON.stringify({ ok: false, problem: "crash", detail: "It crashed: TypeError: Cannot set property data of #<CreatureHandle>" });
+  const pick = async () => {
+    const c = await nextEvidence(db, [], NOW);
+    return c ? { key: c.row.key, reasons: c.reasons } : null;
+  };
+
+  // Wormhole: its refresh candidate crashed (and an older one was superseded) — one informed retry.
+  // Cavern: its candidate passed its test and lost on the judge — out, and cast more.
+  const wormhole = await live("wormhole", FAIL, 3);
+  await refresh("wormhole", wormhole, null, "superseded");
+  const missed = await refresh("wormhole", wormhole, crashed);
+  const cavern = await live("cavern", FAIL, 9);
+  await refresh("cavern", cavern, PASS);
+  const first = await pick();
+  check(
+    "a program whose refresh rewrite failed its own test gets one more, told what that test found; one that lost only on the judge does not",
+    first?.key === "wormhole" &&
+      first.reasons.length === 2 &&
+      first.reasons[1].includes(`program ${missed}`) &&
+      first.reasons[1].includes("Cannot set property data of #<CreatureHandle>"),
+    JSON.stringify(first),
+  );
+
+  // Never more: once a rewrite by evidence started from it, it is spent, and nothing else is taken.
+  await db
+    .prepare("INSERT INTO rewrites (key, from_pid, cause, at, status) VALUES ('wormhole', ?, 'evidence', ?, 'done')")
+    .bind(wormhole, NOW - 4 * 86400_000)
+    .run();
+  const after = await pick();
+  check("the informed retry is the last: once written by evidence, the program is not taken again", after === null, JSON.stringify(after));
 }
