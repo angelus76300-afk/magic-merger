@@ -469,6 +469,8 @@ The owner, 5 November: the owner wants to touch three things only: questions fro
 
 ### 4.6 Every item is what it is: creatures, objects, buildings, places and land
 
+Part A built in PR #50 (`docs/DESIGN.md`, "Every item is what it is"): seven kinds at the merge, the engine's makers, sizes checked, a prompt section per kind, the library's sort and rewrites by form after the owner's approval. Part B (creatures as living things) is next, in its own session once A is merged.
+
 The owner, 5 November: creatures made by merges are poor ("just take the serpent or the human"), artifacts, creatures and buildings should be handled differently, "a lot of the things we create do not make sense... a giant book", and some items should shape the land ("a floating island"; "the village spell should actually create a village as the generation does"). Read in the live programs: **Serpent** is an artifact of twelve stone spheres in a line that never moves; **Human** is a villager with glowing eyes; **Village** is "a brass Village Lantern Charm" ringed by a few wooden boxes, not a village. The cause is structural: an item is either a spell or an artifact (`elements.kind`), and every artifact is written the same way, as a voxel thing of a few cells' reach, whether it is a book, a dragon, a temple or a town. Meanwhile the engine already knows how to make each of these properly: bodies, goals and steering for creatures (3.5, 3.6, 4.3), seeded buildings and villages (4.4.5 part B), land, lakes, rivers and floating rocks (4.4, 4.4.5), wonders (4.4.5).
 
 **Part A. The kinds, each with the engine's own way of making it** (a new migration; existing rows keep working)
