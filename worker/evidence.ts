@@ -117,7 +117,7 @@ function detailOf(checked: string | null): string {
   try {
     const v = JSON.parse(checked ?? "{}") as { detail?: unknown; problem?: unknown };
     const detail = typeof v.detail === "string" && v.detail.trim() ? v.detail.trim().slice(0, 400) : "it failed";
-    return typeof v.problem === "string" ? `${detail} (${v.problem})` : detail;
+    return typeof v.problem === "string" ? `${detail} (${v.problem.slice(0, 40)})` : detail;
   } catch {
     return "it failed";
   }

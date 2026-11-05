@@ -97,7 +97,7 @@ export async function evidenceChecks(check: Check): Promise<void> {
   const t1 = await nextEvidence(db, [], NOW).catch((err: unknown) => String(err));
   check(
     "without a finding, the most cast live program whose test failed, never one a rewrite already started from, nor one with no element, and an older trial or a verdict that is not JSON in the table stops nothing",
-    typeof t1 === "object" && t1?.source === "test" && t1.row.key === "twin" && /changed nothing\. \(idle\)$/.test(t1.reasons[0]),
+    typeof t1 === "object" && t1?.source === "test" && t1.row.key === "twin" && t1.reasons.length === 1 && /changed nothing\. \(idle\)$/.test(t1.reasons[0]),
     JSON.stringify(typeof t1 === "object" ? t1 && { key: t1.row.key, reasons: t1.reasons } : t1),
   );
 
@@ -201,9 +201,25 @@ async function informedRetry(check: Check): Promise<void> {
   const missed = await refresh("wormhole", wormhole, crashed);
   const cavern = await live("cavern", FAIL, 9);
   await refresh("cavern", cavern, PASS);
+  // Shrine: a broken promise was already written again with its finding, and that trial failed: out.
+  const shrine = await live("shrine", FAIL, 20);
+  const shrineTrial = Number(
+    (
+      await db
+        .prepare(
+          "INSERT INTO programs (key, spec, model, version, origin, status, parent, created_at, checked) VALUES ('shrine', '{\"code\":\"\"}', 'm', 6, 'promise', 'rejected', ?, ?, ?)",
+        )
+        .bind(shrine, NOW - 3 * 86400_000, crashed)
+        .run()
+    ).meta.last_row_id,
+  );
+  await db
+    .prepare("INSERT INTO rewrites (key, from_pid, to_pid, cause, at, status) VALUES ('shrine', ?, ?, 'promise', ?, 'done')")
+    .bind(shrine, shrineTrial, NOW - 3 * 86400_000)
+    .run();
   const first = await pick();
   check(
-    "a program whose refresh rewrite failed its own test gets one more, told what that test found; one that lost only on the judge does not",
+    "a program whose refresh rewrite failed its own test gets one more, told what that test found; one that lost only on the judge, or whose informed rewrite already failed, does not",
     first?.key === "wormhole" &&
       first.reasons.length === 2 &&
       first.reasons[1].includes(`program ${missed}`) &&
