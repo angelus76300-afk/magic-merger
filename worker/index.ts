@@ -78,6 +78,7 @@ import { joinsBoth, looksLikeRefusal } from "./prompts";
 import { noDescription } from "../shared/refusal";
 import { readDigest } from "../shared/chronicle";
 import { cronJobs, takeRun } from "./cron";
+import { nextEvidence } from "./evidence";
 import { community, setProfile } from "./community";
 import { dayIn as dayInZone } from "../shared/daily";
 import { RUNS_A_DAY, claim as claimDaily, due as dailyChallengeDue, freePairs, listDaily, openByPair, openByResult, type DailyRow } from "./daily";
@@ -191,6 +192,8 @@ export interface Env {
   WONDERS?: string;
   // 4.5: "0" stops the night's daily challenge (the admin can still set one).
   DAILY_CHALLENGES?: string;
+  // Daily 2026-11-05: "0" stops the daily rewrite by evidence (worker/evidence.ts).
+  EVIDENCE_REWRITES?: string;
   // 4.5: "1" on the staging Worker the previews run on (wrangler.jsonc, env.staging).
   STAGING?: string;
 }
@@ -407,6 +410,7 @@ export default {
         "intents backfill": () => backfillIntents(env),
         wonders: () => wonderDaily(env, env.WONDERS !== "0" ? "due" : "collect"),
         "daily challenge": env.DAILY_CHALLENGES === "0" ? null : () => setDailyChallenge(env, false),
+        "rewrite by evidence": env.EVIDENCE_REWRITES === "0" ? null : () => rewriteByEvidence(env),
       }),
     );
   },
@@ -1861,7 +1865,7 @@ async function overRewriteBudget(env: Env, tier: Tier): Promise<boolean> {
 // spell every three days, within the daily rewrite budget. Small spells are
 // written at once; big ones go to the Batch API, and the live version stays
 // until the new one is back and through its test run.
-async function requestRewrite(env: Env, row: ProgramRow, cause: "votes" | "judge", reasons: string[], payer: Payer): Promise<string> {
+async function requestRewrite(env: Env, row: ProgramRow, cause: RewriteCause, reasons: string[], payer: Payer): Promise<string> {
   const db = env.DB;
   const oracle = oracleFor(env, {}, new Ledger(payer));
   try {
@@ -1871,7 +1875,9 @@ async function requestRewrite(env: Env, row: ProgramRow, cause: "votes" | "judge
   }
 }
 
-async function rewriteWith(env: Env, oracle: Oracle, row: ProgramRow, cause: "votes" | "judge", reasons: string[]): Promise<string> {
+type RewriteCause = "votes" | "judge" | "evidence";
+
+async function rewriteWith(env: Env, oracle: Oracle, row: ProgramRow, cause: RewriteCause, reasons: string[]): Promise<string> {
   const db = env.DB;
   if (await recentRewrite(db, row.key)) return "cooldown";
   const element = await getElement(db, row.key);
@@ -1892,7 +1898,9 @@ async function rewriteWith(env: Env, oracle: Oracle, row: ProgramRow, cause: "vo
     if (err instanceof LedgerError) return err.code === "budget" ? "over the monthly budget" : `the voter's invite: ${err.code}`;
     throw err;
   }
-  const rewrite: Rewrite = { reasons, summary: programOf(row)?.summary };
+  // Evidence names what part broke (daily 2026-11-05): the program is shown, to fix,
+  // as after a failed test run. Votes and the judge ask for a new design.
+  const rewrite: Rewrite = { reasons, summary: programOf(row)?.summary, ...(cause === "evidence" ? { code: programOf(row)?.code } : {}) };
   const intents = await ensureIntents(env, oracle, element, description);
   const library = await liveLibrary(db);
   const request: OracleSpellRequest = {
@@ -1980,6 +1988,9 @@ function batchItemId(cause: string, id: number): string {
   return `${cause === "upgrade" ? "up" : cause === "refresh" ? "rf" : cause === "ahead" ? "ah" : "rw"}${id}`;
 }
 
+// What a program back from a batch is called, by why it was asked; a rewrite asked by votes otherwise.
+const BATCH_ORIGIN: Record<string, ProgramOrigin> = { upgrade: "batch", ahead: "new", judge: "judge", evidence: "evidence", refresh: "refresh" };
+
 // Collects finished batches: each program comes back as a trial, tested by
 // the next browser that asks for the spell.
 async function pollBatches(env: Env): Promise<{ done: number; failed: number; waiting: number }> {
@@ -2039,8 +2050,7 @@ async function pollBatches(env: Env): Promise<{ done: number; failed: number; wa
           // An old row without a request: no promise to keep.
         }
         const program = programFrom(o.answer, intents, await liveLibrary(db));
-        const origin: ProgramOrigin =
-          row.cause === "upgrade" ? "batch" : row.cause === "ahead" ? "new" : row.cause === "judge" ? "judge" : row.cause === "refresh" ? "refresh" : "votes";
+        const origin: ProgramOrigin = BATCH_ORIGIN[row.cause] ?? "votes";
         // Its parent is what is live now: the draft may have been fixed, or the
         // spell rolled back, while the batch ran. A refresh (3.7) waits as a
         // candidate, served to nobody, for the refresh runner to decide.
@@ -2912,6 +2922,29 @@ async function backfillIntents(env: Env, limit = INTENTS_PER_RUN): Promise<{ don
   }
   const left = await env.DB.prepare("SELECT COUNT(*) AS n FROM elements WHERE intents IS NULL").first<{ n: number }>();
   return { done, left: left?.n ?? 0 };
+}
+
+// Daily 2026-11-05: one live program shown to break its promise is written again a day
+// (worker/evidence.ts says which), paid by the game as the designer is, and
+// through the path of a rewrite asked by votes: the daily rewrite budget, the
+// cooldown, a trial tested before anyone else gets it, the old one kept.
+async function rewriteByEvidence(env: Env, now = Date.now()): Promise<Record<string, unknown>> {
+  if (!env.ANTHROPIC_API_KEY) return { skipped: "no API key" };
+  // Nothing paid runs on its own on staging (wrangler.jsonc, env.staging): its
+  // database is copied from production every night, so it would pay each day
+  // for the same rewrite.
+  if (env.STAGING === "1") return { skipped: "staging" };
+  const found = await nextEvidence(env.DB, undefined, now);
+  if (!found) return { skipped: "no evidence" };
+  const element = await getElement(env.DB, found.row.key);
+  if (!element) return { skipped: "unknown element" };
+  // Before the day's attempt is taken: a day whose rewrites votes already
+  // spent tries again at the next run, which costs nothing until it asks.
+  if (await overRewriteBudget(env, tierOf(element))) return { skipped: "over the daily rewrite budget" };
+  if (!(await takeRun(env.DB, "evidence", dayInZone(now), 1, now))) return { skipped: "already tried today" };
+  const result = await requestRewrite(env, found.row, "evidence", found.reasons, ADMIN_PAYER);
+  console.log(JSON.stringify({ evidence: found.row.key, pid: found.row.id, source: found.source, result }));
+  return { key: found.row.key, pid: found.row.id, source: found.source, result };
 }
 
 async function evolve(env: Env, force: boolean): Promise<Record<string, unknown>> {

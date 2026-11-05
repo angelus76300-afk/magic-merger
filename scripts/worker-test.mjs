@@ -295,6 +295,8 @@ const vars = {
   WONDERS: "0",
   // 4.5: the cron sets no daily challenge; section 30 asks through the admin.
   DAILY_CHALLENGES: "0",
+  // Daily 2026-11-05: the cron rewrites nothing by evidence; section 32 turns it on.
+  EVIDENCE_REWRITES: "0",
 };
 // What the Worker logs, kept for the checks that read it (the cron, 4.1).
 let workerLog = "";
@@ -3400,6 +3402,136 @@ const signIn = async (key, count) => {
       localHealth.data?.invited === true,
     JSON.stringify({ staging: stagingHealth.data, merge: stagingMerge.status, admin: stagingAdmin.data?.admin, local: localHealth.data }),
   );
+}
+
+// 32. Rewrites by evidence (daily 2026-11-05, worker/evidence.ts): through the real
+// cron, a live program whose own test failed is written again once a day, by
+// the rewrite path of votes (a trial, tested before players get it, its
+// failing code shown to fix), never twice, and not past the day's budget.
+// Which program and in which order: scripts/evidence-test.ts.
+{
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev({ EVIDENCE_REWRITES: "1" });
+  await reset();
+  const now = Date.now();
+  await db.prepare("DELETE FROM job_runs WHERE job = 'evidence'").run();
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('dim lamp', 'Dim Lamp', '🪔', 'spell', 2, 'minor', 'A small lamp that keeps a house safe from fire.', 'protect', ?)",
+    )
+    .bind(now)
+    .run();
+  const spec = JSON.stringify({
+    version: 6,
+    summary: "Dim Lamp",
+    code: "const spell = { *cast(w) { w.circle(w.x, w.y, 3, '#ffd', '#fff', 1); /* dim-lamp-v1 */ } };",
+  });
+  const checked = JSON.stringify({ ok: false, problem: "promise", detail: "It promises protection, but the house burned all the same." });
+  const lamp = Number(
+    (
+      await db
+        .prepare(
+          "INSERT INTO programs (key, spec, model, version, origin, status, created_at, checked) VALUES ('dim lamp', ?, 'claude-haiku-5-5', 6, 'new', 'live', ?, ?)",
+        )
+        .bind(spec, now, checked)
+        .run()
+    ).lastInsertRowid,
+  );
+  await db
+    .prepare("INSERT INTO spells (key, spec, model, version, created_at, pid) VALUES ('dim lamp', ?, 'claude-haiku-5-5', 6, ?, ?)")
+    .bind(spec, now, lamp)
+    .run();
+  // The most cast failing program of the island's library comes first.
+  for (let i = 0; i < 50; i++) await db.prepare("INSERT INTO casts (player, pid, at) VALUES (?, ?, ?)").bind(`lamp-player-${i}`, lamp, now).run();
+  const runs = async () => (await db.prepare("SELECT COALESCE(SUM(runs), 0) AS n FROM job_runs WHERE job = 'evidence'").first()).n;
+  const fire = async () => {
+    const before = await runs();
+    await fetch(`${BASE}/cdn-cgi/handler/scheduled?cron=*/10+*+*+*+*`);
+    for (let t = 0; t < 40 && (await runs()) === before; t++) await new Promise((r) => setTimeout(r, 250));
+    await new Promise((r) => setTimeout(r, 1500));
+  };
+
+  // A day whose rewrite budget is spent: nothing asked, and the day's attempt kept.
+  await db.prepare("INSERT INTO spend (at, call, model, usd) VALUES (?, 'rewrite', 'claude-haiku-5-5', 0.5)").bind(now).run();
+  const s0 = spellCalls;
+  await fetch(`${BASE}/cdn-cgi/handler/scheduled?cron=*/10+*+*+*+*`);
+  await new Promise((r) => setTimeout(r, 3000));
+  check(
+    "past the day's rewrite budget, the cron asks for no rewrite by evidence and keeps the day's attempt",
+    spellCalls === s0 && (await runs()) === 0,
+    `${spellCalls - s0} calls, ${await runs()} runs`,
+  );
+  await reset();
+
+  const s1 = spellCalls;
+  await fire();
+  const trial = await db.prepare("SELECT * FROM programs WHERE key = 'dim lamp' AND status = 'trial'").first();
+  const rw = await db.prepare("SELECT * FROM rewrites WHERE key = 'dim lamp' AND cause = 'evidence'").first();
+  const asked = lastSpell().user;
+  check(
+    "the cron writes a live program whose test failed again, as a trial whose parent is the live one",
+    spellCalls - s1 === 1 && trial?.origin === "evidence" && trial.parent === lamp && rw?.from_pid === lamp && rw.to_pid === trial.id && rw.status === "done",
+    JSON.stringify({ calls: spellCalls - s1, trial: trial && { origin: trial.origin, parent: trial.parent }, rw }),
+  );
+  check(
+    "the rewrite is told what the test found and shown the failing program to fix",
+    asked.includes("its own test run found: It promises protection, but the house burned all the same. (promise)") && asked.includes("dim-lamp-v1"),
+    asked.slice(-600),
+  );
+  const paid = await db.prepare("SELECT COALESCE(SUM(usd), 0) AS usd FROM spend WHERE call = 'rewrite'").first();
+  check("a rewrite by evidence is paid as a rewrite, inside the day's rewrite budget", paid.usd > 0, JSON.stringify(paid));
+
+  // The same day: no second rewrite, of this program or any other.
+  const s2 = spellCalls;
+  const n2 = (await db.prepare("SELECT COUNT(*) AS n FROM rewrites WHERE cause = 'evidence'").first()).n;
+  await fire();
+  await fire();
+  const n3 = (await db.prepare("SELECT COUNT(*) AS n FROM rewrites WHERE cause = 'evidence'").first()).n;
+  check("two more cron runs the same day write nothing more", spellCalls === s2 && n3 === n2, `${spellCalls - s2} calls, ${n3 - n2} rewrites`);
+
+  // Players get the new version only through its test run; passing makes it live and keeps the old one.
+  const quin = await invite("Quin");
+  const served = await api("/api/spell", { invite: quin.secret, body: { name: "Dim Lamp" } });
+  const verdict = await api("/api/spell/check", {
+    invite: quin.secret,
+    body: { name: "Dim Lamp", id: trial?.id, ok: true, problem: null, detail: "It kept the house." },
+  });
+  const old = await db.prepare("SELECT status FROM programs WHERE id = ?").bind(lamp).first();
+  check(
+    "the rewrite is served as a trial, and its passing test run makes it live with the old one kept",
+    served.data?.program?.id === trial?.id && served.data.program.trial === true && verdict.data?.program?.id === trial?.id && old?.status === "retired",
+    JSON.stringify({ served: served.data?.program?.id, verdict: verdict.data?.program?.id, old }),
+  );
+
+  // The next day: not the same program again (it has a rewrite from it now).
+  await db.prepare("DELETE FROM job_runs WHERE job = 'evidence'").run();
+  await db.prepare("UPDATE programs SET status = 'live' WHERE id = ?").bind(lamp).run();
+  await db
+    .prepare("UPDATE programs SET status = 'retired' WHERE id = ?")
+    .bind(trial?.id ?? 0)
+    .run();
+  await db.prepare("UPDATE spells SET pid = ?, spec = ? WHERE key = 'dim lamp'").bind(lamp, spec).run();
+  await db
+    .prepare("UPDATE rewrites SET at = ? WHERE key = 'dim lamp'")
+    .bind(now - 4 * 86400_000)
+    .run();
+  const s4 = spellCalls;
+  await fire();
+  const again = (await db.prepare("SELECT COUNT(*) AS n FROM rewrites WHERE key = 'dim lamp' AND cause = 'evidence'").first()).n;
+  check("a program written again by evidence is never the one chosen again", again === 1, `${again} rewrites of Dim Lamp, ${spellCalls - s4} calls that day`);
+
+  // Staging rewrites nothing on its own, as it sets no wonder or challenge.
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev({ EVIDENCE_REWRITES: "1", STAGING: "1" });
+  await db.prepare("DELETE FROM job_runs WHERE job = 'evidence'").run();
+  await db.prepare("UPDATE rewrites SET status = 'failed' WHERE key = 'dim lamp'").run();
+  const s5 = spellCalls;
+  await fetch(`${BASE}/cdn-cgi/handler/scheduled?cron=*/10+*+*+*+*`);
+  await new Promise((r) => setTimeout(r, 3000));
+  check("the staging Worker's cron rewrites nothing by evidence", spellCalls === s5 && (await runs()) === 0, `${spellCalls - s5} calls, ${await runs()} runs`);
+  await reset();
 }
 
 stop();

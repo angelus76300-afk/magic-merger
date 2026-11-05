@@ -191,7 +191,7 @@ function versionText(v: {
   const checked = v.checked as { ok?: boolean; problem?: string } | null;
   const judged = v.judged as { score?: number; reason?: string; alive?: string } | null;
   const parts = [`#${v.id} ${v.status}`, `${v.origin}, ${shortModel(v.model)}`, `${v.up} up ${v.down} down${v.library ? " (library)" : ""}`];
-  if (checked) parts.push(checked.ok ? "test ok" : `test ${checked.problem}`);
+  if (checked) parts.push(checked.ok ? "test ok" : `test ${checked.problem ?? "failed"}`);
   if (judged) parts.push(`judge ${judged.score}/5 ${judged.reason}${judged.alive === "no" ? ", creatures not alive" : ""}`);
   return parts.join(" · ");
 }
