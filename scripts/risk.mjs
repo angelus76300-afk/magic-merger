@@ -153,7 +153,7 @@ export const RULES = [
     cls: "red",
     what: "spells in bulk: PROGRAM_VERSION or FIRST_PROGRAM_VERSION anywhere, the refresh of the library (shared/version.ts, scripts/refresh-runner.ts, startRefresh), the one spell rewrite tool (scripts/rewrite-one.mjs), an UPDATE or DELETE on spells or programs with no WHERE of its own, a WHERE that is always true or has an OR, code or version rewritten by a range, the rewrites history deleted",
     file: (f) =>
-      any(["shared/version.ts", "scripts/refresh-runner.ts", "scripts/rewrite-one.mjs"])(f) ||
+      any(["shared/version.ts", "scripts/refresh-runner.ts", "scripts/rewrite-one.mjs", "scripts/rewrite-one-test.mjs"])(f) ||
       added(f, /\b(?:FIRST_)?PROGRAM_VERSION\s*=/).length > 0 ||
       (/^(worker|scripts)\//.test(f.path) &&
         (touched(f, /\bstartRefresh\b|function refresh\w*\(/) || inFunction(f, /\bfunction (?:startRefresh|refresh\w*)\b/) || f.added.some(isBulkSpells))),

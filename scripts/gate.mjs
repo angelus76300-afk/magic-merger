@@ -19,7 +19,17 @@ export const LABELS = { amber: "owner-ok", red: "owner-yes", hold: "hold", pause
 // A marker counts only at the start of a line, never quoted inside prose.
 // tests=pass: the reviewer ran npm test on that commit in its session and it passed (4.5.2: the
 // simulation's tests left GitHub Actions to save its minutes).
-const REVIEW = /^<!--\s*mm-review\s+verdict=(pass|block)\s+sha=([0-9a-f]{7,40})(?:\s+raise=(amber|red))?(?:\s+tests=(pass|fail))?\s*-->/gm;
+// Its fields may come in any order: verdict and sha are needed, raise and tests are optional.
+const REVIEW = /^<!--\s*mm-review\s+((?:[a-z]+=[0-9a-z]+\s*)+)-->/gm;
+const reviewFields = (text) => {
+  const f = Object.fromEntries([...text.matchAll(/([a-z]+)=([0-9a-z]+)/g)].map((m) => [m[1], m[2]]));
+  const ok = /^(pass|block)$/.test(f.verdict ?? "") && /^[0-9a-f]{7,40}$/.test(f.sha ?? "");
+  const raise = /^(amber|red)$/.test(f.raise ?? "") ? f.raise : null;
+  const tests = /^(pass|fail)$/.test(f.tests ?? "") ? f.tests : null;
+  // An unknown value in a known field is a malformed marker, not a missing one: it does not count.
+  const bad = (f.raise && !raise) || (f.tests && !tests);
+  return ok && !bad ? [null, f.verdict, f.sha, raise, tests] : null;
+};
 // The record the planner writes next to the owner's label: who said what, when.
 const OWNER = /^<!--\s*mm-owner\s+(ok|yes)\s*-->/m;
 
@@ -30,8 +40,9 @@ const OWNER = /^<!--\s*mm-owner\s+(ok|yes)\s*-->/m;
 export function reviewFor(comments, sha) {
   let found = null;
   for (const c of comments) {
-    for (const m of (c.body ?? "").matchAll(REVIEW)) {
-      if (!sha.startsWith(m[2])) continue;
+    for (const match of (c.body ?? "").matchAll(REVIEW)) {
+      const m = reviewFields(match[1]);
+      if (!m || !sha.startsWith(m[2])) continue;
       const raise = [found?.raise, m[3]].filter(Boolean).sort((a, b) => ORDER[b] - ORDER[a])[0] ?? null;
       // A failed run sticks like a block: a later comment cannot turn it into a pass.
       const tests = found?.tests === "fail" || m[4] === "fail" ? "fail" : (m[4] ?? found?.tests ?? null);
@@ -75,6 +86,9 @@ export function decide(s) {
   if (cls === "amber" && !ok) reasons.push("amber: waits for the owner's OK in the morning brief (label owner-ok and the planner's mm-owner record)");
   if (cls === "red" && !yes) reasons.push("red: waits for the owner's explicit yes (label owner-yes and the planner's mm-owner record)");
   if (s.mergeable === false) reasons.push("conflicts with main");
+  // npm test runs in sessions on the head commit, not in Actions on what main becomes: the head must
+  // already contain main, or two pull requests tested apart could deploy together untested.
+  if (s.upToDate === false && !s.docsOnly) reasons.push("behind main: merge main into the branch, then the reviewer runs npm test on the new head");
   if (s.workflows) reasons.push("changes .github/workflows: the Gate's token cannot merge it; the planner merges it by hand after the owner's yes");
   return { cls, ready: reasons.length === 0, reasons };
 }
@@ -117,7 +131,8 @@ async function paused() {
 }
 
 // Nothing here runs in the game: docs, the skills, the changelog, the sessions' permission rules.
-const DOCS_ONLY = (path) => /^(docs\/|\.claude\/skills\/)|\.md$|^public\/changelog\.json$|^\.claude\/settings\.json$/.test(path);
+// (Not the changelog: players read public/changelog.json in the live game.)
+const DOCS_ONLY = (path) => /^(docs\/|\.claude\/skills\/)|\.md$|^\.claude\/settings\.json$/.test(path);
 
 /** CI on a commit: "full" when the check job ran every step, "docs" when it ran the light ones on a docs only change. */
 async function ciOn(sha) {
@@ -177,6 +192,14 @@ export async function prState(n) {
       smoke: await smokeOn(sha),
       review: reviewFor(comments, sha),
       mergeable: pr.mergeable,
+      upToDate: (() => {
+        try {
+          git("merge-base", "--is-ancestor", `origin/${pr.base.ref}`, `pr/${n}`);
+          return true;
+        } catch {
+          return false;
+        }
+      })(),
       workflows: files.some((f) => f.path.startsWith(".github/workflows/")),
       docsOnly: files.every((f) => DOCS_ONLY(f.path)),
     },

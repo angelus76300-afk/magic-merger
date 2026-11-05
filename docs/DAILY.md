@@ -91,7 +91,7 @@ One session, "Magic Merger daily planner", woken twice a day by its schedules, s
    2. The newcomer's path and the long session on staging, at 390 by 844: `MM_TOKEN="$ADMIN_TOKEN" node scripts/smoke.mjs preview https://magic-merger-staging.angelus76300.workers.dev --out night/newcomer` and `MM_TOKEN="$ADMIN_TOKEN" node scripts/nightly-play.mjs https://magic-merger-staging.angelus76300.workers.dev --minutes 10 --out night/long` (use `STAGING_ADMIN_TOKEN` instead when the environment has it).
    3. **Look at the frames now**, as a person would: things floating, stuck, overlapping, flickering, invisible, text over text, nothing happening after a cast. Keep what you find for the brief and for tonight's work.
    4. The live game: `MM_TOKEN="$ADMIN_TOKEN" node scripts/live-signals.mjs --hours 24 --out night/live.json` (errors, slow ticks, down votes with their reasons, open reports, refusals, spend, and whether production runs `main`).
-   5. The Judge's work: `npm run evolve`, `npm run wonders`, `npm run challenges -- 10`, then `MM_URL=https://magic-merger.angelus76300.workers.dev MM_TOKEN="$ADMIN_TOKEN" node scripts/judge-runner.mjs 30` and `node scripts/judge-runner.mjs wonders` with the same variables.
+   5. The Judge's work, all with the game's address and token: `export MM_URL=https://magic-merger.angelus76300.workers.dev MM_TOKEN="$ADMIN_TOKEN"`, then `npm run evolve`, `npm run wonders`, `npm run challenges -- 10`, `node scripts/judge-runner.mjs 30` and `node scripts/judge-runner.mjs wonders`.
    6. A spell whose promise is shown broken tonight (a frame, a probe, a down vote that says it): rewrite it, one at a time (below, "One spell at a time").
 3. **Decide the night's work**, first that applies:
    1. A deploy was refused or rolled back, or CI is red on `main`: the night's work fixes it, nothing else.
@@ -122,7 +122,7 @@ Short, in this order, plain words, numbers over adjectives:
 4. **Found before you**: what the night found and what will fix it (no action asked).
 5. **Tonight, probably**: the next work, so the owner can say no in advance.
 
-Every brief ends with one line: GitHub Actions minutes used this month (`scripts/loop-metrics.mjs` prints it) out of 2,000. Sundays add **the week**: the numbers of `docs/LOOP.md` (`scripts/loop-metrics.mjs`, plus the owner's messages the planner counted in the sessions), what shipped, spend, and the designer's three ideas waiting for a pick.
+Every brief ends with one line: GitHub Actions minutes used this month (`NODE_USE_ENV_PROXY=1 node scripts/loop-metrics.mjs` prints it) out of 2,000. Sundays add **the week**: the numbers of `docs/LOOP.md` (`scripts/loop-metrics.mjs`, plus the owner's messages the planner counted in the sessions), what shipped, spend, and the designer's three ideas waiting for a pick.
 
 **When the owner answers**: "OK <n>" for amber, "yes #<pr>" for red, a choice for a question. The planner adds the label (`owner-ok` or `owner-yes`) and a comment on the pull request whose first line is exactly `<!-- mm-owner ok -->` or `<!-- mm-owner yes -->`, followed by the owner's words and the date; the Gate then merges it. Only the planner writes these, and only from the owner's own words in its session. It passes a question's answer to the session that asked (`send_message`). "pause" opens an issue labelled `pause`; "resume" closes it.
 
@@ -165,13 +165,13 @@ The night run looks at the frames as a person would (the vision check: a model r
 A private repository gets 2,000 free minutes a month, and the owner does not pay for more. On 5 November 1,559 were used, mostly by `npm test` (19 of CI's 23 minutes, twice per merge). So, since 4.5.2:
 
 1. `npm test` runs in sessions, never in Actions: the builder before the review, the reviewer on the head commit (`tests=pass` in its verdict, which the Gate requires), the planner's night run on `main`.
-2. CI runs the fast checks only (about 4 minutes); a draft gets no preview; a docs only merge gets no deploy.
+2. CI runs the fast checks only (about 4 minutes); a draft gets no preview; a docs only merge gets no deploy. Since nothing in Actions runs `npm test` on what `main` becomes, the Gate merges only a branch that already contains `main` (else: merge `main` in, and the reviewer runs `npm test` again).
 3. The night's checks and the Judge run in the planner's session.
 4. **Few, finished pull requests.** One pull request a day while fewer than 600 minutes are left in the month (the rest of November): the version's step or the day's fixes grouped together, not both. From the next month, up to three a day. A pull request is pushed as a draft until it is finished and marked ready once. Under 150 minutes left: only fixes for a red `main` or a broken live game.
 
 ## One spell at a time
 
-A session may rewrite one spell whose promise is shown broken (a night frame, a probe, the audit, down votes that say "does not do what its name says"): `node scripts/rewrite-one.mjs "<name>" "<why>"`, the same call as the admin card's "Rewrite this spell". One name per run, at most three a night, each named in the brief with its reason; it refuses past 80% of the month's budget. The new program is a trial: the next person who casts it tests it, and the live one stays until it passes. Never a list, never in bulk, never `PROGRAM_VERSION`. The owner allows the command once in `.claude/settings.json` (a session cannot change its own permissions).
+A session may rewrite one spell whose promise is shown broken (a night frame, a probe, the audit, down votes that say "does not do what its name says"): `node scripts/rewrite-one.mjs "<name>" "<why>"`, the same call as the admin card's "Rewrite this spell". One name per run, at most three a night (about $0.01 for a small spell, up to $0.15 for a big one), each named in the brief with its reason; it refuses past 80% of the month's budget. The new program is a trial: the next person who casts it tests it, and the live one stays until it passes. Never a list, never in bulk, never `PROGRAM_VERSION`. The owner allows the command once in `.claude/settings.json` (a session cannot change its own permissions).
 
 ## Categories and their rotation
 

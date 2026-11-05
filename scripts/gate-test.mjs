@@ -44,6 +44,22 @@ const t = reviewFor(
   SHA,
 );
 check("a failed npm test sticks after a later pass", t?.tests === "fail", JSON.stringify(t));
+check(
+  "a block with raise after tests sticks (fields in any order)",
+  (() => {
+    const r = reviewFor(
+      [{ body: `<!-- mm-review verdict=block sha=${SHA} tests=pass raise=red -->` }, { body: `<!-- mm-review verdict=pass sha=${SHA} tests=pass -->` }],
+      SHA,
+    );
+    return r?.verdict === "block" && r.raise === "red" && r.tests === "pass";
+  })(),
+);
+check("a marker with an unknown value does not count", reviewFor([{ body: `<!-- mm-review verdict=pass sha=${SHA} tests=maybe -->` }], SHA) === null);
+check("behind main waits", !decide({ ...ready, upToDate: false }).ready);
+check(
+  "docs only behind main is ready",
+  decide({ ...ready, ci: "docs", smoke: "missing", docsOnly: true, upToDate: false, review: { verdict: "pass", raise: null, tests: null } }).ready,
+);
 check("tests=pass is read", reviewFor([{ body: `<!-- mm-review verdict=pass sha=${SHA} tests=pass -->` }], SHA)?.tests === "pass");
 check("a blocking review waits", !decide({ ...ready, review: { verdict: "block" } }).ready);
 check("amber without OK waits", !decide({ ...ready, cls: "amber" }).ready);

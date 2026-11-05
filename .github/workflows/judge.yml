@@ -20,11 +20,8 @@
 # Claude call.
 name: Judge
 # 4.5.2: the planner's night run does the same steps every night in its own
-# session (no Actions minutes, docs/DAILY.md); this schedule is the weekly
-# fallback, on Sundays.
+# session (no Actions minutes, docs/DAILY.md); this workflow runs by hand only.
 on:
-  schedule:
-    - cron: "17 4 * * 0"
   workflow_dispatch:
     inputs:
       limit:
