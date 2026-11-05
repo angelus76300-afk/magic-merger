@@ -33,8 +33,9 @@
     // Repairs fix one error in a program that exists: always the small model.
     "REPAIR_MODEL": "claude-haiku-5-5",
     "SPELL_EFFORT": "medium",
-    // Everyone together, the admin included; the Console limit is the same $50.
-    "BUDGET_USD": "50",
+    // Everyone together, the admin included. $48, not the Console's $50: the
+    // previews (env.staging, $2) share the same key and the same Console limit.
+    "BUDGET_USD": "48",
     // 3.4. Each invite's monthly allowance; the admin can top one up.
     "INVITE_CAP_USD": "5",
     // 3.3. Looks at three Spell Lab frames and guesses the vote.
