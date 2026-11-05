@@ -327,7 +327,7 @@ Not done: the previews need the repository secret `CLOUDFLARE_API_TOKEN` before 
 
 ## What the money taught us
 
-The ledger holds $6.64 (plus about $3.32 before it existed): about $10 of the first $25 budget (since 3.4 the cap is $50 a month; November so far: $7.26). Opus spells are 88% of it. Opus spell calls went from 43 to 96 in one day because the program version bump to 4 rewrote every big spell on its next cast. **Never rewrite spells in bulk again**: new API features stay backward compatible, and spells are rewritten one at a time (an admin button in 3.2, player votes in 3.3).
+The ledger holds $6.64 (plus about $3.32 before it existed): about $10 of the first $25 budget (since 3.4 the cap is $50 a month, $48 for the game since 4.5 with $2 for the previews; November so far: $7.26). Opus spells are 88% of it. Opus spell calls went from 43 to 96 in one day because the program version bump to 4 rewrote every big spell on its next cast. **Never rewrite spells in bulk again**: new API features stay backward compatible, and spells are rewritten one at a time (an admin button in 3.2, player votes in 3.3).
 
 ## Next versions
 
