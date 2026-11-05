@@ -41,6 +41,8 @@ interface LabOptions {
   land?: boolean;
   // 4.6: the kind it is written as, for its fine models and makers. The lab ignores it.
   form?: string;
+  // 4.6: keep the camera on the newest fine model, wonder or village it made.
+  focusMade?: boolean;
 }
 
 // A water cell on the island's border, or one next to land at least two
@@ -181,7 +183,19 @@ async function runSpell(code: string, options: LabOptions = {}) {
   if (options.profile) engine.view.profile = profile;
   const stepMs: number[] = [];
   const renderMs: number[] = [];
+  const made0 = { props: world.props.length, wonders: world.wonders.length, settlements: world.settlements.length };
   for (let tick = 0; tick <= last; tick++) {
+    // 4.6: the camera on what the item made (a building settles a few cells from the spot, a village far off).
+    if (options.focusMade) {
+      const p = world.props.length > made0.props ? world.props[world.props.length - 1] : null;
+      const w = world.wonders.length > made0.wonders ? world.wonders[world.wonders.length - 1] : null;
+      const s = world.settlements.length > made0.settlements ? world.settlements[world.settlements.length - 1] : null;
+      const at = s ?? p ?? w;
+      if (at) {
+        engine.view.orbit.tx = at.x;
+        engine.view.orbit.ty = at.y;
+      }
+    }
     const t0 = performance.now();
     engine.step();
     const t1 = performance.now();
