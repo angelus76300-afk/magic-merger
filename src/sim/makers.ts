@@ -54,21 +54,38 @@ function flatDry(world: World, cx: number, cy: number, r: number): number {
   return wet > 3 ? Infinity : rough + wet * 20;
 }
 
-// A spot for a new village near (x, y): dry, fairly flat, away from the others.
+// The centers of the island's villages: its settlements, and on an island
+// made before 4.4 (the old island, the test run's practice island), which
+// keeps no settlements, its houses grouped as findVillages groups villagers.
+export function villageCenters(world: World): { x: number; y: number }[] {
+  const centers = world.settlements.map((s) => ({ x: s.x, y: s.y }));
+  const groups: { x: number; y: number; n: number }[] = [];
+  for (let i = 0; i < world.n; i++) {
+    if (world.cover[i] !== C.HOUSE) continue;
+    const x = i % world.w;
+    const y = Math.floor(i / world.w);
+    if (centers.some((c) => Math.hypot(c.x - x, c.y - y) < 16)) continue;
+    let g = groups.find((o) => Math.hypot(o.x / o.n - x, o.y / o.n - y) < 16);
+    if (!g) groups.push((g = { x: 0, y: 0, n: 0 }));
+    g.x += x;
+    g.y += y;
+    g.n++;
+  }
+  return [...centers, ...groups.map((g) => ({ x: g.x / g.n, y: g.y / g.n }))];
+}
+
+// A spot for a new village near (x, y): dry, fairly flat, its center at
+// least APART cells (in a straight line) from every other village's.
 function villageSpot(world: World, x: number, y: number): { x: number; y: number } | null {
   let best: { x: number; y: number } | null = null;
   let bestScore = Infinity;
-  // Houses of villages the island had before settlements were kept (the old
-  // island, the practice island of the test run) count as villages too.
-  const homes: { x: number; y: number }[] = [];
-  for (let i = 0; i < world.n; i += 2) if (world.cover[i] === C.HOUSE) homes.push({ x: i % world.w, y: Math.floor(i / world.w) });
-  for (let d = 0; d <= 40; d += 3)
+  const others = villageCenters(world);
+  for (let d = 0; d <= 44; d += 3)
     for (let k = 0; k < Math.max(1, d * 2); k++) {
       const a = (k / Math.max(1, d * 2)) * Math.PI * 2;
       const cx = Math.round(x + Math.cos(a) * d);
       const cy = Math.round(y + Math.sin(a) * d);
-      if (world.settlements.some((s) => Math.hypot(s.x - cx, s.y - cy) < APART)) continue;
-      if (homes.some((h) => Math.abs(h.x - cx) + Math.abs(h.y - cy) < APART - 6)) continue;
+      if (others.some((o) => Math.hypot(o.x - cx, o.y - cy) < APART)) continue;
       const score = flatDry(world, cx, cy, 8) + d * 1.5;
       if (score < bestScore) {
         bestScore = score;

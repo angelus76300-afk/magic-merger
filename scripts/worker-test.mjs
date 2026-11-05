@@ -3676,22 +3676,52 @@ const signIn = async (key, count) => {
     JSON.stringify(flipped),
   );
 
-  // Rewrites by form: a capped batch, the entry written again for its kind, the old one kept.
+  // Rewrites by form: a capped batch, the entry written again for its kind,
+  // going live with the program only (the review of #50: it was written over
+  // the public entry when the job was queued, on a dry run too).
   for (const name of ["Serpent", "Old Village"]) {
     const p = await api("/api/spell", { admin: true, body: { name } });
     await api("/api/spell/check", { admin: true, body: { name, id: p.data.program.id, ok: true, problem: null, detail: "ok" } });
   }
+  const entryOf = async (key) => (await db.prepare("SELECT description FROM elements WHERE key = ?").bind(key).first())?.description;
+  const keptOf = async (key) => (await db.prepare("SELECT entry FROM forms WHERE key = ?").bind(key).first())?.entry ?? null;
   const g0 = grimoireCalls;
-  const started = (await api("/api/admin/refresh", { admin: true, body: { forms: true, keys: ["serpent", "old village"], limit: 1 } })).data;
-  const keptEntry = (await db.prepare("SELECT entry FROM forms WHERE key = 'serpent'").first())?.entry;
+  const dry = (await api("/api/admin/refresh", { admin: true, body: { forms: true, keys: ["old village"], limit: 1, dry: true } })).data;
   check(
-    "a rewrite by form takes the asked keys in order, as many as the cap, and writes the entry again with the old one kept",
-    started.queued.length === 1 && started.queued[0] === "Serpent" && keptEntry === "A living coil of bog-black sludge." && grimoireCalls === g0 + 1,
-    JSON.stringify({ started, keptEntry, grimoire: grimoireCalls - g0 }),
+    "a dry rewrite by form writes no entry and changes none",
+    dry.queued.length === 1 &&
+      grimoireCalls === g0 &&
+      (await entryOf("old village")) === "A palm-sized model of a hamlet." &&
+      (await keptOf("old village")) === null,
+    JSON.stringify({ dry, grimoire: grimoireCalls - g0 }),
+  );
+  const g1 = grimoireCalls;
+  const started = (await api("/api/admin/refresh", { admin: true, body: { forms: true, keys: ["serpent", "old village"], limit: 1 } })).data;
+  check(
+    "a rewrite by form takes the asked keys in order, as many as the cap, and writes its new entry for the program without showing it to players yet",
+    started.queued.length === 1 &&
+      started.queued[0] === "Serpent" &&
+      grimoireCalls === g1 + 1 &&
+      (await entryOf("serpent")) === "A living coil of bog-black sludge." &&
+      (await keptOf("serpent")) === null,
+    JSON.stringify({ started, grimoire: grimoireCalls - g1, entry: await entryOf("serpent") }),
   );
   await api("/api/admin/poll-batches", { admin: true, body: {} });
-  const cand = (await api("/api/admin/refresh-candidates", { admin: true })).data.find((c) => c.key === "serpent");
+  const cands = (await api("/api/admin/refresh-candidates", { admin: true })).data;
+  const cand = cands.find((c) => c.key === "serpent");
   check("the candidate carries its kind for the runner's test run", cand?.form === "creature", JSON.stringify(cand && { form: cand.form, giant: cand.giant }));
+  const villageCand = cands.find((c) => c.key === "old village");
+  await api("/api/admin/refresh-verdict", { admin: true, body: { id: villageCand.id, replace: false, reason: "test" } });
+  await api("/api/admin/refresh-verdict", { admin: true, body: { id: cand.id, replace: true, reason: "test" } });
+  const newEntry = await entryOf("serpent");
+  check(
+    "when the candidate replaces the live program its new entry goes live, the old one kept; a rejected one changes no entry",
+    newEntry !== "A living coil of bog-black sludge." &&
+      newEntry === JSON.parse((await db.prepare("SELECT request FROM rewrites WHERE to_pid = ?").bind(cand.id).first()).request).description &&
+      (await keptOf("serpent")) === "A living coil of bog-black sludge." &&
+      (await entryOf("old village")) === "A palm-sized model of a hamlet.",
+    JSON.stringify({ newEntry, kept: await keptOf("serpent"), village: await entryOf("old village") }),
+  );
   const again = (await api("/api/admin/refresh", { admin: true, body: { forms: true, keys: ["serpent"] } })).data;
   const capped = (await api("/api/admin/refresh", { admin: true, body: { forms: true, limit: 500 } })).data;
   check(

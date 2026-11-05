@@ -1519,20 +1519,16 @@ async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; li
     const big = isBig(tier, smallUpTo(env));
     const cost = big ? REFRESH_ESTIMATE.big : REFRESH_ESTIMATE.small;
     if (estimate + cost > room) break;
-    // 4.6: by form, the entry is written again for its kind the first time, the old one kept.
+    // 4.6: by form, the entry is written again for its kind the first time,
+    // for the program to be written from. Players keep reading the old one
+    // until the candidate replaces the live program (refreshVerdict); a dry
+    // run writes no entry at all.
     let fresh = false;
-    if (byForm) {
+    if (byForm && body.dry !== true) {
       const kept = await db.prepare("SELECT entry FROM forms WHERE key = ?").bind(r.key).first<{ entry: string | null }>();
-      if (kept && kept.entry === null) {
-        const old = await db.prepare("SELECT description FROM elements WHERE key = ?").bind(r.key).first<{ description: string | null }>();
-        await db
-          .prepare("UPDATE forms SET entry = ? WHERE key = ? AND entry IS NULL")
-          .bind(old?.description ?? "", r.key)
-          .run();
-        fresh = true;
-      }
+      fresh = !!kept && kept.entry === null;
     }
-    const description = await ensureDescription(env, oracle, element, fresh);
+    const description = fresh ? await ensureDescription(env, oracle, element, true, false) : await ensureDescription(env, oracle, element, false);
     const intents = await ensureIntents(env, oracle, element, description);
     const request: OracleSpellRequest = {
       name: element.name,
@@ -1543,6 +1539,7 @@ async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; li
       tier,
       intents,
       library: library.docs,
+      ...(fresh ? { newEntry: true } : {}),
     };
     const model = big ? env.SPELL_MODEL : smallModel(env);
     const hold = await holdBatch(env, oracle);
@@ -1660,8 +1657,26 @@ async function refreshVerdict(
   const score = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v) : null);
   if (typeof body.checked === "object" && body.checked)
     await db.prepare("UPDATE programs SET checked = ? WHERE id = ?").bind(JSON.stringify(body.checked).slice(0, 2000), row.id).run();
-  if (replace) await promote(db, { ...row, parent: live?.row.id ?? row.parent });
-  else await setStatus(db, row.id, "rejected");
+  if (replace) {
+    await promote(db, { ...row, parent: live?.row.id ?? row.parent });
+    // 4.6: a rewrite by form that wrote the entry again for its kind: the
+    // new entry goes live with the program, the old one kept in forms.entry.
+    const asked = await db.prepare("SELECT request FROM rewrites WHERE cause = 'refresh' AND to_pid = ?").bind(row.id).first<{ request: string | null }>();
+    let entry: string | null = null;
+    try {
+      const req = JSON.parse(asked?.request ?? "{}") as OracleSpellRequest;
+      if (req.newEntry === true && typeof req.description === "string" && req.description.trim()) entry = req.description;
+    } catch {
+      entry = null;
+    }
+    if (entry) {
+      const old = await db.prepare("SELECT description FROM elements WHERE key = ?").bind(row.key).first<{ description: string | null }>();
+      await db.batch([
+        db.prepare("UPDATE forms SET entry = ? WHERE key = ? AND entry IS NULL").bind(old?.description ?? "", row.key),
+        db.prepare("UPDATE elements SET description = ? WHERE key = ?").bind(entry, row.key),
+      ]);
+    }
+  } else await setStatus(db, row.id, "rejected");
   await db
     .prepare("INSERT OR REPLACE INTO refresh_verdicts (to_pid, key, from_pid, replaced, reason, old_score, new_score, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
     .bind(
@@ -2200,7 +2215,7 @@ function checkRegenerate(requested: unknown, admin: boolean): boolean {
   return true;
 }
 
-async function ensureDescription(env: Env, oracle: Oracle, element: GameElement, regenerate: boolean): Promise<string> {
+async function ensureDescription(env: Env, oracle: Oracle, element: GameElement, regenerate: boolean, store = true): Promise<string> {
   const db = env.DB;
   const key = elementKey(element.name);
   if (!oracle.mock && !regenerate) {
@@ -2220,7 +2235,7 @@ async function ensureDescription(env: Env, oracle: Oracle, element: GameElement,
     // it (src/store.ts), so a later description reaches every device.
     if (looksLikeRefusal(description, element.name)) description = noDescription(element.name);
   }
-  if (!oracle.mock) {
+  if (!oracle.mock && store) {
     // Primitives have no row until they are first described.
     await db
       .prepare(

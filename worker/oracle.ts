@@ -65,6 +65,9 @@ export interface SpellRequest {
   // kind's section and example, the test run holds it to that kind's size.
   form?: Form;
   giant?: boolean;
+  // 4.6: its entry was written again for its kind with this program; it goes
+  // live with the program when the refresh replaces the old one.
+  newEntry?: boolean;
   description: string;
   recipe: [string, string] | null;
   tier: Tier;

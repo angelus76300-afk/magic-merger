@@ -429,8 +429,9 @@ export interface Made {
   wonders: number;
   creatures: number;
   onBuilding: number;
-  // Cells raised or sunk, the land's shape itself (paint and water are effects).
+  // Cells raised or sunk, the land's shape itself (paint and water are effects), and how far across.
   lifted: number;
+  liftAcross: number;
   // Boxes of its fine models.
   fine: number;
 }
@@ -489,8 +490,20 @@ function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Ma
   let ly0 = Infinity;
   let ly1 = -Infinity;
   let lifted = 0;
+  let hx0 = Infinity;
+  let hx1 = -Infinity;
+  let hy0 = Infinity;
+  let hy1 = -Infinity;
   for (let i = 0; i < world.n; i++) {
-    if (Math.abs(world.height[i] - ref.height[i]) > 0.4) lifted++;
+    if (Math.abs(world.height[i] - ref.height[i]) > 0.4) {
+      lifted++;
+      const x = i % world.w;
+      const y = Math.floor(i / world.w);
+      hx0 = Math.min(hx0, x);
+      hx1 = Math.max(hx1, x);
+      hy0 = Math.min(hy0, y);
+      hy1 = Math.max(hy1, y);
+    }
     const land = Math.abs(world.height[i] - ref.height[i]) > 0.4 || world.ground[i] !== ref.ground[i] || world.fluid[i] !== ref.fluid[i];
     if (land) {
       reshaped++;
@@ -518,6 +531,7 @@ function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Ma
     tall,
     reshaped,
     landAcross: reshaped ? Math.max(lx1 - lx0, ly1 - ly0) + 1 : 0,
+    liftAcross: lifted ? Math.max(hx1 - hx0, hy1 - hy0) + 1 : 0,
     // Raised with w.building: a house a village builds from an item's gold is not the item's.
     buildings: Math.round(blocks.size / 4),
     lifted,
@@ -557,12 +571,13 @@ export function formCheck(
 export function judgeMade(form: Exclude<Form, "spell">, name: string, giant: boolean, m: Made): { problem: "size" | "kind"; detail: string } | null {
   const rule = FORM_RULES[form];
   const f = giant ? GIANT_FACTOR : 1;
-  const big = form === "creature" && bigBeing(name) ? 2 : 1;
-  const across = rule.across * f * big;
-  const tall = rule.tall * f * big;
-  const most = rule.voxels * (giant ? GIANT_FACTOR * GIANT_FACTOR : 1) * big;
+  // A giant, and a dragon or a titan, may be bigger; never both at once (a "Small Giant").
+  const scale = Math.max(f, form === "creature" && bigBeing(name) ? 2 : 1);
+  const across = rule.across * scale;
+  const tall = rule.tall * scale;
+  const most = rule.voxels * scale * scale;
   const giantNote = giant ? "" : ` Only an item whose name or entry says it is giant may be bigger.`;
-  const measured = `(${m.voxels} voxels and ${m.fine} fine boxes, ${m.across} cells across, ${m.tall} tall; land reshaped on ${m.reshaped} cells, ${m.landAcross} across; ${m.buildings} buildings, ${m.settlements} settlements, ${m.wonders} wonders, ${m.creatures} creatures)`;
+  const measured = `(${m.voxels} voxels and ${m.fine} fine boxes, ${m.across} cells across, ${m.tall} tall; land reshaped on ${m.reshaped} cells, ${m.landAcross} across, raised or sunk on ${m.lifted}, ${m.liftAcross} across; ${m.buildings} buildings, ${m.settlements} settlements, ${m.wonders} wonders, ${m.creatures} creatures)`;
   // Is it that kind of thing at all?
   const kind = (() => {
     switch (form) {
@@ -599,6 +614,14 @@ export function judgeMade(form: Exclude<Form, "spell">, name: string, giant: boo
     };
   if ((form === "creature" || form === "building") && m.settlements > 0)
     return { problem: "size", detail: `${name} is ${LABEL[form]}, but it founded a whole village. ${measured}` };
+  // The land it raised or sank: within its kind's reach, and for what is not land itself, a plinth at most.
+  const plinth: Partial<Record<Exclude<Form, "spell">, number>> = { creature: 12, building: 60 };
+  const mostLifted = plinth[form];
+  if (m.liftAcross > across || (mostLifted !== undefined && m.lifted > mostLifted * scale))
+    return {
+      problem: "size",
+      detail: `${name} reshaped too much land for ${LABEL[form]}: ${m.lifted} cells raised or sunk, ${m.liftAcross} across (at most ${across} across${mostLifted !== undefined ? ` and ${mostLifted * scale} cells` : ""}).${giantNote} ${measured}`,
+    };
   const over =
     m.across > across
       ? `${m.across} cells across (at most ${across})`

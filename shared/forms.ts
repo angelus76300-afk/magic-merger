@@ -283,7 +283,6 @@ const WORDS: [Form, string[]][] = [
       "genie",
       "ghoul",
       "mummy",
-      "person",
       "people",
     ],
   ],
@@ -397,8 +396,12 @@ export function guessForm(name: string): Form | null {
 // An item may be bigger than its kind when it says so ("Giant's Book",
 // "a colossal tome"): its name, or the grimoire entry, in so many words.
 const GIANT = /\b(giant|giants|gigantic|colossal|colossus|titanic|titan|enormous|huge|immense|towering|mountainous|vast|mega|great tree|world tree)\b/i;
+// In the entry, only words that say the thing itself is of giant size: "a
+// huge help to farmers", "lights a vast plain" or "forged by a giant long
+// ago" say nothing of its size (the review of #50).
+const GIANT_ENTRY = /\b(gigantic|colossal|enormous|titanic|giant-sized|mountain-sized|house-sized|towering over)\b/i;
 export function saysGiant(name: string, description = ""): boolean {
-  return GIANT.test(name) || GIANT.test(description);
+  return GIANT.test(name) || GIANT_ENTRY.test(description);
 }
 
 // Beings a person is small beside: drawn up to 3.2 villagers (rigs.ts caps

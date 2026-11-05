@@ -13,7 +13,7 @@ import { loadWorld, saveWorld } from "../src/sim/save";
 import { stepHeadless } from "../src/sim/tick";
 import { generateWorld, type World } from "../src/sim/world";
 import { resolveLand } from "../src/sim/land";
-import { LAND_SHAPES, WONDER_LIST } from "../src/sim/makers";
+import { LAND_SHAPES, WONDER_LIST, villageCenters } from "../src/sim/makers";
 import { findVillages } from "../src/sim/kin";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
@@ -61,8 +61,13 @@ export function formChecks(check: Check): void {
     formOf({ name: "Serpent", kind: "artifact", form: "object" }) === "object" && formOf({ name: "Serpent Strike", kind: "spell" }) === "spell",
   );
   check(
-    "giant only when it says so",
-    saysGiant("Giant's Book") && saysGiant("Tome", "a colossal tome") && !saysGiant("Grimoire", "an old book bound in leather"),
+    "giant only when it says so, of itself",
+    saysGiant("Giant's Book") &&
+      saysGiant("Tome", "a colossal tome") &&
+      !saysGiant("Grimoire", "an old book bound in leather") &&
+      !saysGiant("Harvest Charm", "a huge help to farmers") &&
+      !saysGiant("Sunstone", "it lights a vast plain") &&
+      !saysGiant("Hammer", "forged by a giant long ago"),
   );
   check(
     "each kind's section and example reach the writer, and a spell gets none",
@@ -82,6 +87,7 @@ export function formChecks(check: Check): void {
     const houses = count(world, (i) => world.cover[i] === C.HOUSE);
     const people = world.creatures.filter((c) => c.kind === "villager").length;
     const first = world.cover.findIndex((c) => c === C.HOUSE);
+    const centersBefore = villageCenters(world);
     cast(
       world,
       `const spell = { *cast(w) { w.village(w.x, w.y, { houses: 8, name: "Ashby" }); } };`,
@@ -93,7 +99,8 @@ export function formChecks(check: Check): void {
     const made = { x: s?.x, y: s?.y, name: s?.name };
     const newHouses = count(world, (i) => world.cover[i] === C.HOUSE) - houses;
     const newPeople = world.creatures.filter((c) => c.kind === "villager").length - people;
-    const apart = world.settlements.slice(0, -1).every((o) => Math.hypot(o.x - s.x, o.y - s.y) >= 26) && houses > 0;
+    // From every other village's center, the old island's included (found from its houses, as before the cast).
+    const apart = centersBefore.every((o) => Math.hypot(o.x - s.x, o.y - s.y) >= 26) && centersBefore.length > 0 && houses > 0;
     const fields = count(world, (i) => world.ground[i] === 8 && Math.hypot((i % world.w) - s.x, Math.floor(i / world.w) - s.y) < 16);
     check(
       `w.village on ${label}: a settlement with a name, houses, fields, a street, buildings with a job and villagers, apart from the others`,
@@ -115,6 +122,22 @@ export function formChecks(check: Check): void {
     // Kept by a save.
     const back = loadWorld(JSON.parse(JSON.stringify(saveWorld(world, new Map()))), () => {})!;
     check(`w.village on ${label}: kept by a save`, back.settlements.length === world.settlements.length && back.settlements.some((o) => o.name === "Ashby"));
+  }
+
+  // The review of #50: 3 cells from the first house on practice islands of four seeds, it landed 21 to 22 cells away.
+  {
+    const far: string[] = [];
+    for (const seed of [11, 12, 13, 15]) {
+      const world = generateWorld(112, 112, seed);
+      populate(world);
+      const before = villageCenters(world);
+      const first = world.cover.findIndex((c) => c === C.HOUSE);
+      cast(world, `const spell = { *cast(w) { w.village(w.x, w.y, { houses: 7 }); } };`, (first % world.w) + 3, Math.floor(first / world.w) + 3, 1);
+      const s = world.settlements[world.settlements.length - 1];
+      const near = s ? Math.min(...before.map((o) => Math.hypot(o.x - s.x, o.y - s.y))) : -1;
+      if (!s || near < 26) far.push(`seed ${seed}: ${s ? near.toFixed(1) : "no village"}`);
+    }
+    check("w.village stands 26 cells or more from every old village's center, on four practice islands", !far.length, far.join(", "));
   }
 
   // w.building: each job, near a village, joins it and is drawn by the builder.
@@ -262,6 +285,19 @@ export function formChecks(check: Check): void {
     w.artifact(w.x, w.y, "Charm"); } };`;
   const strayed = runCheck({ key: "stray", name: "Charm", tier: "minor", code: stray, kind: "artifact", form: "object" });
   check("one stray block eleven cells away does not fail a small object", strayed.ok, `${strayed.problem}: ${strayed.detail}`);
+  // The review of #50: land was never held to its kind's reach.
+  const digger = `const spell = { creatures: [{ name: "serpent", base: "beast", body: "serpent", goal: "hunt", prey: ["rabbit"], abilities: [{ do: "dig", when: "every so often", every: 30 }] }],
+    *cast(w) { w.terraform(w.x, w.y, 40, -8); w.spawn("serpent", w.x, w.y); } };`;
+  const dug = runCheck({ key: "digger", name: "Serpent", tier: "minor", code: digger, kind: "artifact", form: "creature" });
+  check(
+    "a creature that sinks the land 40 cells round fails (size)",
+    dug.problem === "size" && dug.detail.includes("reshaped too much land"),
+    `${dug.problem}: ${dug.detail}`,
+  );
+  const sea = `const spell = { *cast(w) { w.land(w.x, w.y, { shape: "lake", r: 60 }); } };`;
+  const vast = runCheck({ key: "vast", name: "Pond", tier: "minor", code: sea, kind: "artifact", form: "land" });
+  check("land 121 cells across fails against its 80 (size)", vast.problem === "size", `${vast.problem}: ${vast.detail}`);
+
   // A tower stacked on the building's own cells hides what the builder draws (the preview's first Lighthouse).
   const stacked = `const spell = { artifacts: [{ name: "Lighthouse", effects: [{ when: "night", do: "light" }] }], *cast(w) {
     const b = w.building(w.x, w.y, { job: "watchtower" }); if (!b) return;
