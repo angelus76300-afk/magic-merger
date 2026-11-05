@@ -3656,6 +3656,14 @@ const signIn = async (key, count) => {
   );
   const flip = (await api("/api/admin/forms-apply", { admin: true, body: { keys: ["living spell"], flip: true } })).data;
   const flipped = await db.prepare("SELECT kind, form FROM elements WHERE key = 'living spell'").first();
+  const appliedBefore = (await db.prepare("SELECT COUNT(*) AS n FROM forms WHERE status = 'applied'").first()).n;
+  const asked = (await api("/api/admin/forms", { admin: true, body: { again: true } })).data;
+  const appliedAfter = (await db.prepare("SELECT COUNT(*) AS n FROM forms WHERE status = 'applied'").first()).n;
+  check(
+    "asking again replaces only the proposals nobody applied",
+    appliedAfter === appliedBefore && asked.asked === asked.stored && asked.asked > 0 && asked.left === 0,
+    JSON.stringify({ appliedBefore, appliedAfter, asked }),
+  );
   check(
     "a flip is applied only by name, with flip",
     flip.applied.includes("living spell") && flipped.kind === "artifact" && flipped.form === "creature",

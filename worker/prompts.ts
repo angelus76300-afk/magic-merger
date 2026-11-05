@@ -16,7 +16,7 @@ building: one structure people raise: Wizard Tower, Temple, Forge, Castle, Libra
 settlement: where people live together: Village, Town, Camp, City.
 place: a spot of nature or old magic, smaller than a landscape: Grove, Spring, Ruins, Fairy Ring, Portal.
 land: it reshapes or covers the land itself: Floating Island, Volcano, Lake, Canyon, Oasis, Swamp, Desert, Gold Vein.
-The kind is what the thing is, not how strong: a legendary tome is still an object, a book becomes a building only when it is one (the Library of Babel). A substance is an object when held (a vial, a nugget) and land when it lies on the land (a moss field, a vein of gold).
+The kind is what the thing is, not how strong: a legendary tome is still an object, a book becomes a building only when it is one (the Library of Babel). A substance is an object when held (a vial, a nugget) and land when it lies on the land (a moss field, a vein of gold). A realm of myth is a place, a group of beings a creature.
 
 How to decide:
 1. Pick what a reader of fantasy, myth and games would expect the two to make. The best answers feel obvious once seen.
@@ -382,7 +382,9 @@ building: one structure people raise: a tower, a temple, a forge, a castle, a li
 settlement: where people live together: a village, a town, a camp, a city.
 place: a spot of nature or old magic, smaller than a landscape: a grove, a spring, a ruin, a fairy ring, a portal.
 land: it reshapes or covers the land itself: a floating island, a volcano, a lake, a canyon, an oasis, a swamp, a vein of gold, a moss field.
-Judge what the thing is, by its name first and its entry second: a Serpent is a creature even if its entry calls it a coil of stones; a Village is a settlement even if its entry describes a charm; a legendary tome is an object. An item that is now a spell stays a spell unless it is plainly a thing (a Curse cast is a spell). why: a few words.
+Judge what the thing is, by its name first and its entry second: a Serpent is a creature even if its entry calls it a coil of stones; a Village is a settlement even if its entry describes a charm; a legendary tome is an object.
+A realm or a world of myth (Underworld, Paradise, Asgard) is a place: the island shows a gate or a spot of it. A substance is land when it lies on the land (Mud, Clay, Lava, Volcanic Ash, Tar) and an object when a hand holds it (a gem, a potion, a vial). A group of beings (an army, a flock, a horde) is a creature. An idea or a state (Immortality, a Quest, Alchemy) is a spell when a mage would cast it, otherwise the kind of the thing it lives in.
+An item that is now a spell stays a spell unless it is plainly a thing (a Curse cast is a spell). why: a few words.
 Answer with every item's name exactly as given.`;
 
 export const FORMS_SCHEMA = {
