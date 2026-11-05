@@ -374,7 +374,7 @@ export const SORT_SCHEMA = {
 
 // 4.6: the library sorted again into the seven kinds, by the small model,
 // a page of names at a time. The owner sees the list before anything changes.
-export const FORMS_SYSTEM = `Magic Merger is a crafting game about magic: players merge items, and each item is placed or cast on a small island of villages, forests, lakes and hills. For each item, one per line with its current kind (spell or artifact) and its grimoire entry, say which of seven kinds it truly is:
+export const FORMS_SYSTEM = `Magic Merger is a crafting game about magic: players merge items, and each item is placed or cast on a small island of villages, forests, lakes and hills. For each item, one per line with its current kind (spell or artifact), say from its name which of seven kinds it truly is:
 spell: something a mage casts: it happens, or starts something the world carries on.
 creature: a being that is alive (or undead) and moves, wants and acts: an animal, a monster, a spirit, a person, or a role a person has (a Necromancer, a Knight).
 object: a thing a hand can hold or a table can bear: a tool, a weapon, a potion, a book, a gem, a charm.
@@ -382,7 +382,7 @@ building: one structure people raise: a tower, a temple, a forge, a castle, a li
 settlement: where people live together: a village, a town, a camp, a city.
 place: a spot of nature or old magic, smaller than a landscape: a grove, a spring, a ruin, a fairy ring, a portal.
 land: it reshapes or covers the land itself: a floating island, a volcano, a lake, a canyon, an oasis, a swamp, a vein of gold, a moss field.
-Judge what the thing is, by its name first and its entry second: a Serpent is a creature even if its entry calls it a coil of stones; a Village is a settlement even if its entry describes a charm; a legendary tome is an object.
+Judge what a reader of fantasy, myth and games would expect the name to be: a Warlock, a Paladin or a Selkie is a creature, a Village a settlement, a legendary tome an object. You see the name only, as when the item was first merged.
 A realm or a world of myth (Underworld, Paradise, Asgard) is a place: the island shows a gate or a spot of it. A substance is land when it lies on the land (Mud, Clay, Lava, Volcanic Ash, Tar) and an object when a hand holds it (a gem, a potion, a vial). A group of beings (an army, a flock, a horde) is a creature. An idea or a state (Immortality, a Quest, Alchemy) is a spell when a mage would cast it, otherwise the kind of the thing it lives in.
 An item that is now a spell stays a spell unless it is plainly a thing (a Curse cast is a spell). why: a few words.
 Answer with every item's name exactly as given.`;

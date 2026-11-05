@@ -99,7 +99,7 @@ function stubAnswer(n, system, user) {
         .split("\n")
         .filter(Boolean)
         .map((line) => {
-          const name = line.replace(/ \((spell|artifact)\):.*$/, "");
+          const name = line.replace(/ \((spell|artifact)\)$/, "");
           const form = /serpent|living spell/i.test(name) ? "creature" : /village/i.test(name) ? "settlement" : /\(spell\)/.test(line) ? "spell" : "object";
           return { name, form, why: "by its name" };
         }),
@@ -3625,6 +3625,12 @@ const signIn = async (key, count) => {
     .run();
   const before = (await db.prepare("SELECT COUNT(*) AS n FROM elements WHERE form IS NOT NULL").first()).n;
   const proposed = await api("/api/admin/forms", { admin: true, body: {} });
+  const sortAsked = seen["Magic Merger is a cr"]?.user ?? "";
+  check(
+    "the sort sees names only, never the entries written before the kinds",
+    sortAsked.includes("Serpent (artifact)") && !sortAsked.includes("bog-black"),
+    sortAsked.slice(0, 120),
+  );
   const untouched = (await db.prepare("SELECT COUNT(*) AS n FROM elements WHERE form IS NOT NULL").first()).n;
   const list = (await api("/api/admin/forms", { admin: true })).data;
   const serpent = list.rows.find((r) => r.key === "serpent");

@@ -3,7 +3,9 @@ import { FORMS, formOf, isForm, kindOfForm, type Form } from "../shared/forms";
 import type { Oracle } from "./oracle";
 
 // The library sorted again (4.6, ROADMAP 4.6 item 5). Every element is
-// given one of the seven kinds by the small model, a page of names at a time,
+// given one of the seven kinds by the small model from its name alone (the
+// entries written before the kinds often made a person a trinket: Warlock
+// "a slender black-iron cage"), a page of names at a time,
 // and the answers are stored as proposals (`forms`): nothing about an element
 // changes until the owner has seen the list. Applying a proposal sets
 // `elements.form` where it was never set, and only when the kind it implies
