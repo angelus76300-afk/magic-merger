@@ -3,6 +3,7 @@ import { parseIntents, type Intent } from "../shared/promises";
 import { syntaxError } from "../shared/spellcode";
 import { isTier, type Tier } from "../shared/tiers";
 import type { ElementKind } from "../shared/types";
+import { guessForm, isForm, kindOfForm, type Form } from "../shared/forms";
 import {
   DESCRIBE_SYSTEM,
   DESIGN_SCHEMA,
@@ -34,6 +35,8 @@ import {
   TRIM_SYSTEM,
   SORT_SCHEMA,
   SORT_SYSTEM,
+  FORMS_SCHEMA,
+  FORMS_SYSTEM,
   WONDER_SCHEMA,
   wonderSystem,
 } from "./prompts";
@@ -42,13 +45,26 @@ export interface MergeAnswer {
   name: string;
   emoji: string;
   kind: ElementKind;
+  // 4.6: which of the seven kinds (shared/forms.ts); kind follows from it.
+  form: Form;
   tier: Tier;
+}
+
+// The library's sort (4.6): each item's kind, and why, in a few words.
+export interface FormAnswer {
+  name: string;
+  form: Form;
+  why: string;
 }
 
 export interface SpellRequest {
   name: string;
   // Artifacts get programs too: they are placed, not cast.
   kind: ElementKind;
+  // 4.6: which of the six kinds of artifact it is: the writer gets that
+  // kind's section and example, the test run holds it to that kind's size.
+  form?: Form;
+  giant?: boolean;
   description: string;
   recipe: [string, string] | null;
   tier: Tier;
@@ -189,7 +205,7 @@ export interface Oracle {
   timings: { call: string; ms: number }[];
   // avoid: a name already refused for this pair (3.7: it only joined the two).
   merge(a: string, b: string, avoid?: string): Promise<MergeAnswer>;
-  describe(name: string, kind: ElementKind, recipe: [string, string] | null | "secret"): Promise<string>;
+  describe(name: string, kind: ElementKind, recipe: [string, string] | null | "secret", form?: Form): Promise<string>;
   // The trim of the library (3.7): near duplicates and senseless merges.
   trim(names: string[], recipes: string[]): Promise<TrimAnswer>;
   // The island's chronicle (3.7), from what its World recorded.
@@ -214,6 +230,8 @@ export interface Oracle {
   wonderResults(batch: string): Promise<WonderOutcome[] | null>;
   // Which of players' artifacts are places, materials or creatures.
   sortItems(items: { name: string; description: string }[]): Promise<SortAnswer[]>;
+  // 4.6: the library sorted again, into the seven kinds, a page at a time.
+  forms(items: { name: string; kind: ElementKind; description: string }[]): Promise<FormAnswer[]>;
 }
 
 export interface OracleModels {
@@ -300,20 +318,22 @@ export class ClaudeOracle implements Oracle {
       MERGE_SCHEMA,
       4000,
     );
-    const { name, emoji, kind, tier } = parseJson(text) as Partial<MergeAnswer>;
-    if (typeof name !== "string" || typeof emoji !== "string" || (kind !== "spell" && kind !== "artifact")) {
+    const { name, emoji, kind, tier } = parseJson(text) as { name?: unknown; emoji?: unknown; kind?: unknown; tier?: unknown };
+    if (typeof name !== "string" || typeof emoji !== "string" || !(isForm(kind) || kind === "artifact")) {
       throw new OracleError("The merge answer did not match the schema");
     }
-    return { name, emoji, kind, tier: isTier(tier) ? tier : "minor" };
+    // An answer in the old two kinds (a cached prompt, a stale schema) is guessed from its name.
+    const form: Form = isForm(kind) ? kind : (guessForm(name) ?? "object");
+    return { name, emoji, kind: kindOfForm(form), form, tier: isTier(tier) ? tier : "minor" };
   }
 
-  async describe(name: string, kind: ElementKind, recipe: [string, string] | null | "secret"): Promise<string> {
+  async describe(name: string, kind: ElementKind, recipe: [string, string] | null | "secret", form?: Form): Promise<string> {
     const text = await this.ask(
       "describe",
       this.models.describe,
       "low",
       DESCRIBE_SYSTEM,
-      [{ role: "user", content: describeUserMessage(name, kind, recipe) }],
+      [{ role: "user", content: describeUserMessage(name, kind, recipe, form) }],
       null,
       2000,
     );
@@ -516,6 +536,16 @@ export class ClaudeOracle implements Oracle {
     return out;
   }
 
+  async forms(items: { name: string; kind: ElementKind; description: string }[]): Promise<FormAnswer[]> {
+    if (!items.length) return [];
+    const list = items.map((i) => `${i.name} (${i.kind}): ${i.description.replace(/\s+/g, " ").slice(0, 240)}`).join("\n");
+    const text = await this.ask("forms", this.models.describe, "low", FORMS_SYSTEM, [{ role: "user", content: list }], FORMS_SCHEMA, 16000, false);
+    const raw = (parseJson(text) as { items?: unknown }).items;
+    return (Array.isArray(raw) ? raw : [])
+      .filter((x): x is FormAnswer => !!x && typeof x === "object" && typeof (x as FormAnswer).name === "string" && isForm((x as FormAnswer).form))
+      .map((x) => ({ name: x.name, form: x.form, why: typeof x.why === "string" ? x.why.slice(0, 160) : "" }));
+  }
+
   async sortItems(items: { name: string; description: string }[]): Promise<SortAnswer[]> {
     if (!items.length) return [];
     const list = items.map((i) => `${i.name}: ${i.description.replace(/\s+/g, " ").slice(0, 300)}`).join("\n");
@@ -546,7 +576,7 @@ export class ClaudeOracle implements Oracle {
 }
 
 function spellMessage(r: SpellRequest): string {
-  return spellUserMessage(r.name, r.kind, r.description, r.recipe, r.tier, r.examples, r.rewrite, r.intents);
+  return spellUserMessage(r.name, r.kind, r.description, r.recipe, r.tier, r.examples, r.rewrite, r.intents, r.form);
 }
 
 function requestParams(
@@ -654,12 +684,14 @@ export class MockOracle implements Oracle {
 
   async merge(a: string, b: string): Promise<MergeAnswer> {
     const [x, y] = [a, b].sort();
-    if (x === y) return { name: `Greater ${lastWord(x)}`, emoji: "✨", kind: "spell", tier: "major" };
+    if (x === y) return { name: `Greater ${lastWord(x)}`, emoji: "✨", kind: "spell", form: "spell", tier: "major" };
     const h = hash(`${x}+${y}`);
     const emoji = MOCK_EMOJI[h % MOCK_EMOJI.length];
     const kind: ElementKind = h % 3 === 0 ? "artifact" : "spell";
     const suffix = kind === "artifact" ? MOCK_ARTIFACTS[h % MOCK_ARTIFACTS.length] : MOCK_SPELLS[h % MOCK_SPELLS.length];
-    return { name: `${firstWord(x)} ${firstWord(y)} ${suffix}`.split(" ").slice(-3).join(" "), emoji, kind, tier: "major" };
+    const name = `${firstWord(x)} ${firstWord(y)} ${suffix}`.split(" ").slice(-3).join(" ");
+    const form: Form = kind === "spell" ? "spell" : (guessForm(name) ?? "object");
+    return { name, emoji, kind, form, tier: "major" };
   }
 
   async trim(): Promise<TrimAnswer> {
@@ -750,6 +782,13 @@ export class MockOracle implements Oracle {
         missing: "",
       };
       return { id: item.id, answer, model: item.model, usd: 0 };
+    });
+  }
+
+  async forms(items: { name: string; kind: ElementKind; description: string }[]): Promise<FormAnswer[]> {
+    return items.map((i) => {
+      const form: Form = i.kind === "spell" ? "spell" : (guessForm(i.name) ?? "object");
+      return { name: i.name, form, why: "mock: from its name" };
     });
   }
 

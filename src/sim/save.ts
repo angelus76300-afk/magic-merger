@@ -140,6 +140,7 @@ const MAX_SPRINGS = 40_000;
 export function loadWorld(data: SavedWorld, prepare: (world: World) => void): World | null {
   if (data?.version !== 2) return null;
   const world = new World(data.w, data.h, data.seed);
+  const ok = (v: unknown) => typeof v === "number" && Number.isFinite(v);
   // The biome first: its colors are the built-in materials', which a spell's
   // own materials come after.
   if (data.land) {
@@ -151,27 +152,6 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
     if (flora.length >= world.n) world.flora = flora.slice(0, world.n);
     const rare = fromBase64(data.layers.rare ?? "");
     if (rare.length >= world.n) world.rare = Uint8Array.from(rare.subarray(0, world.n), (b) => (b <= 10 ? b : 0));
-    const ok = (v: unknown) => typeof v === "number" && Number.isFinite(v);
-    world.settlements = (Array.isArray(data.settlements) ? data.settlements : [])
-      .filter((t) => t && ok(t.x) && ok(t.y) && ok(t.style) && ok(t.level))
-      .slice(0, 32)
-      .map((t) => ({
-        x: t.x,
-        y: t.y,
-        style: Math.max(0, Math.min(HOUSE_STYLES.length - 1, Math.round(t.style))),
-        level: Math.max(0, Math.min(5, Math.round(t.level))),
-        jobs: (Array.isArray(t.jobs) ? t.jobs : [])
-          .filter((b) => b && ok(b.kind) && ok(b.i) && b.kind >= FIRST_JOB && b.kind <= LAST_JOB && b.i >= 0 && b.i < world.n)
-          .slice(0, 16)
-          .map((b) => ({ kind: Math.round(b.kind), i: Math.round(b.i) })),
-        store: ok(t.store) ? Math.max(0, Math.min(200, t.store!)) : 0,
-        street: ok(t.street) ? Math.round(t.street!) & 3 : 0,
-        name: typeof t.name === "string" ? t.name.slice(0, 20) : "",
-      }));
-    world.wonders = (Array.isArray(data.wonders) ? data.wonders : [])
-      .map(readWonder)
-      .filter((w): w is Wonder => w !== null)
-      .slice(0, MAX_WONDERS);
     world.islandName = typeof data.islandName === "string" ? data.islandName.slice(0, 40) : null;
     for (const i of Array.isArray(data.patched) ? data.patched.slice(0, 4000) : []) if (Number.isInteger(i) && i >= 0 && i < world.n) world.patched.add(i);
     world.refuges = (Array.isArray(data.refuges) ? data.refuges : [])
@@ -179,6 +159,28 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
       .slice(0, 200)
       .map((r) => ({ kind: r.kind.slice(0, 30), x: r.x, y: r.y, r: Math.max(1, Math.min(8, r.r)) }));
   }
+  // Villages and wonders, also on an island made before 4.4 (4.6: a placed
+  // village or wonder keeps its name and its jobs there too).
+  world.settlements = (Array.isArray(data.settlements) ? data.settlements : [])
+    .filter((t) => t && ok(t.x) && ok(t.y) && ok(t.style) && ok(t.level))
+    .slice(0, 32)
+    .map((t) => ({
+      x: t.x,
+      y: t.y,
+      style: Math.max(0, Math.min(HOUSE_STYLES.length - 1, Math.round(t.style))),
+      level: Math.max(0, Math.min(5, Math.round(t.level))),
+      jobs: (Array.isArray(t.jobs) ? t.jobs : [])
+        .filter((b) => b && ok(b.kind) && ok(b.i) && b.kind >= FIRST_JOB && b.kind <= LAST_JOB && b.i >= 0 && b.i < world.n)
+        .slice(0, 16)
+        .map((b) => ({ kind: Math.round(b.kind), i: Math.round(b.i) })),
+      store: ok(t.store) ? Math.max(0, Math.min(200, t.store!)) : 0,
+      street: ok(t.street) ? Math.round(t.street!) & 3 : 0,
+      name: typeof t.name === "string" ? t.name.slice(0, 20) : "",
+    }));
+  world.wonders = (Array.isArray(data.wonders) ? data.wonders : [])
+    .map(readWonder)
+    .filter((w): w is Wonder => w !== null)
+    .slice(0, MAX_WONDERS);
   prepare(world);
   world.time = data.time ?? 0;
   const n = world.n;

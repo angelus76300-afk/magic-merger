@@ -990,6 +990,68 @@ export function placeOne(world: World, def: WonderDef, seed: number): Wonder | n
   return w;
 }
 
+// 4.6: a built-in wonder raised where an item asks (a place, makers.ts), not
+// where the generator would look: its land shaped, its model drawn, its life
+// stepped as any other, saved with the island. Its usual reach; a fall's top
+// is the highest cell three cells round, an arch's way from the seed. Null
+// for an unknown kind, a spot off the island or an island already holding
+// MAX_WONDERS.
+export function placeWonderAt(world: World, kind: string, x: number, y: number, seed: number, biomes: readonly Biome[] = BIOMES): Wonder | null {
+  const k = WONDER_KINDS.get(kind);
+  const cx = Math.round(x);
+  const cy = Math.round(y);
+  if (!k || world.wonders.length >= MAX_WONDERS || cx < 4 || cy < 4 || cx >= world.w - 4 || cy >= world.h - 4) return null;
+  const r = REACH_OF[kind] ?? 6;
+  let ax = 0;
+  let ay = 0;
+  if (kind === "waterfall" || kind === "frozen waterfall") {
+    // The top: the highest cell three cells away, raised into a ledge if the land is flat.
+    let top = { x: cx + 3, y: cy, h: -Infinity };
+    for (const [dx, dy] of N8) {
+      const tx = cx + dx * 3;
+      const ty = cy + dy * 3;
+      if (world.inside(tx, ty) && world.height[ty * world.w + tx] > top.h) top = { x: tx, y: ty, h: world.height[ty * world.w + tx] };
+    }
+    const foot = world.height[cy * world.w + cx];
+    if (top.h - foot < 5) disc(world, top.x, top.y, 2.2, (i, d) => (world.height[i] = Math.max(world.height[i], foot + 6 * (1 - d * 0.5))));
+    ax = top.x;
+    ay = top.y;
+  } else if (kind === "stone arch" || kind === "bones") {
+    const a = seedRoll(seed, 7101) * Math.PI * 2;
+    ax = Math.cos(a);
+    ay = Math.sin(a);
+  }
+  const i = cy * world.w + cx;
+  const biome = world.biomeMap ? biomes[world.biomeMap[i]] : (world.land?.biome ?? "temperate");
+  const w: Wonder = { kind, x: cx, y: cy, r, seed: seed >>> 0, name: wonderName(kind, seed, biome), t: 0, state: 0, ax, ay };
+  const homes = distanceTo(world, 40, (j) => world.cover[j] === C.HOUSE || world.ground[j] === G.FIELD);
+  const sea = distanceTo(world, 10, (j) => isSea(world, j));
+  k.shape?.(world, w, { world, biomes, peak: 0, homes, sea, taken: [] }, new Rng(w.seed));
+  world.wonders.push(w);
+  return w;
+}
+
+// The reach each built-in kind's own finder gives it.
+const REACH_OF: Record<string, number> = {
+  waterfall: 6,
+  "hot spring": 7,
+  "cave mouth": 4,
+  "stone arch": 5,
+  "lone tree": 6,
+  ruins: 8,
+  "sinkhole lake": 5,
+  geysers: 5,
+  "sea stacks": 5,
+  crater: 7,
+  "floating rock": 14,
+  bones: 7,
+  "frozen waterfall": 6,
+  "fairy ring": 9,
+  "world tree": 12,
+  hoard: 6,
+  "sunken temple": 6,
+};
+
 // After ecology.ts: what grows under and around a wonder.
 export function settleWonders(world: World): void {
   for (const w of world.wonders) {

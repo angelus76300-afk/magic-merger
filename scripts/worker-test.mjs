@@ -92,6 +92,18 @@ function stubAnswer(n, system, user) {
     return JSON.stringify({ summary: "A dome.", code, missing: "a barrier that stops lava: to keep the village safe" });
   }
   if (system.startsWith("You write the chronicle")) return "The mage came, and the village remembered.";
+  // 4.6: the library sorted into the seven kinds.
+  if (system.startsWith("Magic Merger is a crafting game about magic: players merge items"))
+    return JSON.stringify({
+      items: user
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => {
+          const name = line.replace(/ \((spell|artifact)\):.*$/, "");
+          const form = /serpent|living spell/i.test(name) ? "creature" : /village/i.test(name) ? "settlement" : /\(spell\)/.test(line) ? "spell" : "object";
+          return { name, form, why: "by its name" };
+        }),
+    });
   // 4.1 (M7): the judge, the tier backfill and the trim scan, asked only by section 25.
   if (system.startsWith("You judge spells"))
     return JSON.stringify({ score: 2, reason: "small", note: "A faint ring, far smaller than a village.", alive: "none" });
@@ -127,6 +139,8 @@ function stubAnswer(n, system, user) {
   // answer, since a program written ahead in the background may take a call
   // number in between (4.5.1: "Answer ${calls + 1}" was a race).
   if (/Spiral Left/.test(user) && /Spiral Right/.test(user)) return JSON.stringify({ name: "Daily Spiral", emoji: "🌀", kind: "spell", tier: "minor" });
+  // 4.6: a merge that makes a settlement.
+  if (/Hearth Folk \+ Hearth Folk/.test(user)) return JSON.stringify({ name: "Hearth Village", emoji: "🏘️", kind: "settlement", tier: "major" });
   return JSON.stringify({ name: `Answer ${n}`, emoji: "✨", kind: "spell", tier: user.startsWith("Glow Moss") ? "cosmic" : "minor" });
 }
 
@@ -3566,6 +3580,111 @@ const signIn = async (key, count) => {
   await fetch(`${BASE}/cdn-cgi/handler/scheduled?cron=*/10+*+*+*+*`);
   await new Promise((r) => setTimeout(r, 3000));
   check("the staging Worker's cron rewrites nothing by evidence", spellCalls === s5 && (await runs()) === 0, `${spellCalls - s5} calls, ${await runs()} runs`);
+  await reset();
+}
+
+// 33. Every item is what it is (4.6): seven kinds decided at the merge, the
+// kind's section in the writer's message and the kind in the program, the
+// library sorted again as proposals the owner sees before anything changes,
+// and rewrites by form a capped batch at a time, the old entry kept.
+{
+  await reset();
+  const now = Date.now();
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('hearth folk', 'Hearth Folk', '🧑', 'artifact', 1, 'minor', 'Kind people.', 'other', ?)",
+    )
+    .bind(now)
+    .run();
+  const made = await api("/api/merge", { admin: true, body: { a: "Hearth Folk", b: "Hearth Folk" } });
+  const row = await db.prepare("SELECT kind, form FROM elements WHERE key = 'hearth village'").first();
+  check(
+    "a merge decides one of seven kinds: a settlement is stored as an artifact whose form is settlement",
+    made.status === 200 &&
+      made.data.element.form === "settlement" &&
+      made.data.element.kind === "artifact" &&
+      row?.kind === "artifact" &&
+      row?.form === "settlement",
+    JSON.stringify({ element: made.data?.element, row }),
+  );
+  const written = await api("/api/spell", { admin: true, body: { name: "Hearth Village" } });
+  check(
+    "its program is written with the settlement section and example, and carries its kind",
+    lastSpell().user.includes("SETTLEMENT\nWhere people live together") &&
+      lastSpell().user.includes("w.village(") &&
+      written.data?.program?.form === "settlement",
+    JSON.stringify({ form: written.data?.program?.form, user: lastSpell().user.slice(0, 160) }),
+  );
+
+  // The library sorted again: proposals only, then applied by the owner.
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('serpent', 'Serpent', '🐍', 'artifact', 2, 'minor', 'A living coil of bog-black sludge.', 'other', ?), ('old village', 'Old Village', '🏘️', 'artifact', 3, 'major', 'A palm-sized model of a hamlet.', 'create', ?), ('fire bolt', 'Fire Bolt', '🔥', 'spell', 1, 'minor', 'A bolt of fire.', 'harm', ?), ('living spell', 'Living Spell', '✨', 'spell', 2, 'minor', 'A spell that walks.', 'other', ?)",
+    )
+    .bind(now, now, now, now)
+    .run();
+  const before = (await db.prepare("SELECT COUNT(*) AS n FROM elements WHERE form IS NOT NULL").first()).n;
+  const proposed = await api("/api/admin/forms", { admin: true, body: {} });
+  const untouched = (await db.prepare("SELECT COUNT(*) AS n FROM elements WHERE form IS NOT NULL").first()).n;
+  const list = (await api("/api/admin/forms", { admin: true })).data;
+  const serpent = list.rows.find((r) => r.key === "serpent");
+  check(
+    "the sort only proposes: every element gets a proposal and none changes until the owner applies it",
+    proposed.status === 200 && proposed.data.left === 0 && untouched === before && serpent?.form === "creature" && serpent.was === "guess:creature",
+    JSON.stringify({ proposed: proposed.data, before, untouched, serpent }),
+  );
+  check(
+    "the owner's list puts a spell that would become an artifact apart",
+    list.flips.length === 1 && list.flips[0].key === "living spell" && list.counts.settlement >= 1,
+    JSON.stringify({ flips: list.flips.map((r) => r.key), counts: list.counts }),
+  );
+  const applied = (await api("/api/admin/forms-apply", { admin: true, body: { all: true } })).data;
+  const forms = Object.fromEntries(
+    (
+      await db.prepare("SELECT key, kind, form FROM elements WHERE key IN ('serpent', 'old village', 'fire bolt', 'living spell', 'hearth village')").all()
+    ).results.map((r) => [r.key, `${r.kind}/${r.form}`]),
+  );
+  check(
+    "applying all sets the forms that keep their kind, skips a flip and never overwrites a form the merge set",
+    forms.serpent === "artifact/creature" &&
+      forms["old village"] === "artifact/settlement" &&
+      forms["fire bolt"] === "spell/spell" &&
+      forms["living spell"] === "spell/null" &&
+      forms["hearth village"] === "artifact/settlement" &&
+      applied.skipped.includes("living spell"),
+    JSON.stringify({ forms, applied }),
+  );
+  const flip = (await api("/api/admin/forms-apply", { admin: true, body: { keys: ["living spell"], flip: true } })).data;
+  const flipped = await db.prepare("SELECT kind, form FROM elements WHERE key = 'living spell'").first();
+  check(
+    "a flip is applied only by name, with flip",
+    flip.applied.includes("living spell") && flipped.kind === "artifact" && flipped.form === "creature",
+    JSON.stringify(flipped),
+  );
+
+  // Rewrites by form: a capped batch, the entry written again for its kind, the old one kept.
+  for (const name of ["Serpent", "Old Village"]) {
+    const p = await api("/api/spell", { admin: true, body: { name } });
+    await api("/api/spell/check", { admin: true, body: { name, id: p.data.program.id, ok: true, problem: null, detail: "ok" } });
+  }
+  const g0 = grimoireCalls;
+  const started = (await api("/api/admin/refresh", { admin: true, body: { forms: true, keys: ["serpent", "old village"], limit: 1 } })).data;
+  const keptEntry = (await db.prepare("SELECT entry FROM forms WHERE key = 'serpent'").first())?.entry;
+  check(
+    "a rewrite by form takes the asked keys in order, as many as the cap, and writes the entry again with the old one kept",
+    started.queued.length === 1 && started.queued[0] === "Serpent" && keptEntry === "A living coil of bog-black sludge." && grimoireCalls === g0 + 1,
+    JSON.stringify({ started, keptEntry, grimoire: grimoireCalls - g0 }),
+  );
+  await api("/api/admin/poll-batches", { admin: true, body: {} });
+  const cand = (await api("/api/admin/refresh-candidates", { admin: true })).data.find((c) => c.key === "serpent");
+  check("the candidate carries its kind for the runner's test run", cand?.form === "creature", JSON.stringify(cand && { form: cand.form, giant: cand.giant }));
+  const again = (await api("/api/admin/refresh", { admin: true, body: { forms: true, keys: ["serpent"] } })).data;
+  const capped = (await api("/api/admin/refresh", { admin: true, body: { forms: true, limit: 500 } })).data;
+  check(
+    "never twice by form, and never more than 20 at once",
+    again.queued.length === 0 && capped.queued.length <= 20,
+    JSON.stringify({ again, capped: capped.queued.length }),
+  );
   await reset();
 }
 

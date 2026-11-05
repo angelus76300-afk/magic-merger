@@ -1,5 +1,6 @@
 import { INTENTS, PROMISE_TEST, type Intent } from "../shared/promises";
 import { TIERS } from "../shared/tiers";
+import { FORMS, type Form } from "../shared/forms";
 
 // The merge prompt only ever sees the two input names. No history, no
 // descriptions, no hidden stats: that is what keeps deep merges from drifting
@@ -7,9 +8,15 @@ import { TIERS } from "../shared/tiers";
 // so the same pair always answers the same thing.
 export const MERGE_SYSTEM = `You are the hidden rules of Magic Merger, a crafting game about magic. The player drops one item onto another and you decide what the two make together.
 
-Every item belongs to a world of magic, and is one of two kinds:
-spell: something a mage can cast. Examples: Fireball, Healing Rain, Petrify, Summon Wolf, Eclipse.
-artifact: anything magical that cannot be cast: an object, material, creature, place, person or idea. Examples: Wand, Mana Crystal, Phoenix, Wizard Tower, Necromancer, Curse.
+Every item belongs to a world of magic, and is one of seven kinds:
+spell: something a mage casts: it happens, or starts something the world carries on. Fireball, Healing Rain, Petrify, Summon Wolf, Eclipse, Curse.
+creature: a being that is alive (or undead) and moves, wants and acts: an animal, a monster, a spirit, a person, or a role a person has. Phoenix, Golem, Serpent, Human, Necromancer.
+object: a thing a hand can hold or a table can bear: a tool, a weapon, a potion, a book, a gem, a charm. Wand, Mana Crystal, Grimoire, Lantern.
+building: one structure people raise: Wizard Tower, Temple, Forge, Castle, Library.
+settlement: where people live together: Village, Town, Camp, City.
+place: a spot of nature or old magic, smaller than a landscape: Grove, Spring, Ruins, Fairy Ring, Portal.
+land: it reshapes or covers the land itself: Floating Island, Volcano, Lake, Canyon, Oasis, Swamp, Desert, Gold Vein.
+The kind is what the thing is, not how strong: a legendary tome is still an object, a book becomes a building only when it is one (the Library of Babel). A substance is an object when held (a vial, a nugget) and land when it lies on the land (a moss field, a vein of gold).
 
 How to decide:
 1. Pick what a reader of fantasy, myth and games would expect the two to make. The best answers feel obvious once seen.
@@ -33,16 +40,19 @@ Judge the meaning, not the recipe: Spark is a cantrip whatever made it, Big Bang
 Examples:
 Fire + Air = Firestorm 🌪️ spell major
 Water + Life = Healing Rain 🌧️ spell major
-Earth + Life = Golem 🗿 artifact minor
+Earth + Life = Golem 🗿 creature minor
 Light + Shadow = Eclipse 🌘 spell grand
-Arcane + Earth = Mana Crystal 💎 artifact cantrip
+Arcane + Earth = Mana Crystal 💎 object cantrip
 Fire + Fire = Inferno 🔥 spell grand
 Inferno + Fire = Inferno 🔥 spell grand
 Golem + Arcane = Animate Stone 🪨 spell minor
-Mana Crystal + Wood = Wand 🪄 artifact cantrip
-Phoenix + Water = Steam ♨️ artifact minor
+Mana Crystal + Wood = Wand 🪄 object cantrip
 Fire + Water = Steam ♨️ spell minor
-Life + Shadow = Undead 🧟 artifact minor
+Life + Shadow = Undead 🧟 creature minor
+Fire + Earth = Volcano 🌋 land grand
+Fire + Stone = Forge ⚒️ building minor
+Human + Human = Village 🏘️ settlement major
+Tree + Water = Grove 🌳 place minor
 
 Reply with the result's name in Title Case, one emoji that fits it, its kind and its tier.`;
 
@@ -70,7 +80,7 @@ export const MERGE_SCHEMA = {
   properties: {
     name: { type: "string" },
     emoji: { type: "string" },
-    kind: { type: "string", enum: ["spell", "artifact"] },
+    kind: { type: "string", enum: [...FORMS] },
     tier: { type: "string", enum: [...TIERS] },
   },
   required: ["name", "emoji", "kind", "tier"],
@@ -80,21 +90,21 @@ export const MERGE_SCHEMA = {
 export const DESCRIBE_SYSTEM = `You write the grimoire of Magic Merger, a crafting game about magic. Each entry describes one item in two or three sentences, sixty words at most.
 
 For a spell: say what casting it looks like and what it does to the people, creatures and land it touches. Be concrete about the effect, its size and how long it lasts, because the entry will later be turned into the real spell in a small simulated world.
-For an artifact: say what it is, what it looks like and what mages use it for. Describe the thing itself: a substance stays a substance and a creature a creature, never a jar or a trinket holding it.
+For an artifact: say what it is, what it looks like and what mages use it for. Describe the thing itself: a substance stays a substance and a creature a creature, never a jar or a trinket holding it. Keep it the size of its kind: an object is held in a hand, a creature is its body, a building stands among houses, a settlement is where people live, a place is a spot of land, land reshapes the land; never giant unless its name says so.
 
 Write vivid plain prose. No lists, no headings, no quotation marks around the name, nothing unsuitable for all ages.`;
 
 // "secret": a daily challenge (4.5), whose two parents players must find, so
 // the entry never names what it is made from.
-export function describeUserMessage(name: string, kind: string, recipe: [string, string] | null | "secret"): string {
+export function describeUserMessage(name: string, kind: string, recipe: [string, string] | null | "secret", form?: Form): string {
   const origin =
     recipe === "secret"
       ? " What it is made from is a secret players must find: never name, hint at or describe its ingredients or how it was made."
       : recipe
         ? ` It is made from ${recipe[0]} and ${recipe[1]}.`
         : " It is one of the primal forces.";
-  const article = kind === "artifact" ? "an" : "a";
-  return `Write the entry for ${name}, ${article} ${kind}.${origin}`;
+  const what = form && form !== "spell" ? FORM_NOUN[form] : kind === "artifact" ? "an artifact" : "a spell";
+  return `Write the entry for ${name}, ${what}.${origin}`;
 }
 
 // Tiers that were never chosen (elements from before tiers): asked once, for
@@ -194,6 +204,7 @@ Big moves: w.explode(x, y, r, power 0 to 5), w.quake(x, y, r, strength) (one jol
 Lightning: w.lightning(x, y, {power, color}) strikes the highest thing on that cell, burns, hurts, sets wood alight, shocks every creature in the water it hits and turns sand to glass. w.beam(x0, y0, z0, x1, y1, z1, {color, width, seconds}) draws a ray of light (the effect is up to you).
 Structures (options in braces are all optional; grow: seconds raises it from its base over time, which looks alive):
 w.tree(x, y, {style, height, trunk, leaves, accent, accentShare, glow, z, grow}) with style oak, pine, birch, willow, palm, dead, giant, mushroom or crystal; trunk and leaves are color lists, accent colors are sprinkled in the leaves (blossoms, fruit, autumn), glow makes the leaves shine.
+The engine's own makers, for items that are such things (each returns what it made, or null): w.village(x, y, {houses, name, villagers}) lays out a real village near (x, y), as the island's own: houses round a plaza, a main street, fields, a well, its first buildings with a job and its villagers, dressed alike. w.building(x, y, {job}) raises one building of two by two cells in its village's style, drawn by the island's builder, with job house, smithy, granary, bakery, barn, tavern, market, chapel, watchtower, lumber yard or fisher hut (it does that job for the nearest village). w.land(x, y, {shape, r, height}) reshapes the land within r cells: hill, mountain, volcano (with a vent of lava), lake or pond (kept by a spring), canyon, valley, crater, oasis, swamp, mesa, island (out of the sea), glacier, dunes, or floating island (with z, its height). w.wonder(x, y, kind) raises one of the island's wonders there, with its land, its look and what it does: waterfall, hot spring, cave mouth, stone arch, lone tree, ruins, sinkhole lake, geysers, sea stacks, crater, floating rock, bones, frozen waterfall, fairy ring, world tree, hoard or sunken temple.
 w.spire(x, y, {height, radius, colors, kind, lean, angle, grow}), w.tower(x, y, {height, radius, colors, roof, windows, grow}), w.wall(x0, y0, x1, y1, {height, thick, colors, kind, grow}), w.arch(x0, y0, x1, y1, {height, thick, colors, kind, grow}), w.island(x, y, {z, r, top, rock, grow}) (a floating island; put trees on it with z).
 Free voxels for anything else (z in voxels above the ground at that cell; at most 20000 in the world): w.voxel(x, y, z, color, kind), w.sphere(x, y, z, r, colors, density, kind), w.box(x, y, z, sx, sy, sz, colors, kind), w.unvoxel(x, y, r), w.burnVoxels(x, y, r). kind: stone (default), wood, leaf, ice, glow (shines at night): all of these fall if nothing holds them up; magic (shines) and float stay where they are put. Use magic or float only for things that really float.
 Creatures: w.creatures(x, y, r), w.corpses(x, y, r), w.spawn(kind, x, y). Each has x, y, z, kind, hp, alive, data and hurt(n), heal(n), kill(), revive(), push(dx, dy, up), status(name, seconds, fromX, fromY), transform(kind), resize(factor), tint(color), teleport(x, y).
@@ -220,7 +231,7 @@ Honey or a carcass: lures beast and is taken (eaten); a dragon: scares villager,
 Holy Relic: a small shrine plus w.landmark with scares your undead kinds and aura hurt; a scarecrow: a landmark that scares beast.
 
 ARTIFACTS
-Some items are artifacts, not spells: objects, materials, creatures, places, people. The player places them where they tap, and the same program format makes them appear: keep the arrival short (a flash, a sound, a second at most) and make the thing itself the point. A creature becomes a new creature kind with a behavior and is spawned; a building or a place is built with the structures at a believable size; a material is laid on the land with its reactions; whatever acts on its own (a volcano that leaks lava, a well that waters the fields) gets a creature, a material rule or a body that keeps doing it. An artifact's reach is smaller than a spell's: most are a few cells.
+Some items are artifacts, not spells: creatures, objects, buildings, settlements, places and land. The player places them where they tap, and the same program format makes them appear: keep the arrival short (a flash, a sound, a second at most) and make the thing itself the point. The message says which kind it is and how that kind is made; follow it. A creature becomes a new creature kind with a behavior and is spawned; a building, a settlement, a place or land is made with the engine's makers above, at the size of its kind; a material is laid on the land with its reactions; whatever acts on its own (a volcano that leaks lava, a well that waters the fields) gets a creature, a material rule or a body that keeps doing it. An artifact's reach is smaller than a spell's: most are a few cells.
 An object or a place acts through w.artifact(x, y, "Name") with spell.artifacts: [{name, radius, color, lures, scares, charges, recharge, fuel, health, onBreak, effects, grants, uses, pairs}] (plain data like spell.creatures, kept across a reload). effects: up to four {when, every, do, radius, cost}: when is dawn, dusk, night, day, every, drought, fire, enemy, death, hurt or full moon (one night in four); do is water (waters dry fields and crops), rain, heal, grow, freeze, burn, lightning, shield, light (drives night hunters off), food, gold (to the nearest village's stores), revive (a corpse), summon:<kind>, cast:<a library spell's name> (at major at most), or act(self, w, target) of your own. charges (with recharge, seconds per charge back) are spent by effects and grants; fuel is seconds it burns before it goes out; health is worn down by fire and by kinds that destroy it, and onBreak is an effect. grants: up to three {what, to, cost}, what villagers come to it for: water (they carry it to their fields), arms (they become guards), prayer, food, heal, gold. uses: {do, by}, what kinds do to it: steal, guard, destroy, worship. pairs: {with, within, do, once} with a corpse, a creature kind, another artifact's name or a material: a Phoenix Feather near a corpse revives it. A Well: effects [{when: "dawn", do: "water"}], grants [{what: "water"}]; a Rain Totem: effects [{when: "drought", do: "cast:Rain", every: 120}]; a Forge: grants [{what: "arms"}], uses [{do: "steal", by: ["goblin"]}], health 200. Build its look with structures or voxels next to it.
 Its test run places it by a village and leaves it alone for five minutes: it must keep changing something after it arrives (an effect, a grant villagers use, a pair, its creatures' deeds, a material that keeps spreading). A thing that only stands there fails.
 
@@ -361,6 +372,36 @@ export const SORT_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+// 4.6: the library sorted again into the seven kinds, by the small model,
+// a page of names at a time. The owner sees the list before anything changes.
+export const FORMS_SYSTEM = `Magic Merger is a crafting game about magic: players merge items, and each item is placed or cast on a small island of villages, forests, lakes and hills. For each item, one per line with its current kind (spell or artifact) and its grimoire entry, say which of seven kinds it truly is:
+spell: something a mage casts: it happens, or starts something the world carries on.
+creature: a being that is alive (or undead) and moves, wants and acts: an animal, a monster, a spirit, a person, or a role a person has (a Necromancer, a Knight).
+object: a thing a hand can hold or a table can bear: a tool, a weapon, a potion, a book, a gem, a charm.
+building: one structure people raise: a tower, a temple, a forge, a castle, a library.
+settlement: where people live together: a village, a town, a camp, a city.
+place: a spot of nature or old magic, smaller than a landscape: a grove, a spring, a ruin, a fairy ring, a portal.
+land: it reshapes or covers the land itself: a floating island, a volcano, a lake, a canyon, an oasis, a swamp, a vein of gold, a moss field.
+Judge what the thing is, by its name first and its entry second: a Serpent is a creature even if its entry calls it a coil of stones; a Village is a settlement even if its entry describes a charm; a legendary tome is an object. An item that is now a spell stays a spell unless it is plainly a thing (a Curse cast is a spell). why: a few words.
+Answer with every item's name exactly as given.`;
+
+export const FORMS_SCHEMA = {
+  type: "object",
+  properties: {
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { name: { type: "string" }, form: { type: "string", enum: [...FORMS] }, why: { type: "string" } },
+        required: ["name", "form", "why"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["items"],
+  additionalProperties: false,
+} as const;
+
 // Helpers and hints the API has grown since (worker/evolve.ts), added after
 // the fixed prompt so the part that never changes stays cached.
 export interface LibraryDoc {
@@ -380,6 +421,140 @@ export function spellSystem(library: LibraryDoc[] = []): string {
   if (hints.length) text += `\n\nHINTS\nThings writers thought the API could not do, and how it does:\n${hints.map((h) => `${h.doc}`).join("\n")}`;
   return text;
 }
+
+// 4.6: what each kind of artifact is, how the engine makes it, and the size
+// its test run holds it to (shared/forms.ts, src/sim/check.ts). One section
+// goes into the message of an item of that kind, with one example, so a
+// merge that makes a temple gets the building rules and a lantern the object
+// rules, and the cached system prompt stays the same for every program.
+export const FORM_NOUN: Record<Form, string> = {
+  spell: "a spell",
+  creature: "a creature",
+  object: "an object",
+  building: "a building",
+  settlement: "a settlement",
+  place: "a place",
+  land: "land",
+};
+
+export const FORM_EXAMPLES: Record<Exclude<Form, "spell">, { name: string; tier: string; code: string }> = {
+  creature: {
+    name: "Serpent",
+    tier: "minor",
+    code: `const spell = {
+  creatures: [
+    { name: "serpent", base: "beast", body: "serpent", color: "#3f5f2e", color2: "#d8c46a", features: ["tail"],
+      speed: 1.2, hp: 45, radius: 0.55, behavior: "hunt", prey: ["rabbit"], attack: 14, sense: 14,
+      goal: "hunt", weak: ["cold"], scares: ["rabbit", "deer"],
+      // It digs a burrow in the bank every so often, and hunts from it when hungry.
+      abilities: [{ do: "dig", when: "every so often", every: 30 }] },
+  ],
+  *cast(w) {
+    w.sound("hiss", 0.3);
+    w.burst(w.x, w.y, { count: 14, colors: ["#5d8a3a", "#3f5f2e"], speed: 2, up: 1 });
+    yield 0.4;
+    w.spawn("serpent", w.x, w.y);
+  },
+};`,
+  },
+  object: {
+    name: "Storm Lantern",
+    tier: "minor",
+    code: `const spell = {
+  artifacts: [{ name: "Storm Lantern", radius: 8, color: "#ffd36a", fuel: 900,
+    effects: [{ when: "night", do: "light" }, { when: "enemy", do: "light", every: 15 }],
+    grants: [{ what: "heal", cost: 1 }], charges: 3, recharge: 60 }],
+  *cast(w) {
+    w.sound("chime", 0.25);
+    // A post of dark wood and the lantern on it: three voxels, the size of a villager.
+    w.box(w.x, w.y, 0, 1, 1, 2, ["#5a4030"], "wood");
+    w.voxel(w.x, w.y, 2, "#ffd36a", "glow");
+    w.light(w.x, w.y, 6, "#ffd36a", 2);
+    w.artifact(w.x, w.y, "Storm Lantern");
+  },
+};`,
+  },
+  building: {
+    name: "Forge",
+    tier: "minor",
+    code: `const spell = {
+  artifacts: [{ name: "Forge", radius: 6, health: 200, grants: [{ what: "arms" }], uses: [{ do: "steal", by: ["goblin"] }] }],
+  *cast(w) {
+    w.sound("thump", 0.4);
+    const b = w.building(w.x, w.y, { job: "smithy" });
+    if (!b) return;
+    // What makes it this forge: a stone chimney and the glow of its fire.
+    w.box(b.x + 1, b.y - 1, 0, 1, 1, 4, ["#4a4446", "#3a3436"]);
+    w.voxel(b.x + 1, b.y - 1, 4, "#ff8a2a", "glow");
+    w.gas(b.x + 1, b.y - 1, 1, "smoke", 0.4);
+    w.artifact(b.x, b.y, "Forge");
+  },
+};`,
+  },
+  settlement: {
+    name: "Village",
+    tier: "major",
+    code: `const spell = {
+  *cast(w) {
+    w.sound("chime", 0.4);
+    const v = w.village(w.x, w.y, { houses: 8 });
+    if (!v) return;
+    w.camera(v.x, v.y, 20, 3);
+    w.burst(v.x, v.y, { count: 30, colors: ["#ffe9a8", "#ffffff"], speed: 3, up: 3 });
+  },
+};`,
+  },
+  place: {
+    name: "Healing Spring",
+    tier: "minor",
+    code: `const spell = {
+  *cast(w) {
+    w.sound("chime", 0.3);
+    const p = w.wonder(w.x, w.y, "hot spring");
+    const x = p ? p.x : w.x, y = p ? p.y : w.y;
+    // What is its own: white flowers that crowd the warm banks.
+    w.ring(x, y, 3, 6, (cx, cy) => { if (w.chance(0.25)) w.set(cx, cy, "flower"); });
+    w.light(x, y, 5, "#bfe8ff", 2);
+  },
+};`,
+  },
+  land: {
+    name: "Volcano",
+    tier: "grand",
+    code: `const spell = {
+  *cast(w) {
+    w.sound("rumble", 0.8);
+    w.quake(w.x, w.y, w.r, 1);
+    yield 0.6;
+    w.land(w.x, w.y, { shape: "volcano", r: Math.min(18, w.r) });
+    w.gas(w.x, w.y, 3, "smoke", 0.8);
+    w.shake(0.6, 1.5);
+  },
+};`,
+  },
+};
+
+const FORM_RULES_TEXT: Record<Exclude<Form, "spell">, string> = {
+  creature: `CREATURE
+It is alive: a creature kind in spell.creatures, spawned by cast (one, or a few for a pack or a swarm), never a statue, a ring of spheres or a voxel model of it. Its body plan is what it is (a serpent slithers on the serpent plan, a human walks on two legs as a person), with its own colors and features; it has a goal of its own, needs, prey or food, what it fears, and one or two abilities with a trigger. It is drawn beside a villager: radius is its reach, not its size. Its test run fails it if no creature of its own is alive after it arrives, or if what it builds is more than a few voxels.`,
+  object: `OBJECT
+A thing a hand holds or a table bears: a book, a sword, a potion, a lantern, a gem. Its look is small: a voxel or two, on a pedestal or a post at most, 3 cells across and 4 voxels tall at the very most; it never becomes a statue, a tower or a giant of itself unless its name or entry says it is giant. What it does reaches further through w.artifact: effects, grants villagers come for, uses, pairs. Its test run fails it when it is bigger than that, or builds a building, a village or land.`,
+  building: `BUILDING
+One structure people raise. Make it with w.building(x, y, {job}): the island's builder draws it, two by two cells, in its village's style, and its job works for the nearest village; choose the job nearest to what it is (a temple a chapel, a forge a smithy, a tower a watchtower, an inn a tavern, a mill a granary, a library or a wizard's house a house). Then add what makes it this building beside it with the structures (a chimney, a spire, a bell, a sign of its magic), and what it does with w.artifact or w.hire. At most 12 cells across and 30 voxels tall: a few houses, not a mountain.`,
+  settlement: `SETTLEMENT
+Where people live together. Make it with w.village(x, y, {houses}): it lays out houses round a plaza, a main street, fields, a well and the first buildings with a job, and brings its villagers, the way the island's own villages are made; it finds open ground near the spot by itself, away from the other villages. houses: a camp or a hamlet 3 to 5, a village 6 to 9, a town 10 to 14. Add what is special about this one (a building with w.building, a wall, a shrine, its own people's work with w.hire), never a token of it: a charm, a lantern or a model of houses is not a village.`,
+  place: `PLACE
+A spot of nature or old magic, as the island's wonders are, 4 to 14 cells. When it is one of the wonders, raise it with w.wonder(x, y, kind), which shapes its land, draws it and gives it what it does; otherwise shape it from the land up (w.land, w.terraform, w.paint, w.flood, trees and structures) with what it does through w.artifact or w.landmark. At most 32 cells across and 60 voxels tall.`,
+  land: `LAND
+It changes the land itself. Reshape it with w.land(x, y, {shape, r, height}) (a volcano, a lake, a canyon, an oasis, a swamp, a mountain, a floating island), or w.terraform, w.flood and w.paint over its reach for a land no shape fits, then add what is special. The land is the point: water and lava keep running by themselves once there. Its test run fails it when fewer than 25 cells of land changed.`,
+};
+
+export const FORM_SECTIONS: Record<Exclude<Form, "spell">, string> = Object.fromEntries(
+  (Object.keys(FORM_RULES_TEXT) as Exclude<Form, "spell">[]).map((f) => [
+    f,
+    `${FORM_RULES_TEXT[f]}\nExample, ${FORM_EXAMPLES[f].name} (${FORM_EXAMPLES[f].tier} ${f}):\n${FORM_EXAMPLES[f].code}`,
+  ]),
+) as Record<Exclude<Form, "spell">, string>;
 
 // A program players liked, shown to the small model as a reference (3.3).
 export interface LibraryExample {
@@ -408,10 +583,13 @@ export function spellUserMessage(
   examples: LibraryExample[] = [],
   rewrite?: Rewrite,
   intents: Intent[] = [],
+  form?: Form,
 ): string {
   const origin = recipe ? `It is made from ${recipe[0]} and ${recipe[1]}.` : "It is one of the primal forces.";
-  const label = kind === "artifact" ? "Artifact (placed, not cast)" : "Spell";
+  const shaped = form && form !== "spell" ? form : null;
+  const label = shaped ? `Artifact (placed, not cast), ${FORM_NOUN[shaped]}` : kind === "artifact" ? "Artifact (placed, not cast)" : "Spell";
   let text = `${label}: ${name}\nTier: ${tier}\n${origin}\nGrimoire entry: ${description}`;
+  if (shaped) text += `\n\n${FORM_SECTIONS[shaped]}`;
   const promises = intents.map((i) => PROMISE_TEST[i]).filter(Boolean);
   if (promises.length) text += `\n\n${promises.join("\n")}`;
   if (examples.length) {

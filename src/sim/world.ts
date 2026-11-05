@@ -466,14 +466,16 @@ function landScore(world: World, cx: number, cy: number, r: number, top = 24, mi
 }
 
 // Houses are 2 by 2 blocks around a square, with fields on the outskirts.
-export function buildVillage(world: World, cx: number, cy: number, rng: Rng): void {
+export function buildVillage(world: World, cx: number, cy: number, rng: Rng, count = 0): void {
   const { w } = world;
   const base = world.height[world.idx(cx, cy)];
   const flatten = (x: number, y: number) => {
     const i = y * w + x;
     world.height[i] = base + (world.height[i] - base) * 0.3;
   };
-  const houses = rng.int(5, 9);
+  // Drawn even when a count is given, so a fresh island's stream is unchanged.
+  const drawn = rng.int(5, 9);
+  const houses = count > 0 ? count : drawn;
   for (let k = 0; k < houses; k++) {
     const a = (k / houses) * Math.PI * 2 + rng.range(-0.3, 0.3);
     const d = rng.range(4, 8);

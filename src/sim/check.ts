@@ -9,6 +9,10 @@ import { logCatches } from "./kin";
 import { seeded } from "./noise";
 import { stepHeadless } from "./tick";
 import { TICK, generateWorld, type World } from "./world";
+import { FORM_RULES, GIANT_FACTOR, bigBeing, isForm, type Form } from "../../shared/forms";
+import { isBuilding } from "./materials";
+import { keyLevel, keyX, keyY } from "./voxelkey";
+import { settlementNear } from "./buildings";
 
 // The test run a new program goes through before it is stored (3.3). It is
 // cast near a village on a small seeded island, and the island is compared,
@@ -23,7 +27,7 @@ import { TICK, generateWorld, type World } from "./world";
 // (src/sim/checkframe.ts), and Node for `npm test` and the measurement scripts.
 // The Worker cannot run it, since Cloudflare Workers forbid new Function.
 
-export type CheckProblem = "crash" | "nothing" | "wiped" | "promise" | "idle";
+export type CheckProblem = "crash" | "nothing" | "wiped" | "promise" | "idle" | "size" | "kind";
 
 export interface CheckResult {
   ok: boolean;
@@ -276,6 +280,7 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
   const { world, rt, target, land } = isl;
   Math.random = isl.random;
   const landCells = land.reduce((s, v) => s + v, 0);
+  const before = formBefore(world);
   const started = rt.cast({ ...req, key: `check:${req.key}` }, target.x, target.y);
   let cells = 0;
   let voxels = 0;
@@ -352,6 +357,11 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
       };
     }
   }
+  // 4.6: an item is the size of its kind, and is that kind of thing at all.
+  if (isForm(req.form) && req.form !== "spell") {
+    const found = formCheck(req.form, req.name, req.giant === true, before, world, ref, rt.owners, `check:${req.key}`);
+    if (found) return { ok: false, problem: found.problem, detail: found.detail, stats };
+  }
   const detail = `${cells} cells, ${voxels} blocks and ${creatures} creatures changed${bodies ? `, ${bodies} bodies flew` : ""}.`;
   let result: CheckResult = { ok: true, problem: null, detail, stats };
   if (parseIntents(req.intents).includes("protect")) {
@@ -361,7 +371,7 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
     if (!probe.ok) return { ok: false, problem: "promise", detail: probe.detail, stats: withSaved };
     result = { ok: true, problem: null, detail: `${detail} ${probe.detail}`, stats: withSaved };
   }
-  if (req.kind === "artifact") {
+  if (req.kind === "artifact" && !actsByMaking(req.form, before, world)) {
     phase = "acts";
     const acts = yield* actsProbe(req);
     const withActed = { ...result.stats, acted: acts.acted };
@@ -369,6 +379,218 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
     result = { ok: true, problem: null, detail: `${result.detail} ${acts.detail}`, stats: withActed };
   }
   return result;
+}
+
+// --- 4.6: kinds and sizes ---------------------------------------------------
+
+interface FormBefore {
+  height: Float32Array;
+  fluid: Uint8Array;
+  decor: Set<number>;
+  settlements: number;
+  wonders: number;
+  buildings: Uint8Array;
+  creatureIds: number;
+}
+
+function formBefore(world: World): FormBefore {
+  const decor = new Set<number>();
+  for (const [k] of world.decor) decor.add(k);
+  const buildings = new Uint8Array(world.n);
+  for (let i = 0; i < world.n; i++) buildings[i] = isBuilding(world.cover[i]) ? 1 : 0;
+  return {
+    height: world.height.slice(),
+    fluid: world.fluid.slice(),
+    decor,
+    settlements: world.settlements.length,
+    wonders: world.wonders.length,
+    buildings,
+    creatureIds: Math.max(0, ...world.creatures.map((c) => c.id)),
+  };
+}
+
+// What the item built: its new voxels (how many, how far across, how tall
+// above the land under them), the land it reshaped (cells raised or sunk, or
+// whose ground or water changed, against the island left alone), its new
+// buildings, settlements, wonders and creatures.
+export interface Made {
+  voxels: number;
+  across: number;
+  tall: number;
+  reshaped: number;
+  landAcross: number;
+  buildings: number;
+  settlements: number;
+  wonders: number;
+  creatures: number;
+}
+
+function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Map<string, string>, key: string): Made {
+  let voxels = 0;
+  let x0 = Infinity;
+  let x1 = -Infinity;
+  let y0 = Infinity;
+  let y1 = -Infinity;
+  let tall = 0;
+  for (const [k] of world.decor) {
+    if (before.decor.has(k)) continue;
+    voxels++;
+    const x = keyX(k);
+    const y = keyY(k);
+    x0 = Math.min(x0, x);
+    x1 = Math.max(x1, x);
+    y0 = Math.min(y0, y);
+    y1 = Math.max(y1, y);
+    if (world.inside(x, y)) tall = Math.max(tall, keyLevel(k) + 1 - Math.round(world.height[y * world.w + x] * 0.5));
+  }
+  const across = voxels ? Math.max(x1 - x0, y1 - y0) + 1 : 0;
+  let reshaped = 0;
+  let buildings = 0;
+  let lx0 = Infinity;
+  let lx1 = -Infinity;
+  let ly0 = Infinity;
+  let ly1 = -Infinity;
+  for (let i = 0; i < world.n; i++) {
+    const land = Math.abs(world.height[i] - ref.height[i]) > 0.4 || world.ground[i] !== ref.ground[i] || world.fluid[i] !== ref.fluid[i];
+    if (land) {
+      reshaped++;
+      const x = i % world.w;
+      const y = Math.floor(i / world.w);
+      lx0 = Math.min(lx0, x);
+      lx1 = Math.max(lx1, x);
+      ly0 = Math.min(ly0, y);
+      ly1 = Math.max(ly1, y);
+    }
+    if (!before.buildings[i] && isBuilding(world.cover[i])) buildings++;
+  }
+  // Its own creatures alive at the end, and built-in ones it brought: more
+  // new ones of a kind than the island left alone had (rabbits are born in both).
+  let creatures = 0;
+  const born = new Map<string, number>();
+  for (const c of world.creatures) {
+    if (c.dead || c.id <= before.creatureIds) continue;
+    if (owners.get(`creature:${c.kind}`) === key) creatures++;
+    else if (c.kind !== "villager") born.set(c.kind, (born.get(c.kind) ?? 0) + 1);
+  }
+  for (const [kind, n] of born) creatures += Math.max(0, n - Number(ref.creatures.get(`new:${kind}`) ?? 0));
+  return {
+    voxels,
+    across,
+    tall,
+    reshaped,
+    landAcross: reshaped ? Math.max(lx1 - lx0, ly1 - ly0) + 1 : 0,
+    buildings: Math.round(buildings / 4),
+    settlements: world.settlements.length - before.settlements,
+    wonders: world.wonders.length - before.wonders,
+    creatures,
+  };
+}
+
+const LABEL: Record<Exclude<Form, "spell">, string> = {
+  object: "an object",
+  creature: "a creature",
+  building: "a building",
+  settlement: "a settlement",
+  place: "a place",
+  land: "land",
+};
+
+// Null when the item is what its kind says, at a size that kind can be.
+export function formCheck(
+  form: Exclude<Form, "spell">,
+  name: string,
+  giant: boolean,
+  before: FormBefore,
+  world: World,
+  ref: Snapshot,
+  owners: Map<string, string>,
+  key: string,
+): { problem: "size" | "kind"; detail: string } | null {
+  const m = measureMade(before, world, ref, owners, key);
+  return judgeMade(form, name, giant, m);
+}
+
+export function judgeMade(form: Exclude<Form, "spell">, name: string, giant: boolean, m: Made): { problem: "size" | "kind"; detail: string } | null {
+  const rule = FORM_RULES[form];
+  const f = giant ? GIANT_FACTOR : 1;
+  const big = form === "creature" && bigBeing(name) ? 2 : 1;
+  const across = rule.across * f * big;
+  const tall = rule.tall * f * big;
+  const most = rule.voxels * (giant ? GIANT_FACTOR * GIANT_FACTOR : 1) * big;
+  const giantNote = giant ? "" : ` Only an item whose name or entry says it is giant may be bigger.`;
+  const measured = `(${m.voxels} voxels, ${m.across} cells across, ${m.tall} tall; land reshaped on ${m.reshaped} cells, ${m.landAcross} across; ${m.buildings} buildings, ${m.settlements} settlements, ${m.wonders} wonders, ${m.creatures} creatures)`;
+  // Is it that kind of thing at all?
+  const kind = (() => {
+    switch (form) {
+      case "creature":
+        return m.creatures > 0
+          ? null
+          : `${name} is a creature, but no living creature of its own was on the island after it arrived: spawn it with w.spawn, from spell.creatures.`;
+      case "building":
+        return m.buildings > 0 || m.voxels >= 20
+          ? null
+          : `${name} is a building, but nothing was built: use w.building(x, y, {job}) for the building itself, then add what is special with the structures.`;
+      case "settlement":
+        return m.settlements > 0 || m.buildings >= 3
+          ? null
+          : `${name} is a settlement, but no village was made: use w.village(x, y, {houses}), which lays out houses, a plaza, fields and villagers as the island's own villages are.`;
+      case "land":
+        return m.reshaped >= 25 || m.voxels >= 60
+          ? null
+          : `${name} is land, but the land itself barely changed (${m.reshaped} cells): reshape it with w.land(x, y, {shape, r}), or w.terraform, w.flood and w.paint over its reach.`;
+      default:
+        return null;
+    }
+  })();
+  if (kind) return { problem: "kind", detail: `${kind} ${measured}` };
+  if (form === "object" && (m.buildings > 0 || m.settlements > 0 || m.reshaped > 12 * f))
+    return {
+      problem: "size",
+      detail: `${name} is an object, something a hand holds or a table bears, but it built ${m.buildings ? "a building" : m.settlements ? "a village" : `over ${m.reshaped} cells of land`}. Keep its look to a small thing on a pedestal at most, and let what it does reach further through w.artifact.${giantNote} ${measured}`,
+    };
+  if ((form === "creature" || form === "building") && m.settlements > 0)
+    return { problem: "size", detail: `${name} is ${LABEL[form]}, but it founded a whole village. ${measured}` };
+  const over =
+    m.across > across
+      ? `${m.across} cells across (at most ${across})`
+      : m.tall > tall
+        ? `${m.tall} voxels tall (at most ${tall})`
+        : m.voxels > most
+          ? `${m.voxels} voxels (at most ${most})`
+          : "";
+  if (over) {
+    const scale: Record<Exclude<Form, "spell">, string> = {
+      object: "an object fits in a hand: a voxel or two on a small pedestal, never a statue of itself",
+      creature: "a creature is its body, drawn beside a villager; what it builds stays small",
+      building: "a building stands beside a house (two by two cells, two voxels tall); a temple or a tower is a few houses, not a mountain",
+      settlement: "a village is about thirty cells across",
+      place: "a place reaches 4 to 14 cells, like the island's wonders",
+      land: "land reaches as far as its tier",
+    };
+    return { problem: "size", detail: `${name} is too big for ${LABEL[form]}: ${over}; ${scale[form]}.${giantNote} ${measured}` };
+  }
+  return null;
+}
+
+// A building, a settlement, a place or land acts through what the engine
+// made of it: a job that works for its village, villagers at their work, a
+// wonder doing what it does, water and lava running on new land. Their five
+// minute test is the making itself; any other artifact still faces it.
+function actsByMaking(form: string | undefined, before: FormBefore, world: World): boolean {
+  if (form === "settlement") return world.settlements.length > before.settlements;
+  if (form === "place") return world.wonders.length > before.wonders;
+  if (form === "building") {
+    for (let i = 0; i < world.n; i++)
+      if (!before.buildings[i] && isBuilding(world.cover[i]) && world.cover[i] !== C.HOUSE && settlementNear(world, i % world.w, Math.floor(i / world.w)))
+        return true;
+    return false;
+  }
+  if (form === "land") {
+    let n = 0;
+    for (let i = 0; i < world.n && n < 25; i++) if (Math.abs(world.height[i] - before.height[i]) > 0.4 || world.fluid[i] !== before.fluid[i]) n++;
+    return n >= 25;
+  }
+  return false;
 }
 
 // The five minute test of an artifact (3.7). Placed by the village of the
