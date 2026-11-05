@@ -75,11 +75,12 @@ import {
 } from "./programs";
 import type { LibraryExample, Rewrite } from "./prompts";
 import { joinsBoth, looksLikeRefusal } from "./prompts";
+import { noDescription } from "../shared/refusal";
 import { readDigest } from "../shared/chronicle";
 import { cronJobs, noteRun } from "./cron";
 import { community, setProfile } from "./community";
 import { dayIn as dayInZone } from "../shared/daily";
-import { claim as claimDaily, due as dailyChallengeDue, freePairs, listDaily, openByPair, openByResult, type DailyRow } from "./daily";
+import { RUNS_A_DAY, claim as claimDaily, due as dailyChallengeDue, freePairs, listDaily, openByPair, openByResult, type DailyRow } from "./daily";
 import {
   WONDER_ESTIMATE,
   changeWonder,
@@ -806,8 +807,10 @@ async function setDailyChallenge(env: Env, force: boolean): Promise<{ day: strin
   const day = force ? `${dayInZone(now)}${await forcedSuffix(db, dayInZone(now))}` : await dailyChallengeDue(db, now);
   if (!day) return out;
   out.day = day;
-  // Counted before any call, so a run that finds nothing new (or throws) uses one of the day's runs.
-  if (!force) await noteRun(db, "daily", day, now);
+  // Counted before any call, so a run that finds nothing new (or throws) uses
+  // one of the day's runs. The count is the increment's own answer, so two
+  // runs that overlap cannot both pass the last slot.
+  if (!force && (await noteRun(db, "daily", day, now)) > RUNS_A_DAY) return { ...out, day: null };
   const ledger = new Ledger(ADMIN_PAYER);
   ledger.burstFree = true;
   const oracle = oracleFor(env, {}, ledger);
@@ -1205,6 +1208,9 @@ async function handleRecheck(body: CheckRequest, env: Env, oracle: Oracle, eleme
   const detail = String(body.detail ?? "").slice(0, 400);
   const problem = problemOf(body.problem);
   const verdict = { ok: body.ok === true, problem, detail, stats: body.stats ?? {}, at: Date.now(), recheck: true };
+  // Past the day's rewrite budget (4.5.1), a broken promise is not recorded
+  // yet: recorded, it would count as faced and never be written again.
+  if (!verdict.ok && problem === "promise" && (await overRewriteBudget(env, tier))) return servedLive();
   await env.DB.prepare("UPDATE programs SET checked = ? WHERE id = ?").bind(JSON.stringify(verdict).slice(0, 2000), row.id).run();
   // Only a broken promise asks for a rewrite here; anything else is the old
   // test's business. An old artifact that does nothing in its five minute
@@ -1214,7 +1220,6 @@ async function handleRecheck(body: CheckRequest, env: Env, oracle: Oracle, eleme
   if (verdict.ok || problem !== "promise") return servedLive();
   const pending = await newerTrial(env.DB, key, row.id);
   if (pending) return { name: element.name, tier, program: programOf(pending)!, mock: false };
-  if (await overRewriteBudget(env, tier)) return servedLive();
   let description: string;
   try {
     await ensureBudget(env, oracle, "rewrite", spellEstimate(env, rewriterFor(env, tier)));
@@ -1276,7 +1281,9 @@ async function handleCheck(body: CheckRequest, env: Env, oracle: Oracle): Promis
   if (row.status !== "trial") return served();
   const detail = String(body.detail ?? "").slice(0, 400);
   // 4.5.1 (audit, C.R42-5): a failure that names no problem is a crash, as
-  // the page reads it (src/checkresult.ts); only `ok: true` promotes.
+  // the page reads it (src/checkresult.ts), never a pass. A failure is
+  // promoted only by the 3.3 rule below (a rewrite that failed again, or a
+  // budget spent for the month, with no live program to fall back on).
   const ok = body.ok === true;
   const problem = ok ? null : (problemOf(body.problem) ?? "crash");
   const verdict = { ok, problem, detail, stats: body.stats ?? {}, at: Date.now() };
@@ -1294,7 +1301,13 @@ async function handleCheck(body: CheckRequest, env: Env, oracle: Oracle): Promis
   };
   // Rewrite once: a program written to fix a failed test is not fixed again.
   if (row.origin === "check") return keep();
-  if (await overRewriteBudget(env, tier)) return keep();
+  // Past the day's rewrite budget (4.5.1): a failed trial is not promoted.
+  // It stays a trial, the live program (if any) stays, and the next browser's
+  // failing verdict asks for the rewrite once the budget allows.
+  if (await overRewriteBudget(env, tier)) {
+    if (others) await setStatus(env.DB, row.id, "rejected");
+    return served();
+  }
   let description: string;
   try {
     await ensureBudget(env, oracle, "rewrite", spellEstimate(env, rewriterFor(env, tier)));
@@ -1831,7 +1844,9 @@ const REWRITE_ESTIMATE = { small: 0.003, batch: 0.04, big: 0.08 };
 
 // 4.5.1 (audit, D.M14): the daily rewrite budget covered votes and the judge
 // only; a failed test run and a broken promise found by a recheck wrote again
-// without it. Every path that writes a program again now asks this first.
+// without it. Those two ask this first now. Not under it, on purpose: a
+// repair (a program that crashed in play, capped by its own "mended" limit)
+// and the admin's own rewrite from the card.
 async function overRewriteBudget(env: Env, tier: Tier): Promise<boolean> {
   const estimate = isBig(tier, smallUpTo(env)) ? REWRITE_ESTIMATE.big : REWRITE_ESTIMATE.small;
   return (await rewriteSpendToday(env.DB, REWRITE_ESTIMATE.batch)) + estimate > rewriteBudget(env);
@@ -2099,8 +2114,10 @@ async function ensureDescription(env: Env, oracle: Oracle, element: GameElement,
   if (!oracle.mock && looksLikeRefusal(description)) {
     await ensureBudget(env, oracle, "describe", ESTIMATE.describe);
     description = await oracle.describe(element.name, element.kind, recipe);
-    // Twice refused: nothing is stored, and the card says so plainly.
-    if (looksLikeRefusal(description)) return `${element.name}: no description yet.`;
+    // Twice refused: the plain stand in is stored, so no request pays twice
+    // again (the admin's "New description" asks anew); the page never caches
+    // it (src/store.ts), so a later description reaches every device.
+    if (looksLikeRefusal(description)) description = noDescription(element.name);
   }
   if (!oracle.mock) {
     // Primitives have no row until they are first described.
@@ -2345,6 +2362,9 @@ async function wonderDaily(env: Env, mode: "collect" | "due" | "force") {
   }
   if (mode === "collect") return out;
   if (mode === "due" && !(await dailyDue(db, now))) return out;
+  // 4.5.1 (audit, B13): a wonder whose answer failed its checks left no live
+  // row, so `dailyDue` asked again at the next run; one attempt a day now.
+  if (mode === "due" && (await noteRun(db, "wonder", dayInZone(now), now)) > 1) return out;
   // 2. Today's wonder, within its cap.
   const cap = wonderBudget(env.WONDER_BUDGET_USD);
   const draw = await drawWonder(db);
@@ -2889,8 +2909,9 @@ async function evolve(env: Env, force: boolean): Promise<Record<string, unknown>
   if (!force && !(await designDue(env.DB))) return { skipped: "not due" };
   const gaps = await openGaps(env.DB);
   if (new Set(gaps.map((g) => g.key)).size < 3) return { skipped: "fewer than three spells lacked anything" };
-  // Before the call: whatever it answers, or if it throws, the next is a day away.
-  if (!force) await noteRun(env.DB, "design", dayInZone(Date.now()));
+  // Before the call: whatever it answers, or if it throws, the next is a day
+  // away. One a Toronto day, by the increment's own answer (two overlapping runs cannot both go).
+  if (!force && (await noteRun(env.DB, "design", dayInZone(Date.now()))) > 1) return { skipped: "already tried today" };
   const oracle = oracleFor(env, {}, new Ledger(ADMIN_PAYER));
   try {
     await ensureBudget(env, oracle, "design", ESTIMATE.design);

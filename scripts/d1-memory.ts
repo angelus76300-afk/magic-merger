@@ -28,9 +28,17 @@ export function memoryD1(dir = "migrations"): D1Database {
   });
   return {
     prepare: (sql: string) => statement(sql),
+    // As D1: a batch is one transaction, rolled back whole when a statement fails.
     batch: async (list: { run: () => Promise<unknown> }[]) => {
       const out = [];
-      for (const s of list) out.push(await s.run());
+      db.exec("BEGIN");
+      try {
+        for (const s of list) out.push(await s.run());
+        db.exec("COMMIT");
+      } catch (err) {
+        db.exec("ROLLBACK");
+        throw err;
+      }
       return out;
     },
   } as unknown as D1Database;

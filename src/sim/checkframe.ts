@@ -1,6 +1,7 @@
 import type { CheckResult } from "./check";
 import type { CastRequest } from "./runtime";
 import CheckWorker from "./checkworker?worker&inline";
+import { unfinishedRun } from "../checkresult";
 
 // Entry point of the check iframe (check.html): runs the test run of a new
 // program (check.ts) on a scratch island, out of sight, and says how it went.
@@ -16,7 +17,7 @@ import CheckWorker from "./checkworker?worker&inline";
 // five minute test never finished in the minute allowed. Up to two workers
 // run at once on a phone with the cores for it. A program that keeps a
 // worker busy past WORKER_MS is stopped by terminating the worker; that
-// counts as "did not finish", a pass, as a slow test always has. Where a
+// counts as "did not finish": cast here, reported to nobody (4.5.1). Where a
 // worker cannot be made, the frame runs the test itself as before.
 
 type Job = { id: number; spell: CastRequest };
@@ -97,7 +98,7 @@ function pump(): void {
     s.timer = window.setTimeout(() => {
       // Stuck in spell code: the worker goes, the test counts as not finished.
       drop(s);
-      reply(job.id, { ok: true, problem: null, detail: "The test run did not finish in time", stats: {}, unfinished: true });
+      reply(job.id, unfinishedRun("The test run did not finish in time"));
       pump();
     }, WORKER_MS);
     slot.worker.postMessage(job);

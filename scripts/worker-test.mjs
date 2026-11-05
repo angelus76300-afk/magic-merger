@@ -27,8 +27,15 @@ let spellCalls = 0;
 const STUB_USD = (100 * 4 + 100 * 20) / 1e6;
 const seen = {};
 const lastSpell = () => seen["You write the spells"] ?? { system: "", user: "" };
+// 4.5.1: the grimoire refuses items named Refusenik, and every secret entry while `refuseSecret` is on.
+let refuseSecret = false;
+let grimoireCalls = 0;
 function stubAnswer(n, system, user) {
-  if (system.startsWith("You write the grimoire")) return "A clear dome rises over the village and keeps fire and lava out.";
+  if (system.startsWith("You write the grimoire")) {
+    grimoireCalls++;
+    if (/Refusenik/.test(user ?? "") || (refuseSecret && /secret/.test(user ?? ""))) return "I can't write this one as stated. Here's a safer entry instead.";
+    return "A clear dome rises over the village and keeps fire and lava out.";
+  }
   if (system.includes("Say what this item promises")) return JSON.stringify({ intents: ["protect"] });
   if (system.startsWith("You maintain the World API")) {
     const answers = [...user.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1]));
@@ -2948,6 +2955,7 @@ const signIn = async (key, count) => {
   const item = row ? await lookup("SELECT * FROM elements WHERE key = ?", row.result) : null;
   const described = Object.entries(seen).find(([k]) => k.startsWith("You write the grim"))?.[1]?.user ?? "";
   const [pa, pb] = (row?.pair ?? "+").split("+");
+  const named = (text, key) => new RegExp(`\\b${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text);
   check(
     "daily: the night's challenge is merged ahead, new, with no finder and a description that keeps its recipe secret",
     asked.status === 200 &&
@@ -2956,9 +2964,10 @@ const signIn = async (key, count) => {
       item.invite === null &&
       !!item.description &&
       described.includes("secret") &&
-      // 4.5.1 (audit): the key is lowercase and the prompt holds the name, so compare without case.
-      !described.toLowerCase().includes(pa) &&
-      !described.toLowerCase().includes(pb) &&
+      // 4.5.1 (audit): the key is lowercase and the prompt holds the name, so compare without case, as
+      // whole words (the stub names items "Answer n": "Answer 16" is a parent, "Answer 167" the new item).
+      !named(described, pa) &&
+      !named(described, pb) &&
       !(await lookup("SELECT 1 AS n FROM recipes WHERE pair = ?", row.pair)),
     JSON.stringify({ asked: asked.data, row, described }),
   );
@@ -3102,13 +3111,43 @@ const signIn = async (key, count) => {
     admin: true,
     body: { name: "Ash Cloak", id: made.data.program.id, ok: false, problem: "crash", detail: "It crashed: x is not defined" },
   });
+  const cloak = await db.prepare("SELECT status FROM programs WHERE id = ?").bind(made.data.program.id).first();
   check(
-    "a failed test run past the day's rewrite budget is kept, not written again",
-    failedRun.status === 200 && failedRun.data.program.id === made.data.program.id && spellCalls === before,
-    `${failedRun.status} program ${failedRun.data?.program?.id} (was ${made.data?.program?.id}), ${spellCalls - before} spell calls`,
+    "a failed test run past the day's rewrite budget is not written again, and not made live: it waits as a trial",
+    failedRun.status === 200 &&
+      failedRun.data.program.id === made.data.program.id &&
+      failedRun.data.program.trial === true &&
+      cloak?.status === "trial" &&
+      spellCalls === before,
+    `${failedRun.status} program ${failedRun.data?.program?.id} (was ${made.data?.program?.id}) ${cloak?.status}, ${spellCalls - before} spell calls`,
   );
+  // The blue team's B10: a broken promise found past the budget is not recorded as faced.
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES ('old ward', 'Old Ward', '🛡️', 'spell', 3, 'minor', 'A ward.', ?)",
+    )
+    .bind(now)
+    .run();
+  const ward = await api("/api/spell", { admin: true, body: { name: "Old Ward" } });
+  await db.prepare("DELETE FROM spend WHERE call = 'rewrite'").run();
+  await api("/api/spell/check", { admin: true, body: { name: "Old Ward", id: ward.data.program.id, ok: true, problem: null, detail: "3 cells changed." } });
+  await db.prepare("UPDATE elements SET intents = 'protect' WHERE key = 'old ward'").run();
+  await db.prepare("INSERT INTO spend (at, call, model, usd, invite) VALUES (?, 'rewrite', 'claude-haiku-5-5', 0.5, 'admin')").bind(now).run();
+  const broken = { name: "Old Ward", id: ward.data.program.id, ok: false, problem: "promise", detail: "the village burned", recheck: true };
+  const calls0 = spellCalls;
+  await api("/api/spell/check", { admin: true, body: broken });
+  const unrecorded = JSON.parse((await db.prepare("SELECT checked FROM programs WHERE id = ?").bind(ward.data.program.id).first())?.checked ?? "{}");
+  await db.prepare("DELETE FROM spend WHERE call = 'rewrite'").run();
+  const later = await api("/api/spell/check", { admin: true, body: broken });
+  check(
+    "a broken promise found past the budget is written again on a later day, not marked as faced",
+    !unrecorded.recheck && spellCalls === calls0 + 1 && later.data.program.trial === true && later.data.program.id !== ward.data.program.id,
+    JSON.stringify({ unrecorded: unrecorded.recheck ?? null, calls: spellCalls - calls0, later: later.data?.program?.id }),
+  );
+  await db.prepare("INSERT INTO spend (at, call, model, usd, invite) VALUES (?, 'rewrite', 'claude-haiku-5-5', 0.5, 'admin')").bind(now).run();
   await db.prepare("DELETE FROM spend WHERE call = 'rewrite'").run();
 
+  await db.prepare("DELETE FROM spend WHERE call = 'rewrite'").run();
   // C.R42-5: a failure that names no problem is a crash, never promoted.
   await db
     .prepare(
@@ -3138,6 +3177,76 @@ const signIn = async (key, count) => {
     "a refusal stored as a description is written again",
     described.status === 200 && !/can't write/.test(described.data.description) && !/can't write/.test(stored?.description ?? ""),
     `${described.status} ${described.data?.description?.slice(0, 80)} | stored ${stored?.description?.slice(0, 60)}`,
+  );
+  // B5, B6: a fresh refusal is asked once more, then the stand in is stored, and not asked again.
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES ('refusenik', 'Refusenik', '🙅', 'spell', 3, 'minor', NULL, ?)",
+    )
+    .bind(now)
+    .run();
+  const g0 = grimoireCalls;
+  const refused = await api("/api/describe", { admin: true, body: { name: "Refusenik" } });
+  const g1 = grimoireCalls;
+  const refusedAgain = await api("/api/describe", { admin: true, body: { name: "Refusenik" } });
+  const keptRow = await db.prepare("SELECT description FROM elements WHERE key = 'refusenik'").first();
+  check(
+    "a refused description is asked once more, then the plain stand in is kept and not paid for again",
+    refused.data.description === "Refusenik: no description yet." &&
+      refusedAgain.data.description === "Refusenik: no description yet." &&
+      keptRow?.description === "Refusenik: no description yet." &&
+      g1 - g0 === 2 &&
+      grimoireCalls === g1,
+    JSON.stringify({ first: refused.data?.description, calls: g1 - g0, after: grimoireCalls - g1, stored: keptRow?.description }),
+  );
+  // B5: a daily challenge whose description is a refusal is not set.
+  for (const name of ["Quiet Seed A", "Quiet Seed B", "Quiet Seed C"])
+    await db
+      .prepare(
+        "INSERT OR IGNORE INTO elements (key, name, emoji, kind, depth, tier, description, created_at, invite) VALUES (?, ?, '🌿', 'spell', 2, 'minor', 'A seed.', ?, 'admin')",
+      )
+      .bind(name.toLowerCase(), name, now)
+      .run();
+  await db.prepare("DELETE FROM daily_challenges").run();
+  refuseSecret = true;
+  const refusedNight = await api("/api/admin/daily", { admin: true, body: {} });
+  refuseSecret = false;
+  const nightRows = (await db.prepare("SELECT COUNT(*) AS n FROM daily_challenges").first()).n;
+  check(
+    "a night whose description is a refusal sets no challenge",
+    refusedNight.status === 200 && refusedNight.data.set === null && nightRows === 0 && refusedNight.data.tried.length >= 1,
+    JSON.stringify(refusedNight.data),
+  );
+  // B5 (E.H2a at the call site): an honest win below the greedy count is accepted.
+  // drizzle has two recipes of two merges; only the one through mist shares a
+  // merge with cloud, so thunderhead takes 4 merges and the greedy count says 5.
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES
+       ('mist', 'Mist', '🌫️', 'spell', 1, 'minor', 'Mist', ?), ('puddle', 'Puddle', '💧', 'spell', 1, 'minor', 'A puddle', ?),
+       ('drizzle', 'Drizzle', '🌦️', 'spell', 2, 'minor', 'Drizzle', ?), ('cloud', 'Cloud', '☁️', 'spell', 2, 'minor', 'A cloud', ?),
+       ('thunderhead', 'Thunderhead', '⛈️', 'spell', 3, 'major', 'A storm cloud', ?)`,
+    )
+    .bind(now, now, now, now, now)
+    .run();
+  for (const [pair, a, b, result] of [
+    ["air+water", "air", "water", "mist"],
+    ["water+water", "water", "water", "puddle"],
+    ["air+puddle", "air", "puddle", "drizzle"],
+    ["mist+water", "mist", "water", "drizzle"],
+    ["air+mist", "air", "mist", "cloud"],
+    ["cloud+drizzle", "cloud", "drizzle", "thunderhead"],
+  ])
+    await db.prepare("INSERT OR IGNORE INTO recipes (pair, a, b, result, created_at) VALUES (?, ?, ?, ?, ?)").bind(pair, a, b, result, now).run();
+  const storm = await api("/api/spell", { admin: true, body: { name: "Thunderhead" } });
+  await api("/api/spell/check", { admin: true, body: { name: "Thunderhead", id: storm.data.program.id, ok: true, problem: null, detail: "It rained." } });
+  const tess = await invite("Tess");
+  const honest = await api("/api/challenge/win", { invite: tess.secret, body: { id: "first-fire", merges: 4, spell: "Thunderhead" } });
+  const tooFew = await api("/api/challenge/win", { invite: tess.secret, body: { id: "first-fire", merges: 2, spell: "Thunderhead" } });
+  check(
+    "an honest win in fewer merges than the greedy count is accepted, and a count below the chain is refused",
+    honest.status === 200 && tooFew.status === 400,
+    `${honest.status} ${JSON.stringify(honest.data).slice(0, 100)} | ${tooFew.status}`,
   );
 
   // B.DC15: a player who hides from the Community tab is not named on islands either.

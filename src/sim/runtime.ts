@@ -1564,8 +1564,9 @@ export class SpellApi {
       // 4.5.1 (audit): the prompt teaches `data` as a body field and programs
       // pass it here (Starfall Rain's `data: { h: 0 }`); it was dropped, so
       // their ticks read undefined and never healed. Bodies are never saved
-      // or sent across frames, so the program's own object is kept.
-      data: isPlainData(o.data) ? o.data : {},
+      // or sent across frames. A shallow copy, so bodies made from one shared
+      // options object do not share their state.
+      data: isPlainData(o.data) ? { ...o.data } : {},
       owner: this.castId,
       trail: o.trail === false ? null : o.trail === undefined ? (o.look === "meteor" ? 0xff8a2a : null) : colorOr(o.trail, colorOr(o.color, 0xffffff)),
     };

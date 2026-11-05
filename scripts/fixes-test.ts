@@ -5,17 +5,21 @@ import { designDue, DESIGN_EVERY_MS } from "../worker/evolve";
 import { sweep } from "../worker/ledger";
 import { looksLikeRefusal } from "../worker/prompts";
 import { fewestMerges, leastMerges } from "../shared/challenges";
-import { readResult } from "../src/checkresult";
+import { readResult, reportable, unfinishedRun } from "../src/checkresult";
 import { Runtime } from "../src/sim/runtime";
 import { stepHeadless } from "../src/sim/tick";
 import { TICK, generateWorld } from "../src/sim/world";
 import { C } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
 import { readFileSync } from "node:fs";
-import { seenStamp } from "../shared/changelog";
+import { entryId, whatIsNew } from "../shared/changelog";
+import { setFinders, wonderInfo, type Wonder, type WonderDef } from "../src/sim/wonders";
+import { isPlaceholderDescription, noDescription } from "../shared/refusal";
 
 // The audit's fixes (4.5.1, docs/AUDIT-2026-11-05.md), run by npm test
-// (scripts/sim-test.ts, section 13). Each check fails when its fix is taken out.
+// (scripts/sim-test.ts, section 13). Each check was seen to fail with its fix
+// taken out. Not reached from Node: the page's call sites in src/worldhost.ts and src/whatsnew.ts,
+// which use the functions tested here (reportable, whatIsNew).
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
 export async function fixesChecks(check: Check): Promise<void> {
@@ -232,15 +236,69 @@ export async function fixesChecks(check: Check): Promise<void> {
     );
   }
 
-  // A.W1: "1 new since your last visit" came back after reading, until midnight.
+  // A.W1 and the blue team's B2: what was read is not new again, and an
+  // update or a built idea that comes later the same day is.
   {
-    const entries = [
-      { date: "2026-11-05", text: "today's update" },
-      { date: "2026-11-04", text: "yesterday's" },
-    ];
+    const morning = [{ date: "2026-11-05", version: "4.5", text: "Daily challenges" }];
+    const afternoon = [{ date: "2026-11-05", version: "4.5.1", text: "Fixes from the audit" }, ...morning];
     const readAt = Date.parse("2026-11-05T09:00:00");
-    const stamp = seenStamp(entries, readAt);
-    const stillNew = entries.filter((e) => Date.parse(`${e.date}T23:59:59`) > stamp).length;
-    check("what was read is not new again the same day", stillNew === 0 && stamp >= readAt, `stamp ${new Date(stamp).toISOString()}, ${stillNew} still new`);
+    const read = morning.map(entryId);
+    const idea = [{ title: "Moon phases", at: Date.parse("2026-11-05T15:00:00") }];
+    const sameDay = whatIsNew(morning, [], readAt, read);
+    const later = whatIsNew(afternoon, idea, readAt, read);
+    const first = whatIsNew(afternoon, idea, null, null);
+    check(
+      "what was read is not new again, and what came later that day is",
+      sameDay.fresh.length === 0 && later.fresh.length === 1 && later.fresh[0].version === "4.5.1" && later.ideas.length === 1 && first.fresh.length === 0,
+      JSON.stringify({ sameDay: sameDay.fresh.length, later: later.fresh.map((e) => e.version), ideas: later.ideas.length, first: first.fresh.length }),
+    );
+  }
+
+  // The blue team's B4: a wonder saved on an island names its finder only
+  // while the live pool does (deleted or hidden finders are left out there).
+  {
+    const def = {
+      id: 7,
+      kind: "glimmer moss",
+      rarity: "rare",
+      lands: [],
+      spot: "flat",
+      reach: 5,
+      does: "",
+      code: "x",
+      source: "player",
+      by: "Dan",
+    } as WonderDef;
+    const saved = { kind: "glimmer moss", name: "Dan's Moss", x: 1, y: 1, r: 3, def } as unknown as Wonder;
+    setFinders([def]);
+    const named = wonderInfo(saved).by;
+    setFinders([{ ...def, by: undefined }]);
+    const gone = wonderInfo(saved).by;
+    setFinders([]);
+    const offline = wonderInfo(saved).by;
+    check(
+      "a saved wonder names its finder only while the pool does",
+      named === "Dan" && gone === undefined && offline === undefined,
+      JSON.stringify({ named, gone, offline }),
+    );
+  }
+  // B3, B6: a cached refusal or its stand in is no description on the page either.
+  {
+    check(
+      "a card does not keep a refusal or the stand in for one",
+      isPlaceholderDescription("I can't write this one as stated.") &&
+        isPlaceholderDescription(noDescription("Refusenik")) &&
+        !isPlaceholderDescription("Water is a primal spell."),
+    );
+  }
+  // B5: an unfinished run is never reported; a finished one is, without its timings.
+  {
+    const late = reportable(unfinishedRun("The test run did not finish in time"));
+    const done = reportable({ ok: true, problem: null, detail: "3 cells", stats: { cells: 3 }, phases: { cast: 9 } });
+    check(
+      "an unfinished test run sends no verdict; a finished one does",
+      late === null && !!done && !("phases" in done) && done.ok,
+      JSON.stringify({ late, done }),
+    );
   }
 }

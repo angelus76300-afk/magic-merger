@@ -15,11 +15,28 @@ export interface ChangelogEntry {
 // of today counts as new for someone who last looked this morning.
 export const entryTime = (e: ChangelogEntry) => Date.parse(`${e.date}T23:59:59`);
 
-// What "seen" records when a player looks (or arrives for the first time):
-// now, or the end of the newest entry's day if that is later. 4.5.1 (audit,
-// A.W1): recording now alone left today's entry newer than the read, so the
-// dot and "1 new since your last visit" came back on every visit until
-// midnight, and greeted a player who had just arrived.
-export function seenStamp(entries: ChangelogEntry[], now = Date.now()): number {
-  return Math.max(now, ...entries.map(entryTime).filter(Number.isFinite));
+// An entry as the page remembers it once read.
+export function entryId(e: ChangelogEntry): string {
+  return `${e.date}|${e.version ?? ""}|${e.text.slice(0, 60)}`;
+}
+
+// What is new for a player (4.5.1, audit A.W1 and B2). The page remembers when
+// they last looked (`seen`, a time) and which entries they had then (`read`).
+// An entry is new when it was not among those; an idea of theirs is new when
+// it shipped after that time. Entries carry a day, not a time: comparing the
+// end of their day with `seen` brought "1 new" back after reading, and storing
+// the end of the day instead hid an update or an idea that came later that
+// day. Without `read` (a page from before 4.5.1), entries fall back to the day.
+export function whatIsNew(
+  entries: ChangelogEntry[],
+  shipped: { title: string; at: number }[],
+  seen: number | null,
+  read: string[] | null,
+): { fresh: ChangelogEntry[]; ideas: { title: string; at: number }[] } {
+  if (seen === null) return { fresh: [], ideas: [] };
+  const known = read ? new Set(read) : null;
+  return {
+    fresh: entries.filter((e) => (known ? !known.has(entryId(e)) : entryTime(e) > seen)),
+    ideas: shipped.filter((i) => i.at > seen),
+  };
 }

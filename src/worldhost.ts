@@ -7,6 +7,7 @@ import { DOWN_REASONS, REASON_LABEL, type DownReason } from "../shared/votes";
 import * as api from "./api";
 import { timeline } from "./timeline";
 import { Checker } from "./checker";
+import { reportable } from "./checkresult";
 import { chipElement } from "./craft";
 import { FilterBar, applyFilters, lastUsed, markUsed } from "./filters";
 import { MAX_SAVE_CHARS, readFromWorld } from "./sim/protocol";
@@ -256,16 +257,18 @@ export class WorldHost {
       const tier = d.element.tier;
       if (!now?.recheck?.length || !program || program.id !== now.id || !tier) continue;
       try {
-        const { unfinished, ...result } = await this.checker.check({
-          key,
-          name: d.element.name,
-          tier,
-          code: program.code,
-          intents: now.recheck,
-          kind: d.element.kind,
-        });
+        const result = reportable(
+          await this.checker.check({
+            key,
+            name: d.element.name,
+            tier,
+            code: program.code,
+            intents: now.recheck,
+            kind: d.element.kind,
+          }),
+        );
         // A recheck that did not finish says nothing; the next visit tries again.
-        if (unfinished) continue;
+        if (!result) continue;
         let res = await api.checkSpell({ name: d.element.name, id: now.id, ...result, recheck: true });
         if (res.program.trial) {
           res = await this.settle(key, res, true);
@@ -473,21 +476,24 @@ export class WorldHost {
         timeline.add(key, res.name, "test", performance.now() - t0);
         timeline.step(key, res.name, "tested");
         timeline.phases(key, res.name, result.phases);
-        const { phases: _phases, unfinished, ...verdict } = result;
+        const verdict = reportable(result);
         if (result.ok) {
           // 4.2: a program that passed here is castable now; the Worker is told
           // in the background, and if it answers with another program (a
           // newer one, a rollback), that one replaces it. 4.5.1: a run that
           // timed out is cast here but not reported, so it stays a trial for
           // the next browser to test.
-          if (!unfinished) void this.sendVerdict(key, res, verdict);
+          if (verdict) void this.sendVerdict(key, res, verdict);
           return { ...res, program: { ...res.program, trial: false } };
         }
+        if (!verdict) break;
         res = await api.checkSpell({ name: res.name, id, ...verdict });
         timeline.step(key, res.name, "verdict");
         timeline.server(key, res.name, api.serverTiming(res), "check-");
         if (res.program.id !== id && round === 0 && !result.ok && !quiet)
           toast(`${res.name} failed its test run (${result.problem}); the grimoire wrote it again`);
+        // The same trial back (4.5.1): kept for a later rewrite, testing it again here changes nothing.
+        if (res.program.trial && res.program.id === id) break;
       }
     } catch {
       // The Worker could not be told: the program is cast as it is.

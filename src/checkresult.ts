@@ -37,3 +37,18 @@ export function readResult(raw: Record<string, unknown> | undefined): CheckOutco
     ...(ok && raw?.unfinished === true ? { unfinished: true } : {}),
   };
 }
+
+// A test run that did not finish (it timed out, or the frame never opened):
+// the one shape every caller answers with (src/checker.ts, src/sim/checkframe.ts).
+export function unfinishedRun(detail: string): CheckOutcome {
+  return { ok: true, problem: null, detail, stats: {}, unfinished: true };
+}
+
+// What the Worker is told about a run, or null when it must be told nothing:
+// an unfinished run is no verdict (4.5.1), so it never makes a program live
+// for everyone. Timings stay on the page.
+export function reportable(result: CheckOutcome): Omit<CheckOutcome, "phases" | "unfinished"> | null {
+  if (result.unfinished) return null;
+  const { phases: _phases, unfinished: _unfinished, ...verdict } = result;
+  return verdict;
+}

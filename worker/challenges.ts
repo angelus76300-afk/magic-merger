@@ -121,7 +121,10 @@ export async function recordWin(
       .bind(def.id, key, row.pid, now),
   ]);
   const solvers = (await verified(db)).get(def.id) ?? [key];
-  const { par } = parOf(graph, def.start.map(elementKey), solvers, Math.min(merges, before ?? merges));
+  // 4.5.1 (audit B8): a claim between the floor and the graph's own count
+  // cannot be checked, so it may win but never lowers par for everyone.
+  const greedy = fewestMerges(graph, def.start.map(elementKey)).get(key)?.size ?? least;
+  const { par } = parOf(graph, def.start.map(elementKey), solvers, Math.max(Math.min(merges, before ?? merges), greedy));
   return { stars: starsFor(merges, par), par, best: before === null || merges < before };
 }
 
