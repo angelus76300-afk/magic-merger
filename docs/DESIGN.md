@@ -490,9 +490,37 @@ The island stays last saved wins, with a choice instead of a silent replace. The
 
 ### What syncs, and what stays per device
 
-Synced, because it is the player's progress and must follow them: the discoveries (with each element as the device knew it, so another device can show it), the board, the island, challenge wins (on the server since 3.7), First Discoveries, ideas and votes (keyed by the account since 4.0). The recipe book is the shared library plus the account's discoveries, so it follows them. The favorite spell will sync once the Community tab exists, as a fourth small document of the same kind.
+Synced, because it is the player's progress and must follow them: the discoveries (with each element as the device knew it, so another device can show it), the board, the island, challenge wins (on the server since 3.7), First Discoveries, ideas and votes (keyed by the account since 4.0). The recipe book is the shared library plus the account's discoveries, so it follows them. The favorite spell (4.5) lives on the account's row on the server, so every device reads the same one.
 
 Per device, on purpose: sound and mute, the frame HUD, the graphics switches and the headroom measured on this device (a phone and a computer differ, and a setting that suits one would hurt the other), the size and land last chosen for a new island, the welcome and the account offer already seen, the anonymous player id, and the caches of the wonder pool. They say nothing a second device needs, and syncing them would make one device's choice silently change another's.
+
+## Daily challenges, the Community tab and what's new (4.5)
+
+The owner's social ideas, on two new tabs and the `?` menu. Schema in `migrations/0016_daily_community.sql`, checks in `scripts/worker-test.mjs` section 30.
+
+### Daily challenges
+
+1. **Made ahead, kept secret.** The first cron run after midnight in Toronto (`worker/daily.ts`, `setDailyChallenge` in `worker/index.ts`) samples sixty pool items of tier minor to grand and depth one to eight (not the primal forces, aliases or open challenges), and takes a pair of two different items that is in neither the recipe book nor another challenge. Self merges are left out: they are the cheap ladder the owner does not like. The pair is merged with the ordinary merge prompt and caps; a name that only joins the two is asked again, as in 3.7.
+2. **Truly new, or an ordinary recipe.** If the answer is an item that exists (or an alias, or one of its parents), it becomes an ordinary recipe and the next pair is tried, three at most a night. A new answer becomes an element row with no finder, a description written with its recipe kept secret (the grimoire prompt is told never to name or hint at the ingredients), and its program is written ahead like any new item (4.2). The pair stays out of `recipes`.
+3. **Whoever gets there first wins** (the owner's rule): the first merge of the secret pair is free and makes the player its finder; any other merge whose answer is the item finds it too. Owning the parents is not checked, as on any merge. The claim is one `UPDATE ... WHERE found_at IS NULL`, so two players at the same moment make one finder; the element becomes the finder's First Discovery dated the day found, and the recipe joins the book. Until then the item is no ingredient (a merge that names it is refused as undiscovered), it is not a favorite, and it is not grown into a wonder.
+4. **Never expires**, no cap on how many wait (the owner's choice): the Daily tab lists every open one, oldest first, then the last twenty finds with the finder's name, the day set and the day found. A deleted account's finds stay, without the name. The tab carries the number still open.
+5. **Cost**: one merge and one description, about $0.003 a night, paid by the admin inside the month's budget, plus the program written ahead within `AHEAD_DAILY_USD` (about $0.002 up to grand, $0.05 for a legendary). `DAILY_CHALLENGES = "0"` stops it; `POST /api/admin/daily` sets one now.
+
+### The Community tab
+
+Who plays (`worker/community.ts`): every invite not revoked or deleted who has played, newest first, with when they last played ("today", "this week"), the items in their synced discoveries (unknown for someone playing with a link only, whose discoveries stay in their browser), their First Discoveries, the daily challenges they found first, and their favorite spell's card (emoji, name, tier). No recipe anywhere, so the tab hands nobody an idea. The favorite is a spell from the player's own discoveries (checked against the synced list when there is one), chosen on the account page or at the foot of the tab; the same place hides the player from everyone's list. Before 5.4 brings strangers, the tab needs the name checks and the report button.
+
+### What's new
+
+`public/changelog.json` holds one line per merged update for players, newest first; builders add theirs in the pull request (DAILY.md). The page keeps the time of the last read per device, puts a dot on the `?` button while a line is newer, says so once a visit, and lists what came since in the `?` menu's "What's new". A player whose idea was built (its status became "Done" since) is told so by its title. A new player starts with nothing new: the history is not news to them.
+
+### The Ideas tab follows daily builds
+
+The `Ideas` workflow (`.github/workflows/ideas.yml`) sends every pull request whose description says `Idea #<n>` to `POST /api/admin/idea-pr` with the admin token (`MM_URL`, `MM_TOKEN`): opened puts the idea in "Waiting for review", merged in "Done", closed without merging back where it was if it was that pull request's. The ten minute GitHub sync of ideas sent to Claude leaves such an idea in review.
+
+### Previews
+
+A staging Worker with its own D1 and queue (`wrangler.jsonc`, `env.staging`), $2 a month and nothing running on its own, takes each pull request as a version with its own address; a nightly copy of the live database with everything personal stripped keeps it real (SETUP.md, "Previews"). Staging lets nobody in without the admin token, even in mock mode, and a badge says "preview".
 
 ## Faster creation (4.2)
 

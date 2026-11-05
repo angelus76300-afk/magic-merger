@@ -223,7 +223,8 @@ export class Challenges {
       saveAttempt(a);
       this.picked = made;
       const label = `${result.element.emoji} ${result.element.name}`;
-      if (result.firstDiscovery) toast(`First discovery: ${label}`, "special");
+      if (result.daily) toast(`You found the daily challenge first: ${label}`, "special");
+      else if (result.firstDiscovery) toast(`First discovery: ${label}`, "special");
       else toast(newForMe ? `New: ${label}` : label);
       if (newForMe) this.onDiscovered(made, result.writing === true);
     } catch (err) {

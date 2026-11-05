@@ -277,6 +277,8 @@ const vars = {
   AHEAD_DAILY_USD: "0",
   // 4.4.5 part C: the cron asks for no wonder; section 28 asks through the admin.
   WONDERS: "0",
+  // 4.5: the cron sets no daily challenge; section 30 asks through the admin.
+  DAILY_CHALLENGES: "0",
 };
 // What the Worker logs, kept for the checks that read it (the cron, 4.1).
 let workerLog = "";
@@ -2884,6 +2886,162 @@ const signIn = async (key, count) => {
       prevDoc.device === "Windows" &&
       !(plain.data?.progress ?? []).some((p) => p.kind === "island_previous"),
     JSON.stringify({ refused: refused.status, forced: forcedIsland.status, prev: prevDoc ?? prev.status }),
+  );
+  await reset();
+}
+
+// 30. Daily challenges, the Community tab and ideas that follow pull requests
+// (4.5). The night's challenge is a merge made ahead from two pool items
+// nobody merged: its item is shown (name, emoji, tier, a description that
+// keeps its recipe secret), its pair is not in the recipe book and is never
+// sent; it is no ingredient until found; the first to merge the pair finds
+// it for free and is its First Discovery, the next one only gets the item;
+// any other merge that reaches it finds it too. The Community tab lists who
+// plays without a recipe, with the favorite each picked and a switch to
+// hide. A pull request that says "Idea #n" moves the idea along.
+{
+  await reset();
+  for (const name of ["Daily Seed A", "Daily Seed B", "Daily Seed C"])
+    await db
+      .prepare(
+        "INSERT OR IGNORE INTO elements (key, name, emoji, kind, depth, tier, description, created_at, invite) VALUES (?, ?, '🌿', 'spell', 2, 'minor', NULL, ?, 'admin')",
+      )
+      .bind(name.toLowerCase(), name, Date.now())
+      .run();
+  const asked = await api("/api/admin/daily", { admin: true, body: {} });
+  const row = await lookup("SELECT * FROM daily_challenges ORDER BY id DESC");
+  const item = row ? await lookup("SELECT * FROM elements WHERE key = ?", row.result) : null;
+  const described = Object.entries(seen).find(([k]) => k.startsWith("You write the grim"))?.[1]?.user ?? "";
+  const [pa, pb] = (row?.pair ?? "+").split("+");
+  check(
+    "daily: the night's challenge is merged ahead, new, with no finder and a description that keeps its recipe secret",
+    asked.status === 200 &&
+      !!asked.data.set &&
+      !!item &&
+      item.invite === null &&
+      !!item.description &&
+      described.includes("secret") &&
+      !described.includes(pa) &&
+      !(await lookup("SELECT 1 AS n FROM recipes WHERE pair = ?", row.pair)),
+    JSON.stringify({ asked: asked.data, row, described }),
+  );
+  const ann = await invite("Daily Ann");
+  const ben = await invite("Daily Ben");
+  const list = await api("/api/daily", { invite: ann.secret });
+  const shown = list.data?.open?.find((c) => c.id === row.id);
+  check(
+    "daily: players see the item, its tier and description, never the pair",
+    list.status === 200 && shown?.name === item.name && shown.emoji === item.emoji && !!shown.description && !JSON.stringify(list.data).includes(row.pair),
+    JSON.stringify(list.data),
+  );
+  const asInput = await merge(ann, item.name, "Fire");
+  check("daily: an open challenge is no ingredient", asInput.status === 400, `${asInput.status}`);
+  const before = calls;
+  const parentA = (await lookup("SELECT name FROM elements WHERE key = ?", pa)).name;
+  const parentB = (await lookup("SELECT name FROM elements WHERE key = ?", pb)).name;
+  const found = await merge(ann, parentA, parentB);
+  const after = await lookup("SELECT * FROM daily_challenges WHERE id = ?", row.id);
+  const credited = await lookup("SELECT invite FROM elements WHERE key = ?", row.result);
+  const paid = await lookup("SELECT COUNT(*) AS n FROM spend WHERE invite = ?", ann.id);
+  check(
+    "daily: the first to merge the pair finds it, free, as their First Discovery",
+    found.status === 200 &&
+      found.data.element.name === item.name &&
+      found.data.firstDiscovery === true &&
+      found.data.daily?.day === row.day &&
+      calls === before &&
+      paid.n === 0 &&
+      after.found_by === ann.id &&
+      credited.invite === ann.id &&
+      !!(await lookup("SELECT 1 AS n FROM recipes WHERE pair = ?", row.pair)),
+    JSON.stringify({ found: found.data, after, calls: calls - before, paid }),
+  );
+  const late = await merge(ben, parentB, parentA);
+  check(
+    "daily: the next one gets the item, not the find",
+    late.status === 200 && late.data.firstDiscovery === false && !late.data.daily,
+    JSON.stringify(late.data),
+  );
+  const seenBy = await api("/api/daily", { invite: ann.secret });
+  const done = seenBy.data?.found?.find((c) => c.id === row.id);
+  check(
+    "daily: the find shows its finder and the day found",
+    !seenBy.data.open.some((c) => c.id === row.id) && done?.foundBy === "Daily Ann" && done.mine === true && !!done.foundDay,
+    JSON.stringify(done ?? seenBy.data),
+  );
+
+  // Another merge that lands on an open challenge's item finds it too.
+  const next = `Answer ${calls + 1}`;
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at, invite) VALUES (?, ?, '🌀', 'spell', 3, 'major', 'A spiral.', ?, NULL)",
+    )
+    .bind(next.toLowerCase(), next, Date.now())
+    .run();
+  await db
+    .prepare("INSERT INTO daily_challenges (day, pair, result, created_at) VALUES ('2026-01-01', 'never one+never two', ?, ?)")
+    .bind(next.toLowerCase(), Date.now())
+    .run();
+  const other = await merge(ben, "Daily Seed C", "Daily Seed A");
+  const second = await lookup("SELECT * FROM daily_challenges WHERE result = ?", next.toLowerCase());
+  check(
+    "daily: any merge that reaches the item finds it",
+    other.status === 200 && other.data.element.name === next && other.data.daily?.day === "2026-01-01" && second.found_by === ben.id,
+    JSON.stringify({ other: other.data, second }),
+  );
+
+  // The Community tab.
+  const art = "Daily Relic";
+  await db
+    .prepare("INSERT OR IGNORE INTO elements (key, name, emoji, kind, depth, tier, created_at) VALUES (?, ?, '🏺', 'artifact', 2, 'minor', ?)")
+    .bind(art.toLowerCase(), art, Date.now())
+    .run();
+  const fav = await api("/api/profile", { invite: ann.secret, body: { favorite: "Daily Seed A" } });
+  const notSpell = await api("/api/profile", { invite: ann.secret, body: { favorite: art } });
+  const nobody = await api("/api/profile", { invite: ann.secret, body: { favorite: "Never Merged Anything" } });
+  const people = await api("/api/community", { invite: ben.secret });
+  const annCard = people.data?.friends?.find((f) => f.name === "Daily Ann");
+  const text = JSON.stringify(people.data ?? {});
+  check(
+    "community: a favorite spell is picked, not an artifact or an unknown item; friends see it with their finds, never a recipe",
+    fav.status === 200 &&
+      fav.data.favorite === "daily seed a" &&
+      notSpell.status === 400 &&
+      nobody.status === 400 &&
+      annCard?.favorite?.name === "Daily Seed A" &&
+      annCard.firsts >= 1 &&
+      annCard.daily === 1 &&
+      annCard.me === false &&
+      !/recipe|pair|"a":|parent/i.test(text),
+    JSON.stringify({ fav: fav.data, notSpell: notSpell.status, annCard }),
+  );
+  await api("/api/profile", { invite: ann.secret, body: { hidden: true } });
+  const hiddenFor = await api("/api/community", { invite: ben.secret });
+  const self = await api("/api/community", { invite: ann.secret });
+  check(
+    "community: a player who hides is in nobody's list, and still sees their own choices",
+    !hiddenFor.data.friends.some((f) => f.name === "Daily Ann") && self.data.me.hidden === true && self.data.me.favorite === "daily seed a",
+    JSON.stringify(self.data.me),
+  );
+
+  // Ideas that follow a pull request.
+  const idea = await api("/api/feedback", { invite: ann.secret, body: { title: "Daily idea for a test" } });
+  const id = idea.data.id;
+  const status = async () => (await lookup("SELECT status, pr_number FROM suggestions WHERE id = ?", id)).status;
+  const pr = (state, n = 41) =>
+    api("/api/admin/idea-pr", { admin: true, body: { pr: n, url: `https://github.com/x/y/pull/${n}`, state, body: `Built it.\n\nIdea #${id}` } });
+  const refused = await api("/api/admin/idea-pr", { invite: ann.secret, body: { pr: 41, state: "open", body: `Idea #${id}` } });
+  await pr("open");
+  const inReview = await status();
+  await pr("closed");
+  const back = await status();
+  await pr("open", 42);
+  await pr("merged", 42);
+  const shipped = await status();
+  check(
+    "ideas: a pull request that says Idea #n puts it in review, back when closed, done when merged; players cannot call it",
+    refused.status === 404 && inReview === "review" && back === "open" && shipped === "shipped",
+    JSON.stringify({ refused: refused.status, inReview, back, shipped }),
   );
   await reset();
 }

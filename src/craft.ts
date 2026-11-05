@@ -48,6 +48,8 @@ export class Craft {
   private tappedChip: number | null = null;
   // Called when this player finds something they did not have yet.
   // writing: the Worker started its program at the merge (4.2).
+  // 4.5: told when a merge found a daily challenge first.
+  onDaily: () => void = () => undefined;
   onNewElement: (key: string, writing: boolean) => void = () => {};
 
   private filters = new FilterBar(
@@ -285,7 +287,12 @@ export class Craft {
       node.classList.add("pop");
 
       const label = `${result.element.emoji} ${result.element.name}`;
-      if (result.firstDiscovery) {
+      if (result.daily) {
+        // 4.5: a daily challenge, found first: the name goes on it in the Daily tab.
+        toast(`You found the daily challenge first: ${label}`, "special");
+        this.onDaily();
+        window.setTimeout(() => openCard(this.store, chip.key, true), 700);
+      } else if (result.firstDiscovery) {
         toast(`First discovery: ${label}`, "special");
         // Let the chip pop first, then celebrate with its card.
         window.setTimeout(() => openCard(this.store, chip.key, true), 700);

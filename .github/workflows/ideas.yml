@@ -1,0 +1,35 @@
+# 4.5: the Ideas tab follows daily builds. A pull request whose description
+# says "Idea #<n>" (docs/DAILY.md) moves that idea to "Waiting for review"
+# when it is opened, to "Done" when it is merged, and back when it is closed
+# without merging. The Worker reads the numbers from the description
+# (worker/feedback.ts, ideaPull). Needs the same two secrets as the Judge,
+# MM_URL and MM_TOKEN; without them the job does nothing.
+name: Ideas
+on:
+  pull_request:
+    types: [opened, edited, reopened, ready_for_review, closed]
+permissions:
+  contents: read
+jobs:
+  follow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      MM_URL: ${{ secrets.MM_URL }}
+      MM_TOKEN: ${{ secrets.MM_TOKEN }}
+      BODY: ${{ github.event.pull_request.body }}
+      PR: ${{ github.event.pull_request.number }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+      MERGED: ${{ github.event.pull_request.merged }}
+      STATE: ${{ github.event.pull_request.state }}
+    steps:
+      - name: Tell the Worker
+        if: env.MM_URL != '' && env.MM_TOKEN != ''
+        run: |
+          if ! printf '%s' "$BODY" | grep -qiE 'idea[[:space:]]*#[0-9]+'; then
+            echo "No Idea #n in the description"; exit 0
+          fi
+          if [ "$MERGED" = "true" ]; then state=merged; elif [ "$STATE" = "closed" ]; then state=closed; else state=open; fi
+          jq -n --arg body "$BODY" --arg url "$PR_URL" --arg state "$state" --argjson pr "$PR" '{pr: $pr, url: $url, state: $state, body: $body}' \
+            | curl -sS --fail-with-body -X POST "${MM_URL%/}/api/admin/idea-pr" \
+                -H "content-type: application/json" -H "x-access-token: $MM_TOKEN" --data @-

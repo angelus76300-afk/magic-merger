@@ -1,6 +1,8 @@
 import type { Tier } from "../shared/tiers";
 import type { AccountInfo, ProgressDoc, ProgressPut, SignedIn, StoredKind } from "../shared/account";
 import type { FeedbackAction, FeedbackResponse } from "../shared/feedback";
+import type { DailyResponse } from "../shared/daily";
+import type { CommunityResponse, ProfileChange } from "../shared/community";
 import type {
   ApiError,
   CastResponse,
@@ -156,6 +158,19 @@ export function changeIdea(change: FeedbackAction): Promise<{ ok: boolean; sessi
 // Admin: read GitHub now instead of waiting for the cron.
 export function syncIdeas(): Promise<{ checked: number; changed: number }> {
   return post("/api/admin/feedback-sync", {});
+}
+
+// 4.5: the daily challenges, and the Community tab with the player's own choices.
+export function daily(): Promise<DailyResponse> {
+  return send<DailyResponse>("GET", "/api/daily");
+}
+
+export function community(): Promise<CommunityResponse> {
+  return send<CommunityResponse>("GET", "/api/community");
+}
+
+export function setProfile(change: ProfileChange): Promise<CommunityResponse["me"]> {
+  return post<CommunityResponse["me"]>("/api/profile", change);
 }
 
 export function merge(a: string, b: string): Promise<MergeResponse> {

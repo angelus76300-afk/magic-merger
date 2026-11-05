@@ -125,6 +125,16 @@ Things to know:
 4. Statuses follow GitHub every ten minutes (the cron); **Check GitHub now** in the admin box reads it at once. The pull request must say `Closes #<issue>` for the game to find it; the routine's rules ask for it.
 5. The routine API is experimental. If it changes, Send to Claude shows the error it returns and the rest of the tab keeps working.
 
+### Previews (4.5)
+
+Every pull request gets its own address to try on a phone before merging, `https://pr-<n>-magic-merger-staging.angelus76300.workers.dev` (the "View deployment" link on the pull request). It runs on a separate Worker, `magic-merger-staging` (`wrangler.jsonc`, `env.staging`), with its own D1 (`magic-merger-staging`) and queue, and $2 a month for everyone together. Nothing it does reaches production.
+
+1. **One repository secret**, `CLOUDFLARE_API_TOKEN` (Settings > Secrets and variables > Actions): a Cloudflare API token with Workers Scripts Edit, D1 Edit and Queues Edit on your account (the "Edit Cloudflare Workers" template plus D1 Edit). The account id is in `wrangler.jsonc`.
+2. **Optional**, `STAGING_ANTHROPIC_API_KEY`: a key for the previews, best from a Console workspace with its own $2 limit. Without it the previews run in mock mode (fake merges, free), which is enough to try anything that is not a new merge or a new spell.
+3. `MM_TOKEN` (the Judge's secret, your admin token) is copied to the staging Worker by the `Staging` workflow, so you get in with the same five taps on the title. Staging lets nobody in without it: the copy of the library is not public, even in mock mode.
+
+The `Staging` workflow runs every night at 07:41 UTC and on every merge: it copies the live database to staging with accounts, passkeys, sessions, sign in links, invites, emails, saved progress, reports and devices stripped (`scripts/staging-copy.mjs`; the owner's row stays, with no link or email), keeps staging's own spend of the month so the $2 holds, and deploys `main` there. The `Preview` workflow uploads each pull request as a version of that Worker with its own address. A pull request's migrations run on the staging D1 only; the next night's copy resets it. To refresh by hand: Actions > Staging > Run workflow, or `node scripts/staging-copy.mjs` (`--dry` writes the SQL without loading it).
+
 ### Frame HUD
 
 A long press on the title shows a small panel in the World: frame time p50 and p95, simulation and draw milliseconds, draw calls, triangles, pixel density, voxels, creatures and the boxes drawn for them (3.5), and frames skipped because nothing changed. While it is on, a summary is sent every 30 seconds to `/api/perf` (kept 30 days); the admin reads them back with `GET /api/perf`. A long press again hides it.

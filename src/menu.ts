@@ -3,6 +3,7 @@ import * as api from "./api";
 import { createPasskey, openAccount, signIn, signOut } from "./account";
 import type { Sync } from "./sync";
 import { toast } from "./toast";
+import { openNews, unread } from "./whatsnew";
 
 // 4.4.6: the ? menu. Who is signed in and whether the progress is saved,
 // always first; then sign in (on any device, even one with a link or a
@@ -21,6 +22,7 @@ export function openMenu(status: HealthResponse | null, sync: Sync, about: () =>
     </div>
     <p class="menu-sync"></p>
     <div class="menu-actions">
+      <button class="menu-news"></button>
       <button class="card-cast menu-signin" hidden>Sign in with a passkey</button>
       <button class="card-cast menu-create" hidden>Make a passkey: keep your progress</button>
       <button class="card-cast menu-syncnow" hidden>Sync now</button>
@@ -54,6 +56,13 @@ export function openMenu(status: HealthResponse | null, sync: Sync, about: () =>
   // A link not yet an account, or the owner's account not made yet (the token).
   show(".menu-create", !signedIn && !!account && !account.claimed);
   for (const sel of [".menu-syncnow", ".menu-account", ".menu-switch", ".menu-signout"]) show(sel, signedIn);
+  const newsButton = d.querySelector<HTMLButtonElement>(".menu-news")!;
+  newsButton.textContent = unread() ? `What's new (${unread()})` : "What's new";
+  newsButton.classList.toggle("menu-news-fresh", unread() > 0);
+  newsButton.addEventListener("click", () => {
+    close();
+    openNews();
+  });
   const stop = sync.listen(refresh);
   const close = () => {
     stop();

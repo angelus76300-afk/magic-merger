@@ -1,6 +1,8 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "magic-merger",
+  // So CI needs only the token (docs/SETUP.md, "Previews").
+  "account_id": "9df6f62fed82968200f6388eb51fb6ff",
   "main": "worker/index.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
@@ -70,4 +72,58 @@
   // ideas sent to Claude (3.4.1).
   "triggers": { "crons": ["*/10 * * * *"] },
   "observability": { "enabled": true },
+  // 4.5: a preview of each pull request before it is merged (docs/SETUP.md,
+  // "Previews"). One staging Worker with its own D1, refreshed every night
+  // from a copy of the live one with accounts, sessions, invites and emails
+  // stripped (scripts/staging-copy.mjs), its own queue, and $2 a month. CI
+  // uploads each pull request as a version with its own address,
+  // pr-<n>-magic-merger-staging.angelus76300.workers.dev, and deploys main
+  // to the staging address every night. Nothing here touches production.
+  "env": {
+    "staging": {
+      "name": "magic-merger-staging",
+      "preview_urls": true,
+      "workers_dev": true,
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "magic-merger-staging",
+          "database_id": "d1024ed3-1c00-4fd4-a1b4-3a54c211e616",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "vars": {
+        "MERGE_MODEL": "claude-opus-5-5",
+        "MERGE_EFFORT": "low",
+        "DESCRIBE_MODEL": "claude-haiku-5-5",
+        "SPELL_MODEL": "claude-opus-5-5",
+        "SPELL_MODEL_SMALL": "claude-haiku-5-5",
+        "SPELL_SMALL_UP_TO": "grand",
+        "REPAIR_MODEL": "claude-haiku-5-5",
+        "SPELL_EFFORT": "medium",
+        // $2 a month for the previews together, the admin included; the
+        // nightly copy keeps staging's own spend, so the month holds.
+        "BUDGET_USD": "2",
+        "INVITE_CAP_USD": "2",
+        "JUDGE_MODEL": "claude-haiku-5-5",
+        "REWRITE_BUDGET_USD": "0.1",
+        "BIG_SPELLS_BATCH": "1",
+        "REFRESH_BUDGET_USD": "0",
+        "AHEAD_DAILY_USD": "0.3",
+        "WONDER_BUDGET_USD": "0",
+        // Nothing runs on its own: the owner tries a change, the admin can still ask.
+        "WONDERS": "0",
+        "EVOLVE": "0",
+        "DAILY_CHALLENGES": "0",
+        "STAGING": "1",
+        // No ideas are sent to Claude from a preview.
+        "GITHUB_REPO": "",
+      },
+      "queues": {
+        "producers": [{ "binding": "WRITES", "queue": "magic-merger-staging-writes" }],
+        "consumers": [{ "queue": "magic-merger-staging-writes", "max_batch_size": 10, "max_batch_timeout": 0, "max_retries": 1 }],
+      },
+      "triggers": { "crons": ["*/10 * * * *"] },
+    },
+  },
 }

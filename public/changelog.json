@@ -1,0 +1,37 @@
+{
+  "about": "What's new in Magic Merger, one line per merged update, newest first. Players read it in the ? menu. A builder adds a line in the same pull request (docs/DAILY.md); idea is the Ideas tab id the update built, when it came from one.",
+  "entries": [
+    {
+      "date": "2026-11-05",
+      "version": "4.5",
+      "text": "Daily challenges: every night a new item waits to be found, and the first to make it has their name on it. A Community tab shows who plays and their favorite spell, and this list tells you what changed."
+    },
+    { "date": "2026-11-04", "text": "Your account's name sits in the top bar, and the spell bar in the World can be resized." },
+    {
+      "date": "2026-11-04",
+      "version": "4.4.6",
+      "text": "Accounts you can trust: sign in, sign out and switch on any device, and see when your progress last synced."
+    },
+    {
+      "date": "2026-11-04",
+      "version": "4.4.5",
+      "text": "A library of nature that keeps growing: a new wonder each day, and your discoveries can appear on new islands with your name."
+    },
+    { "date": "2026-11-04", "version": "4.4.5", "text": "Wonders of nature on islands, and villages where no two houses are alike." },
+    { "date": "2026-11-04", "version": "4.4.5", "text": "Nature that is never the same twice: plants, animals and villages that belong to their land." },
+    { "date": "2026-11-04", "version": "4.4.1", "text": "The seed chooses the land, big islands mix several, and rivers wind." },
+    { "date": "2026-11-04", "version": "4.4", "text": "Bigger and richer worlds: seven kinds of land, water that runs, and a better view." },
+    { "date": "2026-11-04", "version": "4.3", "text": "Creatures move like they mean it: herds, flocks, packs and paths." },
+    { "date": "2026-11-03", "version": "4.2", "text": "Faster creation: every new item is written the moment you merge it." },
+    { "date": "2026-11-03", "version": "4.1", "text": "The review's findings fixed: safer accounts, votes and casts." },
+    { "date": "2026-11-02", "version": "4.0", "text": "Accounts with passkeys: your progress follows you on every device." },
+    { "date": "2026-11-02", "version": "3.7", "text": "Challenges from nothing, artifacts that act, and the island's own chronicle." },
+    { "date": "2026-11-02", "version": "3.6", "text": "A living island: creatures with goals, villages, food, taming and memory." },
+    { "date": "2026-11-02", "version": "3.5", "text": "Many kinds of life, each with its own body." },
+    { "date": "2026-11-02", "version": "3.4.2", "text": "Spells keep their promise: a protection really protects." },
+    { "date": "2026-11-02", "version": "3.4.1", "text": "The Ideas tab: post an idea, vote for others, and see Claude build them." },
+    { "date": "2026-11-02", "version": "3.4", "text": "Play with friends, each with their own invite link." },
+    { "date": "2026-11-02", "version": "3.3", "text": "Spells get better: vote on what a spell did." },
+    { "date": "2026-11-01", "version": "2.5", "text": "The voxel island, spells written as programs, challenges, artifacts, day and night." }
+  ]
+}

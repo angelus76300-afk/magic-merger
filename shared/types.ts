@@ -26,6 +26,8 @@ export interface MergeResponse {
   element: GameElement;
   // True when this merge created the element for the first time ever.
   firstDiscovery: boolean;
+  // 4.5: this merge found a daily challenge first (the day it was set).
+  daily?: { day: string };
   // 4.2: its program is being written in the background (worker/ahead.ts).
   writing?: boolean;
   // True when the Worker answered without calling Claude (no API key set).
@@ -171,6 +173,8 @@ export interface HealthResponse {
   account?: { id: string; name: string; signedIn: boolean; claimed: boolean; emailOffered: boolean; admin: boolean };
   // 4.0: whether this Worker can send sign in links by email (the gate's form).
   email?: boolean;
+  // 4.5: a preview on the staging Worker, not the live game.
+  staging?: boolean;
 }
 
 // Why a request was refused, when the game should say it its own way:

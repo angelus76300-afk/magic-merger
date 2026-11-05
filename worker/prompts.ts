@@ -84,8 +84,15 @@ For an artifact: say what it is, what it looks like and what mages use it for. D
 
 Write vivid plain prose. No lists, no headings, no quotation marks around the name, nothing unsuitable for all ages.`;
 
-export function describeUserMessage(name: string, kind: string, recipe: [string, string] | null): string {
-  const origin = recipe ? ` It is made from ${recipe[0]} and ${recipe[1]}.` : " It is one of the primal forces.";
+// "secret": a daily challenge (4.5), whose two parents players must find, so
+// the entry never names what it is made from.
+export function describeUserMessage(name: string, kind: string, recipe: [string, string] | null | "secret"): string {
+  const origin =
+    recipe === "secret"
+      ? " What it is made from is a secret players must find: never name, hint at or describe its ingredients or how it was made."
+      : recipe
+        ? ` It is made from ${recipe[0]} and ${recipe[1]}.`
+        : " It is one of the primal forces.";
   const article = kind === "artifact" ? "an" : "a";
   return `Write the entry for ${name}, ${article} ${kind}.${origin}`;
 }
