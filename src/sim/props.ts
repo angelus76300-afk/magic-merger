@@ -130,6 +130,20 @@ export function propBounds(p: Prop): { across: number; tall: number; x0: number;
   return { across: Math.max(x1 - x0, y1 - y0), tall, x0, x1, y0, y1 };
 }
 
+// Every part its own shade, as the wonders' parts are (voxel/wonders.ts
+// `vary`: the hot spring's 13 stones are 13 colors). Seeded by the prop's
+// place and the part's index, so the same program draws the same model.
+export function shadeParts(p: Prop, amount: number): void {
+  if (amount <= 0) return;
+  let h = (Math.imul(Math.round(p.x * 20), 73856093) ^ Math.imul(Math.round(p.y * 20), 19349663)) >>> 0;
+  for (const b of p.boxes) {
+    h = (Math.imul(h ^ (h >>> 15), 2246822519) + 0x9e3779b9) >>> 0;
+    const k = 1 + (h / 4294967296 - 0.5) * 2 * (b.glow ? amount * 0.4 : amount);
+    const ch = (sh: number) => Math.max(0, Math.min(255, Math.round(((b.color >> sh) & 255) * k)));
+    b.color = (ch(16) << 16) | (ch(8) << 8) | ch(0);
+  }
+}
+
 export function addProp(world: World, p: Prop): boolean {
   if (world.props.length >= MAX_PROPS) return false;
   world.props.push(p);

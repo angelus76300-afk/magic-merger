@@ -22,7 +22,7 @@ import { baseName, type Landmark, type Presence } from "./social";
 import { hexColor, toColor } from "./colors";
 import { DOME_SQUASH, WARD, addWard, ownWard, wardBits, wardHit, warded } from "./wards";
 import { makeBuilding, makeVillage, makeWonder, shapeLand } from "./makers";
-import { addProp, propBounds, readProp } from "./props";
+import { addProp, propBounds, readProp, shadeParts } from "./props";
 
 // Runs spell programs. A program is JavaScript that defines `spell`:
 //
@@ -1545,6 +1545,10 @@ export class SpellApi {
     const asked = typeof o === "string" ? { shape: o } : o;
     const shape = typeof asked.shape === "string" ? asked.shape.toLowerCase().trim() : "hill";
     if (shape === "floating island") {
+      // The island's own floating rock, drawn in fine parts (33 in its model),
+      // drifting as it does; whole voxels only when the island has no room for it.
+      const rock = makeWonder(this.rt.world, "floating rock", x, y, this.seedAt(x, y));
+      if (rock) return { shape, cells: 0, wonder: rock.name };
       this.island(x, y, { z: asked.z ?? asked.height ?? 18, r: asked.r ?? 7, grow: asked.grow });
       return { shape, cells: 0 };
     }
@@ -1559,7 +1563,7 @@ export class SpellApi {
 
   // 4.6: a fine box model of what the item looks like (props.ts): up to 80
   // boxes [x, y, z, w, d, h, color, "glow"], in cells from (x, y) and voxels
-  // up from the ground, as small as a twentieth of a cell. {name, turn}.
+  // up from the ground, as small as a twentieth of a cell. {name, turn, vary}.
   model(x: number, y: number, boxes: unknown, o: Record<string, unknown> = {}) {
     if (!this.inside(x, y)) return null;
     const p = readProp({
@@ -1570,7 +1574,10 @@ export class SpellApi {
       turn: o.turn,
       boxes: Array.isArray(boxes) ? boxes : [],
     });
-    if (!p || !addProp(this.rt.world, p)) return null;
+    if (!p) return null;
+    // Each part a slightly different shade, as the wonders' parts are; vary: 0 keeps the colors exact.
+    shadeParts(p, num(o.vary, 0, 0.3, 0.07));
+    if (!addProp(this.rt.world, p)) return null;
     const b = propBounds(p);
     return { x: p.x, y: p.y, boxes: p.boxes.length, across: Math.round(b.across * 100) / 100, tall: Math.round(b.tall * 100) / 100 };
   }

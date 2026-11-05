@@ -1235,7 +1235,7 @@ function storedVerdict(verdict: { stats?: unknown } & Record<string, unknown>): 
   return JSON.stringify({ ...verdict, stats: { ...kept, cut: 1 } });
 }
 
-const PROBLEMS = ["crash", "nothing", "wiped", "promise", "idle", "size", "kind"] as const;
+const PROBLEMS = ["crash", "nothing", "wiped", "promise", "idle", "size", "kind", "look"] as const;
 const problemOf = (v: unknown): (typeof PROBLEMS)[number] | null => ((PROBLEMS as readonly unknown[]).includes(v) ? (v as (typeof PROBLEMS)[number]) : null);
 
 // A live program tested again by a browser against the promise its element

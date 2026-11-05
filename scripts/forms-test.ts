@@ -177,7 +177,8 @@ export function formChecks(check: Check): void {
       }
       let changed = 0;
       for (let i = 0; i < world.n; i++) if (Math.abs(world.height[i] - h0[i]) > 0.4 || world.fluid[i] !== f0[i]) changed++;
-      const ok = shape === "floating island" ? world.decor.size - d0 > 60 : changed >= 25;
+      // A floating island is the island's own floating rock, in fine parts.
+      const ok = shape === "floating island" ? world.wonders.some((o) => o.kind === "floating rock") || world.decor.size - d0 > 60 : changed >= 25;
       if (!ok) bad.push(`${shape}: ${changed} cells`);
       if (
         (shape === "lake" || shape === "pond" || shape === "oasis") &&
@@ -239,7 +240,9 @@ export function formChecks(check: Check): void {
     check("a blast over it takes it away", world.props.length === 0);
   }
   const fineBook = `const spell = { artifacts: [{ name: "Book", effects: [{ when: "every", every: 20, do: "heal" }] }], *cast(w) {
-    w.model(w.x, w.y, [[-0.4, -0.3, 0, 0.8, 0.6, 1.1, "#6a5040"], [-0.2, -0.15, 1.1, 0.34, 0.26, 0.06, "#6b3a2a"]]); w.artifact(w.x, w.y, "Book"); } };`;
+    w.model(w.x, w.y, [[-0.3, -0.25, 0, 0.6, 0.5, 0.1, "#5a4030"], [-0.08, -0.08, 0.1, 0.16, 0.16, 0.8, "#6a5040"], [-0.35, -0.28, 0.9, 0.7, 0.56, 0.08, "#6a5040"],
+      [-0.2, -0.15, 0.98, 0.4, 0.3, 0.05, "#6b3a2a"], [-0.19, -0.14, 1.03, 0.38, 0.28, 0.06, "#efe6cf"], [-0.2, -0.15, 1.09, 0.4, 0.3, 0.05, "#6b3a2a"],
+      [-0.03, -0.15, 1.14, 0.06, 0.3, 0.05, "#c9a24a"], [0.14, -0.03, 1.14, 0.05, 0.12, 0.05, "#c9a24a"]]); w.artifact(w.x, w.y, "Book"); } };`;
   const onLectern = runCheck({ key: "fine-book", name: "Book of Ages", tier: "minor", code: fineBook, kind: "artifact", form: "object" });
   check(
     "a book in fine boxes on a lectern passes as an object, a model alone counting as something visible",
@@ -247,7 +250,8 @@ export function formChecks(check: Check): void {
     `${onLectern.problem}: ${onLectern.detail}`,
   );
   const hugeFine = `const spell = { artifacts: [{ name: "Book", effects: [{ when: "every", every: 20, do: "heal" }] }], *cast(w) {
-    w.model(w.x, w.y, [[-2, -1.5, 0, 4, 3, 7, "#6b3a2a"]]); w.artifact(w.x, w.y, "Book"); } };`;
+    const parts = []; for (let k = 0; k < 7; k++) parts.push([-2, -1.5, k, 4, 3, 1, k % 2 ? "#6b3a2a" : "#e8dcc0"]);
+    w.model(w.x, w.y, parts); w.artifact(w.x, w.y, "Book"); } };`;
   const tooBig = runCheck({ key: "fine-giant", name: "Book of Ages", tier: "minor", code: hugeFine, kind: "artifact", form: "object" });
   check("a fine model seven voxels tall is still too big for an object", tooBig.problem === "size", `${tooBig.problem}: ${tooBig.detail}`);
 
@@ -272,7 +276,12 @@ export function formChecks(check: Check): void {
   // Sizes: a giant book fails unless it says so; a statue of a serpent is no
   // creature; a charm is no village (the live Serpent and Village, 5 November).
   const book = `const spell = { artifacts: [{ name: "Book", effects: [{ when: "every", every: 20, do: "heal" }] }], *cast(w) {
-    w.box(w.x, w.y, 0, 3, 2, 8, ["#6b3a2a", "#e8dcc0"]); w.artifact(w.x, w.y, "Book"); } };`;
+    const parts = []; for (let k = 0; k < 8; k++) parts.push([-1.5, -1, k, 3, 2, 1, k % 2 ? "#6b3a2a" : "#e8dcc0"]);
+    w.model(w.x, w.y, parts); w.artifact(w.x, w.y, "Book"); } };`;
+  const blocky = `const spell = { artifacts: [{ name: "Book", effects: [{ when: "every", every: 20, do: "heal" }] }], *cast(w) {
+    w.box(w.x, w.y, 0, 1, 1, 1, ["#6b3a2a"]); w.artifact(w.x, w.y, "Book"); } };`;
+  const cube = runCheck({ key: "cube-book", name: "Book of Ages", tier: "minor", code: blocky, kind: "artifact", form: "object" });
+  check("a book drawn as one whole voxel fails its look", cube.problem === "look", `${cube.problem}: ${cube.detail}`);
   const plain = runCheck({ key: "book", name: "Book of Ages", tier: "minor", code: book, kind: "artifact", form: "object" });
   const giant = runCheck({ key: "book2", name: "Giant's Book", tier: "minor", code: book, kind: "artifact", form: "object", giant: true });
   const legacy = runCheck({ key: "book3", name: "Book of Ages", tier: "minor", code: book, kind: "artifact" });
@@ -281,7 +290,9 @@ export function formChecks(check: Check): void {
   check("a program written before 4.6 (no kind in it) is not held to a size", legacy.ok, `${legacy.problem}: ${legacy.detail}`);
   // One block that strays far (knocked away after the cast) does not make an object big.
   const stray = `const spell = { artifacts: [{ name: "Charm", effects: [{ when: "every", every: 20, do: "heal" }] }], *cast(w) {
-    w.box(w.x, w.y, 0, 1, 1, 2, ["#5a4030"], "wood"); w.voxel(w.x, w.y, 2, "#ffd36a", "glow"); w.voxel(w.x + 11, w.y + 3, 1, "#ffd36a", "magic");
+    w.model(w.x, w.y, [[-0.1, -0.1, 0, 0.2, 0.2, 1.4, "#5a4030"], [-0.2, -0.2, 0, 0.4, 0.4, 0.1, "#4a3020"], [-0.15, -0.15, 1.4, 0.3, 0.3, 0.05, "#2b2b30"],
+      [-0.12, -0.12, 1.45, 0.24, 0.24, 0.25, "#ffd36a", "glow"], [-0.15, -0.15, 1.7, 0.3, 0.3, 0.05, "#2b2b30"], [-0.05, -0.05, 1.75, 0.1, 0.1, 0.1, "#2b2b30"]]);
+    w.voxel(w.x + 11, w.y + 3, 1, "#ffd36a", "magic");
     w.artifact(w.x, w.y, "Charm"); } };`;
   const strayed = runCheck({ key: "stray", name: "Charm", tier: "minor", code: stray, kind: "artifact", form: "object" });
   check("one stray block eleven cells away does not fail a small object", strayed.ok, `${strayed.problem}: ${strayed.detail}`);

@@ -28,7 +28,7 @@ import { propBounds } from "./props";
 // (src/sim/checkframe.ts), and Node for `npm test` and the measurement scripts.
 // The Worker cannot run it, since Cloudflare Workers forbid new Function.
 
-export type CheckProblem = "crash" | "nothing" | "wiped" | "promise" | "idle" | "size" | "kind";
+export type CheckProblem = "crash" | "nothing" | "wiped" | "promise" | "idle" | "size" | "kind" | "look";
 
 export interface CheckResult {
   ok: boolean;
@@ -437,49 +437,67 @@ export interface Made {
 }
 
 function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Map<string, string>, key: string, raised: number[]): Made {
-  // Its voxels, measured round their middle: the farthest tenth is left out,
-  // so one block that strays (a lantern's voxel knocked eleven cells away
-  // after the cast) does not make an object a building; a giant stays giant.
-  const mine: { x: number; y: number; tall: number }[] = [];
+  // What it built, measured round its middle: its voxels (each a cell) and
+  // the parts of its fine models (props.ts), the farthest tenth left out, so
+  // one block that strays (a lantern's voxel knocked eleven cells away after
+  // the cast) does not make an object a building; a giant stays giant.
   // Marks creatures lay and grow (a cairn, a den, a graveyard's stones) are the island's life, not the item.
   const marks = world.marks;
+  interface Part {
+    x0: number;
+    x1: number;
+    y0: number;
+    y1: number;
+    tall: number;
+    voxel: boolean;
+  }
+  const parts: Part[] = [];
+  const mine: { x: number; y: number }[] = [];
   for (const [k] of world.decor) {
     if (before.decor.has(k)) continue;
     const x = keyX(k);
     const y = keyY(k);
     if (marks.some((mk) => Math.abs(mk.x - x) <= mk.size + 1.5 && Math.abs(mk.y - y) <= mk.size + 1.5)) continue;
-    mine.push({ x, y, tall: world.inside(x, y) ? keyLevel(k) + 1 - Math.round(world.height[y * world.w + x] * 0.5) : 0 });
+    mine.push({ x, y });
+    // A voxel spans its cell: x to x + 1.
+    parts.push({
+      x0: x,
+      x1: x + 1,
+      y0: y,
+      y1: y + 1,
+      tall: world.inside(x, y) ? keyLevel(k) + 1 - Math.round(world.height[y * world.w + x] * 0.5) : 0,
+      voxel: true,
+    });
   }
   const voxels = mine.length;
+  let fine = 0;
+  for (const p of world.props) {
+    if (p.key !== key) continue;
+    fine += p.boxes.length;
+    for (const b of p.boxes) {
+      const one = propBounds({ ...p, boxes: [b] });
+      // A prop's (x, y) is a cell's corner in these units, as a voxel's is.
+      parts.push({ x0: one.x0 + 0.5, x1: one.x1 + 0.5, y0: one.y0 + 0.5, y1: one.y1 + 0.5, tall: one.tall, voxel: false });
+    }
+  }
   const mid = (list: number[]) => list.sort((a, b) => a - b)[Math.floor(list.length / 2)] ?? 0;
-  const mx = mid(mine.map((v) => v.x));
-  const my = mid(mine.map((v) => v.y));
-  const kept = mine.sort((a, b) => Math.hypot(a.x - mx, a.y - my) - Math.hypot(b.x - mx, b.y - my)).slice(0, Math.max(1, Math.floor(voxels * 0.9)));
+  const mx = mid(parts.map((v) => (v.x0 + v.x1) / 2));
+  const my = mid(parts.map((v) => (v.y0 + v.y1) / 2));
+  const dist = (v: Part) => Math.hypot((v.x0 + v.x1) / 2 - mx, (v.y0 + v.y1) / 2 - my);
+  const kept = parts.sort((a, b) => dist(a) - dist(b)).slice(0, Math.max(1, Math.floor(parts.length * 0.9)));
   let x0 = Infinity;
   let x1 = -Infinity;
   let y0 = Infinity;
   let y1 = -Infinity;
   let tall = 0;
   for (const v of kept) {
-    x0 = Math.min(x0, v.x);
-    x1 = Math.max(x1, v.x);
-    y0 = Math.min(y0, v.y);
-    y1 = Math.max(y1, v.y);
+    x0 = Math.min(x0, v.x0);
+    x1 = Math.max(x1, v.x1);
+    y0 = Math.min(y0, v.y0);
+    y1 = Math.max(y1, v.y1);
     tall = Math.max(tall, v.tall);
   }
-  // Its fine models (props.ts), measured exactly, with the voxels.
-  let fine = 0;
-  for (const p of world.props) {
-    if (p.key !== key) continue;
-    fine += p.boxes.length;
-    const b = propBounds(p);
-    x0 = Math.min(x0, b.x0 - 0.5);
-    x1 = Math.max(x1, b.x1 - 0.5);
-    y0 = Math.min(y0, b.y0 - 0.5);
-    y1 = Math.max(y1, b.y1 - 0.5);
-    tall = Math.max(tall, b.tall);
-  }
-  const across = voxels || fine ? Math.round((Math.max(x1 - x0, y1 - y0) + (voxels ? 1 : 0)) * 10) / 10 : 0;
+  const across = parts.length ? Math.round(Math.max(x1 - x0, y1 - y0) * 10) / 10 : 0;
   tall = Math.round(tall * 10) / 10;
   // Voxels it stacked on the cells of a building it raised, which the builder draws.
   const blocks = new Set(raised);
@@ -563,12 +581,12 @@ export function formCheck(
   owners: Map<string, string>,
   key: string,
   raised: number[] = [],
-): { problem: "size" | "kind"; detail: string } | null {
+): { problem: "size" | "kind" | "look"; detail: string } | null {
   const m = measureMade(before, world, ref, owners, key, raised);
   return judgeMade(form, name, giant, m);
 }
 
-export function judgeMade(form: Exclude<Form, "spell">, name: string, giant: boolean, m: Made): { problem: "size" | "kind"; detail: string } | null {
+export function judgeMade(form: Exclude<Form, "spell">, name: string, giant: boolean, m: Made): { problem: "size" | "kind" | "look"; detail: string } | null {
   const rule = FORM_RULES[form];
   const f = giant ? GIANT_FACTOR : 1;
   // A giant, and a dragon or a titan, may be bigger; never both at once (a "Small Giant").
@@ -594,7 +612,7 @@ export function judgeMade(form: Exclude<Form, "spell">, name: string, giant: boo
           ? null
           : `${name} is a settlement, but no village was made: use w.village(x, y, {houses}), which lays out houses, a plaza, fields and villagers as the island's own villages are.`;
       case "land":
-        return m.reshaped >= 25 || m.voxels >= 60
+        return m.reshaped >= 25 || m.voxels >= 60 || m.wonders > 0
           ? null
           : `${name} is land, but the land itself barely changed (${m.reshaped} cells): reshape it with w.land(x, y, {shape, r}), or w.terraform, w.flood and w.paint over its reach.`;
       default:
@@ -602,6 +620,18 @@ export function judgeMade(form: Exclude<Form, "spell">, name: string, giant: boo
     }
   })();
   if (kind) return { problem: "kind", detail: `${kind} ${measured}` };
+  // Its look, at the detail of the island's own wonders (12 to 70 parts, half
+  // under a cell, each its own shade: docs/measurements/forms-4.6.md).
+  if (form === "object" && m.fine < 6)
+    return {
+      problem: "look",
+      detail: `${name} is an object, but it is drawn with ${m.fine} fine parts${m.voxels ? ` and ${m.voxels} whole voxels` : ""}: a whole voxel is as big as a villager's body. Draw it with w.model in 6 to 40 boxes at its real size (a lantern's frame and glass, a book's covers and pages, a sword's blade, guard and grip), on what bears it. ${measured}`,
+    };
+  if (form === "place" && !m.wonders && m.fine < 8 && m.voxels < 20 && m.lifted < 10)
+    return {
+      problem: "look",
+      detail: `${name} is a place, but nothing stands there: raise it with w.wonder, shape its land with w.land or w.terraform, or draw what stands there with w.model in fine parts (a rim of stones round a pool, an altar, a ring of mushrooms). ${measured}`,
+    };
   if (form === "object" && (m.buildings > 0 || m.settlements > 0 || m.lifted > 12 * f))
     return {
       problem: "size",
