@@ -1,0 +1,78 @@
+# 4.5.2: the Gate merges what is ready (docs/DAILY.md, "Risk classes").
+#
+# Re-checks a pull request whenever something it waits for changes: CI or the
+# preview finished, a comment arrived (the reviewer's verdict), a label was
+# added (the owner's OK or yes), it left draft. scripts/gate.mjs decides:
+# ready, not draft, CI in full on the head commit, the preview smoke test, an
+# independent review of the head commit that passes, nothing paused or on
+# hold, and the owner's OK for amber or yes for red. Then it squashes the pull
+# request and starts the Deploy workflow.
+#
+# Every trigger here runs main's copy of this file and of the scripts
+# (workflow_run, issue_comment and pull_request_target all do), and the pull
+# request's code is only read as a diff, never run, so a pull request cannot
+# loosen its own gate.
+name: Gate
+on:
+  workflow_run:
+    workflows: [CI, Preview]
+    types: [completed]
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [labeled, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Pull request number"
+        required: true
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+  actions: write
+  checks: read
+  deployments: read
+jobs:
+  gate:
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, 'mm-review')) ||
+      github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: gate-${{ github.event.workflow_run.head_sha || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: which pull request
+        id: which
+        env:
+          FROM_RUN: ${{ github.event.workflow_run.pull_requests[0].number }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          FROM_ISSUE: ${{ github.event.issue.number }}
+          FROM_PR: ${{ github.event.pull_request.number }}
+          FROM_INPUT: ${{ inputs.pr }}
+        run: |
+          n="${FROM_RUN:-${FROM_ISSUE:-${FROM_PR:-$FROM_INPUT}}}"
+          if [ -z "$n" ] && [ -n "$HEAD_SHA" ]; then n=$(gh api "repos/${{ github.repository }}/commits/$HEAD_SHA/pulls" --jq '.[0].number // empty'); fi
+          echo "pr=$n" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        if: steps.which.outputs.pr != ''
+        with:
+          node-version: 22
+      - name: decide, and merge when ready
+        id: gate
+        if: steps.which.outputs.pr != ''
+        run: node scripts/gate.mjs pr "${{ steps.which.outputs.pr }}" --merge
+      # A merge made with this workflow's token starts no push workflow: start the deploy here.
+      - name: deploy
+        if: steps.gate.outputs.merged == 'true'
+        run: gh workflow run deploy.yml --ref main
