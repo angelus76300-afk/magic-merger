@@ -10,7 +10,7 @@ const SIMULATION = ["src/sim/*.ts"];
 const HOST = ["src/sim/engine.ts", "src/sim/frame.ts", "src/sim/hud.ts", "src/sim/protocol.ts"];
 
 export default tseslint.config(
-  { ignores: ["dist", "node_modules", ".wrangler", "lab/legacy", "lab/spells", "lab/solutions", "lab/promises", "lab/artifacts"] },
+  { ignores: ["dist", "node_modules", ".wrangler", ".claude/skills", "lab/legacy", "lab/spells", "lab/solutions", "lab/promises", "lab/artifacts"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
