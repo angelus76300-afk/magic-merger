@@ -262,7 +262,7 @@ Asked for: items 6 to 8 of "4.4.5 Every island a surprise" below, buildings that
 7. **Back only where it can live** (the owner's rule): a kind with habitat on the island never dies out (room for a pair whatever its food, a pair walking in when too few, a small habitat never missed); a kind whose habitat is gone, or a village whose houses are all gone, does not pop back, and returns only as the land regrows. Checked in `npm test` both ways (a wipe that leaves the habitat, a scorched island).
 8. **The owner's report on part A, fixed**: fish drawn on frozen lakes (now under the ice), rivers invisible on big islands (wider on large and bigger, running water freezes only below -10), Huge and Giant locked on fast devices (a recommendation now), and picking a spell still being made cast the previous one (a creation bar, a wait message, the spell in hand once ready).
 
-Not done: wonders are box models, not voxels (they cost no voxel budget, and a spell's blast takes a standing one away rather than breaking it block by block); villagers do not rest under a lone tree or bathe in a hot spring on their own, they get the effect when they pass; no sound of their own for wonders yet (4.5).
+Not done: wonders are box models, not voxels (they cost no voxel budget, and a spell's blast takes a standing one away rather than breaking it block by block); villagers do not rest under a lone tree or bathe in a hot spring on their own, they get the effect when they pass; no sound of their own for wonders yet (4.8, sound and music).
 
 ## Done in 4.4.5, part C: a library of nature that keeps growing
 
@@ -277,7 +277,7 @@ Asked for: items 9 to 12 of "4.4.5 Every island a surprise" below, with the wond
 7. **The owner's report on the land and the water**: noise that grows with the island and a warp that no longer stretches lands into worms, ridges on broad lands instead of in bands of sea, only the largest hollows kept as lakes, a little less sea, slopes softened once (cliffs of two voxels or more: medium 12.8% to 4.8% of land, huge 12.6% to 1.6%; water: medium 31% to 27%, huge 34% to 26%); waves drawn per pixel as thin broken crests instead of a vertex heave; the sea's color shaded per corner and nearly opaque past four voxels, so the seabed's steps no longer show through as a grid.
 8. **Found on the way**: water tops on gently sloping rivers opened hairline gaps (a corner judged against each top's own level); the frozen waterfall's check passed only while the land round it was warm.
 
-Not done: the production call has not run yet (the container had no API key; the first daily wonder will be the first real ledger row); the two program wonders up close are clusters of voxel pillars, chunkier than the built-in box models (the kit's spire is coarse; the judge's advice will say whether the next prompt should steer them to the land and fewer, finer voxels); 4.7's what's new list does not exist yet, so "new this week" is a toast and a line in the new island dialog.
+Not done: the production call has not run yet (the container had no API key; the first daily wonder will be the first real ledger row); the two program wonders up close are clusters of voxel pillars, chunkier than the built-in box models (the kit's spire is coarse; the judge's advice will say whether the next prompt should steer them to the land and fewer, finer voxels); 4.5's what's new list does not exist yet, so "new this week" is a toast and a line in the new island dialog.
 
 ## Done in 4.4.6: accounts you can trust
 
@@ -321,7 +321,7 @@ The ledger holds $6.64 (plus about $3.32 before it existed): about $10 of the fi
 
 Sizes are per Claude Code session: S a few hours, M a full session, L two or more. The roadmap page has a ready prompt per version.
 
-**Numbered in the order to run them.** Renumbered on 3 November so the numbers are the order; `docs/REVIEW-4.0.md` and older pull requests use the old numbers (the review's findings were 4.0.2, faster creation 4.0.1, worlds 4.1, sound 4.2, strangers 4.5). Done since: 4.1, 4.2, 4.3, 4.4, 4.4.1, 4.4.5 (parts A, B and C) and 4.4.6, summed up above; their plans are in the git history of this file. Revised on 5 November with the owner's new ideas: 4.5 creatures worth creating, 4.6 things that behave as they should, 4.7 daily challenges, the Community tab and what's new, 4.7.5 a game that runs itself and a morning brief that makes you want to build, 4.8 sound and music (was 4.5), 4.9 builders, roads and vehicles, 5.0 look closer and 5.1 take control (the first person update), 5.2 looks and speed, 5.3 interface, accessibility and quality of life, 5.4 ready for strangers (was 4.6). The daily updates run between them: the planner gives the next version when none is being built, and a small daily fix in other files while one is.
+**Numbered in the order to run them.** Renumbered on 3 November so the numbers are the order; `docs/REVIEW-4.0.md` and older pull requests use the old numbers (the review's findings were 4.0.2, faster creation 4.0.1, worlds 4.1, sound 4.2, strangers 4.6). Done since: 4.1, 4.2, 4.3, 4.4, 4.4.1, 4.4.5 (parts A, B and C) and 4.4.6, summed up above; their plans are in the git history of this file. Revised on 5 November with the owner's new ideas, in this order: 4.5 daily challenges, the Community tab and what's new (the owner asked for it next), 4.6 every item is what it is (creatures, objects, buildings, settlements, places and land, each made by the engine's own makers), 4.7 things that behave as they should, 4.7.5 a game that runs itself and a morning brief that makes you want to build, 4.8 sound and music (was 4.5), 4.9 builders, roads and vehicles, 5.0 look closer and 5.1 take control (the first person update), 5.2 looks and speed, 5.3 interface, accessibility and quality of life, 5.4 ready for strangers (was 4.6). The daily updates run between them: the planner gives the next version when none is being built, and a small daily fix in other files while one is.
 
 ### 4.4.5 Every island a surprise (done, see above)
 
@@ -348,7 +348,7 @@ Goal: be amazed at every new island, never feel the same one twice, and have it 
 9. **A new wonder every day, from the API**: one call a day (like the daily design call of 3.4.2) designs a new wonder as a program in the existing format, from the structure kit, the behaviors and the abilities: what it is, where it grows, what it does, its rarity. Haiku or Opus as the tier says, in the Batch API at half price; about $0.03 to $0.06 a day, under $2 a month, inside its own cap.
 10. **Tested before any island gets it**: in Node by the nightly Action (the way `evolve-runner.ts` tests helpers), not by a player's browser (review M11): it builds, stays within a voxel and tick budget, does what it says on three seeds, breaks nothing in five simulated minutes. A wonder that fails is thrown away; the owner can retire any wonder from the admin view.
 11. **Players' discoveries grow into the world**: items players found that are places, materials or creatures (an Ancient Oak, a Crystal Spire, a Will-o'-wisp), up to grand tier, become rare wonders of new islands, with the name of the friend who found them first. Nothing goes into anyone's inventory: discoveries stay made on the board (Decisions taken).
-12. **What is new shows**: "new on islands this week" in the what's new list (4.7), so returning players have a reason to reset.
+12. **What is new shows**: "new on islands this week" in the what's new list (4.5), so returning players have a reason to reset.
 
 **Balance, in every part: spawns that keep the island alive**
 
@@ -378,28 +378,7 @@ The plan, in order:
 6. **What syncs, written down**: discoveries, board, island, challenge wins (already on the server), the recipe book and the favorite spell (once the Community tab exists); settings stay per device (sound, HUD, graphics switches), on purpose.
 7. **Checked**: the tests of item 1 pass; the owner on two devices sees the same discoveries and island within a minute; sign out and sign in with another account leaves no trace of the first; the admin powers work with a passkey and with the token; the attacks of `docs/REVIEW-4.0.md` section 10 still pass. Shown to the owner on the live site before merging, on a phone and a computer.
 
-### 4.5 Creatures worth creating
-
-The owner, 5 November: creatures made by merges are poor, "just take the serpent or the human". Read in the live programs: **Serpent is not a creature at all**: it is an artifact, twelve stone spheres in a line with a ward around them, "a bog-black living coil" that never moves. **Human** is a villager with glowing eyes that follows other villagers and heals. An item is a spell or an artifact (`elements.kind`), so a living thing becomes either a statue or a recolored base kind; nothing checks that a creature moves, wants something and does it.
-
-1. **A third kind, creature**, beside spell and artifact (a new migration, existing rows untouched): decided at the merge like the other two, placed where the player taps like an artifact, and written as a living thing first: its body plan from what it is (a serpent slithers on the serpent plan, a human walks as a person, not a villager with glowing eyes), its size against a villager, its colors and features, its gait, its needs, a goal of its own, one to three abilities with triggers, whom it is friends with, hunts or fears, and how it breeds or dies.
-2. **The prompt for creatures**, apart from the spell prompt: the 3.5 bodies, the 3.6 goals and abilities and the 4.3 steering as a short reference, two excellent examples written by hand (a serpent, a fox spirit), and the rule that a creature must be watchable for five minutes.
-3. **A creature probe** in the test run, like the promise probes: it moves on its plan, pursues its goal, uses an ability within two simulated minutes, reacts to what it fears or hunts, and the five minute populations still hold. A creature that stands still or does nothing is written again once.
-4. **The judge looks at it**: three frames and the question "does this look and act like a <name>?", advising as today.
-5. **The living things already in the library**, found by the Haiku sort of 4.4.5 part C (creature) and by name: listed for the owner with before and after frames, re-classified and rewritten one batch at a time through the 3.7 refresh path, capped and approved, never all at once.
-6. **Checked**: Serpent and Human rewritten as creatures and shown to the owner on a phone; ten new creatures from new merges watched for five minutes each in a frame strip.
-
-### 4.6 Things that behave as they should
-
-The owner, 5 November: "so many things don't interact in the right way". Systemic causes first; the long tail goes to the daily updates (below), which now have an Interactions category.
-
-1. **Shields with a breaking point**: a ward has health, takes damage from what it stops, shows cracks, and breaks; strong spells break weak wards. It stops projectiles and calamities, not only harm (Ideas tab `#2`: "a shield from immortality let a meteor pass through"): bodies, meteors, fireballs, lightning and lava stop at its edge, each with a check in `npm test`.
-2. **Artifacts the right size**: an object is small (a staff, a ring, a potion, a lantern), a place is large (a temple, a grove); the program says which, and the generator draws it at that scale.
-3. **Objects that are picked up and used**: a creature or villager that reaches an object can take it, carry it in hand (the 3.5 carried items), and gains the object's action as an ability (a staff throws its fireball, a potion heals once, a lantern lights the way); it can be dropped, stolen or lost when its owner dies. The player gets the same actions in 5.1.
-4. **Looks drawn like the built-in wonders**: artifacts and wonders written by Claude get box models with fine parts (the idea in `docs/IDEAS.md`), instead of balls of whole-cell voxels. The Wormhole, a voxel ball with a ring of single voxels, is the first one rewritten.
-5. **An interaction table in `npm test`**: every effect (fire, flood, lightning, projectile, summon, teleport, heal, freeze) against every protection and every material, with what should happen, so a fix in one place cannot break another.
-
-### 4.7 Daily challenges, the Community tab and what's new
+### 4.5 Daily challenges, the Community tab and what's new
 
 The owner's social ideas, together because they share one screen: who plays, what they found, what is new.
 
@@ -409,15 +388,43 @@ The owner's social ideas, together because they share one screen: who plays, wha
 4. **The Ideas tab follows daily builds**: a pull request that says `Idea #<n>` moves that idea to "Waiting for review" and then "Done".
 5. **A preview for each pull request**, so the owner tries it on a phone before merging: a staging Worker with its own D1 (a copy refreshed nightly, accounts, sessions, invites and emails stripped) and a $2 budget, deployed by CI from a token kept in GitHub's secrets.
 
+### 4.6 Every item is what it is: creatures, objects, buildings, places and land
+
+The owner, 5 November: creatures made by merges are poor ("just take the serpent or the human"), artifacts, creatures and buildings should be handled differently, "a lot of the things we create do not make sense... a giant book", and some items should shape the land ("a floating island"; "the village spell should actually create a village as the generation does"). Read in the live programs: **Serpent** is an artifact of twelve stone spheres in a line that never moves; **Human** is a villager with glowing eyes; **Village** is "a brass Village Lantern Charm" ringed by a few wooden boxes, not a village. The cause is structural: an item is either a spell or an artifact (`elements.kind`), and every artifact is written the same way, as a voxel thing of a few cells' reach, whether it is a book, a dragon, a temple or a town. Meanwhile the engine already knows how to make each of these properly: bodies, goals and steering for creatures (3.5, 3.6, 4.3), seeded buildings and villages (4.4.5 part B), land, lakes, rivers and floating rocks (4.4, 4.4.5), wonders (4.4.5).
+
+**Part A. The kinds, each with the engine's own way of making it** (a new migration; existing rows keep working)
+
+1. **Seven kinds**, decided at the merge with the name (the 4.4.5 part C Haiku sort already says place, material, creature, object or person): **spell** (an effect, cast once), **creature** (alive: moves, wants, acts), **object** (small, held or placed: a book, a sword, a potion, a lantern), **building** (made by people: a tower, a temple, a forge, a castle), **settlement** (a village, a town, a camp, a city), **place** (nature or old magic: a grove, a spring, a ruin, a wonder) and **land** (it reshapes the terrain: a floating island, a volcano, a lake, a canyon, an oasis, a swamp).
+2. **A maker per kind, from the engine, not from scratch**: a building goes through the seeded building builder of part B with its own style and job; a settlement through the village generator, so "Village" makes a real village with houses, a plaza, fields and villagers; land through the terrain functions of 4.4 (shapes, lakes, rivers, floating rock); a place through the wonder system; an object is small and goes to the object rules of 4.7; a creature to part B. Claude's program chooses the parameters and adds what is special, instead of drawing everything in voxels.
+3. **Sizes that make sense, checked**: an object fits in a hand, a creature is sized against a villager (3.7), a building against a house, a settlement and land by their reach. A giant book is a bug the test run catches, unless the item says it is giant ("the Library of Babel" may be a building).
+4. **One prompt section per kind**, short, with an excellent example each, so a merge that makes a temple gets the building rules and one that makes a lantern gets the object rules.
+5. **The library re-sorted**: every item classified again (Haiku, cheap), the owner shown the list with the ones that change kind, then rewritten in capped batches through the 3.7 refresh path after approval, the worst first (Serpent, Human, Village, the giant books), never all at once and with no `PROGRAM_VERSION` bump.
+
+**Part B. Creatures worth creating**
+
+6. **Written as living things first**: body plan from what it is (a serpent slithers on the serpent plan, a human walks as a person), size, colors and features, gait, needs, a goal of its own, one to three abilities with triggers, whom it is friends with, hunts or fears, how it breeds or dies; the 3.5 bodies, 3.6 goals and abilities and 4.3 steering as a short reference, and two hand written examples (a serpent, a fox spirit).
+7. **A creature probe** in the test run: it moves on its plan, pursues its goal, uses an ability within two simulated minutes, reacts to what it fears or hunts, and the five minute populations still hold; a creature that stands still or does nothing is written again once. The judge asks "does this look and act like a <name>?".
+8. **Checked**: Serpent and Human rewritten as creatures and Village as a settlement, shown to the owner on a phone; ten new items from new merges, at least one of each kind, watched in a frame strip.
+
+### 4.7 Things that behave as they should
+
+The owner, 5 November: "so many things don't interact in the right way". Systemic causes first; the long tail goes to the daily updates (below), which now have an Interactions category.
+
+1. **Shields with a breaking point**: a ward has health, takes damage from what it stops, shows cracks, and breaks; strong spells break weak wards. It stops projectiles and calamities, not only harm (Ideas tab `#2`: "a shield from immortality let a meteor pass through"): bodies, meteors, fireballs, lightning and lava stop at its edge, each with a check in `npm test`.
+2. **Sizes held at runtime**: the kinds of 4.6 set the scale (an object small, a building as a house, a place large); a spell that grows or shrinks something keeps it within its kind's range.
+3. **Objects that are picked up and used**: a creature or villager that reaches an object can take it, carry it in hand (the 3.5 carried items), and gains the object's action as an ability (a staff throws its fireball, a potion heals once, a lantern lights the way); it can be dropped, stolen or lost when its owner dies. The player gets the same actions in 5.1.
+4. **Looks drawn like the built-in wonders**: artifacts and wonders written by Claude get box models with fine parts (the idea in `docs/IDEAS.md`), instead of balls of whole-cell voxels. The Wormhole, a voxel ball with a ring of single voxels, is the first one rewritten.
+5. **An interaction table in `npm test`**: every effect (fire, flood, lightning, projectile, summon, teleport, heal, freeze) against every protection and every material, with what should happen, so a fix in one place cannot break another.
+
 ### 4.7.5 A game that runs itself, and a morning that makes you want to build
 
 The owner, 5 November: a much more advanced daily routine, one that updates the game on its own for everything it needs (the daily challenge, the new wonder, badly rated spells, and the rest), and one that encourages the owner to make more updates. Today the Worker's cron already runs some of this on its own (the daily wonder of 4.4.5 part C, the API's growth of 3.4.2, the judge, votes that rewrite a spell in 3.3), each with its own cap, but nothing ties them together, says what happened, or asks players the right question.
 
 **Part A. The game's own day, on the server, inside caps**
 
-1. **One daily job list**, run by the cron in a fixed order with a total daily cap (for example $1.50 a day, apart from the 4.2 cap for new items) and a log line each: set the day's challenge (4.7), write the day's wonder (4.4.5), rewrite the spells players voted down, retire wonders and challenges that failed their checks, refresh the "new this week" list, and keep a seasonal or moon calendar (a full moon night, a solstice, a festival a village holds) that islands read.
+1. **One daily job list**, run by the cron in a fixed order with a total daily cap (for example $1.50 a day, apart from the 4.2 cap for new items) and a log line each: set the day's challenge (4.5), write the day's wonder (4.4.5), rewrite the spells players voted down, retire wonders and challenges that failed their checks, refresh the "new this week" list, and keep a seasonal or moon calendar (a full moon night, a solstice, a festival a village holds) that islands read.
 2. **Better votes on spells**: more reasons than today's five (`shared/votes.ts`: nothing happened, too small, looked wrong, broke the island, boring): "it does not do what its name says", "too strong", "too weak", "it lags", "the creature or object looks wrong", "I love it" with what was best. Each reason goes into the rewrite prompt, and "does not do what its name says" weighs most, since it is what the owner sees most.
-3. **Rewrites by evidence, not only by votes**: a spell the promise probe fails, the judge scores low twice, or the audit of 4.6 flags is queued for a rewrite too, one at a time, within the daily cap, the old version kept for rollback as in 3.3.
+3. **Rewrites by evidence, not only by votes**: a spell the promise probe fails, the judge scores low twice, or the audit of 4.7 flags is queued for a rewrite too, one at a time, within the daily cap, the old version kept for rollback as in 3.3.
 4. **The library audits itself**: every night a few of the most cast items are cast in Node and compared with their name, description and intents (the audit lens of DAILY.md, automated); mismatches become rewrite candidates for the next night or lines in `docs/IDEAS.md` through a pull request the owner reviews.
 5. **A report the owner can read in one minute**: what the game did overnight, what it cost, what players did (new discoveries, casts, votes, challenges found, wonders seen), what failed and what is waiting for a decision, at `/api/admin/day` and on the admin badge.
 
@@ -464,21 +471,21 @@ The first person update, part 1. When no spell is selected (or after a cast, whe
 
 The first person update, part 2 (Ideas tab `#3`: "make the characters first person playable characters"). From the card, "take control": the camera moves behind or into the entity and the player plays it.
 
-1. **Controls per kind**: a bird flies, a fish swims, a villager walks and does its jobs (farm, fell, fish, build, trade), a beast hunts or grazes, a creature of a spell uses its own abilities, an object held gives its action (4.6).
+1. **Controls per kind**: a bird flies, a fish swims, a villager walks and does its jobs (farm, fell, fish, build, trade), a beast hunts or grazes, a creature of a spell uses its own abilities, an object held gives its action (4.7).
 2. **Phone first**: a thumb stick and up to four action buttons from the entity's abilities; a tap to let go, and the entity goes back to its own goal.
 3. **The world goes on**: the simulation does not pause; others react to the player's entity as to any other.
 4. **Checked**: each kind played for two minutes in a phone sized browser with a frame strip; the simulation p95 unchanged while controlling.
 
 ### 5.2 Looks and speed: a visual and performance pass
 
-The owner, 5 November: another visual and performance update down the line. By then 4.5 to 5.1 will have added creatures, objects, buildings, roads, vehicles and a controllable entity, all paid for in frame time. Measured first, on real phones through `/api/perf`, never guessed.
+The owner, 5 November: another visual and performance update down the line. By then 4.6 to 5.1 will have added creatures, objects, buildings, roads, vehicles and a controllable entity, all paid for in frame time. Measured first, on real phones through `/api/perf`, never guessed.
 
 1. **Where the time goes**: a profile of a large island at the end of 5.1 on a phone sized browser and on the owner's phone, split by simulation system (temperature and fluids were 40% of a tick in 3.x) and by draw call; a budget per system written down.
 2. **The simulation in a Worker thread**, the full answer to review M3: since 4.2 the check frame already runs spell code in a blob Worker, so the CSP path exists; the view reads the state the Worker sends.
 3. **Far things cost less**: levels of detail for creatures, buildings and wonders by distance, instancing for every repeated model, updates of far simulation regions at a lower rate.
 4. **Quality presets chosen by the device** (low, medium, high) from its own HUD numbers, with a battery saver that lowers the frame rate when idle or hidden.
 5. **Visuals that the budget then allows**: soft shadows, light and color that follow the hour, glow that blooms at night, water that reflects the sky, more particles where they read (embers, pollen, snow), each behind a switch and measured alone, as in 4.4.
-6. **Checked**: 30 fps on a mid range phone on a large island with everything of 4.5 to 5.1 in play, the simulation p95 within its budget, and frames of three seeds before and after.
+6. **Checked**: 30 fps on a mid range phone on a large island with everything of 4.6 to 5.1 in play, the simulation p95 within its budget, and frames of three seeds before and after.
 
 ### 5.3 Interface, accessibility and quality of life
 
