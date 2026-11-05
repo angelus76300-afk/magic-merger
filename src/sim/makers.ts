@@ -304,17 +304,24 @@ export function shapeLand(world: World, x: number, y: number, shape: string, r: 
     }
     case "volcano": {
       const h = height ?? Math.min(30, R * 1.3);
+      // A cone to a rim at 85% of its height, a shallow crater inside the
+      // rim brimming with lava: seen from the island, a glowing mouth, not
+      // a black hole. Rock on the flanks, basalt near the rim, its foot green.
+      const rim = 0.82;
       let vent = -1;
       disc(world, x, y, R, (i, k) => {
-        // A cone with a crater in its top fifth.
-        const cone = k > 0.8 ? h * (0.8 - (k - 0.8) * 2) : h * smooth(k / 0.8) * 0.8 + h * 0.2 * (k / 0.8);
+        const cone = k < rim ? h * 0.85 * smooth(k / rim) : h * (0.85 - 0.18 * smooth((k - rim) / (1 - rim)));
         lift(i, cone);
-        world.ground[i] = k > 0.5 ? G.BASALT : k > 0.2 ? G.ROCK : world.ground[i];
-        if (k > 0.85 && (vent < 0 || k > 0.97)) vent = i;
+        const n = rng.next() * 0.08;
+        world.ground[i] = k + n > 0.76 ? G.BASALT : k + n > 0.34 ? G.ROCK : world.ground[i];
+        if (k > 0.97 && vent < 0) vent = i;
       });
       if (vent >= 0) {
-        disc(world, x, y, Math.max(1.2, R * 0.12), (i) => world.setFluid(i, F.LAVA, 0.8));
-        world.springs.push({ i: vent, level: world.height[vent] + 0.8, lava: true, rate: 0.6 });
+        const level = world.height[vent] + h * 0.16;
+        disc(world, x, y, R * (1 - rim) * 0.95, (i) => {
+          if (world.height[i] < level) world.setFluid(i, F.LAVA, level - world.height[i]);
+        });
+        world.springs.push({ i: vent, level, lava: true, rate: 0.8 });
       }
       break;
     }
