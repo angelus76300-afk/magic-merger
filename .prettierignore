@@ -6,3 +6,5 @@ lab/spells
 lab/solutions
 migrations
 .wrangler
+# Third party skills, kept as published (docs/SKILLS.md)
+.claude/skills
