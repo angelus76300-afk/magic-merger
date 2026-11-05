@@ -25,7 +25,7 @@ import type {
   VoteRequest,
   VoteResponse,
 } from "../shared/types";
-import { changeFeedback, listFeedback, postFeedback, syncFeedback, voteFeedback } from "./feedback";
+import { changeFeedback, ideaPull, listFeedback, postFeedback, syncFeedback, voteFeedback } from "./feedback";
 import type { FeedbackAction } from "../shared/feedback";
 import { candidates, listChallenges, recordVerification, recordWin } from "./challenges";
 import { HttpError } from "./http";
@@ -77,6 +77,9 @@ import type { LibraryExample, Rewrite } from "./prompts";
 import { joinsBoth } from "./prompts";
 import { readDigest } from "../shared/chronicle";
 import { cronJobs } from "./cron";
+import { community, setProfile } from "./community";
+import { dayIn as dayInZone } from "../shared/daily";
+import { claim as claimDaily, due as dailyChallengeDue, freePairs, listDaily, openByPair, openByResult, type DailyRow } from "./daily";
 import {
   WONDER_ESTIMATE,
   changeWonder,
@@ -185,6 +188,10 @@ export interface Env {
   // BUDGET_USD; "0" in WONDERS stops the daily call (the admin can still ask).
   WONDER_BUDGET_USD?: string;
   WONDERS?: string;
+  // 4.5: "0" stops the night's daily challenge (the admin can still set one).
+  DAILY_CHALLENGES?: string;
+  // 4.5: "1" on the staging Worker the previews run on (wrangler.jsonc, env.staging).
+  STAGING?: string;
 }
 
 const MAX_NAME_LENGTH = 60;
@@ -301,6 +308,12 @@ export default {
         if (request.method === "GET" && url.pathname === "/api/challenges") return json(await listChallenges(env.DB, payer));
         // 4.4.5 part C: the pool of wonders new islands draw from, and what came this week.
         if (request.method === "GET" && url.pathname === "/api/wonders") return json(await livePool(env.DB));
+        // 4.5: the daily challenges not found yet, and the last finds.
+        if (request.method === "GET" && url.pathname === "/api/daily") return json(await listDaily(env.DB, payer.invite));
+        if (request.method === "POST" && url.pathname === "/api/admin/daily" && admin) return json(await setDailyChallenge(env, true));
+        // 4.5: the Community tab, and the player's own favorite spell and hide switch.
+        if (request.method === "GET" && url.pathname === "/api/community") return json(await community(env.DB, payer.invite));
+        if (request.method === "POST" && url.pathname === "/api/profile") return json(await setProfile(env.DB, payer.invite, await readBody(request)));
         if (request.method === "POST" && url.pathname === "/api/challenge/win") {
           return json(await recordWin(env.DB, payer, await readBody<{ id?: unknown; merges?: unknown; spell?: unknown }>(request)));
         }
@@ -392,6 +405,7 @@ export default {
         evolve: env.EVOLVE === "0" ? null : () => evolve(env, false),
         "intents backfill": () => backfillIntents(env),
         wonders: () => wonderDaily(env, env.WONDERS !== "0" ? "due" : "collect"),
+        "daily challenge": env.DAILY_CHALLENGES === "0" ? null : () => setDailyChallenge(env, false),
       }),
     );
   },
@@ -532,7 +546,11 @@ async function authenticate(request: Request, env: Env): Promise<Who | Response>
     if (row?.admin) return { admin: false, payer: null };
     if (row) return { admin: false, payer: payerOf(row), invite: row };
   }
-  if (!env.ANTHROPIC_API_KEY && !sessionToken && !secret) return { admin: false, payer: { ...ADMIN_PAYER, invite: "local", name: "local" } };
+  // Mock mode is open for local development, never on the staging Worker
+  // (4.5): a preview holds a copy of the live library, so only the admin
+  // token (or an invite made there) gets in, with or without an API key.
+  if (!env.ANTHROPIC_API_KEY && !sessionToken && !secret && env.STAGING !== "1")
+    return { admin: false, payer: { ...ADMIN_PAYER, invite: "local", name: "local" } };
   return { admin: false, payer: null };
 }
 
@@ -570,6 +588,7 @@ async function health(env: Env, who: Who): Promise<HealthResponse> {
       admin: !!invite.admin,
     };
   out.email = emailReady(env);
+  if (env.STAGING === "1") out.staging = true;
   return out;
 }
 
@@ -676,6 +695,12 @@ async function handleMerge(body: MergeRequest, env: Env, oracle: Oracle): Promis
   const a = await resolveInput(env.DB, body.a, oracle.mock);
   const b = await resolveInput(env.DB, body.b, oracle.mock);
   const pair = pairKey(a.name, b.name);
+  // 4.5: an open daily challenge is not anyone's yet, so it is no ingredient.
+  if (!oracle.mock) {
+    for (const input of [a, b]) {
+      if (await openByResult(env.DB, elementKey(input.name))) throw new HttpError(400, `Nobody has discovered ${input.name} yet`);
+    }
+  }
 
   // The pair as written first: a recipe made with a name that is now an alias (3.7) still answers.
   const asWritten = pairKey(String(body.a), String(body.b));
@@ -686,6 +711,13 @@ async function handleMerge(body: MergeRequest, env: Env, oracle: Oracle): Promis
     const element = await getElement(env.DB, known.result);
     // A known item without a program, got by this merge: written now (4.2).
     if (element) return { element, firstDiscovery: false, mock: oracle.mock, writing: await writeAhead(env, oracle, element, "first") };
+  }
+
+  // 4.5: the secret pair of a daily challenge, merged ahead: free, and the
+  // first to get here is its finder.
+  if (!oracle.mock) {
+    const daily = await openByPair(env.DB, pair, asWritten);
+    if (daily) return foundDaily(env, oracle, daily, pair);
   }
 
   await ensureBudget(env, oracle, "merge", ESTIMATE.merge);
@@ -712,6 +744,13 @@ async function handleMerge(body: MergeRequest, env: Env, oracle: Oracle): Promis
   const existing = await getElement(env.DB, key);
   let element: GameElement;
   let firstDiscovery = false;
+  // 4.5: another pair that gives an open daily challenge finds it too.
+  const daily = existing ? await openByResult(env.DB, key) : null;
+  if (existing && daily) {
+    const [ka, kb] = pair.split("+");
+    await env.DB.prepare("INSERT OR IGNORE INTO recipes (pair, a, b, result, created_at) VALUES (?, ?, ?, ?, ?)").bind(pair, ka, kb, key, Date.now()).run();
+    return foundDaily(env, oracle, daily, pair);
+  }
   if (existing) {
     // An element keeps its first emoji, kind and tier forever; only its depth
     // can shrink when a shorter path to it is found.
@@ -737,6 +776,104 @@ async function handleMerge(body: MergeRequest, env: Env, oracle: Oracle): Promis
   await env.DB.prepare("INSERT OR IGNORE INTO recipes (pair, a, b, result, created_at) VALUES (?, ?, ?, ?, ?)").bind(pair, ka, kb, key, Date.now()).run();
 
   return { element, firstDiscovery, mock: false, writing: await writeAhead(env, oracle, element, firstDiscovery ? "new" : "first") };
+}
+
+// 4.5: a merge reached an open daily challenge. The first to claim it is its
+// finder and its First Discovery; its recipe joins the book. Someone who
+// claims it a moment too late gets the item, like any known recipe.
+async function foundDaily(env: Env, oracle: Oracle, row: DailyRow, pair: string): Promise<MergeResponse> {
+  const won = await claimDaily(env.DB, row, ledgerOf(oracle).payer.invite, pair);
+  const [ka, kb] = row.pair.split("+");
+  await env.DB.prepare("INSERT OR IGNORE INTO recipes (pair, a, b, result, created_at) VALUES (?, ?, ?, ?, ?)")
+    .bind(row.pair, ka, kb, row.result, Date.now())
+    .run();
+  const element = await getElement(env.DB, row.result);
+  if (!element) throw new HttpError(500, "The daily challenge lost its item");
+  return { element, firstDiscovery: won, mock: false, ...(won ? { daily: { day: row.day } } : {}), writing: await writeAhead(env, oracle, element, "first") };
+}
+
+// 4.5: the night's challenge. Two pool items nobody has merged, their merge
+// made now (about $0.003 with its description, paid by the admin), the
+// result kept only if it is truly new; its program is written ahead like
+// any new item. The pair stays out of the recipe book until it is found. A
+// merge that lands on an item that exists is kept as an ordinary recipe, and
+// the next pair is tried, three at most a night.
+async function setDailyChallenge(env: Env, force: boolean): Promise<{ day: string | null; set: string | null; tried: string[] }> {
+  const db = env.DB;
+  const out = { day: null as string | null, set: null as string | null, tried: [] as string[] };
+  if (!env.ANTHROPIC_API_KEY) return out;
+  const now = Date.now();
+  const day = force ? `${dayInZone(now)}${await forcedSuffix(db, dayInZone(now))}` : await dailyChallengeDue(db, now);
+  if (!day) return out;
+  out.day = day;
+  const ledger = new Ledger(ADMIN_PAYER);
+  ledger.burstFree = true;
+  const oracle = oracleFor(env, {}, ledger);
+  try {
+    for (const [pa, pb] of await freePairs(db)) {
+      const a = await getElement(db, pa.key);
+      const b = await getElement(db, pb.key);
+      if (!a || !b) continue;
+      const pair = pairKey(a.name, b.name);
+      out.tried.push(`${a.name} + ${b.name}`);
+      await ensureBudget(env, oracle, "merge", ESTIMATE.merge);
+      let answer = await oracle.merge(a.name, b.name);
+      if (joinsBoth(answer.name, a.name, b.name)) {
+        await ensureBudget(env, oracle, "merge", ESTIMATE.merge);
+        const again = await oracle.merge(a.name, b.name, answer.name);
+        if (!joinsBoth(again.name, a.name, b.name)) answer = again;
+      }
+      const depth = Math.max(a.depth, b.depth) + 1;
+      const name = cleanName(answer.name);
+      const key = elementKey(name);
+      const [ka, kb] = pair.split("+");
+      // Not new (an item, an alias of one, or one of its parents): an ordinary recipe now.
+      if ((await getElement(db, key)) || key === ka || key === kb) {
+        await db.prepare("INSERT OR IGNORE INTO recipes (pair, a, b, result, created_at) VALUES (?, ?, ?, ?, ?)").bind(pair, ka, kb, key, now).run();
+        continue;
+      }
+      const element: GameElement = {
+        name,
+        emoji: cleanEmoji(answer.emoji),
+        kind: answer.kind,
+        depth,
+        tier: capByDepth(capTier(answer.tier, [tierOf(a), tierOf(b)]), depth),
+      };
+      await ensureBudget(env, oracle, "describe", ESTIMATE.describe);
+      const description = await oracle.describe(element.name, element.kind, "secret");
+      const usd = oracle.spent.reduce((sum, s) => sum + s.usd, 0);
+      const results = await db.batch([
+        db
+          .prepare(
+            "INSERT OR IGNORE INTO elements (key, name, emoji, kind, depth, tier, description, created_at, invite) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+          )
+          .bind(key, element.name, element.emoji, element.kind, element.depth, element.tier, description, now),
+        db
+          .prepare(
+            "INSERT OR IGNORE INTO daily_challenges (day, pair, result, created_at, usd) SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM recipes WHERE pair = ?)",
+          )
+          .bind(day, pair, key, now, usd, pair),
+      ]);
+      if (results[1].meta.changes === 0) {
+        // Someone merged the pair meanwhile, or the day was set by another run.
+        if (results[0].meta.changes > 0) await db.prepare("DELETE FROM elements WHERE key = ? AND invite IS NULL").bind(key).run();
+        continue;
+      }
+      out.set = `${element.emoji} ${element.name} (${element.tier})`;
+      await writeAhead(env, oracle, element, "new");
+      console.log(JSON.stringify({ daily: day, item: element.name, tier: element.tier, usd }));
+      break;
+    }
+  } finally {
+    await closeLedger(db, oracle);
+  }
+  return out;
+}
+
+// The admin's "set one now" on a day that has one: a second row for the day.
+async function forcedSuffix(db: D1Database, day: string): Promise<string> {
+  const n = await db.prepare("SELECT COUNT(*) AS n FROM daily_challenges WHERE day = ? OR day LIKE ?").bind(day, `${day} #%`).first<{ n: number }>();
+  return n?.n ? ` #${n.n + 1}` : "";
 }
 
 // 4.2: the program of what a merge gave is written now, in the background,
@@ -2057,6 +2194,8 @@ async function handleAdmin(request: Request, url: URL, env: Env, oracle: Oracle,
   // 3.4.1: send an idea to Claude, decline, reopen or delete it; read GitHub now.
   if (post && path === "feedback") return json(await changeFeedback(env, await readBody<FeedbackAction>(request)));
   if (post && path === "feedback-sync") return json(await syncFeedback(env, 20));
+  // 4.5: a pull request that says "Idea #n" (.github/workflows/ideas.yml).
+  if (post && path === "idea-pr") return json(await ideaPull(env, await readBody(request)));
   // 3.4.2: the API that grows.
   if (post && path === "refresh") return json(await startRefresh(env, oracle, await readBody(request)));
   if (!post && path === "refresh-candidates") return json(await refreshCandidates(env, Number(url.searchParams.get("limit")) || 20));

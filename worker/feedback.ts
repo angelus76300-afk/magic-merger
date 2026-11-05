@@ -424,6 +424,12 @@ export async function syncFeedback(env: FeedbackEnv, limit = 8): Promise<{ check
     try {
       const { issue, prs } = await readGitHub(env, row.issue_number!);
       const v = verdict(row.sent_at ?? 0, issue, prs);
+      // 4.5: a pull request that says "Idea #n" put it in review (ideaPull);
+      // the issue knowing nothing of it does not take it back.
+      if (row.status === "review" && row.pr_number && !v.pr) {
+        await env.DB.prepare("UPDATE suggestions SET checked_at = ? WHERE id = ?").bind(now, row.id).run();
+        continue;
+      }
       const differs = v.status !== row.status || (v.pr?.number ?? null) !== row.pr_number;
       if (!differs) {
         await env.DB.prepare("UPDATE suggestions SET checked_at = ? WHERE id = ?").bind(now, row.id).run();
@@ -439,4 +445,64 @@ export async function syncFeedback(env: FeedbackEnv, limit = 8): Promise<{ check
     }
   }
   return { checked: rows.results.length, changed };
+}
+
+// 4.5: the Ideas tab follows daily builds. A pull request whose body says
+// "Idea #<n>" (docs/DAILY.md) is sent here by the Ideas workflow
+// (.github/workflows/ideas.yml) when it is opened, edited, merged or closed:
+// open puts the idea in "Waiting for review", merged in "Done", and closed
+// without merging takes it back to where it was, if it was this pull
+// request's. A declined idea stays declined unless the pull request merges.
+export function ideaNumbers(body: string | null | undefined): number[] {
+  if (!body) return [];
+  return [...new Set([...body.matchAll(/\bidea\s*#(\d{1,7})\b/gi)].map((m) => Number(m[1])))].slice(0, 10);
+}
+
+export interface PullEvent {
+  pr: number;
+  url: string;
+  state: "open" | "merged" | "closed";
+  ideas: number[];
+}
+
+export function ideaAfterPull(
+  row: Pick<SuggestionRow, "status" | "pr_number" | "sent_at">,
+  e: PullEvent,
+): { status: SuggestionStatus; note: string | null; pr: boolean } | null {
+  if (e.state === "merged") return row.status === "shipped" ? null : { status: "shipped", note: null, pr: true };
+  if (e.state === "open")
+    return row.status === "shipped" || row.status === "declined" || (row.status === "review" && row.pr_number === e.pr)
+      ? null
+      : { status: "review", note: null, pr: true };
+  if (row.status === "review" && row.pr_number === e.pr)
+    return { status: row.sent_at ? "sent" : "open", note: "The change was closed without merging", pr: false };
+  return null;
+}
+
+export async function ideaPull(env: FeedbackEnv, body: { pr?: unknown; url?: unknown; state?: unknown; ideas?: unknown; body?: unknown }) {
+  const pr = Number(body.pr);
+  const state = body.state;
+  if (!Number.isInteger(pr) || pr <= 0 || (state !== "open" && state !== "merged" && state !== "closed"))
+    throw new HttpError(400, "Which pull request, in which state?");
+  const url = typeof body.url === "string" && body.url.startsWith("https://github.com/") ? body.url.slice(0, 300) : null;
+  const ideas = Array.isArray(body.ideas)
+    ? body.ideas
+        .map(Number)
+        .filter((n) => Number.isInteger(n) && n > 0)
+        .slice(0, 10)
+    : ideaNumbers(typeof body.body === "string" ? body.body : "");
+  const e: PullEvent = { pr, url: url ?? "", state, ideas };
+  const changed: { id: number; status: SuggestionStatus }[] = [];
+  const now = Date.now();
+  for (const id of ideas) {
+    const row = await env.DB.prepare("SELECT * FROM suggestions WHERE id = ?").bind(id).first<SuggestionRow>();
+    if (!row) continue;
+    const next = ideaAfterPull(row, e);
+    if (!next) continue;
+    await env.DB.prepare("UPDATE suggestions SET status = ?, note = ?, pr_number = ?, pr_url = ?, updated_at = ? WHERE id = ?")
+      .bind(next.status, next.note, next.pr ? pr : null, next.pr ? url : null, now, id)
+      .run();
+    changed.push({ id, status: next.status });
+  }
+  return { changed };
 }

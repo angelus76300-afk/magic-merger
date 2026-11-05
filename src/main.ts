@@ -9,11 +9,14 @@ import { WorldHost } from "./worldhost";
 import { openPeople } from "./people";
 import { showFeedback } from "./feedback";
 import { Challenges } from "./challenges";
+import { Daily } from "./daily";
+import { Community } from "./community";
 import { openBook } from "./book";
 import { hideGate, showGate, showWelcome, welcomedBefore } from "./welcome";
 import { claimLink, followAccount, offerAccount, offeredBefore, openAccount, setSignedIn, signIn } from "./account";
 import { Sync } from "./sync";
 import { openMenu } from "./menu";
+import { announce, loadNews, onNews, unread } from "./whatsnew";
 import { followOtherTabs } from "./device-save";
 import type { GateActions } from "./welcome";
 import type { HealthResponse } from "../shared/types";
@@ -51,6 +54,14 @@ const world = new WorldHost(store, {
 });
 
 const challenges = new Challenges($("#challenges-view"), store, world);
+// 4.5: the daily challenges (a count on the tab) and the Community tab.
+const daily = new Daily($("#daily-view"));
+daily.onCount = (open) => {
+  const count = document.querySelector<HTMLElement>('.tab[data-view="daily-view"] .tab-count')!;
+  count.hidden = open === 0;
+  count.textContent = String(open);
+};
+const community = new Community($("#community-view"), store);
 // Another tab of this browser found something (4.0 review M6): shown here too.
 store.listen(() => {
   craft.refresh();
@@ -80,6 +91,8 @@ function showTab(view: string): void {
   else world.hide();
   if (view === "feedback-view") showFeedback();
   if (view === "challenges-view") void challenges.show();
+  if (view === "daily-view") void daily.show();
+  if (view === "community-view") void community.show();
 }
 
 world.onChallenges = () => showTab("challenges-view");
@@ -97,6 +110,7 @@ $("#admin-badge").addEventListener("click", () => {
 // note one tap further.
 const menu = () => void api.health().then((h) => openMenu(h, sync, () => void showWelcome(h, h?.account?.signedIn ? openAccount : null)));
 $("#help").addEventListener("click", menu);
+onNews(() => $("#help").classList.toggle("help-news", unread() > 0));
 $("#account-chip").addEventListener("click", menu);
 
 // The account chip, always in sight: who this device is signed in as and
@@ -136,6 +150,7 @@ world.init();
 // New discoveries: the Worker writes their program from the merge (4.2);
 // this page asks for it at once, and tests it as soon as it arrives.
 craft.onNewElement = (key, writing) => world.ahead(key, writing);
+craft.onDaily = () => void daily.count();
 // What a challenge's board finds joins the main inventory (3.7).
 challenges.onDiscovered = (key, writing) => {
   craft.refresh();
@@ -171,6 +186,7 @@ async function refreshSession(): Promise<void> {
   session.mock = status?.mock ?? false;
   session.admin = status?.admin ?? false;
   $("#mock-badge").hidden = !session.mock;
+  $("#staging-badge").hidden = !status?.staging;
   const badge = $("#admin-badge");
   badge.hidden = !session.admin;
   if (session.admin) void showSpend(badge);
@@ -198,6 +214,9 @@ async function refreshSession(): Promise<void> {
   // 4.4.6: the save on this device is the account's (or the link's, or the
   // owner's by token); another's is set aside first and the page reloads.
   if (status.account && (await followAccount(status.account.id))) return;
+  if (!status.mock) void daily.count();
+  // 4.5: what's new since this player's last visit, a dot on the ? button.
+  void loadNews().then(() => announce());
   if (document.getElementById("gate") && !document.getElementById("gate")!.hidden) {
     hideGate();
     showTab("craft-view");

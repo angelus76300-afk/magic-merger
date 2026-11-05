@@ -69,6 +69,10 @@ input {
   color: var(--accent);
 }
 
+.badge-staging {
+  background: #7fd1ff;
+}
+
 .badge-admin {
   background: var(--accent);
   cursor: pointer;
@@ -1530,9 +1534,47 @@ input {
   flex-wrap: wrap;
 }
 
-@media (max-width: 420px) {
+/* 4.5: six tabs. On a phone they take their own full line and share it;
+   past that they scroll sideways rather than push the page. */
+.tab-count {
+  display: inline-block;
+  min-width: 16px;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #1b0d12;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+.tab-count[hidden] {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .tabs {
+    order: 10;
+    width: 100%;
+    margin-left: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .tabs {
+    gap: 0;
+  }
   .tab {
-    padding: 6px 11px;
+    flex: 1 1 auto;
+    padding: 6px 4px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .tab-count {
+    margin-left: 3px;
   }
 }
 
@@ -1899,4 +1941,201 @@ input {
 }
 .account-chip-out::before {
   background: var(--danger);
+}
+
+/* 4.5: the Daily and Community tabs. */
+.daily-view,
+.community-view {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 16px max(24px, env(safe-area-inset-bottom));
+}
+.daily-view > *,
+.community-view > * {
+  max-width: 760px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.daily-head h2,
+.community-head h2 {
+  margin: 4px 0 6px;
+}
+.daily-head p,
+.community-head p,
+.daily-empty,
+.daily-loading,
+.community-empty {
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+.daily-group h3,
+.community-mine h3 {
+  margin: 18px auto 8px;
+  font-size: 15px;
+  color: var(--muted);
+}
+.daily-card,
+.friend {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  margin-bottom: 10px;
+}
+.daily-found {
+  opacity: 0.8;
+}
+.daily-mine {
+  border-color: var(--accent);
+}
+.daily-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+.daily-emoji {
+  font-size: 28px;
+  line-height: 1;
+}
+.daily-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+.daily-facts span {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.daily-kind[data-kind="spell"] {
+  color: var(--spell);
+}
+.daily-kind[data-kind="artifact"] {
+  color: var(--artifact);
+}
+.daily-description {
+  margin: 0 0 8px;
+}
+.daily-finder {
+  margin: 0;
+  color: var(--accent);
+  font-size: 0.92em;
+}
+.community-list {
+  display: grid;
+  gap: 0;
+}
+.friend-me {
+  border-color: var(--accent);
+}
+.friend-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.friend-name {
+  margin: 0;
+  font-size: 16px;
+}
+.friend-seen,
+.friend-facts,
+.friend-nofavorite {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+.friend-facts,
+.friend-nofavorite {
+  margin: 4px 0 0;
+}
+.friend-favorite {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.friend-favorite-emoji {
+  font-size: 26px;
+  line-height: 1;
+}
+.friend-favorite-text {
+  display: flex;
+  flex-direction: column;
+}
+.friend-favorite-label,
+.friend-favorite-tier {
+  color: var(--muted);
+  font-size: 12px;
+}
+.profile-controls {
+  display: grid;
+  gap: 10px;
+}
+.profile-favorite {
+  display: grid;
+  gap: 4px;
+}
+.profile-favorite select {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px;
+  max-width: 100%;
+}
+.profile-hide {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 4.5: what's new. A dot on the ? button while something is unread. */
+.help {
+  position: relative;
+}
+.help-news::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.menu-news-fresh {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+}
+.whatsnew ul {
+  margin: 8px 0;
+  padding-left: 18px;
+}
+.whatsnew li {
+  margin: 6px 0;
+}
+.whatsnew-date {
+  color: var(--muted);
+  font-size: 12px;
+}
+.whatsnew-idea {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--accent);
+}
+.whatsnew-all summary {
+  cursor: pointer;
+  color: var(--muted);
+  margin-top: 8px;
 }

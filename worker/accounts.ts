@@ -601,6 +601,7 @@ export async function deleteAccount(env: AccountEnv, invite: InviteRow): Promise
     db.prepare("DELETE FROM challenge_wins WHERE invite = ?").bind(id),
     db.prepare("DELETE FROM reports WHERE invite = ?").bind(id),
     db.prepare("UPDATE elements SET invite = NULL WHERE invite = ?").bind(id),
+    db.prepare("UPDATE daily_challenges SET found_by = NULL WHERE found_by = ?").bind(id),
     db.prepare("UPDATE invites SET deleted_at = ?, status = 'revoked', email = NULL, token_hash = ? WHERE id = ?").bind(now, await sha256(newSecret(32)), id),
   ]);
   return { ok: true };

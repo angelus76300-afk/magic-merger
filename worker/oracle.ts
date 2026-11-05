@@ -189,7 +189,7 @@ export interface Oracle {
   timings: { call: string; ms: number }[];
   // avoid: a name already refused for this pair (3.7: it only joined the two).
   merge(a: string, b: string, avoid?: string): Promise<MergeAnswer>;
-  describe(name: string, kind: ElementKind, recipe: [string, string] | null): Promise<string>;
+  describe(name: string, kind: ElementKind, recipe: [string, string] | null | "secret"): Promise<string>;
   // The trim of the library (3.7): near duplicates and senseless merges.
   trim(names: string[], recipes: string[]): Promise<TrimAnswer>;
   // The island's chronicle (3.7), from what its World recorded.
@@ -307,7 +307,7 @@ export class ClaudeOracle implements Oracle {
     return { name, emoji, kind, tier: isTier(tier) ? tier : "minor" };
   }
 
-  async describe(name: string, kind: ElementKind, recipe: [string, string] | null): Promise<string> {
+  async describe(name: string, kind: ElementKind, recipe: [string, string] | null | "secret"): Promise<string> {
     const text = await this.ask(
       "describe",
       this.models.describe,
@@ -670,8 +670,8 @@ export class MockOracle implements Oracle {
     return `Mock chronicle of ${digest.days} days: ${digest.lines.slice(0, 3).join("; ") || "nothing happened yet"}. Set ANTHROPIC_API_KEY on the Worker for a real one.`;
   }
 
-  async describe(name: string, kind: ElementKind, recipe: [string, string] | null): Promise<string> {
-    const origin = recipe ? `Born from ${recipe[0]} and ${recipe[1]}.` : "One of the primal forces.";
+  async describe(name: string, kind: ElementKind, recipe: [string, string] | null | "secret"): Promise<string> {
+    const origin = recipe === "secret" ? "Nobody knows yet what makes it." : recipe ? `Born from ${recipe[0]} and ${recipe[1]}.` : "One of the primal forces.";
     return `${origin} This is a placeholder ${kind} description for ${name}. Set ANTHROPIC_API_KEY on the Worker to get real ones.`;
   }
 

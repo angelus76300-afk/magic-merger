@@ -216,6 +216,7 @@ export async function unsorted(db: D1Database, limit = SORT_PER_DAY): Promise<Ca
        LEFT JOIN invites i ON i.id = e.invite
        WHERE e.kind = 'artifact' AND e.tier IN (${tiers.map(() => "?").join(", ")}) AND p.status = 'live'
          AND NOT EXISTS (SELECT 1 FROM wonder_sorts w WHERE w.key = e.key)
+         AND NOT EXISTS (SELECT 1 FROM daily_challenges d WHERE d.result = e.key AND d.found_at IS NULL)
        ORDER BY e.created_at LIMIT ?`,
     )
     .bind(...tiers, limit)

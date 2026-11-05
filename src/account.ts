@@ -3,6 +3,7 @@ import type { PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialRequest
 import type { SignedIn } from "../shared/account";
 import type { HealthResponse } from "../shared/types";
 import * as api from "./api";
+import { profileControls } from "./community";
 import { clearProgress, freeze, hasProgress, isFrozen, owner, restore, setAside, setOwner, summary } from "./device-save";
 import { ago } from "./people";
 import type { Sync } from "./sync";
@@ -287,6 +288,8 @@ export async function openAccount(): Promise<void> {
     <div class="account-devices"></div>
     <h3>Saved progress</h3>
     <p class="account-progress"></p>
+    <h3>Community</h3>
+    <div class="account-community"><p class="account-community-text">Loading...</p></div>
     <div class="account-email" hidden>
       <h3>Sign in by email</h3>
       <p class="account-email-text"></p>
@@ -307,6 +310,12 @@ export async function openAccount(): Promise<void> {
         .map((p) => `${p.synced ? "A synced passkey" : "A passkey"} made ${ago(p.createdAt)}${p.lastUsed ? `, used ${ago(p.lastUsed)}` : ""}`)
         .join(". ")
     : "No passkey yet: this device was signed in with a link. Add one so you can sign in anywhere.";
+  // 4.5: the favorite spell friends see in the Community tab, and the switch that hides you.
+  const communityBox = d.querySelector<HTMLElement>(".account-community")!;
+  void api
+    .community()
+    .then((c) => communityBox.replaceChildren(profileControls(c.me)))
+    .catch(() => (communityBox.textContent = "Could not read your Community choices."));
   const devices = d.querySelector<HTMLElement>(".account-devices")!;
   for (const dev of info.devices) {
     const row = document.createElement("div");

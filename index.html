@@ -11,6 +11,13 @@
     <header class="topbar">
       <h1 class="title">Magic Merger</h1>
       <span id="mock-badge" class="badge" hidden title="No API key on the Worker: results are fake and not saved">mock mode</span>
+      <span
+        id="staging-badge"
+        class="badge badge-staging"
+        hidden
+        title="A preview of a change before it is merged: its own copy of the game, with accounts stripped"
+        >preview</span
+      >
       <span id="admin-badge" class="badge badge-admin" hidden role="button" tabindex="0" title="">admin</span>
       <button id="account-chip" class="account-chip" hidden></button>
       <button id="help" class="help" aria-label="Your account, sync and help">?</button>
@@ -18,6 +25,8 @@
         <button class="tab" role="tab" data-view="craft-view" aria-selected="true">Craft</button>
         <button class="tab" role="tab" data-view="world-view" aria-selected="false">World</button>
         <button class="tab" role="tab" data-view="challenges-view" aria-selected="false">Challenges</button>
+        <button class="tab" role="tab" data-view="daily-view" aria-selected="false">Daily<span class="tab-count" hidden></span></button>
+        <button class="tab" role="tab" data-view="community-view" aria-selected="false">Community</button>
         <button class="tab" role="tab" data-view="feedback-view" aria-selected="false">Ideas</button>
       </nav>
     </header>
@@ -68,6 +77,10 @@
     </main>
 
     <main id="challenges-view" class="view challenges-view" hidden></main>
+
+    <main id="daily-view" class="view daily-view" hidden></main>
+
+    <main id="community-view" class="view community-view" hidden></main>
 
     <main id="feedback-view" class="view feedback" hidden></main>
 
