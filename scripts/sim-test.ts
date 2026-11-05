@@ -437,7 +437,9 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
     `f in ${best.get("f")?.size}, e in ${best.get("e")?.size}`,
   );
   check("an item the start set cannot reach has no par", !fewestMerges(graph, ["b"]).has("f"));
-  check("beating par lowers it", parOf(graph, ["a", "b"], ["e"], 1).par === 1 && parOf(graph, ["a", "b"], ["e"], 5).par === 2);
+  // parOf's bestWin (the Worker passes null since 4.5.1, so a claim never sets par).
+  check("a better win given to parOf lowers par", parOf(graph, ["a", "b"], ["e"], 1).par === 1 && parOf(graph, ["a", "b"], ["e"], 5).par === 2);
+  check("with no win given, par is the graph's", parOf(graph, ["a", "b"], ["e"], null).par === 2);
   check("three stars at par, two within two, one for any win", starsFor(4, 4) === 3 && starsFor(3, 4) === 3 && starsFor(6, 4) === 2 && starsFor(7, 4) === 1);
   // An attempt counts merges as par does: a pair merged twice is one merge, whichever way round.
   const pairs = countMerge(countMerge(countMerge([], "Fire", "Water"), "Water", "Fire"), "Steam", "Air");

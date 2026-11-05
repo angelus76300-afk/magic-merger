@@ -3335,6 +3335,49 @@ const signIn = async (key, count) => {
   await reset();
 }
 
+// 31a. Through the real cron (4.5.1, the adjudication's P1): a night whose
+// tries find nothing new stops after three runs; a paused player's failing
+// verdict leaves a new item's trial a trial.
+{
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev({ DAILY_CHALLENGES: "1" });
+  await db.prepare("DELETE FROM daily_challenges").run();
+  await db.prepare("DELETE FROM job_runs WHERE job = 'daily'").run();
+  const runs = async () => (await db.prepare("SELECT COALESCE(SUM(runs), 0) AS n FROM job_runs WHERE job = 'daily'").first()).n;
+  refuseSecret = true;
+  for (let k = 0; k < 4; k++) {
+    const before = await runs();
+    await fetch(`${BASE}/cdn-cgi/handler/scheduled?cron=*/10+*+*+*+*`);
+    for (let t = 0; t < 40 && (await runs()) === before; t++) await new Promise((r) => setTimeout(r, 250));
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  refuseSecret = false;
+  const set = (await db.prepare("SELECT COUNT(*) AS n FROM daily_challenges").first()).n;
+  check("four cron runs on a night with nothing new: three runs, then none", (await runs()) === 3 && set === 0, `${await runs()} runs, ${set} challenges`);
+
+  const pia = await invite("Pia");
+  await api("/api/admin/invite", { admin: true, body: { id: pia.id, action: "pause" } });
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at) VALUES ('still bell', 'Still Bell', '🔕', 'spell', 3, 'minor', 'A bell.', ?)",
+    )
+    .bind(Date.now())
+    .run();
+  const bell = await api("/api/spell", { admin: true, body: { name: "Still Bell" } });
+  const verdict = await api("/api/spell/check", {
+    invite: pia.secret,
+    body: { name: "Still Bell", id: bell.data.program.id, ok: false, problem: "crash", detail: "It crashed." },
+  });
+  const status = (await db.prepare("SELECT status FROM programs WHERE id = ?").bind(bell.data.program.id).first())?.status;
+  check(
+    "a paused player's failing verdict does not make a new item's program live",
+    verdict.status === 200 && status === "trial",
+    `${verdict.status} ${status}`,
+  );
+  await reset();
+}
+
 // 31b. A.P4: the staging Worker lets nobody in without the token, even with
 // no API key (mock mode is open only for local development).
 {

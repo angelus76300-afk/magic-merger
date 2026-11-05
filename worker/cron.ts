@@ -31,7 +31,9 @@ export async function noteRun(db: D1Database, job: string, day: string, now = Da
     )
     .bind(job, day, now)
     .first<{ runs: number }>();
-  return row?.runs ?? 1;
+  // Fails closed (4.5.1, N4): no count back means no turn, never an open gate.
+  if (!row) throw new Error(`job_runs: no count for ${job} on ${day}`);
+  return row.runs;
 }
 
 export async function runsOn(db: D1Database, job: string, day: string): Promise<number> {

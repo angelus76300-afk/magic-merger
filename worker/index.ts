@@ -1312,9 +1312,14 @@ async function handleCheck(body: CheckRequest, env: Env, oracle: Oracle): Promis
   try {
     await ensureBudget(env, oracle, "rewrite", spellEstimate(env, rewriterFor(env, tier)));
     description = await ensureDescription(env, oracle, element, false);
-  } catch {
-    // Over a budget: the program is kept as it is rather than refused.
-    return keep();
+  } catch (err) {
+    // The month's budget spent for everyone: the program is kept as it is
+    // rather than refused (3.3). Anything else (this player's allowance, a
+    // pause, the burst guard, a failed description) says nothing about the
+    // program (4.5.1, N5): it waits as a trial for the next browser.
+    if (err instanceof LedgerError && err.code === "budget") return keep();
+    if (others) await setStatus(env.DB, row.id, "rejected");
+    return served();
   }
   const tested = programOf(row);
   const intents = parseIntents(tested?.intents);
@@ -2402,9 +2407,11 @@ async function wonderDaily(env: Env, mode: "collect" | "due" | "force") {
       }
     }
   }
-  // 3. Players' discoveries: a day's new artifacts sorted in one small call.
+  // 3. Players' discoveries: a day's new artifacts sorted in one small call,
+  // once a Toronto day (4.5.1, N1: on a day the wonder failed, every due run
+  // would sort again what the last one left unanswered).
   const list = await unsorted(db);
-  if (list.length) {
+  if (list.length && (mode !== "due" || (await takeRun(db, "wonder-sort", dayInZone(now), 1, now)))) {
     const room = cap - (await wonderSpent(db, monthStart(now)));
     if (oracle.mock || room >= WONDER_ESTIMATE.sort) {
       if (!oracle.mock) await hold(db, ledger, "wonder-sort", WONDER_ESTIMATE.sort, budget(env));

@@ -190,6 +190,8 @@ export function leastMerges(recipes: Recipe[], start: string[], key: string): nu
 }
 
 // Par: the fewest merges to any verified solver, or what a player did better.
+// Since 4.5.1 the Worker passes no `bestWin` (null): a claimed count from a
+// browser cannot be verified, so it never sets par (worker/challenges.ts).
 export function parOf(recipes: Recipe[], start: string[], solvers: string[], bestWin: number | null): { par: number | null; via: string | null } {
   const best = fewestMerges(recipes, start);
   let par: number | null = null;
