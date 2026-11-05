@@ -32,7 +32,7 @@ async function cf(path, body) {
 }
 
 /** Errors the production Worker logged since `from` (ms): invocations that did not end "ok", and error logs. */
-export async function errorsSince(from, to = Date.now()) {
+export async function errorsSince(from, to = Date.now(), { outcomesOnly = false } = {}) {
   const query = (filter) =>
     cf("/workers/observability/telemetry/query", {
       queryId: "magic-merger-errors",
@@ -42,10 +42,12 @@ export async function errorsSince(from, to = Date.now()) {
       parameters: { filters: [{ key: "$workers.scriptName", operation: "eq", type: "string", value: "magic-merger" }, filter] },
     });
   const seen = new Map();
-  for (const filter of [
-    { key: "$workers.outcome", operation: "neq", type: "string", value: "ok" },
-    { key: "$metadata.level", operation: "eq", type: "string", value: "error" },
-  ]) {
+  // The deploy counts only invocations that failed (an exception, a limit): logged errors also
+  // include Anthropic overloads and D1 hiccups that the code already handles, which a rollback
+  // would not fix.
+  const filters = [{ key: "$workers.outcome", operation: "neq", type: "string", value: "ok" }];
+  if (!outcomesOnly) filters.push({ key: "$metadata.level", operation: "eq", type: "string", value: "error" });
+  for (const filter of filters) {
     for (const e of (await query(filter))?.events?.events ?? []) seen.set(e?.$metadata?.id ?? seen.size, e);
   }
   // "canceled" is a player who closed the page mid request, not a fault of the Worker.
@@ -80,6 +82,26 @@ async function perf(hours) {
   };
 }
 
+/** What production runs against main: the live deploy's message names the commit it came from. */
+async function drift() {
+  const { execFileSync } = await import("node:child_process");
+  const list = JSON.parse(
+    execFileSync("npx", ["--yes", "wrangler", "deployments", "list", "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }),
+  );
+  const live = list[list.length - 1];
+  const message = live?.annotations?.["workers/message"] ?? "";
+  const main = execFileSync("git", ["rev-parse", "--short=7", "origin/main"], { encoding: "utf8" }).trim();
+  const from = /^main ([0-9a-f]{7,40})\b/.exec(message)?.[1] ?? null;
+  return {
+    live: live?.versions?.[0]?.version_id ?? null,
+    by: live?.annotations?.["workers/triggered_by"] ?? null,
+    message,
+    main,
+    // "by hand" when the live version did not come from the Deploy workflow.
+    state: !from ? "by hand or rolled back" : main.startsWith(from) || from.startsWith(main) ? "main" : "behind main",
+  };
+}
+
 async function signals(hours) {
   const since = Date.now() - hours * 3600_000;
   const out = { at: new Date().toISOString(), hours };
@@ -91,6 +113,7 @@ async function signals(hours) {
     }
   };
   await safe("errors", () => errorsSince(since));
+  await safe("drift", drift);
   await safe("perf", () => perf(hours));
   await safe("downVotes", () =>
     select(
@@ -115,8 +138,8 @@ const cmd = process.argv[2];
 if (cmd === "errors") {
   const since = Number(arg("since", Date.now() - 600_000));
   const max = Number(arg("max", 0));
-  const e = await errorsSince(since);
-  console.log(`${e.count} errors in production since ${new Date(since).toISOString()}${e.first.length ? ": " + e.first.join(" | ") : ""}`);
+  const e = await errorsSince(since, Date.now(), { outcomesOnly: true });
+  console.log(`${e.count} failed invocations in production since ${new Date(since).toISOString()}${e.first.length ? ": " + e.first.join(" | ") : ""}`);
   process.exit(e.count > max ? 1 : 0);
 } else {
   const s = await signals(Number(arg("hours", 24)));

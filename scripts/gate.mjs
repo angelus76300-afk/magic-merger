@@ -1,7 +1,7 @@
 // 4.5.2: what may merge and what may deploy (docs/DAILY.md, "Risk classes").
 //
 //   node scripts/gate.mjs pr <number> [--merge]   is this pull request ready? With --merge, squash it.
-//   node scripts/gate.mjs deploy <sha>            may main at <sha> go to production?
+//   node scripts/gate.mjs deploy <sha> <deployments.json>   may main at <sha> go to production?
 //
 // Runs in GitHub Actions with GITHUB_TOKEN and GITHUB_REPOSITORY, from main's
 // copy of the repository (the Gate and Deploy workflows), so a pull request
@@ -10,26 +10,46 @@
 // check is the lock that holds anyway: production never runs a red or amber
 // change that has no recorded OK from the owner.
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { classify, readGit } from "./risk.mjs";
 
 const ORDER = { green: 0, amber: 1, red: 2 };
 export const LABELS = { amber: "owner-ok", red: "owner-yes", hold: "hold", pause: "pause" };
-const REVIEW = /<!--\s*mm-review\s+verdict=(pass|block)\s+sha=([0-9a-f]{7,40})(?:\s+raise=(amber|red))?\s*-->/;
+// A marker counts only at the start of a line, never quoted inside prose.
+const REVIEW = /^<!--\s*mm-review\s+verdict=(pass|block)\s+sha=([0-9a-f]{7,40})(?:\s+raise=(amber|red))?\s*-->/gm;
+// The record the planner writes next to the owner's label: who said what, when.
+const OWNER = /^<!--\s*mm-owner\s+(ok|yes)\s*-->/m;
 
-/** The newest review verdict written for this exact head commit, or null. */
+/**
+ * The review of this exact head commit. A block or a raised class sticks: a later
+ * comment on the same commit cannot clear it (a builder cannot lower its own class).
+ */
 export function reviewFor(comments, sha) {
   let found = null;
   for (const c of comments) {
-    const m = REVIEW.exec(c.body ?? "");
-    if (m && sha.startsWith(m[2])) found = { verdict: m[1], raise: m[3] ?? null, at: c.created_at, url: c.html_url };
+    for (const m of (c.body ?? "").matchAll(REVIEW)) {
+      if (!sha.startsWith(m[2])) continue;
+      const raise = [found?.raise, m[3]].filter(Boolean).sort((a, b) => ORDER[b] - ORDER[a])[0] ?? null;
+      found = { verdict: found?.verdict === "block" ? "block" : m[1], raise, at: c.created_at, url: c.html_url };
+    }
   }
   return found;
 }
 
+/** The owner's recorded words for a label: "ok" or "yes" comments written by the planner. */
+export function ownerRecords(comments) {
+  const out = new Set();
+  for (const c of comments) {
+    const m = OWNER.exec(c.body ?? "");
+    if (m) out.add(m[1]);
+  }
+  return out;
+}
+
 /**
  * Pure decision for one pull request.
- * s: { cls, labels, draft, paused, ci, smoke, review, mergeable, behind }
+ * s: { cls, labels, records, draft, paused, ci, smoke, review, mergeable, workflows, docsOnly }
  *   ci: "full" (lint to test:worker passed), "docs" (docs only, light checks passed), or anything else
  *   smoke: "pass" | other; review: reviewFor(...) result
  */
@@ -44,23 +64,26 @@ export function decide(s) {
   if (s.smoke !== "pass" && !s.docsOnly) reasons.push(`preview smoke test not passed (${s.smoke})`);
   if (!s.review) reasons.push("no independent review of the head commit");
   else if (s.review.verdict !== "pass") reasons.push("the review blocks it");
-  if (cls === "amber" && !s.labels.includes(LABELS.amber) && !s.labels.includes(LABELS.red))
-    reasons.push("amber: waits for the owner's OK in the morning brief (label owner-ok)");
-  if (cls === "red" && !s.labels.includes(LABELS.red)) reasons.push("red: waits for the owner's explicit yes (label owner-yes)");
-  if (s.behind) reasons.push("behind main: updated, CI runs again");
+  const records = s.records ?? new Set();
+  const yes = s.labels.includes(LABELS.red) && records.has("yes");
+  const ok = yes || (s.labels.includes(LABELS.amber) && records.has("ok"));
+  if (cls === "amber" && !ok) reasons.push("amber: waits for the owner's OK in the morning brief (label owner-ok and the planner's mm-owner record)");
+  if (cls === "red" && !yes) reasons.push("red: waits for the owner's explicit yes (label owner-yes and the planner's mm-owner record)");
   if (s.mergeable === false) reasons.push("conflicts with main");
+  if (s.workflows) reasons.push("changes .github/workflows: the Gate's token cannot merge it; the planner merges it by hand after the owner's yes");
   return { cls, ready: reasons.length === 0, reasons };
 }
 
 /** Pure decision for a deploy: every change since the last deploy has the OK its class needs. */
 export function deployable({ paused, commits }) {
+  const okFor = (c) => (c.labels.includes(LABELS.amber) && c.records?.has("ok")) || (c.labels.includes(LABELS.red) && c.records?.has("yes"));
+  const yesFor = (c) => c.labels.includes(LABELS.red) && c.records?.has("yes");
   const reasons = [];
   if (paused) reasons.push("paused by the owner (an open issue labelled pause)");
   for (const c of commits) {
     if (!c.pr) reasons.push(`${c.sha.slice(0, 7)} reached main without a pull request`);
-    else if (c.cls === "red" && !c.labels.includes(LABELS.red)) reasons.push(`#${c.pr} is red and was merged without the owner's yes`);
-    else if (c.cls === "amber" && !c.labels.includes(LABELS.amber) && !c.labels.includes(LABELS.red))
-      reasons.push(`#${c.pr} is amber and was merged without the owner's OK`);
+    else if (c.cls === "red" && !yesFor(c)) reasons.push(`#${c.pr} is red and was merged without the owner's recorded yes`);
+    else if (c.cls === "amber" && !okFor(c)) reasons.push(`#${c.pr} is amber and was merged without the owner's recorded OK`);
   }
   return { ok: reasons.length === 0, reasons };
 }
@@ -103,14 +126,28 @@ async function ciOn(sha) {
   return test?.conclusion === "success" ? "full" : "docs";
 }
 
+/** The preview smoke test of a commit: the newest Preview run whose smoke job ran (a run for a label skips it). */
 async function smokeOn(sha) {
-  const runs = (await gh(`actions/runs?head_sha=${sha}&per_page=50`))?.workflow_runs ?? [];
-  const preview = runs.filter((r) => r.name === "Preview").sort((a, b) => b.run_number - a.run_number)[0];
-  if (!preview) return "missing";
-  if (preview.status !== "completed") return preview.status;
-  const jobs = (await gh(`actions/runs/${preview.id}/jobs`))?.jobs ?? [];
-  const smoke = jobs.find((j) => j.name === "smoke");
-  return smoke?.conclusion === "success" ? "pass" : (smoke?.conclusion ?? "missing");
+  const runs = ((await gh(`actions/runs?head_sha=${sha}&per_page=50`))?.workflow_runs ?? [])
+    .filter((r) => r.name === "Preview")
+    .sort((a, b) => b.run_number - a.run_number);
+  for (const run of runs) {
+    if (run.status !== "completed") return run.status;
+    const jobs = (await gh(`actions/runs/${run.id}/jobs`))?.jobs ?? [];
+    const smoke = jobs.find((j) => j.name === "smoke");
+    if (smoke && smoke.conclusion !== "skipped") return smoke.conclusion === "success" ? "pass" : smoke.conclusion;
+  }
+  return "missing";
+}
+
+async function allComments(n) {
+  const comments = [];
+  for (let page = 1; page < 10; page++) {
+    const batch = await gh(`issues/${n}/comments?per_page=100&page=${page}`);
+    comments.push(...(batch ?? []));
+    if (!batch || batch.length < 100) break;
+  }
+  return comments;
 }
 
 export async function prState(n) {
@@ -118,44 +155,53 @@ export async function prState(n) {
   const sha = pr.head.sha;
   git("fetch", "--quiet", "origin", `+refs/pull/${n}/head:refs/remotes/pr/${n}`, `+refs/heads/${pr.base.ref}:refs/remotes/origin/${pr.base.ref}`);
   const files = readGit(`origin/${pr.base.ref}`, `pr/${n}`);
-  const { cls, hits } = classify(files, { branch: pr.head.ref });
-  const comments = [];
-  for (let page = 1; page < 10; page++) {
-    const batch = await gh(`issues/${n}/comments?per_page=100&page=${page}`);
-    comments.push(...(batch ?? []));
-    if (!batch || batch.length < 100) break;
-  }
-  const behind = pr.mergeable_state === "behind";
+  const { cls, hits } = classify(files, { branch: pr.head.ref, title: pr.title });
+  const comments = await allComments(n);
   return {
     pr,
     hits,
     state: {
+      open: pr.state === "open" && !pr.merged,
       cls,
       labels: pr.labels.map((l) => l.name),
+      records: ownerRecords(comments),
       draft: pr.draft,
       paused: await paused(),
       ci: await ciOn(sha),
       smoke: await smokeOn(sha),
       review: reviewFor(comments, sha),
       mergeable: pr.mergeable,
-      behind,
+      workflows: files.some((f) => f.path.startsWith(".github/workflows/")),
       docsOnly: files.every((f) => DOCS_ONLY(f.path)),
     },
   };
 }
 
-async function lastDeployedSha() {
-  const deployments = (await gh(`deployments?environment=production&per_page=30`)) ?? [];
-  for (const d of deployments) {
-    const statuses = (await gh(`deployments/${d.id}/statuses?per_page=5`)) ?? [];
-    if (statuses[0]?.state === "success") return d.sha;
+/**
+ * The commit of the newest production deploy this workflow made, read from Cloudflare's own
+ * record (wrangler deployments list --json, saved to a file): each one carries the message
+ * "main <sha7> ...". GitHub's deployment records are not relied on (environments in a private
+ * repository on the free plan may not keep them).
+ */
+export function lastDeployedFrom(deployments) {
+  for (const d of [...deployments].reverse()) {
+    const m = /^main ([0-9a-f]{7,40})\b/.exec(d?.annotations?.["workers/message"] ?? "");
+    if (m) return m[1];
   }
   return null;
 }
 
-export async function deployState(sha) {
+export async function deployState(sha, deploymentsFile) {
   git("fetch", "--quiet", "origin", "main");
-  const last = await lastDeployedSha();
+  let last = null;
+  if (deploymentsFile) {
+    const short = lastDeployedFrom(JSON.parse(readFileSync(deploymentsFile, "utf8")));
+    try {
+      last = short ? git("rev-parse", "--verify", `${short}^{commit}`) : null;
+    } catch {
+      last = null;
+    }
+  }
   let shas = [sha];
   if (last) {
     try {
@@ -170,11 +216,13 @@ export async function deployState(sha) {
     const prs = ((await gh(`commits/${c}/pulls`)) ?? []).filter((p) => p.merged_at && p.base.ref === "main");
     const pr = prs[0];
     let cls = "green";
+    let records = new Set();
     if (pr) {
       const parent = git("rev-parse", `${c}^`);
-      cls = classify(readGit(parent, c), { branch: pr.head.ref }).cls;
+      cls = classify(readGit(parent, c), { branch: pr.head.ref, title: pr.title }).cls;
+      records = ownerRecords(await allComments(pr.number));
     }
-    commits.push({ sha: c, pr: pr?.number ?? null, cls, labels: pr ? pr.labels.map((l) => l.name) : [] });
+    commits.push({ sha: c, pr: pr?.number ?? null, cls, labels: pr ? pr.labels.map((l) => l.name) : [], records });
   }
   return { last, commits, paused: await paused() };
 }
@@ -187,6 +235,10 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   };
   if (cmd === "pr") {
     const { pr, state, hits } = await prState(Number(arg));
+    if (!state.open) {
+      summary(`#${arg} is not open: nothing to do.`);
+      process.exit(0);
+    }
     const d = decide(state);
     summary(
       [
@@ -196,8 +248,6 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
         `CI ${state.ci}, smoke ${state.smoke}, review ${state.review?.verdict ?? "none"}, labels ${state.labels.join(", ") || "none"}`,
       ].join("\n"),
     );
-    if (state.behind && !state.draft)
-      await gh(`pulls/${arg}/update-branch`, { method: "PUT", body: JSON.stringify({ expected_head_sha: pr.head.sha }) }).catch((e) => console.log(e.message));
     if (d.ready && process.argv.includes("--merge")) {
       await gh(`pulls/${arg}/merge`, {
         method: "PUT",
@@ -208,7 +258,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       if (process.env.GITHUB_OUTPUT) execFileSync("sh", ["-c", `echo merged=true >> "$GITHUB_OUTPUT"`]);
     }
   } else if (cmd === "deploy") {
-    const s = await deployState(arg);
+    const s = await deployState(arg, process.argv[4]);
     const d = deployable(s);
     summary(
       [
@@ -222,7 +272,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     );
     process.exit(d.ok ? 0 : 1);
   } else {
-    console.error("usage: node scripts/gate.mjs pr <n> [--merge] | deploy <sha>");
+    console.error("usage: node scripts/gate.mjs pr <n> [--merge] | deploy <sha> [deployments.json]");
     process.exit(2);
   }
 }

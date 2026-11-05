@@ -6,7 +6,7 @@ Every Claude Code session on this repository reads this first. All creation and 
 2. **The morning brief** of the daily planner (`docs/DAILY.md`): what happened, what to try, what to decide.
 3. **The game itself and its Ideas tab.**
 
-Everything else is the AI's: checking, building, testing, reviewing, and finding bugs and ideas before the owner does. Merging and deploying are done by workflows (the Gate and Deploy), never by hand.
+Everything else is the AI's: checking, building, testing, reviewing, and finding bugs and ideas before the owner does. Merging and deploying are done by workflows (the Gate and Deploy); the one exception, a red workflow change the owner said yes to, is merged by the planner (`docs/DAILY.md`).
 
 ## Before anything: check where we are
 
@@ -29,7 +29,7 @@ Keep working on everything that does not depend on the answer while you wait.
 3. **Spells in bulk**: rewriting stored programs in bulk or bumping `PROGRAM_VERSION` (it once doubled the month's Opus spend in a day).
 4. **Anything public**: a link, a post, a listing, a domain.
 
-These are the red and amber classes of `docs/DAILY.md`, checked on every diff by `scripts/risk.mjs`. Pull requests opened by the feedback routine from the Ideas tab carry players' words into code; they are amber and wait for the owner, as `docs/FEEDBACK.md` says. "Pause" from the owner, in any session: open an issue labelled `pause`; it stops every merge and deploy until it is closed.
+They are among the red classes of `docs/DAILY.md`, checked on every diff by `scripts/risk.mjs`; the full list of what is red or amber (the pipeline, dependencies, saves, the admin surface, tests taken out) is there. Pull requests opened by the feedback routine from the Ideas tab carry players' words into code; they are amber and wait for the owner, as `docs/FEEDBACK.md` says. "Pause" from the owner, in any session: open an issue labelled `pause`; it stops every merge and deploy until it is closed.
 
 ## Habits
 

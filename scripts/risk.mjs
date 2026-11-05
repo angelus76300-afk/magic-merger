@@ -32,20 +32,50 @@ const PLAYER_TABLES = [
   "spend",
   "reservations",
   "daily_challenges",
+  // What players discovered and built: the shared library and its history.
+  "recipes",
+  "elements",
+  "recipe_history",
+  "aliases",
+  "challenge_solvers",
+  "writes",
+  "wonders",
+  "wonder_sorts",
+  "trims",
 ];
+// A call that can reach Claude: an oracle method on any receiver the Worker uses for one, the
+// helpers that make or wrap an oracle, or the API itself.
 const ORACLE_CALL =
-  /\b(?:oracle|trial|this\.oracle|env\.oracle)\.(merge|describe|trim|chronicle|tiers|spell|repair|judge|intents|design|submitBatch|submitWonders|sortItems)\(/g;
+  /\b(?:oracle|trial|o|this\.oracle|env\.oracle|w)\.(merge|describe|trim|chronicle|tiers|spell|repair|judge|intents|design|submitBatch|submitWonders|sortItems)\(|\b(?:oracleFor|makeOracle|writeWith)\(|\)\.(?:merge|describe|spell|repair|judge|intents|design|submitBatch|submitWonders|sortItems|chronicle|tiers|trim)\(|api\.anthropic\.com|new Anthropic\(|messages\.(?:create|stream|batches\.create)\(/g;
+// The money knobs that live in code: budgets, holds, caps and the choice of model.
+const MONEY_FN =
+  /\bfunction (?:oracleFor|makeOracle|budget|ensureBudget|writeWith|smallModel|refreshBudget|rewriteBudget|spellModelFor|wonderBudget|aheadCap|hold|sweep|spentBy)\b|\b(?:oracleFor|makeOracle|budget|ensureBudget|smallModel|refreshBudget|rewriteBudget|spellModelFor|wonderBudget|aheadCap)\s*\(|\b[A-Z_]*(?:_USD|_MODEL|_EFFORT|BUDGET|ESTIMATE|PRICES)\b|burstFree|\bhold\(/;
 const MODEL_ID = /claude-(?:opus|sonnet|haiku|fable)-\d/;
 const SECRET =
   /sk-ant-[a-z0-9]{2,}-[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:ADMIN_TOKEN|MM_TOKEN|CLOUDFLARE_API_TOKEN)\s*[:=]\s*["'][A-Za-z0-9_-]{16,}["']/;
 const ROW_REWRITE =
   /\b(UPDATE|DELETE\s+FROM|DROP\s+TABLE|DROP\s+COLUMN|ALTER\s+TABLE\s+\w+\s+(?:RENAME|DROP)|INSERT\s+(?:OR\s+\w+\s+)?INTO\s+\w+(?:\s*\([^)]*\))?\s+SELECT|REPLACE\s+INTO)\b/i;
-const WRITE_PLAYERS = new RegExp(`\\b(?:UPDATE|DELETE\\s+FROM)\\s+(${PLAYER_TABLES.join("|")})\\b`, "i");
+const WRITE_PLAYERS = new RegExp(
+  `\\b(?:UPDATE|DELETE\\s+FROM|REPLACE\\s+INTO|INSERT\\s+OR\\s+REPLACE\\s+INTO)\\s+(${PLAYER_TABLES.join("|")})\\b|\\b(?:UPDATE|DELETE\\s+FROM)\\s+\\$\\{`,
+  "gi",
+);
+// An UPDATE or DELETE on the spells or their programs with no WHERE of its own (sub-queries
+// and strings set aside) on its line: every spell at once.
+const isBulkSpells = (line) => {
+  const m = /\b(?:UPDATE|DELETE\s+FROM)\s+(?:spells|programs)\b(.*)$/i.exec(line);
+  if (!m) return false;
+  let rest = m[1].replace(/'[^']*'|"[^"]*"/g, "''");
+  for (let i = 0; i < 5; i++) rest = rest.replace(/\([^()]*\)/g, "");
+  return !/\bWHERE\b/i.test(rest);
+};
 
 const any = (paths) => (f) => paths.some((p) => (p.endsWith("/") ? f.path.startsWith(p) : f.path === p));
 const added = (f, re) => f.added.filter((l) => re.test(l));
 const count = (lines, re) => lines.reduce((n, l) => n + (l.match(re)?.length ?? 0), 0);
 const isCode = (f) => /^(worker|src|shared)\//.test(f.path);
+const touched = (f, re) => [...f.added, ...f.removed].some((l) => re.test(l));
+// The function each hunk of a file starts in (git's hunk header), for code that lives in worker/index.ts.
+const inFunction = (f, re) => (f.contexts ?? []).some((c) => re.test(c));
 
 // Each rule: an id the docs cite, its class, what it protects, and a test on one changed file
 // (or, with `pr`, on the pull request as a whole). The table in docs/DAILY.md lists the same ids;
@@ -70,7 +100,18 @@ export const RULES = [
     what: "a new call to Claude somewhere in the Worker (more oracle calls added than removed in a file)",
     file: (f) => f.path.startsWith("worker/") && count(f.added, ORACLE_CALL) > count(f.removed, ORACLE_CALL),
   },
-  { id: "R4", cls: "red", what: "a Claude model named in code", file: (f) => isCode(f) && added(f, MODEL_ID).length > 0 },
+  {
+    id: "R4",
+    cls: "red",
+    what: "a Claude model named in code (more model ids added than removed in a file)",
+    file: (f) => isCode(f) && count(f.added, new RegExp(MODEL_ID.source, "g")) > count(f.removed, new RegExp(MODEL_ID.source, "g")),
+  },
+  {
+    id: "R14",
+    cls: "red",
+    what: "the money knobs in code: budgets, holds, caps, prices and the choice of model (a touched line that names one, or a change inside oracleFor, makeOracle, budget, ensureBudget, writeWith, smallModel, refreshBudget, rewriteBudget, spellModelFor, wonderBudget)",
+    file: (f) => /^(worker|shared)\//.test(f.path) && (touched(f, MONEY_FN) || inFunction(f, MONEY_FN)),
+  },
   // Red: players' data.
   {
     id: "R5",
@@ -81,22 +122,31 @@ export const RULES = [
   {
     id: "R6",
     cls: "red",
-    what: "accounts, passkeys, sessions, sign in, export and deletion",
-    file: any(["worker/accounts.ts", "src/account.ts", "src/session.ts", "shared/account.ts"]),
+    what: "accounts, passkeys, sessions, sign in, export and deletion (and authenticate, handleAccount and sameSecret in worker/index.ts)",
+    file: (f) =>
+      any(["worker/accounts.ts", "src/account.ts", "src/session.ts", "shared/account.ts"])(f) ||
+      (f.path === "worker/index.ts" &&
+        (inFunction(f, /\bfunction (?:authenticate|handleAccount|sameSecret)\b/) || touched(f, /\bfunction (?:authenticate|handleAccount|sameSecret)\b/))),
   },
   { id: "R7", cls: "red", what: "what leaves production for staging (scripts/staging-copy.mjs)", file: any(["scripts/staging-copy.mjs"]) },
   {
     id: "R8",
     cls: "red",
     what: "a script line that writes the live database (--remote without SELECT)",
-    file: (f) => /^(scripts\/|package\.json$)/.test(f.path) && f.added.some((l) => /--remote/.test(l) && !/\bSELECT\b/i.test(l) && !/^\s*(\/\/|#|\*)/.test(l)),
+    file: (f) =>
+      /^(scripts\/|package\.json$)/.test(f.path) &&
+      f.added.some((l) => /--remote/.test(l) && !/\bSELECT\b/i.test(l) && !/--env staging|magic-merger-staging/.test(l) && !/^\s*(\/\/|#|\*)/.test(l)),
   },
   // Red: spells in bulk.
   {
     id: "R9",
     cls: "red",
-    what: "PROGRAM_VERSION or the refresh of the library (shared/version.ts, scripts/refresh-runner.ts)",
-    file: any(["shared/version.ts", "scripts/refresh-runner.ts"]),
+    what: "spells in bulk: PROGRAM_VERSION or FIRST_PROGRAM_VERSION anywhere, the refresh of the library (shared/version.ts, scripts/refresh-runner.ts, startRefresh), an UPDATE or DELETE on spells or programs with no WHERE",
+    file: (f) =>
+      any(["shared/version.ts", "scripts/refresh-runner.ts"])(f) ||
+      added(f, /\b(?:FIRST_)?PROGRAM_VERSION\s*=/).length > 0 ||
+      (/^(worker|scripts)\//.test(f.path) &&
+        (touched(f, /\bstartRefresh\b|function refresh\w*\(/) || inFunction(f, /\bfunction (?:startRefresh|refresh\w*)\b/) || f.added.some(isBulkSpells))),
   },
   // Red: going public.
   {
@@ -109,10 +159,11 @@ export const RULES = [
   {
     id: "R11",
     cls: "red",
-    what: "CI, deploys and secrets (.github/), the agreements (CLAUDE.md, .claude/), the rules (docs/DAILY.md, docs/FEEDBACK.md, docs/REVIEWER.md) and their checks (scripts/risk.mjs, scripts/gate.mjs, scripts/smoke.mjs, the deploy error check and the loop metrics, with their tests)",
+    what: "CI, deploys and secrets (.github/, .gitattributes), the agreements (CLAUDE.md, .claude/), the rules (docs/DAILY.md, docs/FEEDBACK.md, docs/REVIEWER.md) and their checks (scripts/risk.mjs, scripts/gate.mjs, scripts/smoke.mjs, the deploy error check and the loop metrics, with their tests)",
     file: any([
       ".github/",
       ".claude/",
+      ".gitattributes",
       "CLAUDE.md",
       "docs/DAILY.md",
       "docs/FEEDBACK.md",
@@ -143,7 +194,12 @@ export const RULES = [
     file: (f) => f.path.startsWith("migrations/") && f.status === "A",
   },
   { id: "A2", cls: "amber", what: "dependencies and npm scripts (package.json, package-lock.json)", file: any(["package.json", "package-lock.json"]) },
-  { id: "A3", cls: "amber", what: "code that updates or deletes rows of a players' table", file: (f) => isCode(f) && added(f, WRITE_PLAYERS).length > 0 },
+  {
+    id: "A3",
+    cls: "amber",
+    what: "code that updates, replaces or deletes rows of a players' table, or of a table named at run time (more such statements added than removed in a file)",
+    file: (f) => isCode(f) && count(f.added, WRITE_PLAYERS) > count(f.removed, WRITE_PLAYERS),
+  },
   {
     id: "A4",
     cls: "amber",
@@ -153,21 +209,33 @@ export const RULES = [
   {
     id: "A5",
     cls: "amber",
-    what: "the admin surface and the browser's guards (an /api/admin/ route added or changed, worker/http.ts, public/_headers)",
+    what: "the admin surface and the browser's guards (an /api/admin/ route or handleAdmin changed, worker/http.ts, public/_headers)",
     file: (f) =>
       any(["worker/http.ts", "public/_headers"])(f) || (f.path.startsWith("worker/") && [...f.added, ...f.removed].some((l) => /\/api\/admin\//.test(l))),
   },
   {
     id: "A6",
     cls: "amber",
-    what: "checks taken out of the tests (more check( calls removed than added)",
-    file: (f) => /^scripts\/.*test.*\.(ts|mjs)$/.test(f.path) && count(f.removed, /\bcheck\(/g) > count(f.added, /\bcheck\(/g),
+    what: "checks taken out of the tests (more check( calls removed than added, an exit added, the check helper changed)",
+    file: (f) =>
+      /^scripts\/.*test.*\.(ts|mjs)$/.test(f.path) &&
+      (count(f.removed, /\bcheck\(/g) > count(f.added, /\bcheck\(/g) ||
+        added(f, /process\.exit\(/).length > count(f.removed, /process\.exit\(/g) ||
+        touched(f, /\b(?:const|let|function)\s+check\b/)),
   },
   {
     id: "A7",
     cls: "amber",
-    what: "a pull request from the Ideas tab's routine (players' words, docs/FEEDBACK.md)",
-    pr: (pr) => /^claude\/feedback-/.test(pr.branch ?? ""),
+    what: "a pull request from the Ideas tab's routine (players' words, docs/FEEDBACK.md): a claude/feedback-* branch or a title that starts with Feedback:",
+    pr: (pr) => /^claude\/feedback-/.test(pr.branch ?? "") || /^feedback:/i.test(pr.title ?? ""),
+  },
+  {
+    id: "A8",
+    cls: "amber",
+    what: "code that runs with production secrets outside the Worker: the scheduled runners (scripts/*runner*, scripts/admin-api.ts, scripts/nightly-play.mjs), the build config (vite.config.*), a script line that calls an /api/admin/ route",
+    file: (f) =>
+      /^scripts\/[^/]*runner[^/]*$|^scripts\/admin-api\.ts$|^scripts\/nightly-play\.mjs$|^vite\.config\.(ts|js|mjs)$/.test(f.path) ||
+      (f.path.startsWith("scripts/") && added(f, /\/api\/admin\//).length > 0),
   },
 ];
 
@@ -192,20 +260,30 @@ export function classify(files, pr = {}) {
 export function parseDiff(text) {
   const files = [];
   let f = null;
+  let inHunk = false;
   for (const line of text.split("\n")) {
     if (line.startsWith("diff --git ")) {
-      const m = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
-      f = { path: m ? m[2] : line.slice(11), status: "M", added: [], removed: [], hunks: [] };
+      // The path is read from the ---/+++ headers below; this is only a fallback (a binary file has none).
+      const m = /^diff --git a\/(.+?) b\/\1$/.exec(line) ?? /^diff --git a\/(.+) b\/(.+)$/.exec(line);
+      f = { path: m ? (m[2] ?? m[1]) : line.slice(11), status: "M", added: [], removed: [], hunks: [], contexts: [] };
       files.push(f);
+      inHunk = false;
     } else if (!f) continue;
-    else if (line.startsWith("new file mode")) f.status = "A";
-    else if (line.startsWith("deleted file mode")) f.status = "D";
-    else if (line.startsWith("@@")) {
-      const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
-      if (m) f.hunks.push({ oldStart: +m[1], oldLines: m[2] === undefined ? 1 : +m[2], newStart: +m[3], newLines: m[4] === undefined ? 1 : +m[4] });
-    } else if (line.startsWith("+++") || line.startsWith("---")) continue;
-    else if (line.startsWith("+")) f.added.push(line.slice(1));
-    else if (line.startsWith("-")) f.removed.push(line.slice(1));
+    else if (!inHunk && line.startsWith("new file mode")) f.status = "A";
+    else if (!inHunk && line.startsWith("deleted file mode")) f.status = "D";
+    else if (!inHunk && line.startsWith("+++ ")) {
+      if (line !== "+++ /dev/null") f.path = line.slice(4).replace(/^b\//, "");
+    } else if (!inHunk && line.startsWith("--- ")) {
+      if (line !== "--- /dev/null") f.path = line.slice(4).replace(/^a\//, "");
+    } else if (line.startsWith("@@")) {
+      inHunk = true;
+      const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@ ?(.*)$/.exec(line);
+      if (m) {
+        f.hunks.push({ oldStart: +m[1], oldLines: m[2] === undefined ? 1 : +m[2], newStart: +m[3], newLines: m[4] === undefined ? 1 : +m[4] });
+        if (m[5]) f.contexts.push(m[5]);
+      }
+    } else if (inHunk && line.startsWith("+")) f.added.push(line.slice(1));
+    else if (inHunk && line.startsWith("-")) f.removed.push(line.slice(1));
   }
   return files;
 }
@@ -242,7 +320,10 @@ export function readGit(base, head, cwd = process.cwd()) {
     }
   };
   const mergeBase = git("merge-base", base, head).trim();
-  const files = parseDiff(git("diff", "-U0", "--no-color", "--no-renames", "--no-ext-diff", mergeBase, head));
+  // -a and --no-textconv: a .gitattributes file cannot hide a file's lines from this check.
+  const files = parseDiff(
+    git("-c", "core.quotePath=false", "diff", "-U0", "-a", "--no-textconv", "--no-color", "--no-renames", "--no-ext-diff", mergeBase, head),
+  );
   for (const f of files) {
     f.sections = ["docs/ROADMAP.md", "docs/IDEAS.md"].includes(f.path) ? sectionsOf(f.hunks, show(mergeBase, f.path), show(head, f.path)) : [];
   }
@@ -271,7 +352,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     return i > 0 ? process.argv[i + 1] : fallback;
   };
   const files = readGit(arg("base", "origin/main"), arg("head", "HEAD"));
-  const result = classify(files, { branch: arg("branch", process.env.GITHUB_HEAD_REF ?? "") });
+  const result = classify(files, { branch: arg("branch", process.env.GITHUB_HEAD_REF ?? ""), title: arg("title", process.env.PR_TITLE ?? "") });
   if (process.argv.includes("--json")) console.log(JSON.stringify({ cls: result.cls, hits: result.hits }));
   else console.log(report(result));
 }

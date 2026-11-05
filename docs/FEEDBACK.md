@@ -9,7 +9,7 @@ How an idea from the Ideas tab becomes a pull request, and the rules Claude foll
 3. The Worker opens a GitHub issue (brief, the idea quoted, vote count, no player name) and fires the Claude Code routine with the brief and the issue number (`worker/feedback.ts`).
 4. The routine runs in a Claude Code cloud session: it builds the brief on a `claude/` branch, runs the checks and opens a **draft** pull request whose body says `Closes #<issue>`.
 5. Every ten minutes the Worker's cron reads the issue's timeline: an open pull request shows the idea as "Waiting for review" with its link, a merged one as "Done", one closed without merging (or the issue closed as not planned) as "Not this time". When Claude stopped to ask (the `needs-info` label), the idea shows "Claude has a question" until the admin sends it again with a clearer brief, which takes the label off.
-6. The pull request is amber (`docs/DAILY.md`, "Risk classes", A7): its preview runs only once the owner labels it `owner-ok`, and it merges only after that OK, through the Gate like any other pull request. The Deploy workflow then deploys `main`. No session deploys production.
+6. The pull request is at least amber (`docs/DAILY.md`, "Risk classes", A7), red if its diff is: its preview runs only once the owner labels it `owner-ok`. When its checks are green the run marks it ready and starts the reviewer (`docs/REVIEWER.md`). It merges through the Gate only after the owner's OK (amber) or yes (red), recorded by the planner. The Deploy workflow then deploys `main`. No session deploys production.
 
 ## The routine's saved prompt
 

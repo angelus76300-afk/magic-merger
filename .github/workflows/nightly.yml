@@ -28,12 +28,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      # Production's admin token, for read only routes; staging's own when it exists (audit 4.5.1, risk 1).
       MM_TOKEN: ${{ secrets.MM_TOKEN }}
+      STAGING_TOKEN: ${{ secrets.STAGING_ADMIN_TOKEN || secrets.MM_TOKEN }}
+      MINUTES: ${{ inputs.minutes || '10' }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       GITHUB_TOKEN: ${{ github.token }}
       STAGING: https://magic-merger-staging.angelus76300.workers.dev
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -46,10 +51,12 @@ jobs:
         run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: the newcomer's path
         continue-on-error: true
-        run: node scripts/smoke.mjs preview "$STAGING" --out night/newcomer 2>&1 | tee night-newcomer.log
+        run: MM_TOKEN="$STAGING_TOKEN" node scripts/smoke.mjs preview "$STAGING" --out night/newcomer 2>&1 | tee night-newcomer.log
       - name: a long session on a random island
         continue-on-error: true
-        run: node scripts/nightly-play.mjs "$STAGING" --minutes "${{ inputs.minutes || '10' }}" --out night/long 2>&1 | tee night-long.log
+        run: |
+          case "$MINUTES" in ''|*[!0-9]*) MINUTES=10;; esac
+          MM_TOKEN="$STAGING_TOKEN" node scripts/nightly-play.mjs "$STAGING" --minutes "$MINUTES" --out night/long 2>&1 | tee night-long.log
       - name: the live game
         continue-on-error: true
         run: node scripts/live-signals.mjs --hours 24 --out night/live.json > /dev/null
@@ -67,7 +74,7 @@ jobs:
             grep '^FAIL' night-newcomer.log 2>/dev/null | head -n 10 || true
             echo; echo "Long session:"; grep -E '^(finding|cast|seed)' night-long.log 2>/dev/null | head -n 20 || echo "did not run"
             echo; echo "Live game (last 24 h):"
-            node -e 'const s=require("./night/live.json");console.log(`errors ${s.errors?.count ?? s.errors?.error}, slow perf samples ${s.perf?.slow ?? "?"} of ${s.perf?.samples ?? "?"}, down votes ${Array.isArray(s.downVotes)?s.downVotes.length:"?"}, open reports ${Array.isArray(s.reports)?s.reports.length:"?"}, refusals ${Array.isArray(s.refusals)?s.refusals.length:"?"}, spend today $${s.spend?.today ?? "?"} of $${s.spend?.budget ?? "?"} a month`)' 2>/dev/null || echo "did not run"
+            node -e 'const s=require("./night/live.json");console.log(`production runs: ${s.drift?.state ?? "?"} (${s.drift?.message || "no message"}), errors ${s.errors?.count ?? s.errors?.error}, slow perf samples ${s.perf?.slow ?? "?"} of ${s.perf?.samples ?? "?"}, down votes ${Array.isArray(s.downVotes)?s.downVotes.length:"?"}, open reports ${Array.isArray(s.reports)?s.reports.length:"?"}, refusals ${Array.isArray(s.refusals)?s.refusals.length:"?"}, spend today $${s.spend?.today ?? "?"} of $${s.spend?.budget ?? "?"} a month`)' 2>/dev/null || echo "did not run"
             if [ -f night/loop.md ]; then echo; cat night/loop.md; fi
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4

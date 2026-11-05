@@ -69,6 +69,35 @@ check("R12 Decisions taken", rules([file("docs/ROADMAP.md", ["4. something"], []
 check("R12 Declined ideas", rules([file("docs/IDEAS.md", ["- hints, reopened"], [], { sections: ["Declined by the owner"] })]) === "R12");
 check("R13 a secret", rules([file("src/x.ts", ['const k = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123";'])]) === "R13");
 
+check("R3 a call through writeWith", rules([file("worker/index.ts", ["const p = await writeWith(env, oracle, m, e, (w) => w.spell(request));"])]) === "R3");
+check("R3 a call on oracleFor(...)", cls([file("worker/daily.ts", ["await oracleFor(env, {}, ledger).submitBatch(items);"])]) === "red");
+check("R3 the API called directly", rules([file("worker/x.ts", ['await fetch("https://api.anthropic.com/v1/messages", init);'])]) === "R3");
+check("R4 a model id reflowed is not new", rules([file("worker/x.ts", ['  "claude-haiku-5-5",'], ['"claude-haiku-5-5",'])]) === "");
+check(
+  "R14 a budget default in code",
+  rules([file("worker/index.ts", ["  return Number(env.BUDGET_USD ?? 500);"], ["  return Number(env.BUDGET_USD ?? 50);"])]) === "R14",
+);
+check(
+  "R14 a change inside spellModelFor",
+  rules([file("worker/index.ts", ["  return env.SPELL_MODEL;"], [], { contexts: ["function spellModelFor(env: Env, tier: Tier): string {"] })]) === "R14",
+);
+check("R14 the burst guard", rules([file("worker/x.ts", ["ledger.burstFree = true;"])]) === "R14");
+check(
+  "R6 authenticate in worker/index.ts",
+  rules([
+    file("worker/index.ts", ["return { admin: false, payer: GUEST };"], [], {
+      contexts: ["async function authenticate(request: Request, env: Env): Promise<Who | Response> {"],
+    }),
+  ]) === "R6",
+);
+check(
+  "R9 a bulk update of spells",
+  rules([file("worker/x.ts", ["UPDATE spells SET pid = (SELECT MAX(id) FROM programs p WHERE p.key = spells.key)"])]) === "R9",
+);
+check("R9 FIRST_PROGRAM_VERSION", rules([file("shared/spellcode.ts", ["export const FIRST_PROGRAM_VERSION = 3;"])]) === "R9");
+check("R9 the refresh started from elsewhere", rules([file("worker/cron.ts", ["await startRefresh(env, oracle, { limit: 5000 });"])]) === "R9");
+check("R11 .gitattributes", rules([file(".gitattributes", ["worker/** -diff"])]) === "R11");
+
 // Amber, one per rule.
 check(
   "A1 an additive migration",
@@ -76,12 +105,28 @@ check(
 );
 check("A2 a dependency", rules([file("package.json", ['"left-pad": "1.0.0",'])]) === "A2");
 check("A3 code deleting players' rows", rules([file("worker/community.ts", ["await db.prepare('DELETE FROM votes WHERE id = ?')"])]) === "A3");
-check("A3 updating programs is not players' rows", rules([file("worker/programs.ts", ["UPDATE programs SET status = 'live'"])]) === "");
+check("A3 updating one program is not players' rows", rules([file("worker/programs.ts", ["UPDATE programs SET status = 'live' WHERE id = ?"])]) === "");
+check(
+  "A3 a players' delete moved is not new",
+  rules([file("worker/community.ts", ["  DELETE FROM votes WHERE id = ?"], ["DELETE FROM votes WHERE id = ?"])]) === "",
+);
+check("A3 a table named at run time", rules([file("worker/x.ts", ["await db.prepare(`DELETE FROM ${t} WHERE at < ?`)"])]) === "A3");
+check("A3 INSERT OR REPLACE into progress", rules([file("worker/x.ts", ["INSERT OR REPLACE INTO progress (id) VALUES (?)"])]) === "A3");
+check("A3 the shared library", rules([file("worker/x.ts", ["DELETE FROM recipes WHERE a = ?"])]) === "A3");
 check("A4 saves", rules([file("src/device-save.ts", ["const KEYS = [];"])]) === "A4");
 check("A5 an admin route", rules([file("worker/index.ts", ['if (url.pathname === "/api/admin/new")'])]) === "A5");
 check("A5 the headers", rules([file("public/_headers", ["  X-Frame-Options: SAMEORIGIN"])]) === "A5");
 check("A6 checks taken out", rules([file("scripts/worker-test.mjs", [], ['check("the cap holds", ok);'])]) === "A6");
+check("A6 an exit at the top of a test", rules([file("scripts/worker-test.mjs", ["process.exit(0);"])]) === "A6");
+check(
+  "A6 the check helper changed",
+  rules([file("scripts/sim-test.ts", ["const check = () => undefined;"], ["const check = (name, ok) => { if (!ok) failed++; };"])]) === "A6",
+);
 check("A7 the Ideas routine", rules([file("src/craft.ts", ["x"])], { branch: "claude/feedback-12" }) === "A7");
+check("A7 the routine's title on another branch", rules([file("src/craft.ts", ["x"])], { branch: "claude/brave-x", title: "Feedback: bigger chips" }) === "A7");
+check("A8 a scheduled runner", rules([file("scripts/judge-runner.mjs", ["x"])]) === "A8");
+check("A8 the build config", rules([file("vite.config.ts", ["x"])]) === "A8");
+check("A8 a script calling an admin route", rules([file("scripts/lab.mjs", ['await api("/api/admin/refresh", { limit: 200 });'])]) === "A8");
 
 // The highest class wins.
 check("red beats amber beats green", cls([file("src/craft.ts", ["x"]), file("package.json", ["y"]), file("wrangler.jsonc", ["z"])]) === "red");
@@ -106,6 +151,22 @@ const diff = [
 const parsed = parseDiff(diff);
 check("the parser reads a new file", parsed[0].status === "A" && parsed[0].added.length === 2 && parsed[0].removed.length === 0);
 check("the parser reads a hunk", parsed[1].hunks[0].oldStart === 5 && parsed[1].added[0] === "new decision");
+const tricky = parseDiff(
+  [
+    "diff --git a/worker/a b/c.ts b/worker/a b/c.ts",
+    "--- a/worker/a b/c.ts",
+    "+++ b/worker/a b/c.ts",
+    "@@ -1,0 +2 @@ async function authenticate(request: Request, env: Env) {",
+    '+++count; await oracle.merge(a, b); const m = "claude-opus-5-5";',
+    "@@ -9 +9,0 @@",
+    "--- an old SQL comment",
+  ].join("\n"),
+);
+check("a path with a space and b/ in it", tricky[0].path === "worker/a b/c.ts", tricky[0].path);
+check("an added line that starts with ++ is kept", tricky[0].added.length === 1 && tricky[0].added[0].startsWith("++count"));
+check("a removed line that starts with -- is kept", tricky[0].removed.length === 1);
+check("the hunk's function is kept", tricky[0].contexts[0]?.startsWith("async function authenticate"));
+check("so that file is red", cls(tricky) === "red");
 const doc = "# Roadmap\n\n## Done\n\n## Decisions taken\n1. old decision\n\n## Next versions\n";
 check(
   "a line under Decisions taken is found there",

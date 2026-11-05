@@ -71,7 +71,11 @@ jobs:
       - name: decide, and merge when ready
         id: gate
         if: steps.which.outputs.pr != ''
-        run: node scripts/gate.mjs pr "${{ steps.which.outputs.pr }}" --merge
+        env:
+          PR: ${{ steps.which.outputs.pr }}
+        run: |
+          case "$PR" in ''|*[!0-9]*) echo "not a pull request number: $PR"; exit 1;; esac
+          node scripts/gate.mjs pr "$PR" --merge
       # A merge made with this workflow's token starts no push workflow: start the deploy here.
       - name: deploy
         if: steps.gate.outputs.merged == 'true'

@@ -27,7 +27,7 @@ jobs:
   preview:
     if: >-
       (github.event.action != 'labeled' || github.event.label.name == 'owner-ok') &&
-      (!startsWith(github.head_ref, 'claude/feedback-') || contains(github.event.pull_request.labels.*.name, 'owner-ok'))
+      ((!startsWith(github.head_ref, 'claude/feedback-') && !startsWith(github.event.pull_request.title, 'Feedback:')) || contains(github.event.pull_request.labels.*.name, 'owner-ok'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -66,7 +66,8 @@ jobs:
     permissions:
       contents: read
     env:
-      MM_TOKEN: ${{ secrets.MM_TOKEN }}
+      # Staging's own admin token when it exists (audit 4.5.1, risk 1), production's until then.
+      MM_TOKEN: ${{ secrets.STAGING_ADMIN_TOKEN || secrets.MM_TOKEN }}
       URL: ${{ needs.preview.outputs.url }}
     steps:
       - uses: actions/checkout@v4

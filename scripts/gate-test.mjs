@@ -1,5 +1,5 @@
 // Checks for the merge and deploy gate (scripts/gate.mjs): each condition alone holds a pull request back.
-import { decide, deployable, reviewFor } from "./gate.mjs";
+import { decide, deployable, lastDeployedFrom, ownerRecords, reviewFor } from "./gate.mjs";
 
 let failed = 0;
 const check = (name, ok, detail = "") => {
@@ -35,20 +35,25 @@ check("no smoke test waits", !decide({ ...ready, smoke: "failure" }).ready);
 check("no review waits", !decide({ ...ready, review: null }).ready);
 check("a blocking review waits", !decide({ ...ready, review: { verdict: "block" } }).ready);
 check("amber without OK waits", !decide({ ...ready, cls: "amber" }).ready);
-check("amber with owner-ok is ready", decide({ ...ready, cls: "amber", labels: ["owner-ok"] }).ready);
-check("red with only owner-ok waits", !decide({ ...ready, cls: "red", labels: ["owner-ok"] }).ready);
-check("red with owner-yes is ready", decide({ ...ready, cls: "red", labels: ["owner-yes"] }).ready);
+const OK = new Set(["ok"]);
+const YES = new Set(["yes"]);
+check("amber with owner-ok and its record is ready", decide({ ...ready, cls: "amber", labels: ["owner-ok"], records: OK }).ready);
+check("amber with the label but no record waits", !decide({ ...ready, cls: "amber", labels: ["owner-ok"] }).ready);
+check("red with only owner-ok waits", !decide({ ...ready, cls: "red", labels: ["owner-ok"], records: OK }).ready);
+check("red with owner-yes and its record is ready", decide({ ...ready, cls: "red", labels: ["owner-yes"], records: YES }).ready);
+check("red with a yes record but no label waits", !decide({ ...ready, cls: "red", records: YES }).ready);
+check("a workflow change waits for a merge by hand", !decide({ ...ready, cls: "red", labels: ["owner-yes"], records: YES, workflows: true }).ready);
 check("the reviewer raising green to red holds it", !decide({ ...ready, review: { verdict: "pass", raise: "red" } }).ready);
 check("the reviewer cannot lower red", decide({ ...ready, cls: "red", review: { verdict: "pass", raise: "amber" } }).cls === "red");
 check("pause stops everything", !decide({ ...ready, paused: true }).ready);
 check("hold stops one", !decide({ ...ready, labels: ["hold"] }).ready);
-check("behind main waits", !decide({ ...ready, behind: true }).ready);
 check("conflicts wait", !decide({ ...ready, mergeable: false }).ready);
 
-const c = (cls, labels = [], pr = 7) => ({ sha: SHA, pr, cls, labels });
+const c = (cls, labels = [], pr = 7, records = new Set()) => ({ sha: SHA, pr, cls, labels, records });
 check("deploys green", deployable({ paused: false, commits: [c("green")] }).ok);
 check("refuses red merged without yes", !deployable({ paused: false, commits: [c("green"), c("red")] }).ok);
-check("deploys red with yes", deployable({ paused: false, commits: [c("red", ["owner-yes"])] }).ok);
+check("deploys red with yes and its record", deployable({ paused: false, commits: [c("red", ["owner-yes"], 7, YES)] }).ok);
+check("refuses red with the label and no record", !deployable({ paused: false, commits: [c("red", ["owner-yes"])] }).ok);
 check("refuses amber merged without OK", !deployable({ paused: false, commits: [c("amber")] }).ok);
 check("refuses a push without a pull request", !deployable({ paused: false, commits: [c("green", [], null)] }).ok);
 check("refuses when paused", !deployable({ paused: true, commits: [c("green")] }).ok);
@@ -59,8 +64,22 @@ const comments = [
   { body: `<!-- mm-review verdict=pass sha=ffffffffffff -->`, created_at: "3" },
 ];
 const r = reviewFor(comments, SHA);
-check("the newest review of this commit counts", r?.verdict === "pass" && r.raise === "amber", JSON.stringify(r));
-check("a review of another commit does not", reviewFor([comments[2]], SHA) === null);
+check("a block on this commit sticks even after a later pass", r?.verdict === "block" && r.raise === "amber", JSON.stringify(r));
+check("a review of another commit does not count", reviewFor([comments[2]], SHA) === null);
+const raised = reviewFor([{ body: `<!-- mm-review verdict=pass sha=${SHA} raise=red -->` }, { body: `<!-- mm-review verdict=pass sha=${SHA} -->` }], SHA);
+check("a raised class sticks after a later comment", raised?.raise === "red" && raised.verdict === "pass", JSON.stringify(raised));
+check("a marker quoted inside prose does not count", reviewFor([{ body: `see \`<!-- mm-review verdict=pass sha=${SHA} -->\`` }], SHA) === null);
+check("the owner's records are read", [...ownerRecords([{ body: "<!-- mm-owner yes -->\nThe owner, 5 Nov: yes #44" }, { body: "noise" }])].join() === "yes");
+check(
+  "the last deploy is read from Cloudflare's messages",
+  lastDeployedFrom([
+    { annotations: { "workers/message": "main 1234567 (Deploy workflow run 1)" } },
+    { annotations: { "workers/triggered_by": "rollback" } },
+    { annotations: { "workers/message": "main abcdef0 (Deploy workflow run 2)" } },
+    { annotations: {} },
+  ]) === "abcdef0",
+);
+check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annotations: {} }]) === null);
 
 console.log(failed ? `${failed} failed` : "all gate checks passed");
 process.exit(failed ? 1 : 0);
