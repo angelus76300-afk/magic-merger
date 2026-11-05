@@ -1,6 +1,6 @@
 # Where the game stands, and what comes next
 
-Updated on 2026-11-04, with 4.4.5 part C.
+Updated on 2026-11-04, with 4.4.6.
 
 ## Done since the first review
 
@@ -279,6 +279,20 @@ Asked for: items 9 to 12 of "4.4.5 Every island a surprise" below, with the wond
 
 Not done: the production call has not run yet (the container had no API key; the first daily wonder will be the first real ledger row); the two program wonders up close are clusters of voxel pillars, chunkier than the built-in box models (the kit's spire is coarse; the judge's advice will say whether the next prompt should steer them to the land and fewer, finer voxels); 4.7's what's new list does not exist yet, so "new this week" is a toast and a line in the new island dialog.
 
+## Done in 4.4.6: accounts you can trust
+
+Asked for: items 1 to 7 of "4.4.6 Accounts you can trust" below, the two bugs reproduced as failing tests before any fix, the live database exported before the migration, and the flow shown on the live site on a phone and a computer before merging. DESIGN.md, "Accounts you can trust (4.4.6)", has the rules; `docs/measurements/accounts-4.4.6.md` the tests before and after.
+
+1. **Reproduced first**: `scripts/worker-test.mjs` section 29 and `scripts/account-verify.mjs` E (the owner on a computer and a phone) and F (Ben signing in on the phone Ann used) failed 12 and 12 on main: the phone showed 8 items after the computer found 9, and Ben's account received Ann's discovery and island.
+2. **The owner is an account**: `migrations/0015_owner_account.sql` adds the `admin` flag and the owner's row with the id the admin's rows already use (`admin`), so nothing moves. The device holding the token makes its passkey; then any device signed in to it has the admin powers with no token, the token is dropped from the browser, no allowance of its own. The token alone works as before for scripts and the nightly Action, and a session beside it is never hidden. The owner's row cannot be paused, revoked or deleted, only given a new link.
+3. **Progress belongs to one account**: the save is tagged with its account; another account's save is set aside on sign in (IndexedDB), never merged or sent, and comes back when its account returns; the Worker refuses an upload tagged with another account; an untagged save is offered once. Sign out asks to remove (the default) or keep a copy, and keeps a copy anyway when it cannot save first.
+4. **Sign in, sign out, switch, "signed in as"** in the `?` menu, and the passkey sign in on the gate, whatever the device holds; the account page lists devices with their last sync.
+5. **Sync you can see**: the status line, **Sync now**, a pull of the discoveries every minute, the Worker joining discoveries instead of replacing them; a newer island from another device is taken when this one did not change, offered next to this one when it did, and the one not played stays on the account as the previous island.
+6. **What syncs** is written in DESIGN.md: discoveries, board, island, wins, ideas and votes, the recipe book through the discoveries, the favorite spell once it exists; settings stay per device, on purpose.
+7. **Checked**: every test above passes, with the 4.0 attacks of `docs/REVIEW-4.0.md` section 10 (the worker section 16 and 26 checks, account-verify A to D) and `scripts/verify-4.1.mjs`. On the live site, a computer and a phone ran the flow with test accounts (`docs/review-4.4.6`); the owner's own passkey is left for the owner to make (SETUP.md, "Your own account").
+
+Not done: the board is still taken only when the device's board is empty (last saved wins otherwise, as in 4.0); a newer island noticed while playing is offered, not loaded by itself; a save set aside lives in that browser's IndexedDB only, so clearing the browser's data loses the copy (the account still holds what it synced).
+
 ## Decisions taken
 
 1. **Cosmic spells may ruin the island.** Consequences are part of the fun; the land regrows on its own (ash turns to soil, grass and forests come back) and Reset is one tap away. Revisit if it feels punishing in play.
@@ -307,7 +321,7 @@ The ledger holds $6.64 (plus about $3.32 before it existed): about $10 of the fi
 
 Sizes are per Claude Code session: S a few hours, M a full session, L two or more. The roadmap page has a ready prompt per version.
 
-**Numbered in the order to run them.** Renumbered on 3 November so the numbers are the order; `docs/REVIEW-4.0.md` and older pull requests use the old numbers (the review's findings were 4.0.2, faster creation 4.0.1, worlds 4.1, sound 4.2, strangers 4.5). Done since: 4.1, 4.2, 4.3, 4.4, 4.4.1 and 4.4.5 (parts A, B and C), summed up above; their plans are in the git history of this file. Left: 4.4.6 (accounts, found on 4 November), 4.5, 4.6, then 4.7, the daily updates that keep going after the plan. 4.4.5 and 4.5 could swap; nothing public before 4.6.
+**Numbered in the order to run them.** Renumbered on 3 November so the numbers are the order; `docs/REVIEW-4.0.md` and older pull requests use the old numbers (the review's findings were 4.0.2, faster creation 4.0.1, worlds 4.1, sound 4.2, strangers 4.5). Done since: 4.1, 4.2, 4.3, 4.4, 4.4.1, 4.4.5 (parts A, B and C) and 4.4.6, summed up above; their plans are in the git history of this file. Left: 4.5, 4.6, then 4.7, the daily updates that keep going after the plan. 4.4.5 and 4.5 could swap; nothing public before 4.6.
 
 ### 4.4.5 Every island a surprise (done, see above)
 
@@ -345,7 +359,7 @@ Goal: be amazed at every new island, never feel the same one twice, and have it 
 
 **Measured** in each part like 4.4: the HUD numbers on medium and large islands stay within 4.4's (voxel and instance counts, simulation and frame p95), frames of the same three seeds before and after, and the variety itself: ten islands from ten seeds side by side, which no two should look alike.
 
-### 4.4.6 Accounts you can trust: the owner's progress, signing in and out
+### 4.4.6 Accounts you can trust: the owner's progress, signing in and out (done, see above)
 
 Runs after every part of 4.4.5 (renumbered on the owner's ask, so it never interrupts 4.4.5). Found by the owner on 4 November: playing as the admin on a computer and a phone, progress is not kept. Read in the code (not yet reproduced in a test):
 

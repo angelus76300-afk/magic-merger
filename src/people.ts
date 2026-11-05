@@ -200,10 +200,13 @@ function row(p: PersonInfo): HTMLElement {
   const account = p.deletedAt ? " · account deleted" : p.claimedAt ? " · account" : "";
   const refused = p.refusals ? ` · ${p.refusals} refused by the bug guard` : "";
   const found = `${p.discoveries} ${p.discoveries === 1 ? "discovery" : "discoveries"}`;
-  facts.textContent = `${usd(p.spent)} of ${usd(allowance)} (${credits(p.spent)} of ${credits(allowance)} credits) · ${found} · ${p.lastSeen ? `seen ${ago(p.lastSeen)}` : "never came"}${status}${account}${refused}`;
+  facts.textContent = p.owner
+    ? `${usd(p.spent)} this month, no allowance of its own · ${found} · the owner's account${p.claimedAt ? ", made with a passkey" : ", not made yet (the ? menu, on a device with the token)"}`
+    : `${usd(p.spent)} of ${usd(allowance)} (${credits(p.spent)} of ${credits(allowance)} credits) · ${found} · ${p.lastSeen ? `seen ${ago(p.lastSeen)}` : "never came"}${status}${account}${refused}`;
   const bar = document.createElement("span");
   bar.className = "people-bar";
   bar.style.setProperty("--used", `${Math.min(100, (p.spent / Math.max(0.01, allowance)) * 100)}%`);
+  bar.hidden = !!p.owner;
   info.append(name, facts, bar);
   el.append(info);
   const actions = document.createElement("div");
@@ -220,6 +223,18 @@ function row(p: PersonInfo): HTMLElement {
     };
     actions.append(b);
   };
+  // 4.4.6: the owner's account only takes a sign in link (a device without
+  // the passkey); the Worker refuses the rest.
+  if (p.owner) {
+    if (p.claimedAt)
+      act("New link", async () => {
+        if (!window.confirm("Make a sign in link for the owner's account? It signs it in once, on the device that opens it.")) return;
+        const r = await api.changeInvite(p.id, "relink");
+        if (r.link) showLink("Sign in link for the owner's account: it works once, then dies.", r.link);
+      });
+    el.append(actions);
+    return el;
+  }
   // 4.0: a revoked invite keeps only the account's data to delete (a test
   // account, a friend who asked); a deleted one has nothing left to do.
   if (p.status === "revoked") {

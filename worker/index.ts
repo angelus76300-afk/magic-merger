@@ -49,7 +49,7 @@ import {
   setEmail,
   type SessionRow,
 } from "./accounts";
-import type { ProgressPut } from "../shared/account";
+import { PROGRESS_KINDS, type ProgressPut, type StoredKind } from "../shared/account";
 import { ClaudeOracle, MockOracle, OracleError, parseEffort, type Oracle, type ProgramAnswer, type SpellRequest as OracleSpellRequest } from "./oracle";
 import { PROBED, parseIntents, type Intent } from "../shared/promises";
 import { designDue, evolution, liveLibrary, openGaps, recordGap, settleHelper, storeDesign, trialHelpers, withLibrary, type Library } from "./evolve";
@@ -198,7 +198,7 @@ export default {
 
     const who = await authenticate(request, env);
     if (who instanceof Response) return who;
-    const { admin, payer, session, invite } = who;
+    const { admin, payer, session, invite, owner } = who;
     // A signed in person is the player for votes and casts, on every device.
     const player = session ? session.invite : playerId(request);
     if (url.pathname === "/api/health" && request.method === "GET") {
@@ -213,7 +213,7 @@ export default {
         if (path === "login/verify") return json(await loginVerify(env, url, request, await readBody(request)));
         if (path === "email-link") return json(await emailLink(env, url, await readBody(request)));
         if (path === "email-claim") return json(await emailClaim(env, request, await readBody(request)));
-        if (path === "claim-link" && invite) return json(await claimLink(env, request, invite));
+        if (path === "claim-link" && invite && !owner) return json(await claimLink(env, request, invite));
         if (path === "register/options" && invite) return json(await registrationOptions(env, url, invite, !!session));
         if (path === "register/verify" && invite) return json(await registrationVerify(env, url, request, invite, !!session, await readBody(request)));
       }
@@ -236,8 +236,13 @@ export default {
           if (r) return r;
         }
         if (session && url.pathname === "/api/progress") {
-          if (request.method === "GET") return json(await getProgress(env, session.invite));
-          if (request.method === "PUT") return json(await putProgress(env, session.invite, await readBody<ProgressPut>(request, MAX_PROGRESS_BODY)));
+          if (request.method === "GET") {
+            const asked = url.searchParams.get("kind");
+            const kinds = asked ? asked.split(",").filter((k): k is StoredKind => k === "island_previous" || PROGRESS_KINDS.some((p) => p === k)) : undefined;
+            return json(await getProgress(env, session.invite, kinds?.length ? kinds : undefined));
+          }
+          if (request.method === "PUT")
+            return json(await putProgress(env, session.invite, await readBody<ProgressPut>(request, MAX_PROGRESS_BODY), session.token_hash));
         }
         if (request.method === "POST" && url.pathname === "/api/merge") {
           const body = await readBody<MergeRequest>(request);
@@ -483,26 +488,39 @@ async function closeLedger(db: D1Database, oracle: Oracle): Promise<void> {
   }
 }
 
-// Who is asking: the admin token, a signed in person (4.0, x-session), an
+// Who is asking: a signed in person (4.0, x-session), the admin token, an
 // invite link, or nobody. An invite whose link was claimed is not a player
 // by its link any more: the link is one use (claim-link), and the person
 // plays with a session. Without an API key the game runs in mock mode and
 // costs nothing, so it is open (local development).
+// 4.4.6: a session comes first, and the token never hides it: a session on
+// the owner's account ('admin', with the admin flag) has the admin powers on
+// every device with no token, and the token next to any session adds them.
+// The token alone, for scripts and the nightly Action, is the admin as
+// before, with the owner's account in `invite` so that the device holding it
+// can make the owner's first passkey (and nothing else: `owner` stops the
+// one use link routes).
 interface Who {
   admin: boolean;
   payer: Payer | null;
   session?: SessionRow;
   // The invite behind the session or the link, for the account routes.
   invite?: InviteRow;
+  // The owner's account, reached by the admin token alone.
+  owner?: boolean;
 }
 
 async function authenticate(request: Request, env: Env): Promise<Who | Response> {
   const token = request.headers.get("x-access-token");
-  if (env.ADMIN_TOKEN && token && (await sameSecret(token, env.ADMIN_TOKEN))) return { admin: true, payer: ADMIN_PAYER };
+  const tokenAdmin = !!(env.ADMIN_TOKEN && token && (await sameSecret(token, env.ADMIN_TOKEN)));
   const sessionToken = request.headers.get("x-session");
   if (sessionToken) {
     const found = await sessionByToken(env.DB, sessionToken);
-    if (found) return { admin: false, payer: payerOf(found.invite), session: found.session, invite: found.invite };
+    if (found) return { admin: tokenAdmin || !!found.invite.admin, payer: payerOf(found.invite), session: found.session, invite: found.invite };
+  }
+  if (tokenAdmin) {
+    const owner = await env.DB.prepare("SELECT * FROM invites WHERE id = ? AND admin = 1").bind(ADMIN_PAYER.invite).first<InviteRow>();
+    return { admin: true, payer: ADMIN_PAYER, ...(owner ? { invite: owner, owner: true } : {}) };
   }
   const secret = request.headers.get("x-invite");
   if (secret) {
@@ -510,6 +528,8 @@ async function authenticate(request: Request, env: Env): Promise<Who | Response>
     if (row?.status === "revoked" || row?.deleted_at) return json({ error: "This invite link has been turned off.", code: "revoked" }, 403);
     // A claimed account's link signs in once (claim-link); it plays nothing by itself.
     if (row?.claimed_at) return { admin: false, payer: null, invite: row };
+    // 4.4.6: the owner's account is never made from a link, only with the token.
+    if (row?.admin) return { admin: false, payer: null };
     if (row) return { admin: false, payer: payerOf(row), invite: row };
   }
   if (!env.ANTHROPIC_API_KEY && !sessionToken && !secret) return { admin: false, payer: { ...ADMIN_PAYER, invite: "local", name: "local" } };
@@ -540,7 +560,15 @@ async function health(env: Env, who: Who): Promise<HealthResponse> {
     const spent = await spentBy(env.DB, payer.invite);
     out.invite = { name: payer.name, status: payer.status, spent: round(spent, 3), cap: payer.cap ?? 0 };
   }
-  if (invite) out.account = { name: invite.name, signedIn: !!session, claimed: !!invite.claimed_at, emailOffered: emailReady(env) };
+  if (invite)
+    out.account = {
+      id: invite.id,
+      name: invite.name,
+      signedIn: !!session,
+      claimed: !!invite.claimed_at,
+      emailOffered: emailReady(env),
+      admin: !!invite.admin,
+    };
   out.email = emailReady(env);
   return out;
 }
@@ -2254,6 +2282,13 @@ async function changeInvite(body: InviteChange, env: Env, url: URL) {
   const id = typeof body.id === "string" ? body.id : "";
   const row = await env.DB.prepare("SELECT * FROM invites WHERE id = ?").bind(id).first<InviteRow>();
   if (!row) throw new HttpError(404, "There is no such invite");
+  // 4.4.6: the owner's account only gets a new link (a sign in on a device
+  // without the passkey); pausing, revoking or deleting it would lock the
+  // owner out of their own game or wipe the admin's rows.
+  if (row.admin && body.action !== "relink") throw new HttpError(400, "The owner's account only takes a new link");
+  // Before its passkey exists, a link to it would make the owner's account
+  // (and the admin powers) for whoever opens it: it is made with the token.
+  if (row.admin && !row.claimed_at) throw new HttpError(400, "Make the owner's account with a passkey first, from a device with the admin token");
   const db = env.DB;
   switch (body.action) {
     case "pause":
@@ -2341,6 +2376,7 @@ async function people(env: Env): Promise<PeopleResponse> {
       createdAt: r.created_at,
       claimedAt: r.claimed_at ?? null,
       deletedAt: r.deleted_at ?? null,
+      owner: !!r.admin,
     })),
     others: spend.results.filter((r) => !r.invite || !ids.has(r.invite)).map((r) => ({ who: r.invite ?? "before invites", spent: round(r.usd, 3) })),
     reports: reports.results,

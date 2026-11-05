@@ -165,7 +165,10 @@ export interface HealthResponse {
   // 4.0: this browser holds a session (an account), or an invite link that
   // is not yet an account (the one time "save your progress" offer), or a
   // one use sign in link for an account that exists (claim it).
-  account?: { name: string; signedIn: boolean; claimed: boolean; emailOffered: boolean };
+  // 4.4.6: id is the account (or the link's invite) the device's save is
+  // tagged with; admin marks the owner's account, which the admin token
+  // alone is offered to make.
+  account?: { id: string; name: string; signedIn: boolean; claimed: boolean; emailOffered: boolean; admin: boolean };
   // 4.0: whether this Worker can send sign in links by email (the gate's form).
   email?: boolean;
 }
@@ -195,6 +198,8 @@ export interface PersonInfo {
   // 4.0: the invite is an account (made with a passkey), or was deleted.
   claimedAt?: number | null;
   deletedAt?: number | null;
+  // 4.4.6: the owner's account ('admin'): only a new link from here.
+  owner?: boolean;
 }
 
 export interface PeopleResponse {

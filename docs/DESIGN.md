@@ -447,7 +447,7 @@ A one use link signs in an account that exists: the admin's "New link" on a clai
 
 ### Progress
 
-Three documents per account in `progress`, each replaced whole: discoveries (key, time, the pair, and the element as the device knew it, so another device can show it), the board, and the island (the world save gzipped by `CompressionStream` and base64 encoded: a large island is about 700k characters raw and under 200k packed). Each has `updated_at` and a device label. Discoveries merge as a union by key with the earliest time (`shared/account.ts`, `mergeDiscoveries`); they go up five seconds after a change. The island goes up a minute after it changed and when the page is hidden; a device says what it last saw (`since`), and a newer save from another device is refused with when and where, so the page asks before replacing it, and loads the other one if the player says no. A device signing in takes the server's island when it is newer than its own, or has none.
+Three documents per account in `progress`, each replaced whole: discoveries (key, time, the pair, and the element as the device knew it, so another device can show it), the board, and the island (the world save gzipped by `CompressionStream` and base64 encoded: a large island is about 700k characters raw and under 200k packed). Each has `updated_at` and a device label. Discoveries merge as a union by key with the earliest time (`shared/account.ts`, `mergeDiscoveries`); they go up five seconds after a change. The island goes up a minute after it changed and when the page is hidden; a device says what it last saw (`since`), and a newer save from another device is refused with when and where, so the page asks before replacing it, and loads the other one if the player says no. A device signing in takes the server's island when it is newer than its own, or has none (4.4.6: when both changed, the player chooses, see "Two islands, never one lost").
 
 Two tabs of one browser (4.1): each write of the discoveries reads the stored save again and merges by key first (`src/store.ts`, `mergeSaves`), and a `storage` listener shows what the other tab found. The island is written by one tab at a time: the tab that shows the World while visible claims it on a `BroadcastChannel`, the others stop writing it, and a tab that takes it back reloads the island first if another tab saved since; without `BroadcastChannel`, a write is refused over a newer save. Uploads read the "seen" times the tabs share, so one tab's upload never reads as an older device to the other. A full storage, or an island past `MAX_SAVE_CHARS` (1.5M characters), is said once per page (`src/quota.ts`).
 
@@ -456,6 +456,43 @@ The upload has its own limit (2 MB a body, `PROGRESS_LIMITS` a document); every 
 ### Existing friends, export, deletion
 
 A browser playing with a link is offered the account once, after the welcome; "Later" is an answer, and the `?` button keeps the offer. Nothing changes until they answer: the invite header keeps playing. Export is one JSON of every row keyed by the account. Deletion removes passkeys, sessions, challenges, links, progress, votes, casts, activity, ideas and their votes, wins and reports, sets `elements.invite` to null (the element stays, the First Discovery no longer names anyone), and keeps the invite row as deleted with its spend, so the month's budget stays whole and the id is never reused. The privacy note says all of this.
+
+## Accounts you can trust (4.4.6)
+
+The owner played as the admin on a computer and a phone and the progress was not kept: the admin token was not an account, so `Sync.start` never ran and each browser kept its own. Reading the code also found the worse half: signing out left the save on the device, and the next account to sign in there received it for good (discoveries merge as a union). Both were written as failing tests first (`scripts/worker-test.mjs` section 29, `scripts/account-verify.mjs` E and F, the output in `docs/measurements/accounts-4.4.6.md`), then fixed. The schema is `migrations/0015_owner_account.sql`; the page side is `src/device-save.ts`, `src/sync.ts`, `src/account.ts` and `src/menu.ts`.
+
+### The owner is an account, admin is a role of it
+
+Everything the admin did since 3.4 is keyed `admin` (`spend`, `elements.invite`, `suggestions`, `challenge_wins`, `reports`), so the owner's account is an invite row with that id and an `admin` flag: nothing moves, the trick of 4.0 again. The row has a random link hash, so no link plays it. The device that holds the token is offered to make it (the one time offer, and the `?` menu); the passkey claims the row like a friend's link, and from then on a session on it has the admin powers on any device, with no token. The page drops the token once it holds such a session. The owner keeps no allowance of their own (`payerOf` gives an admin row no cap) and still pays as `admin`, so every "the admin is not an invite" rule (the burst guard, `seen`, the idea quota, the wonders' finder) holds unchanged.
+
+`authenticate` reads the session first. A valid session is who is asking, and the token beside it only adds the admin powers: it never hides the session again. The token alone is the admin, for scripts and the nightly Action, as before; it carries the owner's row only so that its device can make the first passkey, and it cannot reach the one use link route, so the token never mints a session. The owner's row only takes a new link from the People view (for a lost passkey); pausing, revoking or deleting it is refused, and so is deleting it from the account page.
+
+### Progress belongs to one account
+
+The device's save is tagged with the account it belongs to (`magic-merger.owner`): the session's account, or the invite of the link being played, or `admin` for the token. The rules, in `src/account.ts` and `src/device-save.ts`:
+
+1. A save tagged X goes up only to X. The page checks the tag before every upload, and the Worker refuses an upload whose `owner` is another account (409, "it stays on the device"); a page from before 4.4.6 sends none and is accepted as before.
+2. Signing in as Y on a device whose save is tagged X sets X's save aside, never merged and never sent: it moves to the browser's IndexedDB (which has room for an island beside the one in play), and comes back if X signs in on this device again. A link played on a device that held an account's save does the same.
+3. An untagged save (every save from before 4.4.6, or one a person left without an account) is offered once to whoever signs in: "Add it to Y's account" or "Set it aside". Only a yes uploads it. A device signed in before 4.4.6 tags its save with its account silently, since it was already syncing to it.
+4. Signing out asks "Remove it from this device" (the default, focused, since the account holds it) or "Keep a copy on this device" (tagged, for the next time). What is not saved yet goes up first; when it cannot (offline) the copy stays whatever the choice, so a sign out never loses progress. "Switch account" is the same, then a passkey sign in.
+
+While a save is moved, the page freezes its writers (the discoveries' writer merges with what is stored and the World saves on hide, so either would write the old save back) and reloads; another tab of the browser reloads too when the tag or the session changes.
+
+### Sync you can see
+
+The `?` menu says who is signed in ("Signed in as Ann", "the owner, with the admin powers", "Playing with Ann's link", "Not signed in") and whether the progress is saved ("Saved to your account 2 min ago", "newer changes go up within a minute", "Not saved: offline", "Not signed in: your progress stays on this device only"), with **Sync now**, **Your account**, **Switch account**, **Sign out**, and **Sign in with a passkey** whenever the device is not signed in, even with a link or a save. The gate always offers the passkey sign in too, also when a request was refused on the way (it used to appear only on a device holding nothing). The account page lists each device with its last sync (`sessions.last_sync`, written by each upload).
+
+A signed in page pulls the discoveries every minute while visible and when it comes back to the screen, so a second device sees what the first found within a minute. The Worker now joins discoveries with what it holds (a union by key, the earliest time, the element kept), so two devices writing in turn never erase each other's.
+
+### Two islands, never one lost
+
+The island stays last saved wins, with a choice instead of a silent replace. The page remembers its own island at the moment it last matched the account's. A newer island from another device over an unchanged one here is simply taken (nothing is lost: this device's was the account's previous one); over a changed one, the player is offered both ("Load the island from Windows" or "Keep this device's island", with which device and when). Either way the one not played is kept on the account as `island_previous`: the Worker keeps the replaced island when one is forced over a newer save, and a device keeps its own there before it loads another's. The account page brings the previous island back ("Play it again"), the current one taking its place. A newer island noticed while playing is said once and offered in the menu, never loaded under the player's hands.
+
+### What syncs, and what stays per device
+
+Synced, because it is the player's progress and must follow them: the discoveries (with each element as the device knew it, so another device can show it), the board, the island, challenge wins (on the server since 3.7), First Discoveries, ideas and votes (keyed by the account since 4.0). The recipe book is the shared library plus the account's discoveries, so it follows them. The favorite spell will sync once the Community tab exists, as a fourth small document of the same kind.
+
+Per device, on purpose: sound and mute, the frame HUD, the graphics switches and the headroom measured on this device (a phone and a computer differ, and a setting that suits one would hurt the other), the size and land last chosen for a new island, the welcome and the account offer already seen, the anonymous player id, and the caches of the wonder pool. They say nothing a second device needs, and syncing them would make one device's choice silently change another's.
 
 ## Faster creation (4.2)
 

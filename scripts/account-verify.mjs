@@ -7,6 +7,13 @@
 //      discoveries come down and the island from the first device loads;
 //   C. one invite opened on two devices at once makes one account;
 //   D. deleting the account from one device signs every device out.
+// 4.4.6, reproduced first (the owner played as the admin on a computer and a
+// phone and the progress was not kept):
+//   E. the owner on a computer (the admin token) and a phone: one account,
+//      the admin powers on both with no token, the same discoveries, a sync
+//      status and "Sync now" in the ? menu, the newer island offered;
+//   F. account B signs in on a phone that held account A's progress: B gets
+//      nothing of A's, A's copy is set aside and comes back when A returns.
 //
 //   npm run build && node scripts/account-verify.mjs
 import { createRequire } from "node:module";
@@ -108,8 +115,8 @@ const secretOf = (link) => new URL(link).hash.replace("#invite=", "");
 const browser = await chromium.launch({ args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--ignore-gpu-blocklist"] });
 
 // A device: a context, its page and a virtual authenticator that always says yes.
-async function device() {
-  const ctx = await browser.newContext({ ...devices["iPhone 14"] });
+async function device(kind = "iPhone 14") {
+  const ctx = await browser.newContext({ ...devices[kind] });
   const page = await ctx.newPage();
   const cdp = await ctx.newCDPSession(page);
   await cdp.send("WebAuthn.enable");
@@ -148,8 +155,11 @@ async function closeDialogs(page) {
   }
 }
 async function mergeFireWater(page) {
-  await page.locator(".chip-inventory", { hasText: "Fire" }).first().click();
-  await page.locator(".chip-inventory", { hasText: "Water" }).first().click();
+  await mergePair(page, "Fire", "Water");
+}
+async function mergePair(page, x, y) {
+  await page.locator(".chip-inventory", { hasText: x }).first().click();
+  await page.locator(".chip-inventory", { hasText: y }).first().click();
   const chips = page.locator(".chip-board");
   const a = await chips.nth(1).boundingBox();
   const b = await chips.nth(0).boundingBox();
@@ -255,9 +265,10 @@ try {
 
   // D. Deleting the account from B signs A out too, and the data is gone.
   await closeDialogs(B.page);
+  // 4.4.6: the ? button opens the menu; the account page is in it.
   await B.page.click("#help");
-  await B.page.waitForSelector("dialog.welcome[open]");
-  await B.page.click("dialog.welcome .welcome-account");
+  await B.page.waitForSelector("dialog.menu[open]");
+  await B.page.click("dialog.menu .menu-account");
   await B.page.waitForSelector("dialog.account[open]", { timeout: 10000 });
   B.page.once("dialog", (d) => d.accept("Fay"));
   await B.page.click("dialog.account .account-delete");
@@ -275,6 +286,248 @@ try {
     "D: the admin sees the account as deleted, with its spend kept",
     people.people.find((p) => p.id === inv.id)?.deletedAt > 0 && people.people.find((p) => p.id === inv.id)?.spent > 0,
   );
+
+  // 4.4.6. Helpers that use the new ? menu when it exists, and the 4.0 way
+  // otherwise, so that on the code before the fix each check fails on what
+  // it checks, not on a missing button.
+  const progressOf = async (token) => (await fetch(`${BASE}/api/progress`, { headers: { "x-session": token } }).then((r) => r.json())).progress ?? [];
+  const keysOf = (docs) => (docs.find((p) => p.kind === "discoveries")?.data ?? []).map((d) => d.key);
+  const tokenOf = (D) => D.page.evaluate(() => localStorage.getItem("magic-merger.session"));
+  const inventory = async (D) => {
+    await D.page.waitForSelector(".chip-inventory", { timeout: 20000 });
+    return D.page.locator(".chip-inventory").count();
+  };
+  async function openMenu(D) {
+    await closeDialogs(D.page);
+    await D.page.click("#help");
+    await D.page.waitForSelector("dialog[open]", { timeout: 5000 });
+    return (await D.page.locator("dialog.menu[open]").count()) > 0;
+  }
+  async function menuText(D) {
+    if (!(await openMenu(D))) return "";
+    return (await D.page.locator("dialog.menu[open]").innerText()).replace(/\s+/g, " ");
+  }
+  async function syncNow(D) {
+    if (!(await openMenu(D))) return false;
+    await D.page.click("dialog.menu .menu-syncnow");
+    await D.page.waitForTimeout(3000);
+    return true;
+  }
+  async function signOut(D, choice) {
+    if (await openMenu(D)) {
+      await D.page.click("dialog.menu .menu-signout");
+      await D.page.waitForSelector("dialog.signout[open]", { timeout: 5000 });
+      const focused = await D.page.evaluate(() => document.activeElement?.className ?? "");
+      await D.page.click(`dialog.signout .signout-${choice}`);
+      await D.page.waitForTimeout(3000);
+      return { asked: true, focused };
+    }
+    // 4.0: the account page's "Sign out here", which keeps everything.
+    await D.page.click("dialog.welcome .welcome-account");
+    await D.page.waitForSelector("dialog.account[open]", { timeout: 10000 });
+    await D.page.click("dialog.account .account-logout");
+    await D.page.waitForTimeout(3000);
+    return { asked: false, focused: "" };
+  }
+  async function signInAs(D, credential) {
+    await D.cdp.send("WebAuthn.clearCredentials", { authenticatorId: D.authenticatorId });
+    await D.cdp.send("WebAuthn.addCredential", { authenticatorId: D.authenticatorId, credential });
+    await D.page.waitForSelector("#gate .gate-passkey", { timeout: 20000 });
+    await D.page.click("#gate .gate-passkey");
+    await D.page.waitForFunction(() => !!localStorage.getItem("magic-merger.session"), null, { timeout: 20000 });
+    await D.page.waitForTimeout(4000);
+    // A save from before any account is offered once; these devices have none.
+    await closeDialogs(D.page);
+  }
+  async function makeAccount(name) {
+    const made = await admin("/api/admin/invites", { name, cap: 5 });
+    const D = await device();
+    await D.page.goto(`${BASE}/#invite=${secretOf(made.link)}`);
+    await D.page.waitForSelector("dialog.welcome[open]", { timeout: 20000 });
+    await D.page.click("dialog.welcome .welcome-start");
+    await D.page.waitForSelector("dialog.account-offer[open]", { timeout: 10000 });
+    await D.page.click("dialog.account-offer .account-create");
+    await D.page.waitForFunction(() => !!localStorage.getItem("magic-merger.session"), null, { timeout: 20000 });
+    await D.page.waitForTimeout(2500);
+    const { credentials } = await D.cdp.send("WebAuthn.getCredentials", { authenticatorId: D.authenticatorId });
+    return { D, id: made.id, link: made.link, credential: credentials[0] };
+  }
+
+  // E. The owner on a computer and a phone.
+  const PC = await device("Desktop Chrome");
+  await PC.page.goto(`${BASE}/`);
+  await PC.page.waitForSelector("#gate .gate-passkey", { timeout: 20000 });
+  // Five taps on the title, and the token, as the owner does today.
+  PC.page.once("dialog", (d) => d.accept(ADMIN));
+  for (let i = 0; i < 5; i++) await PC.page.click(".title");
+  await PC.page.waitForTimeout(2500);
+  const offered = await PC.page
+    .waitForSelector("dialog.account-offer[open]", { timeout: 8000 })
+    .then(() => true)
+    .catch(() => false);
+  check("E: the admin token is offered the owner's account", offered);
+  if (offered) {
+    await PC.page.click("dialog.account-offer .account-create");
+    await PC.page.waitForFunction(() => !!localStorage.getItem("magic-merger.session"), null, { timeout: 20000 });
+    await PC.page.waitForTimeout(4000);
+  }
+  const pcToken = await tokenOf(PC);
+  const hPC = await PC.health();
+  check(
+    "E: the computer is signed in to the owner's account, admin with no token kept",
+    !!pcToken && hPC.admin === true && hPC.account?.id === "admin" && !(await PC.page.evaluate(() => localStorage.getItem("magic-merger.token"))),
+    JSON.stringify({ session: !!pcToken, admin: hPC.admin, account: hPC.account }),
+  );
+  await closeDialogs(PC.page);
+  await mergeFireWater(PC.page);
+  await PC.page.click('.tab[data-view="world-view"]');
+  await PC.page.waitForTimeout(12000);
+  await PC.page.click('.tab[data-view="craft-view"]');
+  const syncedPC = await syncNow(PC);
+  await PC.page.waitForTimeout(6000);
+  const PH = await device();
+  const { credentials: ownerCreds } = await PC.cdp.send("WebAuthn.getCredentials", { authenticatorId: PC.authenticatorId });
+  await PH.page.goto(`${BASE}/`);
+  if (ownerCreds[0]) await signInAs(PH, ownerCreds[0]);
+  else {
+    // The bug as the owner met it: the token typed again on the phone.
+    PH.page.once("dialog", (d) => d.accept(ADMIN));
+    await PH.page.waitForSelector(".title");
+    for (let i = 0; i < 5; i++) await PH.page.click(".title");
+    await PH.page.waitForTimeout(3000);
+    await closeDialogs(PH.page);
+  }
+  const hPH = await PH.health();
+  const phoneHas = await inventory(PH);
+  check(
+    "E: the phone signs in with the passkey: admin, no token, the computer's discoveries",
+    hPH.admin === true && phoneHas === 9 && (await PH.page.locator("#admin-badge").isVisible()),
+    JSON.stringify({ admin: hPH.admin, inventory: phoneHas }),
+  );
+  check("E: and the computer's island", await PH.page.evaluate(() => !!localStorage.getItem("magic-merger.world2")));
+  // The phone finds something; "Sync now" on the computer brings it.
+  // The board came down from the computer: cleared, so the two chips are Earth and Air.
+  await PH.page.click("#clear");
+  await mergePair(PH.page, "Earth", "Air");
+  await PH.page.waitForTimeout(7000);
+  const phoneFound = keysOf(await progressOf(await tokenOf(PH)));
+  const shownSync = await syncNow(PC);
+  const pcHas = await inventory(PC);
+  check(
+    'E: "Sync now" on the computer brings what the phone found',
+    shownSync && syncedPC && pcHas === 10,
+    `${pcHas} items on the computer, the account holds ${phoneFound.length}: ${phoneFound.join(", ")}`,
+  );
+  const text = await menuText(PC);
+  check(
+    "E: the ? menu says who is signed in and when the account was last saved",
+    /Signed in as admin/i.test(text) && /Saved to your account/i.test(text),
+    text.slice(0, 200),
+  );
+  // The newer island from another device is offered, never lost.
+  await closeDialogs(PC.page);
+  await PC.page.click('.tab[data-view="world-view"]');
+  await PH.page.click('.tab[data-view="world-view"]');
+  await PH.page.waitForTimeout(12000);
+  await PC.page.waitForTimeout(1000);
+  await PC.page.click('.tab[data-view="craft-view"]');
+  await PH.page.click('.tab[data-view="craft-view"]');
+  await syncNow(PC);
+  await PC.page.waitForTimeout(3000);
+  let choice = false;
+  if (await openMenu(PH)) {
+    await PH.page.click("dialog.menu .menu-syncnow");
+    choice = await PH.page
+      .waitForSelector("dialog.island-choice[open]", { timeout: 8000 })
+      .then(() => true)
+      .catch(() => false);
+  }
+  const choiceText = choice ? (await PH.page.locator("dialog.island-choice[open]").innerText()).replace(/\s+/g, " ") : "";
+  if (choice) {
+    await PH.page.click("dialog.island-choice .choice-this");
+    await PH.page.waitForTimeout(4000);
+  }
+  const prevIsland = await fetch(`${BASE}/api/progress?kind=island_previous`, { headers: { "x-session": await tokenOf(PH) } })
+    .then((r) => r.json())
+    .catch(() => ({}));
+  const nowIsland = (await progressOf(await tokenOf(PH))).find((p) => p.kind === "island");
+  check(
+    "E: a newer island from the computer is offered next to the phone's, and the one not kept stays on the account",
+    choice &&
+      /Windows/.test(choiceText) &&
+      nowIsland?.device === "iPhone" &&
+      prevIsland.progress?.some((p) => p.kind === "island_previous" && p.device?.startsWith("Windows")),
+    JSON.stringify({ choice, choiceText: choiceText.slice(0, 120), now: nowIsland?.device, prev: prevIsland.progress?.map((p) => p.device) }),
+  );
+
+  // F. Account B signs in on a phone that held account A's progress.
+  const ann = await makeAccount("Ann");
+  const ben = await makeAccount("Ben");
+  await closeDialogs(ann.D.page);
+  await mergeFireWater(ann.D.page);
+  await ann.D.page.click('.tab[data-view="world-view"]');
+  await ann.D.page.waitForTimeout(12000);
+  await ann.D.page.click('.tab[data-view="craft-view"]');
+  await syncNow(ann.D);
+  await ann.D.page.waitForTimeout(7000);
+  const annToken = await tokenOf(ann.D);
+  const annKeys = keysOf(await progressOf(annToken));
+  const PRIMAL = ["fire", "water", "earth", "air", "light", "shadow", "life", "arcane"];
+  const annFound = annKeys.filter((k) => !PRIMAL.includes(k));
+  const out1 = await signOut(ann.D, "keep");
+  check("F: signing out asks to keep a copy or remove it, remove by default", out1.asked && /signout-remove/.test(out1.focused), JSON.stringify(out1));
+  await signInAs(ann.D, ben.credential);
+  const benToken = await tokenOf(ann.D);
+  const benDocs = await progressOf(benToken);
+  const benOnAnnPhone = await inventory(ann.D);
+  check(
+    "F: B signed in on A's phone gets nothing of A's, here or on B's account",
+    annFound.length > 0 && !keysOf(benDocs).some((k) => annFound.includes(k)) && !benDocs.some((p) => p.kind === "island") && benOnAnnPhone === 8,
+    JSON.stringify({ ann: annKeys, ben: keysOf(benDocs), benIsland: benDocs.some((p) => p.kind === "island"), inventory: benOnAnnPhone }),
+  );
+  // Switch back to A from the menu: B's copy is removed (the default), A's comes back.
+  let switched = false;
+  if (await openMenu(ann.D)) {
+    await ann.D.cdp.send("WebAuthn.clearCredentials", { authenticatorId: ann.D.authenticatorId });
+    await ann.D.cdp.send("WebAuthn.addCredential", { authenticatorId: ann.D.authenticatorId, credential: ann.credential });
+    await ann.D.page.click("dialog.menu .menu-switch");
+    await ann.D.page.waitForSelector("dialog.signout[open]", { timeout: 5000 });
+    await ann.D.page.click("dialog.signout .signout-remove");
+    await ann.D.page.waitForFunction(() => !!localStorage.getItem("magic-merger.session"), null, { timeout: 20000 }).catch(() => undefined);
+    await ann.D.page.waitForTimeout(5000);
+    await closeDialogs(ann.D.page);
+    switched = true;
+  }
+  const hBack = await ann.D.health();
+  const backHas = switched ? await inventory(ann.D) : 0;
+  const island = await ann.D.page.evaluate(() => !!localStorage.getItem("magic-merger.world2"));
+  check(
+    "F: \"Switch account\" back to A brings A's copy back, island included, and B's is gone",
+    switched && hBack.invite?.name === "Ann" && backHas === 9 && island,
+    JSON.stringify({ switched, who: hBack.invite?.name, inventory: backHas, island }),
+  );
+  // Sign out with the default: nothing of A's stays on the phone.
+  const out2 = await signOut(ann.D, "remove");
+  const trace = await ann.D.page.evaluate(() => ({
+    save: localStorage.getItem("magic-merger.save"),
+    world: !!localStorage.getItem("magic-merger.world2"),
+  }));
+  const traceKeys = trace.save ? Object.keys(JSON.parse(trace.save).discoveries ?? {}) : [];
+  check(
+    "F: signing out with the default leaves no trace of A on the phone",
+    out2.asked && !trace.world && traceKeys.length <= 8,
+    JSON.stringify({ asked: out2.asked, world: trace.world, keys: traceKeys.length }),
+  );
+  // A device with a link still offers "Sign in" from the ? menu.
+  const withLink = await device();
+  const carl = await admin("/api/admin/invites", { name: "Carl", cap: 5 });
+  await withLink.page.goto(`${BASE}/#invite=${secretOf(carl.link)}`);
+  await withLink.page.waitForSelector("dialog.welcome[open]", { timeout: 20000 });
+  await withLink.page.click("dialog.welcome .welcome-start");
+  await withLink.page.waitForSelector("dialog.account-offer[open]", { timeout: 10000 });
+  await withLink.page.click("dialog.account-offer .account-later");
+  const linkMenu = (await openMenu(withLink)) && (await withLink.page.locator("dialog.menu .menu-signin").isVisible());
+  check('F: on a device with a link, "Sign in" is in the ? menu', linkMenu);
 } catch (err) {
   failed++;
   console.log(`FAIL ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);

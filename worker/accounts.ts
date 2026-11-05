@@ -8,7 +8,7 @@ import {
 } from "@simplewebauthn/server";
 import { HttpError } from "./http";
 import { newSecret, sha256, type InviteRow } from "./ledger";
-import type { AccountInfo, ProgressDoc, ProgressKind, ProgressPut } from "../shared/account";
+import type { AccountInfo, ProgressDoc, ProgressKind, ProgressPut, SignedIn, StoredKind } from "../shared/account";
 import { PROGRESS_KINDS, PROGRESS_LIMITS } from "../shared/account";
 
 // 4.0: accounts. An invite becomes an account with the same id when its
@@ -40,6 +40,13 @@ export interface SessionRow {
   expires_at: number;
   last_seen: number | null;
   device: string | null;
+  // 4.4.6: when this device last saved to the account.
+  last_sync?: number | null;
+}
+
+// What a sign in answers: the session, and whose account it is.
+function signInAnswer(token: string, invite: InviteRow): SignedIn {
+  return { token, name: invite.name, id: invite.id, admin: !!invite.admin };
 }
 
 interface CredentialRow {
@@ -172,7 +179,7 @@ export async function registrationVerify(
   invite: InviteRow,
   signedIn: boolean,
   body: { challengeId?: unknown; response?: unknown },
-): Promise<{ token: string; name: string; created: boolean }> {
+): Promise<SignedIn & { created: boolean }> {
   const expectedChallenge = await takeChallenge(env.DB, body.challengeId, "register", invite.id);
   if (!body.response || typeof body.response !== "object") throw new HttpError(400, "The passkey answer is missing");
   let verified;
@@ -214,7 +221,7 @@ export async function registrationVerify(
     )
     .run();
   const token = await newSession(env.DB, invite.id, deviceOf(request), now);
-  return { token, name: invite.name, created };
+  return { ...signInAnswer(token, invite), created };
 }
 
 // Sign in on any device: a discoverable passkey, no name to type.
@@ -224,12 +231,7 @@ export async function loginOptions(env: AccountEnv, url: URL) {
   return { options, challengeId };
 }
 
-export async function loginVerify(
-  env: AccountEnv,
-  url: URL,
-  request: Request,
-  body: { challengeId?: unknown; response?: unknown },
-): Promise<{ token: string; name: string }> {
+export async function loginVerify(env: AccountEnv, url: URL, request: Request, body: { challengeId?: unknown; response?: unknown }): Promise<SignedIn> {
   const expectedChallenge = await takeChallenge(env.DB, body.challengeId, "login", null);
   const response = body.response as AuthenticationResponseJSON | undefined;
   if (!response || typeof response !== "object" || typeof response.id !== "string") throw new HttpError(400, "The passkey answer is missing");
@@ -259,16 +261,16 @@ export async function loginVerify(
   const now = Date.now();
   await env.DB.prepare("UPDATE credentials SET counter = ?, last_used = ? WHERE id = ?").bind(verified.authenticationInfo.newCounter, now, cred.id).run();
   const token = await newSession(env.DB, invite.id, deviceOf(request), now);
-  return { token, name: invite.name };
+  return signInAnswer(token, invite);
 }
 
 // A one use link for a claimed account (the admin's "New link", or an email
 // link): opening it signs this device in, and the link dies.
-export async function claimLink(env: AccountEnv, request: Request, invite: InviteRow): Promise<{ token: string; name: string }> {
+export async function claimLink(env: AccountEnv, request: Request, invite: InviteRow): Promise<SignedIn> {
   if (!invite.claimed_at) throw new HttpError(400, "This link makes an account first: add a passkey");
   if (invite.deleted_at || invite.status === "revoked") throw new HttpError(403, "This account is closed");
   if (!(await retireLink(env.DB, invite))) throw new HttpError(409, "This link was just used on another device. Ask for a new one if that was not you.");
-  return { token: await newSession(env.DB, invite.id, deviceOf(request)), name: invite.name };
+  return signInAnswer(await newSession(env.DB, invite.id, deviceOf(request)), invite);
 }
 
 export async function logout(env: AccountEnv, session: SessionRow): Promise<void> {
@@ -289,17 +291,18 @@ export async function accountInfo(env: AccountEnv, invite: InviteRow, session: S
     env.DB.prepare("SELECT id, device_type, backed_up, created_at, last_used FROM credentials WHERE invite = ? ORDER BY created_at")
       .bind(invite.id)
       .all<CredentialRow>(),
-    env.DB.prepare("SELECT token_hash, created_at, last_seen, device FROM sessions WHERE invite = ? AND expires_at > ? ORDER BY created_at")
+    env.DB.prepare("SELECT token_hash, created_at, last_seen, last_sync, device FROM sessions WHERE invite = ? AND expires_at > ? ORDER BY created_at")
       .bind(invite.id, Date.now())
       .all<SessionRow>(),
     env.DB.prepare("SELECT kind, updated_at, device, LENGTH(data) AS size FROM progress WHERE invite = ?")
       .bind(invite.id)
-      .all<{ kind: ProgressKind; updated_at: number; device: string | null; size: number }>(),
+      .all<{ kind: StoredKind; updated_at: number; device: string | null; size: number }>(),
   ]);
   return {
     id: invite.id,
     name: invite.name,
     claimedAt: invite.claimed_at ?? 0,
+    admin: !!invite.admin,
     email: invite.email ? invite.email.replace(/^(.).*(@.*)$/, "$1…$2") : null,
     emailOffered: emailReady(env),
     passkeys: creds.results.map((c) => ({ id: c.id, createdAt: c.created_at, lastUsed: c.last_used, synced: c.backed_up === 1 })),
@@ -308,6 +311,7 @@ export async function accountInfo(env: AccountEnv, invite: InviteRow, session: S
       device: s.device ?? "a device",
       since: s.created_at,
       lastSeen: s.last_seen,
+      lastSync: s.last_sync ?? null,
       current: s.token_hash === session.token_hash,
     })),
     progress: progress.results.map((p) => ({ kind: p.kind, updatedAt: p.updated_at, device: p.device, size: p.size })),
@@ -364,7 +368,7 @@ export async function emailLink(env: AccountEnv, url: URL, body: { email?: unkno
   return { ok: true };
 }
 
-export async function emailClaim(env: AccountEnv, request: Request, body: { token?: unknown }): Promise<{ token: string; name: string }> {
+export async function emailClaim(env: AccountEnv, request: Request, body: { token?: unknown }): Promise<SignedIn> {
   const raw = typeof body.token === "string" ? body.token : "";
   if (!/^[A-Za-z0-9_-]{40,64}$/.test(raw)) throw new HttpError(400, "That link is not right");
   const now = Date.now();
@@ -376,36 +380,100 @@ export async function emailClaim(env: AccountEnv, request: Request, body: { toke
   const link = await env.DB.prepare("SELECT invite FROM account_links WHERE token_hash = ?").bind(hash).first<{ invite: string }>();
   const invite = link ? await env.DB.prepare("SELECT * FROM invites WHERE id = ?").bind(link.invite).first<InviteRow>() : null;
   if (!invite || invite.deleted_at || invite.status === "revoked") throw new HttpError(403, "This account is closed");
-  return { token: await newSession(env.DB, invite.id, deviceOf(request), now), name: invite.name };
+  return signInAnswer(await newSession(env.DB, invite.id, deviceOf(request), now), invite);
 }
 
 // Progress: three documents, each replaced whole. A device says what it
 // last saw (`since`); a newer save from another device is refused with what
 // is there, unless the device says `force` after the warning.
-export async function putProgress(env: AccountEnv, invite: string, body: ProgressPut, now = Date.now()) {
+// 4.4.6: a save tagged with another account is refused (the page never sends
+// one; this is the server's half of "progress belongs to one account").
+// Discoveries are joined with what is stored (a union by key, the earliest
+// time), so two devices that write in turn never erase each other's. An
+// island forced over a newer one from elsewhere keeps the replaced one as
+// the previous island, and a device can keep its own there before it loads
+// another's: a choice between two islands never loses one.
+export async function putProgress(env: AccountEnv, invite: string, body: ProgressPut, session: string | null = null, now = Date.now()) {
   const kind = PROGRESS_KINDS.find((k) => k === body.kind);
   if (!kind) throw new HttpError(400, "Which progress?");
-  const data = typeof body.data === "string" ? body.data : JSON.stringify(body.data ?? null);
+  if (body.owner !== undefined && body.owner !== null && body.owner !== invite) {
+    throw new HttpError(409, "This device's save belongs to another account: it stays on the device and is never sent to this one", { owner: "other" });
+  }
+  let data = typeof body.data === "string" ? body.data : JSON.stringify(body.data ?? null);
   if (data.length > PROGRESS_LIMITS[kind]) throw new HttpError(413, `That ${kind} save is too big to keep`);
   checkShape(kind, body.data);
   const device = typeof body.device === "string" ? body.device.slice(0, 60) : "a device";
-  const current = await env.DB.prepare("SELECT updated_at, device FROM progress WHERE invite = ? AND kind = ?")
+  const synced = session ? env.DB.prepare("UPDATE sessions SET last_sync = ? WHERE token_hash = ?").bind(now, session) : null;
+  if (body.previous === true) {
+    if (kind !== "island") throw new HttpError(400, "Only an island is kept as the previous one");
+    await env.DB.batch([upsert(env.DB, invite, "island_previous", data, now, device), ...(synced ? [synced] : [])]);
+    return { ok: true as const, updatedAt: now };
+  }
+  const current = await env.DB.prepare(
+    "SELECT updated_at, device, CASE WHEN kind = 'discoveries' THEN data END AS data FROM progress WHERE invite = ? AND kind = ?",
+  )
     .bind(invite, kind)
-    .first<{ updated_at: number; device: string | null }>();
+    .first<{ updated_at: number; device: string | null; data: string | null }>();
   const since = typeof body.since === "number" ? body.since : 0;
-  if (current && current.updated_at > since && body.force !== true) {
+  const newer = !!current && current.updated_at > since;
+  if (newer && body.force !== true) {
     throw new HttpError(409, `A newer ${kind} save exists from ${current.device ?? "another device"}`, {
       updatedAt: current.updated_at,
       device: current.device,
     });
   }
-  await env.DB.prepare(
-    `INSERT INTO progress (invite, kind, data, updated_at, device) VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT (invite, kind) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at, device = excluded.device`,
-  )
-    .bind(invite, kind, data, now, device)
-    .run();
+  if (kind === "discoveries" && current?.data) {
+    data = JSON.stringify(joinDiscoveries(parseList(current.data), body.data as unknown as Record<string, unknown>[]));
+    if (data.length > PROGRESS_LIMITS.discoveries) throw new HttpError(413, "That discoveries save is too big to keep");
+  }
+  const writes = [upsert(env.DB, invite, kind, data, now, device)];
+  if (kind === "island" && newer) {
+    writes.unshift(
+      env.DB.prepare(
+        `INSERT INTO progress (invite, kind, data, updated_at, device) SELECT invite, 'island_previous', data, updated_at, device FROM progress WHERE invite = ? AND kind = 'island'
+         ON CONFLICT (invite, kind) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at, device = excluded.device`,
+      ).bind(invite),
+    );
+  }
+  if (synced) writes.push(synced);
+  await env.DB.batch(writes);
   return { ok: true as const, updatedAt: now };
+}
+
+function upsert(db: D1Database, invite: string, kind: StoredKind, data: string, now: number, device: string) {
+  return db
+    .prepare(
+      `INSERT INTO progress (invite, kind, data, updated_at, device) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (invite, kind) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at, device = excluded.device`,
+    )
+    .bind(invite, kind, data, now, device);
+}
+
+function parseList(text: string): Record<string, unknown>[] {
+  try {
+    const v = JSON.parse(text) as unknown;
+    return Array.isArray(v) ? (v as Record<string, unknown>[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+// The union by key with the earliest time, as shared/account.ts merges them,
+// keeping the element each device sent so another device can show it.
+function joinDiscoveries(stored: Record<string, unknown>[], sent: Record<string, unknown>[]): Record<string, unknown>[] {
+  const out = new Map<string, Record<string, unknown>>();
+  for (const d of [...stored, ...sent]) {
+    if (!d || typeof d.key !== "string" || typeof d.at !== "number") continue;
+    const known = out.get(d.key);
+    if (!known) out.set(d.key, { ...d });
+    else {
+      const at = known.at as number;
+      if (d.at > 0 && (at === 0 || d.at < at))
+        out.set(d.key, { ...known, ...d, recipe: d.recipe ?? known.recipe ?? null, element: d.element ?? known.element });
+      else if (!known.element && d.element) known.element = d.element;
+    }
+  }
+  return [...out.values()].slice(0, 5000);
 }
 
 function checkShape(kind: ProgressKind, data: unknown): void {
@@ -437,10 +505,12 @@ function checkShape(kind: ProgressKind, data: unknown): void {
   }
 }
 
-export async function getProgress(env: AccountEnv, invite: string): Promise<{ progress: ProgressDoc[] }> {
-  const rows = await env.DB.prepare("SELECT kind, data, updated_at, device FROM progress WHERE invite = ?")
-    .bind(invite)
-    .all<{ kind: ProgressKind; data: string; updated_at: number; device: string | null }>();
+// The account's documents; 4.4.6: `kinds` asks for some only (the
+// previous island is never sent unless asked for by name).
+export async function getProgress(env: AccountEnv, invite: string, kinds: readonly StoredKind[] = PROGRESS_KINDS): Promise<{ progress: ProgressDoc[] }> {
+  const rows = await env.DB.prepare(`SELECT kind, data, updated_at, device FROM progress WHERE invite = ? AND kind IN (${kinds.map(() => "?").join(", ")})`)
+    .bind(invite, ...kinds)
+    .all<{ kind: StoredKind; data: string; updated_at: number; device: string | null }>();
   return {
     progress: rows.results.map((r) => {
       let data: unknown = null;
@@ -468,7 +538,7 @@ export async function exportAccount(env: AccountEnv, invite: InviteRow): Promise
   const [credentials, sessions, progress, discoveries, votes, casts, ideas, ideaVotes, wins, reports, spend] = await Promise.all([
     all<object>("SELECT id, device_type, backed_up, created_at, last_used FROM credentials WHERE invite = ?", id),
     all<object>("SELECT created_at, expires_at, last_seen, device FROM sessions WHERE invite = ?", id),
-    (await getProgress(env, id)).progress,
+    (await getProgress(env, id, [...PROGRESS_KINDS, "island_previous"])).progress,
     all<object>("SELECT name, emoji, kind, tier, created_at FROM elements WHERE invite = ? ORDER BY created_at", id),
     all<object>("SELECT key, up, reason, at FROM votes WHERE player = ?", id),
     all<object>("SELECT pid, at FROM casts WHERE player = ?", id),
@@ -511,6 +581,9 @@ export async function exportAccount(env: AccountEnv, invite: InviteRow): Promise
 // random id so the month's budget stays whole. The invite row stays as
 // deleted so the id is never reused and no link or passkey works again.
 export async function deleteAccount(env: AccountEnv, invite: InviteRow): Promise<{ ok: true }> {
+  // 4.4.6: the owner's account holds the game's own rows (every spend and
+  // First Discovery of the admin since 3.4); it is never deleted.
+  if (invite.admin) throw new HttpError(400, "The owner's account is never deleted: it holds the admin's rows since 3.4");
   const db = env.DB;
   const id = invite.id;
   const now = Date.now();

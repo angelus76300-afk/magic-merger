@@ -1,5 +1,5 @@
 import type { Tier } from "../shared/tiers";
-import type { AccountInfo, ProgressDoc, ProgressPut } from "../shared/account";
+import type { AccountInfo, ProgressDoc, ProgressPut, SignedIn, StoredKind } from "../shared/account";
 import type { FeedbackAction, FeedbackResponse } from "../shared/feedback";
 import type {
   ApiError,
@@ -82,20 +82,20 @@ export function setSession(token: string | null): void {
 // 4.0: accounts.
 export const account = {
   registerOptions: () => post<{ options: unknown; challengeId: string }>("/api/account/register/options", {}),
-  registerVerify: (challengeId: string, response: unknown) =>
-    post<{ token: string; name: string; created: boolean }>("/api/account/register/verify", { challengeId, response }),
+  registerVerify: (challengeId: string, response: unknown) => post<SignedIn & { created: boolean }>("/api/account/register/verify", { challengeId, response }),
   loginOptions: () => post<{ options: unknown; challengeId: string }>("/api/account/login/options", {}),
-  loginVerify: (challengeId: string, response: unknown) => post<{ token: string; name: string }>("/api/account/login/verify", { challengeId, response }),
-  claimLink: () => post<{ token: string; name: string }>("/api/account/claim-link", {}),
+  loginVerify: (challengeId: string, response: unknown) => post<SignedIn>("/api/account/login/verify", { challengeId, response }),
+  claimLink: () => post<SignedIn>("/api/account/claim-link", {}),
   emailLink: (email: string) => post<{ ok: true }>("/api/account/email-link", { email }),
-  emailClaim: (token: string) => post<{ token: string; name: string }>("/api/account/email-claim", { token }),
+  emailClaim: (token: string) => post<SignedIn>("/api/account/email-claim", { token }),
   logout: () => post<{ ok: true }>("/api/account/logout", {}),
   setEmail: (email: string) => post<{ ok: true }>("/api/account/email", { email }),
   revokeDevice: (hash: string) => send<{ ok: true }>("DELETE", "/api/account/session", { hash }),
   info: () => send<AccountInfo>("GET", "/api/account"),
   export: () => send<Record<string, unknown>>("GET", "/api/account/export"),
   remove: () => send<{ ok: true }>("DELETE", "/api/account"),
-  progress: () => send<{ progress: ProgressDoc[] }>("GET", "/api/progress"),
+  // 4.4.6: some documents only (the previous island is never sent unasked).
+  progress: (kinds?: StoredKind[]) => send<{ progress: ProgressDoc[] }>("GET", kinds ? `/api/progress?kind=${kinds.join(",")}` : "/api/progress"),
   putProgress: (body: ProgressPut) => send<{ ok: true; updatedAt: number }>("PUT", "/api/progress", body),
 };
 
@@ -230,8 +230,14 @@ export function sendPerf(sample: PerfSample): void {
   }).catch(() => undefined);
 }
 
-export function setToken(token: string): void {
-  store(TOKEN_KEY, token.trim());
+export function setToken(token: string | null): void {
+  if (token) store(TOKEN_KEY, token.trim());
+  else clear(TOKEN_KEY);
+}
+
+// 4.4.6: the admin token is only needed until the owner's account exists.
+export function hasToken(): boolean {
+  return !!read(TOKEN_KEY);
 }
 
 // The Worker's view of this browser. A revoked link answers 403.
