@@ -3,6 +3,10 @@
   "entries": [
     {
       "date": "2026-11-05",
+      "text": "Spells caught breaking their promise are now written again, one a day: Frost Nova first, whose thaw set the village on fire, then Light, then spells that failed their own test. The new version reaches you only once it passes its test."
+    },
+    {
+      "date": "2026-11-05",
       "version": "4.5.1",
       "text": "Spells that keep their own state now work as written (Starfall Rain heals and calms again), a refusal is no longer shown as an item's description, a wonder no longer names a friend who hid or left, and items found on the Community tab no longer count the eight forces."
     },

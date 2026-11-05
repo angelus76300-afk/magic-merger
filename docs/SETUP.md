@@ -155,12 +155,14 @@ Set in `wrangler.jsonc`:
 | `BUDGET_USD`         | `48`                           | Claude spend allowed per calendar month, everyone together; the staging Worker has $2 and the Console workspace $50     |
 | `INVITE_CAP_USD`     | `5`                            | what each invite may spend per calendar month, unless the admin tops it up (3.4)                                        |
 | `JUDGE_MODEL`        | `claude-haiku-5-5`             | scoring three Spell Lab frames of a program (3.3)                                                                       |
-| `REWRITE_BUDGET_USD` | `0.5`                          | dollars a day for rewrites asked by votes, the judge, failed test runs and broken promises (all four since 4.5.1)       |
+| `REWRITE_BUDGET_USD` | `0.5`                          | dollars a day for rewrites by votes, the judge, failed test runs, broken promises and, one a day, evidence              |
 | `BIG_SPELLS_BATCH`   | `1`                            | legendary and cosmic spells drafted by Haiku at once, written by Opus through the Batch API at half price; `0` for 3.2  |
 | `AHEAD_DAILY_USD`    | `1.5`                          | 4.2: dollars a day that writing every new item at the merge may spend, everyone together; `0` turns it off (DESIGN.md)  |
 | `REFRESH_BUDGET_USD` | `8`                            | dollars a month the refresh of the legacy library may spend (3.7 part E), held before each batch is sent                |
 | `WONDER_BUDGET_USD`  | `2`                            | 4.4.5 part C: dollars a month a new wonder a day may spend (held before each call), inside `BUDGET_USD`                 |
 | `WONDERS`            | unset                          | `0` stops the daily wonder; the admin can still ask with `POST /api/admin/wonder-daily`                                 |
+| `DAILY_CHALLENGES`   | unset                          | `0` stops the night's daily challenge; the admin can still set one with `POST /api/admin/daily`                         |
+| `EVIDENCE_REWRITES`  | unset                          | `0` stops the daily rewrite of a live program shown broken (DESIGN.md, "Old spells and new promises")                   |
 | `DESIGN_MODEL`       | `SPELL_MODEL`                  | who designs how the World API grows from what spells lacked (3.4.2), one call a day at most                             |
 | `EVOLVE`             | unset                          | `0` stops the API from growing on its own; the admin can still ask with `POST /api/admin/evolve`                        |
 | `ANTHROPIC_BASE_URL` | unset                          | routes Claude calls through a gateway, or the stub in `npm run test:worker`; `GITHUB_API_URL` does the same for GitHub  |
