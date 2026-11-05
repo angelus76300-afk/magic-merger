@@ -594,8 +594,34 @@ input {
   flex-wrap: wrap;
   overflow-x: hidden;
   overflow-y: auto;
-  max-height: min(42vh, 360px);
+  max-height: var(--spells-h, min(42vh, 360px));
   align-content: flex-start;
+}
+
+/* The grip on the bar's top edge: drag it to show more or fewer spells. */
+.spellbar {
+  position: relative;
+}
+.spellbar-grip {
+  height: 18px;
+  margin: -8px 0 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.spellbar-grip::before {
+  content: "";
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.spellbar-grip:hover::before,
+.spellbar-grip:focus-visible::before,
+.spellbar-grip.dragging::before {
+  background: var(--muted);
 }
 
 .spell-tools {
@@ -1826,4 +1852,51 @@ input {
 }
 .account-previous {
   margin-top: 6px !important;
+}
+
+/* The account chip (4.4.6): who is signed in here, and whether it is saved. */
+.account-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 9em;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  min-height: 28px;
+  cursor: pointer;
+}
+.account-chip[hidden] {
+  display: none;
+}
+.account-chip::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.account-chip-saved::before {
+  background: #5fd38d;
+}
+.account-chip-pending::before {
+  background: #f4d58d;
+}
+.account-chip-unsaved::before {
+  background: var(--danger);
+}
+.account-chip-out {
+  border-color: var(--accent, #f4d58d);
+  color: var(--accent, #f4d58d);
+}
+.account-chip-out::before {
+  background: var(--danger);
 }

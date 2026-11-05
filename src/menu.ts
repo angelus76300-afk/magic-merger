@@ -54,12 +54,12 @@ export function openMenu(status: HealthResponse | null, sync: Sync, about: () =>
   // A link not yet an account, or the owner's account not made yet (the token).
   show(".menu-create", !signedIn && !!account && !account.claimed);
   for (const sel of [".menu-syncnow", ".menu-account", ".menu-switch", ".menu-signout"]) show(sel, signedIn);
+  const stop = sync.listen(refresh);
   const close = () => {
-    sync.onStatus = null;
+    stop();
     d.close();
     d.remove();
   };
-  sync.onStatus = refresh;
   d.querySelector(".menu-signin")!.addEventListener("click", () => {
     close();
     void signIn();

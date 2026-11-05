@@ -418,6 +418,14 @@ try {
     shownSync && syncedPC && pcHas === 10,
     `${pcHas} items on the computer, the account holds ${phoneFound.length}: ${phoneFound.join(", ")}`,
   );
+  // The account chip says who is signed in, and that it is saved.
+  await closeDialogs(PC.page);
+  const chip = await PC.page.locator("#account-chip").evaluate((el) => ({ text: el.textContent, cls: el.className, shown: !el.hidden }));
+  check(
+    "E: the account chip in the top bar names the account, saved",
+    chip.shown && chip.text === "admin" && /saved|pending/.test(chip.cls),
+    JSON.stringify(chip),
+  );
   const text = await menuText(PC);
   check(
     "E: the ? menu says who is signed in and when the account was last saved",
@@ -526,6 +534,33 @@ try {
   await withLink.page.click("dialog.welcome .welcome-start");
   await withLink.page.waitForSelector("dialog.account-offer[open]", { timeout: 10000 });
   await withLink.page.click("dialog.account-offer .account-later");
+  const outChip = await withLink.page.locator("#account-chip").evaluate((el) => ({ text: el.textContent, cls: el.className, shown: !el.hidden }));
+  check(
+    "F: on a device not signed in, the account chip says Sign in",
+    outChip.shown && outChip.text === "Sign in" && /account-chip-out/.test(outChip.cls),
+    JSON.stringify(outChip),
+  );
+  if (process.env.SHOTS) await withLink.page.screenshot({ path: `${process.env.SHOTS}/chip-signed-out.png` });
+  // The spell bar's grip: dragged up it shows more spells, and the height stays.
+  await withLink.page.click('.tab[data-view="world-view"]');
+  await withLink.page.waitForSelector(".spellbar-grip", { timeout: 20000 });
+  await withLink.page.waitForTimeout(3000);
+  const listH = () => withLink.page.locator("#spell-list").evaluate((el) => Math.round(el.getBoundingClientRect().height));
+  const before = await listH();
+  const g = await withLink.page.locator(".spellbar-grip").boundingBox();
+  await withLink.page.mouse.move(g.x + g.width / 2, g.y + g.height / 2);
+  await withLink.page.mouse.down();
+  for (let i = 1; i <= 8; i++) await withLink.page.mouse.move(g.x + g.width / 2, g.y + g.height / 2 - i * 30);
+  await withLink.page.mouse.up();
+  await withLink.page.waitForTimeout(500);
+  const stored = await withLink.page.evaluate(() => Number(localStorage.getItem("mm-spellbar-height") ?? 0));
+  const grown = await withLink.page.locator(".spellbar").evaluate((el) => el.classList.contains("expanded"));
+  if (process.env.SHOTS) await withLink.page.screenshot({ path: `${process.env.SHOTS}/spellbar-grip.png` });
+  check(
+    "G: dragging the spell bar's grip up opens it to that height, kept for next time",
+    grown && stored >= 200 && stored <= 260,
+    JSON.stringify({ before, stored, grown }),
+  );
   const linkMenu = (await openMenu(withLink)) && (await withLink.page.locator("dialog.menu .menu-signin").isVisible());
   check('F: on a device with a link, "Sign in" is in the ? menu', linkMenu);
 } catch (err) {
