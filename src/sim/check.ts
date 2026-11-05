@@ -440,10 +440,13 @@ function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Ma
   // so one block that strays (a lantern's voxel knocked eleven cells away
   // after the cast) does not make an object a building; a giant stays giant.
   const mine: { x: number; y: number; tall: number }[] = [];
+  // Marks creatures lay and grow (a cairn, a den, a graveyard's stones) are the island's life, not the item.
+  const marks = world.marks;
   for (const [k] of world.decor) {
     if (before.decor.has(k)) continue;
     const x = keyX(k);
     const y = keyY(k);
+    if (marks.some((mk) => Math.abs(mk.x - x) <= mk.size + 1.5 && Math.abs(mk.y - y) <= mk.size + 1.5)) continue;
     mine.push({ x, y, tall: world.inside(x, y) ? keyLevel(k) + 1 - Math.round(world.height[y * world.w + x] * 0.5) : 0 });
   }
   const voxels = mine.length;
