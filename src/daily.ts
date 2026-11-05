@@ -63,7 +63,10 @@ export class Daily {
     this.root.append(head);
     const open = el("section", "daily-group");
     open.append(el("h3", "", data.open.length ? `Waiting to be found (${data.open.length})` : "Waiting to be found"));
-    if (!data.open.length) open.append(el("p", "daily-empty", "Every challenge has been found. A new one comes tonight."));
+    if (!data.open.length)
+      open.append(
+        el("p", "daily-empty", data.found.length ? "Every challenge has been found. A new one comes tonight." : "The first challenge comes tonight."),
+      );
     for (const c of data.open) open.append(card(c));
     this.root.append(open);
     if (data.found.length) {

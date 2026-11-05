@@ -3,6 +3,11 @@
   "entries": [
     {
       "date": "2026-11-05",
+      "version": "4.5.1",
+      "text": "Spells that keep their own state now work as written (Starfall Rain heals and calms again), a refusal is no longer shown as an item's description, a wonder no longer names a friend who hid or left, and items found on the Community tab no longer count the eight forces."
+    },
+    {
+      "date": "2026-11-05",
       "version": "4.5",
       "text": "Daily challenges: every night a new item waits to be found, and the first to make it has their name on it. A Community tab shows who plays and their favorite spell, and this list tells you what changed."
     },

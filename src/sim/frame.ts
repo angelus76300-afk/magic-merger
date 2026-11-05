@@ -11,7 +11,7 @@ import type { SavedWorld } from "./save";
 import { Hud } from "./hud";
 import { SCENARIOS } from "./scenarios";
 import { firstLook } from "./firstlook";
-import { readDef, signatureOf, wonderInfo, type WonderDef } from "./wonders";
+import { readDef, setFinders, signatureOf, wonderInfo, type WonderDef } from "./wonders";
 
 // The pool of wonders written as programs (4.4.5 part C), checked: the page
 // relays what the server said, and a definition is code like any spell.
@@ -300,6 +300,7 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       sandbox = { save: msg.save, size: msg.size, land: readChoice(msg.land), rules: msg.rules };
       recent = readRecent(msg.recent);
       pool = readPool(msg.wonders);
+      setFinders(pool);
       openSandbox();
       clearInterval(saveTimer);
       saveTimer = window.setInterval(save, 10_000);
@@ -339,6 +340,7 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       break;
     case "wonders":
       pool = readPool(msg.list);
+      setFinders(pool);
       break;
     case "scenario":
       openScenario(msg.id, msg.ahead ?? 0);

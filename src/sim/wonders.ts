@@ -1032,9 +1032,20 @@ export interface WonderInfo {
   by?: string;
 }
 
+// Who found each program wonder, from the pool the Worker serves now
+// (4.5.1, audit B4): an island saves its wonders' defs, names included, and a
+// finder who later deleted their account or hid from the Community tab was
+// still named on every island made before. The live pool leaves them out
+// (worker/wonders.ts, livePool), so the name is read from it, never from the save.
+let finders = new Map<number, string>();
+
+export function setFinders(pool: WonderDef[]): void {
+  finders = new Map(pool.filter((d) => d.by).map((d) => [d.id, d.by!]));
+}
+
 export function wonderInfo(w: Wonder): WonderInfo {
   const k = kindOf(w);
-  const by = w.def?.by;
+  const by = w.def ? finders.get(w.def.id) : undefined;
   return {
     kind: w.kind,
     name: w.name,

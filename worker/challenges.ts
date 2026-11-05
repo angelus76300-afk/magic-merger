@@ -1,4 +1,4 @@
-import { CHALLENGES, challengeById, fewestMerges, parOf, starsFor, strongEnough, type ChallengeDef, type Recipe } from "../shared/challenges";
+import { CHALLENGES, challengeById, fewestMerges, leastMerges, parOf, starsFor, strongEnough, type ChallengeDef, type Recipe } from "../shared/challenges";
 import { HttpError } from "./http";
 import { elementKey } from "../shared/elements";
 import { isTier, tierFromDepth, type Tier } from "../shared/tiers";
@@ -65,7 +65,10 @@ export async function listChallenges(db: D1Database, payer: Payer): Promise<{ ch
     const keys = solvers.get(def.id) ?? [];
     if (!keys.length) continue;
     const b = best.get(def.id) ?? null;
-    const { par } = parOf(graph, def.start.map(elementKey), keys, b?.merges ?? null);
+    // 4.5.1 (audit B8, T1): par is what the recipe graph says a verified
+    // solver takes. A claimed count is shown as the best, but the floor a
+    // claim must pass is only the chain's length, so it never sets par.
+    const { par } = parOf(graph, def.start.map(elementKey), keys, null);
     const m = myBest.get(def.id) ?? null;
     out.push({
       id: def.id,
@@ -105,9 +108,9 @@ export async function recordWin(
   // recipe graph says that spell takes from this start set, and the spell
   // must be reachable at all, or one client could set par to 0 for everyone.
   const graph = await recipes(db);
-  const fewest = fewestMerges(graph, def.start.map(elementKey)).get(key);
-  if (!fewest) throw new HttpError(400, "That spell cannot be made from this challenge's start set");
-  if (merges < fewest.size) throw new HttpError(400, `That spell takes at least ${fewest.size} merges from this start set`);
+  const least = leastMerges(graph, def.start.map(elementKey), key);
+  if (least === null) throw new HttpError(400, "That spell cannot be made from this challenge's start set");
+  if (merges < least) throw new HttpError(400, `That spell takes at least ${least} merges from this start set`);
   const before = (await bestWins(db)).get(def.id)?.merges ?? null;
   const now = Date.now();
   await db.batch([
@@ -121,7 +124,10 @@ export async function recordWin(
       .bind(def.id, key, row.pid, now),
   ]);
   const solvers = (await verified(db)).get(def.id) ?? [key];
-  const { par } = parOf(graph, def.start.map(elementKey), solvers, Math.min(merges, before ?? merges));
+  // 4.5.1 (audit B8, T1): par from the graph alone, as the cards read it
+  // (listChallenges): a claim between the floor and the graph's own count
+  // cannot be checked, so it may win but never lowers par for everyone.
+  const { par } = parOf(graph, def.start.map(elementKey), solvers, null);
   return { stars: starsFor(merges, par), par, best: before === null || merges < before };
 }
 

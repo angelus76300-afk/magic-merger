@@ -17,7 +17,17 @@ export const OWNER_KEY = "magic-merger.owner";
 // The account's own: discoveries, board, descriptions, spells and wins (the
 // save), the island, what the server held when this device last looked, and
 // the wonders of the last islands (so a new island never repeats them).
-const PROGRESS_KEYS = ["magic-merger.save", WORLD_KEY, WORLD_AT_KEY, "magic-merger.sync", "magic-merger.wonder-sets"];
+// 4.5.1 (audit, E.S10-F): a challenge attempt and a win not yet recorded are
+// the account's too; left out, the next account on the device posted them.
+const PROGRESS_KEYS = [
+  "magic-merger.save",
+  WORLD_KEY,
+  WORLD_AT_KEY,
+  "magic-merger.sync",
+  "magic-merger.wonder-sets",
+  "mm-challenge-attempt",
+  "mm-challenge-win",
+];
 
 // Where a save set aside waits: IndexedDB, which has room for an island
 // beside the one in localStorage (a giant one is 0.6M characters).

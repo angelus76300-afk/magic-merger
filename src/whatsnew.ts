@@ -6,14 +6,9 @@ import { toast } from "./toast";
 // it, puts a dot on the ? button while something is newer, and lists what
 // came since. A player whose idea was built is told so, by its title.
 
-export interface ChangelogEntry {
-  date: string;
-  text: string;
-  pr?: number;
-  version?: string;
-  // The Ideas tab id it built, when it came from one.
-  idea?: number;
-}
+import { entryId, whatIsNew, type ChangelogEntry } from "../shared/changelog";
+
+export type { ChangelogEntry };
 
 const SEEN_KEY = "mm-whatsnew-seen";
 
@@ -35,17 +30,26 @@ function seenAt(): number | null {
   }
 }
 
-function markSeen(at = Date.now()): void {
+// The entries this player had when they last looked (4.5.1).
+const READ_KEY = "mm-whatsnew-read";
+
+function readIds(): string[] | null {
   try {
-    localStorage.setItem(SEEN_KEY, String(at));
+    const v = JSON.parse(localStorage.getItem(READ_KEY) ?? "null") as unknown;
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : null;
+  } catch {
+    return null;
+  }
+}
+
+function markSeen(entries: ChangelogEntry[]): void {
+  try {
+    localStorage.setItem(SEEN_KEY, String(Date.now()));
+    localStorage.setItem(READ_KEY, JSON.stringify(entries.slice(0, 200).map(entryId)));
   } catch {
     // shown again next visit
   }
 }
-
-// The day an entry was merged, as a time: the end of that day, so an entry
-// of today counts as new for someone who last looked this morning.
-const entryTime = (e: ChangelogEntry) => Date.parse(`${e.date}T23:59:59`);
 
 export async function loadNews(): Promise<News | null> {
   let entries: ChangelogEntry[] = [];
@@ -57,14 +61,12 @@ export async function loadNews(): Promise<News | null> {
     return null;
   }
   const seen = seenAt();
+  const read = readIds();
   // A new player starts here: the game's history is not news to them.
-  if (seen === null) markSeen();
-  const since = seen ?? Date.now();
+  if (seen === null) markSeen(entries);
   const feedback = await api.feedback();
-  const ideas = (feedback?.suggestions ?? [])
-    .filter((s) => s.mine && s.status === "shipped" && s.updatedAt > since)
-    .map((s) => ({ title: s.title, at: s.updatedAt }));
-  news = { entries, fresh: entries.filter((e) => entryTime(e) > since && seen !== null), ideas };
+  const shipped = (feedback?.suggestions ?? []).filter((s) => s.mine && s.status === "shipped").map((s) => ({ title: s.title, at: s.updatedAt }));
+  news = { entries, ...whatIsNew(entries, shipped, seen, read) };
   for (const l of listeners) l();
   return news;
 }
@@ -126,7 +128,8 @@ export function openNews(): void {
   d.addEventListener("cancel", close);
   document.body.append(d);
   d.showModal();
-  markSeen();
+  // Only with the list loaded: an empty one stored here would make every entry new next time (T3).
+  if (news) markSeen(news.entries);
   if (news) {
     news.fresh = [];
     news.ideas = [];

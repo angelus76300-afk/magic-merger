@@ -2,6 +2,7 @@ import { parseIntents, type Intent } from "../shared/promises";
 import { syntaxError } from "../shared/spellcode";
 import type { DesignAnswer } from "./oracle";
 import type { LibraryDoc } from "./prompts";
+import { lastRunAt } from "./cron";
 
 // An API that grows from what spells lacked (3.4.2).
 //
@@ -108,9 +109,14 @@ export async function openGaps(db: D1Database, limit = 80): Promise<OpenGap[]> {
   return rows.results.map((r) => ({ id: r.id, key: r.key, spell: r.name ?? r.key, tier: r.tier ?? "major", intents: r.intents, missing: r.missing }));
 }
 
+// 4.5.1 (audit, risk 2): a design answered "none" or refused stores no
+// extension, so the last extension alone made the designer due again at the
+// next ten minute run, an Opus call each time. The last attempt counts too.
 export async function designDue(db: D1Database, now = Date.now()): Promise<boolean> {
   const last = await db.prepare("SELECT MAX(created_at) AS at FROM extensions").first<{ at: number | null }>();
   if (last?.at && now - last.at < DESIGN_EVERY_MS) return false;
+  const tried = await lastRunAt(db, "design");
+  if (tried && now - tried < DESIGN_EVERY_MS) return false;
   const spells = await db.prepare("SELECT COUNT(DISTINCT key) AS n FROM gaps WHERE extension IS NULL").first<{ n: number }>();
   return (spells?.n ?? 0) >= DESIGN_MIN_SPELLS;
 }

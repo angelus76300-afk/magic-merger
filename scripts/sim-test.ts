@@ -65,6 +65,7 @@ import { projectedSim, sizesOffered, SIM_BUDGET_MS } from "../src/headroom";
 import { skyBodies, weatherAt } from "../src/sim/voxel/sky";
 import { Terrain } from "../src/sim/voxel/terrain";
 import { MeshBasicMaterial, type Mesh } from "three";
+import { fixesChecks } from "./fixes-test";
 
 // No verdict here depends on how fast the machine is (4.1, review M8): the
 // slow cast guard is off unless SLOW_MS is set, and worst ticks are printed,
@@ -436,7 +437,9 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
     `f in ${best.get("f")?.size}, e in ${best.get("e")?.size}`,
   );
   check("an item the start set cannot reach has no par", !fewestMerges(graph, ["b"]).has("f"));
-  check("beating par lowers it", parOf(graph, ["a", "b"], ["e"], 1).par === 1 && parOf(graph, ["a", "b"], ["e"], 5).par === 2);
+  // parOf's bestWin (the Worker passes null since 4.5.1, so a claim never sets par).
+  check("a better win given to parOf lowers par", parOf(graph, ["a", "b"], ["e"], 1).par === 1 && parOf(graph, ["a", "b"], ["e"], 5).par === 2);
+  check("with no win given, par is the graph's", parOf(graph, ["a", "b"], ["e"], null).par === 2);
   check("three stars at par, two within two, one for any win", starsFor(4, 4) === 3 && starsFor(3, 4) === 3 && starsFor(6, 4) === 2 && starsFor(7, 4) === 1);
   // An attempt counts merges as par does: a pair merged twice is one merge, whichever way round.
   const pairs = countMerge(countMerge(countMerge([], "Fire", "Water"), "Water", "Fire"), "Steam", "Air");
@@ -2225,6 +2228,9 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
     `failed ${failed.join()}, logged ${logged.join()}, swept ${swept}`,
   );
 }
+
+// 13. The audit's fixes (4.5.1): scripts/fixes-test.ts.
+await fixesChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);
