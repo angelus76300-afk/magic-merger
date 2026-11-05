@@ -79,6 +79,7 @@ The long tail of things that do not behave as their name says, found mostly thro
 - **Audit the most cast items first**: the twenty most cast live items, each cast on a medium island and compared with its name, description and intents; every mismatch becomes a line here, then one rewrite at a time. S, Claude.
 - **Teleports land somewhere sensible**: the Wormhole sends creatures to the mirror point of the island, which can be the sea or a cliff; land on dry ground near the other end. S, Claude.
 - **What a creature carries shows in its hand** and changes what it does (a villager with a torch lights the way, one with a sword fights back). S, Claude.
+- **When the test and the judge disagree, players decide**: the 2 November refresh rejected four rewrites that passed their test run (Light, Crystal Cavern, Divine Intervention, Tree of Life) because the judge scored them a point or two lower, so the old programs that fail their own test stay live. The judge only advises and has 69 votes behind it. Serve such a rewrite to half the players who cast the item for a few days, with the vote bar, and keep whichever version players vote up. What the player feels: the spell they complained about gets better without anyone asking. What it adds: votes settle what an uncalibrated judge cannot. Cost: no paid call (the programs exist), one session; risk: two versions of one item in play for a few days. Found through lens 9, the numbers (the live `refresh_verdicts` and `programs` tables, read on 5 November). S, Claude.
 
 ### Security
 
@@ -118,6 +119,8 @@ Planned in 5.3.
 ## Built
 
 Newest first, one line each: the date, the idea, its category (the planner reads it to find today's place in the rotation), the lens the builder used, and the pull request.
+
+- 2026-11-05: **Spells shown broken are written again, one a day** (rewrites by evidence, ROADMAP 4.7.5 item 3, the part for failed test runs and reviewed findings: Frost Nova and Light first). Interactions, the owner's idea (4.5.1a item 6). Lens 13, audit one item. PR #45.
 
 - 2026-11-05: **Daily challenges** (decided: whoever reaches the item first wins, owned parents or not; never expires, no cap) and **a Community tab**, built in version 4.5, not a daily update. Gameplay, the owner's ideas. PR #40.
 

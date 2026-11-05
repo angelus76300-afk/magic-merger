@@ -9,7 +9,7 @@ import type { LibraryExample } from "./prompts";
 // candidate (3.7): written by the refresh of the legacy library, served to
 // nobody until the refresh runner decides.
 export type ProgramStatus = "trial" | "live" | "retired" | "rejected" | "candidate";
-export type ProgramOrigin = "legacy" | "new" | "draft" | "batch" | "votes" | "judge" | "check" | "repair" | "admin" | "promise" | "refresh";
+export type ProgramOrigin = "legacy" | "new" | "draft" | "batch" | "votes" | "judge" | "check" | "repair" | "admin" | "promise" | "refresh" | "evidence";
 
 export interface ProgramRow {
   id: number;
@@ -158,7 +158,7 @@ export async function downReasons(db: D1Database, pid: number): Promise<string[]
 
 export async function recentRewrite(db: D1Database, key: string, now = Date.now()): Promise<boolean> {
   const row = await db
-    .prepare("SELECT 1 AS x FROM rewrites WHERE key = ? AND at > ? AND cause IN ('votes', 'judge') AND status != 'failed' LIMIT 1")
+    .prepare("SELECT 1 AS x FROM rewrites WHERE key = ? AND at > ? AND cause IN ('votes', 'judge', 'evidence') AND status != 'failed' LIMIT 1")
     .bind(key, now - REWRITE_COOLDOWN_MS)
     .first();
   return !!row;
