@@ -145,6 +145,14 @@ check("the login is compared without case", byOwner(own("x", { user: { login: RE
 
 // Forks: the Gate never merges a pull request whose head branch lives in another repository.
 check("a fork waits", !decide({ ...ready, fork: true }).ready, why({ fork: true }));
+// The planner's case: a fork that only edits docs/ROADMAP.md is docs only (no smoke, no npm test), so on
+// main one forged passing review merged it, and the next night run would start a builder from that plan.
+const roadmapFork = { ...ready, fork: true, ci: "docs", smoke: "missing", docsOnly: true, review: reviewFor(forged.slice(0, 1), SHA, REPO_OWNER) };
+check("a fork editing only the roadmap, with a stranger's passing review, waits", !decide(roadmapFork).ready, why(roadmapFork));
+check(
+  "even with a real review, a docs only fork waits",
+  !decide({ ...roadmapFork, review: reviewFor([own(`<!-- mm-review verdict=pass sha=${SHA} -->`)], SHA, REPO_OWNER) }).ready,
+);
 check("unknown fork state waits (fail closed)", !decide({ ...ready, fork: undefined }).ready);
 check("a head repository of this name is not a fork", headRepoOf({ head: { repo: { full_name: "Owner/Repo" } } }) === "owner/repo");
 check("a deleted fork has no head repository", headRepoOf({ head: { repo: null } }) === "");
