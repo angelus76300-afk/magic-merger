@@ -18,7 +18,7 @@ gitleaks git --log-opts="--all -m"  269 commits scanned, ~11.94 MB, no leaks fou
 gitleaks dir .                      ~3.85 MB, no leaks found
 ```
 
-The pattern pass found one distinct value, 6 times: `sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123`, the fake key `scripts/risk-test.mjs` uses to check that rule R13 catches a key in a diff (added in #44). It is not a key. gitleaks does not flag it because its entropy is too low.
+The pattern pass found one distinct value, 6 times: `sk-ant-api03-abcdef...0123` (cut here so this file is not itself flagged), the fake key `scripts/risk-test.mjs` uses to check that rule R13 catches a key in a diff (added in #44). It is not a key. gitleaks does not flag it because its entropy is too low.
 
 ## What a scan cannot see
 
