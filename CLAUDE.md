@@ -31,6 +31,16 @@ Keep working on everything that does not depend on the answer while you wait.
 
 They are among the red classes of `docs/DAILY.md`, checked on every diff by `scripts/risk.mjs`; the full list of what is red or amber (the pipeline, dependencies, saves, the admin surface, tests taken out) is there. Pull requests opened by the feedback routine from the Ideas tab carry players' words into code; they are amber and wait for the owner, as `docs/FEEDBACK.md` says. "Pause" from the owner, in any session: open an issue labelled `pause`; it stops every merge and deploy until it is closed.
 
+## Talking to the owner
+
+The owner has little time. Every message to the owner, from any session, is short and plain, in this order:
+
+1. **Goal**: the visible change, in words a player would use.
+2. **What I tried**, and **where I am blocked**, one line each.
+3. **Choose**: two or three short options, the recommended one first.
+
+Never ask the owner to merge, deploy or check something the workflows do. Never refer to a pull request by its number. Anything only the owner can do goes on the owner's list (`docs/DAILY.md`, "Your list"), through the planner, so it is not lost.
+
 ## Habits
 
 1. **Find bugs before the owner does**: play what you changed and what it touches, at phone size, for a few minutes; check that items do what their names and descriptions promise. A bug the owner finds first is a miss.
