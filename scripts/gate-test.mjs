@@ -61,6 +61,7 @@ check("behind main only by docs is up to date", upToDateFrom(false, ["docs/DAILY
 check("behind main by code is not", !upToDateFrom(false, ["docs/DAILY.md", "worker/index.ts"]));
 check("behind main by the changelog is not", !upToDateFrom(false, ["public/changelog.json"]));
 check("unknown is not", !upToDateFrom(false, null));
+check("a head commit not fetched yet waits", !decide({ ...ready, headFetched: false }).ready);
 check("behind main waits", !decide({ ...ready, upToDate: false }).ready);
 check(
   "docs only behind main is ready",
