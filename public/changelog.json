@@ -3,6 +3,14 @@
   "entries": [
     {
       "date": "2026-11-07",
+      "text": "Items are now rune tiles, a star for spells and a gem for artifacts. Challenges, Daily, Community and Ideas are read out on the island by day. Craft's filters show their full names."
+    },
+    {
+      "date": "2026-11-07",
+      "text": "A new look: the game is now drawn like its island, with tabs under your thumb and buttons big enough to tap."
+    },
+    {
+      "date": "2026-11-07",
       "text": "Shields now stop meteors, fireballs and other thrown spells at their edge. A shield cracks as it takes hits and breaks under a stronger spell, or a second one of its own strength.",
       "idea": 2
     },
