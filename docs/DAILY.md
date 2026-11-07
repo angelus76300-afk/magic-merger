@@ -25,7 +25,7 @@ Every pull request gets a class from its diff. `scripts/risk.mjs` decides it (ma
 
 - **Green** merges itself: the Gate squashes it once CI has passed on the head commit, the preview smoke test passed, and an independent review of the head commit passed with `npm test` run and passing in the reviewer's session (`tests=pass`). The owner reads about it in the brief.
 - **Amber** never merges by default. It waits for the owner's one tap OK in the morning brief, which lists it with its preview link and two frames. The planner records the OK as the label `owner-ok` with an `mm-owner ok` comment quoting the owner.
-- **Red** merges only on the owner's explicit yes for that pull request, by number, in reply to a question that said what it changes and why it is red. "OK all" is never a yes. The planner records it as the label `owner-yes` with an `mm-owner yes` comment quoting the owner.
+- **Red** merges only on the owner's explicit yes for that item, by its name, in reply to a question that said what it changes and why it is red. "OK all" is never a yes. The planner records it as the label `owner-yes` with an `mm-owner yes` comment quoting the owner.
 
 Red, exactly:
 
