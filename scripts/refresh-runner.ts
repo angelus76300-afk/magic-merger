@@ -39,6 +39,9 @@ interface Candidate {
   key: string;
   name: string;
   kind: "spell" | "artifact";
+  // 4.6: written as this kind (shared/forms.ts), and said to be giant.
+  form?: string;
+  giant?: boolean;
   tier: Tier;
   intents: string[];
   model: string;
@@ -60,7 +63,7 @@ try {
     // A cast that kills the browser (a page crash after many casts) leaves
     // this one undecided, and the next starts in a fresh browser.
     try {
-      const req = { key: c.key, name: c.name, tier: c.tier, code: c.code, intents: c.intents, kind: c.kind };
+      const req = { key: c.key, name: c.name, tier: c.tier, code: c.code, intents: c.intents, kind: c.kind, form: c.form, giant: c.giant };
       const check = runCheck(req);
       const old = c.oldCode ? runCheck({ ...req, code: c.oldCode }) : null;
       const shots = shotsFor(c.tier);
@@ -83,9 +86,16 @@ try {
       const n = judged.new;
       let replace = false;
       let reason: string;
+      // 4.6: an old program that is not the kind of thing its item is (a Serpent
+      // of stone spheres, a Village that is a charm) fails the same test run;
+      // the judge's score of it then decides nothing.
+      const wrongKind = !!c.form && !!old && (old.problem === "kind" || old.problem === "size");
       if (!check.ok) reason = `its test run failed (${check.problem}): ${check.detail}`;
       else if (!n) reason = "the judge did not answer";
-      else if (o && n.score < o.score) reason = `the judge scored it lower (${n.score} against ${o.score})`;
+      else if (wrongKind) {
+        replace = true;
+        reason = `the old one is not ${c.form === "object" ? "an object" : `a ${c.form}`} of its size (${old!.problem}); the new one passed its test run, judged ${n.score}${o ? ` against ${o.score}` : ""}`;
+      } else if (o && n.score < o.score) reason = `the judge scored it lower (${n.score} against ${o.score})`;
       else if (o && o.alive === "yes" && n.alive === "no") reason = "its creatures looked less alive";
       else {
         replace = true;

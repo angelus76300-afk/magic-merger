@@ -14,7 +14,7 @@ export type CheckOutcome = Omit<CheckRequest, "name" | "id"> & { phases?: Record
 // first three were read here, so a program that broke its promise (3.4.2) or
 // stood idle for five minutes (3.7) reached the Worker as "not ok, no
 // problem" and was promoted like a pass.
-const PROBLEMS = ["crash", "nothing", "wiped", "promise", "idle"] as const;
+const PROBLEMS = ["crash", "nothing", "wiped", "promise", "idle", "size", "kind", "look"] as const;
 
 function numbers(raw: unknown, max: number): Record<string, number> {
   const out: Record<string, number> = {};

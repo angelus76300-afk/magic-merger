@@ -36,7 +36,8 @@ export function openCard(store: Store, key: string, first = false): void {
   d.querySelector(".card-emoji")!.textContent = element.emoji;
   d.querySelector(".card-name")!.textContent = element.name;
   const kind = d.querySelector<HTMLElement>(".card-kind")!;
-  kind.textContent = element.kind;
+  // 4.6: what it is, of the seven kinds, when the merge said so.
+  kind.textContent = element.form && element.form !== "spell" ? element.form : element.kind;
   kind.dataset.kind = element.kind;
   const tier = TIER_LABEL[element.tier ?? tierFromDepth(element.depth)];
   d.querySelector(".card-depth")!.textContent = element.depth === 0 ? `Primal force · ${tier}` : `${tier} · depth ${element.depth}`;
