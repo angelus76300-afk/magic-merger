@@ -67,6 +67,9 @@ export const TIER_POWER: Record<Tier, number> = { cantrip: 0.5, minor: 1, major:
 // of the same tier cracks a ward but never breaks it alone; two casts, or
 // one a tier stronger, do.
 export const ONE_SOURCE = 0.8;
+// What a ward keeps of its health against its own tier and below, whatever
+// the number of casts (the owner, 7 November: "shouldn't break by default").
+export const HOLDS = 0.2;
 // What presses on a ward with no cast behind it (lava and fire flowing from
 // the land, creatures pushed out) cracks it, up to ONE_SOURCE, and takes no
 // health: the lava a flood spell poured is that spell's doing, and the spell
@@ -86,7 +89,12 @@ export function damageWard(world: World, ward: Ward, amount: number, source: str
   }
   const cap = 100 * ONE_SOURCE * power;
   const before = ward.dealt[source] ?? 0;
-  const take = Math.max(0, Math.min(amount * power, cap - before));
+  let take = Math.max(0, Math.min(amount * power, cap - before));
+  // The owner, 7 November: a ward does not break against its own tier and
+  // below, however many casts. They crack it, down to HOLDS of its health
+  // at most; only a stronger tier breaks it.
+  const most = ward.maxHp ?? 100;
+  if (power * 100 <= most) take = Math.min(take, Math.max(0, (ward.hp ?? most) - most * HOLDS));
   ward.dealt[source] = before + take;
   ward.hp = (ward.hp ?? 100) - take;
   ward.hit = world.time;

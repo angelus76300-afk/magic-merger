@@ -508,6 +508,12 @@ export class Runtime {
 
   // Runs spell code, catching everything it throws.
   run(key: string, name: string, fn: () => void, onError?: () => void): boolean {
+    // While a spell's code runs, a voxel it puts on a house, a field or a
+    // tree inside another spell's ward against harm is not placed: a voxel
+    // clears the cover under it (World.voxelFits), and Meteor Strike's
+    // stone ball cleared the houses a ward had kept.
+    const outer = this.world.voxelGuard;
+    this.world.voxelGuard = (i) => this.world.wards.length > 0 && warded(this.world, i, WARD.harm) && !ownWard(this.world, i, key);
     try {
       fn();
       return true;
@@ -515,6 +521,8 @@ export class Runtime {
       this.report(key, name, message(err));
       onError?.();
       return false;
+    } finally {
+      this.world.voxelGuard = outer;
     }
   }
 
@@ -1075,6 +1083,12 @@ export class CreatureHandle {
     return this.raw.data;
   }
   // A ward against harm takes most of a blow meant for someone it protects.
+  private underForeignWard(): boolean {
+    const w = this.rt.world;
+    if (!w.wards.length || hostile(this.raw)) return false;
+    const i = w.idx(Math.max(0, Math.min(w.w - 1, Math.round(this.raw.x))), Math.max(0, Math.min(w.h - 1, Math.round(this.raw.y))));
+    return warded(w, i, WARD.harm) && !ownWard(w, i, this.spellKey);
+  }
   private shielded() {
     return shieldedCreature(this.rt.world, this.raw) && !hostile(this.raw);
   }
@@ -1089,6 +1103,9 @@ export class CreatureHandle {
   }
   hurt(n: number) {
     if (this.underGlass(() => this.hurt(n))) return;
+    // Under another spell's ward against harm no blow gets through (it let
+    // 15% through, and Meteor Strike's 80 took 12 from a villager under it).
+    if (this.underForeignWard()) return;
     const blow = num(n, 0, 1e6, 0) * (this.shielded() ? 0.15 : 1);
     this.raw.hp -= blow;
     // People remember what magic did to them (3.6).
@@ -1398,7 +1415,15 @@ export class SpellApi {
     const name = String(material).toLowerCase();
     const i = this.i(x, y);
     if (this.isFluid(name) && this.fluidBlocked(i)) return;
+    if (this.coverAt(i, name) && this.landBlocked(i)) return;
     this.rt.world.place(i, name, num(amount, 0, 50, 1));
+  }
+  // Would placing this material change a cell's cover (a house, a field, a
+  // tree), or the ground under a building? Paint on bare ground goes on.
+  private coverAt(i: number, name: string): boolean {
+    const w = this.rt.world;
+    const layer = w.materials.find(name)?.layer;
+    return (layer === "cover" && w.cover[i] !== C.NONE) || (layer === "ground" && isBuilding(w.cover[i]));
   }
   private isFluid(name: string): boolean {
     return this.rt.world.materials.find(name)?.layer === "fluid";
@@ -1407,6 +1432,19 @@ export class SpellApi {
   private fluidBlocked(i: number): boolean {
     const w = this.rt.world;
     if (!w.wards.length || !warded(w, i, WARD.fluids) || ownWard(w, i, this.req.key)) return false;
+    if (this.rt.glass) this.rt.glass.harm++;
+    else if (Math.random() < 0.02) wardHit(w, i, 1, this.source, this.power);
+    return true;
+  }
+  // 4.7, the owner's report of 7 November ("all of them let a meteor
+  // through"): Meteor Strike's crater and Meteor Storm's craters are dug by
+  // the cast, not the body, so a ward that stopped the meteor still had its
+  // houses cleared and its land dug. What another spell does to the land
+  // inside a ward against harm is held at the glass: its height, its covers
+  // (houses, fields, trees) and the ground under a building do not change.
+  private landBlocked(i: number): boolean {
+    const w = this.rt.world;
+    if (!w.wards.length || !warded(w, i, WARD.harm) || ownWard(w, i, this.req.key)) return false;
     if (this.rt.glass) this.rt.glass.harm++;
     else if (Math.random() < 0.02) wardHit(w, i, 1, this.source, this.power);
     return true;
@@ -1422,6 +1460,7 @@ export class SpellApi {
     if (!this.inside(x, y)) return;
     const w = this.rt.world;
     const i = this.i(x, y);
+    if ((layer === "cover" || layer === "ground") && this.landBlocked(i)) return;
     if (layer === "cover") w.setCover(i, C.NONE);
     else if (layer === "fluid") w.setFluid(i, F.NONE, 0);
     else if (layer === "gas") w.gasAmt[i] = 0;
@@ -1440,7 +1479,7 @@ export class SpellApi {
     this.rt.world.temp[i] += d;
   }
   raise(x: number, y: number, amount: number) {
-    if (!this.inside(x, y)) return;
+    if (!this.inside(x, y) || this.landBlocked(this.i(x, y))) return;
     this.rt.world.height[this.i(x, y)] += num(amount, -50, 50, 0);
   }
 
@@ -1516,6 +1555,7 @@ export class SpellApi {
     const fluid = this.isFluid(name);
     forDisc(w, x, y, num(r, 0, 400, 3), (i, k) => {
       if (fluid && this.fluidBlocked(i)) return;
+      if (this.coverAt(i, name) && this.landBlocked(i)) return;
       if (Math.random() < density * (0.4 + 0.6 * k)) w.place(i, name, num(amount, 0, 50, 1));
     });
   }
@@ -1551,6 +1591,7 @@ export class SpellApi {
     const h = num(height, -60, 60, 0);
     forDisc(w, x, y, num(r, 0, 400, 3), (i, k) => {
       const s = k * k * (3 - 2 * k);
+      if (h !== 0 && this.landBlocked(i)) return;
       w.height[i] += h * s;
       if (h > 4 && s > 0.6 && isBuilding(w.cover[i])) w.setCover(i, C.RUBBLE);
     });
@@ -1562,7 +1603,7 @@ export class SpellApi {
     const w = this.rt.world;
     const i = this.i(x, y);
     const found = w.materials.find(String(material).toLowerCase());
-    if (!found || found.layer !== "ground") return;
+    if (!found || found.layer !== "ground" || this.landBlocked(i)) return;
     w.ground[i] = found.id;
     w.height[i] += num(voxels, -60, 60, 1) * 2;
     w.setCover(i, C.NONE);

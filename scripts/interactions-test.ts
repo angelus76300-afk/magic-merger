@@ -54,6 +54,13 @@ const disc = (world: World, r: number, fn: (i: number) => void) => {
 };
 
 const hurt = (s: Scene) => s.person.dead || s.person.hp < s.hp0 - 5;
+const houses = (s: Scene) => {
+  let n = 0;
+  disc(s.world, 2, (i) => {
+    if (s.world.cover[i] === C.HOUSE) n++;
+  });
+  return n;
+};
 
 // The effects of 4.7's list. Projectiles come from outside the ward, as a
 // meteor from the sky and a fireball thrown from the side.
@@ -315,12 +322,70 @@ export function interactionChecks(check: Check): void {
       !!ward && cracked > 0.3 && cracked <= 0.801 && !hurt(s),
       `damage ${cracked.toFixed(2)}, hurt ${hurt(s)}`,
     );
+    // The owner, 7 November: a ward does not break against its own tier,
+    // however many casts; a stronger tier breaks it.
     run(s, rain, "major", "rain-2");
+    run(s, rain, "major", "rain-3");
     check(
-      "a second rain of the same tier breaks it",
-      s.world.wards.length === 0,
+      "a second and a third rain of the same tier crack it and never break it",
+      s.world.wards.length === 1 && !hurt(s),
       `${s.world.wards.length} wards, damage ${s.world.wards[0] ? wardDamage(s.world.wards[0]).toFixed(2) : "-"}`,
     );
+    run(s, rain, "grand", "rain-4");
+    check("a rain a tier stronger breaks it", s.world.wards.length === 0, `${s.world.wards.length} wards`);
+  }
+  {
+    // The owner's report of 7 November, "all of them let a meteor through",
+    // in the shapes of the live library's programs: Meteor Strike throws a
+    // body that only marks its landing, then the cast blasts, digs a
+    // crater, clears the covers, drops a stone ball and strikes the people
+    // at the target; Meteor Storm's bodies do the same in their land hook.
+    // A ward of the spell's own tier keeps every house, the land and the
+    // person under it.
+    const strike = {
+      name: "strike",
+      code: `const spell = { *cast(w) { const x = w.x, y = w.y, R = 10; let hit = false;
+  w.body({ x: x - 30, y: y - 15, z: 160, vx: 30 / 1.8, vy: 15 / 1.8, vz: -160 / 1.8, gravity: 0, r: 2.6, look: "meteor", land(b, w) { hit = true; b.kill(); } });
+  let t = 0; while (!hit && t < 3.3) { yield 0; t += 1 / 30; }
+  w.explode(x, y, R, 4); w.terraform(x, y, R, -R * 0.45);
+  w.ring(x, y, R * 0.9, R * 1.2, (cx, cy) => w.raise(cx, cy, w.cell(cx, cy).height + 1));
+  for (const c of w.creatures(x, y, 20)) { if (w.dist(x, y, c.x, c.y) < R * 0.6) c.hurt(80); }
+  w.paint(x, y, R * 1.4, "ash", 0.85);
+  w.disc(x, y, R * 1.5, (cx, cy) => { if (w.cell(cx, cy).cover) { w.clear(cx, cy, "cover"); w.set(cx, cy, "ash"); } });
+  w.temperature(x, y, R * 0.6, 300);
+  w.sphere(x, y, 1, 2.2, ["#3a3f4a"], 0.9, "stone");
+  yield 2; } };`,
+      seconds: 6,
+      reached: () => false,
+    };
+    const storm = {
+      name: "storm",
+      code: `const spell = { *cast(w) { for (let k = 0; k < 6; k++) { const tx = w.x + w.rand(-2, 2), ty = w.y + w.rand(-2, 2);
+  w.body({ x: tx - 20, y: ty, z: 95, vx: 20 / 1.3, vy: 0, vz: -95 / 1.3, r: 1.6, look: "meteor", gravity: 0.3, land(b, w) {
+    w.explode(b.x, b.y, 2, 2.2); w.terraform(b.x, b.y, 2.2, -3); w.paint(b.x, b.y, 2.8, "basalt", 0.6);
+    w.sphere(b.x, b.y, 1, 1.4, ["#3a2a24"], 0.8, "stone"); for (const c of w.creatures(b.x, b.y, 5)) c.hurt(40); b.kill(); } });
+  yield 0.3; } yield 3; } };`,
+      seconds: 6,
+      reached: () => false,
+    };
+    for (const [effect, tier] of [
+      [strike, "legendary"],
+      [storm, "legendary"],
+      [strike, "major"],
+    ] as const) {
+      const s = scene("grass", "all", tier);
+      const before = { houses: houses(s), height: Float32Array.from(s.world.height) };
+      run(s, effect, tier);
+      let dug = 0;
+      disc(s.world, 3, (i) => {
+        if (Math.abs(s.world.height[i] - before.height[i]) > 0.5) dug++;
+      });
+      check(
+        `a ward of its tier keeps everything under it from the live ${effect.name === "strike" ? "Meteor Strike" : "Meteor Storm"}'s shape (${tier})`,
+        s.world.wards.length === 1 && houses(s) === before.houses && dug === 0 && !hurt(s) && !s.errors.length,
+        `${s.world.wards.length} wards, houses ${houses(s)} of ${before.houses}, ${dug} cells dug, hp ${s.person.hp.toFixed(0)} of ${s.hp0}${s.errors[0] ? `, ${s.errors[0]}` : ""}`,
+      );
+    }
   }
   {
     const s = scene("grass", "all", "minor");

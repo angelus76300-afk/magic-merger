@@ -216,9 +216,15 @@ export class World {
     const i = Math.round(y) * this.w + Math.round(x);
     const top = Math.round(this.height[i] * 0.5);
     if (level < top) return false;
-    if (level < top + 2 && this.cover[i] !== C.NONE) this.setCover(i, C.NONE);
+    if (level < top + 2 && this.cover[i] !== C.NONE) {
+      if (this.voxelGuard?.(i)) return false;
+      this.setCover(i, C.NONE);
+    }
     return true;
   }
+  // Set by the runtime while a spell's code runs: true where that spell may
+  // not clear a cover to put a voxel (another spell's ward against harm).
+  voxelGuard: ((i: number) => boolean) | null = null;
 
   setVoxel(x: number, y: number, level: number, color: number | null, kind: number = VK.STONE): void {
     if (!this.inside(Math.round(x), Math.round(y)) || level < -60 || level > 380) return;
