@@ -6,6 +6,15 @@
       "mcp__claude-code-remote__list_events",
       "mcp__claude-code-remote__create_session",
       "mcp__claude-code-remote__send_message"
+    ],
+    "deny": ["Edit(/scripts/session-guard.mjs)"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__claude-code-remote__create_session",
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PROJECT_DIR}/scripts/session-guard.mjs\"", "onFailure": "block" }]
+      }
     ]
   }
 }
