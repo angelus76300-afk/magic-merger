@@ -34,7 +34,7 @@ export function stepPhysics(world: World, dt: number): void {
     gasTypeNext = new Uint8Array(world.n);
     tempNext = new Float32Array(world.n);
   }
-  stepWards(world);
+  stepWards(world, dt);
   if (world.springs.length) stepSprings(world, dt);
   stepFluids(world, dt);
   stepFire(world, dt);

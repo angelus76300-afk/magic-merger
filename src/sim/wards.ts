@@ -1,5 +1,5 @@
 import type { Tier } from "../../shared/tiers";
-import { TICK, type World } from "./world";
+import type { World } from "./world";
 
 // Wards (3.4.2): a place a spell keeps safe for a while. Before wards, a
 // protection spell could only build an opaque shell of magic blocks that lava
@@ -264,7 +264,7 @@ export function addWard(world: World, ward: Ward, power = 1): void {
 }
 
 // Drops wards that ended. Called once per tick, before physics.
-export function stepWards(world: World): void {
+export function stepWards(world: World, dt = 1 / 30): void {
   if (!world.wards.length) return;
   // Cracks heal slowly (the owner, 7 November): after HEAL_AFTER seconds
   // with nothing striking it, a ward regains HEAL_RATE of its health a
@@ -272,7 +272,7 @@ export function stepWards(world: World): void {
   for (const ward of world.wards) {
     const most = ward.maxHp ?? 100;
     if (world.time - ward.hit < HEAL_AFTER || ((ward.hp ?? most) >= most && !ward.pressure)) continue;
-    const gain = most * HEAL_RATE * TICK;
+    const gain = most * HEAL_RATE * dt;
     ward.hp = Math.min(most, (ward.hp ?? most) + gain);
     if (ward.pressure) ward.pressure = Math.max(0, ward.pressure - gain);
     if (ward.dealt) for (const k in ward.dealt) ward.dealt[k] = Math.max(0, ward.dealt[k] - gain);
