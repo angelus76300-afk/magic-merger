@@ -72,6 +72,80 @@ export function reviewFor(comments, sha, owner) {
   return found;
 }
 
+/**
+ * 2026-11-07, the lighter process: a review carried across merges of main. When the head has no
+ * review of its own, walk its first-parent line back to the newest reviewed commit R. Every commit
+ * on the way must be a clean merge of main: exactly two parents, the second already on main, its
+ * tree exactly what git merges without help (no conflict, no hand edit), and changing none of the
+ * pull request's own files (the files R changed from its base). The class of the new head must not
+ * be above R's. Then R's review stands for the head, its tests=pass included; the night's npm test
+ * on main is the backstop. Anything the Gate cannot prove (a missing commit, a git error) carries
+ * nothing: it waits as before.
+ *   git: (...args) => stdout, throwing on a non-zero exit; classOf: (base, sha) => "green" | "amber" | "red"
+ * Returns { review, from, why }: review null with why when nothing is carried.
+ */
+export function carriedReview({ head, base, comments, owner, git, classOf, limit = 20 }) {
+  const no = (why) => ({ review: null, from: null, why });
+  try {
+    const own = reviewFor(comments, head, owner);
+    if (own) return { review: own, from: null, why: null };
+    const merges = [];
+    let c = head;
+    let found = null;
+    for (let i = 0; i <= limit; i++) {
+      if (c !== head) {
+        const r = reviewFor(comments, c, owner);
+        if (r) {
+          found = { sha: c, review: r };
+          break;
+        }
+      }
+      const parents = git("rev-list", "--parents", "-n", "1", c).split(/\s+/).slice(1);
+      if (parents.length !== 2) return no(`${c.slice(0, 7)} is not a merge of main: a new review is needed`);
+      merges.push({ sha: c, parents });
+      c = parents[0];
+    }
+    if (!found) return no("no reviewed commit within reach of the head");
+    if (found.review.verdict !== "pass" || found.review.tests !== "pass") return no(`the review of ${found.sha.slice(0, 7)} did not pass with tests=pass`);
+    const ownFiles = new Set(
+      git("diff", "--name-only", "--no-renames", git("merge-base", base, found.sha), found.sha)
+        .split("\n")
+        .filter(Boolean),
+    );
+    for (const m of merges) {
+      const [first, second] = m.parents;
+      const short = m.sha.slice(0, 7);
+      try {
+        git("merge-base", "--is-ancestor", second, base);
+      } catch {
+        return no(`${short} merges a commit that is not on main`);
+      }
+      let tree;
+      try {
+        tree = git("merge-tree", "--write-tree", "--no-messages", first, second).split("\n")[0].trim();
+      } catch {
+        return no(`${short} needed a conflict resolved: a new review is needed`);
+      }
+      if (tree !== git("rev-parse", `${m.sha}^{tree}`))
+        return no(`${short} is not a clean merge (its tree differs from git's own merge): a new review is needed`);
+      const touched = git("diff", "--name-only", "--no-renames", first, m.sha).split("\n").filter(Boolean);
+      const mine = touched.filter((f) => ownFiles.has(f));
+      if (mine.length) return no(`${short} changes the pull request's own files (${mine.slice(0, 3).join(", ")}): a new review is needed`);
+    }
+    const before = classOf(base, found.sha);
+    const after = classOf(base, head);
+    if (!(after in ORDER) || !(before in ORDER)) return no("the class could not be computed");
+    if (ORDER[after] > ORDER[before]) return no(`the merged code raised the class from ${before} to ${after}: a new review is needed`);
+    return { review: { ...found.review, carried: found.sha }, from: found.sha, why: null };
+  } catch (e) {
+    return no(
+      `could not check the merges (${String(e?.message ?? e)
+        .split("\n")[0]
+        .slice(0, 120)})`,
+    );
+  }
+}
+
 /** The owner's recorded words for a label: "ok" or "yes" comments written by the planner, as the owner's account. */
 export function ownerRecords(comments, owner) {
   const out = new Set();
@@ -102,7 +176,7 @@ export function decide(s) {
   if (s.draft) reasons.push("still a draft");
   if (!(s.ci === "full" || (s.ci === "docs" && s.docsOnly))) reasons.push(`CI not passed in full on the head commit (${s.ci})`);
   if (s.smoke !== "pass" && !s.docsOnly) reasons.push(`preview smoke test not passed (${s.smoke})`);
-  if (!s.review) reasons.push("no independent review of the head commit");
+  if (!s.review) reasons.push(`no independent review of the head commit${s.carry ? ` (an earlier review was not carried: ${s.carry})` : ""}`);
   else if (s.review.verdict !== "pass") reasons.push("the review blocks it");
   if (!s.docsOnly && s.review?.tests !== "pass") reasons.push("npm test not reported passing on the head commit (the reviewer's tests=pass)");
   const records = s.records ?? new Set();
@@ -248,7 +322,14 @@ export async function prState(n) {
       paused: await paused(),
       ci: await ciOn(sha),
       smoke: await smokeOn(sha),
-      review: reviewFor(comments, sha, REPO_OWNER),
+      ...(() => {
+        // A review of the head itself, or one carried across clean merges of main (carriedReview).
+        if (!headFetched) return { review: reviewFor(comments, sha, REPO_OWNER), carry: null };
+        const base = `origin/${pr.base.ref}`;
+        const opts = { branch: pr.head.ref, title: pr.title };
+        const { review, why } = carriedReview({ head: sha, base, comments, owner: REPO_OWNER, git, classOf: (b, h) => classify(readGit(b, h), opts).cls });
+        return { review, carry: why };
+      })(),
       mergeable: pr.mergeable,
       upToDate: (() => {
         let ancestor = false;
