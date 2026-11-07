@@ -236,6 +236,22 @@ async function run(width, height, touch = false) {
     return !!row && row.scrollLeft + row.clientWidth < row.scrollWidth - 1 && !row.classList.contains("filter-more");
   });
   if (cutRow) failures.push(`${tag}: World's filter row is cut at its edge with no fade`);
+  // A name of 60 characters (the most a name can be) stays inside its list.
+  const spill = await page.evaluate(() => {
+    const out = [];
+    for (const sel of [".spell-list", ".inventory-list"]) {
+      const list = document.querySelector(sel);
+      const name = list?.querySelector(".chip .chip-name");
+      if (!list || !name || !list.getClientRects().length) continue;
+      const was = name.textContent;
+      name.textContent = "Thunderous Cascade of the Moonlit Glacier and the Long Night";
+      const over = name.closest(".chip").getBoundingClientRect().right - list.getBoundingClientRect().right;
+      name.textContent = was;
+      if (over > 1) out.push(`${sel} by ${Math.round(over)} px`);
+    }
+    return out;
+  });
+  for (const s of spill) failures.push(`${tag}: a long name runs past ${s}`);
   const castable = page.locator(".chip-castable").first();
   if (await castable.count()) {
     await castable.click();

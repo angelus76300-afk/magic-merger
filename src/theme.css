@@ -1791,13 +1791,17 @@ input[type="checkbox"] {
   mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent);
 }
 
-/* A Fold unfolded: two rows of spells that scroll, not one (6 of 58 showed). */
-@media (min-width: 700px) and (max-width: 1023px) and (min-height: 900px) {
+/* A Fold unfolded, or any screen 900 px tall too narrow for the column (a
+   tablet upright): two rows of spells that scroll, not one (6 of 58 showed
+   on a Fold). */
+@media (min-width: 700px) and (min-height: 900px) and (max-aspect-ratio: 1199/1000) {
   .spellbar:not(.expanded) .spell-list {
     flex-wrap: wrap;
     overflow-x: hidden;
     overflow-y: auto;
-    max-height: 104px;
+    /* Two rows and the top of a third, so more below shows without a
+       scrollbar on a touch screen. */
+    max-height: 124px;
     row-gap: 10px;
     align-content: flex-start;
   }
@@ -1867,6 +1871,21 @@ input[type="checkbox"] {
   }
 }
 
+/* A long name (up to 60 characters) ends in an ellipsis inside its row or
+   column instead of running past the edge; the card shows it in full. */
+.spell-list .chip,
+.inventory-list .chip {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.spell-list .chip-name,
+.inventory-list .chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Craft on a desktop: the items' column grows with the screen (two tiles a
    row next to a 1560 px board at 1920). Below 1200 px it stays phone wide. */
 @media (min-width: 1200px) {
@@ -1875,19 +1894,11 @@ input[type="checkbox"] {
   }
 }
 
-/* The desktop top bar: the title, the tabs in the middle, and the account
-   and help at the right end, where "?" sits on a phone. */
+/* The desktop top bar: the title, the tabs between it and the account and
+   help, which sit at the right end, where "?" sits on a phone. The page's
+   order is the same, so the keyboard follows the eye. */
 @media (min-width: 1024px) and (pointer: fine), (min-width: 1280px) {
   .tabs {
-    order: 1;
     margin-inline: auto;
-  }
-
-  .account-chip {
-    order: 2;
-  }
-
-  .help {
-    order: 3;
   }
 }
