@@ -450,13 +450,15 @@ export function keptByFormChecks(check: Check): void {
   const read = [
     requestIntents(JSON.stringify({ newIntents: true, intents: ["summon", "nonsense", 3, "heal"] })),
     requestIntents(JSON.stringify({ intents: ["protect"] })),
+    // A read that failed or said nothing: the stored promise stays.
     requestIntents(JSON.stringify({ newIntents: true, intents: [] })),
+    requestIntents(JSON.stringify({ newIntents: true, intents: ["nonsense", 7] })),
     requestIntents("{not json"),
     requestIntents(null),
   ];
   check(
-    "a rewrite by form's own promise is the one its candidate is held to and stores; a request without one keeps the stored promise",
-    JSON.stringify(read) === JSON.stringify([["summon", "heal"], null, [], null, null]),
+    "a rewrite by form's own promise is the one its candidate is held to and stores; a request without one, or with an empty one, keeps the stored promise",
+    JSON.stringify(read) === JSON.stringify([["summon", "heal"], null, null, null, null, null]),
     JSON.stringify(read),
   );
 }

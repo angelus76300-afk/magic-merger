@@ -1561,8 +1561,11 @@ async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; li
     // the stored one may come from an entry written before its kind (a
     // Serpent promised to protect, so its program raised a shield). Stored
     // only when the program goes live (refreshVerdict).
-    const newIntents = byForm && body.dry !== true;
-    const intents = newIntents ? await readIntents(env, oracle, element, description) : await ensureIntents(env, oracle, element, description);
+    // A failed read keeps the stored promise (the review of #65: an empty one
+    // would hold the candidate to nothing, and clear the live item's).
+    const read = byForm && body.dry !== true ? await readIntents(env, oracle, element, description) : null;
+    const newIntents = read !== null;
+    const intents = read ?? (await ensureIntents(env, oracle, element, description));
     const request: OracleSpellRequest = {
       name: element.name,
       kind: element.kind,
@@ -3067,19 +3070,21 @@ async function ensureIntents(env: Env, oracle: Oracle, element: GameElement, des
   const key = elementKey(element.name);
   const row = await env.DB.prepare("SELECT intents FROM elements WHERE key = ?").bind(key).first<{ intents: string | null }>();
   if (row?.intents) return parseIntents(row.intents);
-  const intents = await readIntents(env, oracle, element, description);
+  const intents = (await readIntents(env, oracle, element, description)) ?? [];
   if (intents.length && !oracle.mock) await env.DB.prepare("UPDATE elements SET intents = ? WHERE key = ?").bind(intents.join(","), key).run();
   return intents;
 }
 
-// What an entry promises, asked of the small model (about $0.0001), stored nowhere.
-async function readIntents(env: Env, oracle: Oracle, element: GameElement, description: string): Promise<Intent[]> {
+// What an entry promises, asked of the small model (about $0.0001), stored
+// nowhere. Null when it could not be read (the budget, the API) or says nothing.
+async function readIntents(env: Env, oracle: Oracle, element: GameElement, description: string): Promise<Intent[] | null> {
   try {
     await ensureBudget(env, oracle, "intent", ESTIMATE.intent);
-    return await oracle.intents(element.name, element.kind, description);
+    const intents = await oracle.intents(element.name, element.kind, description);
+    return intents.length ? intents : null;
   } catch (err) {
     console.error("intents", err);
-    return [];
+    return null;
   }
 }
 

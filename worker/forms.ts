@@ -36,11 +36,14 @@ export const AGAIN_BY_FORM_SQL = `SELECT s.key, s.pid, v.reason, v.replaced FROM
 // The promise a rewrite by form was written for, when it was read again from
 // its new entry (`newIntents`): its test run holds the candidate to it
 // (refreshCandidates), and it goes live with the program (refreshVerdict).
-// Null when the request kept the stored promise, or cannot be read.
+// Null when the request kept the stored promise, cannot be read, or carries
+// no promise at all: an empty one never replaces the stored one (the review
+// of #65: a failed read would have cleared the live item's promise).
 export function requestIntents(request: string | null): Intent[] | null {
   try {
     const req = JSON.parse(request ?? "{}") as { newIntents?: unknown; intents?: unknown };
-    return req.newIntents === true && Array.isArray(req.intents) ? parseIntents(req.intents) : null;
+    const intents = req.newIntents === true && Array.isArray(req.intents) ? parseIntents(req.intents) : [];
+    return intents.length ? intents : null;
   } catch {
     return null;
   }
