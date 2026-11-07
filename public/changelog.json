@@ -7,6 +7,15 @@
     },
     {
       "date": "2026-11-07",
+      "text": "Shields now stop meteors, fireballs and other thrown spells at their edge. A shield cracks as it takes hits and breaks under a stronger spell, or a second one of its own strength.",
+      "idea": 2
+    },
+    {
+      "date": "2026-11-07",
+      "text": "The island moves more smoothly: on phones that keep up it now draws 60 frames a second instead of 30, and creatures move on every one of those frames. A phone that cannot keep up goes back to 30 on its own."
+    },
+    {
+      "date": "2026-11-07",
       "text": "People you create now join the island as real villagers: a Human moves into a house of the nearest village, takes a job and lives with a family there. A Blacksmith works the forge, a Necromancer walks among the graves at night and raises the dead, a Knight guards the village. New creatures are made as living things: a Serpent slithers and hunts, a Fox Spirit tends the woods."
     },
     {

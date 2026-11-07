@@ -35,8 +35,8 @@
         box-sizing: border-box;
         padding: 10px 12px;
         border-radius: 12px;
-        background: rgba(18, 14, 34, 0.88);
-        color: #f2eefc;
+        background: rgba(21, 29, 51, 0.92);
+        color: #f3eedf;
         font:
           13px/1.35 system-ui,
           sans-serif;
@@ -56,13 +56,13 @@
       }
       #inspect .sub {
         flex: 1;
-        color: #b9b0d6;
+        color: #a9b2cf;
         font-size: 12px;
       }
       #inspect .close {
         border: 0;
         background: none;
-        color: #f2eefc;
+        color: #f3eedf;
         font-size: 20px;
         line-height: 1;
         padding: 0 2px;
@@ -76,7 +76,7 @@
       }
       #inspect .bar .label {
         width: 52px;
-        color: #b9b0d6;
+        color: #a9b2cf;
         font-size: 12px;
       }
       #inspect .track {
@@ -97,7 +97,7 @@
         margin: 8px 0 0;
       }
       #inspect dt {
-        color: #b9b0d6;
+        color: #a9b2cf;
       }
       #inspect dd {
         margin: 0;
@@ -111,9 +111,10 @@
         width: min(360px, calc(100% - 32px));
         box-sizing: border-box;
         padding: 12px 14px 10px;
-        border-radius: 14px;
-        background: rgba(18, 14, 34, 0.86);
-        color: #f2eefc;
+        border-radius: 10px;
+        background: rgba(21, 29, 51, 0.9);
+        box-shadow: 0 3px 0 #05080f;
+        color: #f3eedf;
         font:
           13px/1.4 system-ui,
           sans-serif;
@@ -132,21 +133,31 @@
       }
       #first-look .what {
         margin: 2px 0 0;
-        color: #f4d58d;
-        font-size: 12px;
+        color: #ffc54d;
+        font-size: 13px;
       }
       #first-look .does {
         margin: 4px 0 0;
-        color: #b9b0d6;
+        color: #a9b2cf;
+      }
+      /* Below 700 px the host's tool rail runs down the right edge (44 px and
+         a 10 px margin): the card keeps clear of it on both sides. */
+      @media (max-width: 699px) {
+        #first-look {
+          width: min(360px, calc(100% - 128px));
+        }
       }
       #first-look .skip {
         margin-top: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.25);
-        border-radius: 999px;
-        background: none;
-        color: #f2eefc;
+        min-height: 44px;
+        border: 1px solid #56669a;
+        border-radius: 8px;
+        background: #1e2846;
+        box-shadow: 0 3px 0 #05080f;
+        color: #f3eedf;
         font: inherit;
-        padding: 3px 14px;
+        font-weight: 600;
+        padding: 0 18px;
         cursor: pointer;
       }
     </style>

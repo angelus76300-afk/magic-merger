@@ -1,4 +1,5 @@
 import "./style.css";
+import "./theme.css";
 import * as api from "./api";
 import { setCardActions } from "./card";
 import { Craft } from "./craft";

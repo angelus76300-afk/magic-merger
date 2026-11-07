@@ -304,7 +304,7 @@ export function doEffect(world: World, a: Artifact, what: ArtEffectName, arg: st
         t.hp -= 35;
         t.stun = Math.max(t.stun, 1);
         world.emit({ kind: "flash", color: 0xdfe8ff, strength: 0.2 });
-        world.emit({ kind: "sound", name: "zap", size: 0.4 });
+        world.emit({ kind: "sound", name: "zap", size: 0.4, x: t.x, y: t.y });
         puff(world, t.x, t.y, 0xdfe8ff, 8);
       }
       remember(t, a.name, -1);
@@ -367,7 +367,7 @@ export function doEffect(world: World, a: Artifact, what: ArtEffectName, arg: st
       reborn(t);
       remember(t, a.name, 1);
       puff(world, t.x, t.y, 0xffb347, 10);
-      world.emit({ kind: "sound", name: "chime", size: 0.4 });
+      world.emit({ kind: "sound", name: "chime", size: 0.4, x: t.x, y: t.y });
       return true;
     }
     case "summon": {
@@ -564,7 +564,7 @@ export function hurtArtifact(world: World, a: Artifact, n: number): void {
   s.hurtAt = world.time;
   if (s.health === 0) {
     if (s.onBreak) doEffect(world, a, s.onBreak, "", a.radius, null);
-    world.emit({ kind: "sound", name: "thump", size: 0.4 });
+    world.emit({ kind: "sound", name: "thump", size: 0.4, x: a.x, y: a.y });
     for (let k = 0; k < 10; k++) world.particles.add({ x: a.x, y: a.y, z: 1, vz: 3 + Math.random() * 2, life: 1, color: a.color, size: 1.4, glow: false });
   }
 }

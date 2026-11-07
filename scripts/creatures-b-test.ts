@@ -16,7 +16,8 @@ import {
   judgeUserMessage,
   spellUserMessage,
 } from "../worker/prompts";
-import { creatureProbe, runCheck } from "../src/sim/check";
+import { PLANTED_TREES, creatureProbe, runCheck } from "../src/sim/check";
+import { unfitDefence } from "../src/sim/abilities";
 import { kindOf, maxHp, populate } from "../src/sim/creatures";
 import { daylight } from "../src/sim/daylight";
 import { inspect } from "../src/sim/inspect";
@@ -227,6 +228,57 @@ export function creatureChecks(check: Check): void {
   check("a Human made as a creature kind fails its kind: a person is a villager", !kind.ok && kind.problem === "kind", kind.detail);
   const still = run("Stone Serpent", ASLEEP);
   check("a creature that stands still for two minutes fails, to be written once more", !still.ok && still.problem === "idle", still.detail);
+
+  // Defensive magic its name or promise calls for (the owner, 7 November: "a
+  // serpent raising a shield does not fit its name"). The live Serpent had
+  // {do: "shield", when: "enemy near"}: the example serpent given that ability.
+  const SHIELDED = FORM_EXAMPLES.creature.code.replace('{ do: "freeze", when: "hurt", every: 20 }', '{ do: "shield", when: "enemy near", every: 15 }');
+  const WARDED = FORM_EXAMPLES.creature.code.replace('w.spawn("serpent", w.x, w.y);', 'w.spawn("serpent", w.x, w.y); w.ward(w.x, w.y, 6, { seconds: 20 });');
+  const fit = (name: string, code: string, intents: string[] = []) =>
+    runCheck({ key: `b:fit:${name}:${code.length}`, name, tier: "minor", kind: "artifact", form: "creature", code, intents });
+  const shielded = fit("Serpent", SHIELDED);
+  const warded = fit("Serpent", WARDED);
+  const guardian = fit("Stone Guardian", SHIELDED);
+  const promised = fit("Serpent", SHIELDED, ["protect"]);
+  check(
+    "a serpent that shields, or raises a ward, fails its fit; a guardian, or one that promises to protect, may shield",
+    SHIELDED !== FORM_EXAMPLES.creature.code &&
+      WARDED !== FORM_EXAMPLES.creature.code &&
+      shielded.problem === "fit" &&
+      warded.problem === "fit" &&
+      guardian.problem !== "fit" &&
+      promised.problem !== "fit",
+    JSON.stringify([shielded.problem, warded.problem, guardian.problem, promised.problem, shielded.detail]),
+  );
+  const mends = [
+    unfitDefence("Fox Spirit", [], [{ do: "heal", when: "hurt", every: 10 }], 0),
+    unfitDefence("Fox Spirit", ["heal"], [{ do: "heal", when: "hurt", every: 10 }], 0),
+    unfitDefence("Fox Spirit", [], [{ do: "heal", when: "every so often", every: 20 }], 0),
+    unfitDefence("Troll", [], [{ do: "heal", when: "hurt", every: 10 }], 0),
+  ].map((d) => d !== null);
+  check(
+    "healing itself when hurt is defensive unless its promise or name heals; tending others is not",
+    JSON.stringify(mends) === JSON.stringify([true, false, false, false]),
+    JSON.stringify(mends),
+  );
+
+  // A druid plants a few trees: its deeds, not its body (production, 7
+  // November: Druid as a villager with an oak and a birch failed at 10 cells
+  // across). A forest still counts.
+  const grove = (trees: number, height = 9) =>
+    `const spell = { *cast(w) { const p = w.person(w.x, w.y, { job: "farmer", title: "Druid" }); if (!p) return; ${Array.from(
+      { length: trees },
+      (_, k) => `w.tree(p.x + ${k % 2 ? -3 : 3} + ${Math.floor(k / 2) * 4}, p.y + ${k % 2 ? -2 : 2}, { style: "oak", height: ${height} });`,
+    ).join(" ")} } };`;
+  const two = runCheck({ key: "b:druid:2", name: "Druid", tier: "minor", kind: "artifact", form: "creature", code: grove(2) });
+  const forest = runCheck({ key: "b:druid:6", name: "Druid", tier: "minor", kind: "artifact", form: "creature", code: grove(PLANTED_TREES + 3) });
+  // Three giant trees are no deed: they count (the review of #72).
+  const giants = runCheck({ key: "b:druid:giant", name: "Druid", tier: "minor", kind: "artifact", form: "creature", code: grove(2, 120) });
+  check(
+    "a druid's two trees are its deeds, not its size; a forest of them, or giant ones, still count",
+    two.problem !== "size" && forest.problem === "size" && giants.problem === "size",
+    JSON.stringify([two.problem, two.detail.slice(0, 160), forest.problem, giants.problem, giants.detail.slice(0, 160)]),
+  );
 
   // The judge asks it of each item.
   check(
