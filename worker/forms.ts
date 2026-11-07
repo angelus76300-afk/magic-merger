@@ -18,12 +18,15 @@ export const FORMS_PAGE = 60;
 
 // A key asked again by name after its rewrite for its kind kept the old
 // program (its test run failed it, or the judge scored it lower): the live
-// program is still the one that verdict kept, and nothing was asked for it
-// since. Bound to a JSON list of keys. Read by startRefresh (worker/index.ts).
+// program is still the one that verdict kept, nothing was asked for it since,
+// and it was written for its kind once only: one retry, never a third (the
+// review of #63: a retry's rewrite is older than the verdict it leads to).
+// Bound to a JSON list of keys. Read by startRefresh (worker/index.ts).
 export const KEPT_BY_FORM_SQL = `SELECT s.key, s.pid, v.reason FROM spells s JOIN forms f ON f.key = s.key
   JOIN refresh_verdicts v ON v.key = s.key AND v.at = (SELECT MAX(at) FROM refresh_verdicts WHERE key = s.key)
   WHERE s.key IN (SELECT value FROM json_each(?)) AND f.status = 'applied' AND v.replaced = 0 AND v.from_pid = s.pid AND v.at >= f.applied_at
-    AND NOT EXISTS (SELECT 1 FROM rewrites r WHERE r.key = s.key AND r.cause = 'refresh' AND r.at > v.at AND r.status NOT IN ('failed', 'superseded'))`;
+    AND NOT EXISTS (SELECT 1 FROM rewrites r WHERE r.key = s.key AND r.cause = 'refresh' AND r.at > v.at AND r.status NOT IN ('failed', 'superseded'))
+    AND (SELECT COUNT(*) FROM rewrites r WHERE r.key = s.key AND r.cause = 'refresh' AND r.at >= f.applied_at AND r.status NOT IN ('failed', 'superseded')) < 2`;
 
 interface ElementRow {
   key: string;

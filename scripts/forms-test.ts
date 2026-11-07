@@ -410,6 +410,7 @@ export function keptByFormChecks(check: Check): void {
     ["healer", 8, 8, 0], // kept, asked again since and that failed to send
     ["druid", 10, 10, 0], // kept before it was sorted
     ["saint", 11, 11, 0], // kept, not asked
+    ["warlock", 12, 12, 0], // kept twice: its retry was kept too
   ];
   for (const [key, pid, from, replaced] of keyed) {
     insert("elements", { key, name: key, emoji: "x", kind: "artifact", depth: 1, created_at: 1, form: "creature" });
@@ -426,12 +427,17 @@ export function keptByFormChecks(check: Check): void {
   }
   insert("rewrites", { key: "wizard", cause: "refresh", at: 300, status: "pending" });
   insert("rewrites", { key: "healer", cause: "refresh", at: 300, status: "failed" });
-  const asked = ["astrologer", "serpent", "wizard", "healer", "druid"];
+  // Warlock: written for its kind at 150 and kept at 200 (above), retried at
+  // 300 and kept again at 400: no third time.
+  insert("rewrites", { key: "warlock", cause: "refresh", at: 150, status: "done" });
+  insert("rewrites", { key: "warlock", cause: "refresh", at: 300, status: "done" });
+  insert("refresh_verdicts", { to_pid: 212, key: "warlock", from_pid: 12, replaced: 0, reason: "warlock: kept again", at: 400 });
+  const asked = ["astrologer", "serpent", "wizard", "healer", "druid", "warlock"];
   const got = (db.prepare(KEPT_BY_FORM_SQL).all(JSON.stringify(asked)) as { key: string; pid: number; reason: string }[])
     .map((r) => `${r.key}:${r.pid}`)
     .sort();
   check(
-    "a kept rewrite by form is asked again by name only, once nothing waits for it and its program is still the kept one",
+    "a kept rewrite by form is asked again by name only, once nothing waits for it and its program is still the kept one, and never a third time",
     got.join(",") === "astrologer:5,healer:8",
     got.join(","),
   );
