@@ -19,28 +19,122 @@ interface ReasonDef {
 }
 
 export const REASONS = {
-  // The five first ones.
-  nothing: { label: "Nothing happened", prompt: "nothing seemed to happen" },
-  small: { label: "Too small", prompt: "it was too small for its name and tier" },
-  wrong: { label: "Looked wrong", prompt: "it did not look like what its name promises" },
-  broke: { label: "Broke the island", prompt: "it broke the island, far beyond what it should do" },
-  boring: { label: "Boring", prompt: "it was boring: plain, predictable, no interaction" },
-  // REASONS_BY_FORM_PLACEHOLDER
+  // The five first ones, every item's before 2026-11-07. Each line now says
+  // which way to go: a rewrite "rethought" sees only the old summary.
+  nothing: {
+    label: "Nothing happened",
+    prompt: "nothing seemed to happen when it was cast; make it start at once where it lands, big enough to see across the island",
+  },
+  small: { label: "Too small", prompt: "it was too small or weak for its name and tier; make its reach, size and power match both" },
+  wrong: {
+    label: "Looked wrong",
+    prompt: "it did not look like what its name promises; make its shapes, colors and light show that thing at a glance",
+  },
+  broke: {
+    label: "Broke the island",
+    prompt: "it broke the island, far beyond what it should do; keep it to its own reach and leave the rest of the island as it was",
+  },
+  boring: {
+    label: "Boring",
+    prompt: "it was boring: plain, predictable, no interaction; make it surprise, and give people, creatures or the land something to react to",
+  },
+  // Spells, objects and places.
+  effect: {
+    label: "Did the wrong thing",
+    prompt: "it did something other than its name promises; make what it does to people, creatures and land exactly what the name says",
+  },
+  // Creatures and people: three about how they behave.
+  still: {
+    label: "Barely moved",
+    prompt: "it barely moved; give it a goal that takes it across the island, at least its kind's speed (a fox 3.6, a horse 5) and an ability every so often",
+  },
+  aloof: {
+    label: "Ignored everyone",
+    prompt: "it ignored the villagers and animals near it; make it notice them: hunt, lure, scare, follow or guard as its kind would, with a wider sense",
+  },
+  nature: {
+    label: "Not how it behaves",
+    prompt: "what it did did not fit what it is; make its goal, mode, prey, waking hours and speed those of the real thing its name says",
+  },
+  body: {
+    label: "Doesn't look like one",
+    prompt: "it did not look like that creature; make its body plan, features, colors and radius those of the real thing, never a blob or a statue",
+  },
+  // Objects and places.
+  idle: {
+    label: "Does nothing",
+    prompt: "after it appeared it did nothing; give it w.artifact effects on triggers (dawn, night, every so often, enemy) that visibly change what is near it",
+  },
+  unused: {
+    label: "Nobody came for it",
+    prompt: "no villager or creature came for it; give it w.artifact grants villagers come to use, or uses creatures act on, that fit what it is",
+  },
+  big: {
+    label: "Too big",
+    prompt: "it was far bigger than the thing itself; draw it at its real size in fine boxes (a sword 1 long, a lantern 0.4 tall), never a statue of itself",
+  },
+  // Buildings, and places that stand on the land.
+  plain: {
+    label: "Looks like any house",
+    prompt: "it looked like any house of the village; add what makes it this building at b.beside, in fine boxes, with voxels for a tall mass like a spire",
+  },
+  empty: {
+    label: "Nobody uses it",
+    prompt: "nobody worked in it or used it; choose the job nearest what it is and hire villagers to its own work with w.hire, so people come and go",
+  },
+  float: {
+    label: "Floating or buried",
+    prompt: "parts of it floated in the air or sank into the ground; stand every model and structure on the land height of its own cell",
+  },
+  // Settlements.
+  token: {
+    label: "Not a real village",
+    prompt: "it was not a village; make it with w.village(x, y, {houses}) so houses, fields and villagers come, then add what is special about it",
+  },
+  same: {
+    label: "Like any village",
+    prompt:
+      "it was like any other village; give it what its name makes special: a building with w.building, a wall, a shrine, or its people's work with w.hire",
+  },
+  // Land.
+  shape: {
+    label: "Wrong kind of land",
+    prompt: "the land took the wrong form; choose the w.land shape that is what its name says, or terraform and flood until it is that land",
+  },
+  paint: {
+    label: "Only changed color",
+    prompt: "it only changed the color of the ground; raise or cut the land itself with w.land or w.terraform, with water or lava where it belongs",
+  },
+  bare: {
+    label: "Bare and empty",
+    prompt: "the new land was bare; add what makes it this land: trees, rocks, structures or a landmark that does something",
+  },
 } as const satisfies Record<string, ReasonDef>;
 
 export type DownReason = keyof typeof REASONS;
 
-// What a player is offered, by the item's form: at most six, the most
-// common first. Every id here must be one a rewrite can act on.
+// What a player is offered, by the item's form: at most six, chosen by the
+// game designer so each maps to something a rewrite can change. People
+// (w.person) are creatures here: body, size and calling are theirs too.
 export const REASONS_BY_FORM: Record<Form, readonly DownReason[]> = {
-  spell: ["nothing", "small", "wrong", "broke", "boring"],
-  creature: ["nothing", "small", "wrong", "broke", "boring"],
-  object: ["nothing", "small", "wrong", "broke", "boring"],
-  building: ["nothing", "small", "wrong", "broke", "boring"],
-  settlement: ["nothing", "small", "wrong", "broke", "boring"],
-  place: ["nothing", "small", "wrong", "broke", "boring"],
-  land: ["nothing", "small", "wrong", "broke", "boring"],
+  spell: ["nothing", "small", "effect", "wrong", "broke", "boring"],
+  creature: ["still", "aloof", "nature", "body", "small", "broke"],
+  object: ["idle", "unused", "big", "wrong", "effect", "broke"],
+  building: ["plain", "small", "empty", "float", "broke"],
+  settlement: ["token", "small", "same", "broke"],
+  place: ["small", "wrong", "idle", "unused", "float", "broke"],
+  land: ["small", "shape", "paint", "bare", "broke"],
 };
+
+// The same reason, said as a player of that form would: a spell is weak
+// rather than small. Same id, same fix.
+const FORM_LABEL: Partial<Record<Form, Partial<Record<DownReason, string>>>> = {
+  spell: { small: "Too weak" },
+};
+
+export function reasonLabel(reason: DownReason, form?: Form): string {
+  return (form && FORM_LABEL[form]?.[reason]) ?? REASONS[reason].label;
+}
 
 // A player picks one to three.
 export const MAX_REASONS = 3;

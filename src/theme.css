@@ -1204,6 +1204,171 @@ input[type="checkbox"] {
   display: none;
 }
 
+/* "Not good": reasons by the item's form, one to three, then Send
+   (2026-11-07). Two columns of 44 px buttons; the filter row hides while
+   the player picks, so the island loses no more than the five reasons took. */
+.vote[data-step="reasons"] {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px;
+}
+
+.vote-head {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 48px 0 6px;
+}
+
+.vote[data-step="reasons"] .vote-text {
+  flex: none;
+  flex-basis: auto;
+  min-height: 0;
+  display: block;
+}
+
+.vote-text:focus {
+  outline: none;
+}
+
+.vote-hint {
+  font-size: 14px;
+  line-height: 1.3;
+  color: var(--muted);
+}
+
+.vote-hint[data-warn] {
+  color: var(--lantern-hi);
+  font-weight: 700;
+}
+
+.vote[data-step="reasons"] .vote-close {
+  top: 8px;
+  right: 8px;
+}
+
+.vote-reasons,
+.vote-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.vote-reasons {
+  grid-auto-rows: minmax(44px, auto);
+}
+
+/* A picked reason: a ticked box, the lantern's fill and a sunk block, so it
+   reads without color too. */
+.vote button.vote-reason {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 4px 10px;
+  border-color: #6a7bb3;
+  text-align: left;
+  font: 600 15px/1.2 var(--font-body);
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+.vote .vote-reason::before {
+  content: "";
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--line);
+  border-radius: 3px;
+  background: var(--well);
+  box-sizing: border-box;
+}
+
+.vote button.vote-reason[aria-pressed="true"] {
+  border-color: var(--lantern-hi);
+  background: var(--lantern);
+  color: var(--lantern-ink);
+  transform: translateY(2px);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 45%),
+    0 1px 0 var(--lantern-lip);
+}
+
+.vote .vote-reason[aria-pressed="true"]::before {
+  border-color: var(--lantern-ink);
+  background: var(--lantern-ink)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 7 7' shape-rendering='crispEdges'%3E%3Cpath fill='%23ffc54d' d='M5 1h1v1H5zM4 2h2v1H4zM0 3h1v1H0zM3 3h2v1H3zM0 4h2v1H0zM2 4h2v1H2zM1 5h2v1H1z'/%3E%3C/svg%3E")
+    center / 12px 12px no-repeat;
+}
+
+.vote button.vote-send:not([aria-disabled="true"]) {
+  border-color: var(--lantern-hi);
+  background: var(--lantern);
+  color: var(--lantern-ink);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 45%),
+    0 3px 0 var(--lantern-lip);
+}
+
+.vote button.vote-send[aria-disabled="true"] {
+  border-style: dashed;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  cursor: default;
+  transform: none;
+}
+
+.spellbar:has(.vote[data-step="reasons"]) .spell-tools {
+  display: none;
+}
+
+.spellbar.expanded:has(.vote[data-step="reasons"]) .spell-list {
+  max-height: 52px;
+}
+
+/* On its side: one row, the reasons scroll sideways, Send never does. */
+@media (max-height: 500px) {
+  .vote[data-step="reasons"] {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    overflow: visible;
+  }
+
+  .vote-head {
+    flex: 0 0 auto;
+    max-width: 150px;
+    padding: 0 4px;
+  }
+
+  .vote-reasons {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 3px;
+    mask-image: linear-gradient(90deg, #000 85%, transparent);
+  }
+
+  .vote button.vote-reason {
+    flex: none;
+    max-width: 200px;
+  }
+
+  .vote-actions {
+    flex: none;
+    display: flex;
+  }
+
+  .vote[data-step="reasons"] .vote-close.vote-close {
+    position: static;
+  }
+}
+
 .world-banner {
   gap: 6px 10px;
   padding: 10px 12px;

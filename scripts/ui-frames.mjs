@@ -238,6 +238,16 @@ async function run(width, height) {
       await shot("07b-world-reasons");
       const wide = await page.evaluate(() => document.documentElement.scrollWidth);
       if (wide > width) failures.push(`${tag}: the vote's reasons make the page ${wide} px wide`);
+      // Reasons by form (2026-11-07): a spell's, up to three picked, then Send.
+      const reasons = page.locator(".vote .vote-reason");
+      const labels = await reasons.allInnerTexts();
+      if (!labels.includes("Too weak") || labels.length > 6) failures.push(`${tag}: a spell's reasons are not a spell's: ${labels.join(", ")}`);
+      for (let i = 0; i < Math.min(4, labels.length); i++) await reasons.nth(i).click();
+      const pressed = await page.locator('.vote .vote-reason[aria-pressed="true"]').count();
+      if (pressed !== 3) failures.push(`${tag}: ${pressed} reasons picked after four taps, not 3`);
+      await shot("07c-world-reasons-picked");
+      const island = await page.locator("#world-stage").boundingBox();
+      if (island.height < Math.min(300, height * 0.36)) failures.push(`${tag}: the reasons leave the island ${Math.round(island.height)} px tall`);
       await page.locator(".vote .vote-close").click();
     }
   }

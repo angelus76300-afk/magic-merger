@@ -3,7 +3,7 @@ import { elementKey } from "../shared/elements";
 import type { SpellProgram } from "../shared/spellcode";
 import { TIERS, tierFromDepth, type Tier } from "../shared/tiers";
 import type { CheckRequest, SpellResponse } from "../shared/types";
-import { MAX_REASONS, REASON_LABEL, reasonsFor, type DownReason } from "../shared/votes";
+import { MAX_REASONS, reasonLabel, reasonsFor, type DownReason } from "../shared/votes";
 import { formOf, type Form } from "../shared/forms";
 import * as api from "./api";
 import { timeline } from "./timeline";
@@ -1083,9 +1083,16 @@ export class WorldHost {
     bar.className = "vote";
     bar.setAttribute("role", "group");
     bar.setAttribute("aria-label", `Vote on ${name}`);
+    delete bar.dataset.step;
+    // Focus goes back to the spells, never lost on the page, when it closes.
     const close = () => {
+      const had = bar.contains(document.activeElement);
       bar.remove();
       clearTimeout(this.voteTimer);
+      if (had) (this.el.list.querySelector<HTMLElement>('.chip-castable[aria-pressed="true"]') ?? this.el.list).focus({ preventScroll: true });
+    };
+    bar.onkeydown = (e) => {
+      if (e.key === "Escape") close();
     };
     const send = async (up: boolean, reasons?: DownReason[]) => {
       close();
@@ -1106,55 +1113,82 @@ export class WorldHost {
     };
     const text = document.createElement("span");
     text.className = "vote-text";
-    text.textContent = `How was ${name}?`;
+    text.id = "vote-q";
+    text.tabIndex = -1;
     const dismiss = button("×", "vote-close", close);
     dismiss.setAttribute("aria-label", "Not now");
-    // Reasons by the item's form (a creature that did not move, a building
-    // floating): one to three, then Send. Picking keeps the bar open longer.
+    // Reasons by the item's form (a creature that barely moved, a building
+    // floating): one to three, then Send. Picks are kept if the player goes
+    // Back and taps Not good again.
+    const picked: DownReason[] = [];
+    let warned = 0;
     const showReasons = () => {
+      // Choosing takes longer than a tap: no clock while the player picks.
       clearTimeout(this.voteTimer);
-      this.voteTimer = window.setTimeout(close, 60_000);
-      const picked: DownReason[] = [];
-      text.textContent = `What was wrong? Pick up to ${MAX_REASONS}`;
+      bar.dataset.step = "reasons";
+      text.textContent = "What was wrong?";
+      const head = document.createElement("div");
+      head.className = "vote-head";
       const hint = document.createElement("span");
       hint.className = "vote-hint";
       hint.setAttribute("aria-live", "polite");
-      const sendButton = button("Send", "vote-send", () => {
-        if (picked.length) void send(false, [...picked]);
-      });
+      const say = (line: string, warn = false) => {
+        hint.textContent = line;
+        hint.toggleAttribute("data-warn", warn);
+        clearTimeout(warned);
+        if (warn) warned = window.setTimeout(refresh, 3000);
+      };
+      head.append(text, hint);
       const grid = document.createElement("div");
       grid.className = "vote-reasons";
+      grid.setAttribute("role", "group");
+      grid.setAttribute("aria-label", "Reasons");
+      const sendButton = button("Send", "vote-send", () => {
+        if (picked.length) void send(false, [...picked]);
+        else say("Pick at least one reason", true);
+      });
       const choices = reasonsFor(form).map((r) => {
-        const b = button(REASON_LABEL[r], "vote-reason", () => {
+        const b = button(reasonLabel(r, form), "vote-reason", () => {
           const at = picked.indexOf(r);
           if (at >= 0) picked.splice(at, 1);
           else if (picked.length < MAX_REASONS) picked.push(r);
-          else {
-            hint.textContent = `${MAX_REASONS} at most: tap one to unpick it`;
-            return;
-          }
+          else return say(`${MAX_REASONS} is the most. Tap one to unpick it.`, true);
           refresh();
         });
         b.dataset.reason = r;
         return b;
       });
-      const refresh = () => {
+      function refresh() {
         for (const b of choices) b.setAttribute("aria-pressed", String(picked.includes(b.dataset.reason as DownReason)));
-        sendButton.disabled = picked.length === 0;
-        sendButton.textContent = picked.length ? `Send (${picked.length})` : "Send";
-        hint.textContent = "";
-      };
+        sendButton.setAttribute("aria-disabled", String(picked.length === 0));
+        say(picked.length >= MAX_REASONS ? `${MAX_REASONS} picked, the most` : `Pick 1 to ${MAX_REASONS}`);
+      }
       grid.replaceChildren(...choices);
+      const actions = document.createElement("div");
+      actions.className = "vote-actions";
+      actions.append(
+        button("Back", "vote-back", () => {
+          clearTimeout(warned);
+          showAsk();
+          bar.querySelector<HTMLElement>(".vote-down")?.focus({ preventScroll: true });
+        }),
+        sendButton,
+      );
       refresh();
-      bar.replaceChildren(text, dismiss, grid, hint, sendButton);
-      choices[0]?.focus({ preventScroll: true });
+      bar.replaceChildren(head, grid, actions, dismiss);
+      text.focus({ preventScroll: true });
     };
-    bar.replaceChildren(
-      text,
-      button("Good", "vote-up", () => void send(true)),
-      button("Not good", "vote-down", showReasons),
-      dismiss,
-    );
+    const showAsk = () => {
+      delete bar.dataset.step;
+      text.textContent = `How was ${name}?`;
+      bar.replaceChildren(
+        text,
+        button("Good", "vote-up", () => void send(true)),
+        button("Not good", "vote-down", showReasons),
+        dismiss,
+      );
+    };
+    showAsk();
     // On the drawer, in place of its hint line (2026-11-07): over the island
     // it covered the island's own panels and the ground where spells land.
     if (!bar.isConnected) this.el.status.before(bar);
