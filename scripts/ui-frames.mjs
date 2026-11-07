@@ -157,6 +157,15 @@ async function run(width, height) {
     await page.screenshot({ path: join(OUT, `${PREFIX}${tag}-${name}.png`) });
     const small = await smallTargets(page);
     if (small.length) failures.push(`${tag} ${name}: under 44 px: ${small.join(", ")}`);
+    // Nothing in the top bar runs past the screen's right edge.
+    const past = await page.evaluate(() =>
+      [...document.querySelectorAll(".topbar > *:not([hidden]):not(.tabs)")]
+        .filter((el) => el.getBoundingClientRect().right > innerWidth + 0.5)
+        .map((el) => `${(el.id || el.className).toString().slice(0, 20)} at x ${Math.round(el.getBoundingClientRect().right)}`),
+    );
+    if (past.length) failures.push(`${tag} ${name}: past the right edge: ${past.join(", ")}`);
+    const wide = await page.evaluate(() => document.documentElement.scrollWidth);
+    if (wide > width) failures.push(`${tag} ${name}: the page is ${wide} px wide`);
   };
   await page.goto(`${BASE}/`);
   await page.waitForSelector(".chip-inventory", { timeout: 20000 });
@@ -250,6 +259,17 @@ async function run(width, height) {
   await page.click("#help");
   await page.waitForTimeout(600);
   await shot("12-menu");
+  await closeDialogs(page);
+
+  // The owner on a preview: both badges, and a month's spend in two digits.
+  await page.evaluate(() => {
+    document.getElementById("staging-badge").hidden = false;
+    const admin = document.getElementById("admin-badge");
+    admin.hidden = false;
+    admin.textContent = "admin $10.50";
+  });
+  await page.click('.tab[data-view="craft-view"]');
+  await shot("13-topbar-preview");
   await ctx.close();
 }
 
