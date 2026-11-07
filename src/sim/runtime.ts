@@ -118,8 +118,10 @@ export class Runtime {
   static slowMs = 40;
   readonly visuals = new Visuals();
   // The ward a body was stopped on, while its land hook runs (4.7): what the
-  // impact does inside that ward is taken by the glass.
-  glass: Ward | null = null;
+  // impact does inside that ward is taken by the glass. `harm` counts what
+  // it tried to do there (a body that only heals does not wear the ward);
+  // `replay` holds the blows it held back, dealt if the impact breaks it.
+  glass: { ward: Ward; harm: number; replay: (() => void)[] } | null = null;
   private compiled = new Map<string, Compiled>();
   private casts: ActiveCast[] = [];
   private nextCast = 1;
@@ -655,9 +657,13 @@ export class Runtime {
   }
 
   // A body entering a ward's dome from outside: it stops where it was, on
-  // the glass, and lands there (its land hook runs, so a meteor's blast goes
-  // off on the dome, where the ward keeps it from what is inside). Unless the
-  // blow breaks the ward: then it goes on. True when the body was stopped.
+  // the glass. A body with a land hook lands there: the hook runs with every
+  // rule of the land holding inside the ward and no blow reaching anyone
+  // under it; if it tried to harm what is inside, the ward takes the blow,
+  // and a blow that breaks it goes through (the blows held back are dealt).
+  // A body that only heals passes its help and leaves the ward whole. A
+  // body with no land hook is a thrown thing: its blow is taken, or it
+  // breaks the ward and flies on. True when the body was stopped.
   private hitsWard(b: Body, hooks: BodyHooks | undefined, px: number, py: number, pz: number): boolean {
     const owner = hooks?.key ?? "";
     let hit: Ward | undefined;
@@ -665,8 +671,33 @@ export class Runtime {
     if (!hit) return false;
     const speed = Math.hypot(b.vx, b.vy, b.vz);
     const blow = (8 + 8 * Math.min(8, b.r)) * Math.min(2, 0.5 + speed / 40);
-    if (damageWard(this.world, hit, blow, hooks?.source ?? "land", hooks?.power ?? 1)) return false;
+    const source = hooks?.source ?? "land";
+    const power = hooks?.power ?? 1;
+    if (!hooks?.land && damageWard(this.world, hit, blow, source, power)) return false;
     [b.x, b.y, b.z] = [px, py, Math.max(0, pz)];
+    b.alive = false;
+    if (!hooks?.land) {
+      this.splash(b, hit);
+      return true;
+    }
+    const mask = this.world.wardMask;
+    forDisc(this.world, hit.x, hit.y, hit.r, (i) => (mask[i] = WARD_ALL));
+    const glass = { ward: hit, harm: 0, replay: [] as (() => void)[] };
+    this.glass = glass;
+    try {
+      this.run(hooks.key, hooks.name, () => hooks.land!(hooks.handle, hooks.api));
+    } finally {
+      this.glass = null;
+      rebuildMask(this.world);
+    }
+    if (!glass.harm) return true;
+    this.splash(b, hit);
+    if (damageWard(this.world, hit, blow, source, power)) for (const f of glass.replay) this.run(hooks.key, hooks.name, f);
+    return true;
+  }
+
+  // Sparks and a thump where a body hit the glass.
+  private splash(b: Body, hit: Ward): void {
     for (let n = 0; n < 12; n++)
       this.world.particles.add({
         x: b.x,
@@ -683,27 +714,6 @@ export class Runtime {
         drag: 1,
       });
     this.world.emit({ kind: "sound", name: "thump", size: Math.min(1, 0.2 + b.r / 6) });
-    if (hooks?.land) {
-      // Every rule of the land holds inside the struck ward while the impact
-      // goes off on it, whatever it is against, and no blow reaches anyone
-      // under it: the meteor burst on the glass.
-      const mask = this.world.wardMask;
-      forDisc(this.world, hit.x, hit.y, hit.r, (i) => (mask[i] = WARD_ALL));
-      this.glass = hit;
-      try {
-        this.run(
-          hooks.key,
-          hooks.name,
-          () => hooks.land!(hooks.handle, hooks.api),
-          () => (b.alive = false),
-        );
-      } finally {
-        this.glass = null;
-        rebuildMask(this.world);
-      }
-    }
-    b.alive = false;
-    return true;
   }
 
   // Custom material rules: each cell of a material with a tick gets a call,
@@ -1054,12 +1064,16 @@ export class CreatureHandle {
     return shieldedCreature(this.rt.world, this.raw) && !hostile(this.raw);
   }
   // Under the glass a body burst on (Runtime.glass): no blow gets through.
-  private underGlass() {
+  // Held back, and counted as harm the glass took.
+  private underGlass(blow: () => void) {
     const g = this.rt.glass;
-    return !!g && Math.hypot(this.raw.x - g.x, this.raw.y - g.y) <= g.r && !hostile(this.raw);
+    if (!g || Math.hypot(this.raw.x - g.ward.x, this.raw.y - g.ward.y) > g.ward.r || hostile(this.raw)) return false;
+    g.harm++;
+    g.replay.push(blow);
+    return true;
   }
   hurt(n: number) {
-    if (this.underGlass()) return;
+    if (this.underGlass(() => this.hurt(n))) return;
     const blow = num(n, 0, 1e6, 0) * (this.shielded() ? 0.15 : 1);
     this.raw.hp -= blow;
     // People remember what magic did to them (3.6).
@@ -1073,7 +1087,7 @@ export class CreatureHandle {
     this.raw.frozen = 0;
   }
   kill() {
-    if (this.underGlass()) return;
+    if (this.underGlass(() => this.kill())) return;
     if (this.shielded()) {
       this.raw.hp -= maxHp(this.raw) * 0.15;
       if (this.raw.hp > 0) return;
@@ -1345,13 +1359,15 @@ export class SpellApi {
   private fluidBlocked(i: number): boolean {
     const w = this.rt.world;
     if (!w.wards.length || !warded(w, i, WARD.fluids) || ownWard(w, i, this.req.key)) return false;
-    if (Math.random() < 0.02) wardHit(w, i, 1, this.source, this.power);
+    if (this.rt.glass) this.rt.glass.harm++;
+    else if (Math.random() < 0.02) wardHit(w, i, 1, this.source, this.power);
     return true;
   }
   private fireBlocked(i: number): boolean {
     const w = this.rt.world;
     if (!w.wards.length || !warded(w, i, WARD.fire)) return false;
-    if (Math.random() < 0.02) wardHit(w, i, 1, this.source, this.power);
+    if (this.rt.glass) this.rt.glass.harm++;
+    else if (Math.random() < 0.02) wardHit(w, i, 1, this.source, this.power);
     return true;
   }
   clear(x: number, y: number, layer: Layer) {
@@ -1410,9 +1426,16 @@ export class SpellApi {
     const radius = num(r, 0.5, 300, 4);
     const force = num(power, 0, 5, 1);
     // 4.7: a blast that reaches a ward against harm wears it down first;
-    // a strong one breaks it, and then the blast goes through.
+    // a strong one breaks it, and then the blast goes through. On the glass
+    // of a body's impact, the body's blow is what the ward takes, and the
+    // blast inside is held back with the body's other blows.
+    const g = this.rt.glass;
+    if (g && Math.hypot(g.ward.x - x, g.ward.y - y) < g.ward.r + radius) {
+      g.harm++;
+      g.replay.push(() => explode(this.rt.world, x, y, radius, force));
+    }
     for (const ward of [...this.rt.world.wards])
-      if (ward.against & WARD.harm && Math.hypot(ward.x - x, ward.y - y) < ward.r + radius)
+      if (ward !== g?.ward && ward.against & WARD.harm && Math.hypot(ward.x - x, ward.y - y) < ward.r + radius)
         damageWard(this.rt.world, ward, 15 * force * Math.sqrt(Math.min(radius, 40)), this.source, this.power);
     explode(this.rt.world, x, y, radius, force);
   }
@@ -1968,14 +1991,21 @@ export class SpellApi {
     for (let l = target + 1; l < target + 140; l++) if (w.decor.has(voxelKey(cx, cy, l))) target = l + 1;
     if (w.depth[i] > 0.05) target = Math.max(target, (w.height[i] + w.depth[i]) * 0.5);
     // Under a ward against lightning, the bolt ends on the dome.
-    const dome = warded(w, i, WARD.lightning) ? w.wards.find((d) => d.against & WARD.lightning && Math.hypot(d.x - x, d.y - y) <= d.r) : undefined;
+    // On the glass of a body's impact (4.7), a bolt of its land hook ends on that dome.
+    const glass = this.rt.glass;
+    const onGlass = glass && Math.hypot(glass.ward.x - x, glass.ward.y - y) <= glass.ward.r ? glass.ward : undefined;
+    if (glass && onGlass) {
+      glass.harm++;
+      glass.replay.push(() => this.lightning(x, y, o));
+    }
+    const dome = onGlass ?? (warded(w, i, WARD.lightning) ? w.wards.find((d) => d.against & WARD.lightning && Math.hypot(d.x - x, d.y - y) <= d.r) : undefined);
     if (dome) {
       const top = w.height[w.idx(Math.max(0, Math.min(w.w - 1, dome.x)), Math.max(0, Math.min(w.h - 1, dome.y)))] * 0.5;
       target = Math.max(target, top + Math.sqrt(Math.max(0, dome.r ** 2 - (x - dome.x) ** 2 - (y - dome.y) ** 2)) * DOME_SQUASH);
       dome.hit = w.time;
     }
     // 4.7: a bolt on the dome wears it down; one that breaks it strikes through.
-    const broke = !!dome && damageWard(w, dome, 20 * Math.max(0.5, power), this.source, this.power);
+    const broke = !!dome && !onGlass && damageWard(w, dome, 20 * Math.max(0.5, power), this.source, this.power);
     const path = (x0: number, y0: number, l0: number, x1: number, y1: number, l1: number, jag: number) => {
       const pts = [{ x: x0, y: y0, l: l0 }];
       const n = 10;

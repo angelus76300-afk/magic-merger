@@ -65,6 +65,13 @@ export const TIER_POWER: Record<Tier, number> = { cantrip: 0.5, minor: 1, major:
 // of the same tier cracks a ward but never breaks it alone; two casts, or
 // one a tier stronger, do.
 export const ONE_SOURCE = 0.8;
+// What presses on a ward with no cast behind it (lava and fire flowing from
+// the land, creatures pushed out) never takes it below this share of its
+// health: the lava a flood spell poured is that spell's doing, and the spell
+// counts once (the playtest of 7 November: one minor flood broke a minor ward,
+// its flowing lava counted as a second source).
+export const PRESSURE_FLOOR = 0.2;
+const PRESSURE = new Set(["land", "creatures"]);
 
 // Damage is in units of a ward of the same power (100 breaks it). Returns
 // true when the ward broke.
@@ -73,7 +80,8 @@ export function damageWard(world: World, ward: Ward, amount: number, source: str
   ward.dealt ??= {};
   const cap = 100 * ONE_SOURCE * power;
   const before = ward.dealt[source] ?? 0;
-  const take = Math.max(0, Math.min(amount * power, cap - before));
+  const floor = PRESSURE.has(source) ? (ward.maxHp ?? 100) * PRESSURE_FLOOR : -Infinity;
+  const take = Math.max(0, Math.min(amount * power, cap - before, (ward.hp ?? 100) - floor));
   ward.dealt[source] = before + take;
   ward.hp = (ward.hp ?? 100) - take;
   ward.hit = world.time;
@@ -95,15 +103,16 @@ export function breakWard(world: World, ward: Ward): void {
       x: ward.x + Math.cos(a) * rr,
       y: ward.y + Math.sin(a) * rr,
       z: 1 + up * ward.r * DOME_SQUASH * 2,
-      vx: Math.cos(a) * (2 + Math.random() * 4),
-      vy: Math.sin(a) * (2 + Math.random() * 4),
-      vz: 2 + Math.random() * 4,
-      life: 0.8 + Math.random() * 0.8,
-      color: ward.color,
-      size: 0.8 + Math.random() * 0.8,
-      glow: true,
-      gravity: 14,
-      drag: 0.6,
+      // Shards of glass that fall about where the dome stood, not sparks.
+      vx: Math.cos(a) * (1 + Math.random() * 2.5),
+      vy: Math.sin(a) * (1 + Math.random() * 2.5),
+      vz: 1 + Math.random() * 3,
+      life: 0.9 + Math.random() * 0.6,
+      color: k % 3 ? 0xeef8ff : ward.color,
+      size: 1.1 + Math.random() * 1.1,
+      glow: k % 4 === 0,
+      gravity: 22,
+      drag: 0.4,
     });
   }
   world.emit({ kind: "sound", name: "crackle", size: Math.min(1, 0.4 + ward.r / 20) });

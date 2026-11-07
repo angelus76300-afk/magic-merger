@@ -1268,8 +1268,10 @@ function keepOut(world: World): void {
         c.vx -= inward * ux;
         c.vy -= inward * uy;
       }
-      // Each push wears the ward a little (4.7): raiders crack a minor ward, never break it.
-      damageWard(world, ward, 2, "creatures");
+      // Each push wears the ward a little (4.7): a hostile pressing on it is
+      // pushed about every tick, so about 3 a second each; raiders crack a
+      // ward, never break it (wards.ts, PRESSURE_FLOOR).
+      damageWard(world, ward, 0.1, "creatures");
     }
   }
 }

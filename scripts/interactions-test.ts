@@ -346,6 +346,43 @@ export function interactionChecks(check: Check): void {
     check("a ward lets its own spell's bodies through", hurt(s), `hp ${s.person.hp.toFixed(0)} of ${s.hp0}`);
   }
   {
+    // Found by the playtest of 7 November: bodies that only heal wore wards
+    // down and broke them. A healing rain reaches the people under a ward
+    // and leaves it whole.
+    const s = scene("grass", "all", "minor");
+    const healRain = {
+      name: "healing rain",
+      code: `const spell = { *cast(w) { for (let k = 0; k < 8; k++) { w.body({ x: w.x + w.rand(-1, 1), y: w.y + w.rand(-1, 1), z: 30, vz: -20, gravity: 10, r: 1, look: "orb", color: "#7fe08a", land(b, w) { for (const c of w.creatures(b.x, b.y, 4)) c.heal(10); } }); yield 0.2; } yield 2; } };`,
+      seconds: 3.5,
+      reached: () => false,
+    };
+    run(s, healRain, "grand");
+    const ward = s.world.wards[0];
+    check(
+      "a healing rain of a stronger tier heals under a ward and leaves it whole",
+      !!ward && wardDamage(ward) === 0 && s.person.hp > s.hp0 + 20,
+      `${ward ? wardDamage(ward).toFixed(2) : "broken"}, hp ${s.person.hp.toFixed(0)} of ${s.hp0}`,
+    );
+  }
+  {
+    // Found by the same playtest: one minor flood of lava broke a minor
+    // ward, its flowing lava counted apart from the spell that poured it.
+    const s = scene("grass", "all", "minor");
+    const floods = {
+      name: "floods",
+      code: `const spell = { *cast(w) { for (let k = 0; k < 10; k++) { w.flood(w.x, w.y, 13, "lava", 2); yield 2; } } };`,
+      seconds: 22,
+      reached: () => false,
+    };
+    run(s, floods, "minor");
+    const ward = s.world.wards[0];
+    check(
+      "ten floods of lava from one spell of the ward's tier crack it and do not break it",
+      !!ward && wardDamage(ward) > 0.3 && !hurt(s),
+      `${ward ? wardDamage(ward).toFixed(2) : "broken"}, hp ${s.person.hp.toFixed(0)}`,
+    );
+  }
+  {
     // Raiders pushed out again and again crack a minor ward, never break it.
     const s = scene("grass", "creatures", "minor");
     const siege = {

@@ -61,7 +61,7 @@ void main() {
   float rim = pow(edge, 2.6);
   float band = smoothstep(0.93, 1.0, sin(vHeight * 36.0 - time * 1.6) * 0.5 + 0.5) * 0.22 * (1.0 - crack);
   float c = crack > 0.0 ? cracks(vPos * 5.0) : 0.0;
-  float a = (0.05 + rim * 0.6 + band + hit * 0.35 + c * 0.75) * alpha;
+  float a = (0.05 + rim * 0.6 + band + hit * 0.35 + c * 0.5) * alpha;
   gl_FragColor = vec4(mix(color * (0.85 + rim * 0.5 + hit * 0.7), vec3(1.0), c * 0.6), a);
 }`;
 
