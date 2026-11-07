@@ -3,6 +3,10 @@
   "entries": [
     {
       "date": "2026-11-07",
+      "text": "Villagers now pick up the objects you cast and use them: a guard carries your fire staff and burns what attacks, a healing potion is drunk once when someone is badly hurt, a lantern lights the way at night. Goblins can steal them, and an object falls where its holder dies."
+    },
+    {
+      "date": "2026-11-07",
       "text": "People you create now join the island as real villagers: a Human moves into a house of the nearest village, takes a job and lives with a family there. A Blacksmith works the forge, a Necromancer walks among the graves at night and raises the dead, a Knight guards the village. New creatures are made as living things: a Serpent slithers and hunts, a Fox Spirit tends the woods."
     },
     {

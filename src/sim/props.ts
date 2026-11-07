@@ -34,6 +34,8 @@ export interface Prop {
   // Turned about its center, radians.
   turn: number;
   boxes: PropBox[];
+  // 4.7: the creature whose hand holds it (held.ts): drawn there, small, not on the ground.
+  heldBy?: number | null;
 }
 
 // As many as the landmarks a save keeps (60): every placed item can have its look.

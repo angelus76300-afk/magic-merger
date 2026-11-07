@@ -1836,6 +1836,8 @@ export class SpellApi {
       power: num(all.power, 0, 10, 1),
       art: artifactState(all, this.req.key, this.req.tier, w.time, radius),
     };
+    // 4.7: an object can be carried (held.ts); its kind when the spell carries one.
+    if (this.req.form) a.art.form = this.req.form;
     w.landmarks.push(a);
     return new ArtifactHandle(a, w);
   }

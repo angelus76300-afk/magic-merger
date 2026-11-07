@@ -309,7 +309,7 @@ export class VoxelView {
     }
     this.lap("covers");
     if (world.wonders.length) this.wonderModels.update(world, time);
-    this.propModels.update(world);
+    this.propModels.update(world, this.groundAt);
     if (world.decorVersion !== this.decorVersion) {
       this.decorVersion = world.decorVersion;
       this.placeDecor(time);
