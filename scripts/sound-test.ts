@@ -6,7 +6,9 @@
 // gains, biquad filters (the formulas of the Web Audio spec), buffer sources
 // and the automation the voices use, rendered sample by sample.
 
-import { VOICE_NAMES, bedMaker, makeVoice, voiceFor, whiteNoise, type Synth } from "../src/sim/sound";
+import { MusicPlayer, VOICE_NAMES, bedMaker, makeVoice, voiceFor, whiteNoise, type Synth } from "../src/sim/sound";
+import { Composer, MoodTracker, PHRASE_BARS, TENSION_IN, TENSION_OUT, hz, inKey, scoreOf } from "../src/sim/music";
+import { SOUND_DEFAULTS, readSentSettings, readSoundSettings, writeSoundSetting } from "../src/sim/soundsettings";
 import { BEDS, CALLS, CALL_CELLS, CallClock, HEARD, HYSTERESIS, SPECIES_GAP, chooseBeds, sampleBeds, silentBeds, type BedLevels } from "../src/sim/ambience";
 import { C, F } from "../src/sim/materials";
 import { daylight } from "../src/sim/daylight";
@@ -611,6 +613,125 @@ check(!castOwns(120, true), "two minutes on, a sound with no place is never put 
   );
   check(!sameSpecies && !sameCreature, "one call per species per 4 s, and per creature per 20 s");
   check(CALL_CELLS === 25, "calls are heard within 25 cells of the camera's point at most");
+}
+
+// 7. Music (4.8, item 6).
+{
+  // The island's seed sets its key, mode and tempo, the same every time.
+  const a = scoreOf(11);
+  check(JSON.stringify(a) === JSON.stringify(scoreOf(11)), "the same island has the same music");
+  const keys = new Set(Array.from({ length: 24 }, (_, k) => `${scoreOf(k).root}:${scoreOf(k).mode}`));
+  check(keys.size >= 10, `islands have music of their own: ${keys.size} keys and modes in 24 seeds`);
+  check(
+    [...Array(24).keys()].every((k) => scoreOf(k).bpm >= 58 && scoreOf(k).bpm <= 76),
+    "tempo stays between 58 and 76 BPM",
+  );
+
+  // 400 bars by day: every note in the key it was written in, about half the time resting.
+  const run = (seed: number, bars: number, mood: (bar: number) => { night: number; tense: boolean }) => {
+    const c = new Composer(seed);
+    const out = [];
+    for (let b = 0; b < bars; b++) out.push(c.next(mood(b)));
+    return out;
+  };
+  const day = run(11, 400, () => ({ night: 0, tense: false }));
+  const offKey = day.flatMap((b) => b.notes.filter((n) => !inKey(b.root, b.mode, n.midi)));
+  check(offKey.length === 0, `every note is in the key (${offKey.length} out of key)`);
+  const restShare = day.filter((b) => b.rest).length / day.length;
+  check(restShare >= 0.3 && restShare <= 0.65, `music rests about half the time: ${(restShare * 100).toFixed(0)}% of bars`);
+  const melodyDay = day.filter((b) => b.notes.some((n) => n.layer === "melody")).length;
+  const night = run(11, 400, () => ({ night: 1, tense: false }));
+  const melodyNight = night.filter((b) => b.notes.some((n) => n.layer === "melody")).length;
+  check(
+    night.every((b) => !b.notes.some((n) => n.layer === "bass")),
+    "no bass at night",
+  );
+  check(melodyNight < melodyDay, `the melody is rarer at night (${melodyNight} bars against ${melodyDay} by day)`);
+  check(
+    night.every((b) => b.mode === "aeolian"),
+    "night plays in the relative minor",
+  );
+  const tense = run(11, 200, () => ({ night: 0, tense: true }));
+  const playing = tense.filter((b) => !b.rest);
+  check(
+    playing.length > 0 && playing.every((b) => !b.notes.some((n) => n.layer === "melody") && b.notes.filter((n) => n.layer === "bass").length === 8),
+    "in tension: no melody, the bass pulses in eighths",
+  );
+  // Night falls mid phrase: the key waits for the next phrase.
+  const c = new Composer(5);
+  const first = c.next({ night: 0, tense: false });
+  let changedMid = false;
+  for (let b = 1; b < PHRASE_BARS; b++) if (c.next({ night: 1, tense: false }).root !== first.root) changedMid = true;
+  check(!changedMid, "the key changes only when a phrase starts, not in its middle");
+
+  // Tension comes after 3 s of threat and goes after 12 s without.
+  const t = new MoodTracker();
+  let s2 = false;
+  for (let k = 0; k < 8; k++) s2 = t.update(1, 0.25);
+  check(!s2, "2 s of threat is not yet tension");
+  for (let k = 0; k < 4; k++) s2 = t.update(1, 0.25);
+  check(s2, `${TENSION_IN} s of threat is tension`);
+  for (let k = 0; k < 40; k++) s2 = t.update(0, 0.25);
+  check(s2, "10 s of calm keeps the tension");
+  for (let k = 0; k < 8; k++) s2 = t.update(0, 0.25);
+  check(!s2, `${TENSION_OUT} s of calm ends it`);
+
+  // A spell's chime is pulled into the key.
+  const k = new Composer(11);
+  k.next({ night: 0, tense: false });
+  const key = k.current;
+  const tuned = [523, 659, 784, 1046, 1500].map((f) => k.snap(f * 2));
+  check(
+    tuned.every((f) => inKey(key.root, key.mode, Math.round(69 + 12 * Math.log2(f / 440)))) &&
+      tuned.every((f, i) => Math.abs(Math.log2(f / ([523, 659, 784, 1046, 1500][i] * 2))) < 0.1),
+    "a chime's notes move to the nearest notes of the key, never more than a whole tone",
+  );
+
+  // 30 s of music rendered offline: bounded, no NaN, notes in time.
+  const ctx = new Offline();
+  const sink = new Sink();
+  const player = new MusicPlayer(ctx as unknown as BaseAudioContext, sink as unknown as AudioNode, 11, false);
+  player.keep = true;
+  for (let tt = 0; tt < 30; tt += 0.1) {
+    player.mood(0, 0, tt);
+    player.schedule(tt);
+  }
+  const n = Math.round(30 * RATE);
+  let peak = 0;
+  let nan = false;
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const v = sink.out(i);
+    if (!Number.isFinite(v)) nan = true;
+    peak = Math.max(peak, Math.abs(v));
+    sum += v * v;
+  }
+  const late = player.played.filter((p, i) => i > 0 && p.at < player.played[i - 1].at - 8);
+  check(!nan && peak > 0.005 && peak < 0.5, `30 s of music: no NaN, peak ${peak.toFixed(3)} (under 0.5, under the effects)`);
+  check(
+    player.played.length > 20 && late.length === 0,
+    `notes are scheduled in order: ${player.played.length} notes in 30 s, rms ${Math.sqrt(sum / n).toFixed(4)}`,
+  );
+  check(ctx.nodes.length / 30 < 12, `about ${(ctx.nodes.length / 30).toFixed(1)} nodes made a second, under 12`);
+  check(Math.abs(hz(69) - 440) < 1e-9, "note 69 is 440 Hz");
+}
+
+// 8. Settings (item 8): music off on a first visit, volumes kept per device.
+{
+  const store = new Map<string, string>();
+  const fake = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+  check(JSON.stringify(readSoundSettings(fake)) === JSON.stringify(SOUND_DEFAULTS) && !SOUND_DEFAULTS.music, "music is off on a first visit");
+  writeSoundSetting("music", true, fake);
+  writeSoundSetting("musicVolume", 0.35, fake);
+  writeSoundSetting("mono", true, fake);
+  const back = readSoundSettings(fake);
+  check(back.music && back.musicVolume === 0.35 && back.mono && back.effectsVolume === 1, "a setting written is read back");
+  store.set("magic-merger.volume.effects", "7");
+  check(readSoundSettings(fake).effectsVolume === 1, "a volume out of range is held to 0..1");
+  // What crosses into the World's frame is checked field by field.
+  const sent = readSentSettings({ type: "sound-settings", settings: { music: true, musicVolume: 9, effectsVolume: "loud", mono: 1 } });
+  check(!!sent && sent.music && sent.musicVolume === 1 && sent.effectsVolume === 1 && !sent.mono, "settings sent into the frame are clamped and typed");
+  check(readSentSettings({ type: "other", settings: {} }) === null && readSentSettings("x") === null, "any other message is not a setting");
 }
 
 console.log(`sound: ${passes} checks passed${failures ? `, ${failures} failed` : ""}`);
