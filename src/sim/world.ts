@@ -14,7 +14,7 @@ import { placeWonders, settleWonders, type Wonder, type WonderDef } from "./wond
 import { layOutVillages } from "./buildings";
 import { CreatureGrid } from "./crowd";
 import type { Landmark, Presence } from "./social";
-import type { Ward } from "./wards";
+import type { Ruin, Ward } from "./wards";
 import type { Prop } from "./props";
 import type { Death, Mark, Village } from "./kin";
 
@@ -79,6 +79,8 @@ export class World {
   // Places spells keep safe for a while (wards.ts), and what each cell is
   // protected against, as bits.
   wards: Ward[] = [];
+  // Wards broken a moment ago (wards.ts, Ruin): not saved.
+  ruins: Ruin[] = [];
   readonly wardMask: Uint8Array;
   // Gifts villagers have brought home; every few build a house.
   wealth = 0;

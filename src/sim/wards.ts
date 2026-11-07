@@ -57,6 +57,8 @@ export interface Ward {
   dealt?: Record<string, number>;
   // Cracks from pressure, which takes no health (PRESSURE).
   pressure?: number;
+  // Where it was last struck (z in voxels above the ground), for the glow the view draws there.
+  hitAt?: { x: number; y: number; z: number };
 }
 
 // How hard a tier hits and how much a ward of that tier holds: twice the
@@ -70,6 +72,42 @@ export const ONE_SOURCE = 0.8;
 // What a ward keeps of its health against its own tier and below, whatever
 // the number of casts (the owner, 7 November: "shouldn't break by default").
 export const HOLDS = 0.2;
+
+// 4.7, the owner's report and the game designer's rule: a ward broken by a
+// stronger spell spends what it had on the blow. The share of the blow that
+// passes is 1 - 2 (Pw / Pa) (hp / max): one tier up at full health nothing
+// passes and the ward shatters; a fresh minor ward lets half a grand blow
+// through and three quarters of a legendary one; a major ward none of a
+// grand one and half a legendary. So every tier of ward is worth merging
+// toward, and a cantrip ward never cancels a cosmic spell (94% passes).
+export function passShare(ward: Ward, attacker: number, hpBefore: number): number {
+  const most = ward.maxHp ?? 100;
+  return Math.max(0, Math.min(1, 1 - 2 * (most / 100 / Math.max(1e-6, attacker)) * (Math.max(0, hpBefore) / most)));
+}
+
+// Where a ward was broken, and by which spell: for RUIN_SECONDS what that
+// spell does there is scaled by the share that passed (Meteor Strike digs
+// its crater from the cast a moment after its body breaks the glass).
+export interface Ruin {
+  x: number;
+  y: number;
+  r: number;
+  key: string;
+  pass: number;
+  until: number;
+}
+export const RUIN_SECONDS = 2;
+export function addRuin(world: World, ward: Ward, key: string, pass: number): void {
+  world.ruins = world.ruins.filter((r) => r.until > world.time);
+  world.ruins.push({ x: ward.x, y: ward.y, r: ward.r, key, pass, until: world.time + RUIN_SECONDS });
+}
+// The share of what this spell does at (x, y) that goes through: 1 unless it
+// broke a ward there a moment ago.
+export function ruinPass(world: World, key: string, x: number, y: number): number {
+  let p = 1;
+  for (const r of world.ruins) if (r.key === key && r.until > world.time && (x - r.x) ** 2 + (y - r.y) ** 2 <= r.r * r.r) p = Math.min(p, r.pass);
+  return p;
+}
 // What presses on a ward with no cast behind it (lava and fire flowing from
 // the land, creatures pushed out) cracks it, up to ONE_SOURCE, and takes no
 // health: the lava a flood spell poured is that spell's doing, and the spell
@@ -108,6 +146,9 @@ export function breakWard(world: World, ward: Ward): void {
   world.wards = world.wards.filter((w) => w !== ward);
   rebuildMask(world);
   const n = Math.min(120, Math.round(ward.r * 10));
+  // Away from where it was struck: the far side flies, the struck side falls.
+  const ha = ward.hitAt ? Math.atan2(ward.hitAt.y - ward.y, ward.hitAt.x - ward.x) : 0;
+  const away = ward.hitAt ? { a: ha + Math.PI, x: -Math.cos(ha), y: -Math.sin(ha) } : { a: 0, x: 0, y: 0 };
   for (let k = 0; k < n; k++) {
     const a = (k / n) * Math.PI * 2;
     const up = Math.random();
@@ -116,9 +157,10 @@ export function breakWard(world: World, ward: Ward): void {
       x: ward.x + Math.cos(a) * rr,
       y: ward.y + Math.sin(a) * rr,
       z: 1 + up * ward.r * DOME_SQUASH * 2,
-      // Shards of glass that fall about where the dome stood, not sparks.
-      vx: Math.cos(a) * (1 + Math.random() * 2.5),
-      vy: Math.sin(a) * (1 + Math.random() * 2.5),
+      // Shards of glass that fall about where the dome stood, not sparks,
+      // flung away from the point struck (4.7: the shatter starts there).
+      vx: Math.cos(a) * (1 + Math.random() * 2.5) + away.x * (1 - Math.cos(a - away.a)) * 2,
+      vy: Math.sin(a) * (1 + Math.random() * 2.5) + away.y * (1 - Math.cos(a - away.a)) * 2,
       vz: 1 + Math.random() * 3,
       life: 0.9 + Math.random() * 0.6,
       color: k % 3 ? 0xeef8ff : ward.color,
@@ -129,7 +171,9 @@ export function breakWard(world: World, ward: Ward): void {
     });
   }
   world.emit({ kind: "sound", name: "crackle", size: Math.min(1, 0.4 + ward.r / 20) });
-  world.emit({ kind: "flash", color: ward.color, strength: 0.15 });
+  // A ringing tone after the crack, and a brighter flash (the game designer: 0.25).
+  world.emit({ kind: "sound", name: "chime", size: Math.min(1, 0.3 + ward.r / 30) });
+  world.emit({ kind: "flash", color: 0xffffff, strength: 0.25 });
 }
 
 // How cracked a ward looks, 0 whole to 1 about to break.

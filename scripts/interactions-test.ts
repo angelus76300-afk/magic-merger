@@ -13,7 +13,7 @@ import { TICK, generateWorld, type World } from "../src/sim/world";
 import { C, F, G } from "../src/sim/materials";
 import { makeCreature, populate, resetCreatureIds, type Creature } from "../src/sim/creatures";
 import { seeded } from "../src/sim/noise";
-import { wardDamage } from "../src/sim/wards";
+import { passShare, wardDamage, type Ward } from "../src/sim/wards";
 import type { Tier } from "../shared/tiers";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
@@ -64,6 +64,25 @@ const houses = (s: Scene) => {
 
 // The effects of 4.7's list. Projectiles come from outside the ward, as a
 // meteor from the sky and a fireball thrown from the side.
+// The live Meteor Strike's shape (the owner's report of 7 November): its
+// body only marks the landing; the cast blasts, digs, clears and strikes.
+const STRIKE: Effect = {
+  name: "strike",
+  code: `const spell = { *cast(w) { const x = w.x, y = w.y, R = 10; let hit = false;
+  w.body({ x: x - 30, y: y - 15, z: 160, vx: 30 / 1.8, vy: 15 / 1.8, vz: -160 / 1.8, gravity: 0, r: 2.6, look: "meteor", land(b, w) { hit = true; b.kill(); } });
+  let t = 0; while (!hit && t < 3.3) { yield 0; t += 1 / 30; }
+  w.explode(x, y, R, 4); w.terraform(x, y, R, -R * 0.45);
+  w.ring(x, y, R * 0.9, R * 1.2, (cx, cy) => w.raise(cx, cy, w.cell(cx, cy).height + 1));
+  for (const c of w.creatures(x, y, 20)) { if (w.dist(x, y, c.x, c.y) < R * 0.6) c.hurt(80); }
+  w.paint(x, y, R * 1.4, "ash", 0.85);
+  w.disc(x, y, R * 1.5, (cx, cy) => { if (w.cell(cx, cy).cover) { w.clear(cx, cy, "cover"); w.set(cx, cy, "ash"); } });
+  w.temperature(x, y, R * 0.6, 300);
+  w.sphere(x, y, 1, 2.2, ["#3a3f4a"], 0.9, "stone");
+  yield 2; } };`,
+  seconds: 6,
+  reached: () => false,
+};
+
 export const EFFECTS: Effect[] = [
   {
     name: "fire",
@@ -342,22 +361,6 @@ export function interactionChecks(check: Check): void {
     // at the target; Meteor Storm's bodies do the same in their land hook.
     // A ward of the spell's own tier keeps every house, the land and the
     // person under it.
-    const strike = {
-      name: "strike",
-      code: `const spell = { *cast(w) { const x = w.x, y = w.y, R = 10; let hit = false;
-  w.body({ x: x - 30, y: y - 15, z: 160, vx: 30 / 1.8, vy: 15 / 1.8, vz: -160 / 1.8, gravity: 0, r: 2.6, look: "meteor", land(b, w) { hit = true; b.kill(); } });
-  let t = 0; while (!hit && t < 3.3) { yield 0; t += 1 / 30; }
-  w.explode(x, y, R, 4); w.terraform(x, y, R, -R * 0.45);
-  w.ring(x, y, R * 0.9, R * 1.2, (cx, cy) => w.raise(cx, cy, w.cell(cx, cy).height + 1));
-  for (const c of w.creatures(x, y, 20)) { if (w.dist(x, y, c.x, c.y) < R * 0.6) c.hurt(80); }
-  w.paint(x, y, R * 1.4, "ash", 0.85);
-  w.disc(x, y, R * 1.5, (cx, cy) => { if (w.cell(cx, cy).cover) { w.clear(cx, cy, "cover"); w.set(cx, cy, "ash"); } });
-  w.temperature(x, y, R * 0.6, 300);
-  w.sphere(x, y, 1, 2.2, ["#3a3f4a"], 0.9, "stone");
-  yield 2; } };`,
-      seconds: 6,
-      reached: () => false,
-    };
     const storm = {
       name: "storm",
       code: `const spell = { *cast(w) { for (let k = 0; k < 6; k++) { const tx = w.x + w.rand(-2, 2), ty = w.y + w.rand(-2, 2);
@@ -369,9 +372,9 @@ export function interactionChecks(check: Check): void {
       reached: () => false,
     };
     for (const [effect, tier] of [
-      [strike, "legendary"],
+      [STRIKE, "legendary"],
       [storm, "legendary"],
-      [strike, "major"],
+      [STRIKE, "major"],
     ] as const) {
       const s = scene("grass", "all", tier);
       const before = { houses: houses(s), height: Float32Array.from(s.world.height) };
@@ -446,6 +449,71 @@ export function interactionChecks(check: Check): void {
       // Its own cast's share is at most 80%, the lava's pressure takes none: at least 20% is left.
       !!ward && wardDamage(ward) > 0.3 && (ward.hp ?? 0) >= 20 - 1e-9 && !hurt(s),
       `${ward ? `${wardDamage(ward).toFixed(2)} cracked, ${(ward.hp ?? 0).toFixed(0)} hp` : "broken"}, person ${s.person.hp.toFixed(0)}`,
+    );
+  }
+  {
+    // The game designer's rule for a stronger spell (4.7): a broken ward
+    // spends what it had on the blow. One tier up at full health nothing
+    // passes; a minor ward lets half a grand blow through and three
+    // quarters of a legendary one, so a better ward keeps more. Measured
+    // on the live Meteor Strike's shape, whose crater comes from the cast.
+    const strikeAt = (wardTier: Tier, tier: Tier) => {
+      const s = scene("grass", "all", wardTier);
+      const before = { houses: houses(s), height: Float32Array.from(s.world.height) };
+      run(s, STRIKE, tier);
+      let dug = 0;
+      disc(s.world, 3, (i) => (dug += Math.max(0, before.height[i] - s.world.height[i])));
+      return { broken: s.world.wards.length === 0, kept: houses(s) / before.houses, dug, hp: s.person.dead ? 0 : s.person.hp };
+    };
+    const open = (() => {
+      const s = scene("grass", "none");
+      const h = Float32Array.from(s.world.height);
+      run(s, STRIKE, "legendary");
+      let dug = 0;
+      disc(s.world, 3, (i) => (dug += Math.max(0, h[i] - s.world.height[i])));
+      return { dug, kept: houses(s) };
+    })();
+    const oneUp = strikeAt("major", "grand");
+    const minorLegendary = strikeAt("minor", "legendary");
+    const majorLegendary = strikeAt("major", "legendary");
+    check(
+      "a ward one tier weaker shatters and spends the whole blow: every house, the land and the person kept",
+      oneUp.broken && oneUp.kept === 1 && oneUp.dug < 0.5 && oneUp.hp >= 45,
+      JSON.stringify(oneUp),
+    );
+    check(
+      "a weaker ward softens a legendary blow by its tier: a major ward keeps more than a minor one, and both less than nothing",
+      minorLegendary.broken && majorLegendary.broken && majorLegendary.dug < minorLegendary.dug && minorLegendary.dug < open.dug && majorLegendary.dug > 0,
+      `dug: none ${open.dug.toFixed(0)}, minor ${minorLegendary.dug.toFixed(0)}, major ${majorLegendary.dug.toFixed(0)}`,
+    );
+    check(
+      "pass share: none one tier up, half two tiers up, 94% from a cantrip ward under a cosmic blow",
+      (() => {
+        const ward = { maxHp: 100 } as Ward;
+        const minor = passShare(ward, 2, 100);
+        const two = passShare(ward, 4, 100);
+        const cantrip = passShare({ maxHp: 50 } as Ward, 16, 50);
+        return minor === 0 && Math.abs(two - 0.5) < 1e-9 && Math.abs(cantrip - 0.9375) < 1e-9;
+      })(),
+    );
+  }
+  {
+    // Cast again over its own ward, the same spell mends it and renews its time.
+    const s = scene("grass", "all", "minor");
+    run(s, EFFECTS.find((e) => e.name === "meteor")!, "minor", "crack");
+    const cracked = s.world.wards[0] ? wardDamage(s.world.wards[0]) : -1;
+    const until = s.world.wards[0]?.until ?? 0;
+    s.rt.cast(
+      { key: "table-ward", name: "Table Ward", tier: "minor", code: `const spell = { *cast(w) { w.ward(w.x, w.y, ${WARD_R}, { seconds: 60 }); } };` },
+      TX,
+      TY,
+    );
+    stepHeadless(s.world, s.rt);
+    const ward = s.world.wards[0];
+    check(
+      "a ward cast again by its own spell is mended and renewed, not doubled",
+      cracked > 0.1 && s.world.wards.length === 1 && !!ward && wardDamage(ward) === 0 && ward.until > until,
+      `${cracked.toFixed(2)} cracked, then ${s.world.wards.length} wards at ${ward ? wardDamage(ward).toFixed(2) : "-"}`,
     );
   }
   {
