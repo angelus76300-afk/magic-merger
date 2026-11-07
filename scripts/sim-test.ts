@@ -67,8 +67,9 @@ import { Terrain } from "../src/sim/voxel/terrain";
 import { MeshBasicMaterial, type Mesh } from "three";
 import { fixesChecks } from "./fixes-test";
 import { evidenceChecks } from "./evidence-test";
-import { formChecks } from "./forms-test";
+import { formChecks, keptByFormChecks } from "./forms-test";
 import { creatureChecks } from "./creatures-b-test";
+import { pacingChecks } from "./pacing-test";
 
 // No verdict here depends on how fast the machine is (4.1, review M8): the
 // slow cast guard is off unless SLOW_MS is set, and worst ticks are printed,
@@ -1002,6 +1003,7 @@ for (const scenario of SCENARIOS) {
   programWonderChecks(check);
   // 4.6: the seven kinds, the engine's makers, sizes per kind.
   formChecks(check);
+  keptByFormChecks(check);
   // 4.6 part B: people are villagers, creatures live, the judge asks.
   creatureChecks(check);
   check("a small island is one land", generateWorld(112, 112, 5, resolveLand(mid, 5, 112)).biomeMap === null);
@@ -2241,6 +2243,9 @@ await fixesChecks(check);
 
 // 14. Rewrites by evidence (daily 2026-11-05): scripts/evidence-test.ts.
 await evidenceChecks(check);
+
+// 15. The World's frame pacing (2026-11-07): scripts/pacing-test.ts.
+pacingChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);
