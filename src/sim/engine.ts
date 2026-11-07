@@ -6,6 +6,8 @@ import { loadWorld, saveWorld, type SavedWorld } from "./save";
 import { SpellSound } from "./sound";
 import { stepWorld } from "./tick";
 import { VoxelView } from "./voxel/view";
+import { GRAPHICS } from "./voxel/graphics";
+import { FramePacer, ticksDue } from "./voxel/pacing";
 import { TICK, generateWorld, type World } from "./world";
 import { DEFAULT_LAND, type LandOptions } from "./land";
 import { readWonder, type Wonder, type WonderDef } from "./wonders";
@@ -115,6 +117,8 @@ export class Engine {
 
   cast(req: CastRequest, x: number, y: number): boolean {
     const ok = this.runtime.cast(req, x, y);
+    // What the cast changed before the next tick is drawn too (view.ts, scan).
+    this.view.landChanged = true;
     // The player's magic is part of the island's story (3.7).
     if (ok) tell(this.world, `a mage ${req.kind === "artifact" ? "placed" : "cast"} ${req.name}`);
     return ok;
@@ -157,11 +161,11 @@ export class Engine {
     this.view.render(this.runtime.visuals, this.world.time, dt, this.reducedMotion);
   }
 
-  // A frame is drawn only when there is something new to show: the
-  // simulation advanced (30 times a second) or the camera moved. A 60 Hz
-  // screen used to draw the same world twice per tick, a 120 Hz one four
-  // times. On touch screens drawing is also capped at 30 a second, even while
-  // a finger turns the view.
+  // Without GRAPHICS.smooth, a frame is drawn only when there is something
+  // new to show: the simulation advanced (30 times a second) or the camera
+  // moved, and touch screens draw 30 a second at most. With it (2026-11-07),
+  // every device draws up to 60 a second while it keeps up (pacing.ts), and
+  // the frames between two ticks show creatures part way between them.
   private frame(now: number): void {
     this.rafId = 0;
     if (!this.running) return;
@@ -172,25 +176,34 @@ export class Engine {
     const dt = Math.max(0, Math.min(0.1, (now - this.last) / 1000));
     this.last = Math.max(this.last, now);
     this.acc += dt;
-    let steps = 0;
+    const steps = ticksDue(this.acc, TICK, this.pacer.enabled);
     const t0 = performance.now();
-    while (this.acc >= TICK && steps < 3) {
+    for (let k = 0; k < steps; k++) {
       this.step();
       this.acc -= TICK;
-      steps++;
     }
     if (this.acc > TICK * 3) this.acc = 0;
     const t1 = performance.now();
     this.simMs += t1 - t0;
     const since = now - this.lastDraw;
-    const changed = steps > 0 || this.cameraMoved || this.view.orbit.animating();
-    if (!changed || since < this.minDrawMs) {
+    const smooth = this.pacer.target === 60;
+    // At 60 there is always something new: the creatures' motion between ticks.
+    const changed = smooth || steps > 0 || this.cameraMoved || this.view.orbit.animating();
+    const minDraw = this.coarse || smooth ? this.pacer.minDrawMs : 0;
+    if (!changed || since < minDraw) {
       this.stats.idle++;
       return;
     }
     this.cameraMoved = false;
     this.lastDraw = now;
+    // How far the frame is from the last tick to the next one, for the view.
+    this.view.between = this.pacer.enabled ? Math.min(1, this.acc / TICK) : 1;
+    this.view.paceMs = smooth ? 1000 / 60 : 1000 / 30;
     this.render(Math.min(0.1, since / 1000));
+    // A draw from outside the loop (the Spell Lab, a test's frame) shows the
+    // creatures where the simulation has them.
+    this.view.between = 1;
+    this.pacer.push(since, now);
     const t2 = performance.now();
     this.stats.push({ frame: since, sim: this.simMs, render: t2 - t1 });
     this.simMs = 0;
@@ -200,9 +213,9 @@ export class Engine {
   private lastDraw = 0;
   private simMs = 0;
   private cameraMoved = true;
-  // 30 frames a second on touch screens; a few ms of slack so a 60 Hz display
-  // draws every other frame instead of missing one now and then.
-  private minDrawMs = window.matchMedia?.("(pointer: coarse)").matches ? 1000 / 30 - 4 : 0;
+  // Touch screens were capped at 30 a second; without GRAPHICS.smooth they still are.
+  private coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+  readonly pacer = new FramePacer(GRAPHICS.smooth, performance.now());
 
   private handleEvents(): void {
     for (const e of this.world.events.splice(0)) {
