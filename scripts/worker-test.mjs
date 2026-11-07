@@ -35,6 +35,8 @@ let designNone = false;
 // #58: every program the stub writes fails to parse while `brokenSpell` is on.
 let brokenSpell = false;
 let designCalls = 0;
+// 4.6: every page of names the library's sort was asked.
+const sortPages = [];
 function stubAnswer(n, system, user) {
   if (system.startsWith("You write the grimoire")) {
     grimoireCalls++;
@@ -95,6 +97,20 @@ function stubAnswer(n, system, user) {
     return JSON.stringify({ summary: "A dome.", code, missing: "a barrier that stops lava: to keep the village safe" });
   }
   if (system.startsWith("You write the chronicle")) return "The mage came, and the village remembered.";
+  // 4.6: the library sorted into the seven kinds, every page it was asked kept.
+  if (system.startsWith("Magic Merger is a crafting game about magic: players merge items")) {
+    sortPages.push(user);
+    return JSON.stringify({
+      items: user
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => {
+          const name = line.replace(/ \((spell|artifact)\)$/, "");
+          const form = /serpent|living spell/i.test(name) ? "creature" : /village/i.test(name) ? "settlement" : /\(spell\)/.test(line) ? "spell" : "object";
+          return { name, form, why: "by its name" };
+        }),
+    });
+  }
   // 4.1 (M7): the judge, the tier backfill and the trim scan, asked only by section 25.
   if (system.startsWith("You judge spells"))
     return JSON.stringify({ score: 2, reason: "small", note: "A faint ring, far smaller than a village.", alive: "none" });
@@ -130,6 +146,8 @@ function stubAnswer(n, system, user) {
   // answer, since a program written ahead in the background may take a call
   // number in between (4.5.1: "Answer ${calls + 1}" was a race).
   if (/Spiral Left/.test(user) && /Spiral Right/.test(user)) return JSON.stringify({ name: "Daily Spiral", emoji: "🌀", kind: "spell", tier: "minor" });
+  // 4.6: a merge that makes a settlement.
+  if (/Hearth Folk \+ Hearth Folk/.test(user)) return JSON.stringify({ name: "Hearth Village", emoji: "🏘️", kind: "settlement", tier: "major" });
   return JSON.stringify({ name: `Answer ${n}`, emoji: "✨", kind: "spell", tier: user.startsWith("Glow Moss") ? "cosmic" : "minor" });
 }
 
@@ -660,7 +678,17 @@ const fresh = () => ALL[pairs++];
   const pull = (number, state, merged, body = `Closes #${number === 7 ? 1 : 0}`) => ({
     event: "cross-referenced",
     created_at: now,
-    source: { issue: { number, html_url: `https://github.com/${REPO}/pull/${number}`, state, body, pull_request: { merged_at: merged ? now : null } } },
+    source: {
+      issue: {
+        number,
+        html_url: `https://github.com/${REPO}/pull/${number}`,
+        state,
+        body,
+        user: { login: REPO.split("/")[0] },
+        author_association: "OWNER",
+        pull_request: { merged_at: merged ? now : null },
+      },
+    },
   });
   gh.timeline[1] = [{ event: "labeled" }, pull(7, "open", false)];
   gh.issues[1].state = "closed";
@@ -1489,15 +1517,25 @@ console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at st
   await api("/api/admin/feedback", { admin: true, body: { id: own, action: "send", brief: "The moon waxes and wanes." } });
   const n = gh.issues.length;
   const at = new Date(Date.now() + 1000).toISOString();
-  const ref = (number, body) => ({
+  const ref = (number, body, by = { user: { login: REPO.split("/")[0] }, author_association: "OWNER" }) => ({
     event: "cross-referenced",
     created_at: at,
-    source: { issue: { number, html_url: `https://github.com/${REPO}/pull/${number}`, state: "open", body, pull_request: { merged_at: null } } },
+    source: { issue: { number, html_url: `https://github.com/${REPO}/pull/${number}`, state: "open", body, ...by, pull_request: { merged_at: null } } },
   });
   gh.timeline[n] = [ref(40, `Unrelated tidy up, see #${n} for context.`), ref(41, `Also touches ${REPO}#${n}.`)];
   await api("/api/admin/feedback-sync", { admin: true, body: {} });
   const mention = (await api("/api/feedback", { admin: true })).data.suggestions.find((x) => x.id === own);
   check("L8: a pull request that only mentions the issue is not the idea's", mention.status === "sent" && !mention.prUrl, JSON.stringify(mention));
+  // The repository is public (2026-11-06): a stranger's pull request, a fork's, is listed under this
+  // repository too. Saying "Fixes #n" does not make it the idea's, nor move the idea to review.
+  gh.timeline[n].push(
+    ref(43, `Fixes #${n}`, { user: { login: "mallory" }, author_association: "NONE" }),
+    ref(44, `Fixes #${n}`, { user: { login: "mallory" }, author_association: "OWNER" }),
+    ref(45, `Fixes #${n}`, { user: { login: REPO.split("/")[0] }, author_association: "CONTRIBUTOR" }),
+  );
+  await api("/api/admin/feedback-sync", { admin: true, body: {} });
+  const strangers = (await api("/api/feedback", { admin: true })).data.suggestions.find((x) => x.id === own);
+  check("a stranger's pull request that says Fixes #n does not move the idea", strangers.status === "sent" && !strangers.prUrl, JSON.stringify(strangers));
   gh.timeline[n].push(ref(42, `Moon phases.\n\nFixes #${n}`));
   await api("/api/admin/feedback-sync", { admin: true, body: {} });
   const linked = (await api("/api/feedback", { admin: true })).data.suggestions.find((x) => x.id === own);
@@ -3625,7 +3663,156 @@ const signIn = async (key, count) => {
   await reset();
 }
 
-// 33. A session's rewrites are held by the server (#55, #58, docs/DAILY.md "One
+// 33. Every item is what it is (4.6): seven kinds decided at the merge, the
+// kind's section in the writer's message and the kind in the program, the
+// library sorted again as proposals the owner sees before anything changes,
+// and rewrites by form a capped batch at a time, the old entry kept.
+{
+  await reset();
+  const now = Date.now();
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('hearth folk', 'Hearth Folk', '🧑', 'artifact', 1, 'minor', 'Kind people.', 'other', ?)",
+    )
+    .bind(now)
+    .run();
+  const made = await api("/api/merge", { admin: true, body: { a: "Hearth Folk", b: "Hearth Folk" } });
+  const row = await db.prepare("SELECT kind, form FROM elements WHERE key = 'hearth village'").first();
+  check(
+    "a merge decides one of seven kinds: a settlement is stored as an artifact whose form is settlement",
+    made.status === 200 &&
+      made.data.element.form === "settlement" &&
+      made.data.element.kind === "artifact" &&
+      row?.kind === "artifact" &&
+      row?.form === "settlement",
+    JSON.stringify({ element: made.data?.element, row }),
+  );
+  const written = await api("/api/spell", { admin: true, body: { name: "Hearth Village" } });
+  check(
+    "its program is written with the settlement section and example, and carries its kind",
+    lastSpell().user.includes("SETTLEMENT\nWhere people live together") &&
+      lastSpell().user.includes("w.village(") &&
+      written.data?.program?.form === "settlement",
+    JSON.stringify({ form: written.data?.program?.form, user: lastSpell().user.slice(0, 160) }),
+  );
+
+  // The library sorted again: proposals only, then applied by the owner.
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('serpent', 'Serpent', '🐍', 'artifact', 2, 'minor', 'A living coil of bog-black sludge.', 'other', ?), ('old village', 'Old Village', '🏘️', 'artifact', 3, 'major', 'A palm-sized model of a hamlet.', 'create', ?), ('fire bolt', 'Fire Bolt', '🔥', 'spell', 1, 'minor', 'A bolt of fire.', 'harm', ?), ('living spell', 'Living Spell', '✨', 'spell', 2, 'minor', 'A spell that walks.', 'other', ?)",
+    )
+    .bind(now, now, now, now)
+    .run();
+  const before = (await db.prepare("SELECT COUNT(*) AS n FROM elements WHERE form IS NOT NULL").first()).n;
+  const proposed = await api("/api/admin/forms", { admin: true, body: {} });
+  const sortAsked = sortPages.join("\n");
+  check(
+    "the sort sees names only, never the entries written before the kinds",
+    sortAsked.includes("Serpent (artifact)") && !sortAsked.includes("bog-black"),
+    sortAsked.slice(0, 120),
+  );
+  const untouched = (await db.prepare("SELECT COUNT(*) AS n FROM elements WHERE form IS NOT NULL").first()).n;
+  const list = (await api("/api/admin/forms", { admin: true })).data;
+  const serpent = list.rows.find((r) => r.key === "serpent");
+  check(
+    "the sort only proposes: every element gets a proposal and none changes until the owner applies it",
+    proposed.status === 200 && proposed.data.left === 0 && untouched === before && serpent?.form === "creature" && serpent.was === "guess:creature",
+    JSON.stringify({ proposed: proposed.data, before, untouched, serpent }),
+  );
+  check(
+    "the owner's list puts a spell that would become an artifact apart",
+    list.flips.length === 1 && list.flips[0].key === "living spell" && list.counts.settlement >= 1,
+    JSON.stringify({ flips: list.flips.map((r) => r.key), counts: list.counts }),
+  );
+  const applied = (await api("/api/admin/forms-apply", { admin: true, body: { all: true } })).data;
+  const forms = Object.fromEntries(
+    (
+      await db.prepare("SELECT key, kind, form FROM elements WHERE key IN ('serpent', 'old village', 'fire bolt', 'living spell', 'hearth village')").all()
+    ).results.map((r) => [r.key, `${r.kind}/${r.form}`]),
+  );
+  check(
+    "applying all sets the forms that keep their kind, skips a flip and never overwrites a form the merge set",
+    forms.serpent === "artifact/creature" &&
+      forms["old village"] === "artifact/settlement" &&
+      forms["fire bolt"] === "spell/spell" &&
+      forms["living spell"] === "spell/null" &&
+      forms["hearth village"] === "artifact/settlement" &&
+      applied.skipped.includes("living spell"),
+    JSON.stringify({ forms, applied }),
+  );
+  const flip = (await api("/api/admin/forms-apply", { admin: true, body: { keys: ["living spell"], flip: true } })).data;
+  const flipped = await db.prepare("SELECT kind, form FROM elements WHERE key = 'living spell'").first();
+  const appliedBefore = (await db.prepare("SELECT COUNT(*) AS n FROM forms WHERE status = 'applied'").first()).n;
+  const asked = (await api("/api/admin/forms", { admin: true, body: { again: true } })).data;
+  const appliedAfter = (await db.prepare("SELECT COUNT(*) AS n FROM forms WHERE status = 'applied'").first()).n;
+  check(
+    "asking again replaces only the proposals nobody applied",
+    appliedAfter === appliedBefore && asked.asked === asked.stored && asked.asked > 0 && asked.left === 0,
+    JSON.stringify({ appliedBefore, appliedAfter, asked }),
+  );
+  check(
+    "a flip is applied only by name, with flip",
+    flip.applied.includes("living spell") && flipped.kind === "artifact" && flipped.form === "creature",
+    JSON.stringify(flipped),
+  );
+
+  // Rewrites by form: a capped batch, the entry written again for its kind,
+  // going live with the program only (the review of #50: it was written over
+  // the public entry when the job was queued, on a dry run too).
+  for (const name of ["Serpent", "Old Village"]) {
+    const p = await api("/api/spell", { admin: true, body: { name } });
+    await api("/api/spell/check", { admin: true, body: { name, id: p.data.program.id, ok: true, problem: null, detail: "ok" } });
+  }
+  const entryOf = async (key) => (await db.prepare("SELECT description FROM elements WHERE key = ?").bind(key).first())?.description;
+  const keptOf = async (key) => (await db.prepare("SELECT entry FROM forms WHERE key = ?").bind(key).first())?.entry ?? null;
+  const g0 = grimoireCalls;
+  const dry = (await api("/api/admin/refresh", { admin: true, body: { forms: true, keys: ["old village"], limit: 1, dry: true } })).data;
+  check(
+    "a dry rewrite by form writes no entry and changes none",
+    dry.queued.length === 1 &&
+      grimoireCalls === g0 &&
+      (await entryOf("old village")) === "A palm-sized model of a hamlet." &&
+      (await keptOf("old village")) === null,
+    JSON.stringify({ dry, grimoire: grimoireCalls - g0 }),
+  );
+  const g1 = grimoireCalls;
+  const started = (await api("/api/admin/refresh", { admin: true, body: { forms: true, keys: ["serpent", "old village"], limit: 1 } })).data;
+  check(
+    "a rewrite by form takes the asked keys in order, as many as the cap, and writes its new entry for the program without showing it to players yet",
+    started.queued.length === 1 &&
+      started.queued[0] === "Serpent" &&
+      grimoireCalls === g1 + 1 &&
+      (await entryOf("serpent")) === "A living coil of bog-black sludge." &&
+      (await keptOf("serpent")) === null,
+    JSON.stringify({ started, grimoire: grimoireCalls - g1, entry: await entryOf("serpent") }),
+  );
+  await api("/api/admin/poll-batches", { admin: true, body: {} });
+  const cands = (await api("/api/admin/refresh-candidates", { admin: true })).data;
+  const cand = cands.find((c) => c.key === "serpent");
+  check("the candidate carries its kind for the runner's test run", cand?.form === "creature", JSON.stringify(cand && { form: cand.form, giant: cand.giant }));
+  const villageCand = cands.find((c) => c.key === "old village");
+  await api("/api/admin/refresh-verdict", { admin: true, body: { id: villageCand.id, replace: false, reason: "test" } });
+  await api("/api/admin/refresh-verdict", { admin: true, body: { id: cand.id, replace: true, reason: "test" } });
+  const newEntry = await entryOf("serpent");
+  check(
+    "when the candidate replaces the live program its new entry goes live, the old one kept; a rejected one changes no entry",
+    newEntry !== "A living coil of bog-black sludge." &&
+      newEntry === JSON.parse((await db.prepare("SELECT request FROM rewrites WHERE to_pid = ?").bind(cand.id).first()).request).description &&
+      (await keptOf("serpent")) === "A living coil of bog-black sludge." &&
+      (await entryOf("old village")) === "A palm-sized model of a hamlet.",
+    JSON.stringify({ newEntry, kept: await keptOf("serpent"), village: await entryOf("old village") }),
+  );
+  const again = (await api("/api/admin/refresh", { admin: true, body: { forms: true, keys: ["serpent"] } })).data;
+  const capped = (await api("/api/admin/refresh", { admin: true, body: { forms: true, limit: 500 } })).data;
+  check(
+    "never twice by form, and never more than 20 at once",
+    again.queued.length === 0 && capped.queued.length <= 20,
+    JSON.stringify({ again, capped: capped.queued.length }),
+  );
+  await reset();
+}
+
+// 34. A session's rewrites are held by the server (#55, #58, docs/DAILY.md "One
 // spell at a time"): scripts/rewrite-one.mjs runs without the owner's prompt, so
 // its turn is taken before any call, a spell that fails to write counts too, the
 // fourth a day is refused before any call, and the owner's card is never refused.

@@ -21,6 +21,8 @@ import { keyLevel, keyX, keyY, voxelKey } from "./voxelkey";
 import { baseName, type Landmark, type Presence } from "./social";
 import { hexColor, toColor } from "./colors";
 import { DOME_SQUASH, WARD, addWard, ownWard, wardBits, wardHit, warded } from "./wards";
+import { makeBuilding, makeVillage, makeWonder, shapeLand } from "./makers";
+import { addProp, propBounds, readProp, shadeParts } from "./props";
 
 // Runs spell programs. A program is JavaScript that defines `spell`:
 //
@@ -45,6 +47,10 @@ export interface CastRequest {
   kind?: "spell" | "artifact";
   // A wonder written as a program (4.4.5 part C) works within its own reach, whatever the island's size.
   reach?: number;
+  // 4.6: which of the seven kinds it is (shared/forms.ts), and whether it
+  // says it is giant, for the size its test run holds it to. The runtime ignores both.
+  form?: string;
+  giant?: boolean;
 }
 
 interface SpellObject {
@@ -140,6 +146,11 @@ export class Runtime {
   }
   // Which spell defined each custom material and creature, for saving the world.
   readonly owners = new Map<string, string>();
+  // 4.6: the cells of the buildings each program raised (w.building), for
+  // its test run: what it stacks on them hides what the builder draws. Not saved.
+  readonly raised = new Map<string, number[]>();
+  // 4.6: how many times each program called w.model (props.ts). Not saved.
+  readonly modelCalls = new Map<string, number>();
   // A spell's creature named like one of the island's animals ("wolf") is
   // kept as its own kind ("wolf#<spell>"), so summoning wolves that hunt
   // villagers does not turn the island's wolves against them. Per spell:
@@ -1149,6 +1160,7 @@ export class CellHandle {
 // lot, so programs stay short (and cheap to write).
 export class SpellApi {
   readonly r: number;
+  private readonly owner: string;
   readonly tier: Tier;
   readonly width: number;
   readonly height: number;
@@ -1161,6 +1173,8 @@ export class SpellApi {
     readonly y: number,
   ) {
     this.tier = req.tier;
+    // One placing of one item: its models share this (props.ts, MODELS_PER_ITEM).
+    this.owner = `${req.key}#${castId}@${Math.round(rt.world.time * 30)}`;
     this.width = rt.world.w;
     this.height = rt.world.h;
     this.r = req.reach ?? Math.max(2, Math.round(TIER_REACH[req.tier] * Math.min(rt.world.w, rt.world.h)));
@@ -1496,6 +1510,84 @@ export class SpellApi {
     const b = new Builder(this.rt.world);
     island(b, x, y, num(o.z, 4, 200, 20), num(o.r, 2, 30, 6), colorList(o.top, [0x5d9c3a, 0x67a842]), colorList(o.rock, [0x8a6a44, 0x8a8a8e, 0x7e7e84]));
     this.rt.commit(b, num(o.grow, 0, 30, 0));
+  }
+
+  // 4.6: the engine's own makers (makers.ts). A seed from the island, the
+  // spot and the moment, so the test run's two islands build the same thing.
+  private seedAt(x: number, y: number): number {
+    return (Math.imul(this.rt.world.seed ^ 0x4d6, 31) + Math.round(x) * 7919 + Math.round(y) * 104729 + Math.round(this.rt.world.time * 30)) >>> 0;
+  }
+  // A real village near (x, y): houses round a plaza, a street, fields, a
+  // well, its first buildings and villagers. {houses (3 to 14), name, villagers}.
+  village(x: number, y: number, o: Record<string, unknown> = {}) {
+    const made = makeVillage(
+      this.rt.world,
+      x,
+      y,
+      {
+        houses: typeof o.houses === "number" ? num(o.houses, 3, 14, 7) : undefined,
+        name: typeof o.name === "string" ? o.name : undefined,
+        villagers: typeof o.villagers === "number" ? num(o.villagers, 2, 30, 10) : undefined,
+      },
+      this.seedAt(x, y),
+    );
+    return made;
+  }
+  // A house or a building with a job, two by two cells, in its village's style.
+  building(x: number, y: number, o: Record<string, unknown> | string = {}) {
+    if (!this.inside(x, y)) return null;
+    const job = typeof o === "string" ? o : typeof o.job === "string" ? o.job : "house";
+    const made = makeBuilding(this.rt.world, x, y, job.toLowerCase().trim());
+    if (made) {
+      const W = this.rt.world.w;
+      const i = (made.y - 1) * W + made.x - 1;
+      this.rt.raised.set(this.req.key, [...(this.rt.raised.get(this.req.key) ?? []), i, i + 1, i + W, i + W + 1]);
+    }
+    return made;
+  }
+  // The terrain reshaped: {shape, r, height}.
+  land(x: number, y: number, o: Record<string, unknown> | string = {}) {
+    const asked = typeof o === "string" ? { shape: o } : o;
+    const shape = typeof asked.shape === "string" ? asked.shape.toLowerCase().trim() : "hill";
+    if (shape === "floating island") {
+      // The island's own floating rock, drawn in fine parts (33 in its model),
+      // drifting as it does; whole voxels only when the island has no room for it.
+      const rock = makeWonder(this.rt.world, "floating rock", x, y, this.seedAt(x, y));
+      if (rock) return { shape, cells: 0, wonder: rock.name };
+      this.island(x, y, { z: asked.z ?? asked.height ?? 18, r: asked.r ?? 7, grow: asked.grow });
+      return { shape, cells: 0 };
+    }
+    const height = typeof asked.height === "number" && Number.isFinite(asked.height) ? Math.max(-40, Math.min(60, asked.height)) : null;
+    return shapeLand(this.rt.world, x, y, shape, num(asked.r, 3, 60, Math.max(4, this.r)), height, this.seedAt(x, y));
+  }
+  // One of the island's built-in wonders where the item stands.
+  wonder(x: number, y: number, kind: string) {
+    const w = makeWonder(this.rt.world, String(kind), x, y, this.seedAt(x, y));
+    return w ? { kind: w.kind, name: w.name, x: w.x, y: w.y, r: w.r } : null;
+  }
+
+  // 4.6: a fine box model of what the item looks like (props.ts): up to 80
+  // boxes [x, y, z, w, d, h, color, "glow"], in cells from (x, y) and voxels
+  // up from the ground, as small as a twentieth of a cell. {name, turn, vary}.
+  model(x: number, y: number, boxes: unknown, o: Record<string, unknown> = {}) {
+    if (!this.inside(x, y)) return null;
+    // Calls by program, for its test run (more than MODELS_PER_ITEM fails its look).
+    this.rt.modelCalls.set(this.req.key, (this.rt.modelCalls.get(this.req.key) ?? 0) + 1);
+    const p = readProp({
+      key: this.req.key,
+      owner: this.owner,
+      name: typeof o.name === "string" ? o.name : this.req.name,
+      x: Math.round(x * 20) / 20,
+      y: Math.round(y * 20) / 20,
+      turn: o.turn,
+      boxes: Array.isArray(boxes) ? boxes : [],
+    });
+    if (!p) return null;
+    // Each part a slightly different shade, as the wonders' parts are; vary: 0 keeps the colors exact.
+    shadeParts(p, num(o.vary, 0, 0.3, 0.07));
+    if (!addProp(this.rt.world, p)) return null;
+    const b = propBounds(p);
+    return { x: p.x, y: p.y, boxes: p.boxes.length, across: Math.round(b.across * 100) / 100, tall: Math.round(b.tall * 100) / 100 };
   }
 
   // Grass, then trees, bushes and flowers.

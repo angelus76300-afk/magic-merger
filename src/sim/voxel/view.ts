@@ -52,6 +52,7 @@ import { DAMP, HEART, HOUSE_STYLES, R as RARE, STYLE_BITS, TREE_STYLES } from ".
 import { GLOWING, VARIANTS, floraModels } from "./flora";
 import { Buildings } from "./buildings";
 import { WonderModels } from "./wonders";
+import { PropModels } from "./props";
 import { valueNoise } from "../noise";
 import { Sky } from "./sky";
 
@@ -139,6 +140,7 @@ export class VoxelView {
   private buildings!: Buildings;
   // Wonders above the land (4.4.5 part B).
   private wonderModels!: WonderModels;
+  private propModels!: PropModels;
   private skyKey = "";
   private skyCanvas = document.createElement("canvas");
   private decorMesh: InstancedMesh;
@@ -214,6 +216,7 @@ export class VoxelView {
     this.coverMaterial = basic;
     this.buildings = new Buildings(this.scene, basic);
     this.wonderModels = new WonderModels(this.scene, basic, this.glowMaterial);
+    this.propModels = new PropModels(this.scene, basic, this.glowMaterial);
     const figureMats = figureMaterials();
     this.figures = new Figures(this.scene, figureMats);
     this.markMesh = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true }), 900);
@@ -306,6 +309,7 @@ export class VoxelView {
     }
     this.lap("covers");
     if (world.wonders.length) this.wonderModels.update(world, time);
+    this.propModels.update(world);
     if (world.decorVersion !== this.decorVersion) {
       this.decorVersion = world.decorVersion;
       this.placeDecor(time);
@@ -1222,6 +1226,7 @@ export class VoxelView {
     this.domes.dispose();
     this.buildings.dispose();
     this.wonderModels.dispose();
+    this.propModels.dispose();
     const seen = new Set<object>();
     const free = (thing: { dispose(): void } | null | undefined) => {
       if (thing && !seen.has(thing)) {

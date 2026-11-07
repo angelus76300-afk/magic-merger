@@ -12,6 +12,11 @@
 # (audit 4.5.1, risk 1). Then the smoke job plays the newcomer's path on the
 # preview at 390 by 844 with main's copy of scripts/smoke.mjs, never the pull
 # request's, since it holds the admin token; the Gate waits for it.
+#
+# 2026-11-06, the repository is public: a pull request from a fork never runs
+# here. GitHub already gives a fork's run no secrets; the guard on both jobs
+# says so in this file too, so a later change cannot open it by mistake
+# (scripts/workflows-test.mjs checks every job that names a secret).
 name: Preview
 on:
   pull_request:
@@ -27,6 +32,7 @@ jobs:
   preview:
     # 4.5.2: no preview for a draft (Actions minutes); the push that marks it ready builds one.
     if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
       !github.event.pull_request.draft &&
       (github.event.action != 'labeled' || github.event.label.name == 'owner-ok') &&
       ((!startsWith(github.head_ref, 'claude/feedback-') && !startsWith(github.event.pull_request.title, 'Feedback:')) || contains(github.event.pull_request.labels.*.name, 'owner-ok'))
@@ -63,6 +69,7 @@ jobs:
           echo "Preview: $url (the admin token, five taps on the title, lets you in)" >> "$GITHUB_STEP_SUMMARY"
   smoke:
     needs: preview
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

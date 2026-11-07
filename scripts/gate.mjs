@@ -36,13 +36,30 @@ const reviewFields = (text) => {
 // The record the planner writes next to the owner's label: who said what, when.
 const OWNER = /^<!--\s*mm-owner\s+(ok|yes)\s*-->/m;
 
+const REPO = process.env.GITHUB_REPOSITORY ?? "angelus76300-afk/magic-merger";
+/** The account that owns the repository: every session, the reviewer and the planner write as it. */
+export const REPO_OWNER = REPO.split("/")[0];
+
+/**
+ * Whether a comment was written by the repository owner's own account (2026-11-06: the repository
+ * is public, so anyone with a GitHub account can comment). Both must agree: the login, and GitHub's
+ * own author_association. A marker in anyone else's comment is text, never a verdict or a record.
+ */
+export function byOwner(c, owner) {
+  const login = c?.user?.login;
+  return (
+    typeof owner === "string" && owner !== "" && typeof login === "string" && login.toLowerCase() === owner.toLowerCase() && c.author_association === "OWNER"
+  );
+}
+
 /**
  * The review of this exact head commit. A block or a raised class sticks: a later
  * comment on the same commit cannot clear it (a builder cannot lower its own class).
  */
-export function reviewFor(comments, sha) {
+export function reviewFor(comments, sha, owner) {
   let found = null;
   for (const c of comments) {
+    if (!byOwner(c, owner)) continue;
     for (const match of (c.body ?? "").matchAll(REVIEW)) {
       const m = reviewFields(match[1]);
       if (!m || !sha.startsWith(m[2])) continue;
@@ -55,10 +72,11 @@ export function reviewFor(comments, sha) {
   return found;
 }
 
-/** The owner's recorded words for a label: "ok" or "yes" comments written by the planner. */
-export function ownerRecords(comments) {
+/** The owner's recorded words for a label: "ok" or "yes" comments written by the planner, as the owner's account. */
+export function ownerRecords(comments, owner) {
   const out = new Set();
   for (const c of comments) {
+    if (!byOwner(c, owner)) continue;
     const m = OWNER.exec(c.body ?? "");
     if (m) out.add(m[1]);
   }
@@ -67,7 +85,8 @@ export function ownerRecords(comments) {
 
 /**
  * Pure decision for one pull request.
- * s: { cls, labels, records, draft, paused, headFetched, ci, smoke, review, mergeable, upToDate, workflows, docsOnly }
+ * s: { cls, labels, records, draft, paused, fork, headFetched, ci, smoke, review, mergeable, upToDate, workflows, docsOnly }
+ *   fork: false only when the head branch lives in this repository; anything else is refused
  *   ci: "full" (lint to test:worker passed), "docs" (docs only, light checks passed), or anything else
  *   smoke: "pass" | other; review: reviewFor(...) result
  */
@@ -76,6 +95,8 @@ export function decide(s) {
   let cls = s.cls;
   if (s.review?.raise && ORDER[s.review.raise] > ORDER[cls]) cls = s.review.raise;
   if (s.paused) reasons.push("paused by the owner (an open issue labelled pause)");
+  // Fail closed: a fork, or a head repository GitHub no longer names (a deleted fork), never merges here.
+  if (s.fork !== false) reasons.push("its head branch is not in this repository (a fork): the Gate never merges it");
   if (s.headFetched === false) reasons.push("the head commit could not be fetched yet: nothing is judged on an older diff");
   if (s.labels.includes(LABELS.hold)) reasons.push("labelled hold");
   if (s.draft) reasons.push("still a draft");
@@ -113,7 +134,6 @@ export function deployable({ paused, commits }) {
 
 // --- GitHub ---
 
-const REPO = process.env.GITHUB_REPOSITORY ?? "angelus76300-afk/magic-merger";
 async function gh(path, init = {}) {
   const res = await fetch(`https://api.github.com${path.startsWith("/") ? path : `/repos/${REPO}/${path}`}`, {
     ...init,
@@ -185,6 +205,12 @@ async function allComments(n) {
   return comments;
 }
 
+/** The repository a pull request's head branch lives in, lower case; "" when GitHub names none (a deleted fork). */
+export function headRepoOf(pr) {
+  const name = pr?.head?.repo?.full_name;
+  return typeof name === "string" ? name.toLowerCase() : "";
+}
+
 export async function prState(n) {
   const pr = await gh(`pulls/${n}`);
   const sha = pr.head.sha;
@@ -216,12 +242,13 @@ export async function prState(n) {
       headFetched,
       cls,
       labels: pr.labels.map((l) => l.name),
-      records: ownerRecords(comments),
+      records: ownerRecords(comments, REPO_OWNER),
       draft: pr.draft,
+      fork: headRepoOf(pr) !== REPO.toLowerCase(),
       paused: await paused(),
       ci: await ciOn(sha),
       smoke: await smokeOn(sha),
-      review: reviewFor(comments, sha),
+      review: reviewFor(comments, sha, REPO_OWNER),
       mergeable: pr.mergeable,
       upToDate: (() => {
         let ancestor = false;
@@ -287,7 +314,7 @@ export async function deployState(sha, deploymentsFile) {
     if (pr) {
       const parent = git("rev-parse", `${c}^`);
       cls = classify(readGit(parent, c), { branch: pr.head.ref, title: pr.title }).cls;
-      records = ownerRecords(await allComments(pr.number));
+      records = ownerRecords(await allComments(pr.number), REPO_OWNER);
     }
     commits.push({ sha: c, pr: pr?.number ?? null, cls, labels: pr ? pr.labels.map((l) => l.name) : [], records });
   }

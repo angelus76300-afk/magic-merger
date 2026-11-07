@@ -67,6 +67,7 @@ import { Terrain } from "../src/sim/voxel/terrain";
 import { MeshBasicMaterial, type Mesh } from "three";
 import { fixesChecks } from "./fixes-test";
 import { evidenceChecks } from "./evidence-test";
+import { formChecks } from "./forms-test";
 
 // No verdict here depends on how fast the machine is (4.1, review M8): the
 // slow cast guard is off unless SLOW_MS is set, and worst ticks are printed,
@@ -998,6 +999,8 @@ for (const scenario of SCENARIOS) {
   // 4.4.5 part B: wonders, names, the last ten sets, buildings (wonders-test.ts).
   wonderChecks(check);
   programWonderChecks(check);
+  // 4.6: the seven kinds, the engine's makers, sizes per kind.
+  formChecks(check);
   check("a small island is one land", generateWorld(112, 112, 5, resolveLand(mid, 5, 112)).biomeMap === null);
   // 4.4.1: rivers wind instead of running straight with right angle turns
   // (main had a run of 26 cells and a quarter of its river in runs of 8 or
