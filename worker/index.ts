@@ -53,7 +53,7 @@ import { PROGRESS_KINDS, type ProgressPut, type StoredKind } from "../shared/acc
 import { ClaudeOracle, MockOracle, OracleError, parseEffort, type Oracle, type ProgramAnswer, type SpellRequest as OracleSpellRequest } from "./oracle";
 import { PROBED, parseIntents, type Intent } from "../shared/promises";
 import { isForm, kindOfForm, saysGiant, type Form } from "../shared/forms";
-import { applyForms, formList, proposeForms } from "./forms";
+import { KEPT_BY_FORM_SQL, applyForms, formList, proposeForms } from "./forms";
 import { designDue, evolution, liveLibrary, openGaps, recordGap, settleHelper, storeDesign, trialHelpers, withLibrary, type Library } from "./evolve";
 import {
   averageDaily,
@@ -1510,6 +1510,20 @@ async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; li
        ORDER BY (SELECT COUNT(*) FROM casts c JOIN programs p ON p.id = c.pid WHERE p.key = s.key) DESC, s.key`,
         )
         .all<{ key: string; pid: number }>();
+  // By form, a key asked by name whose rewrite for its kind kept the old
+  // program (its test run failed it, or the judge) is asked again, told why
+  // (7 November: 9 of 14 people written as beasts before the API named
+  // w.person). Only by name, never in the daily run, so a key is retried
+  // when someone decides to, and nothing waits for it already.
+  const again = new Map<string, string>();
+  if (byForm && asked?.length) {
+    const kept = await db.prepare(KEPT_BY_FORM_SQL).bind(JSON.stringify(asked)).all<{ key: string; pid: number; reason: string }>();
+    for (const r of kept.results) {
+      if (rows.results.some((o) => o.key === r.key)) continue;
+      rows.results.push({ key: r.key, pid: r.pid });
+      again.set(r.key, r.reason);
+    }
+  }
   const inOrder = asked ? asked.map((k) => rows.results.find((r) => r.key === k)).filter((r): r is { key: string; pid: number } => !!r) : rows.results;
   const picked = inOrder.slice(0, limit);
   const room = refreshBudget(env) - (await refreshSpentThisMonth(db));
@@ -1546,6 +1560,9 @@ async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; li
       intents,
       library: library.docs,
       ...(fresh ? { newEntry: true } : {}),
+      // Its first rewrite for its kind was kept out: the writer is told why,
+      // not shown that program (it is the design that failed).
+      ...(again.has(r.key) ? { rewrite: { reasons: [`its first rewrite for its kind was not used: ${again.get(r.key)}`] } } : {}),
     };
     const model = big ? env.SPELL_MODEL : smallModel(env);
     const hold = await holdBatch(env, oracle);

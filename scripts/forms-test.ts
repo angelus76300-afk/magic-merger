@@ -15,6 +15,9 @@ import { generateWorld, type World } from "../src/sim/world";
 import { resolveLand } from "../src/sim/land";
 import { LAND_SHAPES, WONDER_LIST, villageCenters } from "../src/sim/makers";
 import { findVillages } from "../src/sim/kin";
+import { readdirSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { KEPT_BY_FORM_SQL } from "../worker/forms";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
@@ -366,4 +369,70 @@ export function formChecks(check: Check): void {
     w.artifact(w.x, w.y, "Village"); } };`;
   const village = runCheck({ key: "village", name: "Village", tier: "major", code: charm, kind: "artifact", form: "settlement" });
   check("a lantern charm ringed by boxes is no village (kind)", village.problem === "kind", `${village.problem}: ${village.detail}`);
+}
+
+// A key asked again by name after its rewrite for its kind kept the old
+// program (production, 7 November: 10 of 16 kept, 9 of the 14 people written as beasts).
+// The query runs on every migration, in Node's own SQLite, as D1 would.
+interface Sqlite {
+  exec(sql: string): void;
+  prepare(sql: string): { all(...a: unknown[]): unknown[]; run(...a: unknown[]): unknown };
+}
+export function keptByFormChecks(check: Check): void {
+  let open: (new (path: string) => Sqlite) | null = null;
+  try {
+    open = (createRequire(import.meta.url)("node:sqlite") as { DatabaseSync: new (path: string) => Sqlite }).DatabaseSync;
+  } catch {
+    open = null;
+  }
+  if (!open) {
+    check("node:sqlite is there for the retry query's check", false, process.version);
+    return;
+  }
+  const db = new open(":memory:");
+  for (const f of readdirSync("migrations")
+    .filter((n) => n.endsWith(".sql"))
+    .sort())
+    db.exec(readFileSync(`migrations/${f}`, "utf8"));
+  // Every NOT NULL column of the rows below is given, whatever later migrations add.
+  const insert = (t: string, row: Record<string, unknown>) => {
+    const cols = db.prepare(`PRAGMA table_info(${t})`).all() as { name: string; type: string; notnull: number; dflt_value: unknown; pk: number }[];
+    for (const c of cols) if (c.notnull && c.dflt_value === null && !c.pk && !(c.name in row)) row[c.name] = /INT|REAL/i.test(c.type) ? 0 : "x";
+    const keys = Object.keys(row);
+    db.prepare(`INSERT INTO ${t} (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`).run(...keys.map((k) => row[k]));
+  };
+  // Sorted at 100; the first rewrites for their kind decided at 200.
+  const keyed: [string, number, number, number][] = [
+    // key, live pid, verdict's from_pid, replaced
+    ["astrologer", 5, 5, 0], // kept: asked again
+    ["serpent", 9, 6, 1], // replaced
+    ["wizard", 7, 7, 0], // kept, but asked again since (pending)
+    ["healer", 8, 8, 0], // kept, asked again since and that failed to send
+    ["druid", 10, 10, 0], // kept before it was sorted
+    ["saint", 11, 11, 0], // kept, not asked
+  ];
+  for (const [key, pid, from, replaced] of keyed) {
+    insert("elements", { key, name: key, emoji: "x", kind: "artifact", depth: 1, created_at: 1, form: "creature" });
+    insert("spells", { key, spec: "{}", model: "m", created_at: 1, pid });
+    insert("forms", { key, form: "creature", status: "applied", applied_at: 100, at: 90 });
+    insert("refresh_verdicts", {
+      to_pid: 100 + pid,
+      key,
+      from_pid: from,
+      replaced,
+      reason: `${key}: its test run failed (kind)`,
+      at: key === "druid" ? 50 : 200,
+    });
+  }
+  insert("rewrites", { key: "wizard", cause: "refresh", at: 300, status: "pending" });
+  insert("rewrites", { key: "healer", cause: "refresh", at: 300, status: "failed" });
+  const asked = ["astrologer", "serpent", "wizard", "healer", "druid"];
+  const got = (db.prepare(KEPT_BY_FORM_SQL).all(JSON.stringify(asked)) as { key: string; pid: number; reason: string }[])
+    .map((r) => `${r.key}:${r.pid}`)
+    .sort();
+  check(
+    "a kept rewrite by form is asked again by name only, once nothing waits for it and its program is still the kept one",
+    got.join(",") === "astrologer:5,healer:8",
+    got.join(","),
+  );
 }

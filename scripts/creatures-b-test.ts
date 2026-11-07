@@ -12,6 +12,7 @@ import {
   JUDGE_SYSTEM,
   PERSON_EXAMPLE,
   PERSON_SECTION,
+  SPELL_SYSTEM,
   judgeUserMessage,
   spellUserMessage,
 } from "../worker/prompts";
@@ -94,6 +95,15 @@ export function creatureChecks(check: Check): void {
       serpent.includes(FORM_EXAMPLES.creature.code) &&
       serpent.includes(FOX_SPIRIT_EXAMPLE.code) &&
       !serpent.includes("w.person("),
+  );
+
+  // The system prompt's API names w.person (production, 7 November: with only
+  // the user section saying so, 9 of 14 people were written as beasts).
+  const peopleLine = SPELL_SYSTEM.split("\n").find((l) => l.startsWith("People: w.person(")) ?? "";
+  check(
+    "the writer's API names w.person, and a person is never spawned",
+    /never with w\.spawn or spell\.creatures/.test(peopleLine) && SPELL_SYSTEM.indexOf("People: w.person(") < SPELL_SYSTEM.indexOf("Creatures: w.creatures("),
+    peopleLine,
   );
 
   // w.person on a made island: a villager of the nearest village.
