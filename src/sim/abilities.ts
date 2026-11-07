@@ -52,6 +52,22 @@ const NAME_ABILITIES: [string[], AbilitySpec][] = [
   [["goblin", "thief", "bandit", "rogue", "raccoon", "magpie", "kobold"], { do: "steal", when: "every so often", every: 15 }],
   [["queen", "hive", "broodmother", "alpha", "summoner", "conjurer"], { do: "summon", when: "hurt", every: 30 }],
 ];
+// Defensive magic an item's name or promise must call for (the owner, 7
+// November: "a serpent raising a shield does not fit its name"). A shield, a
+// ward, or healing itself when hurt is for what protects or heals: a promise
+// to protect or heal, or a name that says so (the guardians above, the
+// healers, and the few beings known to mend: a troll, a hydra, a phoenix).
+const DEFENDERS =
+  /\b(knight|paladin|guardian|golem|templar|sentinel|defender|protector|shield|ward|warden|aegis|bastion|bulwark|sanctuary|turtle|tortoise|armadillo|guard|priest|priestess|cleric|healer|saint|angel|unicorn|nymph|troll|hydra|phoenix|mender)s?\b/i;
+export function unfitDefence(name: string, intents: readonly string[], abilities: readonly AbilitySpec[], wards: number): string | null {
+  if (DEFENDERS.test(name) || intents.includes("protect")) return null;
+  const shield = abilities.some((a) => a.do === "shield");
+  const mends = !intents.includes("heal") && abilities.some((a) => a.do === "heal" && a.when === "hurt");
+  if (!shield && !mends && wards <= 0) return null;
+  const what = [shield ? "a shield" : "", mends ? "healing itself when hurt" : "", wards > 0 ? "a ward" : ""].filter(Boolean).join(", ");
+  return `${name} raises defensive magic (${what}), but neither its name nor what it promises is about protection: a serpent hunts, a fox spirit tricks, neither shields. Give it what its name does, and leave shields and wards to guardians and to items that promise to protect.`;
+}
+
 const INDEX = new Map<string, AbilitySpec[]>();
 for (const [words, spec] of NAME_ABILITIES) for (const w of words) INDEX.set(w, [...(INDEX.get(w) ?? []), spec]);
 

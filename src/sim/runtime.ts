@@ -153,6 +153,10 @@ export class Runtime {
   readonly modelCalls = new Map<string, number>();
   // 4.6 part B: the people each item made with w.person, for its test run.
   readonly people = new Map<string, Creature[]>();
+  // 4.6: how many wards each program raised (w.ward), and the cells of each
+  // tree it planted (w.tree), for its test run. Not saved.
+  readonly wardCalls = new Map<string, number>();
+  readonly planted = new Map<string, number[][]>();
   // A spell's creature named like one of the island's animals ("wolf") is
   // kept as its own kind ("wolf#<spell>"), so summoning wolves that hunt
   // villagers does not turn the island's wolves against them. Per spell:
@@ -1456,6 +1460,7 @@ export class SpellApi {
       accentShare: num(o.accentShare, 0, 1, 0.25),
       leafKind: o.glow === true ? VK.GLOW : style === "crystal" ? VK.GLOW : VK.LEAF,
     });
+    this.rt.planted.set(this.req.key, [...(this.rt.planted.get(this.req.key) ?? []), [...b.cells.keys()]]);
     this.rt.commit(b, num(o.grow, 0, 30, 0));
   }
   spire(x: number, y: number, o: Record<string, unknown> = {}) {
@@ -1761,6 +1766,7 @@ export class SpellApi {
       owner: this.req.key,
       hit: -10,
     });
+    this.rt.wardCalls.set(this.req.key, (this.rt.wardCalls.get(this.req.key) ?? 0) + 1);
   }
 
   // Gives villagers near (x, y) a goal this spell defined as their job (3.6):
