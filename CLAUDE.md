@@ -33,7 +33,9 @@ They are among the red classes of `docs/DAILY.md`, checked on every diff by `scr
 
 ## Talking to the owner
 
-The owner has little time. Every message to the owner, from any session, is short and plain, in this order:
+**Sessions never ask the owner directly; they send their questions and approval needs to the planner**, the session "Magic Merger daily planner" (`session_01NxvtApFG2JjVSbpSNYmAKn`), with `send_message`. The planner is the owner's one point of contact: it keeps the owner's list and asks for each approval once, in the brief. When the owner answers somewhere else (for example in the session that keeps the roadmap page), that session passes the answer to the planner word for word.
+
+The owner has little time. Every message meant for the owner is short and plain, in this order:
 
 1. **Goal**: the visible change, in words a player would use.
 2. **What I tried**, and **where I am blocked**, one line each.
