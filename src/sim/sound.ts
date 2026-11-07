@@ -101,8 +101,10 @@ export class SpellSound {
   counts(): SoundCounts {
     const now = this.ctx?.currentTime ?? 0;
     this.live = this.live.filter((l) => l.slot.ends > now);
+    this.budget.sweep(now);
     const s = this.budget.stats;
-    return { voices: this.live.length, audioNodes: this.live.reduce((n, l) => n + l.nodes, 0), merged: s.merged, dropped: s.cooled + s.far + s.full };
+    // Voices as the budget counts them; nodes include the ones still fading out.
+    return { voices: this.budget.playing.length, audioNodes: this.live.reduce((n, l) => n + l.nodes, 0), merged: s.merged, dropped: s.cooled + s.far + s.full };
   }
 
   play(name: string, size: number, at: SoundAt = {}): void {
@@ -305,25 +307,36 @@ function impact(noise: AudioBuffer): Voice {
   };
 }
 
+// Many tiny noise pops at random moments, on one noise source: one node
+// per pop made a crackle 96 nodes (4.8, item 9), now it is 3.
 function crackle(noise: AudioBuffer): Voice {
   return (ctx, out, t, size, pitch) => {
-    // Many tiny noise pops at random moments.
     const pops = 12 + Math.round(20 * size);
-    for (let i = 0; i < pops; i++) {
-      const at = t + Math.random() * (1 + size);
-      const src = ctx.createBufferSource();
-      src.buffer = noise;
-      const filter = ctx.createBiquadFilter();
-      filter.type = "bandpass";
-      filter.frequency.value = (1500 + Math.random() * 2500) * pitch;
-      const gain = ctx.createGain();
-      // 0.45, not 0.15: pops this short were 24 times quieter than a boom (4.8, item 9).
-      envelope(gain, at, 0.002, 0.04, 0.45);
-      src.connect(filter).connect(gain).connect(out);
-      src.start(at, Math.random());
-      src.stop(at + 0.06);
+    const length = 1 + size;
+    const times: number[] = [];
+    for (let i = 0; i < pops; i++) times.push(t + Math.random() * length);
+    times.sort((a, b) => a - b);
+    const src = ctx.createBufferSource();
+    src.buffer = noise;
+    src.loop = true;
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    let free = t;
+    for (const at of times) {
+      // Pops closer than their own length would overlap on one gain: skipped.
+      if (at < free) continue;
+      filter.frequency.setValueAtTime((1500 + Math.random() * 2500) * pitch, at);
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.45, at + 0.002);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.042);
+      free = at + 0.045;
     }
-    return 1.1 + size;
+    src.connect(filter).connect(gain).connect(out);
+    src.start(t, Math.random());
+    src.stop(t + length + 0.1);
+    return length + 0.1;
   };
 }
 

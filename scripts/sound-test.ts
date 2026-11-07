@@ -308,7 +308,7 @@ for (const name of VOICE_NAMES) {
     check(r.peak > 0.01, `voice ${name} at size ${size}: it sounds (peak ${r.peak.toFixed(3)})`);
     check(r.peak <= 1.2, `voice ${name} at size ${size}: peak ${r.peak.toFixed(3)} under 1.2`);
     check(r.tail < 0.01, `voice ${name} at size ${size}: silent after the length it reports (${r.tail.toFixed(4)})`);
-    check(r.nodes <= 100, `voice ${name} at size ${size}: ${r.nodes} nodes, at most 100`);
+    check(r.nodes <= 24, `voice ${name} at size ${size}: ${r.nodes} nodes, at most 24`);
     if (size === 0.5) loudness[name] = r.loud;
   }
 }
