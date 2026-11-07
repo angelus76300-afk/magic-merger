@@ -20,7 +20,22 @@ import { VK, igniteVoxels, kindId } from "./voxels";
 import { keyLevel, keyX, keyY, voxelKey } from "./voxelkey";
 import { baseName, type Landmark, type Presence } from "./social";
 import { hexColor, toColor } from "./colors";
-import { DOME_SQUASH, WARD, addWard, ownWard, wardBits, wardHit, warded } from "./wards";
+import {
+  DOME_SQUASH,
+  TIER_POWER,
+  WARD,
+  WARD_ALL,
+  addWard,
+  rebuildMask,
+  damageWard,
+  inDome,
+  ownWard,
+  stopsBodies,
+  wardBits,
+  wardHit,
+  warded,
+  type Ward,
+} from "./wards";
 import { makeBuilding, makePerson, makeVillage, makeWonder, shapeLand } from "./makers";
 import { addProp, propBounds, readProp, shadeParts } from "./props";
 
@@ -96,12 +111,20 @@ const LOOP_LIMIT = 4_000_000;
 export const WRAPPER_LINES = 3;
 const MAX_JOBS = 24;
 
+// The tallest tree a creature may plant without it counting in its size (an oak is 12).
+export const PLANTED_TREE_HEIGHT = 20;
+
 export class Runtime {
   // A cast whose ticks take longer than this five times is stopped. Tests
   // set it (4.1, review M8): on a loaded CI runner a correct spell can pass
   // 40 ms, and a verdict must not depend on the machine.
   static slowMs = 40;
   readonly visuals = new Visuals();
+  // The ward a body was stopped on, while its land hook runs (4.7): what the
+  // impact does inside that ward is taken by the glass. `harm` counts what
+  // it tried to do there (a body that only heals does not wear the ward);
+  // `replay` holds the blows it held back, dealt if the impact breaks it.
+  glass: { ward: Ward; harm: number; replay: (() => void)[] } | null = null;
   private compiled = new Map<string, Compiled>();
   private casts: ActiveCast[] = [];
   private nextCast = 1;
@@ -153,6 +176,10 @@ export class Runtime {
   readonly modelCalls = new Map<string, number>();
   // 4.6 part B: the people each item made with w.person, for its test run.
   readonly people = new Map<string, Creature[]>();
+  // 4.6: how many wards each program raised (w.ward), and the cells of each
+  // tree it planted (w.tree), for its test run. Not saved.
+  readonly wardCalls = new Map<string, number>();
+  readonly planted = new Map<string, number[][]>();
   // A spell's creature named like one of the island's animals ("wolf") is
   // kept as its own kind ("wolf#<spell>"), so summoning wolves that hunt
   // villagers does not turn the island's wolves against them. Per spell:
@@ -581,10 +608,15 @@ export class Runtime {
       b.vx *= k;
       b.vy *= k;
       b.vz = b.vz * k - b.gravity * dt;
+      const [px, py, pz] = [b.x, b.y, b.z];
       b.x += b.vx * dt;
       b.y += b.vy * dt;
       const wasUp = b.z > 0;
       b.z += b.vz * dt;
+      // 4.7: a ward stops what another spell throws at its edge (Ideas #2:
+      // a meteor passed through a shield). The body lands on the dome, or
+      // breaks it and goes on.
+      if (this.world.wards.length && this.hitsWard(b, hooks, px, py, pz)) continue;
       if (hooks?.tick)
         this.run(
           hooks.key,
@@ -629,6 +661,66 @@ export class Runtime {
         });
       }
     }
+  }
+
+  // A body entering a ward's dome from outside: it stops where it was, on
+  // the glass. A body with a land hook lands there: the hook runs with every
+  // rule of the land holding inside the ward and no blow reaching anyone
+  // under it; if it tried to harm what is inside, the ward takes the blow,
+  // and a blow that breaks it goes through (the blows held back are dealt).
+  // A body that only heals passes its help and leaves the ward whole. A
+  // body with no land hook is a thrown thing: its blow is taken, or it
+  // breaks the ward and flies on. True when the body was stopped.
+  private hitsWard(b: Body, hooks: BodyHooks | undefined, px: number, py: number, pz: number): boolean {
+    const owner = hooks?.key ?? "";
+    let hit: Ward | undefined;
+    for (const ward of this.world.wards) if (stopsBodies(ward, owner) && inDome(ward, b.x, b.y, b.z) && !inDome(ward, px, py, pz)) hit = ward;
+    if (!hit) return false;
+    const speed = Math.hypot(b.vx, b.vy, b.vz);
+    const blow = (8 + 8 * Math.min(8, b.r)) * Math.min(2, 0.5 + speed / 40);
+    const source = hooks?.source ?? "land";
+    const power = hooks?.power ?? 1;
+    if (!hooks?.land && damageWard(this.world, hit, blow, source, power)) return false;
+    [b.x, b.y, b.z] = [px, py, Math.max(0, pz)];
+    b.alive = false;
+    if (!hooks?.land) {
+      this.splash(b, hit);
+      return true;
+    }
+    const mask = this.world.wardMask;
+    forDisc(this.world, hit.x, hit.y, hit.r, (i) => (mask[i] = WARD_ALL));
+    const glass = { ward: hit, harm: 0, replay: [] as (() => void)[] };
+    this.glass = glass;
+    try {
+      this.run(hooks.key, hooks.name, () => hooks.land!(hooks.handle, hooks.api));
+    } finally {
+      this.glass = null;
+      rebuildMask(this.world);
+    }
+    if (!glass.harm) return true;
+    this.splash(b, hit);
+    if (damageWard(this.world, hit, blow, source, power)) for (const f of glass.replay) this.run(hooks.key, hooks.name, f);
+    return true;
+  }
+
+  // Sparks and a thump where a body hit the glass.
+  private splash(b: Body, hit: Ward): void {
+    for (let n = 0; n < 12; n++)
+      this.world.particles.add({
+        x: b.x,
+        y: b.y,
+        z: b.z + 0.5,
+        vx: (Math.random() - 0.5) * 8,
+        vy: (Math.random() - 0.5) * 8,
+        vz: Math.random() * 4,
+        life: 0.4 + Math.random() * 0.4,
+        color: hit.color,
+        size: 0.8,
+        glow: true,
+        gravity: 8,
+        drag: 1,
+      });
+    this.world.emit({ kind: "sound", name: "thump", size: Math.min(1, 0.2 + b.r / 6) });
   }
 
   // Custom material rules: each cell of a material with a tick gets a call,
@@ -780,6 +872,9 @@ interface BodyHooks {
   tick?: (b: BodyHandle, w: SpellApi, dt: number) => void;
   land?: (b: BodyHandle, w: SpellApi) => void;
   end?: (b: BodyHandle, w: SpellApi) => void;
+  // Who threw it and how hard, for the wards it hits (4.7).
+  source: string;
+  power: number;
 }
 const bodyHooks = new WeakMap<Body, BodyHooks>();
 
@@ -975,7 +1070,17 @@ export class CreatureHandle {
   private shielded() {
     return shieldedCreature(this.rt.world, this.raw) && !hostile(this.raw);
   }
+  // Under the glass a body burst on (Runtime.glass): no blow gets through.
+  // Held back, and counted as harm the glass took.
+  private underGlass(blow: () => void) {
+    const g = this.rt.glass;
+    if (!g || Math.hypot(this.raw.x - g.ward.x, this.raw.y - g.ward.y) > g.ward.r || hostile(this.raw)) return false;
+    g.harm++;
+    g.replay.push(blow);
+    return true;
+  }
   hurt(n: number) {
+    if (this.underGlass(() => this.hurt(n))) return;
     const blow = num(n, 0, 1e6, 0) * (this.shielded() ? 0.15 : 1);
     this.raw.hp -= blow;
     // People remember what magic did to them (3.6).
@@ -989,6 +1094,7 @@ export class CreatureHandle {
     this.raw.frozen = 0;
   }
   kill() {
+    if (this.underGlass(() => this.kill())) return;
     if (this.shielded()) {
       this.raw.hp -= maxHp(this.raw) * 0.15;
       if (this.raw.hp > 0) return;
@@ -1182,6 +1288,14 @@ export class SpellApi {
     this.r = req.reach ?? Math.max(2, Math.round(TIER_REACH[req.tier] * Math.min(rt.world.w, rt.world.h)));
   }
 
+  // Who wears a ward down, and how hard (4.7, wards.ts): one cast is one source.
+  private get source() {
+    return `cast:${this.castId}`;
+  }
+  private get power() {
+    return TIER_POWER[this.req.tier] ?? 1;
+  }
+
   get time() {
     return this.rt.world.time;
   }
@@ -1252,13 +1366,15 @@ export class SpellApi {
   private fluidBlocked(i: number): boolean {
     const w = this.rt.world;
     if (!w.wards.length || !warded(w, i, WARD.fluids) || ownWard(w, i, this.req.key)) return false;
-    if (Math.random() < 0.02) wardHit(w, i);
+    if (this.rt.glass) this.rt.glass.harm++;
+    else if (Math.random() < 0.02) wardHit(w, i, 1, this.source, this.power);
     return true;
   }
   private fireBlocked(i: number): boolean {
     const w = this.rt.world;
     if (!w.wards.length || !warded(w, i, WARD.fire)) return false;
-    if (Math.random() < 0.02) wardHit(w, i);
+    if (this.rt.glass) this.rt.glass.harm++;
+    else if (Math.random() < 0.02) wardHit(w, i, 1, this.source, this.power);
     return true;
   }
   clear(x: number, y: number, layer: Layer) {
@@ -1314,7 +1430,21 @@ export class SpellApi {
 
   // Big moves: each does a lot in one call.
   explode(x: number, y: number, r: number, power = 1) {
-    explode(this.rt.world, x, y, num(r, 0.5, 300, 4), num(power, 0, 5, 1));
+    const radius = num(r, 0.5, 300, 4);
+    const force = num(power, 0, 5, 1);
+    // 4.7: a blast that reaches a ward against harm wears it down first;
+    // a strong one breaks it, and then the blast goes through. On the glass
+    // of a body's impact, the body's blow is what the ward takes, and the
+    // blast inside is held back with the body's other blows.
+    const g = this.rt.glass;
+    if (g && Math.hypot(g.ward.x - x, g.ward.y - y) < g.ward.r + radius) {
+      g.harm++;
+      g.replay.push(() => explode(this.rt.world, x, y, radius, force));
+    }
+    for (const ward of [...this.rt.world.wards])
+      if (ward !== g?.ward && ward.against & WARD.harm && Math.hypot(ward.x - x, ward.y - y) < ward.r + radius)
+        damageWard(this.rt.world, ward, 15 * force * Math.sqrt(Math.min(radius, 40)), this.source, this.power);
+    explode(this.rt.world, x, y, radius, force);
   }
   quake(x: number, y: number, r: number, strength = 1) {
     quake(this.rt.world, x, y, num(r, 1, 400, 8), num(strength, 0, 5, 1));
@@ -1447,8 +1577,9 @@ export class SpellApi {
     const style = typeof o.style === "string" && styles.includes(o.style) ? o.style : "oak";
     const d = treeDefaults(style);
     const b = new Builder(this.rt.world);
+    const height = num(o.height, 4, 120, style === "giant" ? 40 : 12);
     tree(b, x, y, num(o.z, 0, 200, 0), {
-      height: num(o.height, 4, 120, style === "giant" ? 40 : 12),
+      height,
       style,
       trunk: colorList(o.trunk, d.trunk),
       leaves: style === "dead" ? [] : colorList(o.leaves, d.leaves),
@@ -1456,6 +1587,9 @@ export class SpellApi {
       accentShare: num(o.accentShare, 0, 1, 0.25),
       leafKind: o.glow === true ? VK.GLOW : style === "crystal" ? VK.GLOW : VK.LEAF,
     });
+    // Only a tree of an ordinary height is a creature's deed (the review of
+    // #72: three giant trees, 120 high, slipped past its size).
+    if (height <= PLANTED_TREE_HEIGHT) this.rt.planted.set(this.req.key, [...(this.rt.planted.get(this.req.key) ?? []), [...b.cells.keys()]]);
     this.rt.commit(b, num(o.grow, 0, 30, 0));
   }
   spire(x: number, y: number, o: Record<string, unknown> = {}) {
@@ -1692,6 +1826,8 @@ export class SpellApi {
       tick: typeof o.tick === "function" ? (o.tick as BodyHooks["tick"]) : undefined,
       land: typeof o.land === "function" ? (o.land as BodyHooks["land"]) : undefined,
       end: typeof o.end === "function" ? (o.end as BodyHooks["end"]) : undefined,
+      source: this.source,
+      power: this.power,
     });
     if (this.rt.visuals.bodies.length < 400) this.rt.visuals.bodies.push(b);
     else b.alive = false;
@@ -1748,19 +1884,24 @@ export class SpellApi {
     const w = this.rt.world;
     if (!this.inside(x, y)) return;
     const seconds = num(o.seconds, 1, 600, 20);
-    addWard(w, {
-      x,
-      y,
-      r: num(r, 1, 120, 8),
-      against: wardBits(o.against),
-      from: w.time,
-      until: w.time + seconds,
-      color: colorOr(o.color, 0x9fd8ff),
-      keepOut: strings(o.keepOut),
-      allow: strings(o.allow),
-      owner: this.req.key,
-      hit: -10,
-    });
+    addWard(
+      w,
+      {
+        x,
+        y,
+        r: num(r, 1, 120, 8),
+        against: wardBits(o.against),
+        from: w.time,
+        until: w.time + seconds,
+        color: colorOr(o.color, 0x9fd8ff),
+        keepOut: strings(o.keepOut),
+        allow: strings(o.allow),
+        owner: this.req.key,
+        hit: -10,
+      },
+      this.power,
+    );
+    this.rt.wardCalls.set(this.req.key, (this.rt.wardCalls.get(this.req.key) ?? 0) + 1);
   }
 
   // Gives villagers near (x, y) a goal this spell defined as their job (3.6):
@@ -1862,12 +2003,21 @@ export class SpellApi {
     for (let l = target + 1; l < target + 140; l++) if (w.decor.has(voxelKey(cx, cy, l))) target = l + 1;
     if (w.depth[i] > 0.05) target = Math.max(target, (w.height[i] + w.depth[i]) * 0.5);
     // Under a ward against lightning, the bolt ends on the dome.
-    const dome = warded(w, i, WARD.lightning) ? w.wards.find((d) => d.against & WARD.lightning && Math.hypot(d.x - x, d.y - y) <= d.r) : undefined;
+    // On the glass of a body's impact (4.7), a bolt of its land hook ends on that dome.
+    const glass = this.rt.glass;
+    const onGlass = glass && Math.hypot(glass.ward.x - x, glass.ward.y - y) <= glass.ward.r ? glass.ward : undefined;
+    if (glass && onGlass) {
+      glass.harm++;
+      glass.replay.push(() => this.lightning(x, y, o));
+    }
+    const dome = onGlass ?? (warded(w, i, WARD.lightning) ? w.wards.find((d) => d.against & WARD.lightning && Math.hypot(d.x - x, d.y - y) <= d.r) : undefined);
     if (dome) {
       const top = w.height[w.idx(Math.max(0, Math.min(w.w - 1, dome.x)), Math.max(0, Math.min(w.h - 1, dome.y)))] * 0.5;
       target = Math.max(target, top + Math.sqrt(Math.max(0, dome.r ** 2 - (x - dome.x) ** 2 - (y - dome.y) ** 2)) * DOME_SQUASH);
       dome.hit = w.time;
     }
+    // 4.7: a bolt on the dome wears it down; one that breaks it strikes through.
+    const broke = !!dome && !onGlass && damageWard(w, dome, 20 * Math.max(0.5, power), this.source, this.power);
     const path = (x0: number, y0: number, l0: number, x1: number, y1: number, l1: number, jag: number) => {
       const pts = [{ x: x0, y: y0, l: l0 }];
       const n = 10;
@@ -1896,7 +2046,7 @@ export class SpellApi {
     vis.lights.push({ x, y, r: 10 * Math.max(0.6, power), color, t: 0, dur: 0.5 });
     this.flash(color, 0.3);
     this.sound("zap", Math.min(1, 0.4 + power * 0.2));
-    if (dome) return;
+    if (dome && !broke) return;
     // Effects on the land.
     const g = w.ground[i];
     if (g === G.SAND && Math.random() < 0.6) w.ground[i] = G.CRYSTAL;

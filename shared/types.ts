@@ -85,7 +85,7 @@ export interface CheckRequest {
   name: string;
   id: number;
   ok: boolean;
-  problem: "crash" | "nothing" | "wiped" | "promise" | "idle" | "size" | "kind" | "look" | null;
+  problem: "crash" | "nothing" | "wiped" | "promise" | "idle" | "size" | "kind" | "look" | "fit" | null;
   detail: string;
   stats?: Record<string, number>;
   // A live program tested again against a promise it never faced (3.6).

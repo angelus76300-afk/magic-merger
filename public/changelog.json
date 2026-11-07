@@ -3,6 +3,11 @@
   "entries": [
     {
       "date": "2026-11-07",
+      "text": "Shields now stop meteors, fireballs and other thrown spells at their edge. A shield cracks as it takes hits and breaks under a stronger spell, or a second one of its own strength.",
+      "idea": 2
+    },
+    {
+      "date": "2026-11-07",
       "text": "The island moves more smoothly: on phones that keep up it now draws 60 frames a second instead of 30, and creatures move on every one of those frames. A phone that cannot keep up goes back to 30 on its own."
     },
     {
