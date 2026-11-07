@@ -1,7 +1,7 @@
 import { C, F, G, S } from "./materials";
 import { explode, forDisc, setBlastSpawn } from "./physics";
 import { lull, names, social, stepLandmarks, TAGS, type Mood } from "./social";
-import { WARD, warded } from "./wards";
+import { WARD, damageWard, warded } from "./wards";
 import { daylight } from "./daylight";
 import type { World } from "./world";
 import { body, type BodySpec } from "./body";
@@ -1268,7 +1268,10 @@ function keepOut(world: World): void {
         c.vx -= inward * ux;
         c.vy -= inward * uy;
       }
-      ward.hit = world.time;
+      // Each push wears the ward a little (4.7): a hostile pressing on it is
+      // pushed about every tick, so about 3 a second each; raiders crack a
+      // ward, never break it (wards.ts, PRESSURE).
+      damageWard(world, ward, 0.1, "creatures");
     }
   }
 }
