@@ -68,6 +68,10 @@ export interface SpellRequest {
   // 4.6: its entry was written again for its kind with this program; it goes
   // live with the program when the refresh replaces the old one.
   newEntry?: boolean;
+  // 4.6: its promise was read again from that entry (the review of the
+  // Serpent, 7 November: a promise to protect read from the old entry made
+  // the writer raise a shield); it goes live with the program too.
+  newIntents?: boolean;
   description: string;
   recipe: [string, string] | null;
   tier: Tier;

@@ -53,7 +53,7 @@ import { PROGRESS_KINDS, type ProgressPut, type StoredKind } from "../shared/acc
 import { ClaudeOracle, MockOracle, OracleError, parseEffort, type Oracle, type ProgramAnswer, type SpellRequest as OracleSpellRequest } from "./oracle";
 import { PROBED, parseIntents, type Intent } from "../shared/promises";
 import { isForm, kindOfForm, saysGiant, type Form } from "../shared/forms";
-import { KEPT_BY_FORM_SQL, applyForms, formList, proposeForms } from "./forms";
+import { AGAIN_BY_FORM_SQL, applyForms, requestIntents, formList, proposeForms } from "./forms";
 import { designDue, evolution, liveLibrary, openGaps, recordGap, settleHelper, storeDesign, trialHelpers, withLibrary, type Library } from "./evolve";
 import {
   averageDaily,
@@ -1484,7 +1484,7 @@ async function refreshSpentThisMonth(db: D1Database): Promise<number> {
 
 const REFRESH_ESTIMATE = { big: 0.06, small: 0.006 };
 
-async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; limit?: unknown; dry?: unknown; forms?: unknown }) {
+async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; limit?: unknown; dry?: unknown; forms?: unknown; why?: unknown }) {
   if (oracle.mock) throw new HttpError(400, "The refresh needs the Claude API");
   const db = env.DB;
   const asked = Array.isArray(body.keys) ? body.keys.filter((k): k is string => typeof k === "string").map(elementKey) : null;
@@ -1510,18 +1510,25 @@ async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; li
        ORDER BY (SELECT COUNT(*) FROM casts c JOIN programs p ON p.id = c.pid WHERE p.key = s.key) DESC, s.key`,
         )
         .all<{ key: string; pid: number }>();
-  // By form, a key asked by name whose rewrite for its kind kept the old
-  // program (its test run failed it, or the judge) is asked again, told why
-  // (7 November: 9 of 14 people written as beasts before the API named
-  // w.person). Only by name, never in the daily run, so a key is retried
-  // when someone decides to, and nothing waits for it already.
-  const again = new Map<string, string>();
+  // By form, a key asked by name may be written for its kind once more
+  // (AGAIN_BY_FORM_SQL): when its first rewrite was kept out, the writer is
+  // told why (7 November: 9 of 14 people written as beasts before the API
+  // named w.person); `why` adds the asker's own reason, a line per key (the
+  // owner: a Serpent raised a shield). Only by name, never in the daily run.
+  const again = new Map<string, string[]>();
+  const why = (k: string): string | null => {
+    const w = body.why && typeof body.why === "object" ? (body.why as Record<string, unknown>)[k] : undefined;
+    return typeof w === "string" && w.trim() ? w.trim().slice(0, 300) : null;
+  };
   if (byForm && asked?.length) {
-    const kept = await db.prepare(KEPT_BY_FORM_SQL).bind(JSON.stringify(asked)).all<{ key: string; pid: number; reason: string }>();
-    for (const r of kept.results) {
+    const more = await db.prepare(AGAIN_BY_FORM_SQL).bind(JSON.stringify(asked)).all<{ key: string; pid: number; reason: string; replaced: number }>();
+    for (const r of more.results) {
       if (rows.results.some((o) => o.key === r.key)) continue;
       rows.results.push({ key: r.key, pid: r.pid });
-      again.set(r.key, r.reason);
+      const reasons = r.replaced ? [] : [`its first rewrite for its kind was not used: ${r.reason}`];
+      const asker = why(r.key);
+      if (asker) reasons.push(asker);
+      again.set(r.key, reasons);
     }
   }
   const inOrder = asked ? asked.map((k) => rows.results.find((r) => r.key === k)).filter((r): r is { key: string; pid: number } => !!r) : rows.results;
@@ -1549,7 +1556,12 @@ async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; li
       fresh = !!kept && kept.entry === null;
     }
     const description = fresh ? await ensureDescription(env, oracle, element, true, false) : await ensureDescription(env, oracle, element, false);
-    const intents = await ensureIntents(env, oracle, element, description);
+    // By form, its promise is read again from the entry it is written from:
+    // the stored one may come from an entry written before its kind (a
+    // Serpent promised to protect, so its program raised a shield). Stored
+    // only when the program goes live (refreshVerdict).
+    const newIntents = byForm && body.dry !== true;
+    const intents = newIntents ? await readIntents(env, oracle, element, description) : await ensureIntents(env, oracle, element, description);
     const request: OracleSpellRequest = {
       name: element.name,
       kind: element.kind,
@@ -1560,9 +1572,10 @@ async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; li
       intents,
       library: library.docs,
       ...(fresh ? { newEntry: true } : {}),
+      ...(newIntents ? { newIntents: true } : {}),
       // Its first rewrite for its kind was kept out: the writer is told why,
       // not shown that program (it is the design that failed).
-      ...(again.has(r.key) ? { rewrite: { reasons: [`its first rewrite for its kind was not used: ${again.get(r.key)}`] } } : {}),
+      ...(again.get(r.key)?.length ? { rewrite: { reasons: again.get(r.key)! } } : {}),
     };
     const model = big ? env.SPELL_MODEL : smallModel(env);
     const hold = await holdBatch(env, oracle);
@@ -1606,7 +1619,8 @@ async function refreshCandidates(env: Env, limit: number) {
     `SELECT p.id, p.key, p.spec, p.model, p.parent, e.name, e.kind, e.tier, e.depth, e.intents,
        (SELECT spec FROM programs o WHERE o.id = (SELECT pid FROM spells WHERE key = p.key)) AS old_spec,
        (SELECT pid FROM spells WHERE key = p.key) AS old_id,
-       (SELECT dry FROM rewrites r WHERE r.to_pid = p.id) AS dry
+       (SELECT dry FROM rewrites r WHERE r.to_pid = p.id) AS dry,
+       (SELECT request FROM rewrites r WHERE r.to_pid = p.id) AS request
      FROM programs p JOIN elements e ON e.key = p.key WHERE p.status = 'candidate' AND p.origin = 'refresh' ORDER BY p.id LIMIT ?`,
   )
     .bind(Math.min(100, Math.max(1, limit)))
@@ -1624,6 +1638,7 @@ async function refreshCandidates(env: Env, limit: number) {
       old_spec: string | null;
       old_id: number | null;
       dry: number | null;
+      request: string | null;
     }>();
   const code = (spec: string | null) => {
     try {
@@ -1648,7 +1663,7 @@ async function refreshCandidates(env: Env, limit: number) {
     kind: r.kind,
     ...shape(r.spec),
     tier: isTier(r.tier) ? r.tier : tierFromDepth(r.depth),
-    intents: parseIntents(r.intents),
+    intents: requestIntents(r.request) ?? parseIntents(r.intents),
     model: r.model,
     code: code(r.spec),
     oldId: r.old_id,
@@ -1692,6 +1707,9 @@ async function refreshVerdict(
     } catch {
       entry = null;
     }
+    // Its promise, read from that entry, goes live with it too.
+    const intents = requestIntents(asked?.request ?? null)?.join(",") ?? null;
+    if (intents !== null) await db.prepare("UPDATE elements SET intents = ? WHERE key = ?").bind(intents, row.key).run();
     if (entry) {
       const old = await db.prepare("SELECT description FROM elements WHERE key = ?").bind(row.key).first<{ description: string | null }>();
       await db.batch([
@@ -3048,11 +3066,16 @@ async function ensureIntents(env: Env, oracle: Oracle, element: GameElement, des
   const key = elementKey(element.name);
   const row = await env.DB.prepare("SELECT intents FROM elements WHERE key = ?").bind(key).first<{ intents: string | null }>();
   if (row?.intents) return parseIntents(row.intents);
+  const intents = await readIntents(env, oracle, element, description);
+  if (intents.length && !oracle.mock) await env.DB.prepare("UPDATE elements SET intents = ? WHERE key = ?").bind(intents.join(","), key).run();
+  return intents;
+}
+
+// What an entry promises, asked of the small model (about $0.0001), stored nowhere.
+async function readIntents(env: Env, oracle: Oracle, element: GameElement, description: string): Promise<Intent[]> {
   try {
     await ensureBudget(env, oracle, "intent", ESTIMATE.intent);
-    const intents = await oracle.intents(element.name, element.kind, description);
-    if (!oracle.mock) await env.DB.prepare("UPDATE elements SET intents = ? WHERE key = ?").bind(intents.join(","), key).run();
-    return intents;
+    return await oracle.intents(element.name, element.kind, description);
   } catch (err) {
     console.error("intents", err);
     return [];
