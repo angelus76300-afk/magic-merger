@@ -209,9 +209,11 @@ async function run(width, height) {
     }
     await shot("06-world-selected");
     const stage = await page.locator("#world-stage").boundingBox();
-    await page.mouse.click(stage.x + stage.width / 2, stage.y + stage.height * 0.45);
+    // On its side the island's first look panel fills the middle: tap beside it.
+    const [fx, fy] = width > height ? [0.15, 0.8] : [0.5, 0.45];
+    await page.mouse.click(stage.x + stage.width * fx, stage.y + stage.height * fy);
     await page.waitForTimeout(500);
-    await page.mouse.click(stage.x + stage.width / 2, stage.y + stage.height * 0.45);
+    await page.mouse.click(stage.x + stage.width * fx, stage.y + stage.height * fy);
     for (let i = 0; i < 30 && !(await page.locator(".vote").count()); i++) await page.waitForTimeout(500);
     await shot("07-world-vote");
     // The vote is answered from the drawer, never over the island.
@@ -220,6 +222,15 @@ async function run(width, height) {
       return !vote || !!vote.closest(".world-stage");
     });
     if (voteOnIsland) failures.push(`${tag}: the vote is missing or over the island`);
+    // "Not good" shows five reasons: they wrap, the page does not grow sideways.
+    const down = page.locator(".vote .vote-down");
+    if (await down.count()) {
+      await down.click();
+      await shot("07b-world-reasons");
+      const wide = await page.evaluate(() => document.documentElement.scrollWidth);
+      if (wide > width) failures.push(`${tag}: the vote's reasons make the page ${wide} px wide`);
+      await page.locator(".vote .vote-close").click();
+    }
   }
 
   for (const [view, name] of [
@@ -229,7 +240,8 @@ async function run(width, height) {
     ["feedback-view", "11-ideas"],
   ]) {
     await page.click(`.tab[data-view="${view}"]`);
-    // Tabs under the thumb below 1024 px: the bar touches the bottom edge.
+    // Tabs under the thumb below 1024 px: the bar touches the bottom edge
+    // (on a phone on its side, a rail down the left edge, top to bottom).
     const tabsBottom = await page.evaluate(() => document.querySelector(".tabs").getBoundingClientRect().bottom);
     if (width < 1024 && Math.abs(tabsBottom - height) > 1) failures.push(`${tag}: the tabs end at y ${Math.round(tabsBottom)}, not at the bottom (${height})`);
     await page.waitForTimeout(1200);
@@ -244,6 +256,7 @@ async function run(width, height) {
 try {
   await run(390, 844);
   await run(806, 968);
+  await run(844, 390);
   console.log(`frames in ${OUT}`);
   if (errors.length) console.log(`page errors:\n${errors.join("\n")}`);
   console.log(
