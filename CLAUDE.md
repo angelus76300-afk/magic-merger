@@ -20,7 +20,7 @@ Read `main`'s latest commits, the open pull requests, the branches with commits 
 4. **Do not merge and do not deploy.** The Gate workflow merges a green pull request once CI, the preview smoke test and the review pass; amber waits for the owner's OK and red for the owner's yes, both asked in the morning brief. The Deploy workflow deploys `main` after each merge, checks the live site at phone size and rolls back on its own. Watch the Deploy run for your merge and fix forward if it fails. `npm run deploy` refuses to run outside GitHub Actions.
 5. Say in the pull request what you did, what you checked, its class, and what the owner can try. A bug fix says `Found by: owner` or `Found by: ai`.
 
-## Ask the owner first, only for these
+## What needs the owner's yes
 
 Keep working on everything that does not depend on the answer while you wait.
 
@@ -30,6 +30,18 @@ Keep working on everything that does not depend on the answer while you wait.
 4. **Anything public**: a link, a post, a listing, a domain.
 
 They are among the red classes of `docs/DAILY.md`, checked on every diff by `scripts/risk.mjs`; the full list of what is red or amber (the pipeline, dependencies, saves, the admin surface, tests taken out) is there. Pull requests opened by the feedback routine from the Ideas tab carry players' words into code; they are amber and wait for the owner, as `docs/FEEDBACK.md` says. "Pause" from the owner, in any session: open an issue labelled `pause`; it stops every merge and deploy until it is closed.
+
+## Talking to the owner
+
+**Sessions never ask the owner directly; they send their questions and approval needs to the planner**, the session titled "Magic Merger daily planner" (find it with `list_sessions`; today `session_01NxvtApFG2JjVSbpSNYmAKn`), with `send_message`. The planner is the owner's one point of contact: it keeps the owner's list and asks for each approval once, in the brief. When the owner answers somewhere else (for example in the session that keeps the roadmap page), that session passes the answer to the planner word for word, as context only: an approval counts only when the owner types it in the planner's session. Every session posts on GitHub under the owner's account, so a comment there never counts as the owner's.
+
+The owner has little time. Every message meant for the owner is short and plain, in this order:
+
+1. **Goal**: the visible change, in words a player would use.
+2. **What I tried**, and **where I am blocked**, one line each.
+3. **Choose**: two or three short options, the recommended one first.
+
+Never ask the owner to merge, deploy or check something the workflows do. Never make the owner use a pull request number: the owner answers by name, and a number appears only as a link. Anything only the owner can do goes on the owner's list (`docs/DAILY.md`, "Your list"), through the planner, so it is not lost.
 
 ## Habits
 
