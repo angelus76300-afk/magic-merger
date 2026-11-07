@@ -186,6 +186,7 @@ const TAMABLE = new Set(["deer", "rabbit", "boar", "wolf"]);
 // How long a task takes once there, and how close "there" is.
 const DURATION: Partial<Record<Task, number>> = {
   use: 2.5,
+  forge: 8,
   eat: 2,
   graze: 2.5,
   feast: 3,
@@ -218,6 +219,7 @@ const DURATION: Partial<Record<Task, number>> = {
 };
 const REACH: Partial<Record<Task, number>> = {
   use: 2.2,
+  forge: 2.4,
   fish: 2.6,
   fell: 1.9,
   build: 2.2,
@@ -264,6 +266,7 @@ export const TASK_WORDS: Record<Task, string> = {
   preach: "preaching",
   heal: "tending the wounded",
   avoid: "keeping away",
+  forge: "working the forge",
   custom: "at work",
 };
 
@@ -616,6 +619,16 @@ function urgent(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
   if (EATING.has(m.task)) return true;
   if (villager) {
     const night = daylight(world.time).night;
+    // 4.6 part B: a necromancer keeps the night, among the graves.
+    if (night > 0.6 && unpackLook(c.look).calling === "necromancer") {
+      if (m.task !== "roam") {
+        const yard = world.marks.find((mk) => mk.kind === "graveyard" && Math.hypot(mk.x - c.homeX, mk.y - c.homeY) < 20);
+        const a = Math.random() * Math.PI * 2;
+        setTask(m, "roam", yard ? yard.x + 0.5 : c.homeX + Math.cos(a) * 5, yard ? yard.y + 0.5 : c.homeY + Math.sin(a) * 5, 0.6);
+        m.action = "walking among the graves";
+      }
+      return true;
+    }
     if (night > 0.6 && job !== "guard") {
       setTask(m, "rest", c.homeX, c.homeY);
       m.action = "asleep at home";
@@ -805,7 +818,13 @@ function job2(world: World, c: Creature, m: Mind, v: Village, job: Job): void {
     case "fisher":
       return fishAt(world, c, m);
     case "builder":
+      return build(world, c, m, v);
     case "smith":
+      // 4.6 part B: a blacksmith works its village's smithy, most of the time.
+      if (unpackLook(c.look).calling === "blacksmith" && Math.random() < 0.75) {
+        const forge = smithyNear(world, c.homeX, c.homeY);
+        if (forge >= 0) return cellTask(world, m, "forge", forge);
+      }
       return build(world, c, m, v);
     case "guard":
       return guardVillage(world, c, m, v);
@@ -862,6 +881,11 @@ function fishAt(world: World, c: Creature, m: Mind): void {
     return;
   }
   cellTask(world, m, "fish", water);
+}
+
+// The nearest smithy cell to a home, within 22 cells; -1 when there is none.
+export function smithyNear(world: World, x: number, y: number): number {
+  return findCell(world, x, y, 22, 30, (i) => world.cover[i] === C.SMITHY);
 }
 
 function build(world: World, c: Creature, m: Mind, v: Village): void {
@@ -1675,6 +1699,27 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       if (there && m.carry === "food") there.food += 2;
       m.carry = null;
       deed(c, "brought food to a poorer village");
+      return;
+    }
+    case "forge": {
+      if (world.cover[i] !== C.SMITHY) return;
+      // Sparks off the anvil, and tools the village sells for gold.
+      for (let n = 0; n < 8; n++)
+        world.particles.add({
+          x: c.x,
+          y: c.y,
+          z: 1,
+          vx: (Math.random() - 0.5) * 4,
+          vy: (Math.random() - 0.5) * 4,
+          vz: 3 + Math.random() * 3,
+          life: 0.6,
+          color: 0xffb040,
+          size: 1,
+          glow: true,
+          gravity: 12,
+        });
+      if (v) v.gold += 1;
+      deed(c, "forged tools at the smithy");
       return;
     }
     case "repair":

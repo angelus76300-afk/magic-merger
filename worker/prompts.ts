@@ -1,6 +1,6 @@
 import { INTENTS, PROMISE_TEST, type Intent } from "../shared/promises";
 import { TIERS } from "../shared/tiers";
-import { FORMS, type Form } from "../shared/forms";
+import { FORMS, personName, type Form } from "../shared/forms";
 
 // The merge prompt only ever sees the two input names. No history, no
 // descriptions, no hidden stats: that is what keeps deep merges from drifting
@@ -446,16 +446,22 @@ export const FORM_EXAMPLES: Record<Exclude<Form, "spell">, { name: string; tier:
     tier: "minor",
     code: `const spell = {
   creatures: [
+    // Body: it slithers low on the serpent plan, olive with a pale belly, a little shorter than a villager is tall.
     { name: "serpent", base: "beast", body: "serpent", color: "#3f5f2e", color2: "#d8c46a", features: ["tail"],
-      speed: 1.2, hp: 45, radius: 0.55, behavior: "hunt", prey: ["rabbit"], attack: 14, sense: 14,
-      goal: "hunt", weak: ["cold"], scares: ["rabbit", "deer"],
-      // It digs a burrow in the bank every so often, and hunts from it when hungry.
-      abilities: [{ do: "dig", when: "every so often", every: 30 }] },
+      radius: 0.55, speed: 1.6, hp: 45,
+      // Life: it hunts small things by day and is slowed by the cold.
+      goal: "hunt", behavior: "hunt", prey: ["rabbit", "frog", "rat"], attack: 14, sense: 12, active: "day", weak: ["cold"],
+      // Others: rabbits and deer keep away from it.
+      scares: ["rabbit", "deer"],
+      // Deeds: now and then it digs a burrow in the bank; hurt, it strikes back.
+      abilities: [{ do: "dig", when: "every so often", every: 30 }, { do: "freeze", when: "hurt", every: 20 }],
+      // Its end: a clutch of eggs hatches one young where it dies.
+      onDeath: "spawn:serpent" },
   ],
   *cast(w) {
     w.sound("hiss", 0.3);
-    w.burst(w.x, w.y, { count: 14, colors: ["#5d8a3a", "#3f5f2e"], speed: 2, up: 1 });
-    yield 0.4;
+    w.burst(w.x, w.y, { count: 10, colors: ["#5d8a3a", "#3f5f2e"], speed: 2, up: 1 });
+    yield 0.3;
     w.spawn("serpent", w.x, w.y);
   },
 };`,
@@ -546,9 +552,57 @@ export const FORM_EXAMPLES: Record<Exclude<Form, "spell">, { name: string; tier:
   },
 };
 
+// 4.6 part B: the second creature example, and the example of a person.
+export const FOX_SPIRIT_EXAMPLE = {
+  name: "Fox Spirit",
+  tier: "minor",
+  code: `const spell = {
+  creatures: [
+    // Body: a small fox of four legs, ember orange with a pale glow, its tail and eyes alight.
+    { name: "fox spirit", base: "spirit", body: "four legs", color: "#e8823a", color2: "#cfe8ff", features: ["tail", "glowing eyes"],
+      glow: true, flying: false, radius: 0.45, speed: 3.6, hp: 60,
+      // Life: it tends the woods, leaving flowers where it runs, and fears nothing but iron and fire.
+      goal: "tend", leaves: "flowers", weak: ["fire"],
+      // Others: hares come to it; wolves keep their distance.
+      lures: ["hare", "rabbit"], scares: ["wolf"],
+      // Deeds: it mends the hurt around it, and blinks away when struck.
+      abilities: [{ do: "heal", when: "every so often", every: 20 }, { do: "teleport", when: "hurt", every: 12 }],
+      // Its end: a spirit fades after a few days, leaving seeds.
+      lifespan: 1800, onDeath: "seeds" },
+  ],
+  *cast(w) {
+    w.sound("chime", 0.25);
+    w.burst(w.x, w.y, { count: 12, colors: ["#ffb070", "#cfe8ff"], speed: 2, up: 2 });
+    yield 0.3;
+    w.spawn("fox spirit", w.x, w.y);
+  },
+};`,
+};
+
+export const PERSON_EXAMPLE = {
+  name: "Blacksmith",
+  tier: "minor",
+  code: `const spell = {
+  *cast(w) {
+    w.sound("chime", 0.25);
+    // A villager of the nearest village, in its clothes, living in one of its houses.
+    // The calling is the twist from the name: a blacksmith works the village's smithy.
+    const p = w.person(w.x, w.y, { calling: "blacksmith", title: "Blacksmith" });
+    if (!p) return;
+    w.burst(p.x, p.y, { count: 10, colors: ["#ffb040", "#fff1c0"], speed: 2, up: 2 });
+  },
+};`,
+};
+
 const FORM_RULES_TEXT: Record<Exclude<Form, "spell">, string> = {
   creature: `CREATURE
-It is alive: a creature kind in spell.creatures, spawned by cast (one, or a few for a pack or a swarm), never a statue, a ring of spheres or a voxel model of it. Its body plan is what it is (a serpent slithers on the serpent plan, a human walks on two legs as a person), with its own colors and features; it has a goal of its own, needs, prey or food, what it fears, and one or two abilities with a trigger. It is drawn beside a villager: radius is its reach, not its size. Its test run fails it if no creature of its own is alive after it arrives, or if what it builds is more than a few voxels.`,
+It is alive: a creature kind in spell.creatures, spawned by cast (one, or two or three for a pair, a pack or a brood), never a statue, a ring of spheres or a voxel model of it. Write it as a living thing first, in this order:
+1. Body: the plan that is what it is (a serpent slithers on "serpent", a fox runs on "four legs", a ghost floats as "spirit"), its colors, its features, its radius against a villager (a fox 0.45, a wolf 0.6, a bear 0.95; radius is its reach, not its height), its gait (speed: a serpent 1.6, a fox 3.6, a horse 5); flying or swims only when it truly does.
+2. Life: a goal of its own, what it eats (prey, or plants), when it is awake, what it is weak to.
+3. Deeds: one to three abilities with a trigger, at least one that fires without a fight (every so often, or night).
+4. Others: whom it hunts, scares or lures; whatever hunts it, it flees by itself.
+5. Its end: lifespan for a summoned thing, onDeath for what it leaves (seeds, a material, spawn:<kind> for its young).
+The engine does the rest: it steers round cliffs and water, eats, rests when hurt and remembers who hurt it. Its test run follows it for two minutes: it must move, pursue its goal, use an ability, go for its prey when one comes near, and leave the island's villagers and animals standing. One that stands still or does nothing fails, and so does a build of more than a few voxels.`,
   object: `OBJECT
 A thing a hand holds or a table bears: a book, a sword, a potion, a lantern, a gem. Draw it with w.model, in fine boxes at its real size (a book about 0.3 across, a sword 1 long, a lantern 0.4 tall), on what bears it if anything (a pedestal, a post, an altar, a lectern), 5 cells across and 5 voxels tall at the very most; a whole voxel is as big as a villager's body, too coarse for a thing in a hand; it never becomes a statue, a tower or a giant of itself unless its name or entry says it is giant. What it does reaches further through w.artifact: effects, grants villagers come for, uses, pairs. Its test run fails it when it is bigger than that, or builds a building, a village or land.`,
   building: `BUILDING
@@ -561,12 +615,22 @@ A spot of nature or old magic, as the island's wonders are, 4 to 14 cells. When 
 It changes the land itself. Reshape it with w.land(x, y, {shape, r, height}) (a volcano, a lake, a canyon, an oasis, a swamp, a mountain, a floating island), or w.terraform, w.flood and w.paint over its reach for a land no shape fits, then add what is special. The land is the point: water and lava keep running by themselves once there. Its test run fails it when fewer than 25 cells of land changed.`,
 };
 
+// 4.6 part B (the owner, 7 November): a person is one of the island's own
+// villagers, never a creature kind drawn of it ("so different").
+export const PERSON_RULES = `PERSON
+A human, or a role a human has (a Blacksmith, a Necromancer, a Knight, a Farmer): a villager of the island, with its look, never a creature kind or a figure drawn of it. Make it with w.person(x, y, {calling, job, title, age}): it walks home to the nearest village, moves in with a household there, works a job, remembers, eats and sleeps like every villager. calling is the twist its name gives it: necromancer (hood and staff; walks among the graves at night and raises the dead as thralls bound to it), blacksmith (apron and hammer; works the village's smithy, raised by its home if there is none), knight (armor, sword and shield; guards the village and wards it when an enemy comes), mage (pointed hat and staff; freezes an enemy, blinks away when hurt). job, when no calling fits: farmer, woodcutter, fisher, smith, guard, priest, merchant or builder (left out: from the name). title is the name the island calls it by (the item's name by default); age adult, elder or child. One person, or two or three for a family or a band. What else is its own goes beside it (a shrine with w.landmark, a tool with w.model). Its test run fails it when no person of its own is alive, or when it never walks home or works.`;
+
+export const CREATURE_SECTION = `${FORM_RULES_TEXT.creature}\nExample, ${FORM_EXAMPLES.creature.name} (${FORM_EXAMPLES.creature.tier} creature):\n${FORM_EXAMPLES.creature.code}\nExample, ${FOX_SPIRIT_EXAMPLE.name} (${FOX_SPIRIT_EXAMPLE.tier} creature):\n${FOX_SPIRIT_EXAMPLE.code}`;
+export const PERSON_SECTION = `${PERSON_RULES}\nExample, ${PERSON_EXAMPLE.name} (${PERSON_EXAMPLE.tier} creature, a person):\n${PERSON_EXAMPLE.code}`;
+
 export const FORM_SECTIONS: Record<Exclude<Form, "spell">, string> = Object.fromEntries(
   (Object.keys(FORM_RULES_TEXT) as Exclude<Form, "spell">[]).map((f) => [
     f,
     `${FORM_RULES_TEXT[f]}\nExample, ${FORM_EXAMPLES[f].name} (${FORM_EXAMPLES[f].tier} ${f}):\n${FORM_EXAMPLES[f].code}`,
   ]),
 ) as Record<Exclude<Form, "spell">, string>;
+// A creature is shown both of its examples, the serpent and the fox spirit.
+FORM_SECTIONS.creature = CREATURE_SECTION;
 
 // A program players liked, shown to the small model as a reference (3.3).
 export interface LibraryExample {
@@ -601,7 +665,7 @@ export function spellUserMessage(
   const shaped = form && form !== "spell" ? form : null;
   const label = shaped ? `Artifact (placed, not cast), ${FORM_NOUN[shaped]}` : kind === "artifact" ? "Artifact (placed, not cast)" : "Spell";
   let text = `${label}: ${name}\nTier: ${tier}\n${origin}\nGrimoire entry: ${description}`;
-  if (shaped) text += `\n\n${FORM_SECTIONS[shaped]}`;
+  if (shaped) text += `\n\n${shaped === "creature" ? (personName(name) ? PERSON_SECTION : CREATURE_SECTION) : FORM_SECTIONS[shaped]}`;
   const promises = intents.map((i) => PROMISE_TEST[i]).filter(Boolean);
   if (promises.length) text += `\n\n${promises.join("\n")}`;
   if (examples.length) {
@@ -705,6 +769,8 @@ boring: plain and predictable, the default orb and explosion, no interaction.
 
 Does it look alive? When the frames show creatures the spell brought (or placed, for an artifact), say whether they look like living things on this island: a body you recognize (legs, wings, a tail, a head), parts in a different place from one frame to the next, a size that fits beside a villager and a house (a wolf about half a villager, a bear smaller than one, a dragon may tower). A box or a statue that slides about, a creature taller than the houses for no reason in its name, or one sunk into the ground is "no". Answer "none" when no creature of the spell is in the frames; a creature that does not look alive is a reason for "wrong".
 
+Does it look and act like its name? The message asks it of this item: does this look and act like a <name>? Judge what a player who chose the name expects: a serpent slithers low and hunts small things, a fox spirit is a glowing fox that does something uncanny, a blacksmith is a villager working a forge, a village is houses and people, a lantern is a small light. Answer "yes", "partly" (it is the thing but does not act like it, or acts like it but looks wrong) or "no" (it is something else: a box, a statue, a stranger in place of a person). "no" is a reason for "wrong" and a score of 2 at most.
+
 Score from 1 to 5: 5 a player would show it to a friend, 4 good, 3 fine but forgettable, 2 a player would vote it down, 1 broken or empty. Give the main reason (fine when the score is 3 or more) and one short sentence on what you see.`;
 
 export const JUDGE_SCHEMA = {
@@ -714,13 +780,14 @@ export const JUDGE_SCHEMA = {
     reason: { type: "string", enum: ["fine", "nothing", "small", "wrong", "broke", "boring"] },
     note: { type: "string" },
     alive: { type: "string", enum: ["yes", "no", "none"] },
+    like: { type: "string", enum: ["yes", "partly", "no"] },
   },
-  required: ["score", "reason", "note", "alive"],
+  required: ["score", "reason", "note", "alive", "like"],
   additionalProperties: false,
 } as const;
 
 export function judgeUserMessage(name: string, kind: string, tier: string, description: string, facts: string, notes: string[], shots: number[]): string {
-  let text = `${kind === "artifact" ? "Artifact (placed, not cast)" : "Spell"}: ${name}\nTier: ${tier}\nGrimoire entry: ${description}\nWhat changed in the world: ${facts}\nFrames at ${shots.map((s) => `${s} s`).join(", ")} after the cast follow.`;
+  let text = `${kind === "artifact" ? "Artifact (placed, not cast)" : "Spell"}: ${name}\nTier: ${tier}\nGrimoire entry: ${description}\nWhat changed in the world: ${facts}\nFrames at ${shots.map((s) => `${s} s`).join(", ")} after the cast follow.\nThe question: does this look and act like a ${name}?`;
   if (notes.length)
     text += `\n\nThe player's votes on spells you judged before. Where you disagreed, they were right:\n${notes.map((n) => `- ${n}`).join("\n")}`;
   return text;

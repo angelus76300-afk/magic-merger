@@ -1,7 +1,7 @@
 import { C, F, G } from "./materials";
 import { daylight } from "./daylight";
 import { names } from "./social";
-import { unpackLook } from "./villagers";
+import { unpackLook, type Calling } from "./villagers";
 import { WARD, addWard, warded } from "./wards";
 import {
   ABILITIES,
@@ -141,9 +141,22 @@ const DEFAULT_WHEN: Record<AbilityName, Trigger> = {
 const PRIEST: AbilitySpec[] = [{ do: "heal", when: "every so often", every: 15 }];
 const GUARD: AbilitySpec[] = [{ do: "shield", when: "enemy near", every: 30 }];
 
+// 4.6 part B: a person's calling brings its own magic (villagers.ts).
+const CALLING_ABILITIES: Partial<Record<Calling, AbilitySpec[]>> = {
+  necromancer: [{ do: "raise the dead", when: "night", every: 40 }],
+  knight: [{ do: "shield", when: "enemy near", every: 25 }],
+  mage: [
+    { do: "freeze", when: "enemy near", every: 15 },
+    { do: "teleport", when: "hurt", every: 12 },
+  ],
+};
+
 export function abilitiesOf(c: Creature, k: CreatureKind): AbilitySpec[] {
   if (c.kind === "villager") {
-    const job = unpackLook(c.look).job;
+    const look = unpackLook(c.look);
+    const own = CALLING_ABILITIES[look.calling ?? "none"];
+    if (own) return own;
+    const job = look.job;
     return job === "priest" ? PRIEST : job === "guard" ? GUARD : [];
   }
   return k.abilities ?? [];
@@ -195,6 +208,8 @@ export function useAbilities(world: World, c: Creature, k: CreatureKind): void {
           ? a.run(c, enemy ?? null)
           : perform(world, c, k, m, a.do as AbilityName, enemy ?? null);
     if (done && (a.run || a.do === "cast")) deed(c, a.do === "cast" ? `cast ${a.spell}` : a.do);
+    // 4.6 part B: counted for the creature probe of the test run (check.ts).
+    if (done) c.data.used = Number(c.data.used ?? 0) + 1;
     // Nothing to do it on: look again in a few seconds instead of a full cooldown.
     m.ready[n] = world.time + (done ? a.every : 3);
   }
@@ -373,12 +388,19 @@ function perform(world: World, c: Creature, k: CreatureKind, m: Mind, what: Abil
       return n > 0;
     }
     case "raise the dead": {
+      // A villager necromancer (4.6 part B) raises thralls bound to its
+      // village, three at most about it; any other raiser the hungry risen.
+      const person = c.kind === "villager";
+      const raised = person ? "thrall" : "risen";
+      let bound = 0;
+      if (person) for (const o of world.creatures) if (!o.dead && o.kind === "thrall" && Math.abs(o.x - c.x) < 14 && Math.abs(o.y - c.y) < 14) bound++;
+      if (bound >= 3) return false;
       let n = 0;
       for (const o of world.creatures) {
-        if (n >= 3 || !o.dead || o.deadFor > 35 || o.data.eaten || o.data.buried || o.kind === c.kind) continue;
+        if (n >= 3 - bound || !o.dead || o.deadFor > 35 || o.data.eaten || o.data.buried || (o.kind === c.kind && !person)) continue;
         if (Math.abs(o.x - c.x) > 10 || Math.abs(o.y - c.y) > 10) continue;
-        o.kind = "risen";
-        o.color = 0xd8d4c8;
+        o.kind = raised;
+        o.color = person ? 0xb8c4a8 : 0xd8d4c8;
         o.dead = false;
         o.deadFor = 0;
         o.vz = 0;
@@ -392,9 +414,13 @@ function perform(world: World, c: Creature, k: CreatureKind, m: Mind, what: Abil
       // With no one to raise, a grave is opened instead.
       if (!n) {
         const yard = world.marks.find((mk) => mk.kind === "graveyard" && Math.abs(mk.x - c.x) < 14 && Math.abs(mk.y - c.y) < 14);
-        if (!yard || world.creatures.length > 480) return false;
-        const r = life.make("risen", yard.x + 0.5, yard.y + 0.5);
+        if (world.creatures.length > 480) return false;
+        // A person calls an old grave open where it stands: every island has its dead.
+        if (!yard && !person) return false;
+        const at = yard ? { x: yard.x + 0.5, y: yard.y + 0.5 } : { x: c.x + 1, y: c.y };
+        const r = life.make(raised, at.x, at.y);
         world.creatures.push(r);
+        puff(world, r.x, r.y, 0x9a7aff, 6);
         n = 1;
       }
       deed(c, n > 1 ? `raised ${n} of the dead` : "raised the dead");

@@ -10,6 +10,7 @@ import { LAYERS } from "../src/sim/materials";
 import { TICK, type World } from "../src/sim/world";
 import { SCENARIOS } from "../src/sim/scenarios";
 import { resolveLand } from "../src/sim/land-options";
+import { daylight } from "../src/sim/daylight";
 import { WORLD_SIZES } from "../src/sim/engine";
 
 interface LabOptions {
@@ -43,6 +44,10 @@ interface LabOptions {
   form?: string;
   // 4.6: keep the camera on the newest fine model, wonder or village it made.
   focusMade?: boolean;
+  // 4.6 part B: keep the camera on the first creature or person it made.
+  follow?: boolean;
+  // 4.6 part B: night falls this many seconds after the cast.
+  nightIn?: number;
 }
 
 // A water cell on the island's border, or one next to land at least two
@@ -195,6 +200,20 @@ async function runSpell(code: string, options: LabOptions = {}) {
         engine.view.orbit.tx = at.x;
         engine.view.orbit.ty = at.y;
       }
+    }
+    if (options.follow) {
+      const mine =
+        engine.runtime.people.get("lab")?.find((c) => !c.dead) ??
+        world.creatures.find((c) => !c.dead && engine.runtime.owners.get(`creature:${c.kind}`) === "lab");
+      if (mine) {
+        engine.view.orbit.tx += (mine.x - engine.view.orbit.tx) * 0.2;
+        engine.view.orbit.ty += (mine.y - engine.view.orbit.ty) * 0.2;
+      }
+    }
+    if (options.nightIn !== undefined && tick === 1) {
+      let t = world.time;
+      while (daylight(t + options.nightIn).night < 0.7 && t < world.time + 400) t += 1;
+      world.time = t;
     }
     const t0 = performance.now();
     engine.step();

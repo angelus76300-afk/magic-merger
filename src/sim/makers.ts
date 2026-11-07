@@ -5,8 +5,10 @@ import type { World } from "./world";
 import { buildVillage } from "./world";
 import { JOBS, block, layOutVillage, settlementNear } from "./buildings";
 import { dressSettlement, firstWell, type Settlement } from "./ecology";
-import { dress, makeCreature } from "./creatures";
-import { tell } from "./kin";
+import { dress, makeCreature, maxHp, styleNear, type Creature } from "./creatures";
+import { mindOf, tell, VILLAGE_REACH } from "./kin";
+import { smithyNear } from "./goals";
+import { CALLINGS, CALLING_JOB, JOBS as VILLAGER_JOBS, packLook, randomLook, shirtOf, sizeOf, unpackLook, type Age, type Calling, type Job } from "./villagers";
 import { placeWonderAt, WONDER_KINDS, type Wonder } from "./wonders";
 
 // The makers of 4.6: an item of each kind is built the engine's own way,
@@ -26,8 +28,12 @@ import { placeWonderAt, WONDER_KINDS, type Wonder } from "./wonders";
 //   place       one of the island's built-in wonders where the item stands
 //               (wonders.ts), with its land, its model and what it does
 //
-// An object and a creature have no maker here: an object is a small look
-// and an artifact (spell.artifacts), a creature a kind (spell.creatures).
+//   person      (4.6 part B) a real villager: the island's own look, a job,
+//               a home in the nearest village with a household to live
+//               with, memory, and a calling from its name (villagers.ts)
+//
+// An object and an animal or monster have no maker here: an object is a
+// small look and an artifact (spell.artifacts), a beast a kind (spell.creatures).
 
 // The jobs a building may have, by the names a program uses, and the house.
 export const BUILDING_JOBS: Record<string, number> = {
@@ -475,3 +481,126 @@ export function makeWonder(world: World, kind: string, x: number, y: number, see
 }
 
 export const WONDER_LIST = [...WONDER_KINDS.keys()];
+
+// --- 4.6 part B: people ------------------------------------------------------
+
+// The calling a name says, whole words only: "Old Necromancer" is one, a
+// "Smithy" is not a person at all.
+const CALLING_WORDS: [Calling, RegExp][] = [
+  ["necromancer", /\b(necromancers?|gravecaller|death ?priest|bone ?witch)\b/i],
+  ["blacksmith", /\b(blacksmiths?|smiths?|armou?rers?|ironsmiths?|swordsmiths?|farriers?)\b/i],
+  ["knight", /\b(knights?|paladins?|templars?|squires?|crusaders?|kings?|queens?|princes?|princess(es)?|arthur)\b/i],
+  [
+    "mage",
+    /\b(mages?|wizards?|sorcer(er|ess)s?|witch(es)?|warlocks?|magicians?|enchant(er|ress)|archmage|conjurers?|astrologers?|astronomers?|\w+mancers?)\b/i,
+  ],
+];
+export function callingFromName(name: string): Calling {
+  for (const [c, re] of CALLING_WORDS) if (re.test(name)) return c;
+  return "none";
+}
+
+// The job a name says, when it says no calling ("Farmer", "Fisherwoman").
+const JOB_WORDS: [Job, RegExp][] = [
+  ["farmer", /\b(farmers?|peasants?|shepherds?|herders?|gardeners?|farmhands?)\b/i],
+  ["woodcutter", /\b(woodcutters?|lumberjacks?|foresters?|woodsm[ae]n)\b/i],
+  ["fisher", /\b(fisher(man|men|woman|women|s)?|anglers?)\b/i],
+  ["guard", /\b(guards?|soldiers?|warriors?|watchm[ae]n|sentr(y|ies)|archers?|hunters?)\b/i],
+  ["priest", /\b(priests?|priestess|monks?|nuns?|clerics?|healers?|saints?|druids?|shamans?|oracles?)\b/i],
+  ["merchant", /\b(merchants?|traders?|peddlers?|innkeepers?|bards?)\b/i],
+  ["builder", /\b(builders?|masons?|carpenters?)\b/i],
+];
+export function jobFromName(name: string): Job | null {
+  for (const [j, re] of JOB_WORDS) if (re.test(name)) return j;
+  return null;
+}
+
+export interface PersonMade {
+  x: number;
+  y: number;
+  job: Job;
+  calling: Calling;
+  title: string;
+  // The village it lives in, by name ("" for one with no name), or null on
+  // an island with no village.
+  village: string | null;
+  // How many people it shares a home with.
+  household: number;
+  // A smithy a blacksmith raised for a village that had none.
+  forge: boolean;
+  creature: Creature;
+}
+
+// A person, as the island's own villagers are (the owner, 7 November: "the
+// original villagers"): kind villager, its village's clothes, a job, a home
+// in a house of the nearest village with the household already living
+// there, and a calling of its own. It appears at (x, y) and walks home.
+export function makePerson(
+  world: World,
+  x: number,
+  y: number,
+  o: { job?: string; calling?: string; title?: string; age?: string },
+  seed: number,
+): PersonMade | null {
+  if (world.creatures.length >= 600 || !world.inside(Math.round(x), Math.round(y))) return null;
+  const rng = new Rng(seed);
+  const title = (typeof o.title === "string" ? o.title.trim() : "").slice(0, 32);
+  const calling: Calling = (CALLINGS as readonly string[]).includes(o.calling ?? "") ? (o.calling as Calling) : callingFromName(title);
+  const job: Job = (VILLAGER_JOBS as readonly string[]).includes(o.job ?? "")
+    ? (o.job as Job)
+    : (CALLING_JOB[calling] ?? jobFromName(title) ?? (["farmer", "woodcutter", "fisher", "merchant"] as Job[])[Math.floor(rng.next() * 4)]);
+  const age: Age = o.age === "elder" || o.age === "child" ? o.age : "adult";
+  // Its village: the nearest one, by its center.
+  const centers = villageCenters(world).sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
+  const center = centers[0] ?? null;
+  // Its household: an adult of that village whose home is nearest the spot;
+  // it moves in with them. A village with nobody left: a house of it.
+  let host: Creature | null = null;
+  if (center)
+    for (const c of world.creatures) {
+      if (c.dead || c.kind !== "villager" || Math.hypot(c.homeX - center.x, c.homeY - center.y) > VILLAGE_REACH) continue;
+      if (!host || Math.hypot(c.homeX - x, c.homeY - y) < Math.hypot(host.homeX - x, host.homeY - y)) host = c;
+    }
+  let home = { x, y };
+  if (host) home = { x: host.homeX, y: host.homeY };
+  else if (center) {
+    let best = -1;
+    let bestD = VILLAGE_REACH;
+    for (let i = 0; i < world.n; i++) {
+      if (world.cover[i] !== C.HOUSE) continue;
+      const d = Math.hypot((i % world.w) - center.x, Math.floor(i / world.w) - center.y);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    if (best >= 0) home = { x: (best % world.w) + 0.5, y: Math.floor(best / world.w) + 2.5 };
+  }
+  const style = host ? unpackLook(host.look).style : styleNear(world, home.x, home.y);
+  const look = {
+    ...randomLook(style, () => rng.next(), age),
+    job: age === "child" ? ("none" as Job) : job,
+    calling: age === "child" ? ("none" as Calling) : calling,
+  };
+  const c = makeCreature("villager", x, y);
+  c.look = packLook(look);
+  c.size = sizeOf(look);
+  c.hp = maxHp(c);
+  c.color = shirtOf(look, () => rng.next());
+  c.homeX = home.x;
+  c.homeY = home.y;
+  dress(c, style);
+  world.creatures.push(c);
+  const m = mindOf(c);
+  if (title) m.title = title;
+  const s = center ? settlementNear(world, center.x, center.y) : null;
+  const where = s?.name ? s.name : center ? "the village" : "";
+  m.did = where ? `came to live in ${where}` : "came to the island";
+  // A blacksmith with no forge near raises one by its new home.
+  let forge = false;
+  if (calling === "blacksmith" && center && smithyNear(world, home.x, home.y) < 0) forge = !!makeBuilding(world, home.x + 3, home.y, "smithy");
+  const household = world.creatures.filter((o) => o !== c && !o.dead && o.kind === "villager" && Math.hypot(o.homeX - c.homeX, o.homeY - c.homeY) < 1.3).length;
+  const noun = title ? title.toLowerCase() : calling !== "none" ? calling : "newcomer";
+  tell(world, where ? `a ${noun} came to live in ${where}` : `a ${noun} came to the island`);
+  return { x: c.x, y: c.y, job: look.job, calling: look.calling, title, village: center ? (s?.name ?? "") : null, household, forge, creature: c };
+}

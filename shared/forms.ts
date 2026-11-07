@@ -437,3 +437,140 @@ export const FORM_RULES: Record<Exclude<Form, "spell">, FormRule> = {
   land: { across: 80, tall: 60, voxels: 4000 },
 };
 export const GIANT_FACTOR = 3;
+
+// 4.6 part B: a person, a human or a role a human has, is made as one of the
+// island's own villagers (w.person), not as a creature kind. Decided from the
+// name like the kinds: the last word that names a person or a creature
+// decides ("Dragon Rider" a person, "Witch Cat" a creature), and words that
+// end in -mancer are people (a Pyromancer). Undead, spirits and other folk
+// (a Lich, a Ghost, an Elf, a Vampire) stay creatures.
+const PERSON_WORDS = new Set([
+  "human",
+  "humans",
+  "person",
+  "people",
+  "man",
+  "woman",
+  "villager",
+  "villagers",
+  "peasant",
+  "citizen",
+  "child",
+  "elder",
+  "hermit",
+  "stranger",
+  "traveler",
+  "traveller",
+  "wanderer",
+  "nomad",
+  "king",
+  "queen",
+  "prince",
+  "princess",
+  "lord",
+  "lady",
+  "noble",
+  "emperor",
+  "empress",
+  "chieftain",
+  "chief",
+  "knight",
+  "paladin",
+  "templar",
+  "squire",
+  "crusader",
+  "warrior",
+  "soldier",
+  "guard",
+  "archer",
+  "ranger",
+  "hunter",
+  "huntress",
+  "rider",
+  "hero",
+  "heroine",
+  "champion",
+  "wizard",
+  "witch",
+  "mage",
+  "archmage",
+  "sorcerer",
+  "sorceress",
+  "warlock",
+  "magician",
+  "enchanter",
+  "enchantress",
+  "conjurer",
+  "summoner",
+  "alchemist",
+  "apprentice",
+  "druid",
+  "shaman",
+  "priest",
+  "priestess",
+  "monk",
+  "nun",
+  "cleric",
+  "healer",
+  "saint",
+  "oracle",
+  "prophet",
+  "seer",
+  "pilgrim",
+  "sage",
+  "scholar",
+  "astrologer",
+  "astronomer",
+  "bard",
+  "blacksmith",
+  "smith",
+  "armorer",
+  "armourer",
+  "farmer",
+  "fisherman",
+  "fisherwoman",
+  "fisher",
+  "shepherd",
+  "merchant",
+  "trader",
+  "innkeeper",
+  "builder",
+  "mason",
+  "carpenter",
+  "woodcutter",
+  "lumberjack",
+  "miner",
+  "baker",
+  "cook",
+  "thief",
+  "rogue",
+  "bandit",
+  "pirate",
+  "sailor",
+  "explorer",
+  "astronaut",
+  "survivor",
+  "assassin",
+  "ninja",
+  "samurai",
+  "viking",
+  "gladiator",
+]);
+// Beings no person is, wherever they stand in the name ("Vampire Lord").
+const NOT_PEOPLE =
+  /\b(vampires?|lich|liches|ghosts?|ghouls?|zombies?|skeletons?|wraiths?|specters?|spectres?|demons?|devils?|werewol(f|ves)|undead|mummy|mummies|banshees?|golems?|elementals?|angels?|spirits?)\b/i;
+
+export function personName(name: string): boolean {
+  if (NOT_PEOPLE.test(name)) return false;
+  const words = name
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .filter(Boolean);
+  for (let k = words.length - 1; k >= 0; k--) {
+    const w = words[k];
+    if (PERSON_WORDS.has(w) || /.mancers?$/.test(w)) return true;
+    const f = FORM_OF_WORD.get(w) ?? (w.endsWith("s") ? FORM_OF_WORD.get(w.slice(0, -1)) : undefined);
+    if (f) return false;
+  }
+  return false;
+}

@@ -124,6 +124,8 @@ export interface JudgeAnswer {
   note: string;
   // Do the creatures it brought look alive (3.7)? none: no creature in the frames.
   alive: "yes" | "no" | "none";
+  // 4.6 part B: does it look and act like its name? Absent in judgments from before.
+  like?: "yes" | "partly" | "no";
 }
 
 // One program asked of the Batch API, and what came back.
@@ -436,13 +438,14 @@ export class ClaudeOracle implements Oracle {
     }
     if (content.length < 2) throw new OracleError("The judge needs frames");
     const text = await this.ask("judge", this.models.judge, "low", JUDGE_SYSTEM, [{ role: "user", content }], JUDGE_SCHEMA, 4000);
-    const { score, reason, note, alive } = parseJson(text) as Partial<JudgeAnswer>;
+    const { score, reason, note, alive, like } = parseJson(text) as Partial<JudgeAnswer>;
     if (typeof score !== "number" || typeof reason !== "string") throw new OracleError("The judge's answer did not match the schema");
     return {
       score: Math.max(1, Math.min(5, Math.round(score))),
       reason,
       note: typeof note === "string" ? note.slice(0, 300) : "",
       alive: alive === "yes" || alive === "no" ? alive : "none",
+      ...(like === "yes" || like === "partly" || like === "no" ? { like } : {}),
     };
   }
 

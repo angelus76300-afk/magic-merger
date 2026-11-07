@@ -182,6 +182,38 @@ for (const k of [
       active: "always",
     },
   }),
+  // 4.6 part B: the dead a villager necromancer raises (villagers.ts). Bound
+  // to it: they follow the village's people and stand guard over them until
+  // dawn crumbles them, never hunting the living of their own village.
+  kind({
+    name: "thrall",
+    speed: 2,
+    hp: 45,
+    radius: 0.55,
+    color: 0xb8c4a8,
+    tags: ["undead"],
+    body: body("two legs", ["glowing eyes"], { color2: 0x9a7aff }),
+    goal: "guard",
+    ai: {
+      mode: "follow",
+      prey: ["wolf", "boar", "bear", "risen"],
+      leader: ["villager"],
+      attack: 8,
+      sense: 8,
+      aura: null,
+      auraRadius: 4,
+      auraPower: 1,
+      leaves: null,
+      weak: ["light"],
+      immune: [],
+      lifespan: 120,
+      onDeath: null,
+      lures: [],
+      scares: ["rabbit", "deer"],
+      converts: false,
+      active: "always",
+    },
+  }),
 ]) {
   k.goal ??= kindGoal(k, undefined);
   k.abilities ??= abilitiesFromName(k.name);
@@ -310,7 +342,7 @@ export function dress(c: Creature, style: number): void {
 }
 
 // Which village's clothes a point belongs to: the nearest villager's.
-function styleNear(world: World, x: number, y: number): number {
+export function styleNear(world: World, x: number, y: number): number {
   let best = -1;
   let bestD = 30;
   for (const o of world.creatures) {
@@ -364,6 +396,8 @@ export interface SavedMind {
   goal?: string;
   job?: string | null;
   mem?: [string, number][];
+  // 4.6 part B: a person's own name and what it last did.
+  ti?: string;
 }
 
 export function saveMind(c: Creature): SavedMind | undefined {
@@ -382,6 +416,7 @@ export function saveMind(c: Creature): SavedMind | undefined {
     goal: m.goal,
     job: m.job,
     mem: m.memory.map((e) => [e.kind, r(e.feel)]),
+    ...(m.title ? { ti: m.title } : {}),
   };
 }
 
@@ -399,6 +434,7 @@ function restoreMind(c: Creature, s: SavedMind): void {
   if (s.goal === "worship") m.goal = "worship";
   // A spell's own job, kept by name: it works again once that spell's rules are loaded.
   if (typeof s.job === "string" && s.job) m.job = s.job.slice(0, 40);
+  if (typeof s.ti === "string" && s.ti.trim()) m.title = s.ti.trim().slice(0, 32);
   if (Array.isArray(s.mem))
     m.memory = s.mem
       .filter((e) => Array.isArray(e) && typeof e[0] === "string" && typeof e[1] === "number" && Number.isFinite(e[1]))
