@@ -3,8 +3,8 @@ import { daylight } from "./daylight";
 import { F } from "./materials";
 import { propBounds } from "./props";
 import { unpackLook } from "./villagers";
-import { deed, life, mindOf, remember, villageOf } from "./kin";
-import { artDeed, type ArtEffectName, type Artifact } from "./artifacts";
+import { deed, life, mindOf, remember, tell, villageOf } from "./kin";
+import type { ArtEffectName, Artifact } from "./artifacts";
 import type { Creature } from "./creatures";
 import type { World } from "./world";
 
@@ -18,6 +18,18 @@ import type { World } from "./world";
 // it from a hand. Everything is read from what artifacts already hold, so the
 // objects of the live library work as they are, with no program rewritten.
 
+// Something an artifact did (3.7; here since 4.7, so held.ts needs nothing
+// from artifacts.ts but types): its count, the world's story, and its last
+// three deeds. A deed after its first 15 s counts for the five minute test.
+const ARRIVAL = 15;
+export function artDeed(world: World, a: Artifact, what: string): void {
+  a.art.actedAt = world.time;
+  a.art.deeds++;
+  tell(world, `the ${a.name} ${what}`);
+  if (world.time - a.art.placed > ARRIVAL) a.art.later++;
+  a.art.did = [what, ...a.art.did.filter((d) => d !== what)].slice(0, 3);
+}
+
 // Seconds an object lies where it was placed before anyone may take it: the
 // player sees what they cast before it walks off.
 export const PICKUP_DELAY = 30;
@@ -27,10 +39,24 @@ export const IDLE_DROP = 120;
 export const HELD_HEAL_BELOW = 0.5;
 // The one who put it down does not take it back for this long.
 const RETAKE_AFTER = 20;
-// What a hand holds is drawn this tall, in cells (a villager is about 1.2).
+// What a hand holds is drawn this tall at most, in cells (a villager is about 1.2).
 export const HELD_SIZE = 0.75;
+
+// How much a model is scaled in a hand: only ever smaller, so a potion drawn
+// small stays small (the playtest of 7 November: scaled up, it hid a goblin).
+export function heldScale(boxes: { x: number; y: number; z: number; w: number; d: number; h: number }[]): number {
+  let across = 0;
+  let top = 0;
+  for (const b of boxes) top = Math.max(top, b.z + b.h);
+  const xs = boxes.flatMap((b) => [b.x, b.x + b.w]);
+  const ys = boxes.flatMap((b) => [b.y, b.y + b.d]);
+  if (boxes.length) across = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+  return Math.min(1, HELD_SIZE / Math.max(0.05, across, top));
+}
 // A thief takes from a hand within this distance.
 const STEAL_REACH = 1.5;
+
+const LONG = /\b(staff|staves|spear|lance|pike|wand|rod|scepter|sceptre|sword|blade|halberd|trident|scythe|cane|crook)s?\b/i;
 
 // Used up by its first effect that does something: what a name says is drunk, read or thrown.
 const CONSUMABLE = /\b(potion|elixir|draught|tonic|vial|flask|brew|scroll|bomb|seed|apple)s?\b/i;
@@ -55,9 +81,13 @@ export function portable(world: World, a: Artifact): boolean {
   if (!s.effects.length && !s.pairs.length && !s.grants.length) return false;
   if (s.grants.some((g) => g.what === "water" || g.what === "prayer" || g.what === "arms")) return false;
   if (s.uses.some((u) => u.do === "guard" || u.do === "worship")) return false;
+  // Held in one hand: no wider than 1.5 cells, and no taller than 2 voxels
+  // (a villager is 1.2) unless it is a long thing held upright, a staff or a
+  // spear. A lantern post 2.5 tall stays put (the playtest of 7 November).
+  const long = LONG.test(a.name);
   for (const p of propsOf(world, a)) {
     const b = propBounds(p);
-    if (b.across > 1.5 || b.tall > 3) return false;
+    if (b.across > 1.5 || b.tall > (long ? 3 : 2)) return false;
   }
   return true;
 }
@@ -80,8 +110,7 @@ const FIELD: ArtEffectName[] = ["grow", "water", "rain", "food"];
 // its people hold one, so an island never ends with every object in a hand.
 export function wantsToTake(world: World, c: Creature, a: Artifact): boolean {
   if (c.dead || holding(world, c) || !free(world, a, c)) return false;
-  const m = mindOf(c);
-  if (c.kind !== "villager") return m.goal === "steal" && life.hostile(c);
+  if (c.kind !== "villager") return thief(c);
   const look = unpackLook(c.look);
   if (look.age !== "adult") return false;
   const v = villageOf(world, c.homeX, c.homeY);
@@ -107,6 +136,18 @@ export function wantsToTake(world: World, c: Creature, a: Artifact): boolean {
       return any(FIELD) || grants.has("food");
   }
   return does.has("light") && daylight(world.time).night > 0.4;
+}
+
+// A creature whose goal is to steal (a goblin, a bandit, a magpie by its
+// name, goals.ts), whatever else it does: a plain goblin is no hunter, so
+// it is not counted hostile, and it still steals (the playtest of 7 November).
+export function thief(c: Creature): boolean {
+  return c.kind !== "villager" && mindOf(c).goal === "steal";
+}
+
+// Which side a creature is on: the village's, or against it (hostile or a thief).
+function against(c: Creature): boolean {
+  return life.hostile(c) || thief(c);
 }
 
 export function holding(world: World, c: Creature): Artifact | null {
@@ -198,9 +239,9 @@ export function stepHeld(world: World, a: Artifact): Creature | null {
   if (c.hp < (s.holderHp ?? c.hp) - 1) s.hurtAt = world.time;
   s.holderHp = c.hp;
   // A thief within reach takes it from the hand (not from another thief).
-  if (!life.hostile(c))
+  if (!thief(c))
     for (const o of world.crowd.near(world, c.x, c.y, STEAL_REACH)) {
-      if (o === c || o.dead || !life.hostile(o) || mindOf(o).goal !== "steal" || holding(world, o)) continue;
+      if (o === c || o.dead || !thief(o) || holding(world, o)) continue;
       dropHeld(world, a, c, c.id);
       take(world, o, a, c);
       deed(c, `was robbed of the ${a.name}`);
@@ -218,21 +259,21 @@ export function stepHeld(world: World, a: Artifact): Creature | null {
 // badly hurt (drunk at 89% health it would be wasted). What is not used up
 // heals in a hand as it does on the ground.
 export function heldHealNeeded(world: World, holder: Creature, r: number): boolean {
-  const side = life.hostile(holder);
+  const side = against(holder);
   for (const o of world.crowd.near(world, holder.x, holder.y, Math.max(1, r)))
-    if (!o.dead && life.hostile(o) === side && (o.hp < life.maxHp(o) * HELD_HEAL_BELOW || o.burning > 0)) return true;
+    if (!o.dead && against(o) === side && (o.hp < life.maxHp(o) * HELD_HEAL_BELOW || o.burning > 0)) return true;
   return false;
 }
 
 // The enemy of a held object's holder: a hostile holder's are the villagers
 // (or its prey), anyone else's are the hostile.
 export function heldEnemy(world: World, holder: Creature, r: number): Creature | null {
-  const side = life.hostile(holder);
+  const side = against(holder);
   let best: Creature | null = null;
   let bestD = r;
   for (const o of world.crowd.near(world, holder.x, holder.y, r)) {
     if (o === holder || o.dead) continue;
-    if (side ? o.kind !== "villager" : !life.hostile(o)) continue;
+    if (side ? o.kind !== "villager" : !against(o)) continue;
     const d = Math.hypot(o.x - holder.x, o.y - holder.y);
     if (d < bestD) {
       bestD = d;

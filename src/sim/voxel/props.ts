@@ -1,7 +1,7 @@
 import { BufferAttribute, BufferGeometry, Mesh, type Material, type Scene } from "three";
 import type { World } from "../world";
 import type { Prop } from "../props";
-import { HELD_SIZE } from "../held";
+import { heldScale } from "../held";
 import { pushBox, type Box } from "./models";
 import { columnTop } from "./terrain";
 
@@ -52,15 +52,13 @@ export class PropModels {
       let x1 = -Infinity;
       let y0 = Infinity;
       let y1 = -Infinity;
-      let top = 0;
       for (const b of p.boxes) {
         x0 = Math.min(x0, b.x);
         x1 = Math.max(x1, b.x + b.w);
         y0 = Math.min(y0, b.y);
         y1 = Math.max(y1, b.y + b.d);
-        top = Math.max(top, b.z + b.h);
       }
-      const k = HELD_SIZE / Math.max(0.05, x1 - x0, y1 - y0, top);
+      const k = heldScale(p.boxes);
       const [mx, my] = [(x0 + x1) / 2, (y0 + y1) / 2];
       const side = c.hd - Math.PI / 2;
       const hx = c.x + 0.5 + Math.cos(c.hd) * 0.15 + Math.cos(side) * 0.3 - world.w / 2;

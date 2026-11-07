@@ -7,7 +7,7 @@ import { TICK, generateWorld, type World } from "../src/sim/world";
 import { makeCreature, maxHp, populate, resetCreatureIds, type Creature } from "../src/sim/creatures";
 import { seeded } from "../src/sim/noise";
 import { isArtifact, loadedState, stepArtifacts, type Artifact } from "../src/sim/artifacts";
-import { PICKUP_DELAY, IDLE_DROP, holding, portable, take, wantsToTake } from "../src/sim/held";
+import { PICKUP_DELAY, IDLE_DROP, heldScale, holding, portable, take, wantsToTake } from "../src/sim/held";
 import { mindOf } from "../src/sim/kin";
 import { packLook, unpackLook } from "../src/sim/villagers";
 import type { Tier } from "../shared/tiers";
@@ -22,6 +22,10 @@ const POTION = `const spell = { *cast(w) { w.artifact(w.x, w.y, { name: "Healing
 const LANTERN_POST = `const spell = { *cast(w) { w.artifact(w.x, w.y, { name: "Lantern Post", effects: [{ when: "night", do: "light", radius: 6 }] }); ${MODEL(4, "#333333")} } };`;
 const WELL = `const spell = { *cast(w) { w.artifact(w.x, w.y, { name: "Wishing Lamp", grants: ["water"] }); ${MODEL(0.5, "#6688aa")} } };`;
 const RAIDER = `{ name: "goblin", base: "beast", color: "#3a6a2a", speed: 3, hp: 80, behavior: "hunt", prey: ["villager"], attack: 4, sense: 30, lifespan: 300 }`;
+// A goblin as a spell most often writes one: no behavior, its goal (steal) from its name.
+const GOBLIN = `{ name: "goblin", base: "beast", color: "#3a6a2a", speed: 3, hp: 80, lifespan: 300 }`;
+// The library's Storm Lantern, drawn as a lamp post 2.5 tall with an arm: never carried.
+const STORM_LANTERN = `const spell = { *cast(w) { w.artifact(w.x, w.y, { name: "Storm Lantern", effects: [{ when: "night", do: "light", radius: 6 }] }); w.model(w.x, w.y, [[-0.08, -0.08, 0, 0.16, 0.16, 2.2, "#333333"], [0, -0.05, 2.0, 0.5, 0.1, 0.1, "#333333"], [0.35, -0.15, 1.7, 0.3, 0.3, 0.35, "#ffd36a", "glow"]], { name: "look" }); } };`;
 
 interface Isl {
   world: World;
@@ -78,11 +82,15 @@ export function heldChecks(check: Check): void {
     const staff = place(isl, STAFF, "staff");
     const post = place(isl, LANTERN_POST, "post", "major", 6);
     const lamp = place(isl, WELL, "lamp", "major", -6);
+    const storm = place(isl, STORM_LANTERN, "storm", "major", 10);
     check(
-      "a staff can be carried; a lantern post four voxels tall and a lamp people draw water at cannot",
-      portable(isl.world, staff) && !portable(isl.world, post) && !portable(isl.world, lamp),
-      `${portable(isl.world, staff)} ${portable(isl.world, post)} ${portable(isl.world, lamp)}`,
+      "a staff can be carried; a lantern post four voxels tall, a storm lantern drawn as a post 2.5 tall and a lamp people draw water at cannot",
+      portable(isl.world, staff) && !portable(isl.world, post) && !portable(isl.world, lamp) && !portable(isl.world, storm),
+      `${portable(isl.world, staff)} ${portable(isl.world, post)} ${portable(isl.world, lamp)} ${portable(isl.world, storm)}`,
     );
+    const small = [{ x: -0.1, y: -0.1, z: 0, w: 0.2, d: 0.2, h: 0.4 }];
+    const tall = [{ x: -0.1, y: -0.1, z: 0, w: 0.2, d: 0.2, h: 2.2 }];
+    check("a model in a hand is only ever made smaller", heldScale(small) === 1 && heldScale(tall) < 0.4, `${heldScale(small)} ${heldScale(tall).toFixed(2)}`);
     const guard = person(isl.world, staff.x + 1, staff.y, "guard");
     const farmer = person(isl.world, staff.x - 1, staff.y, "farmer");
     const child = person(isl.world, staff.x, staff.y + 1, "guard", "child");
@@ -192,13 +200,13 @@ export function heldChecks(check: Check): void {
     isl.world.time += PICKUP_DELAY;
     take(isl.world, guard, staff);
     isl.rt.cast(
-      { key: "thief", name: "Thief", tier: "minor", code: `const spell = { creatures: [${RAIDER}], *cast(w) { w.spawn("goblin", w.x + 0.8, w.y); } };` },
+      { key: "thief", name: "Thief", tier: "minor", code: `const spell = { creatures: [${GOBLIN}], *cast(w) { w.spawn("goblin", w.x + 0.8, w.y); } };` },
       guard.x,
       guard.y,
     );
     stepHeadless(isl.world, isl.rt);
     const thief = isl.world.creatures.find((c) => c.kind.startsWith("goblin"))!;
-    mindOf(thief).goal = "steal";
+    // Its goal is its own (a goblin steals, by its name), not set by the test.
     let stolen = false;
     run(isl, 2, () => {
       guard.x = staff.x;
@@ -208,9 +216,9 @@ export function heldChecks(check: Check): void {
       stolen ||= staff.art.heldBy === thief.id;
     });
     check(
-      "a goblin at a guard's side steals the staff from its hand",
-      stolen && holding(isl.world, thief) === staff,
-      `held by ${staff.art.heldBy}, thief ${thief.id}`,
+      "a goblin written with no behavior, a thief by its name, steals the staff from a guard's hand",
+      stolen && holding(isl.world, thief) === staff && mindOf(thief).goal === "steal",
+      `held by ${staff.art.heldBy}, thief ${thief.id}, its goal ${mindOf(thief).goal}`,
     );
   }
   {
@@ -234,7 +242,7 @@ export function heldChecks(check: Check): void {
     check("a loaded world holds nothing in a hand (creatures get new ids)", loaded?.heldBy === null, String(loaded?.heldBy));
   }
 
-  // A cast from a hand is a creature's: never above minor.
+  // A cast from a hand is capped as on the ground: carrying makes it neither stronger nor weaker.
   {
     const isl = island();
     const code = `const spell = { *cast(w) { w.artifact(w.x, w.y, { name: "Storm Wand", effects: [{ when: "every", do: "cast", spell: "Meteor Storm", every: 30 }] }); ${MODEL(0.8, "#aaaaff")} } };`;
@@ -249,6 +257,6 @@ export function heldChecks(check: Check): void {
       isl.world.tick++;
       stepArtifacts(isl.world);
     }
-    check("a legendary wand in a hand casts at minor at most", caps.length > 0 && caps.every((c) => c === "minor"), caps.join(","));
+    check("a legendary wand in a hand casts as it does on the ground, at major at most", caps.length > 0 && caps.every((c) => c === "major"), caps.join(","));
   }
 }

@@ -4,8 +4,9 @@ import { C, F, G } from "./materials";
 import { names, type Landmark } from "./social";
 import { packLook, unpackLook } from "./villagers";
 import { WARD, addWard, warded } from "./wards";
-import { deed, life, markAt, mindOf, reborn, remember, tell, villageOf } from "./kin";
-import { consumable, heldEnemy, heldGrant, heldHealNeeded, stepHeld, take, useUp, wantsToTake } from "./held";
+import { deed, life, markAt, mindOf, reborn, remember, villageOf } from "./kin";
+import { artDeed, consumable, heldEnemy, heldGrant, heldHealNeeded, stepHeld, take, useUp, wantsToTake } from "./held";
+export { artDeed };
 import type { Creature } from "./creatures";
 import type { World } from "./world";
 
@@ -144,22 +145,11 @@ export interface ArtHooks {
 }
 
 // Artifacts cast library spells at most at major; creatures at minor (abilities.ts).
+// The same in a hand (4.7): carrying makes a spell neither stronger nor weaker.
 export const ARTIFACT_CAST_CAP: Tier = "major";
-// In a hand, as a creature's ability: carrying never makes a spell stronger (4.7).
-export const HELD_CAST_CAP: Tier = "minor";
 
 export function capTier(a: Tier, b: Tier): Tier {
   return TIERS.indexOf(a) <= TIERS.indexOf(b) ? a : b;
-}
-
-const ARRIVAL = 15;
-
-export function artDeed(world: World, a: Artifact, what: string): void {
-  a.art.actedAt = world.time;
-  a.art.deeds++;
-  tell(world, `the ${a.name} ${what}`);
-  if (world.time - a.art.placed > ARRIVAL) a.art.later++;
-  a.art.did = [what, ...a.art.did.filter((d) => d !== what)].slice(0, 3);
 }
 
 function cell(world: World, x: number, y: number): number {
@@ -395,14 +385,7 @@ export function doEffect(world: World, a: Artifact, what: ArtEffectName, arg: st
     case "cast":
       return (
         !!arg &&
-        !!world.magic?.cast(
-          arg,
-          target ? target.x : x,
-          target ? target.y : y,
-          capTier(a.art.tier, a.art.heldBy != null ? HELD_CAST_CAP : ARTIFACT_CAST_CAP),
-          a.name,
-          !!target && !target.dead,
-        )
+        !!world.magic?.cast(arg, target ? target.x : x, target ? target.y : y, capTier(a.art.tier, ARTIFACT_CAST_CAP), a.name, !!target && !target.dead)
       );
     case "code":
       return !!world.magic?.run(a, arg, target);
