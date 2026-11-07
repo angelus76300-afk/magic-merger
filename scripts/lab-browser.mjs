@@ -16,7 +16,7 @@ async function reachable(url) {
   }
 }
 
-export async function openLab() {
+export async function openLab(viewport = { width: 540, height: 540 }) {
   const url = process.env.LAB_URL ?? "http://localhost:5174/lab/";
   let vite = null;
   if (!(await reachable(url))) {
@@ -25,11 +25,12 @@ export async function openLab() {
   }
   // Software WebGL in headless Chromium: slow, but renders the real thing.
   const browser = await chromium.launch({ args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--ignore-gpu-blocklist"] });
-  const page = await browser.newPage({ viewport: { width: 540, height: 540 } });
+  const page = await browser.newPage({ viewport });
   page.on("pageerror", (err) => console.error("page error:", err.message));
   await page.goto(url);
   await page.waitForFunction(() => window.labReady === true);
   return {
+    page,
     // Casts one program near a village on the lab's seeded island.
     cast: (code, options) => page.evaluate(([c, o]) => window.runSpell(c, o), [code, options]),
     close: async () => {

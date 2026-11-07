@@ -1,6 +1,8 @@
 import { parseIntents } from "../../shared/promises";
 import { TIERS, TIER_REACH, type Tier } from "../../shared/tiers";
-import { populate, resetCreatureIds } from "./creatures";
+import { KINDS, kindOf, makeCreature, populate, resetCreatureIds, type Creature } from "./creatures";
+import { abilitiesOf } from "./abilities";
+import { daylight } from "./daylight";
 import { C } from "./materials";
 import { unpackLook } from "./villagers";
 import { Runtime, type CastRequest } from "./runtime";
@@ -9,7 +11,7 @@ import { logCatches } from "./kin";
 import { seeded } from "./noise";
 import { stepHeadless } from "./tick";
 import { TICK, generateWorld, type World } from "./world";
-import { FORM_RULES, GIANT_FACTOR, bigBeing, isForm, type Form } from "../../shared/forms";
+import { FORM_RULES, GIANT_FACTOR, bigBeing, isForm, personName, type Form } from "../../shared/forms";
 import { isBuilding } from "./materials";
 import { keyLevel, keyX, keyY } from "./voxelkey";
 import { settlementNear } from "./buildings";
@@ -373,6 +375,7 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
       `check:${req.key}`,
       rt.raised.get(`check:${req.key}`),
       rt.modelCalls.get(`check:${req.key}`),
+      rt.people.get(`check:${req.key}`),
     );
     if (found) return { ok: false, problem: found.problem, detail: found.detail, stats };
   }
@@ -387,6 +390,15 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
     if (!probe.ok) return { ok: false, problem: "promise", detail: probe.detail, stats: withSaved };
     result = { ok: true, problem: null, detail: `${detail} ${probe.detail}`, stats: withSaved };
   }
+  // 4.6 part B: a creature is followed for two minutes as a living thing;
+  // that is its five minute test too (what it does are its deeds).
+  if (req.form === "creature") {
+    phase = "creature";
+    const probe = yield* creatureProbe(req);
+    const withLife = { ...result.stats, acted: probe.acted };
+    if (!probe.ok) return { ok: false, problem: "idle", detail: probe.detail, stats: withLife };
+    return { ok: true, problem: null, detail: `${result.detail} ${probe.detail}`, stats: withLife };
+  }
   if (req.kind === "artifact" && !actsByMaking(req.form, before, world)) {
     phase = "acts";
     const acts = yield* actsProbe(req);
@@ -395,6 +407,127 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
     result = { ok: true, problem: null, detail: `${result.detail} ${acts.detail}`, stats: withActed };
   }
   return result;
+}
+
+// --- 4.6 part B: the creature probe ------------------------------------------
+
+// Placed by the village of the practice island and followed for two
+// minutes: its own creatures (or the people it made) must move on their
+// plan, pursue a goal, use an ability (night falls a minute in, for night
+// magic), go for their prey when one is set near them, and leave the island's
+// villagers and animals standing. Exported for npm test.
+export const CREATURE_SECONDS = 120;
+
+export interface CreatureLife {
+  ok: boolean;
+  acted: number;
+  detail: string;
+  moved: number;
+  working: number;
+  abilities: number;
+  hunted: boolean | null;
+  villagersLeft: number;
+  animalsLeft: number;
+}
+
+export function* creatureProbe(req: CastRequest): Generator<void, CreatureLife> {
+  const errors: string[] = [];
+  const isl = island(errors);
+  const { world, rt, target } = isl;
+  Math.random = isl.random;
+  const key = `check:${req.key}`;
+  const villagersAt = world.creatures.filter((c) => !c.dead && c.kind === "villager").length;
+  const animalsAt = world.creatures.filter((c) => !c.dead && KINDS.get(c.kind)?.native).length;
+  rt.cast({ ...req, key }, target.x, target.y);
+  const own = (): Creature[] => [
+    ...world.creatures.filter((c) => !c.dead && rt.owners.get(`creature:${c.kind}`) === key),
+    ...(rt.people.get(key) ?? []).filter((c) => !c.dead),
+  ];
+  // Night a minute in, when one of them has night magic.
+  let nightly = false;
+  const start = new Map<Creature, { x: number; y: number }>();
+  let moved = 0;
+  let working = 0;
+  let prey: Creature | null = null;
+  let hunted: boolean | null = null;
+  const ownDeeds = () => own().reduce((sum, c) => sum + (c.mind?.deeds ?? 0), 0);
+  const used = () => own().reduce((sum, c) => sum + Number(c.data.used ?? 0), 0);
+  let deedsAt = 0;
+  for (let k = 0; k < CREATURE_SECONDS / TICK && !errors.length; k++) {
+    step(world, rt, isl.life);
+    // Two seconds in, after the arrival: what it has, and night set to fall.
+    if (k === Math.round(2 / TICK)) {
+      for (const c of own()) start.set(c, { x: c.x, y: c.y });
+      deedsAt = ownDeeds();
+      nightly = own().some((c) => abilitiesOf(c, kindOf(c)).some((a) => a.when === "night"));
+      if (nightly) {
+        let t = world.time;
+        while (daylight(t + 50).night < 0.6 && t < world.time + 400) t += 1;
+        world.time = t;
+      }
+    }
+    if (k > 2 / TICK && k % 30 === 0) {
+      for (const c of own()) {
+        const s = start.get(c);
+        if (s) moved = Math.max(moved, Math.hypot(c.x - s.x, c.y - s.y));
+        const task = c.mind?.task;
+        if (task && task !== "none" && task !== "rest") working++;
+      }
+      // At 40 s, one of what it hunts (a built-in kind) a few cells away.
+      if (k === Math.round(40 / TICK) && !prey) {
+        const hunter = own().find((c) => (kindOf(c).ai?.prey ?? []).some((p) => KINDS.has(p) && p !== "villager"));
+        const kind = hunter && (kindOf(hunter).ai!.prey.find((p) => KINDS.has(p) && p !== "villager") as string);
+        if (hunter && kind) {
+          prey = makeCreature(kind, Math.max(1, Math.min(world.w - 2, hunter.x + 4)), hunter.y);
+          world.creatures.push(prey);
+          hunted = false;
+          // A hunter goes for its prey when hungry: it is, by then.
+          if (hunter.mind) hunter.mind.hunger = Math.max(hunter.mind.hunger, 0.8);
+        }
+      }
+      if (prey && hunted === false && (prey.dead || own().some((c) => c.mind?.target === prey || Math.hypot(c.x - prey!.x, c.y - prey!.y) < 1.6)))
+        hunted = true;
+    }
+    if (k % 5 === 4) {
+      yield;
+      Math.random = isl.random;
+    }
+  }
+  const villagersLeft = villagersAt ? world.creatures.filter((c) => !c.dead && c.kind === "villager").length / villagersAt : 1;
+  const animalsLeft = animalsAt ? world.creatures.filter((c) => !c.dead && KINDS.get(c.kind)?.native).length / animalsAt : 1;
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  const life = { moved: r2(moved), working, abilities: used(), hunted, villagersLeft: r2(villagersLeft), animalsLeft: r2(animalsLeft) };
+  const deeds = ownDeeds() - deedsAt;
+  const acted = deeds + life.abilities;
+  if (errors.length) return { ok: false, acted: 0, detail: `It crashed while it lived: ${errors[0]}`, ...life };
+  const name = req.name;
+  const fail = (why: string): CreatureLife => ({ ok: false, acted, detail: `${name} was followed for two minutes as a living thing: ${why}`, ...life });
+  if (!start.size) return fail("nothing of its own was alive two seconds after it arrived.");
+  if (moved < 3)
+    return fail(`it never moved more than ${life.moved} cells from where it arrived. Give it a speed, a goal and a body that walks, swims or flies.`);
+  if (working < 3 && deeds <= 0)
+    return fail("it pursued no goal: it never took up a task or did anything. Give it a goal (hunt, gather, tend, guard, explore...).");
+  // Asked only of the kinds it wrote: a villager's magic comes with its
+  // calling or job (a mage's freeze and blink, for a fight the probe never starts).
+  if (life.abilities <= 0 && own().some((c) => c.kind !== "villager" && abilitiesOf(c, kindOf(c)).length))
+    return fail(`it never used its abilities${nightly ? ", even at night" : ""}. Give it one that fires without a fight (every so often, or night).`);
+  if (hunted === false) return fail(`it ignored a ${prey!.kind} set four cells from it, though it hunts them.`);
+  if (villagersLeft < 0.7 || animalsLeft < 0.5)
+    return fail(
+      `the island did not hold: ${Math.round(villagersLeft * 100)}% of its villagers and ${Math.round(animalsLeft * 100)}% of its animals were left.`,
+    );
+  const did = [
+    `moved ${Math.round(moved)} cells`,
+    deeds ? `${deeds} deeds` : `at its task ${working} times`,
+    life.abilities ? `${life.abilities} uses of its magic` : "",
+    hunted ? `went for a ${prey!.kind}` : "",
+  ].filter(Boolean);
+  return {
+    ok: true,
+    acted,
+    detail: `Followed for two minutes it lived: ${did.join(", ")}; ${Math.round(villagersLeft * 100)}% of villagers and ${Math.round(animalsLeft * 100)}% of animals left.`,
+    ...life,
+  };
 }
 
 // --- 4.6: kinds and sizes ---------------------------------------------------
@@ -446,9 +579,20 @@ export interface Made {
   // Boxes of its fine models, and how many times it called w.model.
   fine: number;
   models: number;
+  // 4.6 part B: people it made with w.person, alive at the end.
+  people?: number;
 }
 
-function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Map<string, string>, key: string, raised: number[], modelCalls = 0): Made {
+function measureMade(
+  before: FormBefore,
+  world: World,
+  ref: Snapshot,
+  owners: Map<string, string>,
+  key: string,
+  raised: number[],
+  modelCalls = 0,
+  people: Creature[] = [],
+): Made {
   // What it built, measured round its middle: its voxels (each a cell) and
   // the parts of its fine models (props.ts), the farthest tenth left out, so
   // one block that strays (a lantern's voxel knocked eleven cells away after
@@ -571,6 +715,7 @@ function measureMade(before: FormBefore, world: World, ref: Snapshot, owners: Ma
     wonders: world.wonders.length - before.wonders,
     creatures,
     onBuilding,
+    people: people.filter((c) => !c.dead && c.kind === "villager").length,
   };
 }
 
@@ -595,8 +740,9 @@ export function formCheck(
   key: string,
   raised: number[] = [],
   modelCalls = 0,
+  people: Creature[] = [],
 ): { problem: "size" | "kind" | "look"; detail: string } | null {
-  const m = measureMade(before, world, ref, owners, key, raised, modelCalls);
+  const m = measureMade(before, world, ref, owners, key, raised, modelCalls, people);
   return judgeMade(form, name, giant, m);
 }
 
@@ -614,7 +760,12 @@ export function judgeMade(form: Exclude<Form, "spell">, name: string, giant: boo
   const kind = (() => {
     switch (form) {
       case "creature":
-        return m.creatures > 0
+        // 4.6 part B: a person is one of the island's villagers (the owner: "real villagers").
+        if (personName(name))
+          return (m.people ?? 0) > 0
+            ? null
+            : `${name} is a person, so it is one of the island's own villagers, not a creature kind or a figure: make it with w.person(x, y, {calling, title}).`;
+        return m.creatures > 0 || (m.people ?? 0) > 0
           ? null
           : `${name} is a creature, but no living creature of its own was on the island after it arrived: spawn it with w.spawn, from spell.creatures.`;
       case "building":

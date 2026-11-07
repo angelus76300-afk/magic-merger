@@ -4,6 +4,7 @@ package-lock.json
 lab/legacy
 lab/spells
 lab/solutions
+lab/creatures
 migrations
 .wrangler
 # Third party skills, kept as published (docs/SKILLS.md)
