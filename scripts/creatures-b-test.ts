@@ -12,6 +12,7 @@ import {
   JUDGE_SYSTEM,
   PERSON_EXAMPLE,
   PERSON_SECTION,
+  SPELL_SYSTEM,
   judgeUserMessage,
   spellUserMessage,
 } from "../worker/prompts";
@@ -94,6 +95,15 @@ export function creatureChecks(check: Check): void {
       serpent.includes(FORM_EXAMPLES.creature.code) &&
       serpent.includes(FOX_SPIRIT_EXAMPLE.code) &&
       !serpent.includes("w.person("),
+  );
+
+  // The system prompt's API names w.person (production, 7 November: with only
+  // the user section saying so, 9 of 14 people were written as beasts).
+  const peopleLine = SPELL_SYSTEM.split("\n").find((l) => l.startsWith("People: w.person(")) ?? "";
+  check(
+    "the writer's API names w.person, and a person is never spawned",
+    /never with w\.spawn or spell\.creatures/.test(peopleLine) && SPELL_SYSTEM.indexOf("People: w.person(") < SPELL_SYSTEM.indexOf("Creatures: w.creatures("),
+    peopleLine,
   );
 
   // w.person on a made island: a villager of the nearest village.
@@ -183,6 +193,7 @@ export function creatureChecks(check: Check): void {
     );
   }
 
+  const SKY_MAGE = `const spell = { *cast(w) { w.flash("#bfe3ff", 0.2); const p = w.person(w.x, w.y, { calling: "mage", title: "Sky Mage" }); if (p) w.burst(p.x, p.y, { count: 10, colors: ["#bfe3ff"], speed: 1.5, up: 2 }); } };`;
   // The test run's creature probe: the examples live; a Human drawn as a kind, and a creature that stands still, do not.
   const run = (name: string, code: string) => runCheck({ key: `b:${name}:${code.length}`, name, tier: "minor", kind: "artifact", form: "creature", code });
   for (const [name, code] of [
@@ -191,6 +202,9 @@ export function creatureChecks(check: Check): void {
     ["Blacksmith", PERSON_EXAMPLE.code],
     ["Necromancer", NECROMANCER],
     ["Human", HUMAN],
+    // A mage's freeze and blink are the engine's, for a fight the probe never
+    // starts (on the preview, 4 of 5 people written with w.person failed idle).
+    ["Sky Mage", SKY_MAGE],
   ] as const) {
     const r = run(name, code);
     check(`the creature probe: ${name} lives for two minutes`, r.ok, r.detail);
