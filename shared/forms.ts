@@ -560,7 +560,7 @@ const PERSON_WORDS = new Set([
 const NOT_PEOPLE =
   /^(vampires?|lich|liches|ghosts?|ghouls?|zombies?|skeletons?|wraiths?|specters?|spectres?|demons?|devils?|werewol(f|ves)|undead|mummy|mummies|banshees?|golems?|elementals?|angels?|spirits?)$/;
 // Ranks name whom a being rules, not what it is: a Vampire Lord is a vampire,
-// a Goblin King a goblin; a King alone, or a Lady of the Lake, is a person.
+// a Goblin King a goblin; a King alone, or a Castle Lord, is a person.
 const RANKS = new Set(["lord", "lady", "king", "queen", "prince", "princess", "emperor", "empress", "chief", "chieftain", "noble"]);
 
 function formWord(w: string): Form | undefined {

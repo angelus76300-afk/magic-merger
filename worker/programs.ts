@@ -164,6 +164,10 @@ export async function recentRewrite(db: D1Database, key: string, now = Date.now(
   return !!row;
 }
 
+// Rewrites a session may ask in a day through scripts/rewrite-one.mjs (docs/DAILY.md,
+// "One spell at a time"), counted in job_runs before the call, whatever its answer.
+export const SESSION_REWRITES_PER_DAY = 3;
+
 // Calls that rewrite an existing spell, counted against the daily rewrite budget.
 export const REWRITE_CALLS = ["rewrite", "rewrite-retry", "batch-rewrite"];
 
