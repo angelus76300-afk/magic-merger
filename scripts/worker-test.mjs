@@ -2517,10 +2517,12 @@ const signIn = async (key, count) => {
     done && (await programs(key)) === 1 && spellCalls === before + 1,
     JSON.stringify(row),
   );
-  const paid = await db
-    .prepare("SELECT COUNT(*) AS n, SUM(usd) AS usd FROM spend WHERE invite = ? AND call IN ('describe', 'intent', 'spell')")
-    .bind(ann.id)
-    .first();
+  // The job marks the write "done" before closeLedger writes the last spend
+  // rows (worker/index.ts, the WRITES consumer): wait for all three, or a slow
+  // runner reads one (CI on #74: {"n":1,"usd":0.0024}).
+  const spentBy = () =>
+    db.prepare("SELECT COUNT(*) AS n, SUM(usd) AS usd FROM spend WHERE invite = ? AND call IN ('describe', 'intent', 'spell')").bind(ann.id).first();
+  const paid = (await until(async () => ((await spentBy()).n >= 3 ? spentBy() : null))) ?? (await spentBy());
   check(
     "ahead: the player whose merge started it pays for it, and the job records what it cost",
     paid.n === 3 && Math.abs(row.usd - paid.usd) < 1e-9,
