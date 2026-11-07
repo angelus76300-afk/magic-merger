@@ -1,5 +1,6 @@
 {
   "permissions": {
-    "allow": ["Bash(node scripts/rewrite-one.mjs *)"]
+    "allow": ["Bash(node scripts/rewrite-one.mjs *)"],
+    "deny": ["Edit(/scripts/rewrite-one.mjs)"]
   }
 }
