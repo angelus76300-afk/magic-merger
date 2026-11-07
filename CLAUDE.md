@@ -33,7 +33,7 @@ The owner's yes is needed for the concept when an update involves:
 
 Say so in the concept, with the rough cost. A change to the pipeline's rules (R11) or to permissions is a concept too: one approval each, with what it allows and why.
 
-The planner goes back to the owner for an update already approved only when something exceeds its concept: a cost over twice the estimate, players' data deleted, or something going public that the concept did not say. That is one line on the list. A session that sees this coming tells the planner before it builds past the concept.
+The planner goes back to the owner for an update already approved only when something exceeds its concept: a cost over twice the estimate, players' data deleted, or something going public that the concept did not say. The same goes for anything else in the four yes categories (money, players' data rewritten or migrated, spells in bulk or `PROGRAM_VERSION`, anything public) that the concept did not say. The planner checks each pull request's diff against the concept's text, not only the builder's word. That is one line on the list. A session that sees this coming tells the planner before it builds past the concept.
 
 These are among the red classes of `docs/DAILY.md`, checked on every diff by `scripts/risk.mjs`; the full list of what is red or amber (the pipeline, dependencies, saves, the admin surface, tests taken out) is there. The classes do not change; what changed is who answers: the concept, once. Pull requests opened by the feedback routine from the Ideas tab carry players' words into code; they are amber and wait for the owner, as `docs/FEEDBACK.md` says. "Pause" from the owner, in any session: open an issue labelled `pause`; it stops every merge and deploy until it is closed.
 
