@@ -4,7 +4,7 @@ import { FrameStats } from "./hud";
 import { Runtime, type CastRequest, type ErrorReporter } from "./runtime";
 import { loadWorld, saveWorld, type SavedWorld } from "./save";
 import { SpellSound } from "./sound";
-import { CAST_PRIORITY_SECONDS, listenerAt } from "./soundplace";
+import { CAST_PRIORITY_SECONDS, castOwns, listenerAt } from "./soundplace";
 import { stepWorld } from "./tick";
 import { VoxelView } from "./voxel/view";
 import { GRAPHICS } from "./voxel/graphics";
@@ -119,7 +119,7 @@ export class Engine {
   cast(req: CastRequest, x: number, y: number): boolean {
     const ok = this.runtime.cast(req, x, y);
     // A spell's sounds come from its center (4.8). w.sound carries no place
-    // yet, so they belong to the player's last cast, for as long as it lasts.
+    // yet, so they belong to the player's last cast while it runs (castOwns).
     if (ok) this.lastCast = { x, y, at: performance.now() };
     // What the cast changed before the next tick is drawn too (view.ts, scan).
     this.view.landChanged = true;
@@ -235,7 +235,7 @@ export class Engine {
     const now = performance.now();
     // Back from a hidden tab: what piled up is not played all at once.
     const stale = this.sound.wasHidden();
-    const cast = this.lastCast;
+    const cast = this.lastCast && castOwns((now - this.lastCast.at) / 1000, this.runtime.busy()) ? this.lastCast : null;
     const fresh = cast !== null && now - cast.at < CAST_PRIORITY_SECONDS * 1000;
     for (const e of this.world.events.splice(0)) {
       if (e.kind === "sound") {

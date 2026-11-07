@@ -7,7 +7,19 @@
 // and the automation the voices use, rendered sample by sample.
 
 import { VOICE_NAMES, makeVoice, voiceFor, whiteNoise, type Synth } from "../src/sim/sound";
-import { MAX_VOICES, MERGE_CAP, ROUTINE_CELLS, SoundBudget, cooldownOf, listenerAt, place, routineHeard, sameSpot, type Listener } from "../src/sim/soundplace";
+import {
+  MAX_VOICES,
+  MERGE_CAP,
+  ROUTINE_CELLS,
+  SoundBudget,
+  castOwns,
+  cooldownOf,
+  listenerAt,
+  place,
+  routineHeard,
+  sameSpot,
+  type Listener,
+} from "../src/sim/soundplace";
 import { generateWorld } from "../src/sim/world";
 import { populate } from "../src/sim/creatures";
 import { stepWorld } from "../src/sim/tick";
@@ -347,6 +359,11 @@ check(place(zoomedOut, 180, 160).gain === 1 && place(zoomedOut, 200, 100).gain >
 check(Math.abs(place(ear, 101, 100).pan) < 0.05, "a sound right under the camera is not thrown to one side");
 check(routineHeard(ear, 110, 100) && !routineHeard(ear, 100 + ROUTINE_CELLS + 5, 100), "routine work is heard only near the camera");
 check(!routineHeard(zoomedOut, 101, 100), "zoomed out, single tool hits are not heard");
+
+// A sound with no place belongs to the player's cast only while one runs.
+check(castOwns(2, true), "a spell's own sound, 2 s into its running cast, takes the cast's place");
+check(!castOwns(2, false), "once no cast runs, a sound with no place (a creature's explosion) is not put at the old cast");
+check(!castOwns(120, true), "two minutes on, a sound with no place is never put at the old cast, even while something runs");
 
 // 3. The budget, by hand.
 {

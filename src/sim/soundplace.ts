@@ -63,6 +63,16 @@ const MERGE_STEP = 1.4;
 export function sameSpot(ref: number): number {
   return Math.max(4, ref / 4);
 }
+// A sound with no place of its own (w.sound, until runtime.ts passes the
+// spell's center) belongs to the player's last cast only while a cast still
+// runs, and never longer than this: a creature's explosion minutes later
+// is not placed at an old cast (review of part 1).
+export const CAST_OWNS_SECONDS = 30;
+
+export function castOwns(sinceCast: number, running: boolean): boolean {
+  return running && sinceCast >= 0 && sinceCast < CAST_OWNS_SECONDS;
+}
+
 // A player's cast is answered: its sounds in this window skip the cooldown
 // and are never the ones dropped.
 export const CAST_PRIORITY_SECONDS = 0.3;
