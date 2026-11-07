@@ -507,7 +507,9 @@ export function* creatureProbe(req: CastRequest): Generator<void, CreatureLife> 
     return fail(`it never moved more than ${life.moved} cells from where it arrived. Give it a speed, a goal and a body that walks, swims or flies.`);
   if (working < 3 && deeds <= 0)
     return fail("it pursued no goal: it never took up a task or did anything. Give it a goal (hunt, gather, tend, guard, explore...).");
-  if (life.abilities <= 0 && own().some((c) => abilitiesOf(c, kindOf(c)).length))
+  // Asked only of the kinds it wrote: a villager's magic comes with its
+  // calling or job (a mage's freeze and blink, for a fight the probe never starts).
+  if (life.abilities <= 0 && own().some((c) => c.kind !== "villager" && abilitiesOf(c, kindOf(c)).length))
     return fail(`it never used its abilities${nightly ? ", even at night" : ""}. Give it one that fires without a fight (every so often, or night).`);
   if (hunted === false) return fail(`it ignored a ${prey!.kind} set four cells from it, though it hunts them.`);
   if (villagersLeft < 0.7 || animalsLeft < 0.5)
