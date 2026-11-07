@@ -96,6 +96,9 @@ const LOOP_LIMIT = 4_000_000;
 export const WRAPPER_LINES = 3;
 const MAX_JOBS = 24;
 
+// The tallest tree a creature may plant without it counting in its size (an oak is 12).
+export const PLANTED_TREE_HEIGHT = 20;
+
 export class Runtime {
   // A cast whose ticks take longer than this five times is stopped. Tests
   // set it (4.1, review M8): on a loaded CI runner a correct spell can pass
@@ -1451,8 +1454,9 @@ export class SpellApi {
     const style = typeof o.style === "string" && styles.includes(o.style) ? o.style : "oak";
     const d = treeDefaults(style);
     const b = new Builder(this.rt.world);
+    const height = num(o.height, 4, 120, style === "giant" ? 40 : 12);
     tree(b, x, y, num(o.z, 0, 200, 0), {
-      height: num(o.height, 4, 120, style === "giant" ? 40 : 12),
+      height,
       style,
       trunk: colorList(o.trunk, d.trunk),
       leaves: style === "dead" ? [] : colorList(o.leaves, d.leaves),
@@ -1460,7 +1464,9 @@ export class SpellApi {
       accentShare: num(o.accentShare, 0, 1, 0.25),
       leafKind: o.glow === true ? VK.GLOW : style === "crystal" ? VK.GLOW : VK.LEAF,
     });
-    this.rt.planted.set(this.req.key, [...(this.rt.planted.get(this.req.key) ?? []), [...b.cells.keys()]]);
+    // Only a tree of an ordinary height is a creature's deed (the review of
+    // #72: three giant trees, 120 high, slipped past its size).
+    if (height <= PLANTED_TREE_HEIGHT) this.rt.planted.set(this.req.key, [...(this.rt.planted.get(this.req.key) ?? []), [...b.cells.keys()]]);
     this.rt.commit(b, num(o.grow, 0, 30, 0));
   }
   spire(x: number, y: number, o: Record<string, unknown> = {}) {

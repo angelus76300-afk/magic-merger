@@ -265,17 +265,19 @@ export function creatureChecks(check: Check): void {
   // A druid plants a few trees: its deeds, not its body (production, 7
   // November: Druid as a villager with an oak and a birch failed at 10 cells
   // across). A forest still counts.
-  const grove = (trees: number) =>
+  const grove = (trees: number, height = 9) =>
     `const spell = { *cast(w) { const p = w.person(w.x, w.y, { job: "farmer", title: "Druid" }); if (!p) return; ${Array.from(
       { length: trees },
-      (_, k) => `w.tree(p.x + ${k % 2 ? -3 : 3} + ${Math.floor(k / 2) * 4}, p.y + ${k % 2 ? -2 : 2}, { style: "oak", height: 9 });`,
+      (_, k) => `w.tree(p.x + ${k % 2 ? -3 : 3} + ${Math.floor(k / 2) * 4}, p.y + ${k % 2 ? -2 : 2}, { style: "oak", height: ${height} });`,
     ).join(" ")} } };`;
   const two = runCheck({ key: "b:druid:2", name: "Druid", tier: "minor", kind: "artifact", form: "creature", code: grove(2) });
   const forest = runCheck({ key: "b:druid:6", name: "Druid", tier: "minor", kind: "artifact", form: "creature", code: grove(PLANTED_TREES + 3) });
+  // Three giant trees are no deed: they count (the review of #72).
+  const giants = runCheck({ key: "b:druid:giant", name: "Druid", tier: "minor", kind: "artifact", form: "creature", code: grove(2, 120) });
   check(
-    "a druid's two trees are its deeds, not its size; a forest of them still counts",
-    two.problem !== "size" && forest.problem === "size",
-    JSON.stringify([two.problem, two.detail.slice(0, 160), forest.problem, forest.detail.slice(0, 160)]),
+    "a druid's two trees are its deeds, not its size; a forest of them, or giant ones, still count",
+    two.problem !== "size" && forest.problem === "size" && giants.problem === "size",
+    JSON.stringify([two.problem, two.detail.slice(0, 160), forest.problem, giants.problem, giants.detail.slice(0, 160)]),
   );
 
   // The judge asks it of each item.
