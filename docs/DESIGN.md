@@ -209,9 +209,10 @@ The test run plays every program on an island of 112 cells (`REFERENCE_SIDE`, `s
 
 1. **Reach by form.** A cast carries its item's form: the one its program was written and tested as, else the element's own, else a guess from its name (`src/cast-request.ts`). An object, a creature, a building, a settlement or a place keeps the reach of the 112 cell island on every island; a spell and land stay a share of the island (a storm covers as much of a big island as of a small one). A wonder's own reach wins; a library spell a creature casts has no form and scales as a spell.
 2. **Grown within its kind.** `resize` keeps a creature at 1.6 times its size at most, a being a person is small beside (a dragon, a giant, a golem: `bigBeing`, or a dragon or golem body) at 3.2; before, six times. The view's height cap of 3.2 villagers now holds after the size as well (`drawScale`, `src/sim/voxel/rigs.ts`), so a size saved before this, or any other way to it, never draws a giant of 19 villagers.
-3. **A body stopped on a ward** runs its `end` hook after `land`, on the glass, once: a spell that cleans up or leaves something behind in `end` did nothing when a shield stopped it (the review of #64).
+3. **A body stopped on a ward** runs its `end` hook on the glass, after `land`, once, when it would have run anyway: a body with a `life` ends when it runs out, so a spell that cleans up or leaves something behind in `end` did nothing when a shield stopped it (the review of #64). A body with no `life` never ends, on the ground or on the glass. A body strikes the ward once: a thrown thing's blow is taken when it hits, and what its `end` tries stays on the glass (the playtest found a harmful `end` striking twice and breaking a minor ward).
+4. **Health keeps its share through a resize**: a creature grown to 3.2 times keeps its full health instead of a third of it, and a shrunk one is not over its most.
 
-`npm test` checks each in `scripts/sizes-test.ts` and `scripts/interactions-test.ts`; all ten checks fail on the code before.
+`npm test` checks each in `scripts/sizes-test.ts` and `scripts/interactions-test.ts`; every new check fails on the code before.
 
 ### The interaction table
 

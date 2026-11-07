@@ -405,6 +405,32 @@ export function interactionChecks(check: Check): void {
     );
   }
   {
+    // The playtest of the end hook: a thrown body (no land hook) whose end
+    // harms struck the ward twice, broke a minor ward a plain body leaves
+    // standing, and reached the people under it. One blow per body; a body
+    // with no life never runs end, on the ground or on the glass.
+    const thrown = (end: string, life: string) => ({
+      name: "thrown",
+      code: `const spell = { creatures: [{ name: "end marker", base: "beast", color: "#ffffff", speed: 0, hp: 10, lifespan: 60 }], *cast(w) { w.body({ x: w.x + 2, y: w.y, z: 50, vz: -45, r: 2, look: "meteor"${life}${end} }); yield 3; } };`,
+      seconds: 4,
+      reached: () => false,
+    });
+    const plain = scene("grass", "all", "minor");
+    run(plain, thrown("", ", life: 6"), "minor");
+    const harmful = scene("grass", "all", "minor");
+    run(harmful, thrown(", end(b, w) { w.explode(b.x, b.y, 4, 1); for (const c of w.creatures(b.x, b.y, 6)) c.hurt(40); }", ", life: 6"), "minor");
+    const [a, b] = [plain.world.wards[0], harmful.world.wards[0]];
+    check(
+      "a thrown body whose end harms strikes a ward once, like a plain one, and nobody under it is hurt",
+      !!a && !!b && Math.abs(wardDamage(a) - wardDamage(b)) < 1e-9 && !hurt(harmful),
+      `${a ? wardDamage(a).toFixed(2) : "broken"} plain, ${b ? wardDamage(b).toFixed(2) : "broken"} with end, hurt ${hurt(harmful)}`,
+    );
+    const lifeless = scene("grass", "all", "major");
+    run(lifeless, thrown(', end(b, w) { w.spawn("end marker", w.x + 15, w.y); }', ""), "minor");
+    const marks = lifeless.world.creatures.filter((c) => c.kind.includes("end marker")).length;
+    check("a body with no life does not run its end on the glass, as it does not on the ground", marks === 0, `${marks} markers`);
+  }
+  {
     // Raiders pushed out again and again crack a minor ward, never break it.
     const s = scene("grass", "creatures", "minor");
     const siege = {

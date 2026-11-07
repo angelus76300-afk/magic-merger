@@ -4,7 +4,7 @@
 // the view never draws a grown creature past the height cap.
 import { castRequest } from "../src/cast-request";
 import { body } from "../src/sim/body";
-import { kindOf } from "../src/sim/creatures";
+import { kindOf, maxHp } from "../src/sim/creatures";
 import { GROW_MAX, GROW_MAX_BIG, Runtime, castReach } from "../src/sim/runtime";
 import { stepHeadless } from "../src/sim/tick";
 import { MAX_HEIGHT, buildRig, drawScale, villagerUnits } from "../src/sim/voxel/rigs";
@@ -122,6 +122,13 @@ export function sizeChecks(check: Check): void {
       stepHeadless(world, rt);
     }
     check("sizes: a shrink still works", !!shrunk && shrunk.size < 0.5, `${shrunk?.size}`);
+    // Its health keeps its share through a resize (found by the playtest).
+    const grown = world.creatures.find((c) => c.kind.toLowerCase().includes("dragon"));
+    check(
+      "sizes: a grown creature keeps its share of health, not a third of it",
+      !!grown && Math.abs(grown.hp / maxHp(grown) - 1) < 1e-6 && !!shrunk && shrunk.hp <= maxHp(shrunk) + 1e-6,
+      `${grown?.hp.toFixed(0)} of ${grown ? maxHp(grown).toFixed(0) : "-"}, shrunk ${shrunk?.hp.toFixed(0)} of ${shrunk ? maxHp(shrunk).toFixed(0) : "-"}`,
+    );
     const d = world.creatures.find((c) => c.kind.toLowerCase().includes("dragon"));
     if (d) {
       const k = kindOf(d);

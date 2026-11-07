@@ -686,9 +686,12 @@ export class Runtime {
     [b.x, b.y, b.z] = [px, py, Math.max(0, pz)];
     b.alive = false;
     if (!hooks?.land) this.splash(b, hit);
-    // Its last hooks run on the glass: land, then end, which a body stopped
-    // here used to skip (a meteor's end hook, the review of #64).
-    const last = [hooks?.land, hooks?.end].filter((f): f is NonNullable<BodyHooks["land"]> => !!f);
+    // Its last hooks run on the glass: land, then end when it would have run
+    // anyway (a body with a life ends when it runs out; the review of #64
+    // found end skipped here). A body with no life never ends on the
+    // ground, so it does not on the glass either.
+    const ends = hooks?.end && b.life > 0 ? hooks.end : undefined;
+    const last = [hooks?.land, ends].filter((f): f is NonNullable<BodyHooks["land"]> => !!f);
     if (!hooks || !last.length) return true;
     const mask = this.world.wardMask;
     forDisc(this.world, hit.x, hit.y, hit.r, (i) => (mask[i] = WARD_ALL));
@@ -700,8 +703,10 @@ export class Runtime {
       this.glass = null;
       rebuildMask(this.world);
     }
-    if (!glass.harm) return true;
-    if (hooks.land) this.splash(b, hit);
+    // One blow per body: a thrown thing's was taken above, and what its end
+    // tried stays on the glass (the playtest found it striking twice).
+    if (!glass.harm || !hooks.land) return true;
+    this.splash(b, hit);
     if (damageWard(this.world, hit, blow, source, power)) for (const f of glass.replay) this.run(hooks.key, hooks.name, f);
     return true;
   }
@@ -1172,7 +1177,10 @@ export class CreatureHandle {
     // Within its kind (4.7 item 2): a spell that grows something again and
     // again keeps it a villager or a dragon, never a giant of six times.
     const most = Math.max(this.raw.size, growMax(kindOf(this.raw)));
+    const ratio = this.raw.hp / maxHp(this.raw);
     this.raw.size = Math.max(Math.min(SHRINK_MIN, this.raw.size), Math.min(most, this.raw.size * num(factor, 0.1, 10, 1)));
+    // Its health keeps its share (the playtest: a grown dragon read as hurt, a shrunk one over its most).
+    if (!this.raw.dead) this.raw.hp = maxHp(this.raw) * ratio;
   }
   tint(color: string | number) {
     this.raw.color = colorOr(color, this.raw.color);
