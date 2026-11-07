@@ -1117,8 +1117,9 @@ export class WorldHost {
       button("Not good", "vote-down", showReasons),
       dismiss,
     );
-    // Above the challenge banner in the same stack (M10).
-    if (!bar.isConnected) this.el.banner.before(bar);
+    // On the drawer, in place of its hint line (2026-11-07): over the island
+    // it covered the island's own panels and the ground where spells land.
+    if (!bar.isConnected) this.el.status.before(bar);
     // Unanswered, it goes away; the next cast asks again.
     this.voteTimer = window.setTimeout(close, 30_000);
   }
