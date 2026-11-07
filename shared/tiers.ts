@@ -13,6 +13,11 @@ export const TIER_REACH: Record<Tier, number> = {
   cosmic: 0.65,
 };
 
+// The island an item's test run is played on (src/sim/check.ts), in cells a
+// side. 4.7: an item that is not a spell or land keeps the reach it had there
+// on every island (src/sim/runtime.ts, castReach).
+export const REFERENCE_SIDE = 112;
+
 export const TIER_LABEL: Record<Tier, string> = {
   cantrip: "Cantrip",
   minor: "Minor",

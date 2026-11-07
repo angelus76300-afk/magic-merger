@@ -203,6 +203,16 @@ Before 4.7 a ward was a rule of cells only, so a moving body (`w.body`: a meteor
 4. **One source takes at most 80% of a ward of its own power** (`ONE_SOURCE`). So a spell of the ward's tier cracks it and never breaks it alone, a second cast breaks it, a spell a tier stronger can break it, and raiders or pooled lava crack a ward without breaking it. The protection probe's threats, cast at the ward's tier, never break it, so Aegis still passes.
 5. **It shows**: cracks spread over the dome as it wears (a cell pattern in the dome's shader, `src/sim/voxel/domes.ts`), and it breaks with a burst of glass, a crackle and a flash. A blow that breaks it goes through: the meteor lands, the bolt strikes.
 
+### Sizes held at runtime (4.7)
+
+The test run plays every program on an island of 112 cells (`REFERENCE_SIDE`, `shared/tiers.ts`), and w.r was a share of the island it fell on, so an item drawn "within w.r" stood 3.4 times bigger on a 384 cell island than in the test that passed it. Now (`castReach`, `src/sim/runtime.ts`):
+
+1. **Reach by form.** A cast carries its item's form: the one its program was written and tested as, else the element's own, else a guess from its name (`src/cast-request.ts`). An object, a creature, a building, a settlement or a place keeps the reach of the 112 cell island on every island; a spell and land stay a share of the island (a storm covers as much of a big island as of a small one). A wonder's own reach wins; a library spell a creature casts has no form and scales as a spell.
+2. **Grown within its kind.** `resize` keeps a creature at 1.6 times its size at most, a being a person is small beside (a dragon, a giant, a golem: `bigBeing`, or a dragon or golem body) at 3.2; before, six times. The view's height cap of 3.2 villagers now holds after the size as well (`drawScale`, `src/sim/voxel/rigs.ts`), so a size saved before this, or any other way to it, never draws a giant of 19 villagers.
+3. **A body stopped on a ward** runs its `end` hook after `land`, on the glass, once: a spell that cleans up or leaves something behind in `end` did nothing when a shield stopped it (the review of #64).
+
+`npm test` checks each in `scripts/sizes-test.ts` and `scripts/interactions-test.ts`; all ten checks fail on the code before.
+
 ### The interaction table
 
 `npm test` runs `scripts/interactions-test.ts`: ten effects (fire, a flood of lava, lightning, a meteor, a fireball, a blast, a summon, a teleport, a heal, a freeze) against no ward, a ward against everything and a ward against each of the six things alone; fifteen effects on materials (grass, forest, a house, sand, water, rock); the breaking point above, with a healing rain that must leave a ward whole and ten floods of lava that must not break one. The table is data at the top of the file (`PROTECTED`, `MATERIALS`): a row changed on purpose is changed there, in the review's sight. A heal is never stopped: a ward keeps out harm, not help. Without the engine change of 4.7, the meteor and the fireball reached what every ward covered.

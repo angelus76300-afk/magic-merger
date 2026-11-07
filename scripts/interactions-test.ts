@@ -384,6 +384,27 @@ export function interactionChecks(check: Check): void {
     );
   }
   {
+    // The review of #64: a body stopped on a ward skipped its end hook, so a
+    // spell that cleans up or leaves something behind in end did not. It now
+    // runs on the glass, after land, once.
+    const ending = {
+      name: "ending meteor",
+      code: `const spell = { creatures: [{ name: "end marker", base: "beast", color: "#ffffff", speed: 0, hp: 10, lifespan: 60 }], *cast(w) { w.body({ x: w.x, y: w.y, z: 40, vz: -30, gravity: 20, r: 1.5, look: "meteor", life: 2.5, land(b, w) { w.explode(b.x, b.y, 3, 1.2); }, end(b, w) { w.spawn("end marker", w.x + 15, w.y); } }); yield 3; } };`,
+      seconds: 4,
+      reached: () => false,
+    };
+    const markers = (s: Scene) => s.world.creatures.filter((c) => c.kind.includes("end marker") && !c.dead).length;
+    const open = scene("grass", "none");
+    run(open, ending, "minor");
+    const s = scene("grass", "all", "major");
+    run(s, ending, "minor");
+    check(
+      "a meteor stopped on a ward runs its end hook once, as one that lands does",
+      markers(open) === 1 && markers(s) === 1 && s.world.wards.length === 1 && !hurt(s) && !s.errors.length,
+      `${markers(open)} without a ward, ${markers(s)} under one, ${s.world.wards.length} wards, hurt ${hurt(s)}${s.errors[0] ? `, ${s.errors[0]}` : ""}`,
+    );
+  }
+  {
     // Raiders pushed out again and again crack a minor ward, never break it.
     const s = scene("grass", "creatures", "minor");
     const siege = {

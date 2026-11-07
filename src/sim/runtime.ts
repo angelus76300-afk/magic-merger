@@ -1,6 +1,7 @@
 import { guardLoops } from "../../shared/spellcode";
 import { parseIntents } from "../../shared/promises";
-import { TIERS, TIER_REACH, type Tier } from "../../shared/tiers";
+import { REFERENCE_SIDE, TIERS, TIER_REACH, type Tier } from "../../shared/tiers";
+import { bigBeing, isForm } from "../../shared/forms";
 import { artDeed, artifactState, isArtifact, type Artifact } from "./artifacts";
 import { BUILTIN_KINDS, KINDS, hostile, kindOf, makeCreature, maxHp, shieldedCreature, type Behavior, type Creature, type CreatureKind } from "./creatures";
 import { bodyFrom, stillModelColor } from "./body";
@@ -63,7 +64,8 @@ export interface CastRequest {
   // A wonder written as a program (4.4.5 part C) works within its own reach, whatever the island's size.
   reach?: number;
   // 4.6: which of the seven kinds it is (shared/forms.ts), and whether it
-  // says it is giant, for the size its test run holds it to. The runtime ignores both.
+  // says it is giant, for the size its test run holds it to. 4.7: the form
+  // also sets the reach (`castReach`); the runtime ignores giant.
   form?: string;
   giant?: boolean;
 }
@@ -683,22 +685,23 @@ export class Runtime {
     if (!hooks?.land && damageWard(this.world, hit, blow, source, power)) return false;
     [b.x, b.y, b.z] = [px, py, Math.max(0, pz)];
     b.alive = false;
-    if (!hooks?.land) {
-      this.splash(b, hit);
-      return true;
-    }
+    if (!hooks?.land) this.splash(b, hit);
+    // Its last hooks run on the glass: land, then end, which a body stopped
+    // here used to skip (a meteor's end hook, the review of #64).
+    const last = [hooks?.land, hooks?.end].filter((f): f is NonNullable<BodyHooks["land"]> => !!f);
+    if (!hooks || !last.length) return true;
     const mask = this.world.wardMask;
     forDisc(this.world, hit.x, hit.y, hit.r, (i) => (mask[i] = WARD_ALL));
     const glass = { ward: hit, harm: 0, replay: [] as (() => void)[] };
     this.glass = glass;
     try {
-      this.run(hooks.key, hooks.name, () => hooks.land!(hooks.handle, hooks.api));
+      for (const f of last) this.run(hooks.key, hooks.name, () => f(hooks.handle, hooks.api));
     } finally {
       this.glass = null;
       rebuildMask(this.world);
     }
     if (!glass.harm) return true;
-    this.splash(b, hit);
+    if (hooks.land) this.splash(b, hit);
     if (damageWard(this.world, hit, blow, source, power)) for (const f of glass.replay) this.run(hooks.key, hooks.name, f);
     return true;
   }
@@ -1166,7 +1169,10 @@ export class CreatureHandle {
     this.raw.hp = maxHp(this.raw) * ratio;
   }
   resize(factor: number) {
-    this.raw.size = Math.max(0.3, Math.min(6, this.raw.size * num(factor, 0.1, 10, 1)));
+    // Within its kind (4.7 item 2): a spell that grows something again and
+    // again keeps it a villager or a dragon, never a giant of six times.
+    const most = Math.max(this.raw.size, growMax(kindOf(this.raw)));
+    this.raw.size = Math.max(Math.min(SHRINK_MIN, this.raw.size), Math.min(most, this.raw.size * num(factor, 0.1, 10, 1)));
   }
   tint(color: string | number) {
     this.raw.color = colorOr(color, this.raw.color);
@@ -1264,6 +1270,33 @@ export class CellHandle {
   }
 }
 
+// The reach of a cast, w.r (4.7 item 2). A spell and land are a share of the
+// island, so a storm covers as much of a big island as of a small one. Any
+// other item (an object, a creature, a building, a settlement, a place) is
+// drawn within w.r, so it keeps the reach it had in its test run, on the
+// island of REFERENCE_SIDE cells: before, a staff drawn "within w.r" stood
+// 3.4 times bigger on a 384 cell island than in the test that passed it. An
+// item with no form (a library spell a creature casts) is a spell.
+export function castReach(req: Pick<CastRequest, "tier" | "form" | "reach">, w: number, h: number): number {
+  if (req.reach !== undefined) return req.reach;
+  const side = Math.min(w, h);
+  const held = isForm(req.form) && req.form !== "spell" && req.form !== "land";
+  return Math.max(2, Math.round(TIER_REACH[req.tier] * (held ? Math.min(REFERENCE_SIDE, side) : side)));
+}
+
+// How much a spell may grow a creature (4.7 item 2), as its size: a person,
+// and any creature, up to 1.6 times; a being a person is small beside (a
+// dragon, a giant, a golem: shared/forms.ts, bigBeing) up to 3.2. The view
+// caps every drawn figure at MAX_HEIGHT villagers whatever its size (rigs.ts).
+export const GROW_MAX = 1.6;
+export const GROW_MAX_BIG = 3.2;
+export const SHRINK_MIN = 0.3;
+export function growMax(kind: CreatureKind): number {
+  if (kind.name === "villager") return GROW_MAX;
+  const plan = kind.body.plan;
+  return bigBeing(kind.name) || plan === "dragon" || plan === "golem" ? GROW_MAX_BIG : GROW_MAX;
+}
+
 // What a spell program can do. Kept high level on purpose: a few calls do a
 // lot, so programs stay short (and cheap to write).
 export class SpellApi {
@@ -1285,7 +1318,7 @@ export class SpellApi {
     this.owner = `${req.key}#${castId}@${Math.round(rt.world.time * 30)}`;
     this.width = rt.world.w;
     this.height = rt.world.h;
-    this.r = req.reach ?? Math.max(2, Math.round(TIER_REACH[req.tier] * Math.min(rt.world.w, rt.world.h)));
+    this.r = castReach(req, rt.world.w, rt.world.h);
   }
 
   // Who wears a ward down, and how hard (4.7, wards.ts): one cast is one source.
