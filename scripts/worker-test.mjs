@@ -3823,6 +3823,13 @@ const signIn = async (key, count) => {
   await reset();
   await db.prepare("DELETE FROM job_runs WHERE job = 'session-rewrite'").run();
   await liveSpell("Capped Spark");
+  const typo = await api("/api/spell", { admin: true, body: { name: "Caped Spark", regenerate: true, session: true } });
+  const turns = (await db.prepare("SELECT COALESCE(SUM(runs), 0) AS n FROM job_runs WHERE job = 'session-rewrite'").first()).n;
+  check(
+    "a name nobody discovered is refused without taking a session's turn",
+    typo.status === 400 && turns === 0,
+    JSON.stringify({ status: typo.status, turns }),
+  );
   const asked = [];
   for (let i = 0; i < 2; i++) asked.push((await api("/api/spell", { admin: true, body: { name: "Capped Spark", regenerate: true, session: true } })).status);
   check(
