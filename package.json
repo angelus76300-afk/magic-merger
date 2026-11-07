@@ -13,7 +13,7 @@
     "deploy": "node -e \"if(!process.env.GITHUB_ACTIONS&&!process.env.MM_DEPLOY_BY_HAND){console.error('Production deploys only from main, by the Deploy workflow (docs/DAILY.md, Deploys). The owner alone, for a first setup or an emergency: MM_DEPLOY_BY_HAND=1 npm run deploy');process.exit(1)}\" && npm run build && wrangler d1 migrations apply magic-merger --remote && wrangler deploy",
     "test": "esbuild scripts/sim-test.ts scripts/challenge-worker.ts --bundle --platform=node --format=esm --outdir=node_modules/.cache --out-extension:.js=.mjs --log-level=warning && node node_modules/.cache/sim-test.mjs",
     "test:worker": "node --no-warnings scripts/worker-test.mjs",
-    "test:risk": "node scripts/risk-test.mjs && node scripts/gate-test.mjs && node scripts/gate-prstate-test.mjs && node scripts/rewrite-one-test.mjs && node scripts/session-guard-test.mjs",
+    "test:risk": "node scripts/risk-test.mjs && node scripts/gate-test.mjs && node scripts/gate-prstate-test.mjs && node scripts/rewrite-one-test.mjs && node .claude/hooks/session-guard-test.mjs",
     "evolve": "esbuild scripts/evolve-runner.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/evolve.mjs --log-level=warning && node node_modules/.cache/evolve.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",

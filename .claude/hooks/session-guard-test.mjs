@@ -1,4 +1,4 @@
-// Checks for scripts/session-guard.mjs: which create_session calls ask the owner.
+// Checks for .claude/hooks/session-guard.mjs: which create_session calls ask the owner.
 import { spawnSync } from "node:child_process";
 import { askReason } from "./session-guard.mjs";
 
@@ -22,7 +22,7 @@ check("no repository asks", askReason(call({})) !== null);
 check("pushing straight to a branch asks", /pushes straight/.test(askReason(call({ source_url: repo, outcome_branch: "main" }))));
 check("another environment asks", /another environment/.test(askReason(call({ source_url: repo, environment_id: "env_x" }))));
 
-const run = (stdin) => spawnSync(process.execPath, ["scripts/session-guard.mjs"], { input: stdin, encoding: "utf8" });
+const run = (stdin) => spawnSync(process.execPath, [".claude/hooks/session-guard.mjs"], { input: stdin, encoding: "utf8" });
 const asked = run(JSON.stringify(call({ source_url: repo, source_revision: "evil" })));
 check("the hook prints an ask decision", asked.status === 0 && JSON.parse(asked.stdout).hookSpecificOutput.permissionDecision === "ask");
 const quiet = run(JSON.stringify(call({ source_url: repo })));
