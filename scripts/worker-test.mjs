@@ -3622,6 +3622,43 @@ const signIn = async (key, count) => {
   await reset();
 }
 
+// 33. A session's rewrites are held by the server (#55, docs/DAILY.md "One spell
+// at a time"): scripts/rewrite-one.mjs runs without the owner's prompt, so the
+// fourth rewrite a session asks in 24 hours is refused before any call, and the
+// owner's own card is never refused.
+{
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev();
+  await reset();
+  // Earlier sections' admin rewrites are moved out of the last 24 hours.
+  await db
+    .prepare("UPDATE programs SET created_at = ? WHERE origin = 'admin'")
+    .bind(Date.now() - 2 * 86400_000)
+    .run();
+  await liveSpell("Capped Spark");
+  const asked = [];
+  for (let i = 0; i < 3; i++) asked.push((await api("/api/spell", { admin: true, body: { name: "Capped Spark", regenerate: true, session: true } })).status);
+  check(
+    "a session may rewrite three spells in a day",
+    asked.every((st) => st === 200),
+    JSON.stringify(asked),
+  );
+  const s7 = spellCalls;
+  const fourth = await api("/api/spell", { admin: true, body: { name: "Capped Spark", regenerate: true, session: true } });
+  check(
+    "the fourth rewrite a session asks in 24 hours is refused, before any call",
+    fourth.status === 429 && fourth.data?.detail?.capped === true && spellCalls === s7,
+    JSON.stringify({ status: fourth.status, data: fourth.data, calls: spellCalls - s7 }),
+  );
+  const card = await api("/api/spell", { admin: true, body: { name: "Capped Spark", regenerate: true } });
+  check(
+    "the owner's card still rewrites past the session's three",
+    card.status === 200 && spellCalls === s7 + 1,
+    JSON.stringify({ status: card.status, calls: spellCalls - s7 }),
+  );
+  await reset();
+}
 stop();
 if (failed) {
   console.log(`\n${failed} worker checks failed`);

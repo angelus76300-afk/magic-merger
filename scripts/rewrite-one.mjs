@@ -4,7 +4,8 @@
 //   node scripts/rewrite-one.mjs "<spell name>" "<why, one line>"     (MM_TOKEN or ADMIN_TOKEN)
 //
 // One name per run, never a list: spells are never rewritten in bulk (ROADMAP, "What the
-// money taught us"). It refuses when the month's spend has passed 80% of the budget. The new
+// money taught us"). The server refuses a fourth run in 24 hours (worker/programs.ts,
+// SESSION_REWRITES_PER_DAY). It refuses when the month's spend has passed 80% of the budget. The new
 // program is stored as a trial; the next person who casts it tests it before it goes live,
 // and the live one stays until then. scripts/rewrite-one-test.mjs checks both guards.
 import { pathToFileURL } from "node:url";
@@ -39,7 +40,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     console.error(`refused: $${spend?.month} spent of $${spend?.budget} this month (over 80%, or unknown)`);
     process.exit(1);
   }
-  const res = await fetch(`${URL_BASE}/api/spell`, { method: "POST", headers, body: JSON.stringify({ name: args.name, regenerate: true }) });
+  const res = await fetch(`${URL_BASE}/api/spell`, { method: "POST", headers, body: JSON.stringify({ name: args.name, regenerate: true, session: true }) });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || body.error) {
     console.error(`failed: ${res.status} ${body.error ?? ""}`);
