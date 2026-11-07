@@ -66,7 +66,9 @@
   --artifact: #ff9f5c;
   --moss: #7fd68e;
   --danger: #ff8a8a;
-  --radius: 8px;
+  --radius: 5px;
+  /* Stone: a 48 px tile of 6 px voxels, each a shade lighter or darker. */
+  --stone: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48' shape-rendering='crispEdges'%3E%3Crect x='6' y='0' width='6' height='6' fill='%23fff' fill-opacity='0.018'/%3E%3Crect x='36' y='0' width='6' height='6' fill='%23fff' fill-opacity='0.018'/%3E%3Crect x='0' y='6' width='6' height='6' fill='%23000' fill-opacity='0.036'/%3E%3Crect x='6' y='6' width='6' height='6' fill='%23000' fill-opacity='0.060'/%3E%3Crect x='18' y='6' width='6' height='6' fill='%23fff' fill-opacity='0.030'/%3E%3Crect x='24' y='6' width='6' height='6' fill='%23fff' fill-opacity='0.030'/%3E%3Crect x='6' y='12' width='6' height='6' fill='%23000' fill-opacity='0.060'/%3E%3Crect x='12' y='12' width='6' height='6' fill='%23000' fill-opacity='0.090'/%3E%3Crect x='18' y='12' width='6' height='6' fill='%23fff' fill-opacity='0.030'/%3E%3Crect x='30' y='12' width='6' height='6' fill='%23fff' fill-opacity='0.030'/%3E%3Crect x='36' y='12' width='6' height='6' fill='%23000' fill-opacity='0.060'/%3E%3Crect x='0' y='18' width='6' height='6' fill='%23fff' fill-opacity='0.030'/%3E%3Crect x='12' y='18' width='6' height='6' fill='%23fff' fill-opacity='0.018'/%3E%3Crect x='24' y='18' width='6' height='6' fill='%23fff' fill-opacity='0.045'/%3E%3Crect x='36' y='18' width='6' height='6' fill='%23fff' fill-opacity='0.030'/%3E%3Crect x='12' y='24' width='6' height='6' fill='%23000' fill-opacity='0.036'/%3E%3Crect x='24' y='24' width='6' height='6' fill='%23fff' fill-opacity='0.018'/%3E%3Crect x='30' y='24' width='6' height='6' fill='%23000' fill-opacity='0.090'/%3E%3Crect x='36' y='24' width='6' height='6' fill='%23fff' fill-opacity='0.030'/%3E%3Crect x='6' y='30' width='6' height='6' fill='%23fff' fill-opacity='0.030'/%3E%3Crect x='24' y='30' width='6' height='6' fill='%23000' fill-opacity='0.090'/%3E%3Crect x='30' y='30' width='6' height='6' fill='%23fff' fill-opacity='0.045'/%3E%3Crect x='36' y='30' width='6' height='6' fill='%23fff' fill-opacity='0.045'/%3E%3Crect x='42' y='30' width='6' height='6' fill='%23fff' fill-opacity='0.045'/%3E%3Crect x='6' y='36' width='6' height='6' fill='%23000' fill-opacity='0.090'/%3E%3Crect x='12' y='36' width='6' height='6' fill='%23fff' fill-opacity='0.018'/%3E%3Crect x='18' y='36' width='6' height='6' fill='%23000' fill-opacity='0.060'/%3E%3Crect x='42' y='36' width='6' height='6' fill='%23000' fill-opacity='0.036'/%3E%3Crect x='0' y='42' width='6' height='6' fill='%23fff' fill-opacity='0.018'/%3E%3Crect x='12' y='42' width='6' height='6' fill='%23fff' fill-opacity='0.018'/%3E%3Crect x='30' y='42' width='6' height='6' fill='%23fff' fill-opacity='0.018'/%3E%3C/svg%3E");
   --font-body: "Atkinson Hyperlegible Next", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-name: "Pixelify Sans", var(--font-body);
   --tabbar-h: 62px;
@@ -636,6 +638,7 @@ input[type="checkbox"] {
 
 .chip {
   --kind: var(--spell);
+  --tier-lip: var(--lip);
   gap: 8px;
   min-height: 44px;
   padding: 0 12px 0 13px;
@@ -649,7 +652,7 @@ input[type="checkbox"] {
   box-shadow:
     inset 4px 0 0 var(--kind),
     inset 0 1px 0 rgb(255 255 255 / 9%),
-    0 3px 0 var(--lip);
+    0 3px 0 var(--tier-lip);
 }
 
 .chip-artifact {
@@ -671,14 +674,14 @@ input[type="checkbox"] {
   box-shadow:
     inset 4px 0 0 var(--kind),
     inset 0 1px 0 rgb(255 255 255 / 9%),
-    0 1px 0 var(--lip);
+    0 1px 0 var(--tier-lip);
 }
 
 .chip-board {
   box-shadow:
     inset 4px 0 0 var(--kind),
     inset 0 1px 0 rgb(255 255 255 / 9%),
-    0 3px 0 var(--lip),
+    0 3px 0 var(--tier-lip),
     0 10px 18px rgb(0 0 0 / 40%);
 }
 
@@ -686,7 +689,7 @@ input[type="checkbox"] {
   box-shadow:
     inset 4px 0 0 var(--kind),
     inset 0 1px 0 rgb(255 255 255 / 9%),
-    0 3px 0 var(--lip),
+    0 3px 0 var(--tier-lip),
     0 22px 30px rgb(0 0 0 / 55%);
 }
 
@@ -694,7 +697,7 @@ input[type="checkbox"] {
   border-color: var(--lantern);
   box-shadow:
     inset 4px 0 0 var(--kind),
-    0 3px 0 var(--lip),
+    0 3px 0 var(--tier-lip),
     0 0 0 3px rgb(255 197 77 / 45%),
     0 0 24px rgb(255 197 77 / 35%);
 }
@@ -708,12 +711,33 @@ input[type="checkbox"] {
     border-color: var(--lantern);
     box-shadow:
       inset 4px 0 0 var(--kind),
-      0 3px 0 var(--lip),
+      0 3px 0 var(--tier-lip),
       0 0 22px rgb(255 197 77 / 60%);
   }
 }
 
-/* Tiers: square pixels, like the island's. */
+/* Tiers: square pixels, like the island's, and each item's lip is cut from
+   its tier's stone: grey cantrip, green minor, blue major, violet grand,
+   orange legendary, gold cosmic. */
+.chip[data-tier="cantrip"] {
+  --tier-lip: #34384c;
+}
+.chip[data-tier="minor"] {
+  --tier-lip: #2b6b40;
+}
+.chip[data-tier="major"] {
+  --tier-lip: #22558c;
+}
+.chip[data-tier="grand"] {
+  --tier-lip: #5a3c9e;
+}
+.chip[data-tier="legendary"] {
+  --tier-lip: #9a4e12;
+}
+.chip[data-tier="cosmic"] {
+  --tier-lip: #b08a1c;
+}
+
 .chip-tier {
   width: 8px;
   height: 8px;
@@ -1504,4 +1528,37 @@ input[type="checkbox"] {
     animation: none;
     border-color: var(--lantern);
   }
+}
+
+/* ---------- Stone ---------- */
+
+/* The night's surfaces are stone: the voxel tile over their colour. */
+.topbar,
+.tabs,
+.inventory,
+.spellbar {
+  background-image: var(--stone);
+}
+
+.card,
+.challenges,
+.chronicle,
+.book {
+  background-image: var(--stone), linear-gradient(180deg, #1a2340, var(--surface) 140px);
+}
+
+.challenge-card,
+.daily-card,
+.friend,
+.feedback-new,
+.challenge {
+  background-image: var(--stone), linear-gradient(180deg, #1b2440, var(--surface) 80px);
+}
+
+/* Craft's two selects give way before the row runs past the screen (they
+   cut "Oldest" to "Olde" at 390 px). */
+.inventory-filters .filterbar select {
+  flex: 0 1 auto;
+  min-width: 5.5em;
+  text-overflow: ellipsis;
 }
