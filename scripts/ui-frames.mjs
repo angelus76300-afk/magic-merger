@@ -229,6 +229,13 @@ async function run(width, height, touch = false) {
   await page.click('.tab[data-view="world-view"]');
   await page.waitForTimeout(3500);
   await shot("05-world");
+  // A filter row cut by its edge says so: it fades while more is out of
+  // sight (on a phone, "Any tier" sat half cut against Grid, 2026-11-07).
+  const cutRow = await page.evaluate(() => {
+    const row = document.querySelector(".spell-tools .filterbar");
+    return !!row && row.scrollLeft + row.clientWidth < row.scrollWidth - 1 && !row.classList.contains("filter-more");
+  });
+  if (cutRow) failures.push(`${tag}: World's filter row is cut at its edge with no fade`);
   const castable = page.locator(".chip-castable").first();
   if (await castable.count()) {
     await castable.click();

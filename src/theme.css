@@ -1784,6 +1784,13 @@ input[type="checkbox"] {
   }
 }
 
+/* A filter row that scrolls sideways fades at the edge while more of it is
+   out of sight (filters.ts, "filter-more"). */
+.filterbar.filter-more {
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent);
+}
+
 /* A Fold unfolded: two rows of spells that scroll, not one (6 of 58 showed). */
 @media (min-width: 700px) and (max-width: 1023px) and (min-height: 900px) {
   .spellbar:not(.expanded) .spell-list {
