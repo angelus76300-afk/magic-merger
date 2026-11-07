@@ -284,7 +284,7 @@ function perform(world: World, c: Creature, k: CreatureKind, m: Mind, what: Abil
       t.hp -= 18;
       harmed(world, t, c, 18);
       if (t.hp <= 0) t.dead = true;
-      world.emit({ kind: "sound", name: "whoosh", size: 0.4 });
+      world.emit({ kind: "sound", name: "whoosh", size: 0.4, x: c.x, y: c.y });
       deed(c, `breathed fire on a ${t.kind.split("#")[0]}`);
       return true;
     }
@@ -330,7 +330,7 @@ function perform(world: World, c: Creature, k: CreatureKind, m: Mind, what: Abil
         c.x = x;
         c.y = y;
         puff(world, c.x, c.y, k.color, 6);
-        world.emit({ kind: "sound", name: "ping", size: 0.3 });
+        world.emit({ kind: "sound", name: "ping", size: 0.3, x: c.x, y: c.y });
         deed(c, "vanished and appeared elsewhere");
         if (m.target === from) m.task = "none";
         return true;
@@ -365,7 +365,7 @@ function perform(world: World, c: Creature, k: CreatureKind, m: Mind, what: Abil
       if (t.hp <= 0) t.dead = true;
       if (world.materials.get("cover", world.cover[i]).flammable > 0) world.fire[i] = Math.max(world.fire[i], 0.8);
       world.emit({ kind: "flash", color: 0xdfe8ff, strength: 0.25 });
-      world.emit({ kind: "sound", name: "zap", size: 0.5 });
+      world.emit({ kind: "sound", name: "zap", size: 0.5, x: t.x, y: t.y });
       puff(world, t.x, t.y, 0xdfe8ff, 10, 1.6);
       deed(c, `struck a ${t.kind.split("#")[0]} with lightning`);
       return true;

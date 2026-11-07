@@ -4,6 +4,7 @@ import { FrameStats } from "./hud";
 import { Runtime, type CastRequest, type ErrorReporter } from "./runtime";
 import { loadWorld, saveWorld, type SavedWorld } from "./save";
 import { SpellSound } from "./sound";
+import { CAST_PRIORITY_SECONDS, listenerAt } from "./soundplace";
 import { stepWorld } from "./tick";
 import { VoxelView } from "./voxel/view";
 import { GRAPHICS } from "./voxel/graphics";
@@ -117,6 +118,9 @@ export class Engine {
 
   cast(req: CastRequest, x: number, y: number): boolean {
     const ok = this.runtime.cast(req, x, y);
+    // A spell's sounds come from its center (4.8). w.sound carries no place
+    // yet, so they belong to the player's last cast, for as long as it lasts.
+    if (ok) this.lastCast = { x, y, at: performance.now() };
     // What the cast changed before the next tick is drawn too (view.ts, scan).
     this.view.landChanged = true;
     // The player's magic is part of the island's story (3.7).
@@ -207,7 +211,13 @@ export class Engine {
     const t2 = performance.now();
     this.stats.push({ frame: since, sim: this.simMs, render: t2 - t1 });
     this.simMs = 0;
-    this.stats.counts = { ...this.view.counts(), voxels: this.world.decor.size, creatures: this.world.creatures.length, size: this.world.w };
+    this.stats.counts = {
+      ...this.view.counts(),
+      ...this.sound.counts(),
+      voxels: this.world.decor.size,
+      creatures: this.world.creatures.length,
+      size: this.world.w,
+    };
   }
 
   private lastDraw = 0;
@@ -217,10 +227,23 @@ export class Engine {
   private coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
   readonly pacer = new FramePacer(GRAPHICS.smooth, performance.now());
 
+  private lastCast: { x: number; y: number; at: number } | null = null;
+
   private handleEvents(): void {
+    const o = this.view.orbit;
+    this.sound.listener = listenerAt(o.tx, o.ty, o.visibleRadius(), o.theta);
+    const now = performance.now();
+    // Back from a hidden tab: what piled up is not played all at once.
+    const stale = this.sound.wasHidden();
+    const cast = this.lastCast;
+    const fresh = cast !== null && now - cast.at < CAST_PRIORITY_SECONDS * 1000;
     for (const e of this.world.events.splice(0)) {
-      if (e.kind === "sound") this.sound.play(e.name, e.size);
-      else if (e.kind === "shake") this.view.orbit.addShake(e.amount, e.seconds);
+      if (e.kind === "sound") {
+        if (stale) continue;
+        if (e.x !== undefined && e.y !== undefined) this.sound.play(e.name, e.size, { x: e.x, y: e.y, routine: e.routine });
+        else if (cast) this.sound.play(e.name, e.size, { x: cast.x, y: cast.y, priority: fresh });
+        else this.sound.play(e.name, e.size);
+      } else if (e.kind === "shake") this.view.orbit.addShake(e.amount, e.seconds);
       else if (e.kind === "flash" && !this.reducedMotion) {
         const v = this.runtime.visuals;
         v.flash = Math.max(v.flash, e.strength);
