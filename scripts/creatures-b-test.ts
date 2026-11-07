@@ -57,8 +57,20 @@ function cast(world: World, name: string, code: string, x: number, y: number): R
 
 export function creatureChecks(check: Check): void {
   // Who is a person.
-  const people = ["Human", "Blacksmith", "Necromancer", "Pyromancer", "Dragon Rider", "Old Hermit", "King Arthur", "Sorceress"];
-  const beasts = ["Serpent", "Fox Spirit", "Lich", "Ghost", "Witch Cat", "Vampire", "Vampire Lord", "Golem", "Dragon"];
+  const people = [
+    "Human",
+    "Blacksmith",
+    "Necromancer",
+    "Pyromancer",
+    "Dragon Rider",
+    "Old Hermit",
+    "King Arthur",
+    "Sorceress",
+    "Ghost Hunter",
+    "Spirit Guard",
+    "Castle Lord",
+  ];
+  const beasts = ["Serpent", "Fox Spirit", "Lich", "Ghost", "Witch Cat", "Vampire", "Vampire Lord", "Goblin King", "Golem", "Dragon"];
   const wrong = [...people.filter((n) => !personName(n)), ...beasts.filter((n) => personName(n))];
   check("people are told from beasts by the name", !wrong.length, wrong.join(", "));
   const callings: [string, string][] = [

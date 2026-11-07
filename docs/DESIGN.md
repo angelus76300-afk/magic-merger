@@ -886,7 +886,7 @@ Asked for: a creature made by a merge acts like what it is ("a serpent slithers,
 | knight      | armor, sword and shield | guards the village; wards it when an enemy comes near                                                          |
 | mage        | pointed hat, staff      | freezes an enemy; blinks away when hurt                                                                        |
 
-A name with no calling gets a job from its words (a Farmer farms, a Healer is a priest) or one by chance (a Human). Thralls (`creatures.ts`) follow the village's people and never hunt them (`npm test` counts the villagers through a night of them). Who is a person is read from the name (`personName` in `shared/forms.ts`): the last word that names a person or a creature decides (Dragon Rider a person, Witch Cat a creature), and undead, spirits and golems never are (a Vampire Lord, a Lich).
+A name with no calling gets a job from its words (a Farmer farms, a Healer is a priest) or one by chance (a Human). Thralls (`creatures.ts`) follow the village's people and never hunt them (`npm test` counts the villagers through a night of them). Who is a person is read from the name (`personName` in `shared/forms.ts`): the last word that names a person or a creature decides (Dragon Rider and Ghost Hunter are people, Witch Cat and Lich creatures), and a rank after a creature names whom it rules (a Vampire Lord and a Goblin King are creatures, a Castle Lord a person).
 
 ### Creatures written as living things
 

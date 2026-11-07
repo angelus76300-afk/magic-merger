@@ -556,21 +556,30 @@ const PERSON_WORDS = new Set([
   "viking",
   "gladiator",
 ]);
-// Beings no person is, wherever they stand in the name ("Vampire Lord").
+// Beings no person is: a word of theirs decides like a creature's.
 const NOT_PEOPLE =
-  /\b(vampires?|lich|liches|ghosts?|ghouls?|zombies?|skeletons?|wraiths?|specters?|spectres?|demons?|devils?|werewol(f|ves)|undead|mummy|mummies|banshees?|golems?|elementals?|angels?|spirits?)\b/i;
+  /^(vampires?|lich|liches|ghosts?|ghouls?|zombies?|skeletons?|wraiths?|specters?|spectres?|demons?|devils?|werewol(f|ves)|undead|mummy|mummies|banshees?|golems?|elementals?|angels?|spirits?)$/;
+// Ranks name whom a being rules, not what it is: a Vampire Lord is a vampire,
+// a Goblin King a goblin; a King alone, or a Lady of the Lake, is a person.
+const RANKS = new Set(["lord", "lady", "king", "queen", "prince", "princess", "emperor", "empress", "chief", "chieftain", "noble"]);
+
+function formWord(w: string): Form | undefined {
+  return FORM_OF_WORD.get(w) ?? (w.endsWith("s") ? FORM_OF_WORD.get(w.slice(0, -1)) : undefined);
+}
 
 export function personName(name: string): boolean {
-  if (NOT_PEOPLE.test(name)) return false;
   const words = name
     .toLowerCase()
     .split(/[^a-z]+/)
     .filter(Boolean);
   for (let k = words.length - 1; k >= 0; k--) {
     const w = words[k];
-    if (PERSON_WORDS.has(w) || /.mancers?$/.test(w)) return true;
-    const f = FORM_OF_WORD.get(w) ?? (w.endsWith("s") ? FORM_OF_WORD.get(w.slice(0, -1)) : undefined);
-    if (f) return false;
+    if (NOT_PEOPLE.test(w)) return false;
+    if (PERSON_WORDS.has(w) || /.mancers?$/.test(w)) {
+      if (RANKS.has(w) && words.slice(0, k).some((o) => !PERSON_WORDS.has(o) && (NOT_PEOPLE.test(o) || formWord(o) === "creature"))) return false;
+      return true;
+    }
+    if (formWord(w)) return false;
   }
   return false;
 }
