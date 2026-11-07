@@ -1,7 +1,7 @@
 import { PRIMITIVES, elementKey, pairKey } from "../shared/elements";
 import { FIRST_PROGRAM_VERSION, PROGRAM_VERSION, type SpellProgram } from "../shared/spellcode";
 import { TIERS, capByDepth, capTier, isTier, tierFromDepth, type Tier } from "../shared/tiers";
-import { REASON_PROMPT, isBig, isReason, votedDown, votedUp, votedWorse, votesNeeded, VOTE_WINDOW_MS } from "../shared/votes";
+import { REASON_PROMPT, isBig, isReason, voteReasons, votedDown, votedUp, votedWorse, votesNeeded, VOTE_WINDOW_MS } from "../shared/votes";
 import type {
   CastRecord,
   CastResponse,
@@ -1939,14 +1939,16 @@ async function handleVote(body: VoteRequest, env: Env, player: string | null, pa
   const row = await getProgram(env.DB, Number(body.id));
   if (!row || row.key !== key) throw new HttpError(404, "There is no such program");
   const up = body.up === true;
-  if (!up && !isReason(body.reason)) throw new HttpError(400, "A down vote needs a reason");
+  // One to three reasons, stored joined ("still,size"): no new column.
+  const reasons = up ? null : voteReasons(body);
+  if (!up && !reasons) throw new HttpError(400, "A down vote needs one to three of the reasons offered");
   const cast = await env.DB.prepare("SELECT at FROM casts WHERE player = ? AND pid = ?").bind(player, row.id).first<{ at: number }>();
   if (!cast || Date.now() - cast.at > VOTE_WINDOW_MS) throw new HttpError(403, "Only players who cast this version of the spell lately can vote on it");
   await env.DB.prepare(
     `INSERT INTO votes (player, pid, key, up, reason, at) VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT (player, pid) DO UPDATE SET up = excluded.up, reason = excluded.reason, at = excluded.at`,
   )
-    .bind(player, row.id, key, up ? 1 : 0, up ? null : body.reason, Date.now())
+    .bind(player, row.id, key, up ? 1 : 0, reasons ? reasons.join(",") : null, Date.now())
     .run();
   const t = await tally(env.DB, row.id);
   const needed = votesNeeded(await averageDaily(env.DB));

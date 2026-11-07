@@ -1,31 +1,77 @@
+import type { Form } from "./forms";
 import { TIERS, type Tier } from "./tiers";
 
 // Player votes on spell programs (3.3), and the rules that turn them into a
 // rewrite, a rollback or a place in the example library. Pure functions, so
 // `npm test` checks them without a database.
 
+// The five reasons every item had before reasons by form (2026-11-07). Kept:
+// stored votes carry them, and the judge answers with one of them.
 export const DOWN_REASONS = ["nothing", "small", "wrong", "broke", "boring"] as const;
-export type DownReason = (typeof DOWN_REASONS)[number];
 
-export const REASON_LABEL: Record<DownReason, string> = {
-  nothing: "Nothing happened",
-  small: "Too small",
-  wrong: "Looked wrong",
-  broke: "Broke the island",
-  boring: "Boring",
+// Why a player voted an item down: a label they read, and the line the
+// rewrite is told, saying what to fix. Ids are stored in `votes.reason`,
+// joined by commas, so an id never changes meaning once players use it.
+// Players never type a reason: no player's words reach a prompt.
+interface ReasonDef {
+  label: string;
+  prompt: string;
+}
+
+export const REASONS = {
+  // The five first ones.
+  nothing: { label: "Nothing happened", prompt: "nothing seemed to happen" },
+  small: { label: "Too small", prompt: "it was too small for its name and tier" },
+  wrong: { label: "Looked wrong", prompt: "it did not look like what its name promises" },
+  broke: { label: "Broke the island", prompt: "it broke the island, far beyond what it should do" },
+  boring: { label: "Boring", prompt: "it was boring: plain, predictable, no interaction" },
+  // REASONS_BY_FORM_PLACEHOLDER
+} as const satisfies Record<string, ReasonDef>;
+
+export type DownReason = keyof typeof REASONS;
+
+// What a player is offered, by the item's form: at most six, the most
+// common first. Every id here must be one a rewrite can act on.
+export const REASONS_BY_FORM: Record<Form, readonly DownReason[]> = {
+  spell: ["nothing", "small", "wrong", "broke", "boring"],
+  creature: ["nothing", "small", "wrong", "broke", "boring"],
+  object: ["nothing", "small", "wrong", "broke", "boring"],
+  building: ["nothing", "small", "wrong", "broke", "boring"],
+  settlement: ["nothing", "small", "wrong", "broke", "boring"],
+  place: ["nothing", "small", "wrong", "broke", "boring"],
+  land: ["nothing", "small", "wrong", "broke", "boring"],
 };
+
+// A player picks one to three.
+export const MAX_REASONS = 3;
+
+export const REASON_LABEL = Object.fromEntries(Object.entries(REASONS).map(([k, v]) => [k, v.label])) as Record<DownReason, string>;
 
 // What the rewrite prompt is told about each reason.
-export const REASON_PROMPT: Record<DownReason, string> = {
-  nothing: "nothing seemed to happen",
-  small: "it was too small for its name and tier",
-  wrong: "it did not look like what its name promises",
-  broke: "it broke the island, far beyond what it should do",
-  boring: "it was boring: plain, predictable, no interaction",
-};
+export const REASON_PROMPT = Object.fromEntries(Object.entries(REASONS).map(([k, v]) => [k, v.prompt])) as Record<DownReason, string>;
 
 export function isReason(v: unknown): v is DownReason {
-  return typeof v === "string" && (DOWN_REASONS as readonly string[]).includes(v);
+  return typeof v === "string" && Object.prototype.hasOwnProperty.call(REASONS, v);
+}
+
+export function reasonsFor(form: Form): readonly DownReason[] {
+  return REASONS_BY_FORM[form];
+}
+
+// The reasons of a down vote as sent (`reasons`, or the one `reason` of a
+// client from before reasons by form): one to three known ids, each once.
+// Null when there is none, too many, or one the game does not know.
+export function voteReasons(body: { reason?: unknown; reasons?: unknown }): DownReason[] | null {
+  const list: unknown[] = Array.isArray(body.reasons) ? body.reasons : body.reason !== undefined ? [body.reason] : [];
+  if (!list.length || list.length > MAX_REASONS || !list.every(isReason)) return null;
+  const unique = [...new Set(list as DownReason[])];
+  return unique.length === list.length ? unique : null;
+}
+
+// The reasons stored on a vote: "boring" (one, as before) or "still,size".
+// Unknown parts are dropped, so a stored value always reads.
+export function storedReasons(stored: string | null | undefined): DownReason[] {
+  return [...new Set((stored ?? "").split(",").filter(isReason))];
 }
 
 // Only players who cast that version of the spell this recently may vote on it.

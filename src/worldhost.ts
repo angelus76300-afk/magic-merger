@@ -3,7 +3,8 @@ import { elementKey } from "../shared/elements";
 import type { SpellProgram } from "../shared/spellcode";
 import { TIERS, tierFromDepth, type Tier } from "../shared/tiers";
 import type { CheckRequest, SpellResponse } from "../shared/types";
-import { DOWN_REASONS, REASON_LABEL, type DownReason } from "../shared/votes";
+import { MAX_REASONS, REASON_LABEL, reasonsFor, type DownReason } from "../shared/votes";
+import { formOf, type Form } from "../shared/forms";
 import * as api from "./api";
 import { timeline } from "./timeline";
 import { Checker } from "./checker";
@@ -1073,10 +1074,11 @@ export class WorldHost {
     if (!canVote || this.asked.has(program.id)) return;
     this.asked.add(program.id);
     clearTimeout(this.voteTimer);
-    this.voteTimer = window.setTimeout(() => this.askVote(name, program.id!), 6000);
+    const form = formOf(this.store.get(key)!.element);
+    this.voteTimer = window.setTimeout(() => this.askVote(name, program.id!, form), 6000);
   }
 
-  private askVote(name: string, id: number): void {
+  private askVote(name: string, id: number, form: Form): void {
     const bar = (this.voteBar ??= document.createElement("div"));
     bar.className = "vote";
     bar.setAttribute("role", "group");
@@ -1085,10 +1087,10 @@ export class WorldHost {
       bar.remove();
       clearTimeout(this.voteTimer);
     };
-    const send = async (up: boolean, reason?: DownReason) => {
+    const send = async (up: boolean, reasons?: DownReason[]) => {
       close();
       try {
-        await api.vote({ name, id, up, reason });
+        await api.vote({ name, id, up, reasons });
         toast(up ? `Noted: ${name} works` : `Noted: ${name} will get better`);
       } catch (err) {
         toast(err instanceof Error ? err.message : "The vote did not go through", "error");
@@ -1107,9 +1109,45 @@ export class WorldHost {
     text.textContent = `How was ${name}?`;
     const dismiss = button("×", "vote-close", close);
     dismiss.setAttribute("aria-label", "Not now");
+    // Reasons by the item's form (a creature that did not move, a building
+    // floating): one to three, then Send. Picking keeps the bar open longer.
     const showReasons = () => {
-      text.textContent = "What was wrong?";
-      bar.replaceChildren(text, ...DOWN_REASONS.map((r) => button(REASON_LABEL[r], "vote-reason", () => void send(false, r))), dismiss);
+      clearTimeout(this.voteTimer);
+      this.voteTimer = window.setTimeout(close, 60_000);
+      const picked: DownReason[] = [];
+      text.textContent = `What was wrong? Pick up to ${MAX_REASONS}`;
+      const hint = document.createElement("span");
+      hint.className = "vote-hint";
+      hint.setAttribute("aria-live", "polite");
+      const sendButton = button("Send", "vote-send", () => {
+        if (picked.length) void send(false, [...picked]);
+      });
+      const grid = document.createElement("div");
+      grid.className = "vote-reasons";
+      const choices = reasonsFor(form).map((r) => {
+        const b = button(REASON_LABEL[r], "vote-reason", () => {
+          const at = picked.indexOf(r);
+          if (at >= 0) picked.splice(at, 1);
+          else if (picked.length < MAX_REASONS) picked.push(r);
+          else {
+            hint.textContent = `${MAX_REASONS} at most: tap one to unpick it`;
+            return;
+          }
+          refresh();
+        });
+        b.dataset.reason = r;
+        return b;
+      });
+      const refresh = () => {
+        for (const b of choices) b.setAttribute("aria-pressed", String(picked.includes(b.dataset.reason as DownReason)));
+        sendButton.disabled = picked.length === 0;
+        sendButton.textContent = picked.length ? `Send (${picked.length})` : "Send";
+        hint.textContent = "";
+      };
+      grid.replaceChildren(...choices);
+      refresh();
+      bar.replaceChildren(text, dismiss, grid, hint, sendButton);
+      choices[0]?.focus({ preventScroll: true });
     };
     bar.replaceChildren(
       text,

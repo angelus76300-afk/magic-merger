@@ -1,6 +1,6 @@
 import { FIRST_PROGRAM_VERSION, type SpellProgram } from "../shared/spellcode";
 import { TIERS } from "../shared/tiers";
-import { ACTIVE_DAYS, REASON_PROMPT, REWRITE_COOLDOWN_MS, isReason, type Tally } from "../shared/votes";
+import { ACTIVE_DAYS, REASON_PROMPT, REWRITE_COOLDOWN_MS, storedReasons, type Tally } from "../shared/votes";
 import type { LibraryExample } from "./prompts";
 
 // Every version of every program (3.3). The `spells` table still holds the
@@ -144,16 +144,19 @@ export async function tally(db: D1Database, pid: number): Promise<Tally> {
   return { up: row?.up ?? 0, down: row?.down ?? 0 };
 }
 
-// What players said about a version, one line per reason, for the rewrite prompt.
+// What players said about a version, one line per reason, for the rewrite
+// prompt. A vote may carry up to three reasons ("still,size"), each counted.
 export async function downReasons(db: D1Database, pid: number): Promise<string[]> {
   const rows = await db
-    .prepare("SELECT reason, COUNT(*) AS n FROM votes WHERE pid = ? AND up = 0 GROUP BY reason ORDER BY n DESC")
+    .prepare("SELECT reason, COUNT(*) AS n FROM votes WHERE pid = ? AND up = 0 GROUP BY reason")
     .bind(pid)
     .all<{ reason: string | null; n: number }>();
-  return rows.results.map((r) => {
-    const why = isReason(r.reason) ? REASON_PROMPT[r.reason] : "they did not like it";
-    return `${r.n} ${r.n === 1 ? "player" : "players"} voted it down: ${why}`;
-  });
+  const counts = new Map<string, number>();
+  for (const r of rows.results) {
+    const known = storedReasons(r.reason);
+    for (const why of known.length ? known.map((k) => REASON_PROMPT[k]) : ["they did not like it"]) counts.set(why, (counts.get(why) ?? 0) + r.n);
+  }
+  return [...counts].sort((a, b) => b[1] - a[1]).map(([why, n]) => `${n} ${n === 1 ? "player" : "players"} voted it down: ${why}`);
 }
 
 export async function recentRewrite(db: D1Database, key: string, now = Date.now()): Promise<boolean> {
