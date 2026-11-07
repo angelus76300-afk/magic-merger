@@ -59,6 +59,8 @@ export interface SpellRequest {
   effort?: string;
   // 4.2: this page understands "still being written" (writing below).
   ahead?: boolean;
+  // Admin only: asked by a session (scripts/rewrite-one.mjs), held to SESSION_REWRITES_PER_DAY.
+  session?: boolean;
 }
 
 export interface SpellResponse {

@@ -1,13 +1,14 @@
 {
   "permissions": {
     "allow": [
+      "Bash(node scripts/rewrite-one.mjs *)",
       "mcp__claude-code-remote__get_session",
       "mcp__claude-code-remote__list_sessions",
       "mcp__claude-code-remote__list_events",
       "mcp__claude-code-remote__create_session",
       "mcp__claude-code-remote__send_message"
     ],
-    "deny": ["Edit(/.claude/hooks/session-guard.mjs)"]
+    "deny": ["Edit(/scripts/rewrite-one.mjs)", "Edit(/.claude/hooks/session-guard.mjs)"]
   },
   "hooks": {
     "PreToolUse": [
