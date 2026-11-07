@@ -19,7 +19,8 @@ export const FORMS_PAGE = 60;
 
 // A key asked again by name after its rewrite for its kind: kept out (its
 // test run failed it, or the judge), or used and found wrong since (the
-// owner's Serpent raised a shield, 7 November). Only while its live program
+// owner's Serpent raised a shield, 7 November; startRefresh asks a reason
+// for that one). Only while its live program
 // is still the one that verdict left (the kept one, or the one it put live),
 // nothing was asked for it since, and it was written for its kind once only:
 // one more time, never a third (the review of #63: a retry's rewrite is older

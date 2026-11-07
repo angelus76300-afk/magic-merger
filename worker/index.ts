@@ -1523,10 +1523,11 @@ async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; li
   if (byForm && asked?.length) {
     const more = await db.prepare(AGAIN_BY_FORM_SQL).bind(JSON.stringify(asked)).all<{ key: string; pid: number; reason: string; replaced: number }>();
     for (const r of more.results) {
-      if (rows.results.some((o) => o.key === r.key)) continue;
+      const asker = why(r.key);
+      // A program its rewrite put live is written again only for a reason given.
+      if (rows.results.some((o) => o.key === r.key) || (r.replaced && !asker)) continue;
       rows.results.push({ key: r.key, pid: r.pid });
       const reasons = r.replaced ? [] : [`its first rewrite for its kind was not used: ${r.reason}`];
-      const asker = why(r.key);
       if (asker) reasons.push(asker);
       again.set(r.key, reasons);
     }
