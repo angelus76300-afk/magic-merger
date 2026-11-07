@@ -1,10 +1,13 @@
 import { tell } from "./kin";
-import { populate } from "./creatures";
+import { kindOf, populate, type Creature } from "./creatures";
 import { FrameStats } from "./hud";
 import { Runtime, type CastRequest, type ErrorReporter } from "./runtime";
 import { loadWorld, saveWorld, type SavedWorld } from "./save";
 import { SpellSound } from "./sound";
 import { CAST_PRIORITY_SECONDS, castOwns, listenerAt } from "./soundplace";
+import { CALLS, CALL_CELLS, CallClock, HOWLERS, IDLE_PER_SECOND, sampleBeds } from "./ambience";
+import { daylight } from "./daylight";
+import { weatherAt } from "./voxel/sky";
 import { stepWorld } from "./tick";
 import { VoxelView } from "./voxel/view";
 import { GRAPHICS } from "./voxel/graphics";
@@ -231,11 +234,57 @@ export class Engine {
   readonly pacer = new FramePacer(GRAPHICS.smooth, performance.now());
 
   private lastCast: { x: number; y: number; at: number } | null = null;
+  private bedsAt = 0;
+  private callsAt = 0;
+  private callClock = new CallClock();
+  // Creatures in earshot at the last look, with their health, for calls.
+  private earshot = new Map<number, number>();
+
+  // Creatures call when hurt or when they come into view, rarely idle; at
+  // most one call a look, through the sound budget, placed where they are.
+  private calls(seconds: number, x: number, y: number, r: number): void {
+    const t = performance.now() / 1000;
+    const night = daylight(this.world.time).night > 0.5;
+    const seen = new Map<number, number>();
+    let best: { c: Creature; voice: string; species: string; weight: number } | null = null;
+    for (const c of this.world.creatures) {
+      if (c.dead || Math.abs(c.x - x) > r || Math.abs(c.y - y) > r || Math.hypot(c.x - x, c.y - y) > r) continue;
+      seen.set(c.id, c.hp);
+      const plan = kindOf(c).body.plan;
+      const call = CALLS[plan];
+      if (!call) continue;
+      const voice = plan === "four legs" && HOWLERS.test(c.kind) && night ? "howl" : call.voice;
+      const was = this.earshot.get(c.id);
+      const weight = was !== undefined && c.hp < was - 1 ? 3 : was === undefined && this.earshot.size ? 2 : Math.random() < IDLE_PER_SECOND * seconds ? 1 : 0;
+      if (!weight || (best && best.weight >= weight)) continue;
+      if (!this.callClock.may(c.id, c.kind, voice, t)) continue;
+      best = { c, voice, species: c.kind, weight };
+    }
+    this.earshot = seen;
+    if (!best) return;
+    this.callClock.called(best.c.id, best.species, t);
+    this.sound.play(best.voice, 0.5, { x: best.c.x, y: best.c.y });
+  }
 
   private handleEvents(): void {
     const o = this.view.orbit;
-    this.sound.listener = listenerAt(o.tx, o.ty, o.visibleRadius(), o.theta);
+    const ear = listenerAt(o.tx, o.ty, o.visibleRadius(), o.theta);
+    this.sound.listener = ear;
     const now = performance.now();
+    // The island's beds, 4 times a second, and creatures' calls, twice (4.8).
+    if (now - this.bedsAt > 250) {
+      this.bedsAt = now;
+      this.sound.ambient(
+        sampleBeds(this.world, ear.x, ear.y, ear.ref, this.world.time, (cell) => {
+          const w = weatherAt(this.world, this.world.time, cell);
+          return w.kind === "rain" ? w.amount : 0;
+        }),
+      );
+    }
+    if (now - this.callsAt > 500) {
+      this.calls((now - this.callsAt) / 1000, ear.x, ear.y, Math.min(ear.ref, CALL_CELLS));
+      this.callsAt = now;
+    }
     // Back from a hidden tab: what piled up is not played all at once.
     const stale = this.sound.wasHidden();
     const cast = this.lastCast && castOwns((now - this.lastCast.at) / 1000, this.runtime.busy()) ? this.lastCast : null;

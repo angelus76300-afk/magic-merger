@@ -4,6 +4,7 @@
 // fades, dulls and pans with where it is from the camera (soundplace.ts),
 // and a budget keeps a busy island from turning into noise.
 
+import { BEDS, chooseBeds, type Bed, type BedLevels } from "./ambience";
 import { SoundBudget, ROUTINE_LEVEL, ROUTINE_PITCH, UNPLACED, place, routineHeard, type Ask, type Listener, type Placement, type Playing } from "./soundplace";
 
 const MUTE_KEY = "magic-merger.muted";
@@ -21,6 +22,8 @@ export interface SoundCounts {
   audioNodes: number;
   merged: number;
   dropped: number;
+  // Ambience beds heard now (item 3).
+  beds: number;
 }
 
 // Where a sound is (in cells), whether it is routine work (only near the
@@ -46,6 +49,7 @@ export class SpellSound {
   muted = readMuted();
   // The ear, set by the engine from the camera before each batch of events.
   listener: Listener | null = null;
+  private ambience: Ambience | null = null;
 
   constructor() {
     if (typeof window === "undefined") return;
@@ -98,13 +102,32 @@ export class SpellSound {
     return this.ctx;
   }
 
+  // The island's beds (item 3), from ambience.ts's levels, a few times a second.
+  ambient(levels: BedLevels): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.out) return;
+    if (this.muted || ctx.state !== "running") {
+      this.ambience?.stop();
+      this.ambience = null;
+      return;
+    }
+    this.ambience ??= new Ambience(ctx, this.out);
+    this.ambience.set(levels, ctx.currentTime);
+  }
+
   counts(): SoundCounts {
     const now = this.ctx?.currentTime ?? 0;
     this.live = this.live.filter((l) => l.slot.ends > now);
     this.budget.sweep(now);
     const s = this.budget.stats;
     // Voices as the budget counts them; nodes include the ones still fading out.
-    return { voices: this.budget.playing.length, audioNodes: this.live.reduce((n, l) => n + l.nodes, 0), merged: s.merged, dropped: s.cooled + s.far + s.full };
+    return {
+      voices: this.budget.playing.length,
+      audioNodes: this.live.reduce((n, l) => n + l.nodes, 0) + (this.ambience?.nodes() ?? 0),
+      merged: s.merged,
+      dropped: s.cooled + s.far + s.full,
+      beds: this.ambience?.heard() ?? 0,
+    };
   }
 
   play(name: string, size: number, at: SoundAt = {}): void {
@@ -146,10 +169,310 @@ export class SpellSound {
     const pitch = at.routine ? 1 + (Math.random() * 2 - 1) * ROUTINE_PITCH : 1;
     const seconds = VOICES[voice](this.noise)(counting(ctx, counter), bus, now, s, pitch);
     const slot = this.budget.start(voice, level, now, seconds, ask);
+    // The island's beds give way to what happens (item 3).
+    if (!at.routine) this.ambience?.duck(now);
     this.live.push({ slot, bus, nodes: counter.nodes, base });
     // The way is let go once the voice has ended.
     window.setTimeout(() => pan.disconnect(), (seconds + 0.5) * 1000);
   }
+}
+
+// The island's beds (4.8, item 3). Each bed is made when it is first heard
+// and let go after 2 s of silence, for battery and nodes. Levels rise over
+// about 0.6 s and fall over 1.5 s, so a pan of the camera is smooth. The
+// beds sit under every other sound and duck for 1.5 s under each one. Bands
+// stay above 300 Hz, which phone speakers barely play.
+const AMBIENCE_LEVEL = 0.35;
+const DUCKED = 0.4;
+const DUCK_SECONDS = 1.5;
+const RISE = 0.2;
+const FALL = 0.5;
+const IDLE_SECONDS = 2;
+// Phone speakers are loudest and most tiring up high: leaves and rain 5 dB down.
+const BED_GAIN: Record<Bed, number> = { surf: 1, leaves: 0.56, fire: 1, lava: 1, edge: 0.9, rain: 0.56, birds: 1, crickets: 0.5 };
+
+interface BedNodes {
+  level: GainNode;
+  stop: (at: number) => void;
+  // Called each update while heard, for beds made of events (pops, chirps).
+  tick?: (now: number, level: number) => void;
+  nodes: number;
+  silentSince: number;
+}
+
+class Ambience {
+  private bus: GainNode;
+  private beds = new Map<Bed, BedNodes>();
+  private heardBeds: Bed[] = [];
+  private loop: AudioBuffer;
+  private duckUntil = 0;
+  private startedAt: number;
+
+  constructor(
+    private ctx: AudioContext,
+    out: AudioNode,
+  ) {
+    this.bus = ctx.createGain();
+    // A 2 s fade in after the first tap.
+    this.startedAt = ctx.currentTime;
+    this.bus.gain.setValueAtTime(0.0001, ctx.currentTime);
+    this.bus.gain.exponentialRampToValueAtTime(AMBIENCE_LEVEL, ctx.currentTime + 2);
+    this.bus.connect(out);
+    // 5 s of noise: short loops repeat audibly.
+    this.loop = noiseOf(ctx, 5);
+  }
+
+  duck(now: number): void {
+    if (now < this.startedAt + 2) return;
+    this.duckUntil = now + DUCK_SECONDS;
+    this.bus.gain.setTargetAtTime(AMBIENCE_LEVEL * DUCKED, now, 0.05);
+  }
+
+  heard(): number {
+    return [...this.beds.values()].filter((b) => b.silentSince === Infinity).length;
+  }
+
+  nodes(): number {
+    let n = 1;
+    for (const b of this.beds.values()) n += b.nodes;
+    return n;
+  }
+
+  set(raw: BedLevels, now: number): void {
+    const chosen = chooseBeds(raw, this.heardBeds);
+    this.heardBeds = chosen.heard;
+    if (this.duckUntil && now >= this.duckUntil) {
+      this.duckUntil = 0;
+      this.bus.gain.setTargetAtTime(AMBIENCE_LEVEL, now, 0.3);
+    }
+    for (const bed of BEDS) {
+      const level = chosen.levels[bed] * BED_GAIN[bed];
+      let b = this.beds.get(bed);
+      if (level > 0.02) {
+        if (!b) {
+          b = this.make(bed, now);
+          this.beds.set(bed, b);
+        }
+        b.silentSince = Infinity;
+        b.level.gain.setTargetAtTime(level, now, RISE);
+        b.tick?.(now, level);
+      } else if (b) {
+        if (b.silentSince === Infinity) {
+          b.silentSince = now;
+          b.level.gain.setTargetAtTime(0.0001, now, FALL);
+        } else if (now - b.silentSince > IDLE_SECONDS + 3 * FALL) {
+          b.stop(now);
+          this.beds.delete(bed);
+        }
+      }
+    }
+  }
+
+  stop(): void {
+    const now = this.ctx.currentTime;
+    this.bus.gain.setTargetAtTime(0.0001, now, 0.1);
+    for (const b of this.beds.values()) b.stop(now + 0.5);
+    this.beds.clear();
+    window.setTimeout(() => this.bus.disconnect(), 800);
+  }
+
+  private make(bed: Bed, now: number): BedNodes {
+    const ctx = this.ctx;
+    const level = ctx.createGain();
+    level.gain.value = 0.0001;
+    level.connect(this.bus);
+    const made = BED_MAKERS[bed](ctx, this.loop, level, now);
+    return { level, stop: made.stop, tick: made.tick, nodes: made.nodes + 1, silentSince: Infinity };
+  }
+}
+
+export type BedMaker = (
+  ctx: AudioContext,
+  loop: AudioBuffer,
+  out: AudioNode,
+  now: number,
+) => { stop: (at: number) => void; tick?: BedNodes["tick"]; nodes: number };
+
+// A filtered noise loop with a slow swell: the shape of surf, wind and rain.
+function washBed(filterType: BiquadFilterType, freq: number, q: number, swellHz: number, swell: number, gain = 1): BedMaker {
+  return (ctx, loop, out, now) => {
+    const src = ctx.createBufferSource();
+    src.buffer = loop;
+    src.loop = true;
+    const filter = ctx.createBiquadFilter();
+    filter.type = filterType;
+    filter.frequency.value = freq;
+    filter.Q.value = q;
+    const wobble = ctx.createGain();
+    wobble.gain.value = (1 - swell) * gain;
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = swellHz * (0.8 + 0.4 * Math.random());
+    const depth = ctx.createGain();
+    depth.gain.value = swell * gain;
+    lfo.connect(depth).connect(wobble.gain);
+    src.connect(filter).connect(wobble).connect(out);
+    src.start(now, Math.random() * loop.duration);
+    lfo.start(now);
+    return {
+      stop: (at) => {
+        src.stop(at);
+        lfo.stop(at);
+      },
+      nodes: 5,
+    };
+  };
+}
+
+// Short events on one source and one gain, made a little ahead each update:
+// fire's pops, lava's bubbles.
+function popBed(
+  make: (ctx: AudioContext, loop: AudioBuffer, gain: GainNode) => { src: AudioScheduledSourceNode; nodes: number; pop: (at: number) => void },
+  perSecondAtFull: number,
+): BedMaker {
+  return (ctx, loop, out, now) => {
+    const gain = ctx.createGain();
+    gain.gain.value = 0.0001;
+    gain.connect(out);
+    const m = make(ctx, loop, gain);
+    m.src.start(now);
+    let until = now;
+    return {
+      stop: (at) => m.src.stop(at),
+      tick: (t, level) => {
+        // Fill the next 0.3 s with events at a rate that follows the level.
+        const end = t + 0.3;
+        const rate = perSecondAtFull * Math.max(0.2, level);
+        while (until < end) {
+          until = Math.max(until, t) + (0.3 + Math.random()) / rate;
+          if (until < end + 0.3) m.pop(until);
+        }
+      },
+      nodes: m.nodes + 1,
+    };
+  };
+}
+
+// Birds and crickets come in bouts with quiet between: an unbroken chorus is
+// the first thing a player mutes (game designer, 2026-11-07).
+function boutBed(
+  make: (ctx: AudioContext, out: AudioNode, at: number) => number,
+  boutSeconds: [number, number],
+  quietSeconds: [number, number],
+  gapSeconds: [number, number],
+): BedMaker {
+  return (ctx, _loop, out, now) => {
+    let boutEnds = now + rand(boutSeconds);
+    let next = now + 0.5;
+    let made = 0;
+    return {
+      stop: () => {},
+      tick: (t) => {
+        const end = t + 0.3;
+        while (next < end) {
+          if (next > boutEnds) {
+            next = boutEnds + rand(quietSeconds);
+            boutEnds = next + rand(boutSeconds);
+            continue;
+          }
+          make(ctx, out, Math.max(next, t));
+          made++;
+          next += rand(gapSeconds);
+        }
+      },
+      get nodes() {
+        return Math.min(made, 4) * 2;
+      },
+    };
+  };
+}
+
+function rand([a, b]: [number, number]): number {
+  return a + Math.random() * (b - a);
+}
+
+// For the offline checks of scripts/sound-test.ts.
+export function bedMaker(bed: Bed): BedMaker {
+  return BED_MAKERS[bed];
+}
+
+const BED_MAKERS: Record<Bed, BedMaker> = {
+  // Surf: 300 to 1200 Hz, swelling every 6 to 9 s.
+  surf: washBed("bandpass", 650, 0.6, 0.13, 0.6, 0.6),
+  leaves: washBed("bandpass", 2500, 1.2, 0.3, 0.5, 0.6),
+  edge: washBed("bandpass", 420, 0.8, 0.07, 0.5, 0.8),
+  // A high pass lets most of white noise through: held to 0.25.
+  rain: washBed("highpass", 3000, 0.7, 0.05, 0.15, 0.25),
+  fire: popBed((ctx, loop, gain) => {
+    const src = ctx.createBufferSource();
+    src.buffer = loop;
+    src.loop = true;
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.value = 1600;
+    src.connect(filter).connect(gain);
+    return {
+      src,
+      nodes: 2,
+      pop: (at) => {
+        gain.gain.setValueAtTime(0.0001, at);
+        gain.gain.exponentialRampToValueAtTime(1 + Math.random() * 0.6, at + 0.002);
+        gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.04);
+      },
+    };
+  }, 14),
+  // Lava: pitched bubbles at 300 to 900 Hz, not a rumble a phone cannot play.
+  lava: popBed((ctx, _loop, gain) => {
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.connect(gain);
+    return {
+      src: osc,
+      nodes: 1,
+      pop: (at) => {
+        const f = 300 + Math.random() * 600;
+        osc.frequency.setValueAtTime(f, at);
+        osc.frequency.exponentialRampToValueAtTime(f * 1.6, at + 0.08);
+        gain.gain.setValueAtTime(0.0001, at);
+        gain.gain.exponentialRampToValueAtTime(0.35, at + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.1);
+      },
+    };
+  }, 5),
+  birds: boutBed(
+    (ctx, out, at) => VOICES.chirp(null as unknown as AudioBuffer)(ctx, out, at, 0.5, 0.85 + Math.random() * 0.3),
+    [1.5, 2.5],
+    [8, 20],
+    [0.3, 0.6],
+  ),
+  crickets: boutBed(
+    (ctx, out, at) => {
+      // A trill: a 3.8 kHz tone pulsed fast for a short while.
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 3800 + Math.random() * 300;
+      gain.gain.setValueAtTime(0.0001, at);
+      for (let k = 0; k < 6; k++) {
+        const p = at + k * 0.035;
+        gain.gain.setValueAtTime(0.0001, p);
+        gain.gain.exponentialRampToValueAtTime(0.08, p + 0.005);
+        gain.gain.exponentialRampToValueAtTime(0.0001, p + 0.025);
+      }
+      osc.connect(gain).connect(out);
+      osc.start(at);
+      osc.stop(at + 0.25);
+      return 0.25;
+    },
+    [4, 10],
+    [5, 12],
+    [0.5, 0.9],
+  ),
+};
+
+function noiseOf(ctx: BaseAudioContext, seconds: number): AudioBuffer {
+  const buffer = ctx.createBuffer(1, Math.round(ctx.sampleRate * seconds), ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  return buffer;
 }
 
 // Counts the nodes a voice makes, for the HUD.
@@ -230,6 +553,17 @@ const VOICES: Record<string, (noise: AudioBuffer) => Voice> = {
   // Routine work (4.8), heard only near the camera.
   chop: (n) => chop(n),
   clang: () => clang(),
+  // Creature calls (4.8, item 4), by body plan (ambience.ts, CALLS).
+  chirp: () => chirp(),
+  grunt: (n) => grunt(n),
+  howl: () => howl(),
+  roar: (n) => roar(n),
+  squelch: (n) => squelch(n),
+  buzz: () => buzz(),
+  click: (n) => click(n),
+  grind: (n) => grind(n),
+  whisper: (n) => whisper(n),
+  creak: () => creak(),
 };
 
 // Every voice by name, for the offline checks of scripts/sound-test.ts.
@@ -498,6 +832,281 @@ function clang(): Voice {
       osc.stop(t + 0.6);
     }
     return 0.6;
+  };
+}
+
+// A small bird: two or three quick rising whistles.
+function chirp(): Voice {
+  return (ctx, out, t, _size, pitch) => {
+    const notes = 2 + Math.floor(Math.random() * 2);
+    const base = (2600 + Math.random() * 1400) * pitch;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    gain.gain.setValueAtTime(0.0001, t);
+    for (let i = 0; i < notes; i++) {
+      const at = t + i * 0.11;
+      osc.frequency.setValueAtTime(base, at);
+      osc.frequency.exponentialRampToValueAtTime(base * 1.5, at + 0.06);
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.3, at + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.07);
+    }
+    osc.connect(gain).connect(out);
+    osc.start(t);
+    const end = t + notes * 0.11 + 0.05;
+    osc.stop(end);
+    return end - t;
+  };
+}
+
+// A beast on four legs: a short low grunt, voiced and breathy.
+function grunt(noise: AudioBuffer): Voice {
+  return (ctx, out, t, size, pitch) => {
+    const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime((140 - 40 * size) * pitch, t);
+    osc.frequency.exponentialRampToValueAtTime((95 - 25 * size) * pitch, t + 0.3);
+    filter.type = "lowpass";
+    filter.frequency.value = 600 * pitch;
+    envelope(gain, t, 0.03, 0.3, 0.3);
+    osc.connect(filter).connect(gain).connect(out);
+    osc.start(t);
+    osc.stop(t + 0.4);
+    const src = ctx.createBufferSource();
+    src.buffer = noise;
+    const g2 = ctx.createGain();
+    envelope(g2, t, 0.02, 0.25, 0.05);
+    src.connect(g2).connect(out);
+    src.start(t, Math.random());
+    src.stop(t + 0.35);
+    return 0.4;
+  };
+}
+
+// A wolf at night: a long rising then falling tone with a slow vibrato.
+function howl(): Voice {
+  return (ctx, out, t, _size, pitch) => {
+    const osc = ctx.createOscillator();
+    const vib = ctx.createOscillator();
+    const vibGain = ctx.createGain();
+    const gain = ctx.createGain();
+    osc.type = "triangle";
+    const f = (380 + Math.random() * 80) * pitch;
+    osc.frequency.setValueAtTime(f * 0.75, t);
+    osc.frequency.exponentialRampToValueAtTime(f, t + 0.5);
+    osc.frequency.setValueAtTime(f, t + 1.4);
+    osc.frequency.exponentialRampToValueAtTime(f * 0.6, t + 2.2);
+    vib.frequency.value = 5;
+    vibGain.gain.value = f * 0.015;
+    vib.connect(vibGain).connect(osc.frequency);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.14, t + 0.4);
+    gain.gain.setValueAtTime(0.14, t + 1.5);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 2.3);
+    osc.connect(gain).connect(out);
+    osc.start(t);
+    vib.start(t);
+    osc.stop(t + 2.4);
+    vib.stop(t + 2.4);
+    return 2.4;
+  };
+}
+
+// A dragon: a growl of low saw and rough noise, swelling then falling.
+function roar(noise: AudioBuffer): Voice {
+  return (ctx, out, t, size, pitch) => {
+    const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(70 * pitch, t);
+    osc.frequency.linearRampToValueAtTime(95 * pitch, t + 0.5);
+    osc.frequency.exponentialRampToValueAtTime(50 * pitch, t + 1.4);
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(400, t);
+    filter.frequency.linearRampToValueAtTime(1200, t + 0.4);
+    filter.frequency.exponentialRampToValueAtTime(300, t + 1.4);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.3 + 0.1 * size, t + 0.25);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+    osc.connect(filter).connect(gain).connect(out);
+    osc.start(t);
+    osc.stop(t + 1.6);
+    const src = ctx.createBufferSource();
+    src.buffer = noise;
+    src.loop = true;
+    const nf = ctx.createBiquadFilter();
+    nf.type = "bandpass";
+    nf.frequency.value = 700 * pitch;
+    const g2 = ctx.createGain();
+    g2.gain.setValueAtTime(0.0001, t);
+    g2.gain.exponentialRampToValueAtTime(0.2, t + 0.25);
+    g2.gain.exponentialRampToValueAtTime(0.0001, t + 1.4);
+    src.connect(nf).connect(g2).connect(out);
+    src.start(t, Math.random());
+    src.stop(t + 1.6);
+    return 1.6;
+  };
+}
+
+// A slime: a wet low blip, falling fast, with a smack of filtered noise.
+function squelch(noise: AudioBuffer): Voice {
+  return (ctx, out, t, _size, pitch) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(320 * pitch, t);
+    osc.frequency.exponentialRampToValueAtTime(90 * pitch, t + 0.15);
+    envelope(gain, t, 0.005, 0.18, 0.3);
+    osc.connect(gain).connect(out);
+    osc.start(t);
+    osc.stop(t + 0.25);
+    const src = ctx.createBufferSource();
+    src.buffer = noise;
+    const filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = 900;
+    const g2 = ctx.createGain();
+    envelope(g2, t, 0.003, 0.08, 0.15);
+    src.connect(filter).connect(g2).connect(out);
+    src.start(t, Math.random());
+    src.stop(t + 0.15);
+    return 0.25;
+  };
+}
+
+// An insect: a short buzz, a square wave wobbling quickly.
+function buzz(): Voice {
+  return (ctx, out, t, _size, pitch) => {
+    const osc = ctx.createOscillator();
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    osc.type = "square";
+    osc.frequency.value = (210 + Math.random() * 40) * pitch;
+    lfo.frequency.value = 28;
+    lfoGain.gain.value = 18;
+    lfo.connect(lfoGain).connect(osc.frequency);
+    filter.type = "lowpass";
+    filter.frequency.value = 1600;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.08, t + 0.05);
+    gain.gain.setValueAtTime(0.08, t + 0.45);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+    osc.connect(filter).connect(gain).connect(out);
+    osc.start(t);
+    lfo.start(t);
+    osc.stop(t + 0.65);
+    lfo.stop(t + 0.65);
+    return 0.65;
+  };
+}
+
+// A spider: a few dry clicks.
+function click(noise: AudioBuffer): Voice {
+  return (ctx, out, t, _size, pitch) => {
+    const src = ctx.createBufferSource();
+    src.buffer = noise;
+    src.loop = true;
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.value = 3500 * pitch;
+    filter.Q.value = 4;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    const clicks = 3 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < clicks; i++) {
+      const at = t + i * 0.07;
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(2.5, at + 0.002);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.02);
+    }
+    src.connect(filter).connect(gain).connect(out);
+    src.start(t, Math.random());
+    const end = t + clicks * 0.07 + 0.05;
+    src.stop(end);
+    return end - t;
+  };
+}
+
+// A golem: stone grinding on stone, low rough noise rising and falling.
+function grind(noise: AudioBuffer): Voice {
+  return (ctx, out, t, _size, pitch) => {
+    const src = ctx.createBufferSource();
+    src.buffer = noise;
+    src.loop = true;
+    src.playbackRate.value = 0.5;
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.Q.value = 3;
+    filter.frequency.setValueAtTime(180 * pitch, t);
+    filter.frequency.linearRampToValueAtTime(320 * pitch, t + 0.5);
+    filter.frequency.linearRampToValueAtTime(150 * pitch, t + 1);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.9, t + 0.15);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 1);
+    src.connect(filter).connect(gain).connect(out);
+    src.start(t, Math.random());
+    src.stop(t + 1.05);
+    return 1.05;
+  };
+}
+
+// A spirit: a breathy whisper, noise through a narrow sweeping band.
+function whisper(noise: AudioBuffer): Voice {
+  return (ctx, out, t, _size, pitch) => {
+    const src = ctx.createBufferSource();
+    src.buffer = noise;
+    src.loop = true;
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.Q.value = 6;
+    filter.frequency.setValueAtTime(1800 * pitch, t);
+    filter.frequency.exponentialRampToValueAtTime(3200 * pitch, t + 0.4);
+    filter.frequency.exponentialRampToValueAtTime(1400 * pitch, t + 0.9);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.7, t + 0.2);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.9);
+    src.connect(filter).connect(gain).connect(out);
+    src.start(t, Math.random());
+    src.stop(t + 0.95);
+    return 0.95;
+  };
+}
+
+// Tree folk: wood bending, a slow low creak.
+function creak(): Voice {
+  return (ctx, out, t, _size, pitch) => {
+    const osc = ctx.createOscillator();
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(90 * pitch, t);
+    osc.frequency.linearRampToValueAtTime(130 * pitch, t + 0.7);
+    lfo.type = "square";
+    lfo.frequency.value = 22;
+    lfoGain.gain.value = 0.5;
+    const am = ctx.createGain();
+    am.gain.value = 0.5;
+    lfo.connect(lfoGain).connect(am.gain);
+    filter.type = "bandpass";
+    filter.frequency.value = 500;
+    filter.Q.value = 2;
+    envelope(gain, t, 0.08, 0.7, 0.9);
+    osc.connect(am).connect(filter).connect(gain).connect(out);
+    osc.start(t);
+    lfo.start(t);
+    osc.stop(t + 0.85);
+    lfo.stop(t + 0.85);
+    return 0.85;
   };
 }
 
