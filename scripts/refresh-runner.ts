@@ -87,9 +87,9 @@ try {
       let replace = false;
       let reason: string;
       // 4.6: an old program that is not the kind of thing its item is (a Serpent
-      // of stone spheres, a Village that is a charm) fails the same test run;
+      // of stone spheres, a Village that is a charm, a Serpent with a shield) fails the same test run;
       // the judge's score of it then decides nothing.
-      const wrongKind = !!c.form && !!old && (old.problem === "kind" || old.problem === "size");
+      const wrongKind = !!c.form && !!old && (old.problem === "kind" || old.problem === "size" || old.problem === "fit");
       if (!check.ok) reason = `its test run failed (${check.problem}): ${check.detail}`;
       else if (!n) reason = "the judge did not answer";
       else if (wrongKind) {
