@@ -1270,7 +1270,7 @@ function keepOut(world: World): void {
       }
       // Each push wears the ward a little (4.7): a hostile pressing on it is
       // pushed about every tick, so about 3 a second each; raiders crack a
-      // ward, never break it (wards.ts, PRESSURE_FLOOR).
+      // ward, never break it (wards.ts, PRESSURE).
       damageWard(world, ward, 0.1, "creatures");
     }
   }

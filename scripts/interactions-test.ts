@@ -378,8 +378,9 @@ export function interactionChecks(check: Check): void {
     const ward = s.world.wards[0];
     check(
       "ten floods of lava from one spell of the ward's tier crack it and do not break it",
-      !!ward && wardDamage(ward) > 0.3 && !hurt(s),
-      `${ward ? wardDamage(ward).toFixed(2) : "broken"}, hp ${s.person.hp.toFixed(0)}`,
+      // Its own cast's share is at most 80%, the lava's pressure takes none: at least 20% is left.
+      !!ward && wardDamage(ward) > 0.3 && (ward.hp ?? 0) >= 20 - 1e-9 && !hurt(s),
+      `${ward ? `${wardDamage(ward).toFixed(2)} cracked, ${(ward.hp ?? 0).toFixed(0)} hp` : "broken"}, person ${s.person.hp.toFixed(0)}`,
     );
   }
   {

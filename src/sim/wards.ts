@@ -55,6 +55,8 @@ export interface Ward {
   maxHp?: number;
   // What each source (a cast, the land, creatures) has taken from it.
   dealt?: Record<string, number>;
+  // Cracks from pressure, which takes no health (PRESSURE).
+  pressure?: number;
 }
 
 // How hard a tier hits and how much a ward of that tier holds: twice the
@@ -66,11 +68,10 @@ export const TIER_POWER: Record<Tier, number> = { cantrip: 0.5, minor: 1, major:
 // one a tier stronger, do.
 export const ONE_SOURCE = 0.8;
 // What presses on a ward with no cast behind it (lava and fire flowing from
-// the land, creatures pushed out) never takes it below this share of its
+// the land, creatures pushed out) cracks it, up to ONE_SOURCE, and takes no
 // health: the lava a flood spell poured is that spell's doing, and the spell
 // counts once (the playtest of 7 November: one minor flood broke a minor ward,
 // its flowing lava counted as a second source).
-export const PRESSURE_FLOOR = 0.2;
 const PRESSURE = new Set(["land", "creatures"]);
 
 // Damage is in units of a ward of the same power (100 breaks it). Returns
@@ -78,10 +79,14 @@ const PRESSURE = new Set(["land", "creatures"]);
 export function damageWard(world: World, ward: Ward, amount: number, source: string, power = 1): boolean {
   if (!(amount > 0) || !world.wards.includes(ward)) return false;
   ward.dealt ??= {};
+  ward.hit = world.time;
+  if (PRESSURE.has(source)) {
+    ward.pressure = Math.min((ward.maxHp ?? 100) * ONE_SOURCE, (ward.pressure ?? 0) + amount * power);
+    return false;
+  }
   const cap = 100 * ONE_SOURCE * power;
   const before = ward.dealt[source] ?? 0;
-  const floor = PRESSURE.has(source) ? (ward.maxHp ?? 100) * PRESSURE_FLOOR : -Infinity;
-  const take = Math.max(0, Math.min(amount * power, cap - before, (ward.hp ?? 100) - floor));
+  const take = Math.max(0, Math.min(amount * power, cap - before));
   ward.dealt[source] = before + take;
   ward.hp = (ward.hp ?? 100) - take;
   ward.hit = world.time;
@@ -122,7 +127,7 @@ export function breakWard(world: World, ward: Ward): void {
 // How cracked a ward looks, 0 whole to 1 about to break.
 export function wardDamage(ward: Ward): number {
   const max = ward.maxHp ?? 100;
-  return Math.max(0, Math.min(1, 1 - (ward.hp ?? max) / max));
+  return Math.max(0, Math.min(1, Math.max(1 - (ward.hp ?? max) / max, (ward.pressure ?? 0) / max)));
 }
 
 // A point (z in voxels above the ground) inside a ward's dome.
