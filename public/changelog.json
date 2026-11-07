@@ -3,7 +3,7 @@
   "entries": [
     {
       "date": "2026-11-07",
-      "text": "Small fixes: messages no longer cover the tabs on a phone or repeat the same hint three times, new items on the board no longer land on top of each other, the order menu in Craft fits the screen, and the Community tab's favorite spell menu shows the spell you picked on another device."
+      "text": "The island moves more smoothly: on phones that keep up it now draws 60 frames a second instead of 30, and creatures move on every one of those frames. A phone that cannot keep up goes back to 30 on its own."
     },
     {
       "date": "2026-11-07",
@@ -17,6 +17,10 @@
       "date": "2026-11-07",
       "version": "4.6",
       "text": "Every item you discover from today is made as what it is, of seven kinds: a spell, a creature, an object, a building, a settlement, a place or land. A new settlement is a real village with houses, fields and villagers, a new temple or tower stands beside the houses at their size, and a new book stays the size of a book unless it is a giant's. Items found before today will be remade the same way, a few at a time."
+    },
+    {
+      "date": "2026-11-07",
+      "text": "Small fixes: messages no longer cover the tabs on a phone or repeat the same hint three times, new items on the board no longer land on top of each other, the order menu in Craft fits the screen, and the Community tab's favorite spell menu shows the spell you picked on another device."
     },
     {
       "date": "2026-11-05",
