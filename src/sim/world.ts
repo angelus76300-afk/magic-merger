@@ -24,7 +24,10 @@ export const AMBIENT = 15;
 // Moments the view turns into sound and screen effects. The simulation only
 // records them; whoever draws the world decides what to do with them.
 export type WorldEvent =
-  | { kind: "sound"; name: string; size: number }
+  // Where it happened, in cells (4.8): heard nearer or farther, left or
+  // right. Without a place a spell's sound belongs to its cast. `routine`
+  // is everyday work, heard only near the camera.
+  | { kind: "sound"; name: string; size: number; x?: number; y?: number; routine?: boolean }
   | { kind: "shake"; amount: number; seconds: number }
   | { kind: "flash"; color: number; strength: number }
   | { kind: "error"; spell: string; message: string }
