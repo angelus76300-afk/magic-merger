@@ -126,6 +126,8 @@ export interface Mind {
   meal?: boolean;
   // The tick it last walked to or worked at its task (4.3).
   acted?: number;
+  // 4.6 part B: a person made by a merge keeps the item's name ("Blacksmith").
+  title?: string;
 }
 
 export type Task =
@@ -162,6 +164,7 @@ export type Task =
   | "heal"
   | "avoid"
   | "use"
+  | "forge"
   | "custom";
 
 export function newMind(goal: Goal | string): Mind {

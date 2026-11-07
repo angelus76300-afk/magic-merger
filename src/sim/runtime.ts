@@ -21,7 +21,7 @@ import { keyLevel, keyX, keyY, voxelKey } from "./voxelkey";
 import { baseName, type Landmark, type Presence } from "./social";
 import { hexColor, toColor } from "./colors";
 import { DOME_SQUASH, WARD, addWard, ownWard, wardBits, wardHit, warded } from "./wards";
-import { makeBuilding, makeVillage, makeWonder, shapeLand } from "./makers";
+import { makeBuilding, makePerson, makeVillage, makeWonder, shapeLand } from "./makers";
 import { addProp, propBounds, readProp, shadeParts } from "./props";
 
 // Runs spell programs. A program is JavaScript that defines `spell`:
@@ -151,6 +151,8 @@ export class Runtime {
   readonly raised = new Map<string, number[]>();
   // 4.6: how many times each program called w.model (props.ts). Not saved.
   readonly modelCalls = new Map<string, number>();
+  // 4.6 part B: the people each item made with w.person, for its test run.
+  readonly people = new Map<string, Creature[]>();
   // A spell's creature named like one of the island's animals ("wolf") is
   // kept as its own kind ("wolf#<spell>"), so summoning wolves that hunt
   // villagers does not turn the island's wolves against them. Per spell:
@@ -1544,6 +1546,25 @@ export class SpellApi {
       this.rt.raised.set(this.req.key, [...(this.rt.raised.get(this.req.key) ?? []), i, i + 1, i + W, i + W + 1]);
     }
     return made;
+  }
+  // 4.6 part B: a person, as the island's own villagers are: its village's
+  // look, a job, a home with a household, memory, and a calling from the
+  // item's name. {job, calling, title, age}; returns {x, y, job, calling,
+  // village, household, forge, handle} or null when the island is full.
+  person(x: number, y: number, o: Record<string, unknown> = {}) {
+    if (!this.inside(x, y)) return null;
+    const str = (v: unknown) => (typeof v === "string" ? v.toLowerCase().trim() : undefined);
+    const made = makePerson(
+      this.rt.world,
+      x,
+      y,
+      { job: str(o.job), calling: str(o.calling), age: str(o.age), title: typeof o.title === "string" ? o.title : this.req.name },
+      this.seedAt(x, y),
+    );
+    if (!made) return null;
+    this.rt.people.set(this.req.key, [...(this.rt.people.get(this.req.key) ?? []), made.creature]);
+    const { creature, ...rest } = made;
+    return { ...rest, handle: new CreatureHandle(creature, this.rt, this.req.key) };
   }
   // The terrain reshaped: {shape, r, height}.
   land(x: number, y: number, o: Record<string, unknown> | string = {}) {

@@ -871,6 +871,35 @@ The writer's message carries the section of its item's kind, about a hundred wor
 
 `POST /api/admin/forms` asks the small model for every element's kind, sixty names a call (about $0.01 a call), and stores proposals only (`forms`); `GET /api/admin/forms` lists them by kind, with what each live program was written as and how often it is cast, and apart the ones that would turn a spell into an artifact or back. `POST /api/admin/forms-apply` sets the forms the owner approved, by key or all, never over a form a merge set; a flip needs its key and `flip: true`. Rewrites by form then go through the 3.7 refresh (`POST /api/admin/refresh` with `forms: true` and keys, the worst first): at most 20 a call, five by default, inside `REFRESH_BUDGET_USD`, never twice; the grimoire entry is written again for its kind the first time and the old one kept in `forms.entry`; the candidate is tested in Node with its kind, and an old program that fails its kind no longer wins on the judge's score alone (`scripts/refresh-runner.ts`). No `PROGRAM_VERSION` bump.
 
+## Creatures worth creating (4.6, part B)
+
+Asked for: a creature made by a merge acts like what it is ("a serpent slithers, a fox spirit has goals and abilities"), and, first, the owner's change of 7 November: a person (Human, Blacksmith, Necromancer) is a real villager. The created Human was a creature kind of its own, a villager's body with glowing eyes, with no village and no job; the owner loves the island's own villagers and found it "so different".
+
+### People are villagers
+
+`w.person(x, y, {calling, job, title, age})` (`src/sim/makers.ts`, `makePerson`) makes one of the island's own villagers: kind villager, the clothes of the nearest village, a job, a home in that village where it moves in with the household of the nearest villager (its card says who it lives with), and what it did ("came to live in Ashby"). It eats, sleeps, works and is remembered like every villager; its card shows the item's name. A calling is the twist its name gives it (`src/sim/villagers.ts`, saved in three bits of the look):
+
+| Calling     | Looks                   | Does                                                                                                           |
+| ----------- | ----------------------- | -------------------------------------------------------------------------------------------------------------- |
+| necromancer | dark robe, hood, staff  | keeps the night among the graves; raises the dead as thralls bound to its village, three at most, gone at dawn |
+| blacksmith  | apron, hammer           | works the village's smithy (sparks, tools sold for gold); raises one by its home when the village has none     |
+| knight      | armor, sword and shield | guards the village; wards it when an enemy comes near                                                          |
+| mage        | pointed hat, staff      | freezes an enemy; blinks away when hurt                                                                        |
+
+A name with no calling gets a job from its words (a Farmer farms, a Healer is a priest) or one by chance (a Human). Thralls (`creatures.ts`) follow the village's people and never hunt them (`npm test` counts the villagers through a night of them). Who is a person is read from the name (`personName` in `shared/forms.ts`): the last word that names a person or a creature decides (Dragon Rider and Ghost Hunter are people, Witch Cat and Lich creatures), and a rank after a creature names whom it rules (a Vampire Lord and a Goblin King are creatures, a Castle Lord a person).
+
+### Creatures written as living things
+
+The writer's creature section (`worker/prompts.ts`) asks for a creature in five steps: its body (plan, colors, features, radius against a villager, gait), its life (goal, food, when awake, weaknesses), its deeds (one to three abilities, one that fires without a fight), its others (hunts, scares, lures; it flees what hunts it by itself) and its end (lifespan, onDeath). It shows two examples written by hand, the Serpent and the Fox Spirit. A person gets its own section with `w.person` and the Blacksmith. Size: the creature section grew from about 320 to 900 tokens, the person section is about 420; the judge's system prompt grew by about 150.
+
+### The creature probe
+
+A creature's test run follows it for two minutes on the practice island (`creatureProbe` in `src/sim/check.ts`), in place of the five minute test of other artifacts. It fails, and is written once more like any failed trial, when its creatures (or the people it made) never move 3 cells from where they arrived, take up no task and do nothing, never use an ability (night falls a minute in when one has night magic), ignore a prey of theirs set four cells away while hungry, or leave fewer than 70% of the villagers or half of the animals. A person made as a creature kind fails its kind ("a person is one of the island's own villagers"). `npm test` (`scripts/creatures-b-test.ts`) runs the Serpent, the Fox Spirit, the Blacksmith, a Necromancer and a Human through it, and fails a sleeping serpent and the old Human.
+
+### The judge asks
+
+The judge is asked of each item: "does this look and act like a <name>?", and answers yes, partly or no (`like`); it is told that no is a "wrong" and a score of 2 at most. The admin card shows it.
+
 ## Challenges
 
 Hand-made islands with a hazard and a goal (`src/sim/scenarios.ts`, titles in `scenario-list.ts` so the game page does not load the engine to list them). A challenge builds its own world, runs a `tick` every frame (a volcano vent, a rising sea, the sun drying fields) and a `check` twice a second that returns progress text and playing, won or lost. It never touches the player's island: the iframe keeps the sandbox save in memory and restores it on leaving.
