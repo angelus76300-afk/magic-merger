@@ -17,7 +17,7 @@ import { LAND_SHAPES, WONDER_LIST, villageCenters } from "../src/sim/makers";
 import { findVillages } from "../src/sim/kin";
 import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { KEPT_BY_FORM_SQL } from "../worker/forms";
+import { AGAIN_BY_FORM_SQL, requestIntents } from "../worker/forms";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
@@ -371,8 +371,9 @@ export function formChecks(check: Check): void {
   check("a lantern charm ringed by boxes is no village (kind)", village.problem === "kind", `${village.problem}: ${village.detail}`);
 }
 
-// A key asked again by name after its rewrite for its kind kept the old
-// program (production, 7 November: 10 of 16 kept, 9 of the 14 people written as beasts).
+// A key asked again by name after its rewrite for its kind: kept out
+// (production, 7 November: 10 of 16 kept, 9 of the 14 people written as
+// beasts), or used and found wrong since (the owner's Serpent raised a shield).
 // The query runs on every migration, in Node's own SQLite, as D1 would.
 interface Sqlite {
   exec(sql: string): void;
@@ -403,9 +404,10 @@ export function keptByFormChecks(check: Check): void {
   };
   // Sorted at 100; the first rewrites for their kind decided at 200.
   const keyed: [string, number, number, number][] = [
-    // key, live pid, verdict's from_pid, replaced
+    // key, live pid, verdict's from_pid, replaced (a replaced one put 100 + pid live)
     ["astrologer", 5, 5, 0], // kept: asked again
-    ["serpent", 9, 6, 1], // replaced
+    ["serpent", 109, 6, 1], // replaced, its new program live: asked again (the owner's shield)
+    ["village", 13, 13, 1], // replaced, then rolled back by votes: not its program any more
     ["wizard", 7, 7, 0], // kept, but asked again since (pending)
     ["healer", 8, 8, 0], // kept, asked again since and that failed to send
     ["druid", 10, 10, 0], // kept before it was sorted
@@ -417,7 +419,7 @@ export function keptByFormChecks(check: Check): void {
     insert("spells", { key, spec: "{}", model: "m", created_at: 1, pid });
     insert("forms", { key, form: "creature", status: "applied", applied_at: 100, at: 90 });
     insert("refresh_verdicts", {
-      to_pid: 100 + pid,
+      to_pid: replaced && pid > 100 ? pid : 100 + pid,
       key,
       from_pid: from,
       replaced,
@@ -432,13 +434,31 @@ export function keptByFormChecks(check: Check): void {
   insert("rewrites", { key: "warlock", cause: "refresh", at: 150, status: "done" });
   insert("rewrites", { key: "warlock", cause: "refresh", at: 300, status: "done" });
   insert("refresh_verdicts", { to_pid: 212, key: "warlock", from_pid: 12, replaced: 0, reason: "warlock: kept again", at: 400 });
-  const asked = ["astrologer", "serpent", "wizard", "healer", "druid", "warlock"];
-  const got = (db.prepare(KEPT_BY_FORM_SQL).all(JSON.stringify(asked)) as { key: string; pid: number; reason: string }[])
+  const asked = ["astrologer", "serpent", "village", "wizard", "healer", "druid", "warlock"];
+  const got = (db.prepare(AGAIN_BY_FORM_SQL).all(JSON.stringify(asked)) as { key: string; pid: number; reason: string }[])
     .map((r) => `${r.key}:${r.pid}`)
     .sort();
   check(
-    "a kept rewrite by form is asked again by name only, once nothing waits for it and its program is still the kept one, and never a third time",
-    got.join(",") === "astrologer:5,healer:8",
+    "a rewrite by form is asked again by name only, once nothing waits for it and its live program is the one its verdict left, and never a third time",
+    got.join(",") === "astrologer:5,healer:8,serpent:109",
     got.join(","),
+  );
+
+  // A rewrite by form carries the promise read from its new entry: the
+  // candidate is tested against it and it goes live with the program, not
+  // the stored one (the owner's Serpent: "protect" from its old entry).
+  const read = [
+    requestIntents(JSON.stringify({ newIntents: true, intents: ["summon", "nonsense", 3, "heal"] })),
+    requestIntents(JSON.stringify({ intents: ["protect"] })),
+    // A read that failed or said nothing: the stored promise stays.
+    requestIntents(JSON.stringify({ newIntents: true, intents: [] })),
+    requestIntents(JSON.stringify({ newIntents: true, intents: ["nonsense", 7] })),
+    requestIntents("{not json"),
+    requestIntents(null),
+  ];
+  check(
+    "a rewrite by form's own promise is the one its candidate is held to and stores; a request without one, or with an empty one, keeps the stored promise",
+    JSON.stringify(read) === JSON.stringify([["summon", "heal"], null, null, null, null, null]),
+    JSON.stringify(read),
   );
 }
