@@ -649,7 +649,12 @@ export function woodland(world: World, i: number): boolean {
 // jungle, stone where there is little wood or on volcanic ground, timber
 // where the forest is close.
 export function dressSettlements(world: World, biomes: readonly Biome[]): void {
-  for (const s of world.settlements) {
+  for (const s of world.settlements) dressSettlement(world, s, biomes);
+}
+
+// The house style of one village, from its land and what grows round it.
+export function dressSettlement(world: World, s: Settlement, biomes: readonly Biome[]): void {
+  {
     const cx = Math.round(s.x);
     const cy = Math.round(s.y);
     let trees = 0;
@@ -668,6 +673,12 @@ export function dressSettlements(world: World, biomes: readonly Biome[]): void {
     else if (biome === "volcanic" || trees < 25) style = "stone";
     s.style = HOUSE_STYLES.indexOf(style);
   }
+}
+
+// A new village's well, as a fresh island's villages get theirs.
+export function firstWell(world: World, s: Settlement): void {
+  s.level = Math.max(1, s.level);
+  build(world, s, 1);
 }
 
 // What a village has to spend, by the stores of the village nearest to it.
