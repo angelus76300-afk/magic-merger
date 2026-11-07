@@ -38,6 +38,8 @@ jobs:
       MM_URL: ${{ secrets.MM_URL }}
       MM_TOKEN: ${{ secrets.MM_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Through env, never into the shell line (scripts/workflows-test.mjs).
+      LIMIT: ${{ inputs.limit || '30' }}
     steps:
       - uses: actions/checkout@v4
         if: env.MM_URL != '' && env.MM_TOKEN != ''
@@ -56,5 +58,6 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/pw" --no-save --no-package-lock playwright
           "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
           export NODE_PATH="$RUNNER_TEMP/pw/node_modules"
-          node scripts/judge-runner.mjs ${{ inputs.limit || '30' }}
+          case "$LIMIT" in ''|*[!0-9]*) echo "not a number: $LIMIT"; exit 1;; esac
+          node scripts/judge-runner.mjs "$LIMIT"
           node scripts/judge-runner.mjs wonders

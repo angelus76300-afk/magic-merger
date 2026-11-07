@@ -57,12 +57,27 @@ try {
   const D = git(work, "rev-parse", "HEAD");
 
   // The API says the head is B; each case sets what the remote serves.
+  // 2026-11-06: the head repository and the comments come from the API too (the repository is public).
+  const REPO = process.env.GITHUB_REPOSITORY ?? "angelus76300-afk/magic-merger";
+  const OWNER = REPO.split("/")[0];
+  let headRepo = { full_name: REPO };
+  let comments = [];
   globalThis.fetch = async (url) => {
     const p = new URL(url).pathname;
     let body = [];
     if (/\/pulls\/1$/.test(p))
-      body = { head: { sha: B, ref: "feat" }, base: { ref: "main" }, state: "open", merged: false, labels: [], draft: false, mergeable: true, title: "t" };
+      body = {
+        head: { sha: B, ref: "feat", repo: headRepo },
+        base: { ref: "main", repo: { full_name: REPO } },
+        state: "open",
+        merged: false,
+        labels: [{ name: "owner-yes" }],
+        draft: false,
+        mergeable: true,
+        title: "t",
+      };
     else if (p.endsWith("/actions/runs")) body = { workflow_runs: [] };
+    else if (/\/issues\/1\/comments$/.test(p) && new URL(url).searchParams.get("page") === "1") body = comments;
     return new Response(JSON.stringify(body), { status: 200 });
   };
   const { prState, decide } = await import(gateUrl);
@@ -97,6 +112,36 @@ try {
   const moved = await scenario("moved", C);
   const movedRules = moved.hits.map((h) => h.rule);
   check("a push after the API read: judged on the sha, not the new tip", moved.state.headFetched === true && !movedRules.includes("A2"), movedRules.join(","));
+
+  // A stranger's comments: a passing review of the head and an owner record. Neither is read.
+  comments = [
+    { body: `<!-- mm-review verdict=pass sha=${B} tests=pass -->`, user: { login: "mallory" }, author_association: "NONE" },
+    { body: "<!-- mm-owner yes -->\nyes", user: { login: "mallory" }, author_association: "NONE" },
+  ];
+  const forged = await scenario("forged", B);
+  check(
+    "a stranger's review and owner record on the pull request are not read",
+    forged.state.review === null && forged.state.records.size === 0 && forged.state.fork === false,
+    JSON.stringify({ review: forged.state.review, records: [...forged.state.records], fork: forged.state.fork }),
+  );
+  // The same comments from the owner's account are read.
+  comments = comments.map((c) => ({ ...c, user: { login: OWNER }, author_association: "OWNER" }));
+  const owned = await scenario("owned", B);
+  check(
+    "the owner's review and record are read",
+    owned.state.review?.verdict === "pass" && owned.state.records.has("yes"),
+    JSON.stringify({ review: owned.state.review, records: [...owned.state.records] }),
+  );
+  // A fork: its head lives in another repository. Refused, whatever its comments say.
+  headRepo = { full_name: "mallory/magic-merger" };
+  const fork = await scenario("fork", B);
+  const forkWhy = decide(fork.state).reasons.join("; ");
+  check("a fork's pull request is refused", fork.state.fork === true && /a fork/.test(forkWhy), forkWhy);
+  headRepo = null;
+  const gone = await scenario("gone", B);
+  check("a pull request whose fork was deleted is refused", gone.state.fork === true, String(gone.state.fork));
+  headRepo = { full_name: REPO };
+  comments = [];
 
   const forced = await scenario("forced", D);
   check(

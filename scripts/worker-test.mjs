@@ -680,7 +680,17 @@ const fresh = () => ALL[pairs++];
   const pull = (number, state, merged, body = `Closes #${number === 7 ? 1 : 0}`) => ({
     event: "cross-referenced",
     created_at: now,
-    source: { issue: { number, html_url: `https://github.com/${REPO}/pull/${number}`, state, body, pull_request: { merged_at: merged ? now : null } } },
+    source: {
+      issue: {
+        number,
+        html_url: `https://github.com/${REPO}/pull/${number}`,
+        state,
+        body,
+        user: { login: REPO.split("/")[0] },
+        author_association: "OWNER",
+        pull_request: { merged_at: merged ? now : null },
+      },
+    },
   });
   gh.timeline[1] = [{ event: "labeled" }, pull(7, "open", false)];
   gh.issues[1].state = "closed";
@@ -1509,15 +1519,25 @@ console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at st
   await api("/api/admin/feedback", { admin: true, body: { id: own, action: "send", brief: "The moon waxes and wanes." } });
   const n = gh.issues.length;
   const at = new Date(Date.now() + 1000).toISOString();
-  const ref = (number, body) => ({
+  const ref = (number, body, by = { user: { login: REPO.split("/")[0] }, author_association: "OWNER" }) => ({
     event: "cross-referenced",
     created_at: at,
-    source: { issue: { number, html_url: `https://github.com/${REPO}/pull/${number}`, state: "open", body, pull_request: { merged_at: null } } },
+    source: { issue: { number, html_url: `https://github.com/${REPO}/pull/${number}`, state: "open", body, ...by, pull_request: { merged_at: null } } },
   });
   gh.timeline[n] = [ref(40, `Unrelated tidy up, see #${n} for context.`), ref(41, `Also touches ${REPO}#${n}.`)];
   await api("/api/admin/feedback-sync", { admin: true, body: {} });
   const mention = (await api("/api/feedback", { admin: true })).data.suggestions.find((x) => x.id === own);
   check("L8: a pull request that only mentions the issue is not the idea's", mention.status === "sent" && !mention.prUrl, JSON.stringify(mention));
+  // The repository is public (2026-11-06): a stranger's pull request, a fork's, is listed under this
+  // repository too. Saying "Fixes #n" does not make it the idea's, nor move the idea to review.
+  gh.timeline[n].push(
+    ref(43, `Fixes #${n}`, { user: { login: "mallory" }, author_association: "NONE" }),
+    ref(44, `Fixes #${n}`, { user: { login: "mallory" }, author_association: "OWNER" }),
+    ref(45, `Fixes #${n}`, { user: { login: REPO.split("/")[0] }, author_association: "CONTRIBUTOR" }),
+  );
+  await api("/api/admin/feedback-sync", { admin: true, body: {} });
+  const strangers = (await api("/api/feedback", { admin: true })).data.suggestions.find((x) => x.id === own);
+  check("a stranger's pull request that says Fixes #n does not move the idea", strangers.status === "sent" && !strangers.prUrl, JSON.stringify(strangers));
   gh.timeline[n].push(ref(42, `Moon phases.\n\nFixes #${n}`));
   await api("/api/admin/feedback-sync", { admin: true, body: {} });
   const linked = (await api("/api/feedback", { admin: true })).data.suggestions.find((x) => x.id === own);

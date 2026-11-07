@@ -12,6 +12,11 @@
 # checked by the Deploy workflow, which calls this one. A draft or a docs only
 # change runs the light steps and skips test:worker. A newer push cancels the
 # run it replaces.
+#
+# 2026-11-06, the repository is public: this workflow runs a pull request's own
+# code, a fork's included once the owner approves the run, so it names no
+# secret and its token only reads (scripts/workflows-test.mjs fails if a job
+# here gains a secret without the same-repository guard).
 name: CI
 on:
   pull_request:
