@@ -1369,7 +1369,7 @@ function geysers(world: World, w: Wonder): void {
     // An eruption: three seconds of water and steam.
     w.state = 3;
     w.t = 3;
-    world.emit({ kind: "sound", name: "whoosh", size: 0.4 });
+    world.emit({ kind: "sound", name: "whoosh", size: 0.4, x: w.x + 0.5, y: w.y + 0.5 });
     erupt(world, w, true);
   } else {
     w.state = 0;
@@ -1583,7 +1583,7 @@ export function wake(world: World, w: Wonder, spawn: Spawn): void {
   d.homeY = w.y;
   w.state = 1;
   w.t = 60;
-  world.emit({ kind: "sound", name: "rumble", size: 0.8 });
+  world.emit({ kind: "sound", name: "rumble", size: 0.8, x: w.x + 0.5, y: w.y + 0.5 });
   tell(world, `the dragon of ${w.name} woke up`);
 }
 

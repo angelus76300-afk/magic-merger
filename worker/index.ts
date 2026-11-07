@@ -53,7 +53,7 @@ import { PROGRESS_KINDS, type ProgressPut, type StoredKind } from "../shared/acc
 import { ClaudeOracle, MockOracle, OracleError, parseEffort, type Oracle, type ProgramAnswer, type SpellRequest as OracleSpellRequest } from "./oracle";
 import { PROBED, parseIntents, type Intent } from "../shared/promises";
 import { isForm, kindOfForm, saysGiant, type Form } from "../shared/forms";
-import { AGAIN_BY_FORM_SQL, applyForms, requestIntents, formList, proposeForms } from "./forms";
+import { AGAIN_BY_FORM_SQL, applyForms, mayAskAgain, requestIntents, formList, proposeForms } from "./forms";
 import { designDue, evolution, liveLibrary, openGaps, recordGap, settleHelper, storeDesign, trialHelpers, withLibrary, type Library } from "./evolve";
 import {
   averageDaily,
@@ -1241,7 +1241,7 @@ function storedVerdict(verdict: { stats?: unknown } & Record<string, unknown>): 
   return JSON.stringify({ ...verdict, stats: { ...kept, cut: 1 } });
 }
 
-const PROBLEMS = ["crash", "nothing", "wiped", "promise", "idle", "size", "kind", "look"] as const;
+const PROBLEMS = ["crash", "nothing", "wiped", "promise", "idle", "size", "kind", "look", "fit"] as const;
 const problemOf = (v: unknown): (typeof PROBLEMS)[number] | null => ((PROBLEMS as readonly unknown[]).includes(v) ? (v as (typeof PROBLEMS)[number]) : null);
 
 // A live program tested again by a browser against the promise its element
@@ -1521,13 +1521,16 @@ async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; li
     return typeof w === "string" && w.trim() ? w.trim().slice(0, 300) : null;
   };
   if (byForm && asked?.length) {
-    const more = await db.prepare(AGAIN_BY_FORM_SQL).bind(JSON.stringify(asked)).all<{ key: string; pid: number; reason: string; replaced: number }>();
+    const more = await db
+      .prepare(AGAIN_BY_FORM_SQL)
+      .bind(JSON.stringify(asked))
+      .all<{ key: string; pid: number; reason: string; replaced: number; n: number }>();
     for (const r of more.results) {
       const asker = why(r.key);
-      // A program its rewrite put live is written again only for a reason given.
-      if (rows.results.some((o) => o.key === r.key) || (r.replaced && !asker)) continue;
+      // A program its rewrite put live, or a third try, only for a reason given.
+      if (rows.results.some((o) => o.key === r.key) || !mayAskAgain(r, asker)) continue;
       rows.results.push({ key: r.key, pid: r.pid });
-      const reasons = r.replaced ? [] : [`its first rewrite for its kind was not used: ${r.reason}`];
+      const reasons = r.replaced ? [] : [`its last rewrite for its kind was not used: ${r.reason}`];
       if (asker) reasons.push(asker);
       again.set(r.key, reasons);
     }

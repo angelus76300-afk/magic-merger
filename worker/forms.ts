@@ -22,16 +22,27 @@ export const FORMS_PAGE = 60;
 // owner's Serpent raised a shield, 7 November; startRefresh asks a reason
 // for that one). Only while its live program
 // is still the one that verdict left (the kept one, or the one it put live),
-// nothing was asked for it since, and it was written for its kind once only:
-// one more time, never a third (the review of #63: a retry's rewrite is older
-// than the verdict it leads to). Bound to a JSON list of keys. Read by
+// nothing was asked for it since, and it was written for its kind fewer than
+// three times (mayAskAgain decides; the review of #63: a retry's rewrite is
+// older than the verdict it leads to). Bound to a JSON list of keys. Read by
 // startRefresh (worker/index.ts).
-export const AGAIN_BY_FORM_SQL = `SELECT s.key, s.pid, v.reason, v.replaced FROM spells s JOIN forms f ON f.key = s.key
+export const AGAIN_BY_FORM_SQL = `SELECT s.key, s.pid, v.reason, v.replaced,
+    (SELECT COUNT(*) FROM rewrites r WHERE r.key = s.key AND r.cause = 'refresh' AND r.at >= f.applied_at AND r.status NOT IN ('failed', 'superseded')) AS n
+  FROM spells s JOIN forms f ON f.key = s.key
   JOIN refresh_verdicts v ON v.key = s.key AND v.at = (SELECT MAX(at) FROM refresh_verdicts WHERE key = s.key)
   WHERE s.key IN (SELECT value FROM json_each(?)) AND f.status = 'applied' AND v.at >= f.applied_at
     AND ((v.replaced = 0 AND v.from_pid = s.pid) OR (v.replaced = 1 AND v.to_pid = s.pid))
     AND NOT EXISTS (SELECT 1 FROM rewrites r WHERE r.key = s.key AND r.cause = 'refresh' AND r.at > v.at AND r.status NOT IN ('failed', 'superseded'))
-    AND (SELECT COUNT(*) FROM rewrites r WHERE r.key = s.key AND r.cause = 'refresh' AND r.at >= f.applied_at AND r.status NOT IN ('failed', 'superseded')) < 2`;
+    AND (SELECT COUNT(*) FROM rewrites r WHERE r.key = s.key AND r.cause = 'refresh' AND r.at >= f.applied_at AND r.status NOT IN ('failed', 'superseded')) < 3`;
+
+// Whether a key AGAIN_BY_FORM_SQL found is written once more. Written for its
+// kind once (n = 1): a kept one is retried, told why it was kept; one put live
+// only for a reason given (`why`). Twice (n = 2): only as a fix with a reason
+// (the owner's Serpent kept a shield after both). Never a fourth time.
+export function mayAskAgain(found: { replaced: number; n: number }, why: string | null): boolean {
+  if (found.n < 2) return !found.replaced || !!why;
+  return found.n < 3 && !!why;
+}
 
 // The promise a rewrite by form was written for, when it was read again from
 // its new entry (`newIntents`): its test run holds the candidate to it
