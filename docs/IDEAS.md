@@ -97,6 +97,7 @@ The long tail of things that do not behave as their name says, found mostly thro
 - **A two minute first session**: merge, discover, cast, see what it did, then let go. M, Claude.
 - **A moderation queue** for reported names, with one tap to rename or hide. S, Claude.
 - **A status line** when Claude is slow or the month's budget is spent, honest and friendly. S, Claude.
+- **The first twenty merges, measured**: replay the first twenty merges a newcomer tends to try from the eight forces (a force with itself, then with its neighbours) against a copy of the recipe book, and count how many give a new item, a known one or a loop, and how many merges until the first castable spell. Why: with no hints allowed (pillar 1), the recipe book's early answers are the only tutorial, and three loops in a row read as "I did it wrong" to a stranger (flow: a frequent failure must cost almost nothing). It gives 5.4 a number and a target before strangers arrive, say 15 new items in 20 merges and a spell within 10. S, read only, no Claude call. Claude, from the `game-design` lenses.
 
 ### Accessibility
 

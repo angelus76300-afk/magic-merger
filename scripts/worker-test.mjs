@@ -32,6 +32,8 @@ let refuseSecret = false;
 let grimoireCalls = 0;
 // 4.5.1: the designer answers "none" while `designNone` is on.
 let designNone = false;
+// #58: every program the stub writes fails to parse while `brokenSpell` is on.
+let brokenSpell = false;
 let designCalls = 0;
 // 4.6: every page of names the library's sort was asked.
 const sortPages = [];
@@ -88,6 +90,7 @@ function stubAnswer(n, system, user) {
         })),
     });
   if (system.startsWith("You write the spells")) {
+    if (brokenSpell) return "const spell = {";
     const code = system.includes("lib.haven(")
       ? "const spell = { *cast(w) { lib.haven(w, w.x, w.y, w.r); } };"
       : "const spell = { *cast(w) { w.ward(w.x, w.y, w.r, { seconds: 20 }); } };";
@@ -3862,6 +3865,56 @@ const signIn = async (key, count) => {
     "never twice by form, and never more than 20 at once",
     again.queued.length === 0 && capped.queued.length <= 20,
     JSON.stringify({ again, capped: capped.queued.length }),
+  );
+  await reset();
+}
+
+// 34. A session's rewrites are held by the server (#55, #58, docs/DAILY.md "One
+// spell at a time"): scripts/rewrite-one.mjs runs without the owner's prompt, so
+// its turn is taken before any call, a spell that fails to write counts too, the
+// fourth a day is refused before any call, and the owner's card is never refused.
+{
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev();
+  await reset();
+  await db.prepare("DELETE FROM job_runs WHERE job = 'session-rewrite'").run();
+  await liveSpell("Capped Spark");
+  const typo = await api("/api/spell", { admin: true, body: { name: "Caped Spark", regenerate: true, session: true } });
+  const turns = (await db.prepare("SELECT COALESCE(SUM(runs), 0) AS n FROM job_runs WHERE job = 'session-rewrite'").first()).n;
+  check(
+    "a name nobody discovered is refused without taking a session's turn",
+    typo.status === 400 && turns === 0,
+    JSON.stringify({ status: typo.status, turns }),
+  );
+  const asked = [];
+  for (let i = 0; i < 2; i++) asked.push((await api("/api/spell", { admin: true, body: { name: "Capped Spark", regenerate: true, session: true } })).status);
+  check(
+    "a session may rewrite spells in a day",
+    asked.every((st) => st === 200),
+    JSON.stringify(asked),
+  );
+  brokenSpell = true;
+  const s8 = spellCalls;
+  const failedRun = await api("/api/spell", { admin: true, body: { name: "Capped Spark", regenerate: true, session: true } });
+  brokenSpell = false;
+  check(
+    "a rewrite whose program never parses is paid for",
+    failedRun.status >= 500 && spellCalls > s8,
+    JSON.stringify({ status: failedRun.status, calls: spellCalls - s8 }),
+  );
+  const s7 = spellCalls;
+  const fourth = await api("/api/spell", { admin: true, body: { name: "Capped Spark", regenerate: true, session: true } });
+  check(
+    "the fourth rewrite a session asks in a day is refused before any call, the failed one counted",
+    fourth.status === 429 && fourth.data?.detail?.capped === true && spellCalls === s7,
+    JSON.stringify({ status: fourth.status, data: fourth.data, calls: spellCalls - s7 }),
+  );
+  const card = await api("/api/spell", { admin: true, body: { name: "Capped Spark", regenerate: true } });
+  check(
+    "the owner's card still rewrites past the session's three",
+    card.status === 200 && spellCalls === s7 + 1,
+    JSON.stringify({ status: card.status, calls: spellCalls - s7 }),
   );
   await reset();
 }

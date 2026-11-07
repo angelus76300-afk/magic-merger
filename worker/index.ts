@@ -70,6 +70,7 @@ import {
   recentRewrite,
   recordActivity,
   rewriteSpendToday,
+  SESSION_REWRITES_PER_DAY,
   setStatus,
   tally,
   type ProgramOrigin,
@@ -931,6 +932,11 @@ async function handleDescribe(body: DescribeRequest, env: Env, oracle: Oracle, a
 async function handleSpell(body: SpellRequest, env: Env, oracle: Oracle, admin: boolean, ctx: ExecutionContext): Promise<SpellResponse> {
   const regenerate = checkRegenerate(body.regenerate, admin);
   const element = await resolveInput(env.DB, body.name, oracle.mock);
+  // A session's rewrite runs without the owner's prompt: its turn is taken before any call,
+  // so a spell that fails to write still counts (review of #58);
+  // the name is checked first, which costs nothing, so a typo takes no turn. The owner's card is not counted.
+  if (regenerate && body.session === true && !(await takeRun(env.DB, "session-rewrite", dayInZone(Date.now()), SESSION_REWRITES_PER_DAY)))
+    throw new HttpError(429, `${SESSION_REWRITES_PER_DAY} spell rewrites were asked by sessions today; a session may not ask another`, { capped: true });
   const key = elementKey(element.name);
   const tier = tierOf(element);
 
