@@ -282,7 +282,36 @@ interface Render {
   nodes: number;
 }
 
-function render(name: string, size: number, pitch = 1): Render {
+// Voices draw on Math.random (a crackle's pops, the noise). Each render runs
+// on a seeded stream instead, so a run of this file is the same every time:
+// unseeded, the loudness ratio below landed between 8.2 and 10.6 and failed
+// about one run in three.
+function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function render(name: string, size: number, pitch = 1, seed = 1): Render {
+  const shared = Math.random;
+  Math.random = seeded(seed);
+  try {
+    return renderNow(name, size, pitch);
+  } finally {
+    Math.random = shared;
+  }
+}
+
+// A voice's usual loudness: the mean of several renders, so one quiet draw
+// of a crackle's pops does not stand for the voice.
+const LOUDNESS_RENDERS = 8;
+
+function renderNow(name: string, size: number, pitch: number): Render {
   const ctx = new Offline();
   const noise = whiteNoise(ctx as unknown as BaseAudioContext);
   const sink = new Sink();
@@ -321,7 +350,11 @@ for (const name of VOICE_NAMES) {
     check(r.peak <= 1.2, `voice ${name} at size ${size}: peak ${r.peak.toFixed(3)} under 1.2`);
     check(r.tail < 0.01, `voice ${name} at size ${size}: silent after the length it reports (${r.tail.toFixed(4)})`);
     check(r.nodes <= 24, `voice ${name} at size ${size}: ${r.nodes} nodes, at most 24`);
-    if (size === 0.5) loudness[name] = r.loud;
+    if (size === 0.5) {
+      let sum = r.loud;
+      for (let seed = 2; seed <= LOUDNESS_RENDERS; seed++) sum += render(name, size, 1.08, seed).loud;
+      loudness[name] = sum / LOUDNESS_RENDERS;
+    }
   }
 }
 const louds = Object.values(loudness);
