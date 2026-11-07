@@ -165,15 +165,8 @@ export async function recentRewrite(db: D1Database, key: string, now = Date.now(
 }
 
 // Rewrites a session may ask in a day through scripts/rewrite-one.mjs (docs/DAILY.md,
-// "One spell at a time"). Every admin rewrite of the last 24 hours counts, the
-// owner's card included, so the fourth one a session asks is refused whatever
-// the order. The owner's card itself is never refused.
+// "One spell at a time"), counted in job_runs before the call, whatever its answer.
 export const SESSION_REWRITES_PER_DAY = 3;
-
-export async function adminRewritesSince(db: D1Database, since: number): Promise<number> {
-  const row = await db.prepare("SELECT COUNT(*) AS n FROM programs WHERE origin = 'admin' AND created_at >= ?").bind(since).first<{ n: number }>();
-  return row?.n ?? 0;
-}
 
 // Calls that rewrite an existing spell, counted against the daily rewrite budget.
 export const REWRITE_CALLS = ["rewrite", "rewrite-retry", "batch-rewrite"];

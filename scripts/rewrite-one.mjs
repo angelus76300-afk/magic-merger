@@ -4,8 +4,8 @@
 //   node scripts/rewrite-one.mjs "<spell name>" "<why, one line>"     (MM_TOKEN or ADMIN_TOKEN)
 //
 // One name per run, never a list: spells are never rewritten in bulk (ROADMAP, "What the
-// money taught us"). The server refuses a fourth run in 24 hours (worker/programs.ts,
-// SESSION_REWRITES_PER_DAY). It refuses when the month's spend has passed 80% of the budget. The new
+// money taught us"). The server refuses a fourth run in a day, counted before the call
+// (worker/programs.ts, SESSION_REWRITES_PER_DAY). It refuses when the month's spend has passed 80% of the budget. The new
 // program is stored as a trial; the next person who casts it tests it before it goes live,
 // and the live one stays until then. scripts/rewrite-one-test.mjs checks both guards.
 import { pathToFileURL } from "node:url";
