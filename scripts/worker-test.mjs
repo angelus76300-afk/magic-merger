@@ -3530,6 +3530,59 @@ const signIn = async (key, count) => {
   const again = (await db.prepare("SELECT COUNT(*) AS n FROM rewrites WHERE key = 'dim lamp' AND cause = 'evidence'").first()).n;
   check("a program written again by evidence is never the one chosen again", again === 1, `${again} rewrites of Dim Lamp, ${spellCalls - s4} calls that day`);
 
+  // The owner's idea (5 November): a program whose refresh candidate failed
+  // its own test gets one informed retry, told what that candidate's test found.
+  await db.prepare("DELETE FROM job_runs WHERE job = 'evidence'").run();
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('frayed ward', 'Frayed Ward', '🧶', 'spell', 2, 'minor', 'A ward of old thread.', 'protect', ?)",
+    )
+    .bind(now)
+    .run();
+  const wardSpec = JSON.stringify({ version: 4, summary: "Frayed Ward", code: "const spell = { *cast(w) { /* frayed-ward-v1 */ } };" });
+  const ward = Number(
+    (
+      await db
+        .prepare(
+          "INSERT INTO programs (key, spec, model, version, origin, status, created_at, checked) VALUES ('frayed ward', ?, 'claude-haiku-5-5', 4, 'legacy', 'live', ?, ?)",
+        )
+        .bind(wardSpec, now, JSON.stringify({ ok: false, problem: "promise", detail: "It promises protection, but the village burned." }))
+        .run()
+    ).lastInsertRowid,
+  );
+  await db
+    .prepare("INSERT INTO spells (key, spec, model, version, created_at, pid) VALUES ('frayed ward', ?, 'claude-haiku-5-5', 4, ?, ?)")
+    .bind(wardSpec, now, ward)
+    .run();
+  for (let i = 0; i < 80; i++) await db.prepare("INSERT INTO casts (player, pid, at) VALUES (?, ?, ?)").bind(`ward-player-${i}`, ward, now).run();
+  const candidate = Number(
+    (
+      await db
+        .prepare(
+          "INSERT INTO programs (key, spec, model, version, origin, status, parent, created_at, checked) VALUES ('frayed ward', ?, 'claude-haiku-5-5', 6, 'refresh', 'rejected', ?, ?, ?)",
+        )
+        .bind(wardSpec, ward, now, JSON.stringify({ ok: false, problem: "crash", detail: "It crashed: ReferenceError: thread is not defined" }))
+        .run()
+    ).lastInsertRowid,
+  );
+  await db
+    .prepare("INSERT INTO rewrites (key, from_pid, to_pid, cause, at, status) VALUES ('frayed ward', ?, ?, 'refresh', ?, 'done')")
+    .bind(ward, candidate, now - 3 * 86400_000)
+    .run();
+  const s6 = spellCalls;
+  await fire();
+  const informed = await db.prepare("SELECT * FROM rewrites WHERE from_pid = ? AND cause = 'evidence'").bind(ward).first();
+  const told = lastSpell().user;
+  check(
+    "a program whose refresh rewrite failed its own test is written once more, told what that test found",
+    spellCalls - s6 === 1 &&
+      informed?.status === "done" &&
+      told.includes(
+        `an earlier rewrite of it (program ${candidate}) was rejected, because its own test run found: It crashed: ReferenceError: thread is not defined`,
+      ),
+    JSON.stringify({ calls: spellCalls - s6, informed, told: told.slice(-400) }),
+  );
+
   // The review of #45: a verdict whose stats do not fit its 2000 characters
   // was stored cut, not JSON, and a query with json_extract threw on it. It is
   // stored whole now, with the numbers the readers use kept.
