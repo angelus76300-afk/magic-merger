@@ -1,6 +1,6 @@
 import { BufferAttribute, BufferGeometry, Mesh, type Material, type Scene } from "three";
 import { Rng } from "../noise";
-import { C } from "../materials";
+import { C, isBuilding } from "../materials";
 import { HOUSE_STYLES, type Settlement } from "../ecology";
 import type { World } from "../world";
 import { pushBox, type Box } from "./models";
@@ -407,6 +407,16 @@ export class Buildings {
           for (const c of cells) drawn.add(c);
         }
       }
+    // 4.6: a building an item raised away from any village's list (w.building
+    // in the wild) is drawn by the builder too, in the style of the nearest one.
+    for (let i = 0; i < world.n - W - 1; i++) {
+      const k = world.cover[i];
+      if (k === C.HOUSE || !isBuilding(k) || drawn.has(i) || (i % W) + 1 >= W) continue;
+      const cells = [i, i + 1, i + W, i + W + 1];
+      if (!cells.every((c) => world.cover[c] === k && !drawn.has(c))) continue;
+      blocks.push({ i, kind: k, s: nearest(world, i) });
+      for (const c of cells) drawn.add(c);
+    }
     for (let i = 0; i < world.n - W - 1; i++) {
       if (!isHouse(i) || drawn.has(i) || (i % W) + 1 >= W) continue;
       const cells = [i, i + 1, i + W, i + W + 1];

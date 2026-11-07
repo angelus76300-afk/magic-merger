@@ -471,6 +471,8 @@ export class WorldHost {
           code: res.program.code,
           intents: res.program.intents,
           kind: this.store.get(key)?.element.kind,
+          form: res.program.form,
+          giant: res.program.giant,
         });
         const id = res.program.id;
         timeline.add(key, res.name, "test", performance.now() - t0);

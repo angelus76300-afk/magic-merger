@@ -1,5 +1,6 @@
 import { C, F, G, S, isBuilding } from "./materials";
 import { blastWonders } from "./wonders";
+import { blastProps } from "./props";
 import type { World } from "./world";
 import { addGas } from "./cells";
 import { igniteVoxels, stepVoxels } from "./voxels";
@@ -600,6 +601,8 @@ export function explode(world: World, x: number, y: number, r: number, power: nu
   if (world.landmarks.length) world.landmarks = world.landmarks.filter((l) => Math.hypot(l.x - x, l.y - y) > r * 0.6 || shielded(world, l.x, l.y));
   // 4.4.5 part B: a wonder standing above the land falls; a hoard's dragon wakes.
   if (world.wonders.length && !blocked) blastWonders(world, x, y, r, blastSpawn ? blastSpawn(world) : null);
+  // 4.6: the fine models of items (props.ts) go with what stood above the land.
+  if (world.props.length && !blocked) blastProps(world, x, y, r);
   if (world.decor.size) {
     if (!blocked) world.clearVoxels(x, y, r * 0.6);
     igniteVoxels(world, x, y, r * (0.6 + 0.4 * Math.min(1, power)));

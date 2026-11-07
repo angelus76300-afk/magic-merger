@@ -5,7 +5,7 @@
 1. Audience: one player, then (3.4) friends and coworkers by personal invite link. Not public: nothing about the game is listed or open without a link. Browser game, must work well on phones.
 2. Stack: TypeScript and Vite frontend, one Cloudflare Worker serving both the page and `/api`, D1 (SQLite) as the recipe book.
 3. Eight primal forces to start: Fire, Water, Earth, Air, Light, Shadow, Life, Arcane.
-4. Two kinds of items: spells (castable) and artifacts (magical, not castable).
+4. Two kinds of items: spells (castable) and artifacts (magical, not castable). Since 4.6 an artifact is one of six kinds: creature, object, building, settlement, place or land (below).
 5. A merge always makes something. Like Infinite Craft, it may loop back to one of its inputs.
 6. World tab: a sandbox where you cast anywhere and tiny people react. The world persists until reset.
 7. Goal: sandbox discovery, with First Discovery. Objectives later.
@@ -831,6 +831,45 @@ Asked on 4 November from a phone, on a Huge island: too much water, waves that l
 2. **Fewer lakes, no inland seas.** Every hollow below the sea's level filled with sea water, far inland, and every hollow above it with a lake. Now only the largest hollows stay lakes (two on a medium island at the middle of the Water slider, more on bigger, wetter and Lakes islands, `lakesFor`); the others fill to their spill and are land, which rivers cross. The sea is also a little smaller at each position of the Water slider (the middle 16% instead of 20%).
 3. **Fewer cliffs.** Slopes are softened once above the shore (each cell halfway toward the mean of its neighbors), before mesas and plateaus cut their steps, which are their look.
 4. **Waves.** Each one-cell water top heaved by its corners on a wave about seven cells long and glinted by vertex: flashing triangles and dots. The surface now barely heaves (long slow swells) and the waves are drawn per pixel, three sines of the world position on a quarter-cell grid, soft crests and darker troughs that drift: a few operations per water pixel, no geometry, texture or draw call.
+
+## Every item is what it is (4.6, part A)
+
+Asked for: items made as what they are ("just take the serpent or the human"; "a giant book"; "the village spell should actually create a village as the generation does"). Read in the live programs on 5 November: Serpent was twelve stone spheres in a line with a ward, Human a villager with glowing eyes, Village "a palm-sized model of a thatched hamlet" ringed by wooden boxes. The cause was structural: an item was a spell or an artifact, and every artifact was written the same way. Everything is in `shared/forms.ts`, `src/sim/makers.ts`, the size check in `src/sim/check.ts`, the prompts in `worker/prompts.ts` and the sort in `worker/forms.ts`; the schema is `migrations/0018_forms.sql`; `npm test` (`scripts/forms-test.ts`) and section 33 of `npm run test:worker` check it.
+
+### Seven kinds, decided at the merge
+
+Spell, creature, object, building, settlement, place and land. The merge prompt names the seven with examples ("Human + Human = Village, settlement major") and answers one of them; `elements.kind` stays spell or artifact (casting, placing, votes, the five minute test read it) and the new column `elements.form` says which kind of artifact. The grimoire entry is told the kind and its size ("an object is held in a hand; never giant unless its name says so"). Elements merged before 4.6 have no form and are written exactly as before until the owner approves the library's sort; until then the card and the tests guess one from the last word of the name that names a kind (a Dragon Egg is an object, an Egg Dragon a creature).
+
+### The engine's makers
+
+| Kind       | Made by                                                                                                                                                                                                                                                       |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| building   | `w.building(x, y, {job})`: a two by two block of a house or one of the ten buildings with a job, drawn by the seeded builder in its village's style, doing its job for the nearest village                                                                    |
+| settlement | `w.village(x, y, {houses, name})`: the generator's own functions (`buildVillage`, `layOutVillage`, `dressSettlement`): houses round a plaza, a main street, fields, a well, its first buildings and two villagers a house, at least 26 cells from any village |
+| land       | `w.land(x, y, {shape, r, height})`: hill, mountain, volcano (a lava vent that never sets), lake, pond and oasis (kept by a spring), canyon, valley, crater, swamp, mesa, island out of the sea, glacier, dunes, floating island                               |
+| place      | `w.wonder(x, y, kind)`: one of the seventeen built-in wonders where the item stands, its land shaped, its model drawn, what it does stepped, saved with the island (twelve at most)                                                                           |
+| creature   | a kind of its own in `spell.creatures`, spawned, as since 3.5; part B writes them as living things                                                                                                                                                            |
+| object     | a small look and an artifact (`spell.artifacts`); being picked up and carried is 4.7                                                                                                                                                                          |
+
+A program chooses the parameters and adds what is special (the forge's chimney, the temple's spire). Villages and wonders placed on an island made before 4.4 are now saved there too (`save.ts` read them only on islands made by land.ts).
+
+### Fine models
+
+Asked by the owner on the first frames: "make sure the right amount of details is there, like the hot spring; you can add smaller details". What the engine drew looked right (the seeded houses, a wonder's stones); what programs drew in whole-cell voxels did not: a wizard's spire and a lighthouse as flat columns, a gem as four stacked cubes, a lantern as one cube on a post. A voxel is as big as a villager's body. `w.model(x, y, boxes, {name, turn})` (`src/sim/props.ts`, drawn by `src/sim/voxel/props.ts`) takes up to 80 boxes `[x, y, z, width, depth, height, color, "glow"]` in cells and voxels, as small as 0.05, and draws them as the wonders' models are drawn: every prop of the island in one mesh and one for what shines, rebuilt only when one is added or blown away, none of the 20,000 voxels spells share. At most 60 on an island (as many as the landmarks a save keeps), the oldest giving way to a new one, and 4 for one placed item, that item's own oldest giving way (one item calling it 64 times took every other item's look away; the test run fails it), saved with it; a blast of radius 3 or more over one takes it away. It is a look only. The object, building and place sections tell writers to draw with it; the Storm Lantern (a post, an arm, a chain, an iron frame round a lit glass) and the Forge (a chimney in brick courses, the fire's glow at its mouth, an anvil) are the examples. The test run measures a model exactly and counts it as something visible. A building raised away from any village's list is now drawn by the seeded builder too, in the style of the nearest village (it was drawn as plain cubes). This is the part of 4.7 item 4 that items need; wonders written as programs keep theirs for 4.7.
+
+### Sizes, checked
+
+A program written for its kind carries the kind in its stored spec (`form`, and `giant` when its name or entry says it is giant), and its test run measures what it built against the island left alone: new voxels (how many, how far across, how tall above the land), land reshaped, buildings, villages, wonders and its own creatures alive. Two new problems: **kind** (a creature with no creature alive, a building with nothing built, a settlement with no village, land with fewer than 25 cells changed) and **size** (an object over 5 cells across or 5 voxels tall, its pedestal or altar included, or that raises a building, a village or more than 12 cells of land; a creature's own build over 6 by 6; a building over 10 across or 20 tall, or with voxels stacked on its own cells; a settlement over 48 across; a place over 32 across or 60 tall; land over 80 across). Giant multiplies the limits by three; a dragon, a giant or a titan is allowed twice a creature's. A failure is written once more, like any failed trial. A program from before 4.6 carries no kind and is held to nothing new, so no live program's verdict moves. A building, a settlement, a place or land acts through what the engine made of it (a job, villagers at work, a wonder, water and lava running), so its five minute test is the making itself.
+
+`npm test` casts each kind's prompt example through the real test run (all pass), a book eight voxels tall (fails as an object, passes when the item says it is giant), twelve stone spheres as a creature (kind) and a lantern ringed by boxes as a settlement (kind).
+
+### One prompt section per kind
+
+The writer's message carries the section of its item's kind, about a hundred words with one example that passes its own test (Serpent, Storm Lantern, Forge, Village, Healing Spring, Volcano), so the cached system prompt stays the same for every program; the system prompt gained one paragraph on the makers. Cost: about 450 input tokens more per artifact program, $0.0005 on Haiku and $0.002 on Opus at batch price.
+
+### The library sorted again
+
+`POST /api/admin/forms` asks the small model for every element's kind, sixty names a call (about $0.01 a call), and stores proposals only (`forms`); `GET /api/admin/forms` lists them by kind, with what each live program was written as and how often it is cast, and apart the ones that would turn a spell into an artifact or back. `POST /api/admin/forms-apply` sets the forms the owner approved, by key or all, never over a form a merge set; a flip needs its key and `flip: true`. Rewrites by form then go through the 3.7 refresh (`POST /api/admin/refresh` with `forms: true` and keys, the worst first): at most 20 a call, five by default, inside `REFRESH_BUDGET_USD`, never twice; the grimoire entry is written again for its kind the first time and the old one kept in `forms.entry`; the candidate is tested in Node with its kind, and an old program that fails its kind no longer wins on the judge's score alone (`scripts/refresh-runner.ts`). No `PROGRAM_VERSION` bump.
 
 ## Challenges
 
