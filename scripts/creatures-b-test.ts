@@ -193,6 +193,7 @@ export function creatureChecks(check: Check): void {
     );
   }
 
+  const SKY_MAGE = `const spell = { *cast(w) { w.flash("#bfe3ff", 0.2); const p = w.person(w.x, w.y, { calling: "mage", title: "Sky Mage" }); if (p) w.burst(p.x, p.y, { count: 10, colors: ["#bfe3ff"], speed: 1.5, up: 2 }); } };`;
   // The test run's creature probe: the examples live; a Human drawn as a kind, and a creature that stands still, do not.
   const run = (name: string, code: string) => runCheck({ key: `b:${name}:${code.length}`, name, tier: "minor", kind: "artifact", form: "creature", code });
   for (const [name, code] of [
@@ -201,6 +202,9 @@ export function creatureChecks(check: Check): void {
     ["Blacksmith", PERSON_EXAMPLE.code],
     ["Necromancer", NECROMANCER],
     ["Human", HUMAN],
+    // A mage's freeze and blink are the engine's, for a fight the probe never
+    // starts (on the preview, 4 of 5 people written with w.person failed idle).
+    ["Sky Mage", SKY_MAGE],
   ] as const) {
     const r = run(name, code);
     check(`the creature probe: ${name} lives for two minutes`, r.ok, r.detail);
