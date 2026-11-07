@@ -107,7 +107,13 @@ export interface Ruin {
   key: string;
   pass: number;
   until: number;
+  // Tiers between the spell that broke it and the ward: at MERCY_GAP or less
+  // the people it covered are hurt and flee but live.
+  gap: number;
 }
+// The owner's scale, the planner's choice of 7 November: a ward broken two
+// tiers up still saves its people (half a blow of 80 killed them all).
+export const MERCY_GAP = 2;
 // Long enough for the rest of the cast that broke it (a cast lasts under 12
 // seconds, a cosmic one 25): a rain of meteors is one blow, not six.
 export const RUIN_SECONDS = 15;
@@ -117,9 +123,16 @@ export function hpAgainst(ward: Ward, source: string): number {
   const most = ward.maxHp ?? 100;
   return Math.min(most, (ward.hp ?? most) + (ward.dealt?.[source] ?? 0));
 }
-export function addRuin(world: World, ward: Ward, key: string, pass: number): void {
+export function addRuin(world: World, ward: Ward, key: string, pass: number, attacker = 1): void {
   world.ruins = world.ruins.filter((r) => r.until > world.time);
-  world.ruins.push({ x: ward.x, y: ward.y, r: ward.r, key, pass, until: world.time + RUIN_SECONDS });
+  const gap = Math.round(Math.log2(Math.max(1e-6, attacker) / ((ward.maxHp ?? 100) / 100)));
+  world.ruins.push({ x: ward.x, y: ward.y, r: ward.r, key, pass, until: world.time + RUIN_SECONDS, gap });
+}
+// True where this spell broke a ward a moment ago by MERCY_GAP tiers or fewer:
+// its blows on the people there stop short of death.
+export function ruinSpares(world: World, key: string, x: number, y: number): boolean {
+  for (const r of world.ruins) if (r.key === key && r.until > world.time && r.gap <= MERCY_GAP && (x - r.x) ** 2 + (y - r.y) ** 2 <= r.r * r.r) return true;
+  return false;
 }
 // The share of what this spell does at (x, y) that goes through: 1 unless it
 // broke a ward there a moment ago.

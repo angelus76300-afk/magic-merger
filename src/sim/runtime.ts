@@ -32,6 +32,7 @@ import {
   passShare,
   rebuildMask,
   ruinPass,
+  ruinSpares,
   damageWard,
   inDome,
   ownWard,
@@ -702,7 +703,7 @@ export class Runtime {
       if (damageWard(this.world, hit, blow, source, power)) {
         // Broken: it flies on with what passed, or bursts with the glass.
         const pass = passShare(hit, power, hpBefore);
-        addRuin(this.world, hit, hooks?.key ?? "", pass);
+        addRuin(this.world, hit, hooks?.key ?? "", pass, power);
         if (pass > 0) {
           b.vx *= Math.sqrt(pass);
           b.vy *= Math.sqrt(pass);
@@ -738,7 +739,7 @@ export class Runtime {
     const hpBefore = hpAgainst(hit, source);
     if (damageWard(this.world, hit, blow, source, power)) {
       // Broken: the blows held back are dealt, scaled by what passed (ruinPass).
-      addRuin(this.world, hit, hooks.key, passShare(hit, power, hpBefore));
+      addRuin(this.world, hit, hooks.key, passShare(hit, power, hpBefore), power);
       for (const f of glass.replay) this.run(hooks.key, hooks.name, f);
     }
     return true;
@@ -1108,6 +1109,15 @@ export class CreatureHandle {
     return this.raw.data;
   }
   // A ward against harm takes most of a blow meant for someone it protects.
+  // Under a ward this spell broke by two tiers or fewer, a blow that would
+  // kill leaves the person at 1 health, afraid and running (the owner's
+  // scale: a broken shield still saves its people). Not hostile creatures.
+  private spared(blow: number): boolean {
+    const w = this.rt.world;
+    if (!w.ruins.length || hostile(this.raw) || blow < this.raw.hp || !ruinSpares(w, this.spellKey, this.raw.x, this.raw.y)) return false;
+    this.raw.fear = Math.max(this.raw.fear, 8);
+    return true;
+  }
   private underForeignWard(): boolean {
     const w = this.rt.world;
     if (!w.wards.length || hostile(this.raw)) return false;
@@ -1133,7 +1143,8 @@ export class CreatureHandle {
     if (this.underForeignWard()) return;
     const w = this.rt.world;
     const pass = w.ruins.length ? ruinPass(w, this.spellKey, this.raw.x, this.raw.y) : 1;
-    const blow = num(n, 0, 1e6, 0) * (this.shielded() ? 0.15 : 1) * pass;
+    let blow = num(n, 0, 1e6, 0) * (this.shielded() ? 0.15 : 1) * pass;
+    if (pass < 1 && this.spared(blow)) blow = Math.max(0, this.raw.hp - 1);
     this.raw.hp -= blow;
     // People remember what magic did to them (3.6).
     if (blow > 5 && this.raw.kind === "villager") remember(this.raw, "magic", -0.5);
@@ -1147,6 +1158,10 @@ export class CreatureHandle {
   }
   kill() {
     if (this.underGlass(() => this.kill())) return;
+    if (this.spared(Infinity)) {
+      this.raw.hp = Math.min(this.raw.hp, 1);
+      return;
+    }
     if (this.shielded()) {
       this.raw.hp -= maxHp(this.raw) * 0.15;
       if (this.raw.hp > 0) return;
@@ -1162,9 +1177,19 @@ export class CreatureHandle {
     this.raw.hp = maxHp(this.raw) * 0.6;
   }
   push(dx: number, dy: number, up = 0) {
-    this.raw.vx += num(dx, -200, 200, 0);
-    this.raw.vy += num(dy, -200, 200, 0);
-    this.raw.vz += num(up, -200, 200, 0);
+    // Where this spell broke a ward a moment ago, a push is scaled by what
+    // passed, and where its people are spared, never thrown high enough for
+    // the fall to hurt (creatures.ts: landing faster than 16 hurts).
+    const w = this.rt.world;
+    let p = 1;
+    let most = 200;
+    if (w.ruins.length && !hostile(this.raw)) {
+      p = ruinPass(w, this.spellKey, this.raw.x, this.raw.y);
+      if (ruinSpares(w, this.spellKey, this.raw.x, this.raw.y)) most = 15;
+    }
+    this.raw.vx += num(dx, -200, 200, 0) * p;
+    this.raw.vy += num(dy, -200, 200, 0) * p;
+    this.raw.vz += Math.min(most, num(up, -200, 200, 0) * p);
     if (up > 0) this.raw.z = Math.max(this.raw.z, 0.1);
   }
   // fear needs a point to run from; the others only a duration.
@@ -1563,8 +1588,23 @@ export class SpellApi {
     const key = this.req.key;
     const blast = () => {
       // What a ward it broke a moment ago spent of it (ruinPass).
-      const p = ruinPass(this.rt.world, key, x, y);
-      if (p > 0) explode(this.rt.world, x, y, radius * Math.sqrt(p), force * p);
+      const w = this.rt.world;
+      const p = ruinPass(w, key, x, y);
+      if (p <= 0) return;
+      // The blast's own blows on people (physics.ts) spare those a ward
+      // broken by two tiers or fewer covered: hurt, afraid, alive.
+      const spared = w.ruins.length ? w.creatures.filter((c) => !c.dead && !hostile(c) && ruinSpares(w, key, c.x, c.y)) : [];
+      explode(w, x, y, radius * Math.sqrt(p), force * p);
+      for (const c of spared) {
+        // Not thrown high enough for the fall to kill (landing faster than 16 hurts).
+        c.vz = Math.min(c.vz, 15);
+        if (c.dead || c.hp <= 0) {
+          c.dead = false;
+          c.hp = 1;
+          c.burning = 0;
+          c.fear = Math.max(c.fear, 8);
+        }
+      }
     };
     if (g && Math.hypot(g.ward.x - x, g.ward.y - y) < g.ward.r + radius) {
       g.harm++;
@@ -1576,7 +1616,7 @@ export class SpellApi {
         const d = Math.hypot(x - ward.x, y - ward.y) || 1;
         ward.hitAt = d > ward.r ? { x: ward.x + ((x - ward.x) / d) * ward.r, y: ward.y + ((y - ward.y) / d) * ward.r, z: 0 } : { x, y, z: ward.r * 0.6 };
         if (damageWard(this.rt.world, ward, 15 * force * Math.sqrt(Math.min(radius, 40)), this.source, this.power))
-          addRuin(this.rt.world, ward, key, passShare(ward, this.power, hpBefore));
+          addRuin(this.rt.world, ward, key, passShare(ward, this.power, hpBefore), this.power);
       }
     blast();
   }

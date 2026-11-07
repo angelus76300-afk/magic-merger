@@ -486,6 +486,14 @@ export function interactionChecks(check: Check): void {
         two.warded.broken && three.warded.broken && share(two) > 0.2 && share(two) < 0.75 && share(three) > share(two) && share(three) > 0.5,
         `dug ${two.warded.dug.toFixed(0)} of ${two.open.dug.toFixed(0)} (grand), ${three.warded.dug.toFixed(0)} of ${three.open.dug.toFixed(0)} (legendary)`,
       );
+      // The planner's choice of 7 November: at a gap of 2 the people under a
+      // broken ward are hurt and flee but live; at 3 or more the blow kills,
+      // as it does with no ward.
+      check(
+        `gap 2: the person under a minor ward broken by a grand ${name} is hurt but lives; at gap 3 it dies, as with no ward`,
+        two.open.hp === 0 && two.warded.hp > 0 && two.warded.hp < 50 && three.warded.hp === 0,
+        `hp ${two.open.hp} with no ward, ${two.warded.hp.toFixed(0)} at gap 2, ${three.warded.hp.toFixed(0)} at gap 3`,
+      );
     }
     const oneUp = at(STRIKE, "major", "grand");
     const minorLegendary = at(STRIKE, "minor", "legendary");
