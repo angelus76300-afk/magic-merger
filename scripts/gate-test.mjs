@@ -1,5 +1,10 @@
 // Checks for the merge and deploy gate (scripts/gate.mjs): each condition alone holds a pull request back.
-import { REPO_OWNER, byOwner, decide, deployable, headRepoOf, lastDeployedFrom, ownerRecords, reviewFor, upToDateFrom } from "./gate.mjs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { REPO_OWNER, byOwner, carriedReview, decide, deployable, headRepoOf, lastDeployedFrom, ownerRecords, reviewFor, upToDateFrom } from "./gate.mjs";
+import { classify, readGit } from "./risk.mjs";
 
 let failed = 0;
 const check = (name, ok, detail = "") => {
@@ -167,6 +172,154 @@ check(
   ]) === "abcdef0",
 );
 check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annotations: {} }]) === null);
+
+// 2026-11-07, the lighter process: a passing review carried across clean merges of main (carriedReview).
+// A throwaway repository: main, and a branch whose reviewed commit R edits src/a.ts. Each case
+// builds what came after R and asks whether R's review still stands for the new head.
+{
+  const root = mkdtempSync(join(tmpdir(), "mm-carry-"));
+  const g = (...args) =>
+    execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "-c", "init.defaultBranch=main", ...args], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  const write = (path, text) => {
+    mkdirSync(join(root, path, ".."), { recursive: true });
+    writeFileSync(join(root, path), text);
+  };
+  const commit = (msg, files) => {
+    for (const [path, text] of Object.entries(files)) write(path, text);
+    g("add", "-A");
+    g("commit", "-qm", msg);
+    return g("rev-parse", "HEAD");
+  };
+  const lines = (n, edit = {}) => Array.from({ length: n }, (_, i) => edit[i] ?? `line ${i}`).join("\n") + "\n";
+  const classOf = (b, h) => classify(readGit(b, h, root), { branch: "feat", title: "t" }).cls;
+  const reviewOf = (sha, fields = "verdict=pass tests=pass") => own(`<!-- mm-review ${fields} sha=${sha} -->`);
+  const carry = (head, comments, extra = {}) => carriedReview({ head, base: "main", comments, owner: REPO_OWNER, git: g, classOf, ...extra });
+  try {
+    g("init", "-q");
+    commit("base", { "README.md": "a\n", "src/a.ts": lines(40), "src/b.ts": lines(40) });
+    g("checkout", "-qb", "feat");
+    const R = commit("the pull request", { "src/a.ts": lines(40, { 2: "mine" }) });
+    const reviewed = [reviewOf(R)];
+    // Main moves on, in a file the pull request does not touch.
+    g("checkout", "-q", "main");
+    commit("main moves", { "src/b.ts": lines(40, { 5: "theirs" }) });
+    const toFeat = (from) => g("checkout", "-q", "-B", "feat", from);
+
+    toFeat(R);
+    g("merge", "-q", "--no-ff", "--no-edit", "main");
+    const M1 = g("rev-parse", "HEAD");
+    const ok1 = carry(M1, reviewed);
+    check(
+      "a clean merge of main carries the review and its tests=pass",
+      ok1.from === R && ok1.review?.tests === "pass" && ok1.review.verdict === "pass",
+      JSON.stringify(ok1),
+    );
+    check(
+      "the carried review makes a green pull request ready",
+      decide({ ...ready, review: ok1.review }).ready,
+      decide({ ...ready, review: ok1.review }).reasons.join("; "),
+    );
+    check("CI must still pass on the new head", !decide({ ...ready, review: ok1.review, ci: "in_progress" }).ready);
+
+    g("checkout", "-q", "main");
+    commit("main moves again", { "README.md": "b\n" });
+    toFeat(M1);
+    g("merge", "-q", "--no-ff", "--no-edit", "main");
+    const M2 = g("rev-parse", "HEAD");
+    check("two clean merges in a row carry it", carry(M2, reviewed).from === R, JSON.stringify(carry(M2, reviewed)));
+    check("a review of the head itself is used as is", carry(M2, [...reviewed, reviewOf(M2, "verdict=block tests=pass")]).review?.verdict === "block");
+    check(
+      "a block on a merge in between is not skipped over",
+      carry(M2, [...reviewed, reviewOf(M1, "verdict=block tests=pass")]).review === null,
+      JSON.stringify(carry(M2, [...reviewed, reviewOf(M1, "verdict=block tests=pass")])),
+    );
+    check("a blocked review is not carried", carry(M1, [reviewOf(R, "verdict=block tests=pass")]).review === null);
+    check("a review without tests=pass is not carried", carry(M1, [reviewOf(R, "verdict=pass")]).review === null);
+    check("a stranger's review of R is not carried", carry(M1, [stranger(`<!-- mm-review verdict=pass tests=pass sha=${R} -->`)]).review === null);
+
+    // Refused: a merge commit that also edits a pull request file by hand.
+    toFeat(R);
+    g("merge", "-q", "--no-ff", "--no-commit", "main");
+    write("src/a.ts", lines(40, { 2: "mine", 30: "slipped in" }));
+    g("add", "-A");
+    g("commit", "-qm", "merge main");
+    const edited = carry(g("rev-parse", "HEAD"), reviewed);
+    check(
+      "refused: a merge commit that also edits a pull request file",
+      edited.review === null && /not a clean merge/.test(edited.why),
+      JSON.stringify(edited),
+    );
+
+    // Refused: a merge that also slips in a new file of its own.
+    toFeat(R);
+    g("merge", "-q", "--no-ff", "--no-commit", "main");
+    write("src/c.ts", "new\n");
+    g("add", "-A");
+    g("commit", "-qm", "merge main");
+    check("refused: a merge commit that adds a file of its own", carry(g("rev-parse", "HEAD"), reviewed).review === null);
+
+    // Refused: a commit that is not a merge.
+    toFeat(M1);
+    const plain = commit("one more thing", { "src/b.ts": lines(40, { 5: "theirs", 9: "x" }) });
+    const nm = carry(plain, reviewed);
+    check("refused: a non-merge commit after the review", nm.review === null && /not a merge/.test(nm.why), JSON.stringify(nm));
+
+    // Refused: main changed the pull request's own file. Clean for git, but the reviewed code changed.
+    g("checkout", "-q", "main");
+    const mainA = commit("main edits a.ts far away", { "src/a.ts": lines(40, { 35: "main" }) });
+    toFeat(R);
+    g("merge", "-q", "--no-ff", "--no-edit", mainA);
+    const theirs = carry(g("rev-parse", "HEAD"), reviewed);
+    check("refused: a clean merge that changes the pull request's own file", theirs.review === null && /own files/.test(theirs.why), JSON.stringify(theirs));
+
+    // Refused: a conflict resolved by hand.
+    g("checkout", "-q", "main");
+    const clash = commit("main edits the same line", { "src/a.ts": lines(40, { 2: "main's", 35: "main" }) });
+    toFeat(R);
+    try {
+      g("merge", "-q", "--no-ff", "--no-edit", clash);
+    } catch {
+      // the conflict, resolved below
+    }
+    write("src/a.ts", lines(40, { 2: "both", 35: "main" }));
+    g("add", "-A");
+    g("commit", "-qm", "merge main, conflict resolved");
+    const conflict = carry(g("rev-parse", "HEAD"), reviewed);
+    check("refused: a merge whose conflict was resolved by hand", conflict.review === null && /conflict/.test(conflict.why), JSON.stringify(conflict));
+
+    // Refused: the merged code raises the class.
+    const raised = carry(M1, reviewed, { classOf: (b, h) => (h === M1 ? "red" : "green") });
+    check("refused: a class raised by the merged code", raised.review === null && /raised the class/.test(raised.why), JSON.stringify(raised));
+    check("refused: a class that cannot be computed", carry(M1, reviewed, { classOf: () => undefined }).review === null);
+
+    // Refused: a "merge" of a branch that is not main.
+    g("checkout", "-q", "-b", "side", R);
+    const sideTip = commit("unreviewed code", { "src/b.ts": lines(40, { 20: "side" }) });
+    toFeat(R);
+    g("merge", "-q", "--no-ff", "--no-edit", sideTip);
+    const side = carry(g("rev-parse", "HEAD"), reviewed);
+    check("refused: a merge of a branch that is not main", side.review === null && /not on main/.test(side.why), JSON.stringify(side));
+
+    // Fail closed: a commit git does not have, or git failing.
+    check("fail closed: an unknown head", carry("f".repeat(40), reviewed).review === null);
+    check(
+      "fail closed: a git error",
+      carry(M1, reviewed, {
+        git: () => {
+          throw new Error("boom");
+        },
+      }).why?.includes("could not check"),
+    );
+    check("no reviewed commit within reach carries nothing", carry(M1, [], { limit: 3 }).review === null);
+    check("a missing review says why in the Gate's reasons", /not carried: x/.test(why({ review: null, carry: "x" })));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
 
 console.log(failed ? `${failed} failed` : "all gate checks passed");
 process.exit(failed ? 1 : 0);
