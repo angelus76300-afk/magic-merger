@@ -6,7 +6,7 @@
 //
 //   npm run test:worker
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -301,6 +301,15 @@ const vars = {
 // What the Worker logs, kept for the checks that read it (the cron, 4.1).
 let workerLog = "";
 const BASE = `http://127.0.0.1:${port}`;
+// wrangler dev watches the assets folder and restarts the Worker when it
+// changes, answering a request in flight with 503 "Your worker restarted
+// mid-request". A build beside this run (the night's, a reviewer's preview
+// check) rewrites dist/, and section 31 failed on that 503 (#48's review,
+// 5 November). The Worker serves a copy taken once, which nothing rebuilds.
+const ASSETS = join(STATE, "assets");
+if (existsSync("dist")) cpSync("dist", ASSETS, { recursive: true });
+else mkdirSync(ASSETS, { recursive: true });
+let restarts = 0;
 let dev = null;
 async function startDev(extra = {}) {
   dev = spawn(
@@ -308,6 +317,8 @@ async function startDev(extra = {}) {
     [
       "wrangler",
       "dev",
+      "--assets",
+      ASSETS,
       "--port",
       String(port),
       "--ip",
@@ -387,7 +398,19 @@ async function api(path, { body, invite, admin, method, session, player } = {}) 
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
-  return { status: res.status, data: await res.json().catch(() => null) };
+  const text = await res.text();
+  // Named, so a restart is never again read as a slow write (see ASSETS).
+  if (res.status === 503 && text.includes("restarted mid-request")) {
+    restarts++;
+    console.log(`wrangler dev restarted the Worker during ${path}`);
+  }
+  let data = null;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    // not JSON
+  }
+  return { status: res.status, data };
 }
 
 async function invite(name, cap) {
@@ -3095,6 +3118,40 @@ const signIn = async (key, count) => {
     !hiddenFor.data.friends.some((f) => f.name === "Daily Ann") && self.data.me.hidden === true && self.data.me.favorite === "daily seed a",
     JSON.stringify(self.data.me),
   );
+  // 2026-11-07, the night's frame 06-community on staging: the owner's card
+  // said "Favorite spell" with a name while the picker below it was empty (the
+  // browser's discoveries did not hold it), and "played not yet" beside 84
+  // First Discoveries (play with the admin token is never recorded; the
+  // owner's signed in sessions are, and section 16 left some).
+  const ownerSeen = (await db.prepare("SELECT token_hash, last_seen FROM sessions WHERE invite = 'admin'").all()).results;
+  await db.prepare("UPDATE sessions SET last_seen = NULL WHERE invite = 'admin'").run();
+  await db.prepare("UPDATE invites SET last_seen = NULL WHERE id = 'admin'").run();
+  // Saved on another device: this test's owner holds a synced list without it.
+  await db.prepare("UPDATE invites SET favorite = 'daily seed a' WHERE id = 'admin'").run();
+  const ownerView = await api("/api/community", { admin: true });
+  const ownerCard = ownerView.data?.friends?.find((f) => f.me);
+  const benView = await api("/api/community", { invite: ben.secret });
+  const ownerSeenByBen = benView.data?.friends?.find((f) => f.name === "The owner");
+  await db
+    .prepare("INSERT INTO sessions (token_hash, invite, created_at, expires_at, last_seen) VALUES ('community-owner', 'admin', ?, ?, ?)")
+    .bind(Date.now(), Date.now() + 86_400_000, Date.now())
+    .run();
+  const signedInCard = (await api("/api/community", { admin: true })).data?.friends?.find((f) => f.me);
+  await db.prepare("DELETE FROM sessions WHERE token_hash = 'community-owner'").run();
+  for (const s of ownerSeen) await db.prepare("UPDATE sessions SET last_seen = ? WHERE token_hash = ?").bind(s.last_seen, s.token_hash).run();
+  check(
+    "community: the player's own favorite comes with its card; the owner's unrecorded play is marked, not shown as never played; a signed in session's play is shown",
+    ownerView.data?.me?.card?.name === "Daily Seed A" &&
+      !!ownerView.data.me.card.emoji &&
+      ownerCard?.unrecorded === true &&
+      ownerCard.lastPlayed === null &&
+      self.data.me.card?.name === "Daily Seed A" &&
+      (ownerSeenByBen === undefined || ownerSeenByBen.unrecorded === true) &&
+      typeof signedInCard?.lastPlayed === "number" &&
+      !signedInCard.unrecorded,
+    JSON.stringify({ me: ownerView.data?.me, ownerCard, signedInCard }),
+  );
+  await db.prepare("UPDATE invites SET favorite = NULL WHERE id = 'admin'").run();
 
   // Ideas that follow a pull request.
   const idea = await api("/api/feedback", { invite: ann.secret, body: { title: "Daily idea for a test" } });
@@ -3621,6 +3678,9 @@ const signIn = async (key, count) => {
   check("the staging Worker's cron rewrites nothing by evidence", spellCalls === s5 && (await runs()) === 0, `${spellCalls - s5} calls, ${await runs()} runs`);
   await reset();
 }
+
+// A build beside this run once restarted the Worker mid-request (see ASSETS).
+check("wrangler dev never restarted the Worker under a request", restarts === 0, `${restarts} restarts`);
 
 stop();
 if (failed) {

@@ -176,36 +176,44 @@ export class Craft {
   }
 
   private spawnNearCenter(key: string): void {
-    const rect = this.board.getBoundingClientRect();
     const chip = this.store.addChip(key, 0, 0);
     const node = this.mountChip(chip);
-    // The first free spot on a spiral from the center: two tapped items never
-    // land on top of each other, so the one underneath can still be grabbed.
+    const spot = this.freeSpot(chip.id, node, this.board.clientWidth / 2 - node.offsetWidth / 2, this.board.clientHeight / 2 - node.offsetHeight / 2);
+    this.settle(chip, node, spot.x, spot.y);
+    node.classList.add("pop");
+  }
+
+  // The nearest free spot to (cx, cy), on rings growing 10 px at a time: two
+  // items never land on top of each other, so the one underneath can still be
+  // grabbed. Also for a merge's result, which is often wider than the two it
+  // replaces (2026-11-07: after six merges, four pairs overlapped near the
+  // centre). (cx, cy) itself when the board has no room left.
+  private freeSpot(id: number, node: HTMLElement, cx: number, cy: number): Point {
+    const width = this.board.clientWidth;
+    const height = this.board.clientHeight;
     const w = node.offsetWidth;
     const h = node.offsetHeight;
-    const cx = rect.width / 2 - w / 2;
-    const cy = rect.height / 2 - h / 2;
     const others = this.store
       .board()
-      .filter((c) => c.id !== chip.id)
+      .filter((c) => c.id !== id)
       .map((c) => ({ x: c.x, y: c.y, w: this.nodes.get(c.id)?.offsetWidth ?? w, h: this.nodes.get(c.id)?.offsetHeight ?? h }));
-    const free = (x: number, y: number) => others.every((o) => x + w + 8 < o.x || o.x + o.w + 8 < x || y + h + 8 < o.y || o.y + o.h + 8 < y);
-    let x = cx;
-    let y = cy;
-    for (let k = 0; k < 120; k++) {
-      const a = k * 0.9;
-      const r = 6 * k;
-      const tx = cx + Math.cos(a) * r * 1.4;
-      const ty = cy + Math.sin(a) * r * 0.8;
-      if (tx < 0 || ty < 0 || tx + w > rect.width || ty + h > rect.height) continue;
-      if (free(tx, ty)) {
-        x = tx;
-        y = ty;
-        break;
+    const fits = (x: number, y: number) =>
+      x >= 0 &&
+      y >= 0 &&
+      x + w <= width &&
+      y + h <= height &&
+      others.every((o) => x + w + 8 < o.x || o.x + o.w + 8 < x || y + h + 8 < o.y || o.y + o.h + 8 < y);
+    if (fits(cx, cy)) return { x: cx, y: cy };
+    for (let r = 10; r < Math.max(width, height); r += 10) {
+      const n = Math.max(8, Math.round((2 * Math.PI * r) / 20));
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * 2 * Math.PI;
+        const x = cx + Math.cos(a) * r;
+        const y = cy + Math.sin(a) * r;
+        if (fits(x, y)) return { x, y };
       }
     }
-    this.settle(chip, node, x, y);
-    node.classList.add("pop");
+    return { x: cx, y: cy };
   }
 
   private pressChip(chip: BoardChip, node: HTMLElement, e: PointerEvent): void {
@@ -283,7 +291,8 @@ export class Craft {
       this.discard(target.id, false);
       const chip = this.store.addChip(elementKey(result.element.name), target.x, target.y);
       const node = this.mountChip(chip);
-      this.settle(chip, node, target.x, target.y);
+      const spot = this.freeSpot(chip.id, node, target.x, target.y);
+      this.settle(chip, node, spot.x, spot.y);
       node.classList.add("pop");
 
       const label = `${result.element.emoji} ${result.element.name}`;
