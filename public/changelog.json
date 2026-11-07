@@ -2,9 +2,13 @@
   "about": "What's new in Magic Merger, one line per merged update, newest first. Players read it in the ? menu. A builder adds a line in the same pull request (docs/DAILY.md); idea is the Ideas tab id the update built, when it came from one.",
   "entries": [
     {
-      "date": "2026-11-05",
+      "date": "2026-11-07",
       "version": "4.6",
       "text": "Every new item is now made as what it is, of seven kinds: a spell, a creature, an object, a building, a settlement, a place or land. A Village makes a real village with houses, fields and villagers, a Volcano raises a volcano, a temple stands beside the houses at their size, and a book stays the size of a book unless it is a giant's."
+    },
+    {
+      "date": "2026-11-05",
+      "text": "A spell whose last rewrite failed its own test now gets one more try, told what went wrong the first time. Four are in the queue, one spell a day with the others: Wormhole Network, Protection Spell, Fountain of Youth and Void Familiar."
     },
     {
       "date": "2026-11-05",
