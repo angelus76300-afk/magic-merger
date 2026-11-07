@@ -546,6 +546,39 @@ export function interactionChecks(check: Check): void {
     );
   }
   {
+    // The playtest of #83: a quiet ward by a stream cracked to 80% in half
+    // a minute and never healed, every ripple of the water holding the
+    // healing back. Water only ripples the glass; cracks a spell made heal
+    // with water pressing on it.
+    const s = scene("grass", "all", "minor");
+    const ring = (fn: (i: number) => void) => {
+      for (let dy = -WARD_R - 3; dy <= WARD_R + 3; dy++)
+        for (let dx = -WARD_R - 3; dx <= WARD_R + 3; dx++) {
+          const d = Math.hypot(dx, dy);
+          if (d > WARD_R + 0.5 && d <= WARD_R + 3) fn((TY + dy) * s.world.w + TX + dx);
+        }
+    };
+    const flood = () => ring((i) => s.world.setFluid(i, F.WATER, 3));
+    for (let k = 0; k < 30 / TICK; k++) {
+      if (k % 30 === 0) flood();
+      stepHeadless(s.world, s.rt);
+    }
+    const ward = s.world.wards[0];
+    const quiet = ward ? wardDamage(ward) : 1;
+    run(s, EFFECTS.find((e) => e.name === "meteor")!, "minor", "crack");
+    const cracked = ward ? wardDamage(ward) : -1;
+    for (let k = 0; k < 20 / TICK; k++) {
+      if (k % 30 === 0) flood();
+      stepHeadless(s.world, s.rt);
+    }
+    const healed = ward ? wardDamage(ward) : -1;
+    check(
+      "water pressing on a ward only ripples it, and a ward cracked by a spell heals with water at its edge",
+      !!ward && quiet < 0.01 && cracked > 0.1 && healed < cracked - 0.1,
+      `${quiet.toFixed(2)} after 30 s of water, ${cracked.toFixed(2)} after a meteor, ${healed.toFixed(2)} 20 s later`,
+    );
+  }
+  {
     // The slow motion of a shatter: once per ward, and not again within a
     // second (several breaking at once would drag the island).
     const s = scene("grass", "all", "minor");

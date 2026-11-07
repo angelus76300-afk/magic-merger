@@ -57,6 +57,9 @@ export interface Ward {
   dealt?: Record<string, number>;
   // Cracks from pressure, which takes no health (PRESSURE).
   pressure?: number;
+  // When a spell last took health from it: its cracks heal HEAL_AFTER
+  // seconds later. A ripple (hit) or pressure does not hold the healing back.
+  struck?: number;
   // Where it was last struck (z in voxels above the ground), for the glow the view draws there.
   hitAt?: { x: number; y: number; z: number };
 }
@@ -152,6 +155,7 @@ export function damageWard(world: World, ward: Ward, amount: number, source: str
   if (power * 100 <= most) take = Math.min(take, Math.max(0, (ward.hp ?? most) - most * HOLDS));
   ward.dealt[source] = before + take;
   ward.hp = (ward.hp ?? 100) - take;
+  ward.struck = world.time;
   ward.hit = world.time;
   if (ward.hp > 0) return false;
   breakWard(world, ward);
@@ -271,7 +275,7 @@ export function stepWards(world: World, dt = 1 / 30): void {
   // second, and what each source dealt is forgiven in step.
   for (const ward of world.wards) {
     const most = ward.maxHp ?? 100;
-    if (world.time - ward.hit < HEAL_AFTER || ((ward.hp ?? most) >= most && !ward.pressure)) continue;
+    if (world.time - (ward.struck ?? ward.from) < HEAL_AFTER || ((ward.hp ?? most) >= most && !ward.pressure)) continue;
     const gain = most * HEAL_RATE * dt;
     ward.hp = Math.min(most, (ward.hp ?? most) + gain);
     if (ward.pressure) ward.pressure = Math.max(0, ward.pressure - gain);

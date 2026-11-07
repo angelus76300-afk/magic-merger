@@ -117,7 +117,9 @@ function stepFluids(world: World, dt: number): void {
         }
         // A ward against fluids is a wall: nothing flows in from outside.
         if (warded(world, j, WARD.fluids) && !warded(world, i, WARD.fluids)) {
-          if (rng.next() < 0.01) wardHit(world, j, 0.5);
+          // Lava and acid wear it; the island's own water, mud and oil only ripple
+          // the glass (the playtest of #83: a quiet ward by a stream cracked to 80%).
+          if (rng.next() < 0.01) wardHit(world, j, f === F.LAVA || f === F.ACID ? 0.5 : 0);
           continue;
         }
         const d = level - (height[j] + depth[j]);
