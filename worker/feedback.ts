@@ -379,7 +379,17 @@ export function closesIssue(body: string | null | undefined, n: number, repo: st
 interface TimelineEvent {
   event?: string;
   created_at?: string;
-  source?: { issue?: { number?: number; html_url?: string; state?: string; body?: string | null; pull_request?: { merged_at?: string | null } } };
+  source?: {
+    issue?: {
+      number?: number;
+      html_url?: string;
+      state?: string;
+      body?: string | null;
+      user?: { login?: string } | null;
+      author_association?: string;
+      pull_request?: { merged_at?: string | null };
+    };
+  };
 }
 
 async function readGitHub(env: FeedbackEnv, n: number): Promise<{ issue: IssueState; prs: LinkedPull[] }> {
@@ -388,6 +398,7 @@ async function readGitHub(env: FeedbackEnv, n: number): Promise<{ issue: IssueSt
     github<TimelineEvent[]>(env, "GET", `/issues/${n}/timeline?per_page=100`),
   ]);
   const own = `/${env.GITHUB_REPO!.toLowerCase()}/pull/`;
+  const owner = env.GITHUB_REPO!.split("/")[0].toLowerCase();
   const prs = new Map<number, LinkedPull>();
   for (const e of Array.isArray(events) ? events : []) {
     const p = e.source?.issue;
@@ -395,6 +406,10 @@ async function readGitHub(env: FeedbackEnv, n: number): Promise<{ issue: IssueSt
     // A pull request is the idea's only when it closes the issue (4.0 review
     // L8): one that merely mentions #n is someone else's work.
     if (!closesIssue(p.body, n, env.GITHUB_REPO!)) continue;
+    // 2026-11-06, the repository is public: a fork's pull request is listed
+    // under this repository too, so only one the owner's account opened (the
+    // routine and every session write as it) can move an idea.
+    if (p.author_association !== "OWNER" || p.user?.login?.toLowerCase() !== owner) continue;
     if (prs.has(p.number)) continue;
     prs.set(p.number, {
       number: p.number,

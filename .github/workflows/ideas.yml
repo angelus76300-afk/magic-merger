@@ -3,7 +3,10 @@
 # when it is opened, to "Done" when it is merged, and back when it is closed
 # without merging. The Worker reads the numbers from the description
 # (worker/feedback.ts, ideaPull). Needs the same two secrets as the Judge,
-# MM_URL and MM_TOKEN; without them the job does nothing.
+# MM_URL and MM_TOKEN; without them the job does nothing. It runs no code from
+# the pull request, only sends its description; a pull request from a fork is
+# skipped (2026-11-06, the repository is public: a stranger's description must
+# not move an idea).
 name: Ideas
 on:
   pull_request:
@@ -12,6 +15,7 @@ permissions:
   contents: read
 jobs:
   follow:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:

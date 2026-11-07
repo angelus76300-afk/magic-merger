@@ -17,7 +17,7 @@ The second half of 4.0, accounts, is built on this review (part G revises the pl
 | Heap over 30 simulated minutes (large island, a spell a minute, `--expose-gc`) | 9.0 to 9.1 MB from minute 3 to 30, rss 83 to 98 MB: no growth in the simulation (the view was not measured)                                                                                                                                           |
 | `/api/spend`, November so far                                                  | $10.50; Opus spells $5.86 (96 calls, the 3.1 version bump on 11-02), refresh $2.91 (170 batch items), batch spells $0.47, merges $0.31 (252), Haiku spells $0.30 (197), tiers $0.14, judge $0.08 (312), design $0.09 (1), everything else under $0.03 |
 | `/api/perf`, 6 samples from one Android phone (8 cores, 2.25 dpr)              | large island (208): sim p50 / p95 4.2 to 6.0 / 11.7 to 17.5 ms, render p95 8.6 to 12.4 ms, 100 to 105 draw calls, 200k to 430k triangles, one sample at 12.7 fps; medium (112): sim p95 4.0, render p95 6.3, 45 calls                                 |
-| Live database                                                                  | 258 elements, 433 recipes, 171 spells, 334 programs, 3 invites (one revoked test; Leo and Evelyn never came), 13 votes, 26 casts, 1 idea, 0 wins, 19 verified solvers, 88 refresh candidates still to decide                                          |
+| Live database                                                                  | 258 elements, 433 recipes, 171 spells, 334 programs, 3 invites (one revoked test; two invited players never came), 13 votes, 26 casts, 1 idea, 0 wins, 19 verified solvers, 88 refresh candidates still to decide                                     |
 
 ## 2. Findings, by severity
 
