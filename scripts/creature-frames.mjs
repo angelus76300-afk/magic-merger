@@ -9,7 +9,7 @@ import { openLab } from "./lab-browser.mjs";
 
 const [outDir = "docs/visual-checks"] = process.argv.slice(2);
 mkdirSync(outDir, { recursive: true });
-const program = (name) => readFileSync(join("lab/spells/creatures", `${name}.js`), "utf8");
+const program = (name) => readFileSync(join("lab/creatures", `${name}.js`), "utf8");
 
 // Each: label, program file, lab options.
 const pairs = [
