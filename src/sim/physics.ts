@@ -117,7 +117,7 @@ function stepFluids(world: World, dt: number): void {
         }
         // A ward against fluids is a wall: nothing flows in from outside.
         if (warded(world, j, WARD.fluids) && !warded(world, i, WARD.fluids)) {
-          if (rng.next() < 0.01) wardHit(world, j);
+          if (rng.next() < 0.01) wardHit(world, j, 0.5);
           continue;
         }
         const d = level - (height[j] + depth[j]);
@@ -315,7 +315,7 @@ function stepFire(world: World, dt: number): void {
       const j = ny * w + nx;
       if (fire[j] > 0) continue;
       if (warded(world, j, WARD.fire)) {
-        if (rng.next() < 0.02) wardHit(world, j);
+        if (rng.next() < 0.02) wardHit(world, j, 0.5);
         continue;
       }
       const flam = Math.max(

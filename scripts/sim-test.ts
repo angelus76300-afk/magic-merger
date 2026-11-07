@@ -8,6 +8,7 @@ import { availableParallelism } from "node:os";
 import { Worker } from "node:worker_threads";
 import { guardLoops } from "../shared/spellcode";
 import { KINDS, makeCreature, populate, resetCreatureIds } from "../src/sim/creatures";
+import { interactionChecks } from "./interactions-test";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
 import { logDeeds, mindOf, remember } from "../src/sim/kin";
@@ -1587,6 +1588,10 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
     }
   check("a ward keeps lava out and lightning off", inside === 0 && burning === 0 && !errors.length, `${inside} lava cells, ${burning} burning inside`);
 }
+
+// 4.7: the interaction table (effects against wards and materials) and the
+// ward's breaking point (scripts/interactions-test.ts).
+interactionChecks(check);
 
 // 9e. The API that grows (3.4.2): a helper is appended to the programs that
 // call it, runs inside them like any spell code, and is refused when it
