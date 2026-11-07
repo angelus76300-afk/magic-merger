@@ -32,6 +32,8 @@ Their programs are written to the new creature section when they are next rewrit
 
 ## Worst first, if the owner says yes
 
+The daily planner folds these into the villages rebuild the owner is already asked about: its first batch is Serpent, Human and Village, run after part B merges, with part B's prompts, and the 14 people below join that batch.
+
 1. **Serpent** and **Human** (the owner's examples): Serpent as a living serpent (the prompt's example is the target), Human as a villager.
 2. The other 14 people that fail their kind or size today (above).
 3. The beasts most cast among the 59.
