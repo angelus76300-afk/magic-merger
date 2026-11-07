@@ -1,7 +1,7 @@
 // Frames of every screen players see around the island, for a before and
 // after of an interface change: the real Worker (wrangler dev, a fresh local
 // D1, a stub Claude) and the built game in dist/, at a phone (390 by 844) and
-// the owner's foldable (806 by 968).
+// the owner's foldable (832 by 1000) and a desktop (1440 by 900).
 //   npm run build && node scripts/ui-frames.mjs <out dir> [prefix]
 // It fails (exit code 1) when a visible control is under 44 by 44 px, when the
 // tabs are not at the bottom on a phone or foldable, or when the vote after a
@@ -295,9 +295,10 @@ async function run(width, height) {
 }
 
 try {
-  await run(390, 844);
-  await run(806, 968);
-  await run(844, 390);
+  // SIZES="390x844,832x1000,1440x900" picks the sizes; by default a phone,
+  // the owner's foldable, a desktop and a phone on its side.
+  const sizes = (process.env.SIZES ?? "390x844,832x1000,1440x900,844x390").split(",").map((s) => s.split("x").map(Number));
+  for (const [w, h] of sizes) await run(w, h);
   console.log(`frames in ${OUT}`);
   if (errors.length) console.log(`page errors:\n${errors.join("\n")}`);
   console.log(
