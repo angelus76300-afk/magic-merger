@@ -146,9 +146,9 @@ async function closeDialogs(page) {
   }
 }
 
-async function run(width, height) {
-  const tag = `${width}x${height}`;
-  const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, hasTouch: false });
+async function run(width, height, touch = false) {
+  const tag = `${width}x${height}${touch ? "-touch" : ""}`;
+  const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, hasTouch: touch });
   const page = await ctx.newPage();
   page.on("pageerror", (e) => errors.push(`${tag}: ${e.message}`));
   await page.addInitScript((t) => localStorage.setItem("magic-merger.token", t), ADMIN);
@@ -240,7 +240,8 @@ async function run(width, height) {
     await shot("06-world-selected");
     const stage = await page.locator("#world-stage").boundingBox();
     // On its side the island's first look panel fills the middle: tap beside it.
-    const [fx, fy] = width > height ? [0.15, 0.8] : [0.5, 0.45];
+    // On a wide screen the island may not reach the stage's edge: tap nearer in.
+    const [fx, fy] = width > height ? (height > 500 ? [0.3, 0.75] : [0.15, 0.8]) : [0.5, 0.45];
     await page.mouse.click(stage.x + stage.width * fx, stage.y + stage.height * fy);
     await page.waitForTimeout(500);
     await page.mouse.click(stage.x + stage.width * fx, stage.y + stage.height * fy);
@@ -273,7 +274,8 @@ async function run(width, height) {
     // Tabs under the thumb below 1024 px: the bar touches the bottom edge
     // (on a phone on its side, a rail down the left edge, top to bottom).
     const tabsBottom = await page.evaluate(() => document.querySelector(".tabs").getBoundingClientRect().bottom);
-    if (width < 1024 && Math.abs(tabsBottom - height) > 1) failures.push(`${tag}: the tabs end at y ${Math.round(tabsBottom)}, not at the bottom (${height})`);
+    if ((width < 1024 || (touch && width < 1280)) && Math.abs(tabsBottom - height) > 1)
+      failures.push(`${tag}: the tabs end at y ${Math.round(tabsBottom)}, not at the bottom (${height})`);
     await page.waitForTimeout(1200);
     await shot(name);
   }
@@ -296,9 +298,13 @@ async function run(width, height) {
 
 try {
   // SIZES="390x844,832x1000,1440x900" picks the sizes; by default a phone,
-  // the owner's foldable, a desktop and a phone on its side.
-  const sizes = (process.env.SIZES ?? "390x844,832x1000,1440x900,844x390").split(",").map((s) => s.split("x").map(Number));
-  for (const [w, h] of sizes) await run(w, h);
+  // the owner's foldable open and on its side (a touch screen, "t"), a
+  // desktop and a phone on its side.
+  const sizes = (process.env.SIZES ?? "390x844,832x1000,1104x884t,1440x900,844x390").split(",");
+  for (const s of sizes) {
+    const [w, h] = s.replace("t", "").split("x").map(Number);
+    await run(w, h, s.endsWith("t"));
+  }
   console.log(`frames in ${OUT}`);
   if (errors.length) console.log(`page errors:\n${errors.join("\n")}`);
   console.log(
