@@ -729,6 +729,15 @@ input {
   flex: none;
 }
 
+/* In Craft the two selects give up width before the row overflows: at 390 px
+   the order select ended at x = 415, its arrow cut off (2026-11-07). World's
+   bar holds more and keeps scrolling sideways. */
+.inventory-filters .filterbar select {
+  flex: 0 1 auto;
+  min-width: 5.5em;
+  text-overflow: ellipsis;
+}
+
 .chip-castable {
   flex: none;
   cursor: pointer;
