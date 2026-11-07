@@ -32,6 +32,10 @@
       "text": "Every item you discover from today is made as what it is, of seven kinds: a spell, a creature, an object, a building, a settlement, a place or land. A new settlement is a real village with houses, fields and villagers, a new temple or tower stands beside the houses at their size, and a new book stays the size of a book unless it is a giant's. Items found before today will be remade the same way, a few at a time."
     },
     {
+      "date": "2026-11-07",
+      "text": "Small fixes: messages no longer cover the tabs on a phone or repeat the same hint three times, new items on the board no longer land on top of each other, the order menu in Craft fits the screen, and the Community tab's favorite spell menu shows the spell you picked on another device."
+    },
+    {
       "date": "2026-11-05",
       "text": "A spell whose last rewrite failed its own test now gets one more try, told what went wrong the first time. Four are in the queue, one spell a day with the others: Wormhole Network, Protection Spell, Fountain of Youth and Void Familiar."
     },
