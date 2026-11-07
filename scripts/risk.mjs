@@ -182,6 +182,7 @@ export const RULES = [
       "scripts/risk-test.mjs",
       "scripts/gate-test.mjs",
       "scripts/gate-prstate-test.mjs",
+      "scripts/workflows-test.mjs",
       "scripts/gate.mjs",
       "scripts/smoke.mjs",
       "scripts/live-signals.mjs",

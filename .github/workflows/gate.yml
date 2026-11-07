@@ -11,7 +11,14 @@
 # Every trigger here runs main's copy of this file and of the scripts
 # (workflow_run, issue_comment and pull_request_target all do), and the pull
 # request's code is only read as a diff, never run, so a pull request cannot
-# loosen its own gate.
+# loosen its own gate. The one checkout is of main; nothing here installs or
+# runs anything from the pull request (scripts/workflows-test.mjs checks it).
+#
+# 2026-11-06, the repository is public: a comment wakes the Gate only when the
+# repository owner's account wrote it (every session, the reviewer and the
+# planner write as it), so a stranger's comments cost no minutes, and
+# scripts/gate.mjs reads markers from the owner's comments only. A pull request
+# from a fork does not wake it either, and gate.mjs refuses one anyway.
 name: Gate
 on:
   workflow_run:
@@ -36,9 +43,10 @@ permissions:
 jobs:
   gate:
     if: >-
-      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request') ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, 'mm-review') || contains(github.event.comment.body, 'mm-owner'))) ||
-      github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch'
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.author_association == 'OWNER' && github.event.comment.user.login == github.repository_owner && (contains(github.event.comment.body, 'mm-review') || contains(github.event.comment.body, 'mm-owner'))) ||
+      (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository) ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:

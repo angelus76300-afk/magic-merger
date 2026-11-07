@@ -235,3 +235,48 @@ Both test commands take environment knobs since 4.1: `SLOW_MS=40 npm test` turns
 `npm run build && node scripts/verify-4.1.mjs` (4.1) runs the 4.0 review's browser findings in a phone sized headless browser against `wrangler dev` with a stub Claude: two tabs of one browser signed in (discoveries, the island, the upload), a full storage, a World frame stuck in spell code, the vote bar over a live challenge (with `shots=<dir>` for the screenshot), Restart and Retry keeping the head start, a spell mended too often. `node node_modules/.cache/drum.mjs` after `npx esbuild scripts/drum-count.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/drum.mjs` counts the sounds a busy island plays by itself.
 
 `node scripts/local-verify.mjs` (4.0 review) runs the built game in a phone sized headless browser against `wrangler dev` with a stub Claude and checks what no Node test can: a check frame that never loads, a test verdict that never reaches the Worker, a challenge win kept for the next visit. It needs `dist/` and Playwright.
+
+## 7. Going public (2026-11-06)
+
+A public repository gets unlimited GitHub Actions minutes on standard runners, and branch protection for free. It also lets anyone read the code, fork it, open pull requests and comment. The pipeline was hardened for that first (the pull request "Public repository: the pipeline holds against strangers"):
+
+- the Gate reads `mm-review` and `mm-owner` markers only from comments written by your account (its login and GitHub's `author_association` OWNER), and never merges a pull request from a fork;
+- a stranger's comment, a fork's pull request or a fork's finished CI run does not wake the Gate at all, so they cost no minutes;
+- the Preview and Ideas jobs, the only ones that hold secrets on a pull request, run only for branches of this repository; CI runs a fork's code with no secret and a read only token;
+- `scripts/workflows-test.mjs` (in `npm run test:risk`) fails if a later change undoes any of this;
+- the whole history was scanned with gitleaks: no secret (`docs/measurements/secret-scan-2026-11-06.md`).
+
+Your checklist, in this order. Each line is a setting only you can change.
+
+**Before the switch**
+
+1. Actions > Gate > the "..." menu > **Disable workflow**, so nothing merges while settings change.
+
+**The switch**
+
+2. Settings > General > Danger Zone > **Change repository visibility** > Public.
+
+**Right after, before anyone forks**
+
+3. Settings > Actions > General > "Approval for running fork pull request workflows from contributors": **Require approval for all external contributors**. A fork's pull request then runs nothing until you press "Approve and run" on it. (`pull_request_target` workflows run without approval whatever this says; the Gate's own guard covers that.)
+4. Same page, "Workflow permissions": **Read repository contents and packages permissions**, and leave **Allow GitHub Actions to create and approve pull requests** unticked. Each workflow already asks for the permissions it needs.
+5. Settings > Code security: turn on **Secret scanning** and **Push protection** (free on a public repository). Push protection refuses a push that contains a known kind of key.
+6. Settings > Rules > Rulesets > New branch ruleset, named `main`, enforcement Active, target the default branch: tick **Restrict deletions** and **Block force pushes**. Leave the bypass list empty: every session acts as your account, so a rule you can bypass does not stop a session. Optional and recommended: **Require a pull request before merging** with 0 approvals; every merge already goes through a pull request (the Gate, and the planner's squash of a workflow change), so it blocks only a direct push to `main`.
+
+**After the hardening pull request merges**
+
+7. Actions > Gate > **Enable workflow**.
+
+**Soon, the credentials** (ROADMAP 4.5.1a items 2 and 3)
+
+8. Make two new random values, for example with `openssl rand -base64 32` twice: one for production, one for staging.
+9. Production's admin token: Cloudflare dashboard > Workers & Pages > `magic-merger` > Settings > Variables and Secrets > `ADMIN_TOKEN`, the first value. Then GitHub Settings > Secrets and variables > Actions > `MM_TOKEN`, the same value. Then the cloud environment of the Claude Code sessions: `ADMIN_TOKEN`, the same value. The old one stops working at once, on every device that held it; five taps on the title with the new one let you back in.
+10. Staging's own admin token: a new Actions secret `STAGING_ADMIN_TOKEN`, the second value, and the same name and value in the sessions' environment. The Staging workflow copies it to the staging Worker on its next run (Actions > Staging > Run workflow to do it now); previews, the reviewer and the night's checks then use it instead of production's.
+11. On the account page, signed in as yourself: check that the passkeys listed are all yours.
+
+**Things to know**
+
+- Your email address is the author of the squash merges made on github.com (46 commits today). It becomes visible in the history; rewriting history to remove it is not worth the risk. To keep it out of future merges: GitHub Settings > Emails > **Keep my email addresses private**. Session commits use `noreply@anthropic.com`.
+- Issues become public, the Ideas routine's included. They hold the brief and the idea's text, never a player's name. The only one today, #14, is your own test.
+- The game's addresses, the Cloudflare account id in `wrangler.jsonc` and the names of the secrets are public from now on. None of them lets anyone act: every admin route needs the token's value, and staging lets nobody in without it.
+- A GitHub environment with a required reviewer is free on a public repository, so previews could wait for your approval (ROADMAP 4.5.1a item 1). Not set up: your answer of 5 November was to keep previews as they are, and a required reviewer would also stop the Gate from merging green work at night.
