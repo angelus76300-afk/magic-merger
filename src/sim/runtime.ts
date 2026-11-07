@@ -27,6 +27,7 @@ import {
   WARD,
   WARD_ALL,
   addRuin,
+  hpAgainst,
   addWard,
   passShare,
   rebuildMask,
@@ -697,7 +698,7 @@ export class Runtime {
     const source = hooks?.source ?? "land";
     const power = hooks?.power ?? 1;
     if (!hooks?.land) {
-      const hpBefore = hit.hp ?? hit.maxHp ?? 100;
+      const hpBefore = hpAgainst(hit, source);
       if (damageWard(this.world, hit, blow, source, power)) {
         // Broken: it flies on with what passed, or bursts with the glass.
         const pass = passShare(hit, power, hpBefore);
@@ -734,7 +735,7 @@ export class Runtime {
     // tried stays on the glass (the playtest found it striking twice).
     if (!glass.harm || !hooks.land) return true;
     this.splash(b, hit);
-    const hpBefore = hit.hp ?? hit.maxHp ?? 100;
+    const hpBefore = hpAgainst(hit, source);
     if (damageWard(this.world, hit, blow, source, power)) {
       // Broken: the blows held back are dealt, scaled by what passed (ruinPass).
       addRuin(this.world, hit, hooks.key, passShare(hit, power, hpBefore));
@@ -1571,7 +1572,7 @@ export class SpellApi {
     }
     for (const ward of [...this.rt.world.wards])
       if (ward !== g?.ward && ward.against & WARD.harm && Math.hypot(ward.x - x, ward.y - y) < ward.r + radius) {
-        const hpBefore = ward.hp ?? ward.maxHp ?? 100;
+        const hpBefore = hpAgainst(ward, this.source);
         const d = Math.hypot(x - ward.x, y - ward.y) || 1;
         ward.hitAt = d > ward.r ? { x: ward.x + ((x - ward.x) / d) * ward.r, y: ward.y + ((y - ward.y) / d) * ward.r, z: 0 } : { x, y, z: ward.r * 0.6 };
         if (damageWard(this.rt.world, ward, 15 * force * Math.sqrt(Math.min(radius, 40)), this.source, this.power))

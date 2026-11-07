@@ -1,5 +1,5 @@
 import type { Tier } from "../../shared/tiers";
-import type { World } from "./world";
+import { TICK, type World } from "./world";
 
 // Wards (3.4.2): a place a spell keeps safe for a while. Before wards, a
 // protection spell could only build an opaque shell of magic blocks that lava
@@ -72,6 +72,14 @@ export const ONE_SOURCE = 0.8;
 // What a ward keeps of its health against its own tier and below, whatever
 // the number of casts (the owner, 7 November: "shouldn't break by default").
 export const HOLDS = 0.2;
+// Cracks heal: after this many seconds with no hit, this share of its health a second.
+export const HEAL_AFTER = 5;
+export const HEAL_RATE = 0.02;
+// The slow motion of a shatter (the owner: "a small shield would have a slo
+// mo break animation"): the island runs at SLOW_FACTOR for SLOW_SECONDS of
+// real time, once per ward, and not again within a second of the last.
+export const SLOW_FACTOR = 0.25;
+export const SLOW_SECONDS = 1;
 
 // 4.7, the owner's report and the game designer's rule: a ward broken by a
 // stronger spell spends what it had on the blow. The share of the blow that
@@ -87,7 +95,8 @@ export function passShare(ward: Ward, attacker: number, hpBefore: number): numbe
 
 // Where a ward was broken, and by which spell: for RUIN_SECONDS what that
 // spell does there is scaled by the share that passed (Meteor Strike digs
-// its crater from the cast a moment after its body breaks the glass).
+// its crater from the cast a moment after its body breaks the glass, and
+// Meteor Storm's other meteors fall after the first broke it).
 export interface Ruin {
   x: number;
   y: number;
@@ -96,7 +105,15 @@ export interface Ruin {
   pass: number;
   until: number;
 }
-export const RUIN_SECONDS = 2;
+// Long enough for the rest of the cast that broke it (a cast lasts under 12
+// seconds, a cosmic one 25): a rain of meteors is one blow, not six.
+export const RUIN_SECONDS = 15;
+// The health a ward had before this source struck it: one spell's hits count
+// as one blow, so a rain that cracks it first does not pass more for it.
+export function hpAgainst(ward: Ward, source: string): number {
+  const most = ward.maxHp ?? 100;
+  return Math.min(most, (ward.hp ?? most) + (ward.dealt?.[source] ?? 0));
+}
 export function addRuin(world: World, ward: Ward, key: string, pass: number): void {
   world.ruins = world.ruins.filter((r) => r.until > world.time);
   world.ruins.push({ x: ward.x, y: ward.y, r: ward.r, key, pass, until: world.time + RUIN_SECONDS });
@@ -145,7 +162,15 @@ export function damageWard(world: World, ward: Ward, amount: number, source: str
 export function breakWard(world: World, ward: Ward): void {
   world.wards = world.wards.filter((w) => w !== ward);
   rebuildMask(world);
-  const n = Math.min(120, Math.round(ward.r * 10));
+  // Slow motion while the shards fly, unless another ward broke within the
+  // last second (several at once would drag the island).
+  if (world.time - world.lastSlow > 1) {
+    world.slowUntil = world.time + SLOW_SECONDS * SLOW_FACTOR;
+    world.lastSlow = world.time;
+  }
+  // A stronger ward shatters bigger: more shards, flung further.
+  const grade = 1 + Math.log2(Math.max(0.5, (ward.maxHp ?? 100) / 100)) * 0.25;
+  const n = Math.min(200, Math.round(ward.r * 10 * grade));
   // Away from where it was struck: the far side flies, the struck side falls.
   const ha = ward.hitAt ? Math.atan2(ward.hitAt.y - ward.y, ward.hitAt.x - ward.x) : 0;
   const away = ward.hitAt ? { a: ha + Math.PI, x: -Math.cos(ha), y: -Math.sin(ha) } : { a: 0, x: 0, y: 0 };
@@ -159,8 +184,8 @@ export function breakWard(world: World, ward: Ward): void {
       z: 1 + up * ward.r * DOME_SQUASH * 2,
       // Shards of glass that fall about where the dome stood, not sparks,
       // flung away from the point struck (4.7: the shatter starts there).
-      vx: Math.cos(a) * (1 + Math.random() * 2.5) + away.x * (1 - Math.cos(a - away.a)) * 2,
-      vy: Math.sin(a) * (1 + Math.random() * 2.5) + away.y * (1 - Math.cos(a - away.a)) * 2,
+      vx: (Math.cos(a) * (1 + Math.random() * 2.5) + away.x * (1 - Math.cos(a - away.a)) * 2) * grade,
+      vy: (Math.sin(a) * (1 + Math.random() * 2.5) + away.y * (1 - Math.cos(a - away.a)) * 2) * grade,
       vz: 1 + Math.random() * 3,
       life: 0.9 + Math.random() * 0.6,
       color: k % 3 ? 0xeef8ff : ward.color,
@@ -241,6 +266,17 @@ export function addWard(world: World, ward: Ward, power = 1): void {
 // Drops wards that ended. Called once per tick, before physics.
 export function stepWards(world: World): void {
   if (!world.wards.length) return;
+  // Cracks heal slowly (the owner, 7 November): after HEAL_AFTER seconds
+  // with nothing striking it, a ward regains HEAL_RATE of its health a
+  // second, and what each source dealt is forgiven in step.
+  for (const ward of world.wards) {
+    const most = ward.maxHp ?? 100;
+    if (world.time - ward.hit < HEAL_AFTER || ((ward.hp ?? most) >= most && !ward.pressure)) continue;
+    const gain = most * HEAL_RATE * TICK;
+    ward.hp = Math.min(most, (ward.hp ?? most) + gain);
+    if (ward.pressure) ward.pressure = Math.max(0, ward.pressure - gain);
+    if (ward.dealt) for (const k in ward.dealt) ward.dealt[k] = Math.max(0, ward.dealt[k] - gain);
+  }
   const before = world.wards.length;
   world.wards = world.wards.filter((w) => w.until > world.time);
   if (world.wards.length !== before) rebuildMask(world);

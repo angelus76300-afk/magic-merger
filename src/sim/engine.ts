@@ -10,6 +10,7 @@ import { VoxelView } from "./voxel/view";
 import { GRAPHICS } from "./voxel/graphics";
 import { FramePacer, ticksDue } from "./voxel/pacing";
 import { TICK, generateWorld, type World } from "./world";
+import { SLOW_FACTOR } from "./wards";
 import { DEFAULT_LAND, type LandOptions } from "./land";
 import { readWonder, type Wonder, type WonderDef } from "./wonders";
 import { ownCreatures, raiseWonders, reloadWonders } from "./wonderbuild";
@@ -179,7 +180,9 @@ export class Engine {
     // negative step held the simulation still until it was paid back).
     const dt = Math.max(0, Math.min(0.1, (now - this.last) / 1000));
     this.last = Math.max(this.last, now);
-    this.acc += dt;
+    // A shield's shatter slows the island for a moment (wards.ts, SLOW_FACTOR).
+    const scale = this.world.time < this.world.slowUntil && !this.reducedMotion ? SLOW_FACTOR : 1;
+    this.acc += dt * scale;
     const steps = ticksDue(this.acc, TICK, this.pacer.enabled);
     const t0 = performance.now();
     for (let k = 0; k < steps; k++) {
@@ -203,7 +206,7 @@ export class Engine {
     // How far the frame is from the last tick to the next one, for the view.
     this.view.between = this.pacer.enabled ? Math.min(1, this.acc / TICK) : 1;
     this.view.paceMs = smooth ? 1000 / 60 : 1000 / 30;
-    this.render(Math.min(0.1, since / 1000));
+    this.render(Math.min(0.1, since / 1000) * scale);
     // A draw from outside the loop (the Spell Lab, a test's frame) shows the
     // creatures where the simulation has them.
     this.view.between = 1;

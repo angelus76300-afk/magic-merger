@@ -81,6 +81,11 @@ export class World {
   wards: Ward[] = [];
   // Wards broken a moment ago (wards.ts, Ruin): not saved.
   ruins: Ruin[] = [];
+  // The slow motion of a shatter (wards.ts, breakWard): until this world
+  // time the page runs the island at SLOW_FACTOR. Not saved; headless runs
+  // and tests ignore it.
+  slowUntil = -1;
+  lastSlow = -10;
   readonly wardMask: Uint8Array;
   // Gifts villagers have brought home; every few build a house.
   wealth = 0;
