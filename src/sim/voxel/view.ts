@@ -36,7 +36,7 @@ import { easeGround, walkGround, type Footing } from "./walk";
 import { gaitOf, hipHeight, lookAround, strideRate } from "./gait";
 import { BUILTIN, C, F, S } from "../materials";
 import { envelope, type Body, type Visuals } from "../visuals";
-import type { World } from "../world";
+import { TICK, type World } from "../world";
 import { bodyGeometry } from "./bodies";
 import { daylight } from "../daylight";
 import { MODELS, geometryOf } from "./models";
@@ -91,7 +91,24 @@ export class VoxelView {
   private rigs = new WeakMap<CreatureKind, Map<number, Rig>>();
   private gaits = new Map<
     number,
-    Footing & { x: number; y: number; t: number; speed: number; phase: number; yaw: number; seen: number; graze: number; lie: number; look: number }
+    Footing & {
+      x: number;
+      y: number;
+      t: number;
+      speed: number;
+      phase: number;
+      yaw: number;
+      seen: number;
+      graze: number;
+      lie: number;
+      look: number;
+      // Where it stood, its stride and heading one tick before (2026-11-07):
+      // a frame between two ticks draws it part way (between).
+      px: number;
+      py: number;
+      pphase: number;
+      pyaw: number;
+    }
   >();
   private palette: number[] = new Array(ROLES).fill(0);
   private pose: Pose = {
@@ -293,12 +310,27 @@ export class VoxelView {
     return null;
   }
 
+  // Set by the engine before each frame (2026-11-07): how far the frame is
+  // from the last tick to the next (0 to 1; 1 draws creatures where the
+  // simulation has them), and the time between frames it aims for.
+  between = 1;
+  paceMs = 1000 / 30;
+  // A cast changed the land outside a tick (Engine.cast).
+  landChanged = true;
+  private scannedAt = NaN;
+
   render(visuals: Visuals, time: number, dt: number, reducedMotion: boolean): void {
     const started = performance.now();
     this.lapAt = started;
     const { world } = this;
     this.orbit.update(dt, time, this.groundAt, reducedMotion);
-    this.terrain.scan();
+    // The land changes only in a tick or a cast: a frame between two ticks
+    // does not compare every column again (3.5 ms a frame on a large island).
+    if (this.landChanged || time !== this.scannedAt) {
+      this.landChanged = false;
+      this.scannedAt = time;
+      this.terrain.scan();
+    }
     this.terrain.rebuild(this.firstBuild);
     this.firstBuild = false;
     this.lap("terrain");
@@ -403,13 +435,16 @@ export class VoxelView {
     // Frames come every 33 ms, one per simulation tick, unless a finger moves
     // the view. Well past that, frames are being missed: draw fewer pixels.
     // Back up only when both the cadence and the drawing have room, and not
-    // within 10 s of a drop, so it does not see-saw.
+    // within 10 s of a drop, so it does not see-saw. At 60 a second
+    // (pacing.ts) a missed cadence first falls back to 30, so only the draw
+    // time lowers the pixels there; the way back up needs the same room.
     const now = performance.now();
+    const fast = this.paceMs < 25;
     let next = this.pixelRatio;
-    if (avg > 52 || draw > 30) {
+    if ((!fast && avg > 52) || draw > 30) {
       next = Math.max(0.6, this.pixelRatio - 0.25);
       this.droppedAt = now;
-    } else if (avg < 38 && draw < 12 && now - this.droppedAt > 10_000) next = Math.min(max, this.pixelRatio + 0.25);
+    } else if (avg < (fast ? 19 : 38) && draw < 12 && now - this.droppedAt > 10_000) next = Math.min(max, this.pixelRatio + 0.25);
     if (next !== this.pixelRatio) {
       this.pixelRatio = next;
       this.renderer.setPixelRatio(next);
@@ -785,10 +820,14 @@ export class VoxelView {
         g = {
           x: c.x,
           y: c.y,
+          px: c.x,
+          py: c.y,
           t: time,
           speed: 0,
           phase: c.id,
+          pphase: c.id,
           yaw: Math.atan2(Math.cos(c.hd), Math.sin(c.hd)),
+          pyaw: Math.atan2(Math.cos(c.hd), Math.sin(c.hd)),
           seen: frame,
           gy: NaN,
           vy: 0,
@@ -800,29 +839,25 @@ export class VoxelView {
         this.gaits.set(c.id, g);
       }
       g.seen = frame;
-      // Fish swim under the surface, also under ice (a frozen lake: they used
-      // to be drawn standing on it, as if on land); a dead one floats. The
-      // rest walk up and down the island's steps instead of jumping between
-      // levels (walk.ts).
-      const underwater = k.aquatic && !c.dead && world.depth[i] > 0.3 && (world.fluid[i] === FLUID.WATER || world.fluid[i] === FLUID.ICE);
-      const ground = underwater ? this.groundAt(c.x, c.y) : easeGround(g, walkGround(world, c.x, c.y), time);
-      const y = underwater ? ground - Math.min(0.7, world.depth[i] * 0.5) - size * 0.15 : ground + c.z;
-      const p = this.toScene(c.x, c.y, y);
-      this.sphere.center.set(p.x, p.y + rig.height * size * 0.5, p.z);
-      this.sphere.radius = Math.max(rig.height, 1.4) * size;
-      const seen = this.frustum.intersectsSphere(this.sphere);
-
       // The stride comes from how far it moved since the last tick; the
       // heading is the simulation's own (4.3, steer.ts), which turns at the
       // creature's pace and on the spot before it walks off the other way.
       const walking = k.speed * Math.sqrt(c.size);
       if (time > g.t) {
         const dt = time - g.t;
+        g.px = g.x;
+        g.py = g.y;
+        g.pphase = g.phase;
+        g.pyaw = g.yaw;
         const dx = c.x - g.x;
         const dy = c.y - g.y;
         const d = Math.hypot(dx, dy);
-        if (d > 3) g.speed = 0;
-        else {
+        if (d > 3) {
+          // A jump (a teleport, a spawn far off): drawn there at once.
+          g.speed = 0;
+          g.px = c.x;
+          g.py = c.y;
+        } else {
           g.speed += (d / dt - g.speed) * Math.min(1, dt * 8);
           if (!c.dead) {
             let turn = Math.atan2(Math.cos(c.hd), Math.sin(c.hd)) - g.yaw;
@@ -841,6 +876,25 @@ export class VoxelView {
         g.y = c.y;
         g.t = time;
       }
+      // Part way from the last tick to this one: 1 at a tick, or without
+      // GRAPHICS.smooth (the engine's between).
+      const a = this.between;
+      const rx = g.px + (c.x - g.px) * a;
+      const ry = g.py + (c.y - g.py) * a;
+      const yaw = g.pyaw + Math.atan2(Math.sin(g.yaw - g.pyaw), Math.cos(g.yaw - g.pyaw)) * a;
+      const phase = g.pphase + (g.phase - g.pphase) * a;
+
+      // Fish swim under the surface, also under ice (a frozen lake: they used
+      // to be drawn standing on it, as if on land); a dead one floats. The
+      // rest walk up and down the island's steps instead of jumping between
+      // levels (walk.ts).
+      const underwater = k.aquatic && !c.dead && world.depth[i] > 0.3 && (world.fluid[i] === FLUID.WATER || world.fluid[i] === FLUID.ICE);
+      const ground = underwater ? this.groundAt(rx, ry) : easeGround(g, walkGround(world, rx, ry), time - (1 - a) * TICK);
+      const y = underwater ? ground - Math.min(0.7, world.depth[i] * 0.5) - size * 0.15 : ground + c.z;
+      const p = this.toScene(rx, ry, y);
+      this.sphere.center.set(p.x, p.y + rig.height * size * 0.5, p.z);
+      this.sphere.radius = Math.max(rig.height, 1.4) * size;
+      const seen = this.frustum.intersectsSphere(this.sphere);
 
       // The mark over its head, then the figure, when the camera sees it.
       // The creature the player inspects wears a white mark (3.6).
@@ -860,9 +914,9 @@ export class VoxelView {
       pose.x = p.x;
       pose.y = p.y;
       pose.z = p.z;
-      pose.yaw = g.yaw;
+      pose.yaw = yaw;
       pose.scale = size;
-      pose.phase = g.phase;
+      pose.phase = phase;
       pose.moving = still ? 0 : Math.min(1, g.speed / 1.4);
       // A walk, a trot or a run by its speed: longer strides, a body that
       // bobs and leans into a run (4.3).
@@ -874,8 +928,8 @@ export class VoxelView {
       pose.still = still;
       pose.flying = !c.dead && (k.flying || c.levitate > 0) && c.z > 0.5;
       pose.nod = asleep ? 0.35 : 0;
-      pose.pitch = rig.lean + (still ? 0 : pose.moving * 0.05 + gait * 0.04 + Math.sin(g.phase * 2) * 0.03 * gait);
-      if (!still && gait > 0) pose.y += Math.abs(Math.sin(g.phase)) * 0.05 * gait * size;
+      pose.pitch = rig.lean + (still ? 0 : pose.moving * 0.05 + gait * 0.04 + Math.sin(phase * 2) * 0.03 * gait);
+      if (!still && gait > 0) pose.y += Math.abs(Math.sin(phase)) * 0.05 * gait * size;
       if (g.lie > 0.01 && !c.dead) pose.y -= hipHeight(rig) * 0.75 * g.lie * size;
       pose.roll = 0;
       pose.offset = (c.id % 17) * 0.37;
