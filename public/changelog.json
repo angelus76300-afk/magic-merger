@@ -3,6 +3,10 @@
   "entries": [
     {
       "date": "2026-11-07",
+      "text": "A spell you cast is now saved two seconds after it lands, so reloading the page right after a cast no longer loses it."
+    },
+    {
+      "date": "2026-11-07",
       "version": "4.6",
       "text": "Every item you discover from today is made as what it is, of seven kinds: a spell, a creature, an object, a building, a settlement, a place or land. A new settlement is a real village with houses, fields and villagers, a new temple or tower stands beside the houses at their size, and a new book stays the size of a book unless it is a giant's. Items found before today will be remade the same way, a few at a time."
     },
