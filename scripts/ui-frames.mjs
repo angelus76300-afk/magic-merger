@@ -248,7 +248,14 @@ async function run(width, height) {
       await shot("07c-world-reasons-picked");
       const island = await page.locator("#world-stage").boundingBox();
       if (island.height < Math.min(300, height * 0.36)) failures.push(`${tag}: the reasons leave the island ${Math.round(island.height)} px tall`);
-      await page.locator(".vote .vote-close").click();
+      // Escape closes it even with focus on the island, where a cast leaves it.
+      await page.locator("iframe.world-frame").focus();
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(300);
+      if (await page.locator(".vote").count()) {
+        failures.push(`${tag}: Escape on the island does not close the vote`);
+        await page.locator(".vote .vote-close").click();
+      }
     }
   }
 

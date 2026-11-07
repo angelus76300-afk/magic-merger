@@ -100,7 +100,14 @@ export class WorldHost {
   private readyToast: string[] = [];
   private readyTimer = 0;
   private voteBar: HTMLElement | null = null;
+  // The question waiting for its six seconds, and the bar's own clock: two
+  // timers, so answering one item never cancels the next one's question.
   private voteTimer = 0;
+  private voteClose = 0;
+  // A question that came while the player was picking reasons: asked once
+  // the bar closes, never over their picks.
+  private voteWaiting: (() => void) | null = null;
+  private voteKeys: ((e: KeyboardEvent) => void) | null = null;
   private asked = new Set<number>();
   private synced = false;
   // The World tab is on screen (show() until hide()).
@@ -560,6 +567,9 @@ export class WorldHost {
         break;
       case "save":
         this.writeIsland(msg.data);
+        break;
+      case "escape":
+        this.voteKeys?.(new KeyboardEvent("keydown", { key: "Escape" }));
         break;
       case "tap-without-spell":
         if (this.selected) {
@@ -1079,6 +1089,11 @@ export class WorldHost {
   }
 
   private askVote(name: string, id: number, form: Form): void {
+    const open = this.voteBar?.isConnected ? this.voteBar : null;
+    if (open?.dataset.step === "reasons") {
+      this.voteWaiting = () => this.askVote(name, id, form);
+      return;
+    }
     const bar = (this.voteBar ??= document.createElement("div"));
     bar.className = "vote";
     bar.setAttribute("role", "group");
@@ -1088,12 +1103,20 @@ export class WorldHost {
     const close = () => {
       const had = bar.contains(document.activeElement);
       bar.remove();
-      clearTimeout(this.voteTimer);
+      clearTimeout(this.voteClose);
+      if (this.voteKeys) document.removeEventListener("keydown", this.voteKeys);
+      this.voteKeys = null;
+      const next = this.voteWaiting;
+      this.voteWaiting = null;
+      if (next) this.voteTimer = window.setTimeout(next, 1500);
       if (had) (this.el.list.querySelector<HTMLElement>('.chip-castable[aria-pressed="true"]') ?? this.el.list).focus({ preventScroll: true });
     };
-    bar.onkeydown = (e) => {
+    // Escape closes it wherever focus is (after a cast it is on the island).
+    if (this.voteKeys) document.removeEventListener("keydown", this.voteKeys);
+    this.voteKeys = (e: KeyboardEvent) => {
       if (e.key === "Escape") close();
     };
+    document.addEventListener("keydown", this.voteKeys);
     const send = async (up: boolean, reasons?: DownReason[]) => {
       close();
       try {
@@ -1124,9 +1147,9 @@ export class WorldHost {
     let warned = 0;
     const showReasons = () => {
       // Choosing takes longer than a tap: no clock while the player picks.
-      clearTimeout(this.voteTimer);
+      clearTimeout(this.voteClose);
       bar.dataset.step = "reasons";
-      text.textContent = "What was wrong?";
+      text.textContent = `What was wrong with ${name}?`;
       const head = document.createElement("div");
       head.className = "vote-head";
       const hint = document.createElement("span");
@@ -1152,7 +1175,11 @@ export class WorldHost {
           const at = picked.indexOf(r);
           if (at >= 0) picked.splice(at, 1);
           else if (picked.length < MAX_REASONS) picked.push(r);
-          else return say(`${MAX_REASONS} is the most. Tap one to unpick it.`, true);
+          else {
+            // On its side the picked ones may have scrolled out of view.
+            choices.find((c) => c.getAttribute("aria-pressed") === "true")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+            return say(`${MAX_REASONS} is the most. Tap one to unpick it.`, true);
+          }
           refresh();
         });
         b.dataset.reason = r;
@@ -1193,7 +1220,8 @@ export class WorldHost {
     // it covered the island's own panels and the ground where spells land.
     if (!bar.isConnected) this.el.status.before(bar);
     // Unanswered, it goes away; the next cast asks again.
-    this.voteTimer = window.setTimeout(close, 30_000);
+    clearTimeout(this.voteClose);
+    this.voteClose = window.setTimeout(close, 30_000);
   }
 
   renderSpells(): void {
