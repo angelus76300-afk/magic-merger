@@ -23,12 +23,19 @@ export interface Friend {
   // Daily challenges they found first (4.5).
   daily: number;
   favorite: FavoriteCard | null;
+  // The owner's account when its play is not recorded: play with the admin
+  // token is never counted, since the night's scripts use the same token on
+  // production (scripts/live-signals.mjs). Only a signed in session counts.
+  unrecorded?: boolean;
 }
 
 export interface CommunityResponse {
   friends: Friend[];
   // The asking player's own choices, also when hidden from the list.
-  me: { favorite: string | null; hidden: boolean };
+  // `card` is the favorite's card, so the picker can show it on a device
+  // whose discoveries do not hold it (2026-11-07: an empty picker under
+  // "Favorite spell: Aurora").
+  me: { favorite: string | null; hidden: boolean; card?: FavoriteCard | null };
 }
 
 export interface ProfileChange {

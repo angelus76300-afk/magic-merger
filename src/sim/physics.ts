@@ -608,7 +608,8 @@ export function explode(world: World, x: number, y: number, r: number, power: nu
     igniteVoxels(world, x, y, r * (0.6 + 0.4 * Math.min(1, power)));
   }
   if (blocked) wardHit(world, Math.round(y) * world.w + Math.round(x));
-  world.emit({ kind: "sound", name: "boom", size: Math.min(1, r / 30) });
+  // Heard from where it happened (4.8): a creature or powder going off is not placed at the last cast.
+  world.emit({ kind: "sound", name: "boom", size: Math.min(1, r / 30), x, y });
   world.emit({ kind: "shake", amount: Math.min(14, 2 + r * 0.4 * power), seconds: 0.6 });
   world.emit({ kind: "flash", color: 0xfff0c0, strength: Math.min(0.8, 0.2 + r / 60) });
   void w;

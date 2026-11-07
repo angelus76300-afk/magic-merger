@@ -6,7 +6,10 @@
 // gains, biquad filters (the formulas of the Web Audio spec), buffer sources
 // and the automation the voices use, rendered sample by sample.
 
-import { VOICE_NAMES, makeVoice, voiceFor, whiteNoise, type Synth } from "../src/sim/sound";
+import { VOICE_NAMES, bedMaker, makeVoice, voiceFor, whiteNoise, type Synth } from "../src/sim/sound";
+import { BEDS, CALLS, CALL_CELLS, CallClock, HEARD, HYSTERESIS, SPECIES_GAP, chooseBeds, sampleBeds, silentBeds, type BedLevels } from "../src/sim/ambience";
+import { C, F } from "../src/sim/materials";
+import { daylight } from "../src/sim/daylight";
 import {
   MAX_VOICES,
   MERGE_CAP,
@@ -232,6 +235,9 @@ class FakeBuffer {
   constructor(length: number) {
     this.data = new Float32Array(length);
   }
+  get duration() {
+    return this.data.length / RATE;
+  }
   getChannelData() {
     return this.data;
   }
@@ -282,7 +288,36 @@ interface Render {
   nodes: number;
 }
 
-function render(name: string, size: number, pitch = 1): Render {
+// Voices draw on Math.random (a crackle's pops, the noise). Each render runs
+// on a seeded stream instead, so a run of this file is the same every time:
+// unseeded, the loudness ratio below landed between 8.2 and 10.6 and failed
+// about one run in three.
+function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function render(name: string, size: number, pitch = 1, seed = 1): Render {
+  const shared = Math.random;
+  Math.random = seeded(seed);
+  try {
+    return renderNow(name, size, pitch);
+  } finally {
+    Math.random = shared;
+  }
+}
+
+// A voice's usual loudness: the mean of several renders, so one quiet draw
+// of a crackle's pops does not stand for the voice.
+const LOUDNESS_RENDERS = 8;
+
+function renderNow(name: string, size: number, pitch: number): Render {
   const ctx = new Offline();
   const noise = whiteNoise(ctx as unknown as BaseAudioContext);
   const sink = new Sink();
@@ -321,7 +356,11 @@ for (const name of VOICE_NAMES) {
     check(r.peak <= 1.2, `voice ${name} at size ${size}: peak ${r.peak.toFixed(3)} under 1.2`);
     check(r.tail < 0.01, `voice ${name} at size ${size}: silent after the length it reports (${r.tail.toFixed(4)})`);
     check(r.nodes <= 24, `voice ${name} at size ${size}: ${r.nodes} nodes, at most 24`);
-    if (size === 0.5) loudness[name] = r.loud;
+    if (size === 0.5) {
+      let sum = r.loud;
+      for (let seed = 2; seed <= LOUDNESS_RENDERS; seed++) sum += render(name, size, 1.08, seed).loud;
+      loudness[name] = sum / LOUDNESS_RENDERS;
+    }
   }
 }
 const louds = Object.values(loudness);
@@ -447,6 +486,131 @@ check(!castOwns(120, true), "two minutes on, a sound with no place is never put 
   console.log(
     `busy island, one minute: ${events} sound events, ${s.played} played, ${s.merged} merged, ${s.cooled} in cooldown, ${s.far} too far, ${s.full} over budget, at most ${maxLive} voices`,
   );
+}
+
+// 5. Ambience (4.8, item 3).
+{
+  // At most two calm beds, the second at most half the first; fire and rain on top.
+  const busy: BedLevels = { surf: 0.9, leaves: 0.7, fire: 0.4, lava: 0.3, edge: 0.6, rain: 0.5, birds: 0.6, crickets: 0 };
+  const pick = chooseBeds(busy, []);
+  const calm = Object.entries(pick.levels).filter(([b, v]) => v > 0 && !["fire", "rain", "birds", "crickets"].includes(b));
+  check(
+    calm.length === HEARD && pick.levels.surf === 0.9 && pick.levels.leaves === 0.45,
+    `two calm beds heard at most, the second at most half: ${JSON.stringify(pick.levels)}`,
+  );
+  check(pick.levels.fire === 0.4 && pick.levels.rain === 0.5 && pick.levels.birds === 0.6, "fire, rain and birds are heard on top of the two washes");
+  // Hysteresis: a bed heard keeps its slot against one that leads by less than 0.15.
+  const close = { ...silentBeds(), surf: 0.5, leaves: 0.6, edge: 0.3 };
+  check(chooseBeds(close, ["surf", "edge"]).heard.join() === "surf,leaves", "a bed heard is not swapped for one leading by less than the hysteresis");
+  check(
+    chooseBeds({ ...close, leaves: 0.5 + HYSTERESIS + 0.1 }, ["surf", "edge"]).heard[0] === "leaves",
+    "a bed leading by more than the hysteresis takes the first slot",
+  );
+
+  // On a built island: forest, sea and the void past the rim are found where they are.
+  const world = generateWorld(128, 128, 4242);
+  let forest = -1;
+  let sea = -1;
+  for (let i = 0; i < world.n && (forest < 0 || sea < 0); i += 7) {
+    const x = i % world.w;
+    const y = Math.floor(i / world.w);
+    if (x < 10 || y < 10 || x > world.w - 10 || y > world.h - 10) continue;
+    let trees = 0;
+    let water = 0;
+    for (let dy = -4; dy <= 4; dy++)
+      for (let dx = -4; dx <= 4; dx++) {
+        const j = (y + dy) * world.w + x + dx;
+        if (world.cover[j] === C.TREE) trees++;
+        if (world.fluid[j] === F.WATER) water++;
+      }
+    if (forest < 0 && trees > 40) forest = i;
+    if (sea < 0 && water > 70) sea = i;
+  }
+  const at = (i: number, time: number) => sampleBeds(world, i % world.w, Math.floor(i / world.w), 15, time);
+  const day = 30;
+  let night = day;
+  while (daylight(night).night < 0.95) night += 5;
+  const wood = at(forest, day);
+  const woodNight = at(forest, night);
+  check(forest >= 0 && wood.leaves > 0.4 && wood.birds > 0.3 && wood.crickets === 0, `a forest by day: leaves and birds, no crickets ${JSON.stringify(wood)}`);
+  check(woodNight.birds < wood.birds && woodNight.crickets > 0.1, `the same forest at night: crickets, fewer birds ${JSON.stringify(woodNight)}`);
+  const water = at(sea, day);
+  check(sea >= 0 && water.surf + water.edge > 0.3 && water.leaves < wood.leaves, `over water: surf or open sea ${JSON.stringify(water)}`);
+  check(sampleBeds(world, -40, -40, 15, day).edge === 1, "past the island's rim: only the edge wind");
+  check(sampleBeds(world, 64, 64, 15, day, () => 0.8).rain === 0.8, "rain comes from the weather where the camera looks");
+
+  // Bounded and at phone frequencies: every bed rendered 3 s, then through a
+  // 300 Hz high pass (phone speakers barely play lower).
+  const bedLevels: string[] = [];
+  for (const bed of BEDS) {
+    for (const phone of [false, true]) {
+      const ctx = new Offline();
+      const sink = new Sink();
+      let into: Node = sink;
+      if (phone) {
+        const hp = ctx.createBiquadFilter();
+        hp.type = "highpass";
+        hp.frequency.value = 300;
+        hp.connect(sink);
+        into = hp;
+      }
+      const shared = Math.random;
+      Math.random = seeded(7);
+      try {
+        const made = bedMaker(bed)(ctx as unknown as AudioContext, whiteNoise(ctx as unknown as BaseAudioContext), into as unknown as AudioNode, 0);
+        for (let t = 0; t < 3; t += 0.25) made.tick?.(t, 1);
+        made.stop(3);
+      } finally {
+        Math.random = shared;
+      }
+      const n = Math.round(3.1 * RATE);
+      let peak = 0;
+      let sum = 0;
+      let nan = false;
+      for (let i = 0; i < n; i++) {
+        const v = sink.out(i);
+        if (!Number.isFinite(v)) nan = true;
+        peak = Math.max(peak, Math.abs(v));
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / n);
+      if (!phone) check(!nan && peak <= 1.2 && rms > 0.005, `bed ${bed}: sounds and stays bounded (peak ${peak.toFixed(3)}, rms ${rms.toFixed(4)})`);
+      else check(rms > 0.003, `bed ${bed}: still heard above 300 Hz, as on a phone (rms ${rms.toFixed(4)})`);
+      bedLevels.push(`${bed}${phone ? " >300Hz" : ""} ${rms.toFixed(3)}`);
+    }
+  }
+  console.log(`bed levels (RMS over 3 s at full level): ${bedLevels.join(", ")}`);
+}
+
+// 6. Creature calls (item 4): about 0.4 a second, never more than 1, one per
+// species per 4 s, one per creature per 20 s.
+{
+  const clock = new CallClock();
+  const species = Object.keys(CALLS);
+  const calls: { t: number; species: string; id: number }[] = [];
+  // 40 creatures of 10 kinds all wanting to call, 10 looks a second, 2 minutes.
+  for (let k = 0; k < 1200; k++) {
+    const t = k / 10;
+    for (let id = 0; id < 40; id++) {
+      const sp = species[id % species.length];
+      if (clock.may(id, sp, CALLS[sp].voice, t)) {
+        clock.called(id, sp, t);
+        calls.push({ t, species: sp, id });
+        break;
+      }
+    }
+  }
+  const perSecond = calls.length / 120;
+  let maxInOne = 0;
+  for (const c of calls) maxInOne = Math.max(maxInOne, calls.filter((d) => d.t >= c.t && d.t < c.t + 1).length);
+  const sameSpecies = calls.some((c, i) => calls.slice(i + 1).some((d) => d.species === c.species && d.t - c.t < SPECIES_GAP - 1e-9));
+  const sameCreature = calls.some((c, i) => calls.slice(i + 1).some((d) => d.id === c.id && d.t - c.t < 20 - 1e-9));
+  check(
+    maxInOne <= 1 && perSecond <= 1,
+    `never more than one call a second (${calls.length} calls in 2 minutes, ${perSecond.toFixed(2)} a second, busiest second ${maxInOne})`,
+  );
+  check(!sameSpecies && !sameCreature, "one call per species per 4 s, and per creature per 20 s");
+  check(CALL_CELLS === 25, "calls are heard within 25 cells of the camera's point at most");
 }
 
 console.log(`sound: ${passes} checks passed${failures ? `, ${failures} failed` : ""}`);
