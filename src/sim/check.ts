@@ -1,7 +1,7 @@
 import { parseIntents } from "../../shared/promises";
 import { TIERS, TIER_REACH, type Tier } from "../../shared/tiers";
 import { KINDS, kindOf, makeCreature, populate, resetCreatureIds, type Creature } from "./creatures";
-import { abilitiesOf } from "./abilities";
+import { abilitiesOf, unfitDefence } from "./abilities";
 import { daylight } from "./daylight";
 import { C } from "./materials";
 import { unpackLook } from "./villagers";
@@ -30,7 +30,7 @@ import { MODELS_PER_ITEM, propBounds } from "./props";
 // (src/sim/checkframe.ts), and Node for `npm test` and the measurement scripts.
 // The Worker cannot run it, since Cloudflare Workers forbid new Function.
 
-export type CheckProblem = "crash" | "nothing" | "wiped" | "promise" | "idle" | "size" | "kind" | "look";
+export type CheckProblem = "crash" | "nothing" | "wiped" | "promise" | "idle" | "size" | "kind" | "look" | "fit";
 
 export interface CheckResult {
   ok: boolean;
@@ -376,8 +376,11 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
       rt.raised.get(`check:${req.key}`),
       rt.modelCalls.get(`check:${req.key}`),
       rt.people.get(`check:${req.key}`),
+      rt.planted.get(`check:${req.key}`),
     );
     if (found) return { ok: false, problem: found.problem, detail: found.detail, stats };
+    const unfit = defenceOf(req, rt.owners, `check:${req.key}`, rt.wardCalls.get(`check:${req.key}`) ?? 0);
+    if (unfit) return { ok: false, problem: "fit", detail: unfit, stats };
   }
   const detail = `${cells} cells, ${voxels} blocks and ${creatures} creatures changed${bodies ? `, ${bodies} bodies flew` : ""}.`;
   let result: CheckResult = { ok: true, problem: null, detail, stats };
@@ -592,6 +595,7 @@ function measureMade(
   raised: number[],
   modelCalls = 0,
   people: Creature[] = [],
+  planted: ReadonlySet<number> = new Set(),
 ): Made {
   // What it built, measured round its middle: its voxels (each a cell) and
   // the parts of its fine models (props.ts), the farthest tenth left out, so
@@ -610,7 +614,7 @@ function measureMade(
   const parts: Part[] = [];
   const mine: { x: number; y: number }[] = [];
   for (const [k] of world.decor) {
-    if (before.decor.has(k)) continue;
+    if (before.decor.has(k) || planted.has(k)) continue;
     const x = keyX(k);
     const y = keyY(k);
     if (marks.some((mk) => Math.abs(mk.x - x) <= mk.size + 1.5 && Math.abs(mk.y - y) <= mk.size + 1.5)) continue;
@@ -741,9 +745,23 @@ export function formCheck(
   raised: number[] = [],
   modelCalls = 0,
   people: Creature[] = [],
+  planted: number[][] = [],
 ): { problem: "size" | "kind" | "look"; detail: string } | null {
-  const m = measureMade(before, world, ref, owners, key, raised, modelCalls, people);
+  // A creature or a person may plant a few trees (a druid's oak and birch):
+  // its deeds, not its body. Up to three; a forest still counts.
+  const trees = form === "creature" ? new Set(planted.slice(0, PLANTED_TREES).flat()) : new Set<number>();
+  const m = measureMade(before, world, ref, owners, key, raised, modelCalls, people, trees);
   return judgeMade(form, name, giant, m);
+}
+export const PLANTED_TREES = 3;
+
+// Its defensive magic, which its name or promise must call for (the owner's
+// Serpent, 7 November): the abilities of the kinds it wrote, and its wards.
+export function defenceOf(req: CastRequest, owners: Map<string, string>, key: string, wards: number): string | null {
+  const abilities = [...owners]
+    .filter(([k, v]) => v === key && k.startsWith("creature:"))
+    .flatMap(([k]) => KINDS.get(k.slice("creature:".length))?.abilities ?? []);
+  return unfitDefence(req.name, parseIntents(req.intents), abilities, wards);
 }
 
 export function judgeMade(form: Exclude<Form, "spell">, name: string, giant: boolean, m: Made): { problem: "size" | "kind" | "look"; detail: string } | null {

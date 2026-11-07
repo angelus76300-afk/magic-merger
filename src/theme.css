@@ -1,0 +1,1566 @@
+/* Lantern night (2026-11-07): the look of everything around the island.
+
+   The island is a bright voxel world in daylight; the interface is the night
+   around it and the workbench where items are merged. Three ideas carry it:
+   - Blocks: buttons and items are small voxels, a lit top edge and a dark lip
+     underneath, that press down when tapped, like the island's own blocks.
+   - Lantern light: one warm gold for what is chosen, what to do next and what
+     is new. Violet stays the colour of spells and copper of artifacts.
+   - Type: Pixelify Sans, a pixel face, only for names (the game, a page, an
+     item on its card); Atkinson Hyperlegible Next, made for low vision
+     readers, for everything players read.
+   It is layered over style.css: tokens first (style.css reads them), then the
+   parts. Both fonts are served from this site, never a third party. */
+
+@font-face {
+  font-family: "Pixelify Sans";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/pixelify-sans-latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("/fonts/atkinson-next-latin.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("/fonts/atkinson-next-latin-ext.woff2") format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+:root {
+  /* The night */
+  --bg: #0d1322;
+  --well: #090e1a;
+  --surface: #151d33;
+  --surface-2: #1e2846;
+  --surface-3: #283458;
+  --lip: #05080f;
+  /* At least 3:1 on the surface: the edge of a control has to be seen. */
+  --line: #56669a;
+  --rule: #2d3a63;
+  --text: #f3eedf;
+  --muted: #a9b2cf;
+  /* The light */
+  --lantern: #ffc54d;
+  --lantern-hi: #ffdc8a;
+  --lantern-lip: #8a5600;
+  --lantern-ink: #2b1a00;
+  --accent: var(--lantern);
+  /* The kinds, and the good and the bad */
+  --spell: #b9a0ff;
+  --artifact: #ff9f5c;
+  --moss: #7fd68e;
+  --danger: #ff8a8a;
+  --radius: 5px;
+  /* Stone: a 48 px tile of 6 px voxels, each a shade lighter or darker. */
+  --stone: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48' shape-rendering='crispEdges'%3E%3Crect x='6' y='0' width='6' height='6' fill='%23fff' fill-opacity='0.018'/%3E%3Crect x='36' y='0' width='6' height='6' fill='%23fff' fill-opacity='0.018'/%3E%3Crect x='0' y='6' width='6' height='6' fill='%23000' fill-opacity='0.036'/%3E%3Crect x='6' y='6' width='6' height='6' fill='%23000' fill-opacity='0.060'/%3E%3Crect x='18' y='6' width='6' height='6' fill='%23fff' fill-opacity='0.030'/%3E%3Crect x='24' y='6' width='6' height='6' fill='%23fff' fill-opacity='0.030'/%3E%3Crect x='6' y='12' width='6' height='6' fill='%23000' fill-opacity='0.060'/%3E%3Crect x='12' y='12' width='6' height='6' fill='%23000' fill-opacity='0.090'/%3E%3Crect x='18' y='12' width='6' height='6' fill='%23fff' fill-opacity='0.030'/%3E%3Crect x='30' y='12' width='6' height='6' fill='%23fff' fill-opacity='0.030'/%3E%3Crect x='36' y='12' width='6' height='6' fill='%23000' fill-opacity='0.060'/%3E%3Crect x='0' y='18' width='6' height='6' fill='%23fff' fill-opacity='0.030'/%3E%3Crect x='12' y='18' width='6' height='6' fill='%23fff' fill-opacity='0.018'/%3E%3Crect x='24' y='18' width='6' height='6' fill='%23fff' fill-opacity='0.045'/%3E%3Crect x='36' y='18' width='6' height='6' fill='%23fff' fill-opacity='0.030'/%3E%3Crect x='12' y='24' width='6' height='6' fill='%23000' fill-opacity='0.036'/%3E%3Crect x='24' y='24' width='6' height='6' fill='%23fff' fill-opacity='0.018'/%3E%3Crect x='30' y='24' width='6' height='6' fill='%23000' fill-opacity='0.090'/%3E%3Crect x='36' y='24' width='6' height='6' fill='%23fff' fill-opacity='0.030'/%3E%3Crect x='6' y='30' width='6' height='6' fill='%23fff' fill-opacity='0.030'/%3E%3Crect x='24' y='30' width='6' height='6' fill='%23000' fill-opacity='0.090'/%3E%3Crect x='30' y='30' width='6' height='6' fill='%23fff' fill-opacity='0.045'/%3E%3Crect x='36' y='30' width='6' height='6' fill='%23fff' fill-opacity='0.045'/%3E%3Crect x='42' y='30' width='6' height='6' fill='%23fff' fill-opacity='0.045'/%3E%3Crect x='6' y='36' width='6' height='6' fill='%23000' fill-opacity='0.090'/%3E%3Crect x='12' y='36' width='6' height='6' fill='%23fff' fill-opacity='0.018'/%3E%3Crect x='18' y='36' width='6' height='6' fill='%23000' fill-opacity='0.060'/%3E%3Crect x='42' y='36' width='6' height='6' fill='%23000' fill-opacity='0.036'/%3E%3Crect x='0' y='42' width='6' height='6' fill='%23fff' fill-opacity='0.018'/%3E%3Crect x='12' y='42' width='6' height='6' fill='%23fff' fill-opacity='0.018'/%3E%3Crect x='30' y='42' width='6' height='6' fill='%23fff' fill-opacity='0.018'/%3E%3C/svg%3E");
+  --font-body: "Atkinson Hyperlegible Next", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-name: "Pixelify Sans", var(--font-body);
+  --tabbar-h: 62px;
+  /* A pixel drawing per tab, 12 by 12. */
+  --icon-craft: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' shape-rendering='crispEdges'%3E%3Cpath d='M5 0h2v1H5zM5 1h2v1H5zM3 2h6v1H3zM3 3h6v1H3zM5 4h2v1H5zM5 5h2v1H5zM1 7h4v1H1zM7 7h4v1H7zM1 8h4v1H1zM7 8h4v1H7zM1 9h4v1H1zM7 9h4v1H7zM1 10h4v1H1zM7 10h4v1H7z'/%3E%3C/svg%3E");
+  --icon-world: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' shape-rendering='crispEdges'%3E%3Cpath d='M8 0h2v1H8zM7 1h4v1H7zM7 2h4v1H7zM8 3h1v1H8zM1 4h10v1H1zM0 5h12v1H0zM1 6h10v1H1zM2 7h8v1H2zM3 8h6v1H3zM4 9h4v1H4zM5 10h2v1H5z'/%3E%3C/svg%3E");
+  --icon-challenges: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' shape-rendering='crispEdges'%3E%3Cpath d='M5 0h2v1H5zM5 1h2v1H5zM4 2h4v1H4zM0 3h12v1H0zM1 4h10v1H1zM2 5h8v1H2zM3 6h6v1H3zM3 7h2v1H3zM7 7h2v1H7zM2 8h2v1H2zM8 8h2v1H8zM1 9h2v1H1zM9 9h2v1H9z'/%3E%3C/svg%3E");
+  --icon-daily: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' shape-rendering='crispEdges'%3E%3Cpath d='M5 0h2v1H5zM1 1h1v1H1zM5 1h2v1H5zM10 1h1v1H10zM2 2h1v1H2zM9 2h1v1H9zM4 3h4v1H4zM3 4h6v1H3zM0 5h2v1H0zM3 5h6v1H3zM10 5h2v1H10zM0 6h2v1H0zM3 6h6v1H3zM10 6h2v1H10zM3 7h6v1H3zM4 8h4v1H4zM2 9h1v1H2zM9 9h1v1H9zM1 10h1v1H1zM5 10h2v1H5zM10 10h1v1H10zM5 11h2v1H5z'/%3E%3C/svg%3E");
+  --icon-community: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' shape-rendering='crispEdges'%3E%3Cpath d='M2 1h2v1H2zM8 1h2v1H8zM1 2h4v1H1zM7 2h4v1H7zM1 3h4v1H1zM7 3h4v1H7zM2 4h2v1H2zM8 4h2v1H8zM1 6h4v1H1zM7 6h4v1H7zM0 7h6v1H0zM6 7h6v1H6zM0 8h6v1H0zM6 8h6v1H6zM0 9h6v1H0zM6 9h6v1H6z'/%3E%3C/svg%3E");
+  --icon-chronicle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' shape-rendering='crispEdges'%3E%3Cpath d='M2 0h9v1H2zM2 1h2v1H2zM10 1h1v1H10zM2 2h2v1H2zM5 2h4v1H5zM10 2h1v1H10zM2 3h2v1H2zM10 3h1v1H10zM2 4h2v1H2zM5 4h4v1H5zM10 4h1v1H10zM2 5h2v1H2zM10 5h1v1H10zM2 6h2v1H2zM5 6h3v1H5zM10 6h1v1H10zM2 7h2v1H2zM10 7h1v1H10zM2 8h9v1H2zM2 9h1v1H2zM10 9h1v1H10zM2 10h9v1H2z'/%3E%3C/svg%3E");
+  --icon-villager: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' shape-rendering='crispEdges'%3E%3Cpath d='M3 0h2v1H3zM2 1h4v1H2zM2 2h4v1H2zM3 3h2v1H3zM10 3h1v1H10zM2 4h4v1H2zM9 4h3v1H9zM1 5h6v1H1zM10 5h1v1H10zM1 6h6v1H1zM2 7h4v1H2zM2 8h1v1H2zM5 8h1v1H5zM2 9h1v1H2zM5 9h1v1H5zM2 10h1v1H2zM5 10h1v1H5z'/%3E%3C/svg%3E");
+  --icon-reset: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' shape-rendering='crispEdges'%3E%3Cpath d='M1 0h1v1H1zM0 1h3v1H0zM1 2h1v1H1zM1 4h10v1H1zM0 5h12v1H0zM1 6h10v1H1zM2 7h8v1H2zM3 8h6v1H3zM4 9h4v1H4zM5 10h2v1H5z'/%3E%3C/svg%3E");
+  --icon-soundon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' shape-rendering='crispEdges'%3E%3Cpath d='M5 1h1v1H5zM10 1h1v1H10zM4 2h2v1H4zM7 2h1v1H7zM11 2h1v1H11zM1 3h5v1H1zM8 3h1v1H8zM11 3h1v1H11zM1 4h5v1H1zM8 4h1v1H8zM11 4h1v1H11zM1 5h5v1H1zM8 5h1v1H8zM11 5h1v1H11zM1 6h5v1H1zM8 6h1v1H8zM11 6h1v1H11zM4 7h2v1H4zM7 7h1v1H7zM11 7h1v1H11zM5 8h1v1H5zM10 8h1v1H10z'/%3E%3C/svg%3E");
+  --icon-soundoff: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' shape-rendering='crispEdges'%3E%3Cpath d='M5 1h1v1H5zM4 2h2v1H4zM1 3h5v1H1zM7 3h1v1H7zM11 3h1v1H11zM1 4h5v1H1zM8 4h1v1H8zM10 4h1v1H10zM1 5h5v1H1zM9 5h1v1H9zM1 6h5v1H1zM8 6h1v1H8zM10 6h1v1H10zM4 7h2v1H4zM7 7h1v1H7zM11 7h1v1H11zM5 8h1v1H5z'/%3E%3C/svg%3E");
+  --icon-ideas: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' shape-rendering='crispEdges'%3E%3Cpath d='M4 0h4v1H4zM3 1h6v1H3zM2 2h2v1H2zM5 2h5v1H5zM2 3h1v1H2zM4 3h6v1H4zM2 4h8v1H2zM3 5h6v1H3zM4 6h4v1H4zM4 8h4v1H4zM4 9h4v1H4zM5 10h2v1H5z'/%3E%3C/svg%3E");
+}
+
+/* ---------- Base ---------- */
+
+body {
+  font: 16px/1.45 var(--font-body);
+  background: var(--bg);
+  color: var(--text);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-weight: 700;
+  line-height: 1.2;
+  text-wrap: balance;
+}
+
+::selection {
+  background: var(--lantern);
+  color: var(--lantern-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--lantern);
+  outline-offset: 2px;
+}
+
+a {
+  color: var(--lantern);
+}
+
+/* A block: a lit top edge, a dark lip underneath, and a press that sinks it. */
+button,
+.book-open,
+.board-clear,
+.card-admin button,
+.challenge-go,
+.attempt-cast,
+.attempt-back,
+.chronicle button,
+.book button,
+.people button,
+.feedback button,
+.idea-dialog button:not(.card-close),
+.world-banner button,
+.challenge-list button,
+.world-tools button,
+.spellbar-expand,
+.vote button:not(.vote-close) {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font: 600 15px/1.2 var(--font-body);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 8%),
+    0 3px 0 var(--lip);
+  cursor: pointer;
+  transition:
+    transform 0.07s ease-out,
+    box-shadow 0.07s ease-out,
+    background-color 0.15s;
+}
+
+button:hover {
+  background-color: var(--surface-3);
+}
+
+button:active:not(:disabled, .chip, .tab, .card-close, .vote-close) {
+  transform: translateY(2px);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 8%),
+    0 1px 0 var(--lip);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The one thing to do next: lit by the lantern. */
+.card-cast,
+.feedback-new button[type="submit"],
+.reset-actions .primary,
+.challenge-go:not(:disabled),
+.attempt-cast,
+.welcome .card-cast {
+  border-color: var(--lantern-hi);
+  background: var(--lantern);
+  color: var(--lantern-ink);
+  font-weight: 700;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 45%),
+    0 3px 0 var(--lantern-lip);
+}
+
+.card-cast:hover,
+.feedback-new button[type="submit"]:hover,
+.reset-actions .primary:hover,
+.challenge-go:not(:disabled):hover,
+.attempt-cast:hover {
+  background: var(--lantern-hi);
+}
+
+.card-cast:active,
+.attempt-cast:active,
+.challenge-go:not(:disabled):active {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 45%),
+    0 1px 0 var(--lantern-lip);
+}
+
+/* Fields: sunk into the surface, where blocks stand out of it. */
+input[type="search"],
+input[type="text"],
+input[type="email"],
+input:not([type]),
+textarea,
+select,
+.filterbar input,
+.filterbar select,
+.inventory-head input,
+.feedback-new input,
+.feedback-new textarea,
+.people-new input,
+.reset-fields select,
+.reset-fields input[type="text"],
+.profile-favorite select {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--well);
+  color: var(--text);
+  font: 400 15px/1.3 var(--font-body);
+  box-shadow: inset 0 2px 0 rgb(0 0 0 / 35%);
+  outline: none;
+}
+
+textarea,
+.feedback-new textarea {
+  padding: 10px 12px;
+  line-height: 1.45;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #7d87a8;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+.inventory-head input:focus,
+.filter-search:focus {
+  border-color: var(--lantern);
+  outline: none;
+  box-shadow:
+    inset 0 2px 0 rgb(0 0 0 / 35%),
+    0 0 0 2px rgb(255 197 77 / 35%);
+}
+
+input[type="checkbox"],
+input[type="range"] {
+  accent-color: var(--lantern);
+}
+
+input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+}
+
+/* ---------- Top bar ---------- */
+
+.topbar {
+  flex-wrap: nowrap;
+  gap: 8px;
+  min-height: 60px;
+  padding: max(8px, env(safe-area-inset-top)) 12px 8px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: 0 3px 0 var(--lip);
+  position: relative;
+  z-index: 20;
+}
+
+.title {
+  flex: none;
+  font-family: var(--font-name);
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--lantern);
+  text-shadow: 2px 2px 0 var(--lantern-lip);
+  white-space: nowrap;
+}
+
+.account-chip,
+.help {
+  flex-shrink: 0;
+}
+
+/* The owner's badge (spend so far) gives way before the account chip does. */
+.badge {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 419px) {
+  .topbar {
+    gap: 6px;
+    padding-left: 12px;
+    padding-right: 10px;
+  }
+
+  .title {
+    font-size: 20px;
+  }
+
+  .account-chip {
+    padding: 0 10px;
+  }
+}
+
+.badge {
+  /* Shrinks, with an ellipsis, so the account chip and ? stay on screen
+     (the review of #67: preview and admin badges pushed ? to x 444). */
+  flex: 0 1 auto;
+  padding: 3px 7px;
+  border-radius: 4px;
+  font: 700 12px/1.3 var(--font-body);
+  box-shadow: 0 2px 0 var(--lip);
+}
+
+.badge-admin {
+  background: var(--lantern);
+  color: var(--lantern-ink);
+}
+
+.account-chip {
+  min-width: 0;
+  min-height: 44px;
+  max-width: 10em;
+  padding: 0 12px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font: 600 14px/1.2 var(--font-body);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 8%),
+    0 3px 0 var(--lip);
+}
+
+.account-chip::before {
+  border-radius: 1px;
+}
+
+.help {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border-radius: var(--radius);
+  color: var(--text);
+  font: 600 20px/1 var(--font-name);
+}
+
+/* Tabs: a bar under the thumb on phones and foldables, in the top bar on a
+   wide screen. Each is a pixel drawing over its name. */
+.tab[data-view="craft-view"] {
+  --icon: var(--icon-craft);
+}
+.tab[data-view="world-view"] {
+  --icon: var(--icon-world);
+}
+.tab[data-view="challenges-view"] {
+  --icon: var(--icon-challenges);
+}
+.tab[data-view="daily-view"] {
+  --icon: var(--icon-daily);
+}
+.tab[data-view="community-view"] {
+  --icon: var(--icon-community);
+}
+.tab[data-view="feedback-view"] {
+  --icon: var(--icon-ideas);
+}
+
+.tabs {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+
+.tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  font: 600 15px/1.1 var(--font-body);
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+
+.tab::before {
+  content: "";
+  flex: none;
+  width: 24px;
+  height: 24px;
+  background: currentColor;
+  -webkit-mask: var(--icon) center / 24px 24px no-repeat;
+  mask: var(--icon) center / 24px 24px no-repeat;
+}
+
+.tab:hover {
+  background: transparent;
+  color: var(--text);
+}
+
+.tab[aria-selected="true"] {
+  background: transparent;
+  color: var(--lantern);
+}
+
+/* The lit block over (or under) the chosen tab. */
+.tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  width: 28px;
+  height: 4px;
+  margin-left: -14px;
+  background: var(--lantern);
+  box-shadow: 0 0 12px rgb(255 197 77 / 55%);
+}
+
+.tab-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--lantern);
+  color: var(--lantern-ink);
+  font: 700 12px/18px var(--font-body);
+  box-shadow: 0 2px 0 var(--lantern-lip);
+}
+
+@media (max-width: 1023px) {
+  .title {
+    margin-right: auto;
+  }
+
+  .tabs {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    order: 0;
+    width: auto;
+    margin: 0;
+    display: flex;
+    gap: 0;
+    overflow: visible;
+    padding: 0 4px env(safe-area-inset-bottom);
+    background: var(--surface);
+    border-top: 1px solid var(--line);
+    box-shadow: 0 -3px 0 var(--lip);
+  }
+
+  .tab {
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 5px;
+    min-height: var(--tabbar-h);
+    padding: 8px 2px 6px;
+    font-size: 12.5px;
+    letter-spacing: 0.01em;
+  }
+
+  .tab[aria-selected="true"]::after {
+    top: 0;
+  }
+
+  /* The count sits on the drawing's corner. */
+  .tab-count {
+    position: absolute;
+    top: 4px;
+    left: calc(50% + 6px);
+    margin: 0;
+  }
+
+  /* The views end above the bar. */
+  body:has(.tabs:not([hidden])) {
+    padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+  }
+
+  body:has(.tabs:not([hidden])) .inventory,
+  body:has(.tabs:not([hidden])) .spellbar {
+    padding-bottom: 8px;
+  }
+
+  body:has(.tabs:not([hidden])) .feedback-inner,
+  body:has(.tabs:not([hidden])) .challenges-view,
+  body:has(.tabs:not([hidden])) .daily-view,
+  body:has(.tabs:not([hidden])) .community-view {
+    padding-bottom: 24px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .tabs {
+    gap: 2px;
+  }
+
+  .tab {
+    gap: 8px;
+    padding: 0 14px;
+  }
+
+  .tab::before {
+    width: 18px;
+    height: 18px;
+    -webkit-mask-size: 18px 18px;
+    mask-size: 18px 18px;
+  }
+
+  .tab[aria-selected="true"]::after {
+    bottom: -9px;
+  }
+}
+
+/* ---------- Craft: the workbench ---------- */
+
+.board {
+  background-color: #0f1629;
+  background-image:
+    radial-gradient(ellipse 80% 60% at 50% 0%, rgb(255 197 77 / 8%), transparent 70%), linear-gradient(rgb(255 255 255 / 3.2%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 3.2%) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    24px 24px,
+    24px 24px;
+  background-position:
+    0 0,
+    -1px -1px,
+    -1px -1px;
+}
+
+.board-hint {
+  bottom: 14px;
+  font-size: 14px;
+  color: var(--muted);
+  text-wrap: balance;
+}
+
+.board-clear {
+  top: 12px;
+  right: 12px;
+  color: var(--muted);
+}
+
+.inventory {
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: 0 -3px 0 var(--lip);
+  position: relative;
+  z-index: 1;
+}
+
+@media (min-width: 768px) {
+  .inventory {
+    box-shadow: -3px 0 0 var(--lip);
+    width: 360px;
+  }
+}
+
+.inventory-head {
+  gap: 8px;
+  padding: 12px 16px 10px;
+}
+
+.count {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.inventory-list {
+  gap: 10px 8px;
+  padding: 2px 16px 16px;
+}
+
+.inventory-filters {
+  padding: 0 16px 12px;
+}
+
+.filterbar {
+  gap: 8px;
+}
+
+.filterbar select {
+  padding-right: 8px;
+}
+
+/* Kinds: one segmented block; the chosen one is lit. */
+.filter-kinds button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 0;
+  background: var(--surface-2);
+  font-size: 14px;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 8%),
+    0 3px 0 var(--lip);
+}
+
+.filter-kinds button:first-child {
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+
+.filter-kinds button:last-child {
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.filter-kinds button[aria-pressed="true"] {
+  position: relative;
+  z-index: 1;
+  border-color: var(--lantern-hi);
+  background: var(--lantern);
+  color: var(--lantern-ink);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 45%),
+    0 3px 0 var(--lantern-lip);
+}
+
+.filter-search {
+  width: 7em;
+}
+
+/* ---------- Items: voxels with a coloured edge for their kind ---------- */
+
+.chip {
+  --kind: var(--spell);
+  --tier-lip: var(--lip);
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 12px 0 13px;
+  border: 1px solid var(--line);
+  border-left-width: 1px;
+  border-left-color: var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--surface-3), var(--surface-2) 55%);
+  color: var(--text);
+  font: 600 15px/1.2 var(--font-body);
+  box-shadow:
+    inset 4px 0 0 var(--kind),
+    inset 0 1px 0 rgb(255 255 255 / 9%),
+    0 3px 0 var(--tier-lip);
+}
+
+.chip-artifact {
+  --kind: var(--artifact);
+  border-left-color: var(--line);
+}
+
+.chip-emoji {
+  font-size: 19px;
+}
+
+.chip-inventory:hover,
+.chip-castable:hover {
+  border-color: var(--kind);
+}
+
+.chip-inventory:active,
+.chip-castable:active {
+  box-shadow:
+    inset 4px 0 0 var(--kind),
+    inset 0 1px 0 rgb(255 255 255 / 9%),
+    0 1px 0 var(--tier-lip);
+}
+
+.chip-board {
+  box-shadow:
+    inset 4px 0 0 var(--kind),
+    inset 0 1px 0 rgb(255 255 255 / 9%),
+    0 3px 0 var(--tier-lip),
+    0 10px 18px rgb(0 0 0 / 40%);
+}
+
+.chip-board.dragging {
+  box-shadow:
+    inset 4px 0 0 var(--kind),
+    inset 0 1px 0 rgb(255 255 255 / 9%),
+    0 3px 0 var(--tier-lip),
+    0 22px 30px rgb(0 0 0 / 55%);
+}
+
+.chip-board.target {
+  border-color: var(--lantern);
+  box-shadow:
+    inset 4px 0 0 var(--kind),
+    0 3px 0 var(--tier-lip),
+    0 0 0 3px rgb(255 197 77 / 45%),
+    0 0 24px rgb(255 197 77 / 35%);
+}
+
+.chip-board.merging {
+  animation: mm-merging 0.8s ease-in-out infinite;
+}
+
+@keyframes mm-merging {
+  50% {
+    border-color: var(--lantern);
+    box-shadow:
+      inset 4px 0 0 var(--kind),
+      0 3px 0 var(--tier-lip),
+      0 0 22px rgb(255 197 77 / 60%);
+  }
+}
+
+/* Tiers: square pixels, like the island's, and each item's lip is cut from
+   its tier's stone: grey cantrip, green minor, blue major, violet grand,
+   orange legendary, gold cosmic. */
+.chip[data-tier="cantrip"] {
+  --tier-lip: #34384c;
+}
+.chip[data-tier="minor"] {
+  --tier-lip: #2b6b40;
+}
+.chip[data-tier="major"] {
+  --tier-lip: #22558c;
+}
+.chip[data-tier="grand"] {
+  --tier-lip: #5a3c9e;
+}
+.chip[data-tier="legendary"] {
+  --tier-lip: #9a4e12;
+}
+.chip[data-tier="cosmic"] {
+  --tier-lip: #b08a1c;
+}
+
+.chip-tier {
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+}
+
+.chip-castable[aria-pressed="true"] {
+  border-color: var(--lantern);
+  background: linear-gradient(180deg, #3a3a52, #2c2c40 55%);
+  box-shadow:
+    inset 4px 0 0 var(--kind),
+    inset 0 1px 0 rgb(255 255 255 / 12%),
+    0 3px 0 var(--lantern-lip),
+    0 0 0 2px rgb(255 197 77 / 40%);
+}
+
+.chip-state {
+  padding: 1px 6px;
+  border-radius: 3px;
+  font: 700 11px/15px var(--font-body);
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+
+.chip-castable[data-state="ready"] .chip-state {
+  color: var(--lantern-ink);
+  background: var(--lantern);
+}
+
+.spell-empty {
+  border-radius: var(--radius);
+  padding: 10px 14px;
+}
+
+/* ---------- Cards and dialogs ---------- */
+
+.card,
+.challenges,
+.chronicle,
+.book {
+  padding: 22px 20px 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #1a2340, var(--surface) 140px);
+  color: var(--text);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 7%),
+    0 5px 0 var(--lip),
+    0 30px 70px rgb(0 0 0 / 60%);
+}
+
+.card::backdrop,
+.challenges::backdrop,
+.chronicle::backdrop,
+.book::backdrop {
+  background: rgb(4 7 14 / 74%);
+}
+
+.card-head {
+  gap: 14px;
+}
+
+.card-emoji {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 64px;
+  height: 64px;
+  border-radius: 10px;
+  background: var(--well);
+  box-shadow: inset 0 3px 0 rgb(0 0 0 / 40%);
+  font-size: 38px;
+}
+
+.card-name {
+  font-family: var(--font-name);
+  font-size: 25px;
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: 0.005em;
+}
+
+.card-meta {
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.card-kind {
+  letter-spacing: 0.08em;
+}
+
+.card-close,
+.vote .vote-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  margin: -10px -10px 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  font: 400 28px/1 var(--font-body);
+}
+
+.card-close:hover,
+.vote .vote-close:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.card-recipe {
+  margin: 18px 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.card-description {
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.card-summary {
+  padding: 10px 12px;
+  border-left: 0;
+  border-radius: var(--radius);
+  background: var(--well);
+  box-shadow:
+    inset 4px 0 0 var(--spell),
+    inset 0 2px 0 rgb(0 0 0 / 35%);
+  font-size: 14px;
+}
+
+.card-cast {
+  width: 100%;
+  min-height: 50px;
+  font-size: 16px;
+}
+
+.card-view-source,
+.card-report {
+  min-height: 44px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 400;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.card-view-source:hover,
+.card-report:hover {
+  background: transparent;
+  color: var(--text);
+}
+
+.card-admin button {
+  min-height: 44px;
+  padding: 0 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.card-ribbon {
+  margin: -4px 0 12px;
+  font-family: var(--font-name);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--lantern);
+}
+
+.card-first {
+  border-color: var(--lantern);
+}
+
+.card-first .card-emoji {
+  background: radial-gradient(circle, rgb(255 197 77 / 30%), var(--well) 70%);
+}
+
+@keyframes card-glow {
+  0% {
+    box-shadow:
+      0 5px 0 var(--lip),
+      0 0 0 0 rgb(255 197 77 / 90%);
+  }
+  40% {
+    box-shadow:
+      0 5px 0 var(--lip),
+      0 0 70px 16px rgb(255 197 77 / 40%);
+  }
+  100% {
+    box-shadow:
+      0 5px 0 var(--lip),
+      0 30px 70px rgb(0 0 0 / 60%);
+  }
+}
+
+.menu-actions {
+  gap: 10px;
+}
+
+.menu-actions button {
+  width: 100%;
+}
+
+.welcome-privacy,
+.gate-privacy {
+  font-size: 13px;
+}
+
+.account h3,
+.challenges h2,
+.reset-island h2 {
+  font-family: var(--font-name);
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0.01em;
+}
+
+.account h3 {
+  font-size: 16px;
+  color: var(--muted);
+}
+
+.challenges h2,
+.reset-island h2 {
+  font-size: 24px;
+}
+
+/* ---------- Toasts ---------- */
+
+/* Under the one row top bar, never on the tab bar or the drawer. */
+.toasts {
+  top: calc(68px + env(safe-area-inset-top));
+}
+
+.toast {
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font: 600 15px/1.35 var(--font-body);
+  text-align: center;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 8%),
+    0 3px 0 var(--lip),
+    0 12px 26px rgb(0 0 0 / 45%);
+}
+
+.toast-special {
+  border-color: var(--lantern-hi);
+  background: var(--lantern);
+  color: var(--lantern-ink);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 45%),
+    0 3px 0 var(--lantern-lip),
+    0 12px 26px rgb(0 0 0 / 45%);
+}
+
+.toast-error {
+  border-color: var(--danger);
+  background: #3a1820;
+  color: #ffd4d4;
+}
+
+/* ---------- World ---------- */
+
+.world-stage {
+  background: var(--bg);
+}
+
+.world-tools {
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  gap: 8px;
+}
+
+.world-tools button,
+.world-tools select {
+  min-height: 44px;
+  padding: 0 12px;
+  border-color: rgb(255 255 255 / 12%);
+  background: rgb(21 29 51 / 88%);
+  color: var(--text);
+  font-size: 14px;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.world-tools button:hover {
+  background: rgb(40 52 88 / 92%);
+}
+
+.spellbar {
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: 0 -3px 0 var(--lip);
+  z-index: 1;
+}
+
+.spellbar-grip {
+  height: 24px;
+  margin: -8px 0 0;
+}
+
+.spellbar-grip::before {
+  width: 44px;
+  height: 5px;
+  border-radius: 1px;
+  background: var(--muted);
+  box-shadow: 0 2px 0 var(--lip);
+}
+
+.spellbar-grip:hover::before,
+.spellbar-grip:focus-visible::before,
+.spellbar-grip.dragging::before {
+  background: var(--lantern);
+}
+
+.world-status {
+  margin: 0 16px 10px;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.creation-bar {
+  height: 6px;
+  border-radius: 1px;
+  background: var(--well);
+}
+
+.creation-bar > i {
+  background: var(--lantern);
+}
+
+.spell-tools {
+  gap: 8px;
+  padding: 0 16px 10px;
+}
+
+.spell-list {
+  gap: 8px;
+  padding: 2px 16px 6px;
+}
+
+.spellbar.expanded .spell-list {
+  row-gap: 10px;
+}
+
+/* The vote after a cast, docked on the drawer in place of its hint, so it
+   never covers the island or what the island shows (2026-11-07). */
+.vote {
+  justify-content: flex-start;
+  gap: 8px;
+  max-width: none;
+  margin: 0 16px 10px;
+  padding: 8px 6px 8px 14px;
+  border: 1px solid var(--lantern-lip);
+  border-radius: var(--radius);
+  background: #241f2a;
+  box-shadow:
+    inset 4px 0 0 var(--lantern),
+    0 3px 0 var(--lip);
+  font-size: 15px;
+}
+
+/* The words and the answers wrap (five reasons do not fit one phone row);
+   the close button keeps its corner. */
+.vote {
+  position: relative;
+  flex-wrap: wrap;
+  padding-right: 54px;
+}
+
+.vote-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-right: 0;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.vote button {
+  flex: none;
+}
+
+.vote button:not(.vote-close) {
+  min-height: 44px;
+  padding: 0 14px;
+  font-size: 15px;
+}
+
+.vote button.vote-up {
+  border-color: #b8f0c2;
+  background: var(--moss);
+  color: #0d2a14;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 40%),
+    0 3px 0 #2e6b3a;
+}
+
+.vote button.vote-up:hover {
+  background: #9be3a7;
+}
+
+.vote button.vote-down {
+  border-color: var(--danger);
+  color: #ffd4d4;
+}
+
+/* On a phone the question takes its row and the answers sit together below. */
+@media (max-width: 699px) {
+  .vote-text {
+    flex-basis: 100%;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+  }
+}
+
+/* On its side, one row that scrolls: the island keeps its little height. */
+@media (max-height: 500px) {
+  .vote {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .vote-text {
+    flex: none;
+  }
+
+  .vote {
+    padding-right: 6px;
+  }
+
+  .vote .vote-close.vote-close {
+    position: static;
+  }
+}
+
+.vote .vote-close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  margin: 0;
+}
+
+.spellbar:has(.vote) .world-status {
+  display: none;
+}
+
+.world-banner {
+  gap: 6px 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: rgb(21 29 51 / 92%);
+  box-shadow: 0 3px 0 var(--lip);
+  font-size: 14px;
+}
+
+.world-banner[data-status="won"] {
+  border-color: var(--moss);
+}
+
+/* ---------- Pages: Challenges, Daily, Community, Ideas ---------- */
+
+.challenges-head h2,
+.attempt-head h2,
+.daily-head h2,
+.community-head h2,
+.feedback-new h2 {
+  margin: 6px 0 8px;
+  font-family: var(--font-name);
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: 0.01em;
+  color: var(--text);
+}
+
+.feedback-new h2 {
+  margin-top: 0;
+  font-size: 24px;
+  color: var(--lantern);
+}
+
+.challenges-head p,
+.attempt-head p,
+.daily-head p,
+.community-head p {
+  max-width: 60ch;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.challenges-view,
+.daily-view,
+.community-view {
+  padding-top: 20px;
+}
+
+/* A panel: a big block standing out of the night. */
+.challenge-card,
+.daily-card,
+.friend,
+.feedback-new,
+.challenge {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #1b2440, var(--surface) 80px);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 6%),
+    0 4px 0 var(--lip);
+}
+
+.daily-card,
+.friend {
+  margin-bottom: 14px;
+}
+
+.challenge-card h3,
+.daily-title,
+.friend-name,
+.challenge h3 {
+  font-size: 19px;
+}
+
+.challenge-stars {
+  font-size: 18px;
+  color: var(--lantern);
+}
+
+.daily-group h3,
+.community-mine h3,
+.feedback-group h3,
+.feedback-group summary {
+  margin: 24px 0 10px;
+  font-family: var(--font-name);
+  font-size: 18px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0.01em;
+  color: var(--text);
+}
+
+.daily-facts span {
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--well);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.daily-mine,
+.friend-me {
+  border-color: var(--lantern);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 6%),
+    0 4px 0 var(--lantern-lip);
+}
+
+.friend-favorite {
+  border-radius: var(--radius);
+  background: var(--well);
+  box-shadow: inset 0 2px 0 rgb(0 0 0 / 35%);
+}
+
+.friend-seen,
+.friend-facts,
+.friend-nofavorite {
+  font-size: 14px;
+}
+
+.profile-hide {
+  min-height: 44px;
+}
+
+.feedback-inner {
+  padding-top: 20px;
+}
+
+.feedback-new {
+  gap: 10px;
+}
+
+.feedback-hint,
+.idea-dialog-hint {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.feedback-admin {
+  border-radius: 10px;
+}
+
+.feedback-empty {
+  margin-top: 32px;
+  font-size: 15px;
+}
+
+.idea {
+  padding: 14px 0;
+}
+
+.feedback .idea-vote {
+  min-width: 52px;
+  min-height: 56px;
+  padding: 4px;
+}
+
+.feedback .idea-vote[aria-pressed="true"] {
+  border-color: var(--lantern);
+  color: var(--lantern);
+}
+
+.idea-main h4 {
+  font-size: 16px;
+}
+
+.idea-meta,
+.idea-note {
+  font-size: 13px;
+}
+
+.whatsnew-idea {
+  background: var(--well);
+}
+
+/* The World's tools: a rail of pixel drawings down the right edge on a
+   phone, their names in a row on a wider screen. The name stays the button's
+   text, so a screen reader still says it. */
+#world-challenges {
+  --icon: var(--icon-challenges);
+}
+#world-chronicle {
+  --icon: var(--icon-chronicle);
+}
+#world-add {
+  --icon: var(--icon-villager);
+}
+#world-reset {
+  --icon: var(--icon-reset);
+}
+#world-sound {
+  --icon: var(--icon-soundon);
+}
+#world-sound[aria-pressed="false"] {
+  --icon: var(--icon-soundoff);
+}
+
+.world-tools button::before {
+  content: "";
+  flex: none;
+  width: 20px;
+  height: 20px;
+  background: currentColor;
+  -webkit-mask: var(--icon) center / 20px 20px no-repeat;
+  mask: var(--icon) center / 20px 20px no-repeat;
+}
+
+.world-tools button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* A phone held either way. The rail scrolls when the drawer is pulled up so
+   far that five tools no longer fit. */
+@media (max-width: 699px), (max-height: 500px) {
+  .world-tools {
+    left: auto;
+    bottom: 10px;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 10px;
+    padding-bottom: 4px;
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+
+  .world-tools button {
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    padding: 0;
+    font-size: 0;
+    gap: 0;
+  }
+
+  .world-tools button::before {
+    width: 24px;
+    height: 24px;
+    -webkit-mask-size: 24px 24px;
+    mask-size: 24px 24px;
+  }
+}
+
+/* A phone on its side: width is plenty and height is short, so the tabs
+   become a rail down the left edge and the island keeps the height. */
+@media (max-width: 1023px) and (max-height: 500px) {
+  :root {
+    --tabrail-w: 84px;
+  }
+
+  .tabs {
+    top: 0;
+    right: auto;
+    width: calc(var(--tabrail-w) + env(safe-area-inset-left));
+    flex-direction: column;
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom) env(safe-area-inset-left);
+    border-top: 0;
+    border-right: 1px solid var(--line);
+    box-shadow: 3px 0 0 var(--lip);
+  }
+
+  .tab {
+    flex: 1 1 0;
+    min-height: 44px;
+    gap: 3px;
+    padding: 2px;
+    font-size: 12px;
+  }
+
+  .tab::before {
+    width: 20px;
+    height: 20px;
+    -webkit-mask-size: 20px 20px;
+    mask-size: 20px 20px;
+  }
+
+  .tab[aria-selected="true"]::after {
+    top: 50%;
+    left: 0;
+    width: 4px;
+    height: 28px;
+    margin: -14px 0 0;
+  }
+
+  .tab-count {
+    top: 2px;
+  }
+
+  body:has(.tabs:not([hidden])) {
+    padding-bottom: 0;
+    padding-left: calc(var(--tabrail-w) + env(safe-area-inset-left));
+  }
+
+  /* The drawer's hint line goes; a vote still takes its place. */
+  .world-status {
+    display: none;
+  }
+
+  .topbar {
+    min-height: 48px;
+    padding-top: max(2px, env(safe-area-inset-top));
+    padding-bottom: 2px;
+  }
+}
+
+/* ---------- Motion, kept small ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  button,
+  .tab {
+    transition: none;
+  }
+
+  button:active:not(:disabled) {
+    transform: none;
+  }
+
+  .chip-board.merging {
+    animation: none;
+    border-color: var(--lantern);
+  }
+}
+
+/* ---------- Stone ---------- */
+
+/* The night's surfaces are stone: the voxel tile over their colour. */
+.topbar,
+.tabs,
+.inventory,
+.spellbar {
+  background-image: var(--stone);
+}
+
+.card,
+.challenges,
+.chronicle,
+.book {
+  background-image: var(--stone), linear-gradient(180deg, #1a2340, var(--surface) 140px);
+}
+
+.challenge-card,
+.daily-card,
+.friend,
+.feedback-new,
+.challenge {
+  background-image: var(--stone), linear-gradient(180deg, #1b2440, var(--surface) 80px);
+}
+
+/* Craft's two selects give way before the row runs past the screen (they
+   cut "Oldest" to "Olde" at 390 px). */
+.inventory-filters .filterbar select {
+  flex: 0 1 auto;
+  min-width: 5.5em;
+  text-overflow: ellipsis;
+}
