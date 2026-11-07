@@ -33,6 +33,8 @@ let grimoireCalls = 0;
 // 4.5.1: the designer answers "none" while `designNone` is on.
 let designNone = false;
 let designCalls = 0;
+// 4.6: every page of names the library's sort was asked.
+const sortPages = [];
 function stubAnswer(n, system, user) {
   if (system.startsWith("You write the grimoire")) {
     grimoireCalls++;
@@ -92,8 +94,9 @@ function stubAnswer(n, system, user) {
     return JSON.stringify({ summary: "A dome.", code, missing: "a barrier that stops lava: to keep the village safe" });
   }
   if (system.startsWith("You write the chronicle")) return "The mage came, and the village remembered.";
-  // 4.6: the library sorted into the seven kinds.
-  if (system.startsWith("Magic Merger is a crafting game about magic: players merge items"))
+  // 4.6: the library sorted into the seven kinds, every page it was asked kept.
+  if (system.startsWith("Magic Merger is a crafting game about magic: players merge items")) {
+    sortPages.push(user);
     return JSON.stringify({
       items: user
         .split("\n")
@@ -104,6 +107,7 @@ function stubAnswer(n, system, user) {
           return { name, form, why: "by its name" };
         }),
     });
+  }
   // 4.1 (M7): the judge, the tier backfill and the trim scan, asked only by section 25.
   if (system.startsWith("You judge spells"))
     return JSON.stringify({ score: 2, reason: "small", note: "A faint ring, far smaller than a village.", alive: "none" });
@@ -3678,7 +3682,7 @@ const signIn = async (key, count) => {
     .run();
   const before = (await db.prepare("SELECT COUNT(*) AS n FROM elements WHERE form IS NOT NULL").first()).n;
   const proposed = await api("/api/admin/forms", { admin: true, body: {} });
-  const sortAsked = seen["Magic Merger is a cr"]?.user ?? "";
+  const sortAsked = sortPages.join("\n");
   check(
     "the sort sees names only, never the entries written before the kinds",
     sortAsked.includes("Serpent (artifact)") && !sortAsked.includes("bog-black"),
