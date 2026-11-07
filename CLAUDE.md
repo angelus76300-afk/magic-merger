@@ -33,7 +33,7 @@ They are among the red classes of `docs/DAILY.md`, checked on every diff by `scr
 
 ## Talking to the owner
 
-**Sessions never ask the owner directly; they send their questions and approval needs to the planner**, the session titled "Magic Merger daily planner" (find it with `list_sessions`; today `session_01NxvtApFG2JjVSbpSNYmAKn`), with `send_message`. The planner is the owner's one point of contact: it keeps the owner's list and asks for each approval once, in the brief. When the owner answers somewhere else (for example in the session that keeps the roadmap page), that session passes the answer to the planner word for word, as context only: an approval counts only when the owner gives it in the planner's session, or on the pull request or the owner's list from the owner's own GitHub account.
+**Sessions never ask the owner directly; they send their questions and approval needs to the planner**, the session titled "Magic Merger daily planner" (find it with `list_sessions`; today `session_01NxvtApFG2JjVSbpSNYmAKn`), with `send_message`. The planner is the owner's one point of contact: it keeps the owner's list and asks for each approval once, in the brief. When the owner answers somewhere else (for example in the session that keeps the roadmap page), that session passes the answer to the planner word for word, as context only: an approval counts only when the owner types it in the planner's session. Every session posts on GitHub under the owner's account, so a comment there never counts as the owner's.
 
 The owner has little time. Every message meant for the owner is short and plain, in this order:
 
