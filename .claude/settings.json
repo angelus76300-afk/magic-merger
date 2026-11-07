@@ -1,6 +1,21 @@
 {
   "permissions": {
-    "allow": ["Bash(node scripts/rewrite-one.mjs *)"],
-    "deny": ["Edit(/scripts/rewrite-one.mjs)"]
+    "allow": [
+      "Bash(node scripts/rewrite-one.mjs *)",
+      "mcp__claude-code-remote__get_session",
+      "mcp__claude-code-remote__list_sessions",
+      "mcp__claude-code-remote__list_events",
+      "mcp__claude-code-remote__create_session",
+      "mcp__claude-code-remote__send_message"
+    ],
+    "deny": ["Edit(/scripts/rewrite-one.mjs)", "Edit(/.claude/hooks/session-guard.mjs)"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__claude-code-remote__create_session",
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/session-guard.mjs\"", "onFailure": "block" }]
+      }
+    ]
   }
 }
