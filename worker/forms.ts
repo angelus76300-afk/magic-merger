@@ -33,15 +33,27 @@ export const AGAIN_BY_FORM_SQL = `SELECT s.key, s.pid, v.reason, v.replaced,
   WHERE s.key IN (SELECT value FROM json_each(?)) AND f.status = 'applied' AND v.at >= f.applied_at
     AND ((v.replaced = 0 AND v.from_pid = s.pid) OR (v.replaced = 1 AND v.to_pid = s.pid))
     AND NOT EXISTS (SELECT 1 FROM rewrites r WHERE r.key = s.key AND r.cause = 'refresh' AND r.at > v.at AND r.status NOT IN ('failed', 'superseded'))
-    AND (SELECT COUNT(*) FROM rewrites r WHERE r.key = s.key AND r.cause = 'refresh' AND r.at >= f.applied_at AND r.status NOT IN ('failed', 'superseded')) < 3`;
+    AND (SELECT COUNT(*) FROM rewrites r WHERE r.key = s.key AND r.cause = 'refresh' AND r.at >= f.applied_at AND r.status NOT IN ('failed', 'superseded')) < 4`;
 
 // Whether a key AGAIN_BY_FORM_SQL found is written once more. Written for its
 // kind once (n = 1): a kept one is retried, told why it was kept; one put live
 // only for a reason given (`why`). Twice (n = 2): only as a fix with a reason
-// (the owner's Serpent kept a shield after both). Never a fourth time.
-export function mayAskAgain(found: { replaced: number; n: number }, why: string | null): boolean {
+// (the owner's Serpent kept a shield after both). A fourth time only with a
+// new entry given by name: the item itself changes (the owner chose a hunting
+// Serpent over the garden one its entry described). Never a fifth.
+export function mayAskAgain(found: { replaced: number; n: number }, why: string | null, entry = false): boolean {
+  if (entry) return found.n < 4;
   if (found.n < 2) return !found.replaced || !!why;
   return found.n < 3 && !!why;
+}
+
+// An entry given by name for a rewrite by form (`entries`): plain text the
+// grimoire shows, 40 to 600 characters, or nothing.
+export function givenEntry(entries: unknown, key: string): string | null {
+  const v = entries && typeof entries === "object" ? (entries as Record<string, unknown>)[key] : undefined;
+  if (typeof v !== "string") return null;
+  const t = v.replace(/\s+/g, " ").trim();
+  return t.length >= 40 && t.length <= 600 ? t : null;
 }
 
 // The promise a rewrite by form was written for, when it was read again from
