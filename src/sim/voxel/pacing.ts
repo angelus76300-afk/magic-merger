@@ -50,11 +50,12 @@ export class FramePacer {
     // A frame after a pause (a hidden tab, a stall of a second) says nothing
     // about the steady cadence.
     if (interval > 250) return;
-    this.intervals.push(interval);
+    // At 30 only the time to try 60 again matters: nothing is kept.
     if (this.target === 30) {
       if (now >= this.retryAt) this.switchTo(60, now);
       return;
     }
+    this.intervals.push(interval);
     if (this.intervals.length < WINDOW) return;
     const late = this.intervals.filter((t) => t > FAST_MS * 1.5).length / this.intervals.length;
     this.intervals = [];
