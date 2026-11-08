@@ -1,0 +1,5 @@
+# The two files almost every pull request adds lines to, newest first at the same place. union keeps
+# both sides' lines instead of a conflict. The Gate carries a review across such a merge only when the
+# merge adds there nothing but main's lines (scripts/gate.mjs, sharedChangeFromMain).
+public/changelog.json merge=union
+docs/IDEAS.md merge=union
