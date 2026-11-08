@@ -522,7 +522,7 @@ The `Ideas` workflow (`.github/workflows/ideas.yml`) sends every pull request wh
 
 ### Previews
 
-A staging Worker with its own D1 and queue (`wrangler.jsonc`, `env.staging`), $2 a month and nothing running on its own, takes each pull request as a version with its own address; a nightly copy of the live database with everything personal stripped keeps it real (SETUP.md, "Previews"). Staging lets nobody in without the admin token, even in mock mode, and a badge says "preview".
+A staging Worker with its own D1 and queue (`wrangler.jsonc`, `env.staging`), $5 a month and nothing running on its own, takes each pull request as a version with its own address; a nightly copy of the live database with everything personal stripped keeps it real (SETUP.md, "Previews"). Staging lets nobody in without the admin token, even in mock mode, and a badge says "preview".
 
 ## Faster creation (4.2)
 
