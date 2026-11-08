@@ -33,6 +33,7 @@ import {
   ROUTINE_CELLS,
   SoundBudget,
   castOwns,
+  eventAt,
   tierSize,
   cooldownOf,
   listenerAt,
@@ -841,6 +842,16 @@ check(!castOwns(120, true), "two minutes on, a sound with no place is never put 
     `a spell's tier scales its sound: cantrip ${small?.size}, major ${mid?.size}, cosmic ${big?.size}`,
   );
   check(tierSize(1, "cosmic") === 1 && tierSize(-1, "major") === 0 && tierSize(0.5, "unknown") === 0.5, "a scaled size stays within 0 to 1");
+
+  // Review of #95: the player's own cast keeps its priority (cooldown skip,
+  // never dropped, the island's motif); a creature's spell does not take it.
+  const ownAt = eventAt({ x: mid!.x, y: mid!.y }, { x: 40, y: 50 }, true);
+  check(ownAt?.priority === true && ownAt.x === 40, "a sound of the player's fresh cast, from its center, has priority");
+  check(eventAt({ x: 40, y: 50 }, { x: 40, y: 50 }, false)?.priority === false, "after the window it has none");
+  check(eventAt({ x: 10, y: 10 }, { x: 40, y: 50 }, true)?.priority === false, "a creature's placed sound in the window has none");
+  check(eventAt({ x: 40, y: 50, routine: true }, { x: 40, y: 50 }, true)?.priority === false, "routine work at the cast's cell has none");
+  const loose = eventAt({}, { x: 40, y: 50 }, true);
+  check(loose?.x === 40 && loose.priority === true && eventAt({}, null, true) === undefined, "an unplaced sound belongs to the running cast, else to nobody");
 }
 
 // 11. Which creature calls (review of #76: a pure function, with checks).

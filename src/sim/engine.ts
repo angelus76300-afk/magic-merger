@@ -4,7 +4,7 @@ import { FrameStats } from "./hud";
 import { Runtime, type CastRequest, type ErrorReporter } from "./runtime";
 import { loadWorld, saveWorld, type SavedWorld } from "./save";
 import { SpellSound } from "./sound";
-import { CAST_PRIORITY_SECONDS, castOwns, listenerAt } from "./soundplace";
+import { CAST_PRIORITY_SECONDS, castOwns, eventAt, listenerAt } from "./soundplace";
 import { CALL_CELLS, CallClock, chooseCall, sampleBeds, type Caller } from "./ambience";
 import { daylight } from "./daylight";
 import { weatherAt } from "./voxel/sky";
@@ -122,8 +122,9 @@ export class Engine {
 
   cast(req: CastRequest, x: number, y: number): boolean {
     const ok = this.runtime.cast(req, x, y);
-    // A spell's sounds come from its center (4.8). w.sound carries no place
-    // yet, so they belong to the player's last cast while it runs (castOwns).
+    // A spell's sounds come from its own center (4.8, runtime.ts w.sound); the
+    // player's cast gives them priority just after it (eventAt). A sound with
+    // no place belongs to the player's last cast while it runs (castOwns).
     if (ok) this.lastCast = { x, y, at: performance.now() };
     // What the cast changed before the next tick is drawn too (view.ts, scan).
     this.view.landChanged = true;
@@ -282,9 +283,7 @@ export class Engine {
     for (const e of this.world.events.splice(0)) {
       if (e.kind === "sound") {
         if (stale) continue;
-        if (e.x !== undefined && e.y !== undefined) this.sound.play(e.name, e.size, { x: e.x, y: e.y, routine: e.routine });
-        else if (cast) this.sound.play(e.name, e.size, { x: cast.x, y: cast.y, priority: fresh });
-        else this.sound.play(e.name, e.size);
+        this.sound.play(e.name, e.size, eventAt(e, cast, fresh));
       } else if (e.kind === "shake") this.view.orbit.addShake(e.amount, e.seconds);
       else if (e.kind === "flash" && !this.reducedMotion) {
         const v = this.runtime.visuals;
