@@ -8,9 +8,23 @@
 
 import { MusicPlayer, VOICE_NAMES, bedMaker, makeVoice, voiceFor, whiteNoise, type Synth } from "../src/sim/sound";
 import { Composer, MoodTracker, PHRASE_BARS, TENSION_IN, TENSION_OUT, hz, inKey, scoreOf } from "../src/sim/music";
-import { CRAFT_VOICES, nameMotif, tierNotes, tierRoot, type CraftVoice } from "../src/craftsound";
+import { CRAFT_VOICES, CraftSound, nameMotif, tierNotes, tierRoot, type CraftVoice } from "../src/craftsound";
 import { SOUND_DEFAULTS, readSentSettings, readSoundSettings, writeSoundSetting } from "../src/sim/soundsettings";
-import { BEDS, CALLS, CALL_CELLS, CallClock, HEARD, HYSTERESIS, SPECIES_GAP, chooseBeds, sampleBeds, silentBeds, type BedLevels } from "../src/sim/ambience";
+import {
+  BEDS,
+  CALLS,
+  CALL_CELLS,
+  CallClock,
+  chooseCall,
+  type Caller,
+  HEARD,
+  HYSTERESIS,
+  SPECIES_GAP,
+  chooseBeds,
+  sampleBeds,
+  silentBeds,
+  type BedLevels,
+} from "../src/sim/ambience";
 import { C, F } from "../src/sim/materials";
 import { daylight } from "../src/sim/daylight";
 import {
@@ -19,6 +33,8 @@ import {
   ROUTINE_CELLS,
   SoundBudget,
   castOwns,
+  eventAt,
+  tierSize,
   cooldownOf,
   listenerAt,
   place,
@@ -817,6 +833,145 @@ check(!castOwns(120, true), "two minutes on, a sound with no place is never put 
     motifs.size >= 6 && nameMotif(" Steam").join() === nameMotif("steam").join(),
     `known items have motifs of their own: ${motifs.size} for 8 names, the same for the same name`,
   );
+}
+
+// 10. A spell's sound comes from its center and is as big as its tier (4.8, part 5b).
+{
+  const world = generateWorld(96, 96, 77);
+  const rt = new Runtime(world, () => {});
+  const heard = (tier: "cantrip" | "major" | "cosmic") => {
+    world.events.length = 0;
+    rt.cast({ key: `t-${tier}`, name: "Bell", tier, code: "const spell = { *cast(w) { w.sound('chime', 0.5); } };" }, 40, 50);
+    for (let k = 0; k < 3; k++) stepWorld(world, rt);
+    return world.events.find((e) => e.kind === "sound") as { x?: number; y?: number; size: number } | undefined;
+  };
+  const small = heard("cantrip");
+  const mid = heard("major");
+  const big = heard("cosmic");
+  check(!!mid && mid.x === 40 && mid.y === 50, `w.sound is heard from the spell's center (${mid?.x}, ${mid?.y})`);
+  check(
+    !!small && !!big && small.size < mid!.size && mid!.size < big.size && big.size <= 1,
+    `a spell's tier scales its sound: cantrip ${small?.size}, major ${mid?.size}, cosmic ${big?.size}`,
+  );
+  check(tierSize(1, "cosmic") === 1 && tierSize(-1, "major") === 0 && tierSize(0.5, "unknown") === 0.5, "a scaled size stays within 0 to 1");
+
+  // Review of #95: the player's own cast keeps its priority (cooldown skip,
+  // never dropped, the island's motif); a creature's spell does not take it.
+  const ownAt = eventAt({ x: mid!.x, y: mid!.y }, { x: 40, y: 50 }, true);
+  check(ownAt?.priority === true && ownAt.x === 40, "a sound of the player's fresh cast, from its center, has priority");
+  check(eventAt({ x: 40, y: 50 }, { x: 40, y: 50 }, false)?.priority === false, "after the window it has none");
+  check(eventAt({ x: 10, y: 10 }, { x: 40, y: 50 }, true)?.priority === false, "a creature's placed sound in the window has none");
+  check(eventAt({ x: 40, y: 50, routine: true }, { x: 40, y: 50 }, true)?.priority === false, "routine work at the cast's cell has none");
+  const loose = eventAt({}, { x: 40, y: 50 }, true);
+  check(loose?.x === 40 && loose.priority === true && eventAt({}, null, true) === undefined, "an unplaced sound belongs to the running cast, else to nobody");
+}
+
+// 11. Which creature calls (review of #76: a pure function, with checks).
+{
+  const c = (id: number, hp: number, plan = "four legs", kind = "deer"): Caller => ({ id, x: 0, y: 0, hp, kind, plan });
+  const never = () => 0.99;
+  const hurtFirst = chooseCall(
+    [c(1, 50), c(2, 80)],
+    new Map([
+      [1, 50],
+      [2, 90],
+      [9, 1],
+    ]),
+    0.5,
+    false,
+    new CallClock(),
+    100,
+    never,
+  );
+  check(hurtFirst?.caller.id === 2 && hurtFirst.why === "hurt", "a creature hurt since the last look calls first");
+  const arrives = chooseCall([c(1, 50), c(3, 80)], new Map([[1, 50]]), 0.5, false, new CallClock(), 100, never);
+  check(arrives?.caller.id === 3 && arrives.why === "arrived", "a creature just come into view calls");
+  check(chooseCall([c(1, 50)], new Map(), 0.5, false, new CallClock(), 100, never) === null, "on the first look nobody counts as arrived");
+  // A long hidden tab: 600 s since the last look would make an idle call certain; it is held to 1 s.
+  const idle = chooseCall([c(1, 50)], new Map([[1, 50]]), 600, false, new CallClock(), 100, () => 0.5);
+  check(idle === null, "after a long gap, an idle call is not certain (seconds held to 1)");
+  check(
+    chooseCall([c(5, 50, "four legs", "wolf")], new Map([[5, 60]]), 0.5, true, new CallClock(), 100, never)?.voice === "howl",
+    "a wolf hurt at night howls",
+  );
+  check(chooseCall([c(6, 50, "fish")], new Map([[6, 60]]), 0.5, false, new CallClock(), 100, never) === null, "a fish never calls");
+  const busy = new CallClock();
+  busy.called(2, "deer", 99.5);
+  check(chooseCall([c(2, 50)], new Map([[2, 60]]), 0.5, false, busy, 100, never) === null, "the gaps between calls are kept");
+}
+
+// 12. The Craft swell waits for the last merge in flight (review of #87).
+{
+  const g = globalThis as unknown as { window?: unknown; document?: unknown };
+  const had = { window: g.window, document: g.document };
+  const timers = new Set<number>();
+  let next = 1;
+  g.window = {
+    setTimeout: () => (timers.add(next), next++),
+    clearTimeout: (id: number) => timers.delete(id),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  g.document = { addEventListener: () => {}, hidden: false };
+  try {
+    const cs = new CraftSound();
+    cs.startWait();
+    cs.startWait();
+    cs.stopWait();
+    const afterFirst = cs.waiting === 1 && timers.size === 1;
+    cs.stopWait();
+    check(
+      afterFirst && (cs.waiting as number) === 0 && (timers.size as number) === 0,
+      "two merges in flight: the first answer keeps the swell, the second ends it",
+    );
+  } finally {
+    g.window = had.window;
+    g.document = had.document;
+  }
+  const many = [
+    "Fire",
+    "Water",
+    "Earth",
+    "Air",
+    "Steam",
+    "Mud",
+    "Lava",
+    "Dust",
+    "Cloud",
+    "Rain",
+    "Storm",
+    "Stone",
+    "Sand",
+    "Glass",
+    "Life",
+    "Plant",
+    "Tree",
+    "Forest",
+    "Swamp",
+    "Ice",
+    "Snow",
+    "Metal",
+    "Gold",
+    "Sword",
+    "Golem",
+    "Dragon",
+    "Phoenix",
+    "Spirit",
+    "Ghost",
+    "Light",
+    "Darkness",
+    "Moon",
+    "Sun",
+    "Star",
+    "Meteor",
+    "Time",
+    "Void",
+    "Crystal",
+    "Lightning",
+    "Ocean",
+  ];
+  const distinct = new Set(many.map((n) => nameMotif(n).join())).size;
+  check(distinct >= 15, `40 common names have ${distinct} motifs between them (at least 15)`);
 }
 
 console.log(`sound: ${passes} checks passed${failures ? `, ${failures} failed` : ""}`);
