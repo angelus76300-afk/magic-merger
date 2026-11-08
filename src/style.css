@@ -2148,3 +2148,38 @@ input {
   color: var(--muted);
   margin-top: 8px;
 }
+
+/* 4.8: sound settings in the ? menu. Every control at least 44 px tall. */
+.menu-sound {
+  border: none;
+  padding: 0;
+  margin: 14px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.menu-sound legend {
+  padding: 0;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+.menu-sound button {
+  width: 100%;
+  min-height: 44px;
+}
+.menu-sound button[aria-pressed="true"] {
+  font-weight: 700;
+}
+.menu-sound label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+}
+.menu-sound input[type="range"] {
+  flex: 0 1 60%;
+  min-width: 0;
+  height: 44px;
+  margin: 0;
+}
