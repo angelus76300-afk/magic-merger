@@ -7,7 +7,7 @@ import { TICK, generateWorld, type World } from "../src/sim/world";
 import { makeCreature, maxHp, populate, resetCreatureIds, type Creature } from "../src/sim/creatures";
 import { seeded } from "../src/sim/noise";
 import { isArtifact, loadedState, stepArtifacts, type Artifact } from "../src/sim/artifacts";
-import { PICKUP_DELAY, IDLE_DROP, heldScale, holding, portable, take, wantsToTake } from "../src/sim/held";
+import { PICKUP_DELAY, IDLE_DROP, IDLE_REST, heldScale, holding, portable, take, wantsToTake } from "../src/sim/held";
 import { mindOf } from "../src/sim/kin";
 import { packLook, unpackLook } from "../src/sim/villagers";
 import type { Tier } from "../shared/tiers";
@@ -237,6 +237,47 @@ export function heldChecks(check: Check): void {
       staff.art.heldBy == null && !wantsToTake(isl.world, guard, staff),
       `held ${staff.art.heldBy}`,
     );
+    // The review of #70: 20 s later the guard took it back, and put it down
+    // again 120 s on, every 140 s. Put down unused, it now rests ten
+    // minutes, unless an enemy of the village comes near it.
+    isl.world.time += 60;
+    const soon = wantsToTake(isl.world, guard, staff);
+    isl.world.time += IDLE_REST;
+    const later = wantsToTake(isl.world, guard, staff);
+    check(
+      `a staff put down unused rests: its guard does not take it back a minute later, but does after ${IDLE_REST} s`,
+      !soon && later,
+      `a minute later ${soon}, after the rest ${later}`,
+    );
+    {
+      const quiet = island();
+      const stick = place(quiet, STAFF, "staff");
+      const g = person(quiet.world, stick.x, stick.y, "guard");
+      quiet.world.time += PICKUP_DELAY;
+      take(quiet.world, g, stick);
+      quiet.world.time += IDLE_DROP + 1;
+      for (let k = 0; k < 30; k++) {
+        quiet.world.tick++;
+        stepArtifacts(quiet.world);
+      }
+      quiet.world.time += 60;
+      quiet.rt.cast(
+        {
+          key: "raid",
+          name: "Raid",
+          tier: "minor",
+          code: `const spell = { creatures: [{ name: "rest raider", base: "beast", color: "#5a1020", speed: 4, hp: 300, behavior: "hunt", prey: ["villager"], attack: 30, sense: 40 }], *cast(w) { w.spawn("rest raider", w.x + 6, w.y); } };`,
+        },
+        stick.x,
+        stick.y,
+      );
+      stepHeadless(quiet.world, quiet.rt);
+      check(
+        "a resting staff is taken up again at once when a raider comes near it",
+        stick.art.heldBy == null && wantsToTake(quiet.world, g, stick),
+        `held ${stick.art.heldBy}, wants ${wantsToTake(quiet.world, g, stick)}`,
+      );
+    }
     take(isl.world, guard, staff);
     const loaded = loadedState(JSON.parse(JSON.stringify(staff.art)));
     check("a loaded world holds nothing in a hand (creatures get new ids)", loaded?.heldBy === null, String(loaded?.heldBy));

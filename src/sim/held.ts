@@ -39,6 +39,11 @@ export const IDLE_DROP = 120;
 export const HELD_HEAL_BELOW = 0.5;
 // The one who put it down does not take it back for this long.
 const RETAKE_AFTER = 20;
+// Put down unused, it rests: nobody takes it for this long, unless an enemy
+// of the village comes within REST_ALARM cells of it (the review of #70: a
+// quiet guard took up and put down the same staff every 140 s).
+export const IDLE_REST = 600;
+export const REST_ALARM = 16;
 // What a hand holds is drawn this tall at most, in cells (a villager is about 1.2).
 export const HELD_SIZE = 0.75;
 
@@ -97,7 +102,13 @@ function free(world: World, a: Artifact, c: Creature): boolean {
   const s = a.art;
   if (s.heldBy != null || world.time - s.placed < PICKUP_DELAY) return false;
   if (s.droppedBy === c.id && world.time - (s.droppedAt ?? -1e9) < RETAKE_AFTER) return false;
+  if (s.restUntil !== undefined && world.time < s.restUntil && !threatNear(world, a)) return false;
   return portable(world, a);
+}
+
+function threatNear(world: World, a: Artifact): boolean {
+  for (const o of world.crowd.near(world, a.x, a.y, REST_ALARM)) if (!o.dead && against(o)) return true;
+  return false;
 }
 
 const HARM: ArtEffectName[] = ["burn", "freeze", "lightning", "shield", "cast"];
@@ -249,6 +260,7 @@ export function stepHeld(world: World, a: Artifact): Creature | null {
     }
   if (world.time - (s.actedAt ?? world.time) > IDLE_DROP) {
     dropHeld(world, a, c, c.id);
+    s.restUntil = world.time + IDLE_REST;
     deed(c, `put down the ${a.name}`);
     return null;
   }

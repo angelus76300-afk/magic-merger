@@ -158,12 +158,24 @@ export function shadeParts(p: Prop, amount: number): void {
 // it, that item's own oldest gives way.
 export const MODELS_PER_ITEM = 4;
 
+// A model a wonder drew (its cast's key is wonder:<id>, src/sim/wonders.ts).
+export function isWonderProp(p: Prop): boolean {
+  return !!p.owner?.startsWith("wonder:");
+}
+
 export function addProp(world: World, p: Prop): boolean {
   if (p.owner) {
     const own = world.props.filter((q) => q.owner === p.owner);
     if (own.length >= MODELS_PER_ITEM) world.props.splice(world.props.indexOf(own[0]), 1);
   }
-  while (world.props.length >= MAX_PROPS) world.props.shift();
+  // Full: the oldest goes, but not a wonder's look (4.7: wonders are drawn in
+  // models since #79, and as the island's oldest they went first), while
+  // wonders hold half the models or fewer.
+  while (world.props.length >= MAX_PROPS) {
+    const wonders = world.props.filter(isWonderProp).length;
+    const k = wonders <= MAX_PROPS / 2 ? world.props.findIndex((q) => !isWonderProp(q)) : 0;
+    world.props.splice(k < 0 ? 0 : k, 1);
+  }
   world.props.push(p);
   world.propsVersion++;
   return true;

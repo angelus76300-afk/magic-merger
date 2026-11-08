@@ -129,6 +129,8 @@ export interface ArtState {
   holderHp?: number;
   droppedBy?: number | null;
   droppedAt?: number;
+  // Put down unused: nobody takes it before this world time unless an enemy is near (held.ts, IDLE_REST).
+  restUntil?: number;
 }
 
 export type Artifact = Landmark & { art: ArtState };
