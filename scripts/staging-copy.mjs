@@ -4,7 +4,7 @@
 // Exports the live D1, strips everything that is a person's (accounts,
 // passkeys, sessions, sign in links, invites and their emails, saved
 // progress, reports, activity, devices), keeps staging's own spend of the
-// month so its $5 holds across nights, and replaces the staging D1 with it.
+// month so its $2 holds across nights, and replaces the staging D1 with it.
 // The owner's row stays, with no link and no email, so the admin token works
 // on a preview. Reads production, never writes it.
 //
