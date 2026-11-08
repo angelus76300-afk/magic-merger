@@ -827,7 +827,8 @@ function work(world: World, c: Creature, m: Mind): void {
   job2(world, c, m, v, job);
   // Nothing for its job right now: lend a hand on a road, or a chore, so
   // nobody just stands there.
-  if (m.task === "none" && (job === "none" || job === "woodcutter" || job === "farmer") && world.roads.length && Math.random() < 0.5 && layRoad(world, c, m, v)) return;
+  if (m.task === "none" && (job === "none" || job === "woodcutter" || job === "farmer") && world.roads.length && Math.random() < 0.5 && layRoad(world, c, m, v))
+    return;
   if (m.task === "none" && !forage(world, c, m) && Math.random() < 0.25) plantFlowers(world, c, m, true);
 }
 
