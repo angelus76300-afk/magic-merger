@@ -448,7 +448,9 @@ input[type="checkbox"] {
   box-shadow: 0 2px 0 var(--lantern-lip);
 }
 
-@media (max-width: 1023px) {
+/* Tabs under the thumb below 1024 px, and on a touch screen up to 1279 px
+   (a Fold or a tablet held sideways). */
+@media (max-width: 1023px), (pointer: coarse) and (max-width: 1279px) {
   .title {
     margin-right: auto;
   }
@@ -511,7 +513,7 @@ input[type="checkbox"] {
   }
 }
 
-@media (min-width: 1024px) {
+@media (min-width: 1024px) and (pointer: fine), (min-width: 1280px) {
   .tabs {
     gap: 2px;
   }
@@ -1603,9 +1605,11 @@ input[type="checkbox"] {
   gap: 8px;
 }
 
-/* A phone held either way. The rail scrolls when the drawer is pulled up so
+/* A phone held either way, and a Fold: a rail at the right edge, within
+   the thumb's reach (it was a row of named buttons at the top of the Fold,
+   over the island, 2026-11-07). The rail scrolls when the drawer is pulled up so
    far that five tools no longer fit. */
-@media (max-width: 699px), (max-height: 500px) {
+@media (max-width: 1023px), (max-height: 500px), (pointer: coarse) and (max-width: 1279px) {
   .world-tools {
     left: auto;
     bottom: 10px;
@@ -1902,5 +1906,166 @@ input[type="checkbox"] {
 
   .inventory-filters .filterbar select {
     flex: none;
+  }
+}
+
+/* ---------- Big screens (2026-11-07) ---------- */
+
+/* The owner on a Galaxy Z Fold: "look at the computer elongated view and at
+   bigger screens like a z fold". The phone is the reference and is left as
+   it is; these rules start at 700 px. */
+:root {
+  --side-w: clamp(360px, 28vw, 520px);
+}
+
+/* The World's Challenges tool only opens the Challenges tab, which the tab
+   bar already offers: past the phone it was the same word twice, stacked. */
+@media (min-width: 700px) {
+  #world-challenges {
+    display: none;
+  }
+
+  /* Read at arm's length: the pages' intros and facts at 16 px, hints at 14. */
+  .challenges-head p,
+  .attempt-head p,
+  .daily-head p,
+  .community-head p,
+  .friend-seen,
+  .friend-facts,
+  .friend-nofavorite {
+    font-size: 16px;
+  }
+
+  .feedback-hint,
+  .idea-dialog-hint,
+  .idea-meta,
+  .idea-note,
+  .daily-facts span,
+  .count {
+    font-size: 14px;
+  }
+
+  /* Ideas starts where the other pages start (it sat 36 px further in). */
+  .feedback-inner {
+    max-width: 792px;
+  }
+}
+
+/* A filter row that scrolls sideways fades at the edge while more of it is
+   out of sight (filters.ts, "filter-more"). */
+.filterbar.filter-more {
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent);
+}
+
+/* A Fold unfolded, or any screen 900 px tall too narrow for the column (a
+   tablet upright): two rows of spells that scroll, not one (6 of 58 showed
+   on a Fold). */
+@media (min-width: 700px) and (min-height: 900px) and (max-aspect-ratio: 1199/1000) {
+  .spellbar:not(.expanded) .spell-list {
+    flex-wrap: wrap;
+    overflow-x: hidden;
+    overflow-y: auto;
+    /* Two rows and the top of a third, so more below shows without a
+       scrollbar on a touch screen. */
+    max-height: 124px;
+    row-gap: 10px;
+    align-content: flex-start;
+  }
+}
+
+/* A wide screen: the spells are a column at the right, as Craft's items
+   are, and the island keeps the full height. On a 1920 px screen the drawer
+   was a band 171 px tall across the whole width with 15 of 58 spells, and
+   opening it took 40% of the island. */
+@media (min-width: 1024px) and (min-height: 600px) and (min-aspect-ratio: 6/5) {
+  .world {
+    flex-direction: row;
+  }
+
+  .world .spellbar {
+    display: flex;
+    flex-direction: column;
+    flex: none;
+    width: var(--side-w);
+    min-height: 0;
+    padding-top: 14px;
+    border-top: 0;
+    border-left: 1px solid var(--line);
+    box-shadow: -3px 0 0 var(--lip);
+  }
+
+  /* The filters wrap inside the column, so each label reads in full. */
+  .world .spell-tools .filterbar {
+    flex-wrap: wrap;
+    overflow: visible;
+    row-gap: 10px;
+  }
+
+  .world .spell-tools .filter-search {
+    flex: 1 1 8em;
+  }
+
+  /* The two selects share their own row. */
+  .world .spell-tools .filterbar select {
+    flex: 1 1 calc(50% - 5px);
+    min-width: 0;
+  }
+
+  .world .spell-list,
+  .world .spellbar.expanded .spell-list {
+    flex: 1;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    overflow-x: hidden;
+    overflow-y: auto;
+    max-height: none;
+    row-gap: 10px;
+  }
+
+  /* The column is always open: no grip, no Grid button. */
+  .world .spellbar-grip,
+  .world .spellbar-expand {
+    display: none;
+  }
+
+  .world .vote {
+    flex-wrap: wrap;
+  }
+
+  .world .vote-text {
+    flex-basis: 100%;
+  }
+}
+
+/* A long name (up to 60 characters) ends in an ellipsis inside its row or
+   column instead of running past the edge; the card shows it in full. */
+.spell-list .chip,
+.inventory-list .chip {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.spell-list .chip-name,
+.inventory-list .chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Craft on a desktop: the items' column grows with the screen (two tiles a
+   row next to a 1560 px board at 1920). Below 1200 px it stays phone wide. */
+@media (min-width: 1200px) {
+  .inventory {
+    width: var(--side-w);
+  }
+}
+
+/* The desktop top bar: the title, the tabs between it and the account and
+   help, which sit at the right end, where "?" sits on a phone. The page's
+   order is the same, so the keyboard follows the eye. */
+@media (min-width: 1024px) and (pointer: fine), (min-width: 1280px) {
+  .tabs {
+    margin-inline: auto;
   }
 }
