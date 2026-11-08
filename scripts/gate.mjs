@@ -112,6 +112,7 @@ export function sharedChangeFromMain(git, first, second, merged, file) {
   if (byMerge !== fromMain) return "brings lines that did not come from main";
   if (ownAfter !== ownBefore) return "changes the pull request's own lines";
   // union stacks lines: two entries of several lines can interleave into JSON that no longer parses.
+  // The line checks above refuse every such case seen so far; this is a second lock behind them.
   if (file.endsWith(".json")) {
     try {
       JSON.parse(git("show", `${merged}:${file}`));
@@ -136,8 +137,10 @@ export function sharedChangeFromMain(git, first, second, merged, file) {
  * now change those two files (SHARED) when the lines it adds and removes there are exactly the lines
  * main added and removed since the merge base, and the pull request's own lines there are the same
  * before and after the merge (sharedChangeFromMain). Every other file of the pull request still may
- * not change. .gitattributes merges the two files with union, so two insertions at the same place
- * (newest first) merge without a conflict; git's own merge in the tree check uses the same rule.
+ * not change. .gitattributes merges the changelog with union, so two entries added at its top merge
+ * without a conflict; git's own merge in the tree check reads main's .gitattributes too. Lines are
+ * compared without their place: where a line sits may move, which the class check covers for the
+ * one place that matters (IDEAS.md "Declined", R12).
  *   git: (...args) => stdout, throwing on a non-zero exit; classOf: (base, sha) => "green" | "amber" | "red"
  * Returns { review, from, why }: review null with why when nothing is carried.
  */

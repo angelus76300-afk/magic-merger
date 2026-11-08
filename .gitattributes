@@ -1,5 +1,5 @@
-# The two files almost every pull request adds lines to, newest first at the same place. union keeps
-# both sides' lines instead of a conflict. The Gate carries a review across such a merge only when the
-# merge adds there nothing but main's lines (scripts/gate.mjs, sharedChangeFromMain).
+# The changelog: almost every pull request adds one line at its top (newest first). union keeps both
+# sides' lines instead of a conflict. The Gate carries a review across such a merge only when the merge
+# adds there nothing but main's lines (scripts/gate.mjs, sharedChangeFromMain). docs/IDEAS.md stays on
+# git's own merge: its ideas move between sections, and union could bring a moved idea back unseen.
 public/changelog.json merge=union
-docs/IDEAS.md merge=union

@@ -357,10 +357,11 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
   // One line per entry (docs/DAILY.md): union then stacks two new entries as two lines.
   const entry = (text) => `    { "date": "2026-11-08", "text": "${text}" },\n`;
   const changelog = (...texts) => `{\n  "entries": [\n${texts.map(entry).join("")}    { "date": "2026-11-01", "text": "old" }\n  ]\n}\n`;
-  const ideas = ({ backlog = [], built = [], keep = true } = {}) =>
+  const ideas = ({ top = [], backlog = [], built = [], keep = true } = {}) =>
     [
       "# Ideas",
       "",
+      ...top,
       "## Backlog",
       "",
       ...(keep ? ["- old idea"] : []),
@@ -396,7 +397,7 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
     const reviewed = [reviewOf(R)];
     g("checkout", "-q", "main");
     const mainTip = commit("main: another pull request", {
-      "docs/IDEAS.md": ideas({ backlog: ["- theirs"], built: ["- 2026-11-08 theirs"] }),
+      "docs/IDEAS.md": ideas({ top: ["- theirs"] }),
       "public/changelog.json": changelog("theirs"),
       "src/b.ts": code(3),
     });
@@ -418,8 +419,14 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
       toFeat("main~1");
       const T = commit("a tall entry", { "public/changelog.json": tallLog("mine") });
       const TM = mergeMain(T, tallTheirs);
+      g("branch", "-qf", "main", tallTheirs);
       const broken = carry(TM, [reviewOf(T)]);
-      check("refused: union of two entries of several lines (the merged changelog is wrong)", broken.review === null, JSON.stringify(broken));
+      g("branch", "-qf", "main", mainTip);
+      check(
+        "refused: union of two entries of several lines (the merged changelog is wrong)",
+        broken.review === null && /did not come from main|does not parse/.test(broken.why ?? ""),
+        JSON.stringify(broken),
+      );
     }
 
     // Refused: the merge also rewrites one of the pull request's own lines in a shared file.
@@ -433,24 +440,26 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
 
     // Refused: union keeps a line the pull request removed (its own lines changed, though git's merge is clean).
     g("checkout", "-q", "-B", "base2", "main~1");
-    toFeat(g("rev-parse", "base2"));
-    const D = commit("the pull request removes an idea", { "docs/IDEAS.md": ideas({ keep: false }), "src/a.ts": code(4) });
-    g("checkout", "-q", "-B", "main2", "main~1");
-    const mainEdit = commit("main edits next to it", { "docs/IDEAS.md": ideas({ backlog: ["- next to it"] }) });
+    const withA = commit("an entry a", { "public/changelog.json": changelog("a") });
+    toFeat(withA);
+    const D = commit("the pull request removes entry a", { "public/changelog.json": changelog(), "src/a.ts": code(4) });
+    g("checkout", "-q", "-B", "main2", withA);
+    const mainEdit = commit("main adds an entry right above it", { "public/changelog.json": changelog("theirs", "a") });
     g("branch", "-qf", "main", mainEdit);
     const MD = mergeMain(D);
+    const resurrected = JSON.parse(g("show", `${MD}:public/changelog.json`)).entries.some((e) => e.text === "a");
     const undone = carry(MD, [reviewOf(D)]);
     check(
-      "refused: a union merge that undoes the pull request's own removal in a shared file",
-      undone.review === null && /own lines|did not come from main/.test(undone.why ?? ""),
-      JSON.stringify(undone),
+      "refused: a union merge that brings back an entry the pull request removed",
+      resurrected && undone.review === null && /own lines|did not come from main/.test(undone.why ?? ""),
+      `resurrected ${resurrected} ${JSON.stringify(undone)}`,
     );
     g("branch", "-qf", "main", mainTip);
 
     // Refused: main changes another of the pull request's files (src/a.ts), as before.
     g("checkout", "-q", "main");
     commit("main edits a.ts too", {
-      "docs/IDEAS.md": ideas({ backlog: ["- theirs", "- third"], built: ["- 2026-11-08 theirs"] }),
+      "docs/IDEAS.md": ideas({ top: ["- theirs", "- third"] }),
       "src/a.ts": code(1, "// main\n"),
     });
     const MA = mergeMain(R);
@@ -465,7 +474,7 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
     // Refused: a hand edit of a shared file in the merge (the tree differs from git's merge).
     toFeat(R);
     g("merge", "-q", "--no-ff", "--no-commit", mainTip);
-    write("docs/IDEAS.md", ideas({ backlog: ["- mine", "- theirs", "- slipped in"], built: ["- 2026-11-08 mine", "- 2026-11-08 theirs"] }));
+    write("docs/IDEAS.md", ideas({ top: ["- theirs"], backlog: ["- mine", "- slipped in"], built: ["- 2026-11-08 mine"] }));
     g("add", "-A");
     g("commit", "-qm", "merge main");
     check("refused: a merge that adds a line of its own to a shared file", carry(g("rev-parse", "HEAD"), reviewed).review === null);
@@ -487,6 +496,30 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
       return "";
     };
     check("a removed line that starts with -- is a line, not a header", /did not come from main/.test(sharedChangeFromMain(fakeGit, "F", "S", "M", "f") ?? ""));
+    // Fake diffs for the parts no real merge reaches on its own (defence in depth behind the tree check).
+    const diffs =
+      (table) =>
+      (...a) => {
+        if (a[0] === "merge-base") return "mb";
+        if (a[0] === "show") return "{}";
+        const [from, to] = a.slice(-4, -2);
+        return table[`${from}>${to}`] ?? "";
+      };
+    const hunk = (...l) => `diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n${l.join("\n")}`;
+    check(
+      "refused: the merge brings main's lines but the pull request's own lines differ after it",
+      /own lines/.test(
+        sharedChangeFromMain(diffs({ "mb>S": hunk("+t"), "F>M": hunk("+t"), "mb>F": hunk("+mine"), "S>M": hunk("+mine, changed") }), "F", "S", "M", "f") ?? "",
+      ),
+    );
+    check(
+      "main's lines placed in another order by git still count as main's",
+      sharedChangeFromMain(diffs({ "mb>S": hunk("+a", "+b"), "F>M": hunk("+b", "+a") }), "F", "S", "M", "f") === null,
+    );
+    check(
+      "a line's trailing spaces do not count (git output may be trimmed)",
+      sharedChangeFromMain(diffs({ "mb>S": hunk("+a  ", "+b"), "F>M": hunk("+a", "+b") }), "F", "S", "M", "f") === null,
+    );
     check(
       "a merged changelog that does not parse carries nothing",
       /does not parse/.test(
