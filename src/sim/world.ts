@@ -14,7 +14,7 @@ import { placeWonders, settleWonders, type Wonder, type WonderDef } from "./wond
 import { layOutVillages } from "./buildings";
 import { CreatureGrid } from "./crowd";
 import type { Landmark, Presence } from "./social";
-import type { Ward } from "./wards";
+import type { Ruin, Ward } from "./wards";
 import type { Prop } from "./props";
 import type { Death, Mark, Village } from "./kin";
 
@@ -79,6 +79,13 @@ export class World {
   // Places spells keep safe for a while (wards.ts), and what each cell is
   // protected against, as bits.
   wards: Ward[] = [];
+  // Wards broken a moment ago (wards.ts, Ruin): not saved.
+  ruins: Ruin[] = [];
+  // The slow motion of a shatter (wards.ts, breakWard): until this world
+  // time the page runs the island at SLOW_FACTOR. Not saved; headless runs
+  // and tests ignore it.
+  slowUntil = -1;
+  lastSlow = -10;
   readonly wardMask: Uint8Array;
   // Gifts villagers have brought home; every few build a house.
   wealth = 0;
@@ -216,9 +223,15 @@ export class World {
     const i = Math.round(y) * this.w + Math.round(x);
     const top = Math.round(this.height[i] * 0.5);
     if (level < top) return false;
-    if (level < top + 2 && this.cover[i] !== C.NONE) this.setCover(i, C.NONE);
+    if (level < top + 2 && this.cover[i] !== C.NONE) {
+      if (this.voxelGuard?.(i)) return false;
+      this.setCover(i, C.NONE);
+    }
     return true;
   }
+  // Set by the runtime while a spell's code runs: true where that spell may
+  // not clear a cover to put a voxel (another spell's ward against harm).
+  voxelGuard: ((i: number) => boolean) | null = null;
 
   setVoxel(x: number, y: number, level: number, color: number | null, kind: number = VK.STONE): void {
     if (!this.inside(Math.round(x), Math.round(y)) || level < -60 || level > 380) return;
