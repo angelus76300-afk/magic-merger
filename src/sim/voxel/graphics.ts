@@ -10,6 +10,10 @@ export const GRAPHICS = {
   weather: true,
   // Sun, moon and stars.
   sky: true,
+  // Up to 60 frames a second where the device keeps up, creatures drawn part
+  // way between two ticks (2026-11-07, pacing.ts). Off: 30 a second on touch
+  // screens, a frame only when something changed.
+  smooth: true,
 };
 
 export type GraphicsFlag = keyof typeof GRAPHICS;

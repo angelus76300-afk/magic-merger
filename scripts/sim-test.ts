@@ -8,6 +8,8 @@ import { availableParallelism } from "node:os";
 import { Worker } from "node:worker_threads";
 import { guardLoops } from "../shared/spellcode";
 import { KINDS, makeCreature, populate, resetCreatureIds } from "../src/sim/creatures";
+import { interactionChecks } from "./interactions-test";
+import { sizeChecks } from "./sizes-test";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
 import { logDeeds, mindOf, remember } from "../src/sim/kin";
@@ -67,6 +69,10 @@ import { Terrain } from "../src/sim/voxel/terrain";
 import { MeshBasicMaterial, type Mesh } from "three";
 import { fixesChecks } from "./fixes-test";
 import { evidenceChecks } from "./evidence-test";
+import { formChecks, keptByFormChecks } from "./forms-test";
+import { creatureChecks } from "./creatures-b-test";
+import { heldChecks } from "./held-test";
+import { pacingChecks } from "./pacing-test";
 
 // No verdict here depends on how fast the machine is (4.1, review M8): the
 // slow cast guard is off unless SLOW_MS is set, and worst ticks are printed,
@@ -998,6 +1004,13 @@ for (const scenario of SCENARIOS) {
   // 4.4.5 part B: wonders, names, the last ten sets, buildings (wonders-test.ts).
   wonderChecks(check);
   programWonderChecks(check);
+  // 4.6: the seven kinds, the engine's makers, sizes per kind.
+  formChecks(check);
+  keptByFormChecks(check);
+  // 4.6 part B: people are villagers, creatures live, the judge asks.
+  creatureChecks(check);
+  // 4.7: objects that are picked up and used (src/sim/held.ts).
+  heldChecks(check);
   check("a small island is one land", generateWorld(112, 112, 5, resolveLand(mid, 5, 112)).biomeMap === null);
   // 4.4.1: rivers wind instead of running straight with right angle turns
   // (main had a run of 26 cells and a quarter of its river in runs of 8 or
@@ -1580,6 +1593,11 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
   check("a ward keeps lava out and lightning off", inside === 0 && burning === 0 && !errors.length, `${inside} lava cells, ${burning} burning inside`);
 }
 
+// 4.7: the interaction table (effects against wards and materials) and the
+// ward's breaking point (scripts/interactions-test.ts).
+interactionChecks(check);
+sizeChecks(check);
+
 // 9e. The API that grows (3.4.2): a helper is appended to the programs that
 // call it, runs inside them like any spell code, and is refused when it
 // yields, reaches outside the sandbox or is never called by its example.
@@ -1623,7 +1641,7 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
     JOBS.map((job) => buildRig(body("two legs", [], { villager: true }), packLook({ age, job, style: 0, skin: 0, hair: 0, long: false }))),
   );
   check("every villager age and job", looks.every(finite), `${looks.length} looks`);
-  const l = { age: "elder" as const, job: "smith" as const, style: 4, skin: 3, hair: 5, long: true };
+  const l = { age: "elder" as const, job: "smith" as const, style: 4, skin: 3, hair: 5, long: true, calling: "necromancer" as const };
   check("a villager's look packs into one number", JSON.stringify(unpackLook(packLook(l))) === JSON.stringify(l));
 
   const guess = (name: string) => bodyFrom({}, name, KINDS.get("beast")!.body);
@@ -2235,6 +2253,9 @@ await fixesChecks(check);
 
 // 14. Rewrites by evidence (daily 2026-11-05): scripts/evidence-test.ts.
 await evidenceChecks(check);
+
+// 15. The World's frame pacing (2026-11-07): scripts/pacing-test.ts.
+pacingChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);

@@ -52,6 +52,8 @@ import {
 import { PROGRESS_KINDS, type ProgressPut, type StoredKind } from "../shared/account";
 import { ClaudeOracle, MockOracle, OracleError, parseEffort, type Oracle, type ProgramAnswer, type SpellRequest as OracleSpellRequest } from "./oracle";
 import { PROBED, parseIntents, type Intent } from "../shared/promises";
+import { isForm, kindOfForm, saysGiant, type Form } from "../shared/forms";
+import { AGAIN_BY_FORM_SQL, applyForms, givenEntry, mayAskAgain, requestIntents, formList, proposeForms } from "./forms";
 import { designDue, evolution, liveLibrary, openGaps, recordGap, settleHelper, storeDesign, trialHelpers, withLibrary, type Library } from "./evolve";
 import {
   averageDaily,
@@ -68,6 +70,7 @@ import {
   recentRewrite,
   recordActivity,
   rewriteSpendToday,
+  SESSION_REWRITES_PER_DAY,
   setStatus,
   tally,
   type ProgramOrigin,
@@ -737,6 +740,7 @@ async function handleMerge(body: MergeRequest, env: Env, oracle: Oracle): Promis
     name: cleanName(answer.name),
     emoji: cleanEmoji(answer.emoji),
     kind: answer.kind,
+    form: answer.form,
     depth: Math.max(a.depth, b.depth) + 1,
     // At most two tiers above its strongest input, and one above what its depth implies (3.7).
     tier: capByDepth(capTier(answer.tier, [tierOf(a), tierOf(b)]), Math.max(a.depth, b.depth) + 1),
@@ -769,9 +773,19 @@ async function handleMerge(body: MergeRequest, env: Env, oracle: Oracle): Promis
     }
   } else {
     const inserted = await env.DB.prepare(
-      "INSERT OR IGNORE INTO elements (key, name, emoji, kind, depth, tier, created_at, invite) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR IGNORE INTO elements (key, name, emoji, kind, depth, tier, created_at, invite, form) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-      .bind(key, candidate.name, candidate.emoji, candidate.kind, candidate.depth, candidate.tier, Date.now(), ledgerOf(oracle).payer.invite)
+      .bind(
+        key,
+        candidate.name,
+        candidate.emoji,
+        candidate.kind,
+        candidate.depth,
+        candidate.tier,
+        Date.now(),
+        ledgerOf(oracle).payer.invite,
+        candidate.form ?? null,
+      )
       .run();
     firstDiscovery = inserted.meta.changes > 0;
     element = (await getElement(env.DB, key)) ?? candidate;
@@ -845,20 +859,21 @@ async function setDailyChallenge(env: Env, force: boolean): Promise<{ day: strin
         name,
         emoji: cleanEmoji(answer.emoji),
         kind: answer.kind,
+        form: answer.form,
         depth,
         tier: capByDepth(capTier(answer.tier, [tierOf(a), tierOf(b)]), depth),
       };
       await ensureBudget(env, oracle, "describe", ESTIMATE.describe);
-      const description = await oracle.describe(element.name, element.kind, "secret");
+      const description = await oracle.describe(element.name, element.kind, "secret", element.form);
       // A refusal is no description of a challenge (4.5.1): the next pair is tried.
       if (looksLikeRefusal(description, element.name)) continue;
       const usd = oracle.spent.reduce((sum, s) => sum + s.usd, 0);
       const results = await db.batch([
         db
           .prepare(
-            "INSERT OR IGNORE INTO elements (key, name, emoji, kind, depth, tier, description, created_at, invite) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+            "INSERT OR IGNORE INTO elements (key, name, emoji, kind, depth, tier, description, created_at, invite, form) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
           )
-          .bind(key, element.name, element.emoji, element.kind, element.depth, element.tier, description, now),
+          .bind(key, element.name, element.emoji, element.kind, element.depth, element.tier, description, now, element.form ?? null),
         db
           .prepare(
             "INSERT OR IGNORE INTO daily_challenges (day, pair, result, created_at, usd) SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM recipes WHERE pair = ?)",
@@ -917,6 +932,11 @@ async function handleDescribe(body: DescribeRequest, env: Env, oracle: Oracle, a
 async function handleSpell(body: SpellRequest, env: Env, oracle: Oracle, admin: boolean, ctx: ExecutionContext): Promise<SpellResponse> {
   const regenerate = checkRegenerate(body.regenerate, admin);
   const element = await resolveInput(env.DB, body.name, oracle.mock);
+  // A session's rewrite runs without the owner's prompt: its turn is taken before any call,
+  // so a spell that fails to write still counts (review of #58);
+  // the name is checked first, which costs nothing, so a typo takes no turn. The owner's card is not counted.
+  if (regenerate && body.session === true && !(await takeRun(env.DB, "session-rewrite", dayInZone(Date.now()), SESSION_REWRITES_PER_DAY)))
+    throw new HttpError(429, `${SESSION_REWRITES_PER_DAY} spell rewrites were asked by sessions today; a session may not ask another`, { capped: true });
   const key = elementKey(element.name);
   const tier = tierOf(element);
 
@@ -964,7 +984,7 @@ export async function writeProgram(
   const request = await buildRequest(env, oracle, element, o.model, library);
   const intents = request.intents ?? [];
   const answer = await writeWith(env, oracle, o.model, o.effort, (w) => w.spell(request));
-  const program = programFrom(answer, intents, library);
+  const program = programFrom(answer, intents, library, request);
   if (oracle.mock) return { program, id: null, request };
   const id = await insertProgram(env.DB, key, JSON.stringify(program), o.model, PROGRAM_VERSION, o.origin, "trial", o.liveId);
   await recordGap(env.DB, key, id, answer.missing);
@@ -985,7 +1005,16 @@ async function buildRequest(env: Env, oracle: Oracle, element: GameElement, mode
     firstRecipe(env.DB, key),
     small ? libraryEntries(env.DB) : Promise.resolve([]),
   ]);
-  const request: OracleSpellRequest = { name: element.name, kind: element.kind, description, recipe, tier, intents, library: lib.docs };
+  const request: OracleSpellRequest = {
+    name: element.name,
+    kind: element.kind,
+    ...shapeOf(element, description),
+    description,
+    recipe,
+    tier,
+    intents,
+    library: lib.docs,
+  };
   if (small) request.examples = pickExamples(entries, { key, name: request.name, description, kind: request.kind, tier });
   return request;
 }
@@ -1123,7 +1152,10 @@ async function handleRepair(body: RepairRequest, env: Env, oracle: Oracle, admin
   const model = env.REPAIR_MODEL || "claude-haiku-5-5";
   const answer = await writeWith(env, oracle, model, undefined, (w) => w.repair(element.name, tier, stored?.code ?? "", error));
   const library = oracle.mock ? NO_LIBRARY : await liveLibrary(env.DB);
-  const program = programFrom({ ...answer, summary: answer.summary || stored?.summary || "" }, parseIntents(stored?.intents), library);
+  const program = programFrom({ ...answer, summary: answer.summary || stored?.summary || "" }, parseIntents(stored?.intents), library, {
+    form: isForm(stored?.form) ? stored.form : undefined,
+    giant: stored?.giant === true,
+  });
   if (oracle.mock || !live) return { name: element.name, tier, program: { ...program, model }, mock: oracle.mock };
   await env.DB.prepare("UPDATE spells SET repairs = repairs + 1 WHERE key = ?").bind(key).run();
   const id = await insertProgram(env.DB, key, JSON.stringify(program), model, PROGRAM_VERSION, "repair", "trial", live.row.id);
@@ -1209,7 +1241,7 @@ function storedVerdict(verdict: { stats?: unknown } & Record<string, unknown>): 
   return JSON.stringify({ ...verdict, stats: { ...kept, cut: 1 } });
 }
 
-const PROBLEMS = ["crash", "nothing", "wiped", "promise", "idle"] as const;
+const PROBLEMS = ["crash", "nothing", "wiped", "promise", "idle", "size", "kind", "look", "fit"] as const;
 const problemOf = (v: unknown): (typeof PROBLEMS)[number] | null => ((PROBLEMS as readonly unknown[]).includes(v) ? (v as (typeof PROBLEMS)[number]) : null);
 
 // A live program tested again by a browser against the promise its element
@@ -1253,6 +1285,7 @@ async function handleRecheck(body: CheckRequest, env: Env, oracle: Oracle, eleme
   const request: OracleSpellRequest = {
     name: element.name,
     kind: element.kind,
+    ...shapeOf(element, description),
     description,
     recipe: await firstRecipe(env.DB, key),
     tier,
@@ -1267,7 +1300,7 @@ async function handleRecheck(body: CheckRequest, env: Env, oracle: Oracle, eleme
     console.error("recheck rewrite", err);
     return servedLive();
   }
-  const program = programFrom(answer, intents, library);
+  const program = programFrom(answer, intents, library, request);
   // A trial like any rewrite: if it fails its own test run it is written once more, and the live program stays.
   const id = await insertProgram(env.DB, key, JSON.stringify(program), rewriterFor(env, tier), PROGRAM_VERSION, "promise", "trial", row.id);
   await recordGap(env.DB, key, id, answer.missing);
@@ -1347,6 +1380,7 @@ async function handleCheck(body: CheckRequest, env: Env, oracle: Oracle): Promis
   const request: OracleSpellRequest = {
     name: element.name,
     kind: element.kind,
+    ...shapeOf(element, description),
     description,
     recipe: await firstRecipe(env.DB, key),
     tier,
@@ -1362,7 +1396,7 @@ async function handleCheck(body: CheckRequest, env: Env, oracle: Oracle): Promis
     return keep();
   }
   await setStatus(env.DB, row.id, "rejected");
-  const program = programFrom(answer, intents, library);
+  const program = programFrom(answer, intents, library, request);
   const id = await insertProgram(env.DB, key, JSON.stringify(program), rewriterFor(env, tier), PROGRAM_VERSION, "check", "trial", row.parent);
   await recordGap(env.DB, key, id, answer.missing);
   await env.DB.prepare("INSERT INTO rewrites (key, from_pid, to_pid, cause, at, status, model) VALUES (?, ?, ?, 'check', ?, 'done', ?)")
@@ -1450,20 +1484,64 @@ async function refreshSpentThisMonth(db: D1Database): Promise<number> {
 
 const REFRESH_ESTIMATE = { big: 0.06, small: 0.006 };
 
-async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; limit?: unknown; dry?: unknown }) {
+async function startRefresh(
+  env: Env,
+  oracle: Oracle,
+  body: { keys?: unknown; limit?: unknown; dry?: unknown; forms?: unknown; why?: unknown; entries?: unknown },
+) {
   if (oracle.mock) throw new HttpError(400, "The refresh needs the Claude API");
   const db = env.DB;
   const asked = Array.isArray(body.keys) ? body.keys.filter((k): k is string => typeof k === "string").map(elementKey) : null;
-  const limit = Math.max(1, Math.min(200, Number(body.limit) || 20));
+  // 4.6, rewrites by form: a capped batch, at most 20 at a time (ROADMAP 4.6 item 5: never all at once).
+  const byForm = body.forms === true;
+  const limit = Math.max(1, Math.min(byForm ? 20 : 200, Number(body.limit) || (byForm ? 5 : 20)));
   // Every element with a live program, never refreshed, the ones players hold most first.
-  const rows = await db
-    .prepare(
-      `SELECT s.key, s.pid FROM spells s JOIN elements e ON e.key = s.key
+  // By form: every element whose sorted kind the owner approved, not refreshed
+  // since; the keys asked first, in their order.
+  const rows = byForm
+    ? await db
+        .prepare(
+          `SELECT s.key, s.pid FROM spells s JOIN elements e ON e.key = s.key JOIN forms f ON f.key = s.key
+           WHERE s.pid IS NOT NULL AND f.status = 'applied' AND e.form IS NOT NULL AND e.form != 'spell'
+             AND NOT EXISTS (SELECT 1 FROM rewrites r WHERE r.key = s.key AND r.cause = 'refresh' AND r.at >= f.applied_at AND r.status NOT IN ('failed', 'superseded'))
+           ORDER BY (SELECT COUNT(*) FROM casts c JOIN programs p ON p.id = c.pid WHERE p.key = s.key) DESC, s.key`,
+        )
+        .all<{ key: string; pid: number }>()
+    : await db
+        .prepare(
+          `SELECT s.key, s.pid FROM spells s JOIN elements e ON e.key = s.key
        WHERE s.pid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM rewrites r WHERE r.key = s.key AND r.cause = 'refresh' AND r.status NOT IN ('failed', 'superseded'))
        ORDER BY (SELECT COUNT(*) FROM casts c JOIN programs p ON p.id = c.pid WHERE p.key = s.key) DESC, s.key`,
-    )
-    .all<{ key: string; pid: number }>();
-  const picked = (asked ? rows.results.filter((r) => asked.includes(r.key)) : rows.results).slice(0, limit);
+        )
+        .all<{ key: string; pid: number }>();
+  // By form, a key asked by name may be written for its kind once more
+  // (AGAIN_BY_FORM_SQL): when its first rewrite was kept out, the writer is
+  // told why (7 November: 9 of 14 people written as beasts before the API
+  // named w.person); `why` adds the asker's own reason, a line per key (the
+  // owner: a Serpent raised a shield). Only by name, never in the daily run.
+  const again = new Map<string, string[]>();
+  const why = (k: string): string | null => {
+    const w = body.why && typeof body.why === "object" ? (body.why as Record<string, unknown>)[k] : undefined;
+    return typeof w === "string" && w.trim() ? w.trim().slice(0, 300) : null;
+  };
+  if (byForm && asked?.length) {
+    const more = await db
+      .prepare(AGAIN_BY_FORM_SQL)
+      .bind(JSON.stringify(asked))
+      .all<{ key: string; pid: number; reason: string; replaced: number; n: number }>();
+    for (const r of more.results) {
+      const asker = why(r.key);
+      // A program its rewrite put live, or a third try, only for a reason
+      // given; a fourth only with a new entry given (`entries`).
+      if (rows.results.some((o) => o.key === r.key) || !mayAskAgain(r, asker, givenEntry(body.entries, r.key) !== null)) continue;
+      rows.results.push({ key: r.key, pid: r.pid });
+      const reasons = r.replaced ? [] : [`its last rewrite for its kind was not used: ${r.reason}`];
+      if (asker) reasons.push(asker);
+      again.set(r.key, reasons);
+    }
+  }
+  const inOrder = asked ? asked.map((k) => rows.results.find((r) => r.key === k)).filter((r): r is { key: string; pid: number } => !!r) : rows.results;
+  const picked = inOrder.slice(0, limit);
   const room = refreshBudget(env) - (await refreshSpentThisMonth(db));
   const byModel = new Map<string, { id: string; request: OracleSpellRequest }[]>();
   const queued: string[] = [];
@@ -1477,16 +1555,43 @@ async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; li
     const big = isBig(tier, smallUpTo(env));
     const cost = big ? REFRESH_ESTIMATE.big : REFRESH_ESTIMATE.small;
     if (estimate + cost > room) break;
-    const description = await ensureDescription(env, oracle, element, false);
-    const intents = await ensureIntents(env, oracle, element, description);
+    // 4.6: by form, the entry is written again for its kind the first time,
+    // for the program to be written from. Players keep reading the old one
+    // until the candidate replaces the live program (refreshVerdict); a dry
+    // run writes no entry at all.
+    let fresh = false;
+    if (byForm && body.dry !== true) {
+      const kept = await db.prepare("SELECT entry FROM forms WHERE key = ?").bind(r.key).first<{ entry: string | null }>();
+      fresh = !!kept && kept.entry === null;
+    }
+    // An entry given by name is the item's new entry: written from, and live
+    // with the program (the owner's hunting Serpent).
+    const given = byForm && body.dry !== true ? givenEntry(body.entries, r.key) : null;
+    if (given) fresh = true;
+    const description = given ?? (fresh ? await ensureDescription(env, oracle, element, true, false) : await ensureDescription(env, oracle, element, false));
+    // By form, its promise is read again from the entry it is written from:
+    // the stored one may come from an entry written before its kind (a
+    // Serpent promised to protect, so its program raised a shield). Stored
+    // only when the program goes live (refreshVerdict).
+    // A failed read keeps the stored promise (the review of #65: an empty one
+    // would hold the candidate to nothing, and clear the live item's).
+    const read = byForm && body.dry !== true ? await readIntents(env, oracle, element, description) : null;
+    const newIntents = read !== null;
+    const intents = read ?? (await ensureIntents(env, oracle, element, description));
     const request: OracleSpellRequest = {
       name: element.name,
       kind: element.kind,
+      ...shapeOf(element, description),
       description,
       recipe: await firstRecipe(db, r.key),
       tier,
       intents,
       library: library.docs,
+      ...(fresh ? { newEntry: true } : {}),
+      ...(newIntents ? { newIntents: true } : {}),
+      // Its first rewrite for its kind was kept out: the writer is told why,
+      // not shown that program (it is the design that failed).
+      ...(again.get(r.key)?.length ? { rewrite: { reasons: again.get(r.key)! } } : {}),
     };
     const model = big ? env.SPELL_MODEL : smallModel(env);
     const hold = await holdBatch(env, oracle);
@@ -1530,7 +1635,8 @@ async function refreshCandidates(env: Env, limit: number) {
     `SELECT p.id, p.key, p.spec, p.model, p.parent, e.name, e.kind, e.tier, e.depth, e.intents,
        (SELECT spec FROM programs o WHERE o.id = (SELECT pid FROM spells WHERE key = p.key)) AS old_spec,
        (SELECT pid FROM spells WHERE key = p.key) AS old_id,
-       (SELECT dry FROM rewrites r WHERE r.to_pid = p.id) AS dry
+       (SELECT dry FROM rewrites r WHERE r.to_pid = p.id) AS dry,
+       (SELECT request FROM rewrites r WHERE r.to_pid = p.id) AS request
      FROM programs p JOIN elements e ON e.key = p.key WHERE p.status = 'candidate' AND p.origin = 'refresh' ORDER BY p.id LIMIT ?`,
   )
     .bind(Math.min(100, Math.max(1, limit)))
@@ -1548,6 +1654,7 @@ async function refreshCandidates(env: Env, limit: number) {
       old_spec: string | null;
       old_id: number | null;
       dry: number | null;
+      request: string | null;
     }>();
   const code = (spec: string | null) => {
     try {
@@ -1556,13 +1663,23 @@ async function refreshCandidates(env: Env, limit: number) {
       return "";
     }
   };
+  // 4.6: the kind a candidate was written as, so its test run holds it to that kind's size.
+  const shape = (spec: string | null) => {
+    try {
+      const v = JSON.parse(spec ?? "{}") as { form?: unknown; giant?: unknown };
+      return isForm(v.form) ? { form: v.form, giant: v.giant === true } : {};
+    } catch {
+      return {};
+    }
+  };
   return rows.results.map((r) => ({
     id: r.id,
     key: r.key,
     name: r.name,
     kind: r.kind,
+    ...shape(r.spec),
     tier: isTier(r.tier) ? r.tier : tierFromDepth(r.depth),
-    intents: parseIntents(r.intents),
+    intents: requestIntents(r.request) ?? parseIntents(r.intents),
     model: r.model,
     code: code(r.spec),
     oldId: r.old_id,
@@ -1594,8 +1711,29 @@ async function refreshVerdict(
   const score = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v) : null);
   if (typeof body.checked === "object" && body.checked)
     await db.prepare("UPDATE programs SET checked = ? WHERE id = ?").bind(JSON.stringify(body.checked).slice(0, 2000), row.id).run();
-  if (replace) await promote(db, { ...row, parent: live?.row.id ?? row.parent });
-  else await setStatus(db, row.id, "rejected");
+  if (replace) {
+    await promote(db, { ...row, parent: live?.row.id ?? row.parent });
+    // 4.6: a rewrite by form that wrote the entry again for its kind: the
+    // new entry goes live with the program, the old one kept in forms.entry.
+    const asked = await db.prepare("SELECT request FROM rewrites WHERE cause = 'refresh' AND to_pid = ?").bind(row.id).first<{ request: string | null }>();
+    let entry: string | null = null;
+    try {
+      const req = JSON.parse(asked?.request ?? "{}") as OracleSpellRequest;
+      if (req.newEntry === true && typeof req.description === "string" && req.description.trim()) entry = req.description;
+    } catch {
+      entry = null;
+    }
+    // Its promise, read from that entry, goes live with it too.
+    const intents = requestIntents(asked?.request ?? null)?.join(",") ?? null;
+    if (intents !== null) await db.prepare("UPDATE elements SET intents = ? WHERE key = ?").bind(intents, row.key).run();
+    if (entry) {
+      const old = await db.prepare("SELECT description FROM elements WHERE key = ?").bind(row.key).first<{ description: string | null }>();
+      await db.batch([
+        db.prepare("UPDATE forms SET entry = ? WHERE key = ? AND entry IS NULL").bind(old?.description ?? "", row.key),
+        db.prepare("UPDATE elements SET description = ? WHERE key = ?").bind(entry, row.key),
+      ]);
+    }
+  } else await setStatus(db, row.id, "rejected");
   await db
     .prepare("INSERT OR REPLACE INTO refresh_verdicts (to_pid, key, from_pid, replaced, reason, old_score, new_score, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
     .bind(
@@ -1922,6 +2060,7 @@ async function rewriteWith(env: Env, oracle: Oracle, row: ProgramRow, cause: Rew
   const request: OracleSpellRequest = {
     name: element.name,
     kind: element.kind,
+    ...shapeOf(element, description),
     description,
     recipe: await firstRecipe(db, row.key),
     tier,
@@ -1938,7 +2077,7 @@ async function rewriteWith(env: Env, oracle: Oracle, row: ProgramRow, cause: Rew
   const at = Date.now();
   try {
     const answer = await writeWith(env, oracle, model, undefined, (w) => w.spell(request));
-    const program = programFrom(answer, intents, library);
+    const program = programFrom(answer, intents, library, request);
     const id = await insertProgram(db, row.key, JSON.stringify(program), model, PROGRAM_VERSION, cause, "trial", row.id);
     await recordGap(db, row.key, id, answer.missing);
     await db
@@ -2060,12 +2199,15 @@ async function pollBatches(env: Env): Promise<{ done: number; failed: number; wa
       }
       if (taken) {
         let intents: Intent[] = [];
+        let shape: { form?: Form; giant?: boolean } = {};
         try {
-          intents = parseIntents((JSON.parse(row.request ?? "{}") as OracleSpellRequest).intents);
+          const asked = JSON.parse(row.request ?? "{}") as OracleSpellRequest;
+          intents = parseIntents(asked.intents);
+          shape = { form: isForm(asked.form) ? asked.form : undefined, giant: asked.giant === true };
         } catch {
           // An old row without a request: no promise to keep.
         }
-        const program = programFrom(o.answer, intents, await liveLibrary(db));
+        const program = programFrom(o.answer, intents, await liveLibrary(db), shape);
         const origin: ProgramOrigin = BATCH_ORIGIN[row.cause] ?? "votes";
         // Its parent is what is live now: the draft may have been fixed, or the
         // spell rolled back, while the batch ran. A refresh (3.7) waits as a
@@ -2130,7 +2272,7 @@ function checkRegenerate(requested: unknown, admin: boolean): boolean {
   return true;
 }
 
-async function ensureDescription(env: Env, oracle: Oracle, element: GameElement, regenerate: boolean): Promise<string> {
+async function ensureDescription(env: Env, oracle: Oracle, element: GameElement, regenerate: boolean, store = true): Promise<string> {
   const db = env.DB;
   const key = elementKey(element.name);
   if (!oracle.mock && !regenerate) {
@@ -2141,16 +2283,16 @@ async function ensureDescription(env: Env, oracle: Oracle, element: GameElement,
 
   await ensureBudget(env, oracle, "describe", ESTIMATE.describe);
   const recipe = await firstRecipe(db, key);
-  let description = await oracle.describe(element.name, element.kind, recipe);
+  let description = await oracle.describe(element.name, element.kind, recipe, element.form);
   if (!oracle.mock && looksLikeRefusal(description, element.name)) {
     await ensureBudget(env, oracle, "describe", ESTIMATE.describe);
-    description = await oracle.describe(element.name, element.kind, recipe);
+    description = await oracle.describe(element.name, element.kind, recipe, element.form);
     // Twice refused: the plain stand in is stored, so no request pays twice
     // again (the admin's "New description" asks anew); the page never caches
     // it (src/store.ts), so a later description reaches every device.
     if (looksLikeRefusal(description, element.name)) description = noDescription(element.name);
   }
-  if (!oracle.mock) {
+  if (!oracle.mock && store) {
     // Primitives have no row until they are first described.
     await db
       .prepare(
@@ -2181,11 +2323,18 @@ async function getElement(db: D1Database, key: string): Promise<GameElement | nu
   const alias = await db.prepare("SELECT key FROM aliases WHERE alias = ?").bind(key).first<{ key: string }>();
   if (alias && alias.key !== key) return getElement(db, alias.key);
   const row = await db
-    .prepare("SELECT name, emoji, kind, depth, tier FROM elements WHERE key = ?")
+    .prepare("SELECT name, emoji, kind, depth, tier, form FROM elements WHERE key = ?")
     .bind(key)
-    .first<{ name: string; emoji: string; kind: ElementKind; depth: number; tier: string | null }>();
+    .first<{ name: string; emoji: string; kind: ElementKind; depth: number; tier: string | null; form: string | null }>();
   if (!row) return null;
-  return { name: row.name, emoji: row.emoji, kind: row.kind, depth: row.depth, ...(isTier(row.tier) ? { tier: row.tier } : {}) };
+  return {
+    name: row.name,
+    emoji: row.emoji,
+    kind: row.kind,
+    depth: row.depth,
+    ...(isTier(row.tier) ? { tier: row.tier } : {}),
+    ...(isForm(row.form) && kindOfForm(row.form) === row.kind ? { form: row.form } : {}),
+  };
 }
 
 async function firstRecipe(db: D1Database, key: string): Promise<[string, string] | null> {
@@ -2274,6 +2423,21 @@ async function handleAdmin(request: Request, url: URL, env: Env, oracle: Oracle,
   if (!post && path === "refresh-candidates") return json(await refreshCandidates(env, Number(url.searchParams.get("limit")) || 20));
   if (post && path === "refresh-verdict") return json(await refreshVerdict(env, await readBody(request)));
   if (!post && path === "refresh-report") return json(await refreshReport(env));
+  // 4.6: the library sorted into the seven kinds: proposals first, the owner's list, then applied.
+  if (post && path === "forms") {
+    const body = await readBody<{ limit?: unknown; again?: unknown }>(request);
+    // again: proposals nobody applied or declined are asked anew (a better prompt).
+    if (body.again === true) await env.DB.prepare("DELETE FROM forms WHERE status = 'proposed'").run();
+    return json(await proposeForms(env.DB, oracle, () => ensureBudget(env, oracle, "forms", ESTIMATE.trim), Number(body.limit) || 180));
+  }
+  if (!post && path === "forms") return json(await formList(env.DB));
+  if (post && path === "forms-apply") {
+    try {
+      return json(await applyForms(env.DB, await readBody(request)));
+    } catch (err) {
+      throw new HttpError(400, err instanceof Error ? err.message : String(err));
+    }
+  }
   if (post && path === "trim-scan") return json(await trimScan(env, oracle));
   if (!post && path === "trims") return json(await trimNext(env));
   if (post && path === "trim") return json(await trimDecide(env, await readBody(request)));
@@ -2639,6 +2803,9 @@ interface SpellTrialBody {
   // "library" picks from the library; a list is used as given.
   examples?: "library" | LibraryExample[];
   rewrite?: Rewrite;
+  // 4.6, measurements: write it as this kind, from this entry, storing nothing.
+  form?: string;
+  description?: string;
 }
 
 // Live programs the judge has not looked at, newest first, for scripts/judge-runner.mjs.
@@ -2798,10 +2965,14 @@ async function handleJudge(body: JudgeBody, env: Env, oracle: Oracle, ctx: Execu
 // Writes a program as the game would, and stores nothing: for measuring
 // models, prompts and the library on a fixed set of spells.
 async function spellTrial(body: SpellTrialBody, env: Env, oracle: Oracle) {
-  const element = await resolveInput(env.DB, body.name, oracle.mock);
+  const found = await resolveInput(env.DB, body.name, oracle.mock);
+  const element: GameElement = isForm(body.form) ? { ...found, form: body.form } : found;
   const key = elementKey(element.name);
   const tier = tierOf(element);
-  const description = await ensureDescription(env, oracle, element, false);
+  const description =
+    typeof body.description === "string" && body.description.trim()
+      ? body.description.trim().slice(0, 600)
+      : await ensureDescription(env, oracle, element, false);
   await ensureBudget(env, oracle, "spell", ESTIMATE.big);
   const model = body.model && SPELL_MODELS.has(body.model) ? body.model : spellModelFor(env, tier);
   // 4.2: the request a player's write sends (intents, the API's library),
@@ -2811,6 +2982,7 @@ async function spellTrial(body: SpellTrialBody, env: Env, oracle: Oracle) {
   const request: OracleSpellRequest = {
     name: element.name,
     kind: element.kind,
+    ...shapeOf(element, description),
     description,
     recipe: await firstRecipe(env.DB, key),
     tier,
@@ -2831,7 +3003,7 @@ async function spellTrial(body: SpellTrialBody, env: Env, oracle: Oracle) {
       model,
       ms: Date.now() - t0,
       usd: trial.spent.reduce((s, x) => s + x.usd, 0),
-      program: { ...answer, code: withLibrary(answer.code, library.helpers) },
+      program: { ...answer, code: withLibrary(answer.code, library.helpers), ...shapeOf(element, description) },
       intents,
       examples: (request.examples ?? []).map((e) => e.name),
       calls: trial.spent.map((x) => ({ call: x.call, usd: x.usd, tokens: x.tokens })),
@@ -2854,7 +3026,14 @@ async function batchTrial(body: SpellTrialBody & { names?: string[] }, env: Env,
     const description = await ensureDescription(env, oracle, element, false);
     items.push({
       id: `trial${i}`,
-      request: { name: element.name, kind: element.kind, description, recipe: await firstRecipe(env.DB, key), tier: tierOf(element) },
+      request: {
+        name: element.name,
+        kind: element.kind,
+        ...shapeOf(element, description),
+        description,
+        recipe: await firstRecipe(env.DB, key),
+        tier: tierOf(element),
+      },
     });
   }
   const model = body.model && SPELL_MODELS.has(body.model) ? body.model : env.SPELL_MODEL;
@@ -2879,10 +3058,21 @@ async function batchTrialResults(batch: string, env: Env) {
 const NO_LIBRARY: Library = { docs: [], helpers: [] };
 
 // The program as stored: the helpers it calls appended, and its promise with it.
-function programFrom(answer: ProgramAnswer, intents: Intent[], library: Library): SpellProgram {
+function programFrom(answer: ProgramAnswer, intents: Intent[], library: Library, shape: { form?: Form; giant?: boolean } = {}): SpellProgram {
   const program: SpellProgram = { version: PROGRAM_VERSION, summary: answer.summary, code: withLibrary(answer.code, library.helpers) };
   if (intents.length) program.intents = intents;
+  // 4.6: written for its kind, its test run holds it to that kind's size.
+  if (shape.form) program.form = shape.form;
+  if (shape.giant) program.giant = true;
   return program;
+}
+
+// 4.6: the kind an element's program is written for, and whether it says it
+// is giant. Only a stored form: an element merged before 4.6 is written as it
+// always was until the owner approves the library's sort.
+function shapeOf(element: GameElement, description: string): { form?: Form; giant?: boolean } {
+  if (!element.form || element.form === "spell") return {};
+  return { form: element.form, ...(saysGiant(element.name, description) ? { giant: true } : {}) };
 }
 
 // What an element promises, decided once by its own small call (3.4.2). A
@@ -2892,14 +3082,21 @@ async function ensureIntents(env: Env, oracle: Oracle, element: GameElement, des
   const key = elementKey(element.name);
   const row = await env.DB.prepare("SELECT intents FROM elements WHERE key = ?").bind(key).first<{ intents: string | null }>();
   if (row?.intents) return parseIntents(row.intents);
+  const intents = (await readIntents(env, oracle, element, description)) ?? [];
+  if (intents.length && !oracle.mock) await env.DB.prepare("UPDATE elements SET intents = ? WHERE key = ?").bind(intents.join(","), key).run();
+  return intents;
+}
+
+// What an entry promises, asked of the small model (about $0.0001), stored
+// nowhere. Null when it could not be read (the budget, the API) or says nothing.
+async function readIntents(env: Env, oracle: Oracle, element: GameElement, description: string): Promise<Intent[] | null> {
   try {
     await ensureBudget(env, oracle, "intent", ESTIMATE.intent);
     const intents = await oracle.intents(element.name, element.kind, description);
-    if (!oracle.mock) await env.DB.prepare("UPDATE elements SET intents = ? WHERE key = ?").bind(intents.join(","), key).run();
-    return intents;
+    return intents.length ? intents : null;
   } catch (err) {
     console.error("intents", err);
-    return [];
+    return null;
   }
 }
 

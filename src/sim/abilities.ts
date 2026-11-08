@@ -1,7 +1,7 @@
 import { C, F, G } from "./materials";
 import { daylight } from "./daylight";
 import { names } from "./social";
-import { unpackLook } from "./villagers";
+import { unpackLook, type Calling } from "./villagers";
 import { WARD, addWard, warded } from "./wards";
 import {
   ABILITIES,
@@ -52,6 +52,22 @@ const NAME_ABILITIES: [string[], AbilitySpec][] = [
   [["goblin", "thief", "bandit", "rogue", "raccoon", "magpie", "kobold"], { do: "steal", when: "every so often", every: 15 }],
   [["queen", "hive", "broodmother", "alpha", "summoner", "conjurer"], { do: "summon", when: "hurt", every: 30 }],
 ];
+// Defensive magic an item's name or promise must call for (the owner, 7
+// November: "a serpent raising a shield does not fit its name"). A shield, a
+// ward, or healing itself when hurt is for what protects or heals: a promise
+// to protect or heal, or a name that says so (the guardians above, the
+// healers, and the few beings known to mend: a troll, a hydra, a phoenix).
+const DEFENDERS =
+  /\b(knight|paladin|guardian|golem|templar|sentinel|defender|protector|shield|ward|warden|aegis|bastion|bulwark|sanctuary|turtle|tortoise|armadillo|guard|priest|priestess|cleric|healer|saint|angel|unicorn|nymph|troll|hydra|phoenix|mender)s?\b/i;
+export function unfitDefence(name: string, intents: readonly string[], abilities: readonly AbilitySpec[], wards: number): string | null {
+  if (DEFENDERS.test(name) || intents.includes("protect")) return null;
+  const shield = abilities.some((a) => a.do === "shield");
+  const mends = !intents.includes("heal") && abilities.some((a) => a.do === "heal" && a.when === "hurt");
+  if (!shield && !mends && wards <= 0) return null;
+  const what = [shield ? "a shield" : "", mends ? "healing itself when hurt" : "", wards > 0 ? "a ward" : ""].filter(Boolean).join(", ");
+  return `${name} raises defensive magic (${what}), but neither its name nor what it promises is about protection: a serpent hunts, a fox spirit tricks, neither shields. Give it what its name does, and leave shields and wards to guardians and to items that promise to protect.`;
+}
+
 const INDEX = new Map<string, AbilitySpec[]>();
 for (const [words, spec] of NAME_ABILITIES) for (const w of words) INDEX.set(w, [...(INDEX.get(w) ?? []), spec]);
 
@@ -141,9 +157,22 @@ const DEFAULT_WHEN: Record<AbilityName, Trigger> = {
 const PRIEST: AbilitySpec[] = [{ do: "heal", when: "every so often", every: 15 }];
 const GUARD: AbilitySpec[] = [{ do: "shield", when: "enemy near", every: 30 }];
 
+// 4.6 part B: a person's calling brings its own magic (villagers.ts).
+const CALLING_ABILITIES: Partial<Record<Calling, AbilitySpec[]>> = {
+  necromancer: [{ do: "raise the dead", when: "night", every: 40 }],
+  knight: [{ do: "shield", when: "enemy near", every: 25 }],
+  mage: [
+    { do: "freeze", when: "enemy near", every: 15 },
+    { do: "teleport", when: "hurt", every: 12 },
+  ],
+};
+
 export function abilitiesOf(c: Creature, k: CreatureKind): AbilitySpec[] {
   if (c.kind === "villager") {
-    const job = unpackLook(c.look).job;
+    const look = unpackLook(c.look);
+    const own = CALLING_ABILITIES[look.calling ?? "none"];
+    if (own) return own;
+    const job = look.job;
     return job === "priest" ? PRIEST : job === "guard" ? GUARD : [];
   }
   return k.abilities ?? [];
@@ -195,6 +224,8 @@ export function useAbilities(world: World, c: Creature, k: CreatureKind): void {
           ? a.run(c, enemy ?? null)
           : perform(world, c, k, m, a.do as AbilityName, enemy ?? null);
     if (done && (a.run || a.do === "cast")) deed(c, a.do === "cast" ? `cast ${a.spell}` : a.do);
+    // 4.6 part B: counted for the creature probe of the test run (check.ts).
+    if (done) c.data.used = Number(c.data.used ?? 0) + 1;
     // Nothing to do it on: look again in a few seconds instead of a full cooldown.
     m.ready[n] = world.time + (done ? a.every : 3);
   }
@@ -269,7 +300,9 @@ function perform(world: World, c: Creature, k: CreatureKind, m: Mind, what: Abil
       t.hp -= 18;
       harmed(world, t, c, 18);
       if (t.hp <= 0) t.dead = true;
-      world.emit({ kind: "sound", name: "whoosh", size: 0.4 });
+      world.emit({ kind: "sound", name: "whoosh", size: 0.4, x: c.x, y: c.y });
+      // A dragon roars as it breathes fire (4.8, item 4).
+      if (k.body.plan === "dragon") world.emit({ kind: "sound", name: "roar", size: 0.8, x: c.x, y: c.y });
       deed(c, `breathed fire on a ${t.kind.split("#")[0]}`);
       return true;
     }
@@ -315,7 +348,7 @@ function perform(world: World, c: Creature, k: CreatureKind, m: Mind, what: Abil
         c.x = x;
         c.y = y;
         puff(world, c.x, c.y, k.color, 6);
-        world.emit({ kind: "sound", name: "ping", size: 0.3 });
+        world.emit({ kind: "sound", name: "ping", size: 0.3, x: c.x, y: c.y });
         deed(c, "vanished and appeared elsewhere");
         if (m.target === from) m.task = "none";
         return true;
@@ -350,7 +383,7 @@ function perform(world: World, c: Creature, k: CreatureKind, m: Mind, what: Abil
       if (t.hp <= 0) t.dead = true;
       if (world.materials.get("cover", world.cover[i]).flammable > 0) world.fire[i] = Math.max(world.fire[i], 0.8);
       world.emit({ kind: "flash", color: 0xdfe8ff, strength: 0.25 });
-      world.emit({ kind: "sound", name: "zap", size: 0.5 });
+      world.emit({ kind: "sound", name: "zap", size: 0.5, x: t.x, y: t.y });
       puff(world, t.x, t.y, 0xdfe8ff, 10, 1.6);
       deed(c, `struck a ${t.kind.split("#")[0]} with lightning`);
       return true;
@@ -373,12 +406,19 @@ function perform(world: World, c: Creature, k: CreatureKind, m: Mind, what: Abil
       return n > 0;
     }
     case "raise the dead": {
+      // A villager necromancer (4.6 part B) raises thralls bound to its
+      // village, three at most about it; any other raiser the hungry risen.
+      const person = c.kind === "villager";
+      const raised = person ? "thrall" : "risen";
+      let bound = 0;
+      if (person) for (const o of world.creatures) if (!o.dead && o.kind === "thrall" && Math.abs(o.x - c.x) < 14 && Math.abs(o.y - c.y) < 14) bound++;
+      if (bound >= 3) return false;
       let n = 0;
       for (const o of world.creatures) {
-        if (n >= 3 || !o.dead || o.deadFor > 35 || o.data.eaten || o.data.buried || o.kind === c.kind) continue;
+        if (n >= 3 - bound || !o.dead || o.deadFor > 35 || o.data.eaten || o.data.buried || (o.kind === c.kind && !person)) continue;
         if (Math.abs(o.x - c.x) > 10 || Math.abs(o.y - c.y) > 10) continue;
-        o.kind = "risen";
-        o.color = 0xd8d4c8;
+        o.kind = raised;
+        o.color = person ? 0xb8c4a8 : 0xd8d4c8;
         o.dead = false;
         o.deadFor = 0;
         o.vz = 0;
@@ -392,9 +432,13 @@ function perform(world: World, c: Creature, k: CreatureKind, m: Mind, what: Abil
       // With no one to raise, a grave is opened instead.
       if (!n) {
         const yard = world.marks.find((mk) => mk.kind === "graveyard" && Math.abs(mk.x - c.x) < 14 && Math.abs(mk.y - c.y) < 14);
-        if (!yard || world.creatures.length > 480) return false;
-        const r = life.make("risen", yard.x + 0.5, yard.y + 0.5);
+        if (world.creatures.length > 480) return false;
+        // A person calls an old grave open where it stands: every island has its dead.
+        if (!yard && !person) return false;
+        const at = yard ? { x: yard.x + 0.5, y: yard.y + 0.5 } : { x: c.x + 1, y: c.y };
+        const r = life.make(raised, at.x, at.y);
         world.creatures.push(r);
+        puff(world, r.x, r.y, 0x9a7aff, 6);
         n = 1;
       }
       deed(c, n > 1 ? `raised ${n} of the dead` : "raised the dead");

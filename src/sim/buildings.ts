@@ -109,7 +109,7 @@ const free = (world: World, i: number) => {
 };
 
 // The top left cell of a free, flat two by two block at (x, y), or -1.
-function block(world: World, x: number, y: number): number {
+export function block(world: World, x: number, y: number): number {
   if (x < 1 || y < 1 || x + 2 >= world.w || y + 2 >= world.h) return -1;
   const i = y * world.w + x;
   const cells = [i, i + 1, i + world.w, i + world.w + 1];
@@ -185,8 +185,13 @@ function raise(world: World, s: Settlement, job: Job, rng: Rng): boolean {
 // When the island is made: a name, a main street, gardens, and one or two
 // buildings with a job, chosen by the place.
 export function layOutVillages(world: World, biomes: readonly Biome[]): void {
-  world.settlements.forEach((s, k) => {
-    const rng = new Rng((world.seed ^ 0x6b75) + k * 7919 + 13);
+  world.settlements.forEach((s, k) => layOutVillage(world, s, new Rng((world.seed ^ 0x6b75) + k * 7919 + 13), biomes));
+}
+
+// One village: its name, main street, gardens and first buildings. Also for
+// a village a player places (4.6, makers.ts), with its own random stream.
+export function layOutVillage(world: World, s: Settlement, rng: Rng, biomes: readonly Biome[]): void {
+  {
     const cx = Math.round(s.x);
     const cy = Math.round(s.y);
     const ci = cy * world.w + cx;
@@ -251,7 +256,7 @@ export function layOutVillages(world: World, biomes: readonly Biome[]): void {
       if (jobAt(s, job.id) >= 0) continue;
       raise(world, s, job, rng);
     }
-  });
+  }
 }
 
 const DIRS: readonly [number, number][] = [

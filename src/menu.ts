@@ -4,6 +4,11 @@ import { createPasskey, openAccount, signIn, signOut } from "./account";
 import type { Sync } from "./sync";
 import { toast } from "./toast";
 import { openNews, unread } from "./whatsnew";
+import { readSoundSettings, writeSoundSetting, type SoundSettings } from "./sim/soundsettings";
+import { answerSoundAsks, sendSoundSettings } from "./soundbridge";
+
+// The World's frame asks for the sound settings when it starts (soundbridge.ts).
+answerSoundAsks();
 
 // 4.4.6: the ? menu. Who is signed in and whether the progress is saved,
 // always first; then sign in (on any device, even one with a link or a
@@ -32,6 +37,14 @@ export function openMenu(status: HealthResponse | null, sync: Sync, about: () =>
       <button class="menu-signout" hidden>Sign out</button>
       <button class="menu-about">About the game and privacy</button>
     </div>
+    <fieldset class="menu-sound">
+      <legend>Sound on this device</legend>
+      <button class="menu-music" aria-pressed="false">Music</button>
+      <label>Music <input type="range" class="menu-vol-music" min="0" max="100" step="5" /></label>
+      <label>Effects <input type="range" class="menu-vol-effects" min="0" max="100" step="5" /></label>
+      <label>Ambience <input type="range" class="menu-vol-ambience" min="0" max="100" step="5" /></label>
+      <button class="menu-mono" aria-pressed="false">Mono</button>
+    </fieldset>
   `;
   const account = status?.account;
   const signedIn = !!account?.signedIn;
@@ -63,6 +76,7 @@ export function openMenu(status: HealthResponse | null, sync: Sync, about: () =>
     close();
     openNews();
   });
+  soundControls(d);
   const stop = sync.listen(refresh);
   const close = () => {
     stop();
@@ -114,4 +128,37 @@ export function openMenu(status: HealthResponse | null, sync: Sync, about: () =>
   d.showModal();
   // Not signed in with a token: nothing to sync, but say whether the admin token is here.
   if (!signedIn && api.hasToken() && account?.admin && account.claimed) syncLine.textContent += " Sign in with your passkey to keep the admin's progress.";
+}
+
+// 4.8: music (off until the player turns it on), the three volumes and mono,
+// per device. The World's frame gets each change by message (soundbridge.ts).
+function soundControls(d: HTMLElement): void {
+  const now = readSoundSettings();
+  const toggle = (sel: string, key: "music" | "mono", label: string) => {
+    const b = d.querySelector<HTMLButtonElement>(sel)!;
+    const show = (on: boolean) => {
+      b.setAttribute("aria-pressed", String(on));
+      b.textContent = `${label}: ${on ? "on" : "off"}`;
+    };
+    show(now[key]);
+    b.addEventListener("click", () => {
+      const on = b.getAttribute("aria-pressed") !== "true";
+      writeSoundSetting(key, on);
+      show(on);
+      sendSoundSettings();
+    });
+  };
+  toggle(".menu-music", "music", "Music");
+  toggle(".menu-mono", "mono", "Mono");
+  const slider = (sel: string, key: keyof Pick<SoundSettings, "musicVolume" | "effectsVolume" | "ambienceVolume">) => {
+    const input = d.querySelector<HTMLInputElement>(sel)!;
+    input.value = String(Math.round(now[key] * 100));
+    input.addEventListener("change", () => {
+      writeSoundSetting(key, Number(input.value) / 100);
+      sendSoundSettings();
+    });
+  };
+  slider(".menu-vol-music", "musicVolume");
+  slider(".menu-vol-effects", "effectsVolume");
+  slider(".menu-vol-ambience", "ambienceVolume");
 }

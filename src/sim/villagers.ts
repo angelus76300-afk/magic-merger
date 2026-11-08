@@ -19,7 +19,25 @@ export interface Look {
   hair: number;
   // Short or long hair.
   long: boolean;
+  // 4.6 part B: a calling a person made by a merge has beside its job (a
+  // Necromancer, a Blacksmith), its own tools, clothes and magic. Villagers
+  // born on the island have none.
+  calling?: Calling;
 }
+
+// What a person item can be beyond a job (makers.ts, makePerson). Each is a
+// villager like any other, with a twist taken from its name:
+//   necromancer  hooded, a staff; walks among the graves at night and raises
+//                the dead as thralls bound to it (abilities.ts)
+//   blacksmith   apron and hammer; works the village's smithy (goals.ts)
+//   knight       armor, sword and shield; guards the village, wards it when
+//                an enemy is near
+//   mage         a pointed hat and a staff; freezes an enemy, blinks away when hurt
+export const CALLINGS = ["none", "necromancer", "blacksmith", "knight", "mage"] as const;
+export type Calling = (typeof CALLINGS)[number];
+// The job each calling works at, and the robe it wears instead of its village's shirt.
+export const CALLING_JOB: Record<Calling, Job | null> = { none: null, necromancer: "priest", blacksmith: "smith", knight: "guard", mage: "none" };
+export const CALLING_ROBE: Partial<Record<Calling, number>> = { necromancer: 0x3b2a4a, mage: 0x2f4a8a };
 
 // Clothes per village: shirts to pick from, trousers, hats, and the priest's hood.
 export const STYLES: { name: string; shirts: number[]; pants: number; hat: number; cloth: number }[] = [
@@ -57,7 +75,7 @@ function weighted<T>(list: [T, number][], r: number): T {
   return list[list.length - 1][0];
 }
 
-// Bits: age 2, job 4, style 3, skin 3, hair 3, long 1.
+// Bits: age 2, job 4, style 3, skin 3, hair 3, long 1, calling 3 (4.6 part B).
 export function packLook(l: Look): number {
   return (
     AGES.indexOf(l.age) |
@@ -65,8 +83,13 @@ export function packLook(l: Look): number {
     ((l.style & 7) << 6) |
     (l.skin % SKINS.length << 9) |
     (l.hair % HAIRS.length << 12) |
-    ((l.long ? 1 : 0) << 15)
+    ((l.long ? 1 : 0) << 15) |
+    (Math.max(0, CALLINGS.indexOf(l.calling ?? "none")) << 16)
   );
+}
+
+export function callingOf(look: number): Calling {
+  return CALLINGS[(look >> 16) & 7] ?? "none";
 }
 
 export function unpackLook(n: number): Look {
@@ -77,6 +100,7 @@ export function unpackLook(n: number): Look {
     skin: ((n >> 9) & 7) % SKINS.length,
     hair: ((n >> 12) & 7) % HAIRS.length,
     long: ((n >> 15) & 1) === 1,
+    calling: callingOf(n),
   };
 }
 
@@ -93,6 +117,8 @@ export function sizeOf(l: Look): number {
 }
 
 export function shirtOf(l: Look, rnd: () => number = Math.random): number {
+  const robe = l.calling ? CALLING_ROBE[l.calling] : undefined;
+  if (robe !== undefined) return robe;
   const s = STYLES[l.style].shirts;
   return s[(rnd() * s.length) | 0];
 }

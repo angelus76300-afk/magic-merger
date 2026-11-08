@@ -214,6 +214,12 @@ function land(world: World): void {
     if (hard && kind !== VK.LEAF && kind !== VK.FLOAT) hit.set(i, (hit.get(i) ?? 0) + 1);
   }
   if (hit.size) {
+    let sx = 0;
+    let sy = 0;
+    for (const i of hit.keys()) {
+      sx += (i % world.w) + 0.5;
+      sy += Math.floor(i / world.w) + 0.5;
+    }
     for (const [i, n] of hit) {
       const x = i % world.w;
       const y = Math.floor(i / world.w);
@@ -241,7 +247,7 @@ function land(world: World): void {
       if (n) c.hp -= 25 * Math.min(4, n) * Math.min(3, s.fell / 4);
       if (c.hp <= 0) c.dead = true;
     }
-    world.emit({ kind: "sound", name: "rumble", size: Math.min(1, 0.2 + hit.size / 200) });
+    world.emit({ kind: "sound", name: "rumble", size: Math.min(1, 0.2 + hit.size / 200), x: sx / hit.size, y: sy / hit.size });
     if (hit.size > 30) world.emit({ kind: "shake", amount: Math.min(8, hit.size / 30), seconds: 0.3 });
   }
   s.falling.clear();

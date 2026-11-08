@@ -1,4 +1,5 @@
 import { FilterBar, applyFilters } from "./filters";
+import { CRAFT_VOICES, CraftSound } from "./craftsound";
 import { elementKey } from "../shared/elements";
 import type { GameElement } from "../shared/types";
 import * as api from "./api";
@@ -37,6 +38,9 @@ export function chipElement(element: GameElement, tag: "div" | "button" = "div")
   }
   return node;
 }
+
+// 4.8: the Craft view's own small sounds (craftsound.ts).
+const sound = new CraftSound();
 
 // The Craft tab: a board where chips are dropped onto each other, and the
 // inventory of everything discovered so far.
@@ -176,36 +180,45 @@ export class Craft {
   }
 
   private spawnNearCenter(key: string): void {
-    const rect = this.board.getBoundingClientRect();
     const chip = this.store.addChip(key, 0, 0);
     const node = this.mountChip(chip);
-    // The first free spot on a spiral from the center: two tapped items never
-    // land on top of each other, so the one underneath can still be grabbed.
+    const spot = this.freeSpot(chip.id, node, this.board.clientWidth / 2 - node.offsetWidth / 2, this.board.clientHeight / 2 - node.offsetHeight / 2);
+    this.settle(chip, node, spot.x, spot.y);
+    node.classList.add("pop");
+    sound.play("place", CRAFT_VOICES.place());
+  }
+
+  // The nearest free spot to (cx, cy), on rings growing 10 px at a time: two
+  // items never land on top of each other, so the one underneath can still be
+  // grabbed. Also for a merge's result, which is often wider than the two it
+  // replaces (2026-11-07: after six merges, four pairs overlapped near the
+  // centre). (cx, cy) itself when the board has no room left.
+  private freeSpot(id: number, node: HTMLElement, cx: number, cy: number): Point {
+    const width = this.board.clientWidth;
+    const height = this.board.clientHeight;
     const w = node.offsetWidth;
     const h = node.offsetHeight;
-    const cx = rect.width / 2 - w / 2;
-    const cy = rect.height / 2 - h / 2;
     const others = this.store
       .board()
-      .filter((c) => c.id !== chip.id)
+      .filter((c) => c.id !== id)
       .map((c) => ({ x: c.x, y: c.y, w: this.nodes.get(c.id)?.offsetWidth ?? w, h: this.nodes.get(c.id)?.offsetHeight ?? h }));
-    const free = (x: number, y: number) => others.every((o) => x + w + 8 < o.x || o.x + o.w + 8 < x || y + h + 8 < o.y || o.y + o.h + 8 < y);
-    let x = cx;
-    let y = cy;
-    for (let k = 0; k < 120; k++) {
-      const a = k * 0.9;
-      const r = 6 * k;
-      const tx = cx + Math.cos(a) * r * 1.4;
-      const ty = cy + Math.sin(a) * r * 0.8;
-      if (tx < 0 || ty < 0 || tx + w > rect.width || ty + h > rect.height) continue;
-      if (free(tx, ty)) {
-        x = tx;
-        y = ty;
-        break;
+    const fits = (x: number, y: number) =>
+      x >= 0 &&
+      y >= 0 &&
+      x + w <= width &&
+      y + h <= height &&
+      others.every((o) => x + w + 8 < o.x || o.x + o.w + 8 < x || y + h + 8 < o.y || o.y + o.h + 8 < y);
+    if (fits(cx, cy)) return { x: cx, y: cy };
+    for (let r = 10; r < Math.max(width, height); r += 10) {
+      const n = Math.max(8, Math.round((2 * Math.PI * r) / 20));
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * 2 * Math.PI;
+        const x = cx + Math.cos(a) * r;
+        const y = cy + Math.sin(a) * r;
+        if (fits(x, y)) return { x, y };
       }
     }
-    this.settle(chip, node, x, y);
-    node.classList.add("pop");
+    return { x: cx, y: cy };
   }
 
   private pressChip(chip: BoardChip, node: HTMLElement, e: PointerEvent): void {
@@ -220,6 +233,7 @@ export class Craft {
       (ev) => {
         if (!dragging && distance(start, ev) > DRAG_THRESHOLD) {
           dragging = true;
+          sound.play("pickUp", CRAFT_VOICES.pickUp());
           node.classList.add("dragging");
           this.board.append(node); // bring to front
         }
@@ -246,6 +260,7 @@ export class Craft {
 
     // Dropping back on the inventory, or off the board, throws the chip away.
     if (inside(this.inventory.getBoundingClientRect(), ev) || !inside(this.board.getBoundingClientRect(), ev)) {
+      sound.play("puff", CRAFT_VOICES.puff());
       this.discard(chip.id);
       return;
     }
@@ -254,6 +269,7 @@ export class Craft {
       void this.merge(chip, target.chip);
       return;
     }
+    sound.play("place", CRAFT_VOICES.place());
     this.settle(chip, node, chip.x, chip.y);
   }
 
@@ -264,6 +280,9 @@ export class Craft {
     const targetNode = this.nodes.get(target.id)!;
 
     this.busy.add(dragged.id).add(target.id);
+    // The drop answers at once; a slow answer gets a quiet swell (4.8).
+    sound.play("clink", CRAFT_VOICES.clink());
+    sound.startWait();
     draggedNode.classList.add("merging");
     targetNode.classList.add("merging");
     this.place(draggedNode, target.x + 10, target.y + 10);
@@ -272,6 +291,14 @@ export class Craft {
       const dropped = Date.now();
       const result = await api.merge(a.name, b.name);
       const newForMe = this.store.discover(result.element, [a.name, b.name]);
+      sound.stopWait();
+      // What came back, heard: a First Discovery, something new by its tier,
+      // a loop (one of the two again), or a known thing's own motif.
+      const got = result.element.name.trim().toLowerCase();
+      if (result.daily || result.firstDiscovery) sound.play("first", CRAFT_VOICES.first(result.element.tier ?? "minor"));
+      else if (newForMe) sound.play("fresh", CRAFT_VOICES.fresh(result.element.tier ?? "minor"));
+      else if (got === a.name.trim().toLowerCase() || got === b.name.trim().toLowerCase()) sound.play("loop", CRAFT_VOICES.loop());
+      else sound.play("known", CRAFT_VOICES.known(result.element.name));
       if (newForMe) {
         const k = elementKey(result.element.name);
         timeline.start(k, result.element.name, dropped);
@@ -283,7 +310,8 @@ export class Craft {
       this.discard(target.id, false);
       const chip = this.store.addChip(elementKey(result.element.name), target.x, target.y);
       const node = this.mountChip(chip);
-      this.settle(chip, node, target.x, target.y);
+      const spot = this.freeSpot(chip.id, node, target.x, target.y);
+      this.settle(chip, node, spot.x, spot.y);
       node.classList.add("pop");
 
       const label = `${result.element.emoji} ${result.element.name}`;
@@ -300,6 +328,8 @@ export class Craft {
       if (newForMe) this.renderInventory();
       if (newForMe) this.onNewElement(chip.key, result.writing === true);
     } catch (err) {
+      sound.stopWait();
+      sound.play("refuse", CRAFT_VOICES.refuse());
       draggedNode.classList.remove("merging");
       targetNode.classList.remove("merging");
       this.settle(dragged, draggedNode, target.x + 40, target.y + 40);
