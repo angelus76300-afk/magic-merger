@@ -72,6 +72,57 @@ export function reviewFor(comments, sha, owner) {
   return found;
 }
 
+// The two files almost every pull request adds a line to (docs/DAILY.md): the backlog and the changelog.
+export const SHARED = ["docs/IDEAS.md", "public/changelog.json"];
+
+// The lines a text diff adds and removes, without positions, sorted: the same lines moved by a hunk
+// that git placed differently compare equal. null for anything that is not a plain text change
+// (a binary file, a mode change, a rename, a deleted or a new file), which carries nothing.
+function changedLines(out) {
+  const add = [];
+  const del = [];
+  let inHunk = false;
+  for (const line of out.split("\n")) {
+    // Headers come before a file's first hunk; inside a hunk, "--- x" is a removed line "-- x".
+    if (line.startsWith("diff --git ")) inHunk = false;
+    else if (line.startsWith("@@")) inHunk = true;
+    else if (!inHunk) {
+      if (/^(Binary files |GIT binary patch|old mode |new mode |deleted file |new file |rename |copy |similarity )/.test(line)) return null;
+    } else if (line.startsWith("+")) add.push(line.slice(1).trimEnd());
+    else if (line.startsWith("-")) del.push(line.slice(1).trimEnd());
+    else if (line && !line.startsWith("\\")) return null;
+  }
+  return JSON.stringify([add.sort(), del.sort()]);
+}
+
+/**
+ * One merge (first + second = merged) and one shared file the pull request changed. Null when the merge
+ * changed the file only with main's own lines: what it added and removed there is exactly what main
+ * added and removed since the merge base, and the pull request's own lines there are unchanged. Else
+ * what is wrong, in words.
+ */
+export function sharedChangeFromMain(git, first, second, merged, file) {
+  const diff = (a, b) => changedLines(git("diff", "-U0", "--no-renames", "--no-ext-diff", "--no-textconv", a, b, "--", file));
+  const mb = git("merge-base", first, second);
+  const fromMain = diff(mb, second);
+  const byMerge = diff(first, merged);
+  const ownBefore = diff(mb, first);
+  const ownAfter = diff(second, merged);
+  if ([fromMain, byMerge, ownBefore, ownAfter].includes(null)) return "is not a plain text change";
+  if (byMerge !== fromMain) return "brings lines that did not come from main";
+  if (ownAfter !== ownBefore) return "changes the pull request's own lines";
+  // union stacks lines: two entries of several lines can interleave into JSON that no longer parses.
+  // The line checks above refuse every such case seen so far; this is a second lock behind them.
+  if (file.endsWith(".json")) {
+    try {
+      JSON.parse(git("show", `${merged}:${file}`));
+    } catch {
+      return "leaves JSON that does not parse";
+    }
+  }
+  return null;
+}
+
 /**
  * 2026-11-07, the lighter process: a review carried across merges of main. When the head has no
  * review of its own, walk its first-parent line back to the newest reviewed commit R. Every commit
@@ -81,6 +132,15 @@ export function reviewFor(comments, sha, owner) {
  * be above R's. Then R's review stands for the head, its tests=pass included; the night's npm test
  * on main is the backstop. Anything the Gate cannot prove (a missing commit, a git error) carries
  * nothing: it waits as before.
+ * 2026-11-08: almost every pull request adds lines to docs/IDEAS.md and public/changelog.json, so a
+ * merge of main nearly always touched them and sent the pull request back for a review. A merge may
+ * now change those two files (SHARED) when the lines it adds and removes there are exactly the lines
+ * main added and removed since the merge base, and the pull request's own lines there are the same
+ * before and after the merge (sharedChangeFromMain). Every other file of the pull request still may
+ * not change. .gitattributes merges the changelog with union, so two entries added at its top merge
+ * without a conflict; git's own merge in the tree check reads main's .gitattributes too. Lines are
+ * compared without their place: where a line sits may move, which the class check covers for the
+ * one place that matters (IDEAS.md "Declined", R12).
  *   git: (...args) => stdout, throwing on a non-zero exit; classOf: (base, sha) => "green" | "amber" | "red"
  * Returns { review, from, why }: review null with why when nothing is carried.
  */
@@ -129,8 +189,12 @@ export function carriedReview({ head, base, comments, owner, git, classOf, limit
       if (tree !== git("rev-parse", `${m.sha}^{tree}`))
         return no(`${short} is not a clean merge (its tree differs from git's own merge): a new review is needed`);
       const touched = git("diff", "--name-only", "--no-renames", first, m.sha).split("\n").filter(Boolean);
-      const mine = touched.filter((f) => ownFiles.has(f));
+      const mine = touched.filter((f) => ownFiles.has(f) && !SHARED.includes(f));
       if (mine.length) return no(`${short} changes the pull request's own files (${mine.slice(0, 3).join(", ")}): a new review is needed`);
+      for (const f of touched.filter((t) => ownFiles.has(t) && SHARED.includes(t))) {
+        const bad = sharedChangeFromMain(git, first, second, m.sha, f);
+        if (bad) return no(`${short} ${bad} in ${f}: a new review is needed`);
+      }
     }
     const before = classOf(base, found.sha);
     const after = classOf(base, head);
