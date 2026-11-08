@@ -1,7 +1,8 @@
 import type { ChronicleDigest } from "../shared/chronicle";
 import { elementKey } from "../shared/elements";
+import { castRequest } from "./cast-request";
 import type { SpellProgram } from "../shared/spellcode";
-import { TIERS, tierFromDepth, type Tier } from "../shared/tiers";
+import { TIERS, type Tier } from "../shared/tiers";
 import type { CheckRequest, SpellResponse } from "../shared/types";
 import { DOWN_REASONS, REASON_LABEL, type DownReason } from "../shared/votes";
 import * as api from "./api";
@@ -527,7 +528,7 @@ export class WorldHost {
     const program = this.store.spell(key);
     const discovery = this.store.get(key);
     if (!program || !discovery) return null;
-    return { key, name: discovery.element.name, tier: tierOf(discovery.element.tier, discovery.element.depth), code: program.code };
+    return castRequest(key, discovery.element, program);
   }
 
   private send(msg: ToWorld): void {
@@ -1117,8 +1118,9 @@ export class WorldHost {
       button("Not good", "vote-down", showReasons),
       dismiss,
     );
-    // Above the challenge banner in the same stack (M10).
-    if (!bar.isConnected) this.el.banner.before(bar);
+    // On the drawer, in place of its hint line (2026-11-07): over the island
+    // it covered the island's own panels and the ground where spells land.
+    if (!bar.isConnected) this.el.status.before(bar);
     // Unanswered, it goes away; the next cast asks again.
     this.voteTimer = window.setTimeout(close, 30_000);
   }
@@ -1289,10 +1291,6 @@ function compactCreation(c: ReturnType<typeof timeline.recent>[number]) {
 function withoutTrial(program: SpellProgram): SpellProgram {
   const { trial: _trial, ...rest } = program;
   return rest;
-}
-
-function tierOf(tier: Tier | undefined, depth: number): Tier {
-  return tier ?? tierFromDepth(depth);
 }
 
 function readAt(): string | null {

@@ -53,7 +53,7 @@ import { PROGRESS_KINDS, type ProgressPut, type StoredKind } from "../shared/acc
 import { ClaudeOracle, MockOracle, OracleError, parseEffort, type Oracle, type ProgramAnswer, type SpellRequest as OracleSpellRequest } from "./oracle";
 import { PROBED, parseIntents, type Intent } from "../shared/promises";
 import { isForm, kindOfForm, saysGiant, type Form } from "../shared/forms";
-import { AGAIN_BY_FORM_SQL, applyForms, requestIntents, formList, proposeForms } from "./forms";
+import { AGAIN_BY_FORM_SQL, applyForms, givenEntry, mayAskAgain, requestIntents, formList, proposeForms } from "./forms";
 import { designDue, evolution, liveLibrary, openGaps, recordGap, settleHelper, storeDesign, trialHelpers, withLibrary, type Library } from "./evolve";
 import {
   averageDaily,
@@ -1241,7 +1241,7 @@ function storedVerdict(verdict: { stats?: unknown } & Record<string, unknown>): 
   return JSON.stringify({ ...verdict, stats: { ...kept, cut: 1 } });
 }
 
-const PROBLEMS = ["crash", "nothing", "wiped", "promise", "idle", "size", "kind", "look"] as const;
+const PROBLEMS = ["crash", "nothing", "wiped", "promise", "idle", "size", "kind", "look", "fit"] as const;
 const problemOf = (v: unknown): (typeof PROBLEMS)[number] | null => ((PROBLEMS as readonly unknown[]).includes(v) ? (v as (typeof PROBLEMS)[number]) : null);
 
 // A live program tested again by a browser against the promise its element
@@ -1484,7 +1484,11 @@ async function refreshSpentThisMonth(db: D1Database): Promise<number> {
 
 const REFRESH_ESTIMATE = { big: 0.06, small: 0.006 };
 
-async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; limit?: unknown; dry?: unknown; forms?: unknown; why?: unknown }) {
+async function startRefresh(
+  env: Env,
+  oracle: Oracle,
+  body: { keys?: unknown; limit?: unknown; dry?: unknown; forms?: unknown; why?: unknown; entries?: unknown },
+) {
   if (oracle.mock) throw new HttpError(400, "The refresh needs the Claude API");
   const db = env.DB;
   const asked = Array.isArray(body.keys) ? body.keys.filter((k): k is string => typeof k === "string").map(elementKey) : null;
@@ -1521,13 +1525,17 @@ async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; li
     return typeof w === "string" && w.trim() ? w.trim().slice(0, 300) : null;
   };
   if (byForm && asked?.length) {
-    const more = await db.prepare(AGAIN_BY_FORM_SQL).bind(JSON.stringify(asked)).all<{ key: string; pid: number; reason: string; replaced: number }>();
+    const more = await db
+      .prepare(AGAIN_BY_FORM_SQL)
+      .bind(JSON.stringify(asked))
+      .all<{ key: string; pid: number; reason: string; replaced: number; n: number }>();
     for (const r of more.results) {
       const asker = why(r.key);
-      // A program its rewrite put live is written again only for a reason given.
-      if (rows.results.some((o) => o.key === r.key) || (r.replaced && !asker)) continue;
+      // A program its rewrite put live, or a third try, only for a reason
+      // given; a fourth only with a new entry given (`entries`).
+      if (rows.results.some((o) => o.key === r.key) || !mayAskAgain(r, asker, givenEntry(body.entries, r.key) !== null)) continue;
       rows.results.push({ key: r.key, pid: r.pid });
-      const reasons = r.replaced ? [] : [`its first rewrite for its kind was not used: ${r.reason}`];
+      const reasons = r.replaced ? [] : [`its last rewrite for its kind was not used: ${r.reason}`];
       if (asker) reasons.push(asker);
       again.set(r.key, reasons);
     }
@@ -1556,7 +1564,11 @@ async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; li
       const kept = await db.prepare("SELECT entry FROM forms WHERE key = ?").bind(r.key).first<{ entry: string | null }>();
       fresh = !!kept && kept.entry === null;
     }
-    const description = fresh ? await ensureDescription(env, oracle, element, true, false) : await ensureDescription(env, oracle, element, false);
+    // An entry given by name is the item's new entry: written from, and live
+    // with the program (the owner's hunting Serpent).
+    const given = byForm && body.dry !== true ? givenEntry(body.entries, r.key) : null;
+    if (given) fresh = true;
+    const description = given ?? (fresh ? await ensureDescription(env, oracle, element, true, false) : await ensureDescription(env, oracle, element, false));
     // By form, its promise is read again from the entry it is written from:
     // the stored one may come from an entry written before its kind (a
     // Serpent promised to protect, so its program raised a shield). Stored

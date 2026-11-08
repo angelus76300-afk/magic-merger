@@ -62,7 +62,12 @@ export class Community {
 function friendCard(f: Friend): HTMLElement {
   const card = el("article", `friend${f.me ? " friend-me" : ""}`);
   const head = el("div", "friend-head");
-  head.append(el("h4", "friend-name", f.me ? `${f.name} (you)` : f.name), el("span", "friend-seen", `played ${lastPlayedLabel(f.lastPlayed)}`));
+  head.append(el("h4", "friend-name", f.me ? `${f.name} (you)` : f.name));
+  // The owner's play with the admin token is not counted (shared/community.ts):
+  // "played not yet" beside their finds would be false, so the card says why.
+  if (f.unrecorded) {
+    if (f.me) head.append(el("span", "friend-seen", "admin play not counted"));
+  } else head.append(el("span", "friend-seen", `played ${lastPlayedLabel(f.lastPlayed)}`));
   card.append(head);
   const facts = el("p", "friend-facts");
   const parts = [
@@ -103,6 +108,15 @@ export function profileControls(me: CommunityResponse["me"], changed: () => void
     o.value = elementKey(d.element.name);
     o.textContent = `${d.element.emoji} ${d.element.name}`;
     select.append(o);
+  }
+  // A favorite picked on another device, or by the owner's token on a copy
+  // of the library, may not be in this browser's discoveries: shown anyway,
+  // so the picker says what the card above it says.
+  if (me.favorite && !spells.some((d) => elementKey(d.element.name) === me.favorite)) {
+    const o = document.createElement("option");
+    o.value = me.favorite;
+    o.textContent = me.card ? `${me.card.emoji} ${me.card.name}` : me.favorite;
+    none.after(o);
   }
   select.value = me.favorite ?? "";
   select.onchange = () => {

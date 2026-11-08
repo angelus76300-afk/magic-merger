@@ -40,7 +40,7 @@ interface LabOptions {
   reach?: number;
   // 4.6: a player's island (land.ts, with its seeded villages), not the island before 4.4.
   land?: boolean;
-  // 4.6: the kind it is written as, for its fine models and makers. The lab ignores it.
+  // 4.6: the kind it is written as, for its fine models and makers; 4.7: it sets the reach, as in the game.
   form?: string;
   // 4.6: keep the camera on the newest fine model, wonder or village it made.
   focusMade?: boolean;
@@ -176,7 +176,15 @@ async function runSpell(code: string, options: LabOptions = {}) {
   const creaturesBefore = creatures(world);
   const started = performance.now();
   const ok = engine.cast(
-    { key: "lab", name: "Lab", tier, code, ...(options.kind ? { kind: options.kind } : {}), ...(options.reach ? { reach: options.reach } : {}) },
+    {
+      key: "lab",
+      name: "Lab",
+      tier,
+      code,
+      ...(options.kind ? { kind: options.kind } : {}),
+      ...(options.reach ? { reach: options.reach } : {}),
+      ...(options.form ? { form: options.form } : {}),
+    },
     target.x,
     target.y,
   );
@@ -255,7 +263,8 @@ function quantiles(list: number[]): [number, number, number] {
 // times and places, and reports how the objective evolved.
 async function runScenario(
   id: string,
-  options: { seconds?: number; casts?: { t: number; x: number; y: number; code: string; tier: string }[]; shots?: number[] } = {},
+  // `village`: casts given at x = -1 land on the scenario's first village, and the camera looks there (4.7's ward frames).
+  options: { seconds?: number; casts?: { t: number; x: number; y: number; code: string; tier: string }[]; shots?: number[]; village?: { dist: number } } = {},
 ) {
   seedRandom(5);
   const def = SCENARIOS.find((s) => s.id === id)!;
@@ -270,6 +279,15 @@ async function runScenario(
   engine.view.orbit.tx = focus.x;
   engine.view.orbit.ty = focus.y;
   engine.view.orbit.dist = focus.dist;
+  let at = { x: focus.x, y: focus.y };
+  if (options.village) {
+    const i = world.cover.findIndex((c) => c === C.HOUSE);
+    if (i >= 0) at = { x: (i % world.w) + 3, y: Math.floor(i / world.w) + 3 };
+    engine.view.orbit.tx = at.x;
+    engine.view.orbit.ty = at.y;
+    engine.view.orbit.dist = options.village.dist;
+    engine.runtime.camera = null;
+  }
   const timeline: { t: number; text: string; status: string }[] = [];
   const frames: { t: number; png: string }[] = [];
   const shots = (options.shots ?? []).map((s) => Math.round(s / TICK));
@@ -277,7 +295,8 @@ async function runScenario(
   let status = "playing";
   for (let tick = 0; tick <= ticks; tick++) {
     for (const c of options.casts ?? [])
-      if (Math.round(c.t / TICK) === tick) engine.cast({ key: `lab${c.t}`, name: "Lab", tier: isTier(c.tier) ? c.tier : "major", code: c.code }, c.x, c.y);
+      if (Math.round(c.t / TICK) === tick)
+        engine.cast({ key: `lab${c.t}`, name: "Lab", tier: isTier(c.tier) ? c.tier : "major", code: c.code }, c.x < 0 ? at.x : c.x, c.x < 0 ? at.y : c.y);
     engine.step();
     run.tick(world);
     if (tick % 30 === 0 || shots.includes(tick)) {

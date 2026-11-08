@@ -17,7 +17,7 @@ import { LAND_SHAPES, WONDER_LIST, villageCenters } from "../src/sim/makers";
 import { findVillages } from "../src/sim/kin";
 import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { AGAIN_BY_FORM_SQL, requestIntents } from "../worker/forms";
+import { AGAIN_BY_FORM_SQL, givenEntry, mayAskAgain, requestIntents } from "../worker/forms";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
@@ -434,14 +434,61 @@ export function keptByFormChecks(check: Check): void {
   insert("rewrites", { key: "warlock", cause: "refresh", at: 150, status: "done" });
   insert("rewrites", { key: "warlock", cause: "refresh", at: 300, status: "done" });
   insert("refresh_verdicts", { to_pid: 212, key: "warlock", from_pid: 12, replaced: 0, reason: "warlock: kept again", at: 400 });
-  const asked = ["astrologer", "serpent", "village", "wizard", "healer", "druid", "warlock"];
-  const got = (db.prepare(AGAIN_BY_FORM_SQL).all(JSON.stringify(asked)) as { key: string; pid: number; reason: string }[])
-    .map((r) => `${r.key}:${r.pid}`)
-    .sort();
+  // Ent: written for its kind three times, the last kept at 600: a fourth only with a new entry.
+  insert("elements", { key: "ent", name: "ent", emoji: "x", kind: "artifact", depth: 1, created_at: 1, form: "creature" });
+  insert("spells", { key: "ent", spec: "{}", model: "m", created_at: 1, pid: 14 });
+  insert("forms", { key: "ent", form: "creature", status: "applied", applied_at: 100, at: 90 });
+  for (const at of [150, 300, 500]) insert("rewrites", { key: "ent", cause: "refresh", at, status: "done" });
+  insert("refresh_verdicts", { to_pid: 314, key: "ent", from_pid: 14, replaced: 0, reason: "ent: kept", at: 600 });
+  const asked = ["astrologer", "serpent", "village", "wizard", "healer", "druid", "warlock", "ent"];
+  const found = db.prepare(AGAIN_BY_FORM_SQL).all(JSON.stringify(asked)) as { key: string; pid: number; reason: string; replaced: number; n: number }[];
+  const got = found.map((r) => `${r.key}:${r.pid}:${r.n}`).sort();
   check(
-    "a rewrite by form is asked again by name only, once nothing waits for it and its live program is the one its verdict left, and never a third time",
-    got.join(",") === "astrologer:5,healer:8,serpent:109",
+    "a rewrite by form is found again by name only, once nothing waits for it and its live program is the one its verdict left, and never a fifth time",
+    got.join(",") === "astrologer:5:0,ent:14:3,healer:8:0,serpent:109:0,warlock:12:2",
     got.join(","),
+  );
+  // Who of them is written again: a kept one; one put live, or a third try,
+  // only for a reason given (the owner's Serpent kept a shield after two).
+  const decide = (key: string, why: string | null) => mayAskAgain(found.find((r) => r.key === key)!, why);
+  const decided = [
+    decide("astrologer", null),
+    decide("serpent", null),
+    decide("serpent", "a serpent raises no shield"),
+    decide("warlock", null),
+    decide("warlock", "a warlock is a villager"),
+    mayAskAgain({ replaced: 1, n: 2 }, "a third try"),
+    mayAskAgain({ replaced: 0, n: 3 }, "a fourth try"),
+    // A new entry given (the owner's hunting Serpent): a fourth, never a fifth.
+    decide("ent", null),
+    mayAskAgain({ replaced: 1, n: 3 }, null, true),
+    mayAskAgain({ replaced: 1, n: 4 }, "a fifth try", true),
+  ];
+  check(
+    "a kept one is written again; one put live, or a third try, only with a reason; a fourth only with a new entry; never a fifth",
+    JSON.stringify(decided) === JSON.stringify([true, false, true, false, true, true, false, false, true, false]),
+    JSON.stringify(decided),
+  );
+
+  // An entry given by name: plain text of a grimoire's length, or nothing.
+  const entries = {
+    serpent: "  A hunting snake  of the long grass,\n quick and low, that strikes small prey.  ",
+    short: "a snake",
+    long: "x".repeat(601),
+    num: 7,
+  };
+  const given = [
+    givenEntry(entries, "serpent"),
+    givenEntry(entries, "short"),
+    givenEntry(entries, "long"),
+    givenEntry(entries, "num"),
+    givenEntry(entries, "none"),
+    givenEntry(null, "serpent"),
+  ];
+  check(
+    "an entry given by name is trimmed plain text of 40 to 600 characters, or nothing",
+    JSON.stringify(given) === JSON.stringify(["A hunting snake of the long grass, quick and low, that strikes small prey.", null, null, null, null, null]),
+    JSON.stringify(given),
   );
 
   // A rewrite by form carries the promise read from its new entry: the
