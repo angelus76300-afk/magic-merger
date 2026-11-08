@@ -155,6 +155,29 @@ export function programWonderChecks(check: Check): void {
     );
   }
 
+  // 4.7 item 4: a wonder drawn as the island's own are, in fine boxes
+  // (w.model) and no voxel, has built something: its test used to fail it
+  // as "nothing visible".
+  {
+    const mire = fixture("moon-mire");
+    const head = mire.code.slice(0, mire.code.indexOf("*cast(w)"));
+    const code = `${head}*cast(w) {
+    const parts = [[-0.6, -0.6, 0, 1.2, 1.2, 0.2, "#2a3550"]];
+    for (let k = 0; k < 14; k++) { const a = (k / 14) * Math.PI * 2; parts.push([Math.cos(a) * 2.4 - 0.2, Math.sin(a) * 2.4 - 0.2, 0, 0.4, 0.4, 0.6 + (k % 3) * 0.4, "#dfe8ff"]); }
+    parts.push([-0.3, -0.3, 0.2, 0.6, 0.6, 0.6, "#cfdcff", "glow"]);
+    w.model(w.x, w.y, parts, { name: "Moon Mire" });
+    w.artifact(w.x, w.y, "Moon Mire");
+  }
+};`;
+    const v = checkWonderDef({ ...mire, code }, { islands: 1 });
+    const parts = v.islands[0]?.built.parts ?? 0;
+    check(
+      "part C: a wonder drawn only in fine models is built, and passes its test",
+      v.ok && parts >= 16,
+      `${v.ok ? "passed" : v.detail.slice(0, 200)}, ${parts} parts`,
+    );
+  }
+
   // The nightly test, on one island each (three in the nightly run).
   for (const [name, pass] of [
     ["aurora-ice-spires", true],
