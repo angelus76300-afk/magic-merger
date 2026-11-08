@@ -10,6 +10,8 @@ import { readSentSettings, readSoundSettings, type SoundSettings } from "./sound
 import { SoundBudget, ROUTINE_LEVEL, ROUTINE_PITCH, UNPLACED, place, routineHeard, type Ask, type Listener, type Placement, type Playing } from "./soundplace";
 
 const MUTE_KEY = "magic-merger.muted";
+// The level of everything together, with the sound on.
+const OUT_LEVEL = 0.5;
 
 // While music plays, pitched spell voices (chime, ping) take the nearest
 // note of its key, so a cast sounds part of the music (game designer,
@@ -56,7 +58,7 @@ export class SpellSound {
   // No sound before the player's first tap or key (browsers forbid it, and
   // it should not surprise anyone).
   private unlocked = false;
-  muted = readMuted();
+  private silent = readMuted();
   // The ear, set by the engine from the camera before each batch of events.
   listener: Listener | null = null;
   private ambience: Ambience | null = null;
@@ -67,31 +69,87 @@ export class SpellSound {
   private musicVol: GainNode | null = null;
   settings: SoundSettings = readSoundSettings();
 
+  private readonly off: (() => void)[] = [];
+
   constructor() {
     if (typeof window === "undefined") return;
-    const unlock = () => {
+    // iOS starts or resumes a context only inside a gesture. Every tap in the
+    // World makes the context (even with the sound off, so turning it on later
+    // works) and wakes it if it slept, as when the sound came back on from
+    // the button outside this frame, where this frame saw no gesture (#91).
+    const gesture = () => {
       this.unlocked = true;
-      // iOS resumes a context only inside a gesture: make it here.
       this.context();
-      for (const type of ["pointerdown", "keydown", "touchend"]) window.removeEventListener(type, unlock, true);
     };
-    for (const type of ["pointerdown", "keydown", "touchend"]) window.addEventListener(type, unlock, true);
+    for (const type of ["pointerdown", "keydown", "touchend"]) {
+      window.addEventListener(type, gesture, true);
+      this.off.push(() => window.removeEventListener(type, gesture, true));
+    }
     // The settings come from the page around the World's frame, which alone
     // can read them (soundbridge.ts): asked for once, then sent on each change.
     // Only the parent window is heard, never the spell code in this frame.
-    window.addEventListener("message", (e: MessageEvent<unknown>) => {
+    const message = (e: MessageEvent<unknown>) => {
       if (e.source !== window.parent || window.parent === window) return;
       const settings = readSentSettings(e.data);
       if (settings) this.applySettings(settings);
-    });
+    };
+    window.addEventListener("message", message);
+    this.off.push(() => window.removeEventListener("message", message));
     if (window.parent !== window) window.parent.postMessage({ type: "sound-settings?" }, "*");
     // A hidden tab makes no sound and spends no battery on it.
-    document.addEventListener("visibilitychange", () => {
+    const visibility = () => {
       if (document.hidden) this.hidden = true;
       if (!this.ctx) return;
       if (document.hidden) void this.ctx.suspend();
-      else if (!this.muted) void this.ctx.resume();
-    });
+      else if (!this.silent) void this.ctx.resume();
+    };
+    document.addEventListener("visibilitychange", visibility);
+    this.off.push(() => document.removeEventListener("visibilitychange", visibility));
+  }
+
+  get muted(): boolean {
+    return this.silent;
+  }
+
+  // Sound off is silent at once: what still rings, the beds and the music
+  // stop, and the context sleeps. Sound on wakes it (#91).
+  set muted(muted: boolean) {
+    if (muted === this.silent) return;
+    this.silent = muted;
+    const ctx = this.ctx;
+    if (!ctx || !this.out) return;
+    const now = ctx.currentTime;
+    this.out.gain.cancelScheduledValues(now);
+    if (muted) {
+      this.out.gain.setTargetAtTime(0, now, 0.02);
+      this.ambience?.stop();
+      this.ambience = null;
+      this.stopMusic();
+      for (const l of this.live) l.slot.ends = Math.min(l.slot.ends, now);
+      // After the short fade, unless the sound came back on meanwhile.
+      window.setTimeout(() => {
+        if (this.silent && this.ctx === ctx) void ctx.suspend();
+      }, 150);
+    } else {
+      this.out.gain.setTargetAtTime(OUT_LEVEL, now, 0.02);
+      if (ctx.state === "suspended" && !document.hidden) void ctx.resume();
+    }
+  }
+
+  // A World replaced by another (a new island, a challenge) falls silent for
+  // good: its beds and music would otherwise play on, out of reach of the
+  // Sound button, which only speaks to the World on screen (#91).
+  dispose(): void {
+    for (const off of this.off.splice(0)) off();
+    this.unlocked = false;
+    this.ambience?.stop();
+    this.ambience = null;
+    this.stopMusic();
+    const ctx = this.ctx;
+    this.ctx = null;
+    this.out = this.fx = this.ambVol = this.musicVol = null;
+    this.live = [];
+    if (ctx) window.setTimeout(() => void ctx.close().catch(() => {}), 200);
   }
 
   private hidden = false;
@@ -113,13 +171,13 @@ export class SpellSound {
   }
 
   private context(): AudioContext | null {
-    if (this.muted || !this.unlocked) return null;
+    if (!this.unlocked) return null;
     if (!this.ctx) {
       const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!Ctx) return null;
       this.ctx = new Ctx();
       this.out = this.ctx.createGain();
-      this.out.gain.value = 0.5;
+      this.out.gain.value = this.silent ? 0 : OUT_LEVEL;
       this.out.connect(this.ctx.destination);
       this.fx = this.ctx.createGain();
       this.fx.connect(this.out);
@@ -130,6 +188,7 @@ export class SpellSound {
       this.noise = whiteNoise(this.ctx);
       this.applySettings(this.settings);
     }
+    if (this.silent) return null;
     if (this.ctx.state === "suspended" && !document.hidden) void this.ctx.resume();
     return this.ctx;
   }
