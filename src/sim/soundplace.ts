@@ -52,6 +52,15 @@ export function place(l: Listener, x: number, y: number): Placement {
   return { gain, pan, cutoff };
 }
 
+// A spell's tier scales its sound (4.8, item 5): a cantrip is a small
+// sparkle, a cosmic spell fills the sky. Applied to the size a spell asks for,
+// which stays within 0 to 1.
+export const TIER_SOUND: Record<string, number> = { cantrip: 0.55, minor: 0.75, major: 1, grand: 1.2, legendary: 1.4, cosmic: 1.6 };
+
+export function tierSize(size: number, tier: string): number {
+  return Math.max(0, Math.min(1, size * (TIER_SOUND[tier] ?? 1)));
+}
+
 // The budget (item 2).
 export const MAX_VOICES = 24;
 export const MERGE_SECONDS = 0.1;
