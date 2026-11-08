@@ -3,6 +3,18 @@
   "entries": [
     {
       "date": "2026-11-07",
+      "text": "Villagers now pick up the objects you cast and use them: a guard carries your fire staff and burns what attacks, a healing potion is drunk once when someone is badly hurt, a lantern lights the way at night. Goblins can steal them, and an object falls where its holder dies."
+    },
+    {
+      "date": "2026-11-07",
+      "text": "Shields now really protect. A shield never breaks against a spell of its own strength or weaker, and keeps the houses, fields and people under it whole, even from a Meteor Strike. A stronger spell breaks it in slow motion, and the shield still takes the blow: one level stronger and the village is spared, much stronger and only part of the blow gets through. Cracks heal over time, and casting the same shield again mends it."
+    },
+    {
+      "date": "2026-11-07",
+      "text": "Things you create keep their size: a staff or a tower you place is as big on a giant island as on a small one, and a spell that makes a creature grow can make a villager a head taller or a dragon tower over the houses, never a giant six times its size."
+    },
+    {
+      "date": "2026-11-07",
       "text": "Items are now rune tiles, a star for spells and a gem for artifacts. Challenges, Daily, Community and Ideas are read out on the island by day. Craft's filters show their full names."
     },
     {
