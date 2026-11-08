@@ -981,7 +981,7 @@ Limits: 3 roads at a village, 12 on an island, none between places closer than 3
 
 - **Faster**: 1.1 times on a path, 1.3 times on a dirt road and a bridge (`creatures.ts`, every walker, wolves too).
 - **Preferred**: a flow field (4.3, `paths.ts`) is now the cost of the walk, not its number of steps: 4 a step, 3 a step along a road or a bridge, filled cheapest first with a bucket per cost. Walkers take a road up to a third longer than the way across the grass. With no road every cost is exactly 4 times the old count, so nothing moved on islands without one (checked cell for cell in `npm test`).
-- **Followed**: a long walk to market, or home from it, past the 64 steps a field reaches, follows the road's line toward the end near its destination, and stops at a bridge not built yet. The walk to another village may take 150 seconds instead of 30 before it counts as lost, and so may the walk home from it, so a traveller does not settle in the village it visited.
+- **Followed**: a long walk to market, or home from it, past the 64 steps a field reaches, follows the road's line toward the end near its destination, and stops at a bridge not built yet. The walk to another village may take 150 seconds instead of 30 before it counts as lost, and so may the walk home from it, so a traveller does not settle in the village it visited. All of this is on islands of 4.4.5 and later, where paths wear in; the challenges and the island from before keep their villagers exactly as they were.
 - **Crossed**: on a bridge's deck a walker stands at the deck's height (`world.walkLevel`), its feet dry: no drowning, no slowing in water. Fish swim under it.
 
 ### Seen and saved

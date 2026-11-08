@@ -456,7 +456,7 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
     // Somewhere it cannot reach: give up and think again (a fish spawns where it got to).
     // A trip to another village (4.9) is a long walk, not a lost one.
     // So is the way home from it.
-    const far = m.task === "trade" || ((m.task === "eat" || m.task === "carry" || m.task === "rest") && Math.hypot(tx - c.x, ty - c.y) > 30);
+    const far = !!world.flora && (m.task === "trade" || ((m.task === "eat" || m.task === "carry" || m.task === "rest") && Math.hypot(tx - c.x, ty - c.y) > 30));
     if (m.walk > (strike ? 20 : far ? 150 : 30)) {
       if (m.task === "spawn") finish(world, c, k, m);
       else {
@@ -949,6 +949,9 @@ function nameNear(world: World, v: Village): string {
 // a village within a long walk, or now and then to see a wonder. Ends that
 // keep seeing each other's people lay a road between them (roads.ts).
 function goToMarket(world: World, c: Creature, m: Mind, v: Village): boolean {
+  // Islands of 4.4.5 and later, where roads are stepped; the challenges and
+  // the oldest island keep their villagers as they were.
+  if (!world.flora) return false;
   if (v.market === undefined) v.market = world.time + 20 + Math.random() * 60;
   if (world.time < v.market) return false;
   v.market = world.time + 70 + Math.random() * 40;
