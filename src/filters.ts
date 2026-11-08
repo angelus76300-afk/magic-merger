@@ -77,7 +77,7 @@ export class FilterBar {
     for (const [value, label] of [
       ["all", "All"],
       ["spell", "Spells"],
-      ["artifact", "Artifacts"],
+      ["artifact", "Things"],
     ] as const) {
       const b = document.createElement("button");
       b.type = "button";
@@ -102,6 +102,12 @@ export class FilterBar {
     for (const s of options.sorts) sort.append(new Option(SORT_LABELS[s], s));
     sort.addEventListener("change", () => this.set({ sort: sort.value as SortOrder }));
     this.el.append(sort);
+    // A row that scrolls sideways fades at its right edge while more of it
+    // is out of sight, so a select cut by the edge reads as "scroll for
+    // more" (on a phone, World's "Any tier" sat half cut against Grid).
+    const more = () => this.el.classList.toggle("filter-more", this.el.scrollLeft + this.el.clientWidth < this.el.scrollWidth - 1);
+    this.el.addEventListener("scroll", more, { passive: true });
+    if (typeof ResizeObserver === "function") new ResizeObserver(more).observe(this.el);
     this.sync();
   }
 
