@@ -12,6 +12,8 @@ import { DAY_LENGTH, MOON_DAYS, fullMoon } from "../src/sim/daylight";
 import { DRAGON, WONDERS, WONDER_KINDS, floatAt, signatureOf, vents, type Wonder } from "../src/sim/wonders";
 import { JOBS as BUILDING_JOBS, growBuildings, hasJob, housesOf, tierOf } from "../src/sim/buildings";
 import { villageOf } from "../src/sim/kin";
+import { SPELL_SYSTEM, wonderSystem } from "../worker/prompts";
+import { WORLD_SIZES } from "../src/sim/sizes";
 import { SPECIES, habitatCells } from "../src/sim/wildlife";
 import { houseShape, jobShape } from "../src/sim/voxel/buildings";
 
@@ -37,6 +39,26 @@ function near(world: World, w: Wonder, r: number, test: (i: number) => boolean):
 }
 
 export function wonderChecks(check: Check): void {
+  // 4.7 item 4: the daily wonder's writer draws its look in fine models, as
+  // items do since 4.6, and its voxels only for great masses; the writer is
+  // told the island's real sizes, and that an item's reach does not grow
+  // with them (runtime.ts, castReach).
+  {
+    const wonders = wonderSystem().slice(wonderSystem().indexOf("WONDERS\n"));
+    const program = wonders.slice(wonders.indexOf("The program"), wonders.indexOf("The island it joins"));
+    const largest = Math.max(...Object.values(WORLD_SIZES));
+    check(
+      "4.7: the wonder writer draws in fine models, voxels only for a mass",
+      /draw what stands there with w\.model in fine boxes/.test(program) &&
+        /Whole-cell voxels and the structures only for a mass/.test(program) &&
+        !/Build its look with the structures, voxels/.test(program),
+      program.slice(0, 200),
+    );
+    check(
+      "4.7: the writer knows the island's sizes and that an item's reach does not grow with them",
+      SPELL_SYSTEM.includes(`112 to ${largest} cells wide`) && SPELL_SYSTEM.includes("an item's stays what it is on a 112 cell island"),
+    );
+  }
   // Eighty medium islands and sixteen large ones, as the game makes them.
   const byKind = new Map<string, World>();
   const counts = new Map<string, number>();
