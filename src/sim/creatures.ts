@@ -8,6 +8,7 @@ import { body, type BodySpec } from "./body";
 import { SPECIES, habitatCell, habitatCellSure, targetOf } from "./wildlife";
 import { keepBalance, stepMovers } from "./balance";
 import { growSettlements, wearPaths } from "./ecology";
+import { roadSpeed, stepRoads } from "./roads";
 import { DRAGON, stepWonders } from "./wonders";
 import { growBuildings, stepBuildings } from "./buildings";
 import { packLook, randomLook, shirtOf, sizeOf, unpackLook } from "./villagers";
@@ -463,15 +464,17 @@ function blocked(world: World, x: number, y: number, c: Creature, k: CreatureKin
   if (k.aquatic) return !wet(world, i, 0.6);
   // Solid covers by id from a table (4.3: steering asks this many times a tick).
   if (solidCovers(world)[world.cover[i]]) return true;
+  // A bridge's deck carries walkers over the water (4.9).
+  const deck = world.cover[i] === C.BRIDGE && world.onDeck(i);
   // Deep water and any lava are walls for those who would die in them.
   const f = world.fluid[i];
-  if (f !== F.NONE && f !== F.ICE && world.depth[i] > 0.05) {
+  if (!deck && f !== F.NONE && f !== F.ICE && world.depth[i] > 0.05) {
     if (f === F.LAVA && !k.fireproof) return true;
     if (world.depth[i] > 1 && !k.swims) return true;
   }
   // Cliffs: too steep a step up (ice and fluids count as the surface you walk on).
-  const here = world.level(world.idx(Math.max(0, Math.min(world.w - 1, fx)), Math.max(0, Math.min(world.h - 1, fy))));
-  return world.level(i) - here > 1.6;
+  const here = world.walkLevel(world.idx(Math.max(0, Math.min(world.w - 1, fx)), Math.max(0, Math.min(world.h - 1, fy))));
+  return world.walkLevel(i) - here > 1.6;
 }
 
 const TIMED = ["frozen", "fear", "sleep", "calm", "levitate", "stun"] as const;
@@ -501,6 +504,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
 
   const i = world.idx(Math.max(0, Math.min(world.w - 1, c.x)), Math.max(0, Math.min(world.h - 1, c.y)));
   const onGround = c.z < 0.5 && !k.flying && c.levitate <= 0;
+  // On a bridge's deck: dry feet whatever the water under it (4.9).
+  const onDeck = onGround && !k.aquatic && world.cover[i] === C.BRIDGE && world.onDeck(i);
 
   const ai = k.ai;
   const weak = (e: string) => !!ai && ai.weak.includes(e);
@@ -533,10 +538,10 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   if (onGround) {
     if (world.fire[i] > 0.25 && !k.fireproof && !immune("fire")) c.burning = Math.max(c.burning, 3);
     const fluid = world.materials.get("fluid", world.fluid[i]);
-    if (world.depth[i] > 0.05 && fluid.hurts > 0 && !(k.fireproof && world.fluid[i] === F.LAVA) && !(immune("acid") && world.fluid[i] === F.ACID))
+    if (!onDeck && world.depth[i] > 0.05 && fluid.hurts > 0 && !(k.fireproof && world.fluid[i] === F.LAVA) && !(immune("acid") && world.fluid[i] === F.ACID))
       c.hp -= fluid.hurts * dt;
     if (world.fluid[i] === F.WATER && world.depth[i] > 0.25) c.burning = 0;
-    if (world.fluid[i] === F.WATER && world.depth[i] > 1.4 && !k.swims && !immune("water")) {
+    if (!onDeck && world.fluid[i] === F.WATER && world.depth[i] > 1.4 && !k.swims && !immune("water")) {
       c.drowning += dt;
       if (c.drowning > 4) c.hp -= 12 * dt;
     } else c.drowning = Math.max(0, c.drowning - dt);
@@ -719,13 +724,16 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     let speed = 0;
     if (len > 0 && pace > 0) {
       speed = k.speed * pace * Math.sqrt(c.size);
-      if (onGround && world.depth[i] > 0.3 && world.fluid[i] !== F.ICE) speed *= 0.5;
-      if (onGround && world.fluid[i] === F.MUD) speed *= 0.3;
+      if (onGround && !onDeck && world.depth[i] > 0.3 && world.fluid[i] !== F.ICE) speed *= 0.5;
+      if (onGround && !onDeck && world.fluid[i] === F.MUD) speed *= 0.3;
+      // Faster on a path, a road or a bridge (4.9, roads.ts).
+      if (onGround && !k.aquatic) speed *= roadSpeed(world, i);
     }
     // The end of the trip, for its flow field: the task's place, when the
     // point asked for is only a bend on the way (goals.ts roamAim).
     const m = c.mind;
-    const trip = drive === "pursue" && m && m.task !== "none";
+    // A traveller following a road (4.9) goes to the next bend of it.
+    const trip = drive === "pursue" && m && m.task !== "none" && !(m.task === "trade" && c.data.via);
     const gx = trip ? (m.target ? m.target.x : m.tx) : c.x + wantX;
     const gy = trip ? (m.target ? m.target.y : m.ty) : c.y + wantY;
     const hunting = mood === "hunt" || mood === "angry";
@@ -1305,6 +1313,8 @@ export function lifeCycle(world: World, dt: number): void {
     if (Math.random() < dt * 0.2) keepBalance(world, makeCreature);
     if (world.tick % 60 === 7) stepMovers(world);
     if (world.tick % 30 === 11) wearPaths(world);
+    // 4.9: villages that trade lay roads between them.
+    stepRoads(world);
     if (world.tick % 600 === 13) growSettlements(world);
     // 4.4.5 part B: what wonders and buildings with a job do.
     if (world.tick % 600 === 13) growBuildings(world);

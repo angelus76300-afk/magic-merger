@@ -230,7 +230,8 @@ export function layOutVillage(world: World, s: Settlement, rng: Rng, biomes: rea
         if (world.depth[i] > 0 || world.fluid[i] !== F.NONE) break;
         if (isBuilding(world.cover[i]) || world.ground[i] === G.FIELD) continue;
         if (world.cover[i] !== C.WELL) world.setCover(i, C.NONE);
-        world.ground[i] = G.PATH;
+        // 4.9: the main street is a dirt road from the start.
+        world.ground[i] = G.ROAD;
       }
     }
     // Gardens beside some houses: flowers or berries, behind a fence.
@@ -241,7 +242,7 @@ export function layOutVillage(world: World, s: Settlement, rng: Rng, biomes: rea
         if (world.cover[i] !== C.HOUSE || cellHash(i, world.seed + 4801) > 0.18) continue;
         for (const [dx, dy] of DIRS) {
           const j = (y + dy) * world.w + x + dx;
-          if (!world.inside(x + dx, y + dy) || !free(world, j) || world.ground[j] === G.PATH) continue;
+          if (!world.inside(x + dx, y + dy) || !free(world, j) || world.ground[j] === G.PATH || world.ground[j] === G.ROAD) continue;
           world.setCover(j, rng.next() < 0.5 ? C.BERRIES : C.FLOWER);
         }
       }

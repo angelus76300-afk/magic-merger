@@ -1,4 +1,4 @@
-import { F } from "./materials";
+import { C, F, G } from "./materials";
 import type { World } from "./world";
 
 // Long trips (4.3): a flow field per destination, shared by everyone going
@@ -28,6 +28,13 @@ const MAX_FIELDS = 40;
 // No field reaches further than this many steps from its destination: a trip
 // longer than that walks straight until it is within reach.
 export const MAX_STEPS = 64;
+// 4.9: a field is the cost of the walk, not its steps. A step costs STEP, a
+// step along a dirt road or a bridge ROAD_STEP, so walkers keep to a road
+// that is up to a third longer than the way across the grass. With no road
+// every cost is STEP times the old count of steps, so nothing else moves.
+export const STEP = 4;
+const ROAD_STEP = 3;
+const BUCKETS = STEP + 1;
 const BLOCK = 4;
 const SHORT_STEPS = 28;
 const FAR = 0xffff;
@@ -62,10 +69,12 @@ export class Paths {
     return this.pending.length;
   }
   private spare: Field[] = [];
-  // Fields are filled one at a time, so they share one queue.
-  private queue = new Int32Array(0);
-  private head = 0;
-  private tail = 0;
+  // Fields are filled one at a time, so they share one bucket queue
+  // (Dial's: a bucket per cost, modulo the dearest step), and the cost
+  // being taken out.
+  private buckets: number[][] = Array.from({ length: BUCKETS }, () => []);
+  private cost = 0;
+  private seeded = false;
 
   // The field toward (x, y), made if need be; null while it is being filled.
   // exact: to that very cell (a short way round a tree to the bush behind
@@ -120,7 +129,7 @@ export class Paths {
           // A lower cell beyond a cliff was reached from its other side: not a way.
           if (
             nd < best &&
-            (f.mobility === Mobility.WATER || world.level(ny * world.w + nx) - world.level(cy * world.w + cx) <= CLIMB) &&
+            (f.mobility === Mobility.WATER || world.walkLevel(ny * world.w + nx) - world.walkLevel(cy * world.w + cx) <= CLIMB) &&
             (!ox || !oy || (f.dist[cy * world.w + nx] !== FAR && f.dist[ny * world.w + cx] !== FAR))
           ) {
             best = nd;
@@ -158,7 +167,7 @@ export class Paths {
         if (px < 0 || py < 0 || px >= world.w || py >= world.h) return false;
         const i = py * world.w + px;
         if (i === last) continue;
-        if (f.dist[i] === FAR || (f.mobility !== Mobility.WATER && world.level(i) - world.level(last) > CLIMB)) return false;
+        if (f.dist[i] === FAR || (f.mobility !== Mobility.WATER && world.walkLevel(i) - world.walkLevel(last) > CLIMB)) return false;
         last = i;
       }
     }
@@ -171,11 +180,12 @@ export class Paths {
     this.filled = 0;
     while (budget > 0 && this.pending.length) {
       const f = this.pending[0];
-      if (this.head === 0 && this.tail === 0) this.seed(world, f);
-      budget = this.fill(world, f, budget);
+      if (!this.seeded) this.seed(world, f);
+      if (!f.done) budget = this.fill(world, f, budget);
       if (f.done) {
         this.pending.shift();
-        this.head = this.tail = 0;
+        this.seeded = false;
+        for (const b of this.buckets) b.length = 0;
       }
     }
     this.filled = BUDGET - budget;
@@ -214,68 +224,78 @@ export class Paths {
 
   // The destination's open cells, where the filling starts.
   private seed(world: World, f: Field): void {
-    if (this.queue.length < world.w * world.h) this.queue = new Int32Array(world.w * world.h);
+    this.seeded = true;
+    this.cost = 0;
+    for (const b of this.buckets) b.length = 0;
+    const q = this.buckets[0];
     f.dist.fill(FAR);
     f.made = world.time;
-    const q = this.queue;
     const B = f.size;
     for (let y = f.by * B; y < Math.min(world.h, f.by * B + B); y++)
       for (let x = f.bx * B; x < Math.min(world.w, f.bx * B + B); x++) {
         const i = y * world.w + x;
         if (!open(world, i, f.mobility)) continue;
         f.dist[i] = 0;
-        q[this.tail++] = i;
+        q.push(i);
       }
     // A destination inside a wood or a lake: its nearest open cells around it.
     const cx = Math.min(world.w - 1, f.bx * B + (B >> 1));
     const cy = Math.min(world.h - 1, f.by * B + (B >> 1));
-    for (let r = 1; r <= 6 && !this.tail; r++)
+    for (let r = 1; r <= 6 && !q.length; r++)
       for (let y = cy - r; y <= cy + r; y++)
         for (let x = cx - r; x <= cx + r; x++) {
           if (x < 0 || y < 0 || x >= world.w || y >= world.h) continue;
           const i = y * world.w + x;
           if (f.dist[i] === FAR && open(world, i, f.mobility)) {
             f.dist[i] = 0;
-            q[this.tail++] = i;
+            q.push(i);
           }
         }
     // Nothing open at all: a field that leads nowhere, and is done.
-    if (!this.tail) f.done = true;
+    if (!q.length) f.done = true;
   }
 
-  // Breadth first, four ways. Going from a cell to the one it was reached
-  // from is the creature's step: a step up of more than 1.6 is a cliff.
+  // Cheapest first, four ways (Dial's algorithm: costs are small whole
+  // numbers, so a bucket per cost). Going from a cell to the one it was
+  // reached from is the creature's step: a step up of more than 1.6 is a
+  // cliff. A step off a cell on a road or a bridge costs less.
   private fill(world: World, f: Field, budget: number): number {
     const w = world.w;
     const h = world.h;
     const dist = f.dist;
-    const q = this.queue;
     const walk = f.mobility !== Mobility.WATER;
-    const limit = f.size === 1 ? SHORT_STEPS : MAX_STEPS;
-    const height = world.height;
-    const depth = world.depth;
+    const limit = (f.size === 1 ? SHORT_STEPS : MAX_STEPS) * STEP;
     const solid = solidCovers(world);
-    while (this.head < this.tail && budget > 0) {
-      const i = q[this.head++];
+    const ground = world.ground;
+    const cover = world.cover;
+    const buckets = this.buckets;
+    while (budget > 0) {
+      let q = buckets[this.cost % BUCKETS];
+      for (let k = 0; !q.length && k < BUCKETS; k++) q = buckets[++this.cost % BUCKETS];
+      if (!q.length) {
+        f.done = true;
+        break;
+      }
+      const i = q.pop()!;
       budget--;
-      const d = dist[i] + 1;
-      if (d > limit) continue;
+      if (dist[i] !== this.cost) continue;
       const x = i % w;
       const y = (i - x) / w;
-      const here = height[i] + depth[i];
+      const here = walk ? world.walkLevel(i) : 0;
       for (let k = 0; k < 4; k++) {
         const nx = k === 0 ? x + 1 : k === 1 ? x - 1 : x;
         const ny = k === 2 ? y + 1 : k === 3 ? y - 1 : y;
         if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
         const j = ny * w + nx;
-        if (dist[j] !== FAR || !openFast(world, j, f.mobility, solid)) continue;
+        const step = walk && (ground[j] === G.ROAD || cover[j] === C.BRIDGE) ? ROAD_STEP : STEP;
+        const d = this.cost + step;
+        if (d > limit || d >= dist[j] || !openFast(world, j, f.mobility, solid)) continue;
         // From j the creature steps onto i.
-        if (walk && here - height[j] - depth[j] > CLIMB) continue;
+        if (walk && here - world.walkLevel(j) > CLIMB) continue;
         dist[j] = d;
-        q[this.tail++] = j;
+        buckets[d % BUCKETS].push(j);
       }
     }
-    if (this.head >= this.tail) f.done = true;
     return budget;
   }
 }
@@ -297,6 +317,7 @@ function openFast(world: World, i: number, mobility: Mobility, solid: Uint8Array
   const fluid = world.fluid[i];
   if (mobility === Mobility.WATER) return (fluid === F.WATER || fluid === F.ICE) && world.depth[i] > 0.6;
   if (solid[world.cover[i]]) return false;
+  if (world.cover[i] === C.BRIDGE && world.onDeck(i)) return true;
   if (fluid === F.NONE || fluid === F.ICE) return true;
   const depth = world.depth[i];
   if (fluid === F.LAVA) return depth <= 0.05;
@@ -308,6 +329,7 @@ function open(world: World, i: number, mobility: Mobility): boolean {
   const deep = fluid !== F.NONE && fluid !== F.ICE && world.depth[i];
   if (mobility === Mobility.WATER) return (fluid === F.WATER || fluid === F.ICE) && world.depth[i] > 0.6;
   if (world.materials.get("cover", world.cover[i]).solid) return false;
+  if (world.cover[i] === C.BRIDGE && world.onDeck(i)) return true;
   if (fluid === F.LAVA && world.depth[i] > 0.05) return false;
   return mobility === Mobility.SWIM || !deep || deep <= 1;
 }

@@ -165,6 +165,7 @@ export type Task =
   | "avoid"
   | "use"
   | "forge"
+  | "pave"
   | "custom";
 
 export function newMind(goal: Goal | string): Mind {
@@ -340,6 +341,8 @@ export interface Village {
   // Counted when the villages are found again.
   people: number;
   houses: number;
+  // 4.9: when it next sends someone to market (not saved).
+  market?: number;
 }
 
 export const VILLAGE_REACH = 22;

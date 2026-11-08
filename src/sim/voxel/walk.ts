@@ -1,5 +1,5 @@
 import type { World } from "../world";
-import { surfaceY } from "./terrain";
+import { V, surfaceY } from "./terrain";
 
 // Creatures walk up and down the island's steps instead of jumping from one
 // level to the next (3.7). The land is columns of whole voxels, so the
@@ -28,7 +28,9 @@ const smooth = (t: number) => t * t * (3 - 2 * t);
 function surface(world: World, x: number, y: number): number {
   const cx = Math.max(0, Math.min(world.w - 1, x));
   const cy = Math.max(0, Math.min(world.h - 1, y));
-  return surfaceY(world, cy * world.w + cx);
+  const i = cy * world.w + cx;
+  // On a bridge, its deck (4.9).
+  return world.onDeck(i) ? Math.max(surfaceY(world, i), world.walkLevel(i) * V) : surfaceY(world, i);
 }
 
 // The ground under a point, in scene units, blended across walkable edges.

@@ -10,6 +10,7 @@ import { guardLoops } from "../shared/spellcode";
 import { KINDS, makeCreature, populate, resetCreatureIds } from "../src/sim/creatures";
 import { interactionChecks } from "./interactions-test";
 import { sizeChecks } from "./sizes-test";
+import { roadsChecks } from "./roads-test";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
 import { logDeeds, mindOf, remember } from "../src/sim/kin";
@@ -2256,6 +2257,9 @@ await evidenceChecks(check);
 
 // 15. The World's frame pacing (2026-11-07): scripts/pacing-test.ts.
 pacingChecks(check);
+
+// Roads (4.9): scripts/roads-test.ts.
+roadsChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);
