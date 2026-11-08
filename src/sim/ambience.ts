@@ -169,6 +169,47 @@ export const CALL_CELLS = 25;
 
 export type CallWhy = "hurt" | "arrived" | "idle";
 
+// One creature in earshot, as the engine sees it.
+export interface Caller {
+  id: number;
+  x: number;
+  y: number;
+  hp: number;
+  kind: string;
+  plan: string;
+}
+
+// Which creature calls now, if any (review of #76: once a pure function, with
+// checks). A creature hurt since the last look calls first, then one just
+// come into view, then rarely one idle. `seconds` since the last look is held
+// to 1, so the first look after a long hidden tab is not a certain idle call.
+export function chooseCall(
+  callers: readonly Caller[],
+  earshot: ReadonlyMap<number, number>,
+  seconds: number,
+  night: boolean,
+  clock: CallClock,
+  now: number,
+  rng: () => number = Math.random,
+): { caller: Caller; voice: string; why: CallWhy } | null {
+  const dt = Math.min(1, Math.max(0, seconds));
+  let best: { caller: Caller; voice: string; why: CallWhy; weight: number } | null = null;
+  for (const c of callers) {
+    const call = CALLS[c.plan];
+    if (!call) continue;
+    const voice = c.plan === "four legs" && HOWLERS.test(c.kind) && night ? "howl" : call.voice;
+    const was = earshot.get(c.id);
+    const why: CallWhy | null =
+      was !== undefined && c.hp < was - 1 ? "hurt" : was === undefined && earshot.size > 0 ? "arrived" : rng() < IDLE_PER_SECOND * dt ? "idle" : null;
+    if (!why) continue;
+    const weight = why === "hurt" ? 3 : why === "arrived" ? 2 : 1;
+    if (best && best.weight >= weight) continue;
+    if (!clock.may(c.id, c.kind, voice, now)) continue;
+    best = { caller: c, voice, why, weight };
+  }
+  return best ? { caller: best.caller, voice: best.voice, why: best.why } : null;
+}
+
 // Keeps the gaps between calls, so the engine only says who could call.
 export class CallClock {
   private bySpecies = new Map<string, number>();

@@ -56,6 +56,7 @@ import { WonderModels } from "./wonders";
 import { PropModels } from "./props";
 import { valueNoise } from "../noise";
 import { Sky } from "./sky";
+import { fogRange } from "./fog";
 
 // What a spell's darkness pulls the sky toward.
 const NIGHT_SKY = 0x04020f;
@@ -717,11 +718,14 @@ export class VoxelView {
       paintSky(this.skyCanvas, top, low);
       (this.scene.background as CanvasTexture).image = this.skyCanvas;
       (this.scene.background as CanvasTexture).needsUpdate = true;
-      const fog = this.scene.fog as Fog;
-      fog.color.set(fogStep ? hexColor(mixColor(parseInt(low.slice(1), 16), 0xc4c8cc, fogStep * 0.6)) : low);
-      fog.near = this.world.w * 1.6 * (1 - fogStep * 0.85);
-      fog.far = this.world.w * 5 * (1 - fogStep * 0.8);
+      (this.scene.fog as Fog).color.set(fogStep ? hexColor(mixColor(parseInt(low.slice(1), 16), 0xc4c8cc, fogStep * 0.6)) : low);
     }
+    // The mist moves back with the camera, so the island keeps its colours
+    // when zoomed out (fog.ts).
+    const range = fogRange(Math.max(this.world.w, this.world.h), o.dist, fogStep);
+    const fog = this.scene.fog as Fog;
+    fog.near = range.near;
+    fog.far = range.far;
     let n = 0;
     const lights = this.world.settlements.length ? this.buildings.lights : null;
     if (day.night > 0.15 && lights) {

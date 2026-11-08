@@ -136,7 +136,7 @@ export function openCard(store: Store, key: string, first = false): void {
   d.querySelector<HTMLButtonElement>(".card-new-description")!.onclick = () => showDescription(true);
   // The only way a stored spell is ever written again: one at a time, by the
   // admin, after seeing what it costs. A version bump never does it.
-  const label = isSpell ? "Rewrite this spell" : "Rewrite this artifact";
+  const label = isSpell ? "Rewrite this spell" : `Rewrite this ${element.form && element.form !== "spell" ? element.form : "thing"}`;
   const newSpell = d.querySelector<HTMLButtonElement>(".card-new-spell")!;
   newSpell.textContent = label;
   newSpell.onclick = async () => {

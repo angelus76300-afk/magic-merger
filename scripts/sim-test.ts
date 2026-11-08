@@ -74,6 +74,7 @@ import { formChecks, keptByFormChecks } from "./forms-test";
 import { creatureChecks } from "./creatures-b-test";
 import { heldChecks } from "./held-test";
 import { pacingChecks } from "./pacing-test";
+import { fogChecks } from "./fog-test";
 
 // No verdict here depends on how fast the machine is (4.1, review M8): the
 // slow cast guard is off unless SLOW_MS is set, and worst ticks are printed,
@@ -2257,6 +2258,9 @@ await evidenceChecks(check);
 
 // 15. The World's frame pacing (2026-11-07): scripts/pacing-test.ts.
 pacingChecks(check);
+
+// The mist from afar (2026-11-07): scripts/fog-test.ts.
+fogChecks(check);
 
 // Roads (4.9): scripts/roads-test.ts.
 roadsChecks(check);
