@@ -13,7 +13,7 @@ import { TICK, generateWorld } from "../src/sim/world";
 import { C } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
 import { readFileSync } from "node:fs";
-import { entryId, whatIsNew } from "../shared/changelog";
+import { entryId, joinChangelog, whatIsNew } from "../shared/changelog";
 import { setFinders, wonderInfo, type Wonder, type WonderDef } from "../src/sim/wonders";
 import { isPlaceholderDescription, noDescription } from "../shared/refusal";
 
@@ -376,5 +376,33 @@ export async function fixesChecks(check: Check): Promise<void> {
       kept.village === null && kept.refusenik === null && kept.water === "Water is a primal spell.",
       JSON.stringify(kept),
     );
+  }
+
+  // 2026-11-08, no shared hot files: changelog.d/ parts joined at build (joinChangelog, vite.config.ts).
+  {
+    const base = { about: "a", entries: [{ date: "2026-11-07", text: "old" }] };
+    const joined = joinChangelog(base, [
+      { name: "2026-11-08-b.json", text: '{ "date": "2026-11-08", "text": "second" }' },
+      { name: "2026-11-08-a.json", text: '{ "date": "2026-11-08", "text": "first", "idea": 3 }' },
+      { name: "2026-11-09-c.json", text: '{ "date": "2026-11-09", "text": "newest" }' },
+    ]);
+    check(
+      "changelog parts join newest first, by date then by file name, above the file",
+      joined.entries.map((e) => e.text).join() === "newest,second,first,old" && joined.about === "a" && joined.entries[2].idea === 3,
+      JSON.stringify(joined.entries),
+    );
+    check("no parts leaves the changelog as it is", JSON.stringify(joinChangelog(base, [])) === JSON.stringify(base));
+    const throws = (text: string) => {
+      try {
+        joinChangelog(base, [{ name: "x.json", text }]);
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    check("a part that is not JSON stops the build", throws("{ date: 1"));
+    check("a part without a date stops the build", throws('{ "text": "t" }'));
+    check("a part with an empty text stops the build", throws('{ "date": "2026-11-08", "text": " " }'));
+    check("a part with a date in another form stops the build", throws('{ "date": "8 Nov", "text": "t" }'));
   }
 }
