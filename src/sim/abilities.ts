@@ -301,6 +301,8 @@ function perform(world: World, c: Creature, k: CreatureKind, m: Mind, what: Abil
       harmed(world, t, c, 18);
       if (t.hp <= 0) t.dead = true;
       world.emit({ kind: "sound", name: "whoosh", size: 0.4, x: c.x, y: c.y });
+      // A dragon roars as it breathes fire (4.8, item 4).
+      if (k.body.plan === "dragon") world.emit({ kind: "sound", name: "roar", size: 0.8, x: c.x, y: c.y });
       deed(c, `breathed fire on a ${t.kind.split("#")[0]}`);
       return true;
     }
