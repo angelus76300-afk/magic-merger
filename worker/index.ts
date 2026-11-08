@@ -53,7 +53,7 @@ import { PROGRESS_KINDS, type ProgressPut, type StoredKind } from "../shared/acc
 import { ClaudeOracle, MockOracle, OracleError, parseEffort, type Oracle, type ProgramAnswer, type SpellRequest as OracleSpellRequest } from "./oracle";
 import { PROBED, parseIntents, type Intent } from "../shared/promises";
 import { isForm, kindOfForm, saysGiant, type Form } from "../shared/forms";
-import { AGAIN_BY_FORM_SQL, applyForms, mayAskAgain, requestIntents, formList, proposeForms } from "./forms";
+import { AGAIN_BY_FORM_SQL, applyForms, givenEntry, mayAskAgain, requestIntents, formList, proposeForms } from "./forms";
 import { designDue, evolution, liveLibrary, openGaps, recordGap, settleHelper, storeDesign, trialHelpers, withLibrary, type Library } from "./evolve";
 import {
   averageDaily,
@@ -1484,7 +1484,11 @@ async function refreshSpentThisMonth(db: D1Database): Promise<number> {
 
 const REFRESH_ESTIMATE = { big: 0.06, small: 0.006 };
 
-async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; limit?: unknown; dry?: unknown; forms?: unknown; why?: unknown }) {
+async function startRefresh(
+  env: Env,
+  oracle: Oracle,
+  body: { keys?: unknown; limit?: unknown; dry?: unknown; forms?: unknown; why?: unknown; entries?: unknown },
+) {
   if (oracle.mock) throw new HttpError(400, "The refresh needs the Claude API");
   const db = env.DB;
   const asked = Array.isArray(body.keys) ? body.keys.filter((k): k is string => typeof k === "string").map(elementKey) : null;
@@ -1527,8 +1531,9 @@ async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; li
       .all<{ key: string; pid: number; reason: string; replaced: number; n: number }>();
     for (const r of more.results) {
       const asker = why(r.key);
-      // A program its rewrite put live, or a third try, only for a reason given.
-      if (rows.results.some((o) => o.key === r.key) || !mayAskAgain(r, asker)) continue;
+      // A program its rewrite put live, or a third try, only for a reason
+      // given; a fourth only with a new entry given (`entries`).
+      if (rows.results.some((o) => o.key === r.key) || !mayAskAgain(r, asker, givenEntry(body.entries, r.key) !== null)) continue;
       rows.results.push({ key: r.key, pid: r.pid });
       const reasons = r.replaced ? [] : [`its last rewrite for its kind was not used: ${r.reason}`];
       if (asker) reasons.push(asker);
@@ -1559,7 +1564,11 @@ async function startRefresh(env: Env, oracle: Oracle, body: { keys?: unknown; li
       const kept = await db.prepare("SELECT entry FROM forms WHERE key = ?").bind(r.key).first<{ entry: string | null }>();
       fresh = !!kept && kept.entry === null;
     }
-    const description = fresh ? await ensureDescription(env, oracle, element, true, false) : await ensureDescription(env, oracle, element, false);
+    // An entry given by name is the item's new entry: written from, and live
+    // with the program (the owner's hunting Serpent).
+    const given = byForm && body.dry !== true ? givenEntry(body.entries, r.key) : null;
+    if (given) fresh = true;
+    const description = given ?? (fresh ? await ensureDescription(env, oracle, element, true, false) : await ensureDescription(env, oracle, element, false));
     // By form, its promise is read again from the entry it is written from:
     // the stored one may come from an entry written before its kind (a
     // Serpent promised to protect, so its program raised a shield). Stored

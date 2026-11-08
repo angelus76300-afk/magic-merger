@@ -4,7 +4,9 @@ import { C, F, G } from "./materials";
 import { names, type Landmark } from "./social";
 import { packLook, unpackLook } from "./villagers";
 import { WARD, addWard, warded } from "./wards";
-import { deed, life, markAt, mindOf, reborn, remember, tell, villageOf } from "./kin";
+import { deed, life, markAt, mindOf, reborn, remember, villageOf } from "./kin";
+import { artDeed, consumable, heldEnemy, heldGrant, heldHealNeeded, stepHeld, take, useUp, wantsToTake } from "./held";
+export { artDeed };
 import type { Creature } from "./creatures";
 import type { World } from "./world";
 
@@ -117,6 +119,18 @@ export interface ArtState {
   later: number;
   // Seconds of world time when it was last hurt (for "hurt").
   hurtAt: number;
+  // 4.7, held.ts: its item's kind when the spell said it (an object can be
+  // carried), who holds it, since when, when it last did something, its
+  // holder's health a second ago, and who last put it down.
+  form?: string;
+  heldBy?: number | null;
+  heldAt?: number;
+  actedAt?: number;
+  holderHp?: number;
+  droppedBy?: number | null;
+  droppedAt?: number;
+  // Put down unused: nobody takes it before this world time unless an enemy is near (held.ts, IDLE_REST).
+  restUntil?: number;
 }
 
 export type Artifact = Landmark & { art: ArtState };
@@ -133,19 +147,11 @@ export interface ArtHooks {
 }
 
 // Artifacts cast library spells at most at major; creatures at minor (abilities.ts).
+// The same in a hand (4.7): carrying makes a spell neither stronger nor weaker.
 export const ARTIFACT_CAST_CAP: Tier = "major";
 
 export function capTier(a: Tier, b: Tier): Tier {
   return TIERS.indexOf(a) <= TIERS.indexOf(b) ? a : b;
-}
-
-const ARRIVAL = 15;
-
-export function artDeed(world: World, a: Artifact, what: string): void {
-  a.art.deeds++;
-  tell(world, `the ${a.name} ${what}`);
-  if (world.time - a.art.placed > ARRIVAL) a.art.later++;
-  a.art.did = [what, ...a.art.did.filter((d) => d !== what)].slice(0, 3);
 }
 
 function cell(world: World, x: number, y: number): number {
@@ -426,6 +432,20 @@ export function stepArtifacts(world: World): void {
     if (!isArtifact(l)) continue;
     const s = l.art;
     if ((world.tick + s.id) % 30 !== 0) continue;
+    // 4.7: a held object follows its holder, may be stolen or put down (held.ts).
+    const wasHeld = s.heldBy != null;
+    const holder = wasHeld ? stepHeld(world, l) : null;
+    if (wasHeld && !world.landmarks.includes(l)) continue;
+    if (holder) {
+      const did = heldGrant(world, holder, l);
+      if (did) {
+        artDeed(world, l, did);
+        if (consumable(l)) {
+          useUp(world, l);
+          continue;
+        }
+      }
+    }
     // State: charges come back, fuel burns, fire wears it down.
     if (s.charges !== null && s.charges < s.maxCharges && world.time >= s.rechargeAt) {
       s.charges++;
@@ -467,7 +487,7 @@ export function stepArtifacts(world: World): void {
           fire = fireNear(world, l.x, l.y, e.radius) >= 0;
           break;
         case "enemy":
-          target = enemyNear(world, l.x, l.y, e.radius);
+          target = holder ? heldEnemy(world, holder, e.radius) : enemyNear(world, l.x, l.y, e.radius);
           fire = !!target;
           break;
         case "death":
@@ -482,6 +502,8 @@ export function stepArtifacts(world: World): void {
           break;
       }
       if (!fire || !canPay(l, e.cost)) continue;
+      // In a hand, a potion waits for someone badly hurt: nothing wasted.
+      if (holder && e.do === "heal" && consumable(l) && !heldHealNeeded(world, holder, e.radius)) continue;
       const done = doEffect(world, l, e.do, e.arg, e.radius, target);
       // Dawn and dusk come once a day; the rest wait their cooldown, or a
       // few seconds when there was nothing to do it on.
@@ -489,8 +511,14 @@ export function stepArtifacts(world: World): void {
       if (done) {
         pay(l, e.cost);
         artDeed(world, l, WORDS[e.do]);
+        // A potion is drunk once, a scroll read once.
+        if (holder && consumable(l)) {
+          useUp(world, l);
+          break;
+        }
       }
     }
+    if (!world.landmarks.includes(l)) continue;
     for (const p of s.pairs) {
       if ((p.once && p.done) || world.time < p.next || !canPay(l, 1)) continue;
       const partner = partnerOf(world, l, p);
@@ -580,7 +608,7 @@ function wantsGrant(world: World, c: Creature, g: ArtGrant, a: Artifact): boolea
 
 export interface Visit {
   id: number;
-  kind: "grant" | "use";
+  kind: "grant" | "use" | "take";
   n: number;
 }
 
@@ -598,6 +626,14 @@ export function artifactVisit(world: World, c: Creature): { a: Artifact; visit: 
     const d = Math.hypot(l.x - c.x, l.y - c.y);
     if (d >= bestD) continue;
     const s = l.art;
+    // In a hand: nobody visits it there (a thief takes it from the hand, held.ts).
+    if (s.heldBy != null) continue;
+    // 4.7: an object someone would carry and use.
+    if (wantsToTake(world, c, l)) {
+      best = { a: l, visit: { id: s.id, kind: "take", n: 0 } };
+      bestD = d;
+      continue;
+    }
     s.grants.forEach((g, n) => {
       if (canPay(l, g.cost) && wantsGrant(world, c, g, l)) {
         best = { a: l, visit: { id: s.id, kind: "grant", n } };
@@ -623,6 +659,11 @@ export function useArtifact(world: World, c: Creature, visit: Visit): boolean {
   c.data.usedArt = world.time;
   if (!a) return false;
   const s = a.art;
+  if (visit.kind === "take") {
+    if (Math.hypot(a.x - c.x, a.y - c.y) > 2.5 || !wantsToTake(world, c, a)) return false;
+    take(world, c, a);
+    return true;
+  }
   if (visit.kind === "grant") {
     const g = s.grants[visit.n];
     if (!g || !canPay(a, g.cost)) return false;
@@ -910,6 +951,9 @@ export function loadedState(raw: unknown): ArtState | null {
     return null;
   nextArt = Math.max(nextArt, s.id + 1);
   s.did = Array.isArray(s.did) ? s.did.filter((d) => typeof d === "string").slice(0, 3) : [];
+  // Creatures get new ids when a world loads: what a hand held lies where
+  // its holder last stood (held.ts keeps it and its look there).
+  s.heldBy = null;
   return s;
 }
 

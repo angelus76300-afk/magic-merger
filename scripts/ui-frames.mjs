@@ -166,6 +166,27 @@ async function run(width, height) {
     if (past.length) failures.push(`${tag} ${name}: past the right edge: ${past.join(", ")}`);
     const wide = await page.evaluate(() => document.documentElement.scrollWidth);
     if (wide > width) failures.push(`${tag} ${name}: the page is ${wide} px wide`);
+    // A select shows its chosen label in full ("Old..." for Oldest is a miss,
+    // 2026-11-07): the label's width, measured in the select's own font,
+    // fits inside it beside the arrow. Selects scrolled out of a sideways
+    // row are measured too: they keep their full width there.
+    const cut = await page.evaluate(() => {
+      const ctx = document.createElement("canvas").getContext("2d");
+      const out = [];
+      for (const el of document.querySelectorAll("select")) {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) continue;
+        const dialog = document.querySelector("dialog[open]");
+        if (dialog && !dialog.contains(el)) continue;
+        const cs = getComputedStyle(el);
+        ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+        const label = el.selectedOptions[0]?.textContent ?? "";
+        const room = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 20;
+        if (ctx.measureText(label).width > room) out.push(`"${label}" in ${Math.round(room)} px`);
+      }
+      return out;
+    });
+    if (cut.length) failures.push(`${tag} ${name}: select labels cut: ${cut.join(", ")}`);
   };
   await page.goto(`${BASE}/`);
   await page.waitForSelector(".chip-inventory", { timeout: 20000 });

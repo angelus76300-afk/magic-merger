@@ -1,7 +1,8 @@
 import type { ChronicleDigest } from "../shared/chronicle";
 import { elementKey } from "../shared/elements";
+import { castRequest } from "./cast-request";
 import type { SpellProgram } from "../shared/spellcode";
-import { TIERS, tierFromDepth, type Tier } from "../shared/tiers";
+import { TIERS, type Tier } from "../shared/tiers";
 import type { CheckRequest, SpellResponse } from "../shared/types";
 import { MAX_REASONS, reasonLabel, reasonsFor, type DownReason } from "../shared/votes";
 import { formOf, type Form } from "../shared/forms";
@@ -535,7 +536,7 @@ export class WorldHost {
     const program = this.store.spell(key);
     const discovery = this.store.get(key);
     if (!program || !discovery) return null;
-    return { key, name: discovery.element.name, tier: tierOf(discovery.element.tier, discovery.element.depth), code: program.code };
+    return castRequest(key, discovery.element, program);
   }
 
   private send(msg: ToWorld): void {
@@ -1390,10 +1391,6 @@ function compactCreation(c: ReturnType<typeof timeline.recent>[number]) {
 function withoutTrial(program: SpellProgram): SpellProgram {
   const { trial: _trial, ...rest } = program;
   return rest;
-}
-
-function tierOf(tier: Tier | undefined, depth: number): Tier {
-  return tier ?? tierFromDepth(depth);
 }
 
 function readAt(): string | null {
