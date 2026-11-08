@@ -16,6 +16,7 @@ import { loadWorld, saveWorld } from "../src/sim/save";
 import { stepHeadless } from "../src/sim/tick";
 import { generateWorld } from "../src/sim/world";
 import { raiseWonders, reloadWonders } from "../src/sim/wonderbuild";
+import { MAX_PROPS, addProp, type Prop } from "../src/sim/props";
 import { checkWonderDef } from "../src/sim/wondercheck";
 import { WONDERS, WONDER_CREATURES, readDef, readWonder, type Wonder, type WonderDef } from "../src/sim/wonders";
 
@@ -152,6 +153,44 @@ export function programWonderChecks(check: Check): void {
       'part C: an artifact effect "when full moon" fires on the full moon night only',
       byMoon >= 1 && otherwise === 0,
       `${byMoon} on the full moon, ${otherwise} on other nights`,
+    );
+  }
+
+  // 4.7 item 4: a wonder drawn as the island's own are, in fine boxes
+  // (w.model) and no voxel, has built something: its test used to fail it
+  // as "nothing visible".
+  {
+    const mire = fixture("moon-mire");
+    const head = mire.code.slice(0, mire.code.indexOf("*cast(w)"));
+    const code = `${head}*cast(w) {
+    const parts = [[-0.6, -0.6, 0, 1.2, 1.2, 0.2, "#2a3550"]];
+    for (let k = 0; k < 14; k++) { const a = (k / 14) * Math.PI * 2; parts.push([Math.cos(a) * 2.4 - 0.2, Math.sin(a) * 2.4 - 0.2, 0, 0.4, 0.4, 0.6 + (k % 3) * 0.4, "#dfe8ff"]); }
+    parts.push([-0.3, -0.3, 0.2, 0.6, 0.6, 0.6, "#cfdcff", "glow"]);
+    w.model(w.x, w.y, parts, { name: "Moon Mire" });
+    w.artifact(w.x, w.y, "Moon Mire");
+  }
+};`;
+    const v = checkWonderDef({ ...mire, code }, { islands: 1 });
+    const parts = v.islands[0]?.built.parts ?? 0;
+    check(
+      "part C: a wonder drawn only in fine models is built, and passes its test",
+      v.ok && parts >= 16,
+      `${v.ok ? "passed" : v.detail.slice(0, 200)}, ${parts} parts`,
+    );
+  }
+
+  // A wonder's models are the island's oldest: players' items filling the
+  // island's models must not push them out (MAX_PROPS).
+  {
+    const world = generateWorld(112, 112, 11);
+    const box = { x: 0, y: 0, z: 0, w: 0.5, d: 0.5, h: 0.5, color: 0xffffff, glow: false };
+    addProp(world, { key: "w", owner: "wonder:9#1@0", name: "Moon Mire", x: 50, y: 50, turn: 0, boxes: [box] } satisfies Prop);
+    for (let k = 0; k < MAX_PROPS + 20; k++)
+      addProp(world, { key: `p${k}`, owner: `item${k}#1@0`, name: "Lantern", x: 10 + (k % 40), y: 10, turn: 0, boxes: [box] } satisfies Prop);
+    check(
+      "a wonder's model stays when players' items fill the island's models",
+      world.props.length === MAX_PROPS && world.props.some((p) => p.owner?.startsWith("wonder:")),
+      `${world.props.length} models, wonder kept ${world.props.some((p) => p.owner?.startsWith("wonder:"))}`,
     );
   }
 

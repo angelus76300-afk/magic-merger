@@ -28,6 +28,7 @@ uniform float alpha;
 uniform float hit;
 uniform float time;
 uniform float crack;
+uniform vec3 hitDir;
 varying vec3 vNormal;
 varying vec3 vView;
 varying float vHeight;
@@ -61,8 +62,14 @@ void main() {
   float rim = pow(edge, 2.6);
   float band = smoothstep(0.93, 1.0, sin(vHeight * 36.0 - time * 1.6) * 0.5 + 0.5) * 0.22 * (1.0 - crack);
   float c = crack > 0.0 ? cracks(vPos * 5.0) : 0.0;
-  float a = (0.05 + rim * 0.6 + band + hit * 0.35 + c * 0.5) * alpha;
-  gl_FragColor = vec4(mix(color * (0.85 + rim * 0.5 + hit * 0.7), vec3(1.0), c * 0.6), a);
+  // 4.7: the glass glows where it was struck, white at the point, and its
+  // cracks show brightest there (the game designer: the player should point
+  // to where the shield took the hit within a quarter second).
+  float near = length(hitDir) > 0.5 ? smoothstep(0.82, 1.0, dot(normalize(vPos), hitDir)) : 0.0;
+  float spot = hit * near;
+  c = min(1.0, c * (1.0 + near * 1.5));
+  float a = (0.05 + rim * 0.6 + band + hit * 0.2 + spot * 0.9 + c * 0.5) * alpha;
+  gl_FragColor = vec4(mix(color * (0.85 + rim * 0.5 + hit * 0.5), vec3(1.0), max(c * 0.6, spot)), a);
 }`;
 
 interface DomeMesh {
@@ -84,7 +91,14 @@ export class Domes {
       const glass = new Mesh(
         this.geometry,
         new ShaderMaterial({
-          uniforms: { color: { value: new Color() }, alpha: { value: 1 }, hit: { value: 0 }, time: { value: 0 }, crack: { value: 0 } },
+          uniforms: {
+            color: { value: new Color() },
+            alpha: { value: 1 },
+            hit: { value: 0 },
+            time: { value: 0 },
+            crack: { value: 0 },
+            hitDir: { value: new Vector3() },
+          },
           vertexShader: VERTEX,
           fragmentShader: FRAGMENT,
           transparent: true,
@@ -114,6 +128,11 @@ export class Domes {
       mat.uniforms.hit.value = Math.max(0, 1 - (time - ward.hit) * 2.5);
       mat.uniforms.time.value = time;
       mat.uniforms.crack.value = wardDamage(ward);
+      // The point struck, on the unit dome (scene axes: x east, y up, z south).
+      const dir = mat.uniforms.hitDir.value as Vector3;
+      if (ward.hitAt)
+        dir.set(ward.hitAt.x - ward.x, Math.max(0.05, ward.hitAt.z / Math.max(1, ward.r * DOME_SQUASH)) * ward.r, ward.hitAt.y - ward.y).normalize();
+      else dir.set(0, 0, 0);
       d.ring.position.copy(toScene(ward.x, ward.y, groundAt(ward.x, ward.y) + 0.3));
       d.ring.scale.setScalar(ward.r);
       const ringMat = d.ring.material as MeshBasicMaterial;

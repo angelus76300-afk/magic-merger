@@ -3,6 +3,7 @@ import { jobOf, TASK_WORDS } from "./goals";
 import { villageOf } from "./kin";
 import { unpackLook } from "./villagers";
 import { isArtifact, type Artifact } from "./artifacts";
+import { holding } from "./held";
 import type { Creature, CreatureKind } from "./creatures";
 import type { World } from "./world";
 
@@ -71,6 +72,10 @@ export function inspect(world: World, c: Creature, kindOf: (c: Creature) => Crea
   rows.push(["Wants to", age === "child" ? "play and pick berries" : age === "elder" && goal === "tend" ? "plant flowers" : (job ?? GOAL_WORDS[goal] ?? goal)]);
   rows.push(["Doing", c.dead ? "nothing any more" : (moodWords(c) ?? m?.action ?? TASK_WORDS.none)]);
   if (m?.did) rows.push(["Last did", m.did]);
+  // 4.7: an object in hand (held.ts), with its charges when it has some.
+  const held = holding(world, c);
+  if (held)
+    rows.push(["Holds", `the ${held.name}${held.art.charges !== null ? ` (${held.art.charges} ${held.art.charges === 1 ? "charge" : "charges"})` : ""}`]);
   if (m?.carry) rows.push(["Carrying", m.carry]);
   else if (c.data.carry !== undefined) rows.push(["Carrying", "treasure"]);
   if (m?.memory.length) {
