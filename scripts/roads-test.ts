@@ -148,7 +148,7 @@ export function roadsChecks(check: Check): void {
       world.time += 60;
       const after = field(world, 82, 20);
       check("a walker can now cross the river on the bridge", after.dist[20 * 96 + 14] !== 0xffff, `cost ${after.dist[20 * 96 + 14]}`);
-      check("the villager's card says where its roads go", roadsOf(world, a).join() === "to the village, over a bridge", roadsOf(world, a).join());
+      check("the villager's card says where its roads go", roadsOf(world, a).join() === "to the village, finished, over a bridge", roadsOf(world, a).join());
 
       // A villager on the deck stays dry and does not drown.
       const deck = road.cells.find((i) => world.cover[i] === C.BRIDGE)!;
@@ -224,5 +224,14 @@ export function roadsChecks(check: Check): void {
       stepRoads(world);
     }
     check("no road between villages closer than a village's reach", world.roads.length === 0);
+    // A villager who settled alone far off is not a village.
+    const lone = { ...village(60, 16), people: 1 };
+    world.villages = [a, lone];
+    for (let t = 0; t < 10; t++) noteTrip(world, a, lone);
+    for (let t = 0; t < 200; t++) {
+      world.tick++;
+      stepRoads(world);
+    }
+    check("no road to a villager who settled alone", world.roads.length === 0);
   }
 }

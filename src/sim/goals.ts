@@ -1,5 +1,5 @@
 import { C, F, G } from "./materials";
-import { alongRoad, claim, isWay, nextPave, noteTrip, pave, planned, type PaveJob } from "./roads";
+import { MIN_PEOPLE, alongRoad, claim, isWay, nextPave, noteTrip, pave, planned, type PaveJob } from "./roads";
 import type { Wonder } from "./wonders";
 import { hasJob, settlementNear, tavernFor } from "./buildings";
 import { VK } from "./voxels";
@@ -967,7 +967,7 @@ function goToMarket(world: World, c: Creature, m: Mind, v: Village): boolean {
   } else {
     // Nearer villages more often.
     let total = 0;
-    const near = world.villages.filter((o) => o !== v && Math.hypot(o.x - v.x, o.y - v.y) < 110);
+    const near = world.villages.filter((o) => o !== v && o.people >= MIN_PEOPLE && Math.hypot(o.x - v.x, o.y - v.y) < 110);
     for (const o of near) total += 1 / Math.max(20, Math.hypot(o.x - v.x, o.y - v.y));
     let pick = Math.random() * total;
     for (const o of near) {

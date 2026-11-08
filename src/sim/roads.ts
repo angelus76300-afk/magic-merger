@@ -59,11 +59,13 @@ export const ROAD = {
 
 // The steepest step a road takes, a little less than a walker climbs.
 const CLIMB = 1.5;
-// Water deeper than this is crossed by a bridge; shallower is a ford.
-const DEEP = 0.3;
+// Water deeper than this is crossed by a bridge: any water drawn as water
+// (the view's WET_ON), so a road never wades through a shallow river.
+const DEEP = 0.06;
 const LAND = -999;
-// Ends closer than this are one place.
+// Ends closer than this are one place; fewer people than this are not a village.
 const MIN_LEN = 30;
+export const MIN_PEOPLE = 4;
 
 export interface Road {
   // Its ends, in cells, and their names (for the card and the chronicle).
@@ -198,6 +200,8 @@ function isWonder(e: End): e is Wonder {
 export function noteTrip(world: World, from: Village, to: End): void {
   // Two halves of one village are one village: no road between them.
   if (from === to || Math.hypot(from.x - to.x, from.y - to.y) < MIN_LEN) return;
+  // A villager who settled alone far from home is not a village to lay a road to.
+  if (from.people < MIN_PEOPLE || (!isWonder(to) && to.people < MIN_PEOPLE)) return;
   const named = settlementName(world, from);
   if (named && named === settlementName(world, to)) return;
   const s = stateOf(world);
@@ -652,9 +656,13 @@ export function roadsOf(world: World, v: Village): string[] {
         if (world.cover[r.cells[k]] === C.BRIDGE) planks++;
       }
     }
+    // Either end's builders may plank it.
+    const other = world.villages.find((o) => o !== v && Math.hypot((atA ? r.bx : r.ax) - o.x, (atA ? r.by : r.ay) - o.y) < VILLAGE_REACH);
+    const wood = Math.max(v.wood, other?.wood ?? 0);
     let line = `to ${to}`;
     if (done < r.cells.length) line += `, ${Math.round((done / r.cells.length) * 100)}% laid`;
-    if (water) line += planks < water ? (v.wood < ROAD.bridgeWood ? ", a bridge waits for wood" : ", a bridge going up") : ", over a bridge";
+    else line += ", finished";
+    if (water) line += planks < water ? (wood < ROAD.bridgeWood ? ", a bridge waits for wood" : ", a bridge going up") : ", over a bridge";
     out.push(line);
   }
   return out;
