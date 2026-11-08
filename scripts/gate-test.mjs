@@ -7,6 +7,7 @@ import {
   REPO_OWNER,
   byOwner,
   carriedReview,
+  ciFrom,
   decide,
   deployable,
   headRepoOf,
@@ -588,6 +589,31 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
   check("nothing is updated while another is in flight", pickUpdate([q(79, behind), q(90, { ...ready, upToDate: true, ci: "in_progress" })]).update === null);
   check("nothing to update says why", /only behind/.test(pickUpdate([q(1, { ...ready, upToDate: true })]).why));
   check("an empty queue updates nothing", pickUpdate([]).update === null);
+}
+
+// 2026-11-08: GitHub listed finished check jobs with no steps (#88, #89, #95): never read as docs or as a pass.
+{
+  const step = (conclusion) => [
+    { name: "lint", conclusion: "success" },
+    { name: "test:worker", conclusion },
+  ];
+  const fake = (pages, run = { name: "CI", run_number: 1, id: 7, status: "completed", conclusion: "success" }) => {
+    let n = 0;
+    return async (path) =>
+      path.startsWith("actions/runs?") ? { workflow_runs: [run] } : { jobs: [{ name: "check", steps: pages[Math.min(n++, pages.length - 1)] }] };
+  };
+  const noWait = async () => {};
+  check("a full run reads full", (await ciFrom("s", fake([step("success")]), noWait)) === "full");
+  check("a light run (test:worker skipped) reads docs", (await ciFrom("s", fake([step("skipped")]), noWait)) === "docs");
+  check("no steps listed is neither docs nor full: it waits", (await ciFrom("s", fake([[]]), noWait)) === "steps not listed by GitHub yet");
+  check("steps listed on a second fetch are read", (await ciFrom("s", fake([[], step("success")]), noWait)) === "full");
+  check("a check job without test:worker is not docs", (await ciFrom("s", fake([[{ name: "lint", conclusion: "success" }]]), noWait)) !== "docs");
+  check("a failed test:worker is not full", (await ciFrom("s", fake([step("failure")]), noWait)) !== "full");
+  check(
+    "a running CI reads as running",
+    (await ciFrom("s", fake([[]], { name: "CI", run_number: 1, id: 7, status: "in_progress" }), noWait)) === "in_progress",
+  );
+  check("no CI run reads missing", (await ciFrom("s", async () => ({ workflow_runs: [] }), noWait)) === "missing");
 }
 
 console.log(failed ? `${failed} failed` : "all gate checks passed");

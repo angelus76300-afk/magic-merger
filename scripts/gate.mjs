@@ -340,21 +340,32 @@ export function upToDateFrom(ancestor, moved) {
 
 const DOCS_ONLY = (path) => /^(docs\/|\.claude\/skills\/)|\.md$|^\.claude\/settings\.json$/.test(path);
 
-/** CI on a commit: "full" when the check job ran every step, "docs" when it ran the light ones on a docs only change. */
-async function ciOn(sha) {
-  const runs = (await gh(`actions/runs?head_sha=${sha}&per_page=50`))?.workflow_runs ?? [];
+/**
+ * CI on a commit: "full" when the check job ran every step, "docs" when it ran the light ones on a docs
+ * only change. 2026-11-08: GitHub sometimes lists a finished check job with no steps (#88, #89, #95,
+ * all full runs). Missing data is never read as a pass nor as docs: the jobs are fetched again a few
+ * times, and if the steps still cannot prove which run it was, the Gate waits (and the sweep retries).
+ *   ghGet: (path) => json; sleep: (ms) => promise
+ */
+export async function ciFrom(sha, ghGet, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), tries = 3) {
+  const runs = (await ghGet(`actions/runs?head_sha=${sha}&per_page=50`))?.workflow_runs ?? [];
   const ci = runs.filter((r) => r.name === "CI").sort((a, b) => b.run_number - a.run_number)[0];
   if (!ci) return "missing";
   if (ci.status !== "completed") return ci.status;
   if (ci.conclusion !== "success") return ci.conclusion;
-  const jobs = (await gh(`actions/runs/${ci.id}/jobs`))?.jobs ?? [];
-  const check = jobs.find((j) => j.name === "check");
-  // 2026-11-08: GitHub once listed a finished check job with no steps at all. Say so, rather than
-  // reading it as a docs only run; the Gate waits either way (a re-run of CI lists them again).
-  if (!check?.steps?.length) return "steps not listed by GitHub (re-run CI)";
-  const test = check.steps.find((st) => st.name === "test:worker");
-  return test?.conclusion === "success" ? "full" : "docs";
+  for (let i = 0; i < tries; i++) {
+    if (i) await sleep(5000 * i);
+    const jobs = (await ghGet(`actions/runs/${ci.id}/jobs`))?.jobs ?? [];
+    const steps = jobs.find((j) => j.name === "check")?.steps ?? [];
+    if (!steps.length) continue;
+    const test = steps.find((st) => st.name === "test:worker");
+    if (test?.conclusion === "success") return "full";
+    // The light run skips test:worker; any other state of it is not a full pass.
+    return test?.conclusion === "skipped" ? "docs" : `test:worker ${test?.conclusion ?? "not found"}`;
+  }
+  return "steps not listed by GitHub yet";
 }
+const ciOn = (sha) => ciFrom(sha, gh);
 
 /** The preview smoke test of a commit: the newest Preview run whose smoke job ran (a run for a label skips it). */
 async function smokeOn(sha) {
