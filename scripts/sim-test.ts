@@ -71,6 +71,7 @@ import { fixesChecks } from "./fixes-test";
 import { evidenceChecks } from "./evidence-test";
 import { formChecks, keptByFormChecks } from "./forms-test";
 import { creatureChecks } from "./creatures-b-test";
+import { heldChecks } from "./held-test";
 import { pacingChecks } from "./pacing-test";
 
 // No verdict here depends on how fast the machine is (4.1, review M8): the
@@ -1008,6 +1009,8 @@ for (const scenario of SCENARIOS) {
   keptByFormChecks(check);
   // 4.6 part B: people are villagers, creatures live, the judge asks.
   creatureChecks(check);
+  // 4.7: objects that are picked up and used (src/sim/held.ts).
+  heldChecks(check);
   check("a small island is one land", generateWorld(112, 112, 5, resolveLand(mid, 5, 112)).biomeMap === null);
   // 4.4.1: rivers wind instead of running straight with right angle turns
   // (main had a run of 26 cells and a quarter of its river in runs of 8 or
