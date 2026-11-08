@@ -10,10 +10,13 @@ import {
   decide,
   deployable,
   headRepoOf,
+  inFlight,
   lastDeployedFrom,
   ownerRecords,
+  pickUpdate,
   reviewFor,
   sharedChangeFromMain,
+  updatable,
   upToDateFrom,
 } from "./gate.mjs";
 import { classify, readGit } from "./risk.mjs";
@@ -550,6 +553,41 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
       log.entries.every((e) => /^\d{4}-\d{2}-\d{2}$/.test(e.date) && typeof e.text === "string" && e.text),
     typeof log === "string" ? log : "",
   );
+}
+
+// 2026-11-08, the merge queue: which pull request the Gate merges main into (updatable, pickUpdate).
+{
+  const behind = { ...ready, upToDate: false, mergeable: true, headFetched: true };
+  check("a pull request ready but for being behind main is updatable", updatable(behind));
+  check("one already up to date is not", !updatable({ ...behind, upToDate: true }));
+  check("one GitHub cannot merge cleanly is not (a conflict stays its builder's)", !updatable({ ...behind, mergeable: false }));
+  check("one whose mergeability GitHub has not computed yet is not", !updatable({ ...behind, mergeable: null }));
+  check("a fork is never updated", !updatable({ ...behind, fork: true }));
+  check("unknown fork state is not updated", !updatable({ ...behind, fork: undefined }));
+  check("a draft is not updated", !updatable({ ...behind, draft: true }));
+  check("nothing is updated while paused", !updatable({ ...behind, paused: true }));
+  check("a pull request on hold is not updated", !updatable({ ...behind, labels: ["hold"] }));
+  check("one without a passing review is not updated", !updatable({ ...behind, review: null }));
+  check("one with a blocking review is not updated", !updatable({ ...behind, review: { verdict: "block", tests: "pass" } }));
+  check("one whose CI failed is not updated", !updatable({ ...behind, ci: "failure" }));
+  check("one without its smoke test is not updated", !updatable({ ...behind, smoke: "failure" }));
+  check("red without the owner's yes is not updated", !updatable({ ...behind, cls: "red" }));
+  check("red with the owner's yes is updated", updatable({ ...behind, cls: "red", labels: ["owner-yes"], records: YES }));
+  check("a reviewer's raise to red without a yes is not updated", !updatable({ ...behind, review: { ...pass, raise: "red" } }));
+  check("a head not fetched is not updated", !updatable({ ...behind, headFetched: false }));
+  check("a workflow change is not updated (the Gate cannot merge it anyway)", !updatable({ ...behind, workflows: true }));
+
+  check("an up to date pull request whose CI runs is in flight", inFlight({ ...ready, upToDate: true, ci: "in_progress" }));
+  check("so is one whose preview runs", inFlight({ ...ready, upToDate: true, smoke: "queued" }));
+  check("a finished one is not in flight", !inFlight({ ...ready, upToDate: true }));
+  check("a behind one is not in flight", !inFlight({ ...ready, upToDate: false, ci: "in_progress" }));
+  check("a fork is never in flight (it cannot hold the queue)", !inFlight({ ...ready, upToDate: true, ci: "in_progress", fork: true }));
+
+  const q = (number, state) => ({ number, state });
+  check("the oldest updatable pull request goes first", pickUpdate([q(83, behind), q(79, behind), q(85, { ...behind, review: null })]).update === 79);
+  check("nothing is updated while another is in flight", pickUpdate([q(79, behind), q(90, { ...ready, upToDate: true, ci: "in_progress" })]).update === null);
+  check("nothing to update says why", /only behind/.test(pickUpdate([q(1, { ...ready, upToDate: true })]).why));
+  check("an empty queue updates nothing", pickUpdate([]).update === null);
 }
 
 console.log(failed ? `${failed} failed` : "all gate checks passed");

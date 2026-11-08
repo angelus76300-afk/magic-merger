@@ -256,6 +256,40 @@ export function decide(s) {
   return { cls, ready: reasons.length === 0, reasons };
 }
 
+// --- The merge queue (2026-11-08) ---
+// A ready pull request that is only behind main waited for its builder to merge main in. The Gate now
+// does it, one pull request at a time, oldest first, then lets the carry rules (carriedReview) decide.
+
+const RUNNING = new Set(["queued", "in_progress", "waiting", "requested", "pending"]);
+
+/**
+ * Whether the Gate may merge main into this pull request: everything it waits for is there except
+ * being up to date, and GitHub says main merges into it without a conflict. Its head must be fully
+ * green and reviewed already, so an update never turns a waiting pull request into a merge by itself.
+ */
+export function updatable(s) {
+  if (s.upToDate !== false || s.mergeable !== true || s.fork !== false || s.draft || s.paused || s.headFetched === false) return false;
+  return decide({ ...s, upToDate: true }).ready;
+}
+
+/** A pull request that is up to date and still waits for its CI or preview: it may merge soon. */
+export function inFlight(s) {
+  return s.upToDate === true && !s.draft && s.fork === false && (RUNNING.has(s.ci) || RUNNING.has(s.smoke));
+}
+
+/**
+ * Which pull request the sweep updates: the oldest one that is updatable, and none while another is
+ * in flight (updating a second one would only make one of them stale again when the first merges).
+ * prs: [{ number, state }]. Returns { update: number | null, why }.
+ */
+export function pickUpdate(prs) {
+  const flying = prs.filter((p) => inFlight(p.state)).map((p) => p.number);
+  const candidates = prs.filter((p) => updatable(p.state)).sort((a, b) => a.number - b.number);
+  if (!candidates.length) return { update: null, why: "no ready pull request is only behind main" };
+  if (flying.length) return { update: null, why: `waiting for #${flying.join(", #")} to finish its checks first` };
+  return { update: candidates[0].number, why: null };
+}
+
 /** Pure decision for a deploy: every change since the last deploy has the OK its class needs. */
 export function deployable({ paused, commits }) {
   const okFor = (c) => (c.labels.includes(LABELS.amber) && c.records?.has("ok")) || (c.labels.includes(LABELS.red) && c.records?.has("yes"));
@@ -315,7 +349,10 @@ async function ciOn(sha) {
   if (ci.conclusion !== "success") return ci.conclusion;
   const jobs = (await gh(`actions/runs/${ci.id}/jobs`))?.jobs ?? [];
   const check = jobs.find((j) => j.name === "check");
-  const test = check?.steps?.find((st) => st.name === "test:worker");
+  // 2026-11-08: GitHub once listed a finished check job with no steps at all. Say so, rather than
+  // reading it as a docs only run; the Gate waits either way (a re-run of CI lists them again).
+  if (!check?.steps?.length) return "steps not listed by GitHub (re-run CI)";
+  const test = check.steps.find((st) => st.name === "test:worker");
   return test?.conclusion === "success" ? "full" : "docs";
 }
 
@@ -497,6 +534,73 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       // A docs only merge changes nothing live: the Gate starts no deploy for it.
       if (process.env.GITHUB_OUTPUT) execFileSync("sh", ["-c", `echo merged=true >> "$GITHUB_OUTPUT"; echo docs=${state.docsOnly} >> "$GITHUB_OUTPUT"`]);
     }
+  } else if (cmd === "sweep") {
+    // After a merge, and after any Gate run: every open pull request again, oldest first. Merges at most
+    // one (each merge leaves the others behind main), then updates at most one branch (pickUpdate).
+    const open = (await gh(`pulls?state=open&per_page=100&sort=created&direction=asc`)) ?? [];
+    const lines = [`### Sweep of ${open.length} open pull requests`];
+    let merged = false;
+    const states = [];
+    for (const p of open) {
+      if (p.draft || headRepoOf(p) !== REPO.toLowerCase()) continue;
+      let pr, state;
+      try {
+        ({ pr, state } = await prState(p.number));
+      } catch (e) {
+        lines.push(`- #${p.number}: could not be read (${String(e?.message ?? e).slice(0, 120)})`);
+        continue;
+      }
+      if (!state.open) continue;
+      const d = decide(state);
+      if (d.ready && !merged && process.argv.includes("--merge")) {
+        await gh(`pulls/${p.number}/merge`, {
+          method: "PUT",
+          body: JSON.stringify({ merge_method: "squash", sha: pr.head.sha, commit_title: `${pr.title} (#${p.number})` }),
+        });
+        merged = true;
+        lines.push(`- merged #${p.number} (${d.cls})`);
+        if (process.env.GITHUB_OUTPUT) execFileSync("sh", ["-c", `echo merged=true >> "$GITHUB_OUTPUT"; echo docs=${state.docsOnly} >> "$GITHUB_OUTPUT"`]);
+        continue;
+      }
+      states.push({ number: p.number, state, sha: pr.head.sha });
+      lines.push(`- #${p.number}: ${d.ready ? "ready" : d.reasons[0]}`);
+    }
+    if (process.argv.includes("--update")) {
+      // A merge just now left every other branch behind main, and a merge made with the Gate's token
+      // starts no new Gate run: read them again before choosing, or the queue would stop here.
+      let queue = states;
+      if (merged) {
+        queue = [];
+        for (const p of states) {
+          try {
+            const { pr, state } = await prState(p.number);
+            if (state.open) queue.push({ number: p.number, state, sha: pr.head.sha });
+          } catch {
+            // left for the next sweep
+          }
+        }
+      }
+      const { update, why } = pickUpdate(queue);
+      if (update === null) lines.push(`No branch updated: ${why}.`);
+      else if (!process.env.GATE_UPDATE_TOKEN)
+        lines.push(`Would merge main into #${update}, but there is no GATE_UPDATE_TOKEN yet (a push with the Gate's own token starts no CI).`);
+      else {
+        const sha = queue.find((p) => p.number === update).sha;
+        // expected_head_sha: if the builder pushed meanwhile, GitHub refuses and nothing changes.
+        try {
+          await gh(`pulls/${update}/update-branch`, {
+            method: "PUT",
+            headers: { authorization: `Bearer ${process.env.GATE_UPDATE_TOKEN}` },
+            body: JSON.stringify({ expected_head_sha: sha }),
+          });
+          lines.push(`Merged main into #${update}: its CI and preview start now, and the carry rules decide on its review.`);
+        } catch (e) {
+          // A conflict GitHub found after all, or a push meanwhile: the builder merges main as before.
+          lines.push(`Could not merge main into #${update} (${String(e?.message ?? e).slice(0, 160)}).`);
+        }
+      }
+    }
+    summary(lines.join("\n"));
   } else if (cmd === "deploy") {
     const s = await deployState(arg, process.argv[4]);
     const d = deployable(s);
@@ -512,7 +616,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     );
     process.exit(d.ok ? 0 : 1);
   } else {
-    console.error("usage: node scripts/gate.mjs pr <n> [--merge] | deploy <sha> [deployments.json]");
+    console.error("usage: node scripts/gate.mjs pr <n> [--merge] | sweep [--merge] [--update] | deploy <sha> [deployments.json]");
     process.exit(2);
   }
 }

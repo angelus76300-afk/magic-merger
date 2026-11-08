@@ -40,6 +40,12 @@ permissions:
   actions: write
   checks: read
   deployments: read
+# 2026-11-08: one Gate run at a time, for every pull request, so two merges can never race (each
+# would be checked against a main the other is about to change). A newer run waiting replaces an
+# older one waiting; nothing is lost, because every run ends with a sweep of all open pull requests.
+concurrency:
+  group: gate
+  cancel-in-progress: false
 jobs:
   gate:
     if: >-
@@ -49,9 +55,6 @@ jobs:
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    concurrency:
-      group: gate-${{ github.event.workflow_run.head_sha || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
-      cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}
@@ -87,4 +90,41 @@ jobs:
       # A merge made with this workflow's token starts no push workflow: start the deploy here.
       - name: deploy
         if: steps.gate.outputs.merged == 'true' && steps.gate.outputs.docs != 'true'
+        run: gh workflow run deploy.yml --ref main
+  # 2026-11-08, the merge queue. After every Gate run, every open pull request again, oldest first
+  # (scripts/gate.mjs sweep): it merges one that became ready without an event of its own, then merges
+  # main into the oldest ready pull request that is only behind, so its CI, preview and the carry
+  # rules run without its builder.
+  # GATE_UPDATE_TOKEN (a GitHub App or fine-grained token, contents and pull requests write) is used
+  # for the update alone, because a push made with the Gate's own token starts no workflow; without
+  # it the sweep only says which branch it would update. Same guards as the gate job.
+  sweep:
+    needs: gate
+    if: >-
+      always() && (
+        (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository) ||
+        (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.author_association == 'OWNER' && github.event.comment.user.login == github.repository_owner && (contains(github.event.comment.body, 'mm-review') || contains(github.event.comment.body, 'mm-owner'))) ||
+        (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository) ||
+        github.event_name == 'workflow_dispatch'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: sweep the open pull requests
+        id: sweep
+        env:
+          GATE_UPDATE_TOKEN: ${{ secrets.GATE_UPDATE_TOKEN }}
+        run: node scripts/gate.mjs sweep --merge --update
+      - name: deploy
+        if: steps.sweep.outputs.merged == 'true' && steps.sweep.outputs.docs != 'true'
         run: gh workflow run deploy.yml --ref main
