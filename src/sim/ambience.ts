@@ -4,7 +4,8 @@
 // scripts/sound-test.ts checks them on built islands.
 
 import { daylight } from "./daylight";
-import { C, F } from "./materials";
+import { C, F, isBuilding } from "./materials";
+import { hostile } from "./creatures";
 import type { World } from "./world";
 
 // No village murmur: filtered noise at 500 Hz reads as traffic, not people
@@ -12,6 +13,14 @@ import type { World } from "./world";
 export const BEDS = ["surf", "leaves", "fire", "lava", "edge", "rain", "birds", "crickets"] as const;
 export type Bed = (typeof BEDS)[number];
 export type BedLevels = Record<Bed, number>;
+
+// What the music follows (4.8, item 6), sampled with the beds: night from 0
+// to 1, tension from fire or a monster in view, and the island's seed for its key.
+export interface Sampled extends BedLevels {
+  night: number;
+  tension: number;
+  seed: number;
+}
 
 // Cells read per sample: a sunflower spiral over the disc, the same every time.
 export const SAMPLES = 80;
@@ -24,7 +33,7 @@ export function silentBeds(): BedLevels {
 // The beds heard at (x, y) with a view of radius `ref` cells, at `time`.
 // `rainAt` gives the rain (0 to 1) over a cell: the weather lives in the
 // view (voxel/sky.ts), which the simulation must not import.
-export function sampleBeds(world: World, x: number, y: number, ref: number, time: number, rainAt: (cell: number) => number = () => 0): BedLevels {
+export function sampleBeds(world: World, x: number, y: number, ref: number, time: number, rainAt: (cell: number) => number = () => 0): Sampled {
   let water = 0;
   let land = 0;
   let deep = 0;
@@ -34,6 +43,8 @@ export function sampleBeds(world: World, x: number, y: number, ref: number, time
   let fire = 0;
   let lava = 0;
   let centre = -1;
+  const fires: number[] = [];
+  const houses: number[] = [];
   for (let k = 0; k < SAMPLES; k++) {
     // Denser near the middle: what is close counts more.
     const r = ref * Math.sqrt((k + 0.5) / SAMPLES);
@@ -55,7 +66,11 @@ export function sampleBeds(world: World, x: number, y: number, ref: number, time
     const c = world.cover[i];
     if (c === C.TREE || c === C.BUSH) trees++;
     if (c === C.TREE || c === C.BUSH || c === C.FERN || c === C.FLOWER || c === C.CROP || c === C.REEDS || c === C.BERRIES) green++;
-    if (world.fire[i] > 0.05) fire++;
+    if (world.fire[i] > 0.05) {
+      fire++;
+      fires.push(cx, cy);
+    }
+    if (isBuilding(c)) houses.push(cx, cy);
   }
   const n = SAMPLES;
   const night = daylight(time).night;
@@ -63,7 +78,30 @@ export function sampleBeds(world: World, x: number, y: number, ref: number, time
   // Surf is loudest where water meets land, quieter over open sea.
   const surf = share(water, 0.5) * (land > 0 ? 1 : 0.5);
   const leaves = share(trees, 0.4);
+  // A threat makes the music tense: fire within 15 cells of a house, or a
+  // monster within 25 cells of a villager. Fire the player lights in the
+  // wild is play, not danger (game designer, 2026-11-07).
+  let threat = 0;
+  for (let a = 0; a < fires.length && !threat; a += 2)
+    for (let b = 0; b < houses.length; b += 2)
+      if (Math.hypot(fires[a] - houses[b], fires[a + 1] - houses[b + 1]) <= 15) {
+        threat = 1;
+        break;
+      }
+  for (const c of world.creatures) {
+    if (threat) break;
+    if (c.dead || Math.abs(c.x - x) > ref || Math.abs(c.y - y) > ref || !hostile(c)) continue;
+    if (
+      world.creatures.some(
+        (o) => !o.dead && o.kind === "villager" && Math.abs(o.x - c.x) <= 25 && Math.abs(o.y - c.y) <= 25 && Math.hypot(o.x - c.x, o.y - c.y) <= 25,
+      )
+    )
+      threat = 1;
+  }
   return {
+    night,
+    tension: threat,
+    seed: world.seed,
     surf,
     leaves,
     // A few burning cells already crackle.

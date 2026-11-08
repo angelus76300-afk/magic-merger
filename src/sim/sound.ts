@@ -4,10 +4,20 @@
 // fades, dulls and pans with where it is from the camera (soundplace.ts),
 // and a budget keeps a busy island from turning into noise.
 
-import { BEDS, chooseBeds, type Bed, type BedLevels } from "./ambience";
+import { BEDS, chooseBeds, type Bed, type BedLevels, type Sampled } from "./ambience";
+import { Composer, MoodTracker, hz, type Note } from "./music";
+import { readSentSettings, readSoundSettings, type SoundSettings } from "./soundsettings";
 import { SoundBudget, ROUTINE_LEVEL, ROUTINE_PITCH, UNPLACED, place, routineHeard, type Ask, type Listener, type Placement, type Playing } from "./soundplace";
 
 const MUTE_KEY = "magic-merger.muted";
+
+// While music plays, pitched spell voices (chime, ping) take the nearest
+// note of its key, so a cast sounds part of the music (game designer,
+// 2026-11-07). No stored program changes.
+let tuning: ((f: number) => number) | null = null;
+export function tune(f: number): number {
+  return tuning ? tuning(f) : f;
+}
 
 // The part of an audio context a voice uses. A real AudioContext is one; so
 // is the offline renderer of scripts/sound-test.ts.
@@ -50,6 +60,12 @@ export class SpellSound {
   // The ear, set by the engine from the camera before each batch of events.
   listener: Listener | null = null;
   private ambience: Ambience | null = null;
+  private music: MusicPlayer | null = null;
+  // The three volumes (item 8): effects, ambience and music each on a bus.
+  private fx: GainNode | null = null;
+  private ambVol: GainNode | null = null;
+  private musicVol: GainNode | null = null;
+  settings: SoundSettings = readSoundSettings();
 
   constructor() {
     if (typeof window === "undefined") return;
@@ -60,6 +76,15 @@ export class SpellSound {
       for (const type of ["pointerdown", "keydown", "touchend"]) window.removeEventListener(type, unlock, true);
     };
     for (const type of ["pointerdown", "keydown", "touchend"]) window.addEventListener(type, unlock, true);
+    // The settings come from the page around the World's frame, which alone
+    // can read them (soundbridge.ts): asked for once, then sent on each change.
+    // Only the parent window is heard, never the spell code in this frame.
+    window.addEventListener("message", (e: MessageEvent<unknown>) => {
+      if (e.source !== window.parent || window.parent === window) return;
+      const settings = readSentSettings(e.data);
+      if (settings) this.applySettings(settings);
+    });
+    if (window.parent !== window) window.parent.postMessage({ type: "sound-settings?" }, "*");
     // A hidden tab makes no sound and spends no battery on it.
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) this.hidden = true;
@@ -96,23 +121,57 @@ export class SpellSound {
       this.out = this.ctx.createGain();
       this.out.gain.value = 0.5;
       this.out.connect(this.ctx.destination);
+      this.fx = this.ctx.createGain();
+      this.fx.connect(this.out);
+      this.ambVol = this.ctx.createGain();
+      this.ambVol.connect(this.out);
+      this.musicVol = this.ctx.createGain();
+      this.musicVol.connect(this.out);
       this.noise = whiteNoise(this.ctx);
+      this.applySettings(this.settings);
     }
     if (this.ctx.state === "suspended" && !document.hidden) void this.ctx.resume();
     return this.ctx;
   }
 
-  // The island's beds (item 3), from ambience.ts's levels, a few times a second.
-  ambient(levels: BedLevels): void {
+  applySettings(settings: SoundSettings): void {
+    this.settings = settings;
     const ctx = this.ctx;
-    if (!ctx || !this.out) return;
+    if (!ctx || !this.fx || !this.ambVol || !this.musicVol) return;
+    const now = ctx.currentTime;
+    this.fx.gain.setTargetAtTime(settings.effectsVolume, now, 0.05);
+    this.ambVol.gain.setTargetAtTime(settings.ambienceVolume, now, 0.05);
+    this.musicVol.gain.setTargetAtTime(settings.musicVolume, now, 0.05);
+    ctx.destination.channelCount = settings.mono ? 1 : 2;
+    ctx.destination.channelCountMode = "explicit";
+    ctx.destination.channelInterpretation = "speakers";
+    if (!settings.music) this.stopMusic();
+  }
+
+  private stopMusic(): void {
+    this.music?.stop();
+    this.music = null;
+    tuning = null;
+  }
+
+  // The island's beds (item 3) and the music's mood (item 6), from the
+  // ambience sampler, a few times a second.
+  ambient(levels: BedLevels | Sampled): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.ambVol || !this.musicVol) return;
     if (this.muted || ctx.state !== "running") {
       this.ambience?.stop();
       this.ambience = null;
+      this.stopMusic();
       return;
     }
-    this.ambience ??= new Ambience(ctx, this.out);
+    this.ambience ??= new Ambience(ctx, this.ambVol);
     this.ambience.set(levels, ctx.currentTime);
+    if ("seed" in levels && this.settings.music) {
+      this.music ??= new MusicPlayer(ctx, this.musicVol, levels.seed);
+      this.music.mood(levels.night, levels.tension, ctx.currentTime);
+      tuning = this.music.tuning;
+    }
   }
 
   counts(): SoundCounts {
@@ -165,12 +224,19 @@ export class SpellSound {
     dull.frequency.value = where.cutoff;
     const pan = ctx.createStereoPanner();
     pan.pan.value = where.pan;
-    bus.connect(dull).connect(pan).connect(this.out);
+    bus.connect(dull).connect(pan).connect(this.fx!);
     const pitch = at.routine ? 1 + (Math.random() * 2 - 1) * ROUTINE_PITCH : 1;
     const seconds = VOICES[voice](this.noise)(counting(ctx, counter), bus, now, s, pitch);
     const slot = this.budget.start(voice, level, now, seconds, ask);
-    // The island's beds give way to what happens (item 3).
-    if (!at.routine) this.ambience?.duck(now);
+    // The beds and the music give way to what happens (items 3 and 6), for
+    // sounds of size 0.5 or more; a big one swells the music; the player's
+    // own cast gets the island's three notes, once a minute at most.
+    if (!at.routine && s >= 0.5) {
+      this.ambience?.duck(now);
+      this.music?.duck(now);
+    }
+    if (!at.routine && s >= 0.8) this.music?.swell(now);
+    if (at.priority) this.music?.motif(now);
     this.live.push({ slot, bus, nodes: counter.nodes, base });
     // The way is let go once the voice has ended.
     window.setTimeout(() => pan.disconnect(), (seconds + 0.5) * 1000);
@@ -224,8 +290,10 @@ class Ambience {
 
   duck(now: number): void {
     if (now < this.startedAt + 2) return;
+    // Held, never retriggered: a spell's three sounds are one duck, not three.
+    const ducked = this.duckUntil > now;
     this.duckUntil = now + DUCK_SECONDS;
-    this.bus.gain.setTargetAtTime(AMBIENCE_LEVEL * DUCKED, now, 0.05);
+    if (!ducked) this.bus.gain.setTargetAtTime(AMBIENCE_LEVEL * DUCKED, now, 0.05);
   }
 
   heard(): number {
@@ -282,7 +350,16 @@ class Ambience {
     level.gain.value = 0.0001;
     level.connect(this.bus);
     const made = BED_MAKERS[bed](ctx, this.loop, level, now);
-    return { level, stop: made.stop, tick: made.tick, nodes: made.nodes + 1, silentSince: Infinity };
+    // Read live: a bout bed's nodes change as it sings (review of #76).
+    return {
+      level,
+      stop: made.stop,
+      tick: made.tick,
+      get nodes() {
+        return made.nodes + 1;
+      },
+      silentSince: Infinity,
+    };
   }
 }
 
@@ -473,6 +550,168 @@ function noiseOf(ctx: BaseAudioContext, seconds: number): AudioBuffer {
   const data = buffer.getChannelData(0);
   for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
   return buffer;
+}
+
+// Music that follows the island (4.8, item 6). The notes come from
+// music.ts's Composer, bar by bar, scheduled 250 ms ahead on a 100 ms timer,
+// never from the drawing frame. Layers fade with the mood over about 6 s.
+const MUSIC_LEVEL = 0.25;
+const MUSIC_DUCK = 0.63;
+const MOTIF_GAP = 60;
+
+export class MusicPlayer {
+  readonly composer: Composer;
+  private tracker = new MoodTracker();
+  private bus: GainNode;
+  private layers: Record<"pad" | "bass" | "melody", GainNode>;
+  private timer = 0;
+  private nextBar: number;
+  private night = 0;
+  private tense = false;
+  private moodAt = -1;
+  private duckUntil = 0;
+  private motifAt = -Infinity;
+  private beat = 60 / 66;
+  readonly tuning: (f: number) => number;
+  // For the offline checks: every note scheduled, with its time.
+  readonly played: { at: number; layer: string; midi: number }[] = [];
+  keep = false;
+
+  constructor(
+    private ctx: BaseAudioContext,
+    out: AudioNode,
+    seed: number,
+    timers = true,
+  ) {
+    this.composer = new Composer(seed);
+    this.tuning = (f) => this.composer.snap(f);
+    this.bus = ctx.createGain();
+    this.bus.gain.setValueAtTime(0.0001, ctx.currentTime);
+    this.bus.gain.exponentialRampToValueAtTime(MUSIC_LEVEL, ctx.currentTime + 4);
+    this.bus.connect(out);
+    const layer = () => {
+      const g = ctx.createGain();
+      g.connect(this.bus);
+      return g;
+    };
+    this.layers = { pad: layer(), bass: layer(), melody: layer() };
+    this.nextBar = ctx.currentTime + 0.5;
+    if (timers && typeof window !== "undefined") this.timer = window.setInterval(() => this.schedule(this.ctx.currentTime), 100);
+  }
+
+  mood(night: number, threat: number, now: number): void {
+    const seconds = this.moodAt < 0 ? 0 : Math.min(1, now - this.moodAt);
+    this.moodAt = now;
+    this.night = night;
+    this.tense = this.tracker.update(threat, seconds);
+  }
+
+  // Fills the next 250 ms with notes.
+  schedule(now: number): void {
+    if (this.nextBar < now) this.nextBar = now + 0.05;
+    while (this.nextBar < now + 0.25) {
+      const bar = this.composer.next({ night: this.night, tense: this.tense });
+      this.beat = 60 / bar.bpm;
+      for (const n of bar.notes) this.play(n, this.nextBar + n.beat * this.beat);
+      this.nextBar += 4 * this.beat;
+    }
+  }
+
+  private play(n: Note, at: number): void {
+    const ctx = this.ctx;
+    const f = hz(n.midi);
+    const seconds = n.beats * this.beat;
+    const out = this.layers[n.layer];
+    const gain = ctx.createGain();
+    gain.connect(out);
+    if (this.keep) this.played.push({ at, layer: n.layer, midi: n.midi });
+    if (n.layer === "pad") {
+      // Two detuned triangles, soft: a slow swell in, a long fade out.
+      const filter = ctx.createBiquadFilter();
+      filter.type = "lowpass";
+      filter.frequency.value = 1200;
+      filter.connect(gain);
+      for (const cents of [-6, 6]) {
+        const osc = ctx.createOscillator();
+        osc.type = "triangle";
+        osc.frequency.value = f;
+        osc.detune.value = cents;
+        osc.connect(filter);
+        osc.start(at);
+        osc.stop(at + seconds + 2.2);
+      }
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.05 * n.level, at + 1.5);
+      gain.gain.setValueAtTime(0.05 * n.level, at + Math.max(1.6, seconds));
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + seconds + 2);
+    } else if (n.layer === "bass") {
+      for (const [type, level] of [
+        ["sine", 1],
+        ["triangle", 0.3],
+      ] as const) {
+        const osc = ctx.createOscillator();
+        osc.type = type;
+        osc.frequency.value = f;
+        const g = ctx.createGain();
+        g.gain.value = level;
+        osc.connect(g).connect(gain);
+        osc.start(at);
+        osc.stop(at + seconds + 0.3);
+      }
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.12 * n.level, at + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + seconds + 0.25);
+    } else {
+      // A bell: a sine and a quiet partial a little above the octave.
+      for (const [ratio, level] of [
+        [1, 1],
+        [2.01, 0.3],
+      ] as const) {
+        const osc = ctx.createOscillator();
+        osc.frequency.value = f * ratio;
+        const g = ctx.createGain();
+        g.gain.value = level;
+        osc.connect(g).connect(gain);
+        osc.start(at);
+        osc.stop(at + seconds + 1.6);
+      }
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.07 * n.level, at + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + seconds + 1.5);
+    }
+  }
+
+  // Under a sound of size 0.5 or more: -4 dB, held, never retriggered.
+  duck(now: number): void {
+    const ducked = this.duckUntil > now;
+    this.duckUntil = now + 1.5;
+    if (ducked) return;
+    this.bus.gain.setTargetAtTime(MUSIC_LEVEL * MUSIC_DUCK, now, 0.05);
+    this.bus.gain.setTargetAtTime(MUSIC_LEVEL, now + 1.5, 0.5);
+  }
+
+  // A big spell: the pad swells for 3 s.
+  swell(now: number): void {
+    const pad = this.layers.pad.gain;
+    pad.setTargetAtTime(1.6, now, 0.3);
+    pad.setTargetAtTime(1, now + 3, 0.8);
+  }
+
+  // The island's three notes on the next beat, once a minute at most.
+  motif(now: number): void {
+    if (now - this.motifAt < MOTIF_GAP) return;
+    this.motifAt = now;
+    const at = this.nextBar - Math.floor((this.nextBar - now) / this.beat) * this.beat;
+    this.composer.motif().forEach((midi, k) => this.play({ layer: "melody", beat: 0, beats: 0.75, midi, level: 1 }, at + k * this.beat * 0.5));
+  }
+
+  stop(): void {
+    window.clearInterval(this.timer);
+    const now = this.ctx.currentTime;
+    this.bus.gain.cancelScheduledValues(now);
+    this.bus.gain.setTargetAtTime(0.0001, now, 0.5);
+    window.setTimeout(() => this.bus.disconnect(), 3000);
+  }
 }
 
 // Counts the nodes a voice makes, for the HUD.
@@ -758,7 +997,7 @@ function chime(notes: number[]): Voice {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = "sine";
-      osc.frequency.value = f * 2 * pitch;
+      osc.frequency.value = tune(f * 2 * pitch);
       envelope(gain, at, 0.005, 0.9, 0.1);
       osc.connect(gain).connect(out);
       osc.start(at);
@@ -777,7 +1016,7 @@ function ping(f: number): Voice {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = "sine";
-      osc.frequency.value = f * ratio * pitch;
+      osc.frequency.value = tune(f * ratio * pitch);
       envelope(gain, t, 0.002, 0.6, level);
       osc.connect(gain).connect(out);
       osc.start(t);
