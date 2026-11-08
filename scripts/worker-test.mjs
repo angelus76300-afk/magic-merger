@@ -35,6 +35,8 @@ let designNone = false;
 // #58: every program the stub writes fails to parse while `brokenSpell` is on.
 let brokenSpell = false;
 let designCalls = 0;
+// #65: the promise reader answers nonsense while `intentsDown` is on.
+let intentsDown = false;
 // 4.6: every page of names the library's sort was asked.
 const sortPages = [];
 function stubAnswer(n, system, user) {
@@ -43,7 +45,7 @@ function stubAnswer(n, system, user) {
     if (/Refusenik/.test(user ?? "") || (refuseSecret && /secret/.test(user ?? ""))) return "I can't write this one as stated. Here's a safer entry instead.";
     return "A clear dome rises over the village and keeps fire and lava out.";
   }
-  if (system.includes("Say what this item promises")) return JSON.stringify({ intents: ["protect"] });
+  if (system.includes("Say what this item promises")) return intentsDown ? "the promise reader is down" : JSON.stringify({ intents: ["protect"] });
   if (system.startsWith("You maintain the World API")) {
     designCalls++;
     if (designNone) return JSON.stringify({ decision: "none", answers: [], name: "", signature: "", doc: "", code: "", example: "", spec: "" });
@@ -3887,6 +3889,37 @@ const signIn = async (key, count) => {
     "never twice by form, and never more than 20 at once",
     again.queued.length === 0 && capped.queued.length <= 20,
     JSON.stringify({ again, capped: capped.queued.length }),
+  );
+
+  // #65: a rewrite by form reads its promise again from its new entry; the
+  // candidate is held to it and it is stored only when the program goes live.
+  // A failed read keeps the stored promise, and never stores an empty one.
+  const intentsOf = async (key) => (await db.prepare("SELECT intents FROM elements WHERE key = ?").bind(key).first())?.intents;
+  const requestOf = async (id) => JSON.parse((await db.prepare("SELECT request FROM rewrites WHERE to_pid = ?").bind(id).first()).request);
+  const serpentReq = await requestOf(cand.id);
+  check(
+    "a rewrite by form carries the promise read from its new entry, the candidate is held to it, and it goes live with the program (the stored one was 'other')",
+    serpentReq.newIntents === true &&
+      JSON.stringify(serpentReq.intents) === JSON.stringify(["protect"]) &&
+      JSON.stringify(cand.intents) === JSON.stringify(["protect"]) &&
+      (await intentsOf("serpent")) === "protect",
+    JSON.stringify({ req: { newIntents: serpentReq.newIntents, intents: serpentReq.intents }, cand: cand.intents, stored: await intentsOf("serpent") }),
+  );
+  check("a rejected rewrite by form stores no promise", (await intentsOf("old village")) === "create", String(await intentsOf("old village")));
+  intentsDown = true;
+  const retry = (await api("/api/admin/refresh", { admin: true, body: { forms: true, keys: ["old village"], limit: 1 } })).data;
+  intentsDown = false;
+  await api("/api/admin/poll-batches", { admin: true, body: {} });
+  const retryCand = (await api("/api/admin/refresh-candidates", { admin: true })).data.filter((c) => c.key === "old village").at(-1);
+  const retryReq = retryCand ? await requestOf(retryCand.id) : {};
+  await api("/api/admin/refresh-verdict", { admin: true, body: { id: retryCand?.id, replace: true, reason: "test" } });
+  check(
+    "when the promise cannot be read again the stored one holds the candidate and stays: it is never cleared",
+    retry.queued.length === 1 &&
+      retryReq.newIntents === undefined &&
+      JSON.stringify(retryCand?.intents) === JSON.stringify(["create"]) &&
+      (await intentsOf("old village")) === "create",
+    JSON.stringify({ retry, req: retryReq.newIntents, cand: retryCand?.intents, stored: await intentsOf("old village") }),
   );
   await reset();
 }

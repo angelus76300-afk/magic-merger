@@ -1,4 +1,5 @@
 import { C, F, G } from "./materials";
+import { wearMinute } from "./roads";
 import { Rng, fbm, valueNoise } from "./noise";
 import { seedRoll, type Biome } from "./land-options";
 import type { World } from "./world";
@@ -812,11 +813,16 @@ function build(world: World, s: Settlement, level: number): boolean {
 
 // Paths wear in where villagers walk (once a second from lifeCycle): grass
 // walked over often enough turns to a path, and a path no one walks greens
-// over again (physics.ts). Every minute the count halves.
+// over again (physics.ts). Every minute the count halves, and a path walked
+// hard enough for long enough becomes a dirt road (4.9, roads.ts).
 export function wearPaths(world: World): void {
   if (!world.wear) world.wear = new Uint8Array(world.n);
   const wear = world.wear;
-  if (world.tick % 1800 < 30) for (let i = 0; i < world.n; i++) wear[i] >>= 1;
+  if (world.tick % 1800 < 30) {
+    // 4.9: paths walked hard for minutes running tread into dirt roads.
+    wearMinute(world);
+    for (let i = 0; i < world.n; i++) wear[i] >>= 1;
+  }
   for (const c of world.creatures) {
     if (c.dead || c.kind !== "villager") continue;
     const x = Math.round(c.x);
