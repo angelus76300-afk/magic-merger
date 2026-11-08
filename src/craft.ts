@@ -1,4 +1,5 @@
 import { FilterBar, applyFilters } from "./filters";
+import { CRAFT_VOICES, CraftSound } from "./craftsound";
 import { elementKey } from "../shared/elements";
 import type { GameElement } from "../shared/types";
 import * as api from "./api";
@@ -37,6 +38,9 @@ export function chipElement(element: GameElement, tag: "div" | "button" = "div")
   }
   return node;
 }
+
+// 4.8: the Craft view's own small sounds (craftsound.ts).
+const sound = new CraftSound();
 
 // The Craft tab: a board where chips are dropped onto each other, and the
 // inventory of everything discovered so far.
@@ -181,6 +185,7 @@ export class Craft {
     const spot = this.freeSpot(chip.id, node, this.board.clientWidth / 2 - node.offsetWidth / 2, this.board.clientHeight / 2 - node.offsetHeight / 2);
     this.settle(chip, node, spot.x, spot.y);
     node.classList.add("pop");
+    sound.play("place", CRAFT_VOICES.place());
   }
 
   // The nearest free spot to (cx, cy), on rings growing 10 px at a time: two
@@ -228,6 +233,7 @@ export class Craft {
       (ev) => {
         if (!dragging && distance(start, ev) > DRAG_THRESHOLD) {
           dragging = true;
+          sound.play("pickUp", CRAFT_VOICES.pickUp());
           node.classList.add("dragging");
           this.board.append(node); // bring to front
         }
@@ -254,6 +260,7 @@ export class Craft {
 
     // Dropping back on the inventory, or off the board, throws the chip away.
     if (inside(this.inventory.getBoundingClientRect(), ev) || !inside(this.board.getBoundingClientRect(), ev)) {
+      sound.play("puff", CRAFT_VOICES.puff());
       this.discard(chip.id);
       return;
     }
@@ -262,6 +269,7 @@ export class Craft {
       void this.merge(chip, target.chip);
       return;
     }
+    sound.play("place", CRAFT_VOICES.place());
     this.settle(chip, node, chip.x, chip.y);
   }
 
@@ -272,6 +280,9 @@ export class Craft {
     const targetNode = this.nodes.get(target.id)!;
 
     this.busy.add(dragged.id).add(target.id);
+    // The drop answers at once; a slow answer gets a quiet swell (4.8).
+    sound.play("clink", CRAFT_VOICES.clink());
+    sound.startWait();
     draggedNode.classList.add("merging");
     targetNode.classList.add("merging");
     this.place(draggedNode, target.x + 10, target.y + 10);
@@ -280,6 +291,14 @@ export class Craft {
       const dropped = Date.now();
       const result = await api.merge(a.name, b.name);
       const newForMe = this.store.discover(result.element, [a.name, b.name]);
+      sound.stopWait();
+      // What came back, heard: a First Discovery, something new by its tier,
+      // a loop (one of the two again), or a known thing's own motif.
+      const got = result.element.name.trim().toLowerCase();
+      if (result.daily || result.firstDiscovery) sound.play("first", CRAFT_VOICES.first(result.element.tier ?? "minor"));
+      else if (newForMe) sound.play("fresh", CRAFT_VOICES.fresh(result.element.tier ?? "minor"));
+      else if (got === a.name.trim().toLowerCase() || got === b.name.trim().toLowerCase()) sound.play("loop", CRAFT_VOICES.loop());
+      else sound.play("known", CRAFT_VOICES.known(result.element.name));
       if (newForMe) {
         const k = elementKey(result.element.name);
         timeline.start(k, result.element.name, dropped);
@@ -309,6 +328,8 @@ export class Craft {
       if (newForMe) this.renderInventory();
       if (newForMe) this.onNewElement(chip.key, result.writing === true);
     } catch (err) {
+      sound.stopWait();
+      sound.play("refuse", CRAFT_VOICES.refuse());
       draggedNode.classList.remove("merging");
       targetNode.classList.remove("merging");
       this.settle(dragged, draggedNode, target.x + 40, target.y + 40);
