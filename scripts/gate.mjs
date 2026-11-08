@@ -347,25 +347,45 @@ const DOCS_ONLY = (path) => /^(docs\/|\.claude\/skills\/)|\.md$|^\.claude\/setti
  * times, and if the steps still cannot prove which run it was, the Gate waits (and the sweep retries).
  *   ghGet: (path) => json; sleep: (ms) => promise
  */
-export async function ciFrom(sha, ghGet, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), tries = 3) {
+export async function ciFrom(sha, ghGet, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), tries = 3, ghText = async () => null) {
   const runs = (await ghGet(`actions/runs?head_sha=${sha}&per_page=50`))?.workflow_runs ?? [];
   const ci = runs.filter((r) => r.name === "CI").sort((a, b) => b.run_number - a.run_number)[0];
   if (!ci) return "missing";
   if (ci.status !== "completed") return ci.status;
   if (ci.conclusion !== "success") return ci.conclusion;
+  let job = null;
   for (let i = 0; i < tries; i++) {
     if (i) await sleep(5000 * i);
     const jobs = (await ghGet(`actions/runs/${ci.id}/jobs`))?.jobs ?? [];
-    const steps = jobs.find((j) => j.name === "check")?.steps ?? [];
+    job = jobs.find((j) => j.name === "check") ?? job;
+    const steps = job?.steps ?? [];
     if (!steps.length) continue;
     const test = steps.find((st) => st.name === "test:worker");
     if (test?.conclusion === "success") return "full";
     // The light run skips test:worker; any other state of it is not a full pass.
     return test?.conclusion === "skipped" ? "docs" : `test:worker ${test?.conclusion ?? "not found"}`;
   }
+  // Still no steps (#89's run kept none after a re-run): the job's own log shows which steps ran. Only
+  // a successful check job whose log opens the test:worker step counts as full; anything else waits.
+  if (job?.id && job.conclusion === "success") {
+    let log = null;
+    try {
+      log = await ghText(`actions/jobs/${job.id}/logs`);
+    } catch {
+      log = null;
+    }
+    if (typeof log === "string" && /^\S*\s?##\[group\]Run npm run test:worker\s*$/m.test(log)) return "full";
+  }
   return "steps not listed by GitHub yet";
 }
-const ciOn = (sha) => ciFrom(sha, gh);
+async function ghText(path) {
+  const res = await fetch(`https://api.github.com/repos/${REPO}/${path}`, {
+    headers: { authorization: `Bearer ${process.env.GITHUB_TOKEN}`, "x-github-api-version": "2022-11-28" },
+  });
+  if (!res.ok) throw new Error(`GET ${path}: ${res.status}`);
+  return res.text();
+}
+const ciOn = (sha) => ciFrom(sha, gh, undefined, 3, ghText);
 
 /** The preview smoke test of a commit: the newest Preview run whose smoke job ran (a run for a label skips it). */
 async function smokeOn(sha) {

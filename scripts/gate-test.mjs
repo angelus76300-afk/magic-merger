@@ -606,6 +606,20 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
   check("a full run reads full", (await ciFrom("s", fake([step("success")]), noWait)) === "full");
   check("a light run (test:worker skipped) reads docs", (await ciFrom("s", fake([step("skipped")]), noWait)) === "docs");
   check("no steps listed is neither docs nor full: it waits", (await ciFrom("s", fake([[]]), noWait)) === "steps not listed by GitHub yet");
+  // The job's log, when GitHub lists no steps (#89's CI): full only when the test:worker step opened in it.
+  const withJob = (log, conclusion = "success") => {
+    const gh = async (path) =>
+      path.startsWith("actions/runs?")
+        ? { workflow_runs: [{ name: "CI", run_number: 1, id: 7, status: "completed", conclusion: "success" }] }
+        : { jobs: [{ name: "check", id: 9, conclusion, steps: [] }] };
+    return ciFrom("s", gh, noWait, 2, async (path) => (path === "actions/jobs/9/logs" ? log : null));
+  };
+  const fullLog = "2026-11-08T03:59:40.4833576Z ##[group]Run npm run test:worker\n... all worker checks passed";
+  check("no steps, but the job log opens test:worker: full", (await withJob(fullLog)) === "full");
+  check("no steps and a log without test:worker: waits", (await withJob("2026-11-08T03:59:05Z ##[group]Run npm run lint")) !== "full");
+  check("no steps, a failed job, a log with test:worker: waits", (await withJob(fullLog, "failure")) !== "full");
+  check("test:worker named inside another line does not count", (await withJob("x echo '##[group]Run npm run test:worker' fake")) !== "full");
+  check("no steps and no log: waits", (await withJob(null)) !== "full");
   check("steps listed on a second fetch are read", (await ciFrom("s", fake([[], step("success")]), noWait)) === "full");
   check("a check job without test:worker is not docs", (await ciFrom("s", fake([[{ name: "lint", conclusion: "success" }]]), noWait)) !== "docs");
   check("a failed test:worker is not full", (await ciFrom("s", fake([step("failure")]), noWait)) !== "full");
