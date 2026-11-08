@@ -58,9 +58,10 @@ export async function community(db: D1Database, invite: string): Promise<Communi
       firsts: r.firsts,
       daily: r.daily,
       favorite: r.favorite ? favoriteCard(r) : null,
+      ...(r.admin && !played ? { unrecorded: true } : {}),
     }))
     .sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0));
-  return { friends, me: { favorite: me?.favorite ?? null, hidden: !!me?.community_hidden } };
+  return { friends, me: { favorite: me?.favorite ?? null, hidden: !!me?.community_hidden, card: me?.favorite ? favoriteCard(me) : null } };
 }
 
 function favoriteCard(r: Row): Friend["favorite"] {
