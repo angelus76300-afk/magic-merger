@@ -1,5 +1,5 @@
 import { parseIntents } from "../../shared/promises";
-import { TIERS, TIER_REACH, type Tier } from "../../shared/tiers";
+import { REFERENCE_SIDE, TIERS, TIER_REACH, type Tier } from "../../shared/tiers";
 import { KINDS, kindOf, makeCreature, populate, resetCreatureIds, type Creature } from "./creatures";
 import { abilitiesOf, unfitDefence } from "./abilities";
 import { daylight } from "./daylight";
@@ -60,7 +60,8 @@ export interface CheckResult {
   phases?: Record<string, number>;
 }
 
-const SIZE = 112;
+// The reference island: the reach every item but a spell and land keeps on any island.
+const SIZE = REFERENCE_SIDE;
 const SEED = 11;
 // Below this many cells, voxels or creatures, a difference with the control is
 // noise (spells that only draw random numbers or particles: 0 cells and 0

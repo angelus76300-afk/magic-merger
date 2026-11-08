@@ -40,7 +40,7 @@ interface LabOptions {
   reach?: number;
   // 4.6: a player's island (land.ts, with its seeded villages), not the island before 4.4.
   land?: boolean;
-  // 4.6: the kind it is written as, for its fine models and makers. The lab ignores it.
+  // 4.6: the kind it is written as, for its fine models and makers; 4.7: it sets the reach, as in the game.
   form?: string;
   // 4.6: keep the camera on the newest fine model, wonder or village it made.
   focusMade?: boolean;
@@ -176,7 +176,15 @@ async function runSpell(code: string, options: LabOptions = {}) {
   const creaturesBefore = creatures(world);
   const started = performance.now();
   const ok = engine.cast(
-    { key: "lab", name: "Lab", tier, code, ...(options.kind ? { kind: options.kind } : {}), ...(options.reach ? { reach: options.reach } : {}) },
+    {
+      key: "lab",
+      name: "Lab",
+      tier,
+      code,
+      ...(options.kind ? { kind: options.kind } : {}),
+      ...(options.reach ? { reach: options.reach } : {}),
+      ...(options.form ? { form: options.form } : {}),
+    },
     target.x,
     target.y,
   );
