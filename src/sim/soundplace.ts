@@ -52,6 +52,15 @@ export function place(l: Listener, x: number, y: number): Placement {
   return { gain, pan, cutoff };
 }
 
+// A spell's tier scales its sound (4.8, item 5): a cantrip is a small
+// sparkle, a cosmic spell fills the sky. Applied to the size a spell asks for,
+// which stays within 0 to 1.
+export const TIER_SOUND: Record<string, number> = { cantrip: 0.55, minor: 0.75, major: 1, grand: 1.2, legendary: 1.4, cosmic: 1.6 };
+
+export function tierSize(size: number, tier: string): number {
+  return Math.max(0, Math.min(1, size * (TIER_SOUND[tier] ?? 1)));
+}
+
 // The budget (item 2).
 export const MAX_VOICES = 24;
 export const MERGE_SECONDS = 0.1;
@@ -76,6 +85,26 @@ export function castOwns(sinceCast: number, running: boolean): boolean {
 // A player's cast is answered: its sounds in this window skip the cooldown
 // and are never the ones dropped.
 export const CAST_PRIORITY_SECONDS = 0.3;
+
+// Where a spell's sound event is heard from, and whether it has the player's
+// priority. A placed sound keeps its own place. It has priority in the window
+// just after the player's cast when it comes from that cast's own cell: a
+// spell's sounds come from its center (runtime.ts, w.sound), and the player's
+// cast is centered where the player cast it (review of #95). A creature's
+// spell elsewhere never takes it. An unplaced sound belongs to the player's
+// running cast, if any (castOwns), with the same window.
+export function eventAt(
+  e: { x?: number; y?: number; routine?: boolean },
+  cast: { x: number; y: number } | null,
+  fresh: boolean,
+): { x?: number; y?: number; routine?: boolean; priority?: boolean } | undefined {
+  if (e.x !== undefined && e.y !== undefined) {
+    const mine = fresh && cast !== null && e.x === cast.x && e.y === cast.y && !e.routine;
+    return { x: e.x, y: e.y, routine: e.routine, priority: mine };
+  }
+  if (cast) return { x: cast.x, y: cast.y, priority: fresh };
+  return undefined;
+}
 
 // Shortest time between two starts of the same name at one spot, in seconds.
 // Long voices wait longer: two drones a second apart are one blur.

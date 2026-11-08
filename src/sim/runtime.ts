@@ -1,4 +1,5 @@
 import { guardLoops } from "../../shared/spellcode";
+import { tierSize } from "./soundplace";
 import { parseIntents } from "../../shared/promises";
 import { REFERENCE_SIDE, TIERS, TIER_REACH, type Tier } from "../../shared/tiers";
 import { bigBeing, isForm } from "../../shared/forms";
@@ -2360,8 +2361,10 @@ export class SpellApi {
   shake(amount: number, seconds = 0.5) {
     this.rt.world.emit({ kind: "shake", amount: num(amount, 0, 40, 4), seconds: num(seconds, 0.05, 10, 0.5) });
   }
+  // Heard from the spell's center, and as big as its tier (4.8): stored
+  // programs call w.sound(name, size) and need no change.
   sound(name: string, size = 0.5) {
-    this.rt.world.emit({ kind: "sound", name: String(name), size: num(size, 0, 1, 0.5) });
+    this.rt.world.emit({ kind: "sound", name: String(name), size: tierSize(num(size, 0, 1, 0.5), this.tier), x: this.x, y: this.y });
   }
 }
 
