@@ -827,7 +827,7 @@ function work(world: World, c: Creature, m: Mind): void {
   job2(world, c, m, v, job);
   // Nothing for its job right now: lend a hand on a road, or a chore, so
   // nobody just stands there.
-  if (m.task === "none" && (job === "none" || job === "woodcutter" || job === "farmer") && Math.random() < 0.5 && layRoad(world, c, m, v)) return;
+  if (m.task === "none" && (job === "none" || job === "woodcutter" || job === "farmer") && world.roads.length && Math.random() < 0.5 && layRoad(world, c, m, v)) return;
   if (m.task === "none" && !forage(world, c, m) && Math.random() < 0.25) plantFlowers(world, c, m, true);
 }
 
@@ -917,7 +917,7 @@ function build(world: World, c: Creature, m: Mind, v: Village): void {
   const ruin = findCell(world, v.x, v.y, 14, 20, (i) => world.cover[i] === C.RUBBLE);
   if (ruin >= 0) return cellTask(world, m, "repair", ruin);
   // 4.9: a road the village marked out is laid, most of the time.
-  if (Math.random() < 0.7 && layRoad(world, c, m, v)) return;
+  if (world.roads.length && Math.random() < 0.7 && layRoad(world, c, m, v)) return;
   const cap = 12 + Math.floor(v.gold / 4);
   if (v.wood >= 5 && v.houses < cap && v.people >= v.houses * 1.2) {
     const site = houseSite(world, v.x, v.y);
