@@ -8,6 +8,7 @@
 
 import { MusicPlayer, VOICE_NAMES, bedMaker, makeVoice, voiceFor, whiteNoise, type Synth } from "../src/sim/sound";
 import { Composer, MoodTracker, PHRASE_BARS, TENSION_IN, TENSION_OUT, hz, inKey, scoreOf } from "../src/sim/music";
+import { CRAFT_VOICES, nameMotif, tierNotes, tierRoot, type CraftVoice } from "../src/craftsound";
 import { SOUND_DEFAULTS, readSentSettings, readSoundSettings, writeSoundSetting } from "../src/sim/soundsettings";
 import { BEDS, CALLS, CALL_CELLS, CallClock, HEARD, HYSTERESIS, SPECIES_GAP, chooseBeds, sampleBeds, silentBeds, type BedLevels } from "../src/sim/ambience";
 import { C, F } from "../src/sim/materials";
@@ -714,6 +715,20 @@ check(!castOwns(120, true), "two minutes on, a sound with no place is never put 
   );
   check(ctx.nodes.length / 30 < 12, `about ${(ctx.nodes.length / 30).toFixed(1)} nodes made a second, under 12`);
   check(Math.abs(hz(69) - 440) < 1e-9, "note 69 is 440 Hz");
+
+  // A burst of big sounds keeps the music down to its end (review of #86).
+  {
+    const dctx = new Offline();
+    const p2 = new MusicPlayer(dctx as unknown as BaseAudioContext, new Sink() as unknown as AudioNode, 3, false);
+    for (let tt = 5; tt <= 15; tt += 0.25) {
+      if (tt <= 10) p2.duck(tt);
+      p2.mood(0, 0, tt);
+    }
+    const gain = (p2 as unknown as { bus: { gain: Param } }).bus.gain;
+    const at = (tt: number) => gain.at(tt, Math.round(tt * RATE));
+    check(at(9.9) < 0.2 && at(4.9) > 0.2, `the music stays down through a 5 s burst (${at(4.9).toFixed(3)} before, ${at(9.9).toFixed(3)} at its end)`);
+    check(at(14.9) > 0.23, `and comes back after it (${at(14.9).toFixed(3)} at 15 s)`);
+  }
 }
 
 // 8. Settings (item 8): music off on a first visit, volumes kept per device.
@@ -732,6 +747,64 @@ check(!castOwns(120, true), "two minutes on, a sound with no place is never put 
   const sent = readSentSettings({ type: "sound-settings", settings: { music: true, musicVolume: 9, effectsVolume: "loud", mono: 1 } });
   check(!!sent && sent.music && sent.musicVolume === 1 && sent.effectsVolume === 1 && !sent.mono, "settings sent into the frame are clamped and typed");
   check(readSentSettings({ type: "other", settings: {} }) === null && readSentSettings("x") === null, "any other message is not a setting");
+}
+
+// 9. The Craft view (4.8, item 7): what is heard most is quietest.
+{
+  const loud = (voice: CraftVoice) => {
+    const ctx = new Offline();
+    const sink = new Sink();
+    const shared = Math.random;
+    Math.random = seeded(5);
+    let seconds = 0;
+    try {
+      seconds = voice(ctx as unknown as Synth & BaseAudioContext, sink as unknown as AudioNode, 0);
+    } finally {
+      Math.random = shared;
+    }
+    const n = Math.ceil((seconds + 0.1) * RATE);
+    let peak = 0;
+    let nan = false;
+    for (let i = 0; i < n; i++) {
+      const v = sink.out(i);
+      if (!Number.isFinite(v)) nan = true;
+      peak = Math.max(peak, Math.abs(v));
+    }
+    return { peak, nan, seconds };
+  };
+  const v = {
+    pickUp: loud(CRAFT_VOICES.pickUp()),
+    place: loud(CRAFT_VOICES.place()),
+    clink: loud(CRAFT_VOICES.clink()),
+    known: loud(CRAFT_VOICES.known("Steam")),
+    loop: loud(CRAFT_VOICES.loop()),
+    fresh: loud(CRAFT_VOICES.fresh("minor")),
+    freshCosmic: loud(CRAFT_VOICES.fresh("cosmic")),
+    first: loud(CRAFT_VOICES.first("major")),
+    refuse: loud(CRAFT_VOICES.refuse()),
+    puff: loud(CRAFT_VOICES.puff()),
+  };
+  check(
+    Object.values(v).every((r) => !r.nan && r.peak > 0.005 && r.peak < 0.5 && r.seconds <= 2),
+    `every Craft sound renders, bounded, at most 2 s: ${Object.entries(v)
+      .map(([k, r]) => `${k} ${r.peak.toFixed(3)}`)
+      .join(", ")}`,
+  );
+  check(
+    v.pickUp.peak < v.known.peak && v.loop.peak < v.known.peak && v.known.peak < v.fresh.peak && v.fresh.peak <= v.first.peak * 1.2,
+    "what is heard most is quietest: pick up and loop under known, known under new, new up to a First Discovery",
+  );
+  check(v.known.peak / v.fresh.peak < 0.5, `a known result is well under a new one (${(20 * Math.log10(v.known.peak / v.fresh.peak)).toFixed(1)} dB)`);
+  check(v.refuse.peak <= v.known.peak * 1.2, "a refusal is never louder than a known result");
+  check(
+    v.freshCosmic.seconds > v.fresh.seconds && tierRoot("cosmic") < tierRoot("cantrip") && tierNotes("cosmic") > tierNotes("cantrip"),
+    "a higher tier sounds lower and longer",
+  );
+  const motifs = new Set(["Steam", "Mud", "Lava", "Cloud", "Storm", "Golem", "Phoenix", "Glass"].map((n) => nameMotif(n).join()));
+  check(
+    motifs.size >= 6 && nameMotif(" Steam").join() === nameMotif("steam").join(),
+    `known items have motifs of their own: ${motifs.size} for 8 names, the same for the same name`,
+  );
 }
 
 console.log(`sound: ${passes} checks passed${failures ? `, ${failures} failed` : ""}`);

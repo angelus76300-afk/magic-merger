@@ -600,6 +600,7 @@ export class MusicPlayer {
   }
 
   mood(night: number, threat: number, now: number): void {
+    this.unduck(now);
     const seconds = this.moodAt < 0 ? 0 : Math.min(1, now - this.moodAt);
     this.moodAt = now;
     this.night = night;
@@ -681,13 +682,21 @@ export class MusicPlayer {
     }
   }
 
-  // Under a sound of size 0.5 or more: -4 dB, held, never retriggered.
+  // Under a sound of size 0.5 or more: -4 dB, held while such sounds keep
+  // coming, never retriggered. The way back is decided in mood(), once 1.5 s
+  // have passed since the last one (review of #86: it came back 1.5 s after
+  // the first).
   duck(now: number): void {
-    const ducked = this.duckUntil > now;
+    const ducked = this.duckUntil > 0;
     this.duckUntil = now + 1.5;
-    if (ducked) return;
-    this.bus.gain.setTargetAtTime(MUSIC_LEVEL * MUSIC_DUCK, now, 0.05);
-    this.bus.gain.setTargetAtTime(MUSIC_LEVEL, now + 1.5, 0.5);
+    if (!ducked) this.bus.gain.setTargetAtTime(MUSIC_LEVEL * MUSIC_DUCK, now, 0.05);
+  }
+
+  private unduck(now: number): void {
+    if (this.duckUntil > 0 && now >= this.duckUntil) {
+      this.duckUntil = 0;
+      this.bus.gain.setTargetAtTime(MUSIC_LEVEL, now, 0.5);
+    }
   }
 
   // A big spell: the pad swells for 3 s.
