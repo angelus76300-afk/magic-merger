@@ -1000,6 +1000,8 @@ export function naturalHeight(spec: BodySpec, radius: number): number | null {
 // The scale a figure is drawn at, in scene units per figure unit. size is the
 // creature's own (children 0.68). Villagers keep the size their radius gives:
 // they are the measure.
+// The cap holds after size too (4.7 item 2): a creature a spell grew is drawn
+// at MAX_HEIGHT villagers at most, where before a size of 6 drew a giant of 19.
 export function drawScale(spec: BodySpec, radius: number, rig: Rig, size = 1): number {
   const V = villagerUnits();
   const natural = naturalHeight(spec, radius);
@@ -1007,7 +1009,10 @@ export function drawScale(spec: BodySpec, radius: number, rig: Rig, size = 1): n
   const h = units * rig.height;
   if (h > MAX_HEIGHT * V) units *= (MAX_HEIGHT * V) / h;
   else if (h < MIN_HEIGHT * V) units *= (MIN_HEIGHT * V) / h;
-  return units * size;
+  units *= size;
+  const tall = units * rig.height;
+  if (tall > MAX_HEIGHT * V) units *= (MAX_HEIGHT * V) / tall;
+  return units;
 }
 
 // Colors per role for one creature, written into out (length ROLES).
