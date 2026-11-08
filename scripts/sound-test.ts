@@ -384,6 +384,18 @@ console.log(
 
 // Names spells use map to a voice or to silence, as before.
 check(voiceFor("chime") === "chime" && voiceFor("Thunder") === "rumble" && voiceFor("nonsense") === null, "names map to voices as before 4.8");
+// 4.8 item 5: names stored programs already use play richer voices; bell and
+// thunder keep theirs until part 5 (scripts/sim-test.ts checks them).
+check(
+  voiceFor("twinkle") === "sparkle" &&
+    voiceFor("glass") === "crystal" &&
+    voiceFor("wind") === "wind" &&
+    voiceFor("splash") === "splash" &&
+    voiceFor("choir") === "choir" &&
+    voiceFor("bell") === "chime" &&
+    voiceFor("thunder") === "rumble",
+  "old names play the new voices; bell and thunder are unchanged",
+);
 
 // 2. Placement.
 const ear: Listener = listenerAt(100, 100, 20, 0);
