@@ -26,8 +26,13 @@ import {
   TIER_POWER,
   WARD,
   WARD_ALL,
+  addRuin,
+  hpAgainst,
   addWard,
+  passShare,
   rebuildMask,
+  ruinPass,
+  ruinSpares,
   damageWard,
   inDome,
   ownWard,
@@ -508,6 +513,14 @@ export class Runtime {
 
   // Runs spell code, catching everything it throws.
   run(key: string, name: string, fn: () => void, onError?: () => void): boolean {
+    // While a spell's code runs, a voxel it puts on a house, a field or a
+    // tree inside another spell's ward against harm is not placed: a voxel
+    // clears the cover under it (World.voxelFits), and Meteor Strike's
+    // stone ball cleared the houses a ward had kept.
+    const outer = this.world.voxelGuard;
+    this.world.voxelGuard = (i) =>
+      (this.world.wards.length > 0 && warded(this.world, i, WARD.harm) && !ownWard(this.world, i, key)) ||
+      (this.world.ruins.length > 0 && Math.random() >= ruinPass(this.world, key, i % this.world.w, Math.floor(i / this.world.w)));
     try {
       fn();
       return true;
@@ -515,6 +528,8 @@ export class Runtime {
       this.report(key, name, message(err));
       onError?.();
       return false;
+    } finally {
+      this.world.voxelGuard = outer;
     }
   }
 
@@ -678,11 +693,25 @@ export class Runtime {
     let hit: Ward | undefined;
     for (const ward of this.world.wards) if (stopsBodies(ward, owner) && inDome(ward, b.x, b.y, b.z) && !inDome(ward, px, py, pz)) hit = ward;
     if (!hit) return false;
+    hit.hitAt = { x: px, y: py, z: Math.max(0, pz) };
     const speed = Math.hypot(b.vx, b.vy, b.vz);
     const blow = (8 + 8 * Math.min(8, b.r)) * Math.min(2, 0.5 + speed / 40);
     const source = hooks?.source ?? "land";
     const power = hooks?.power ?? 1;
-    if (!hooks?.land && damageWard(this.world, hit, blow, source, power)) return false;
+    if (!hooks?.land) {
+      const hpBefore = hpAgainst(hit, source);
+      if (damageWard(this.world, hit, blow, source, power)) {
+        // Broken: it flies on with what passed, or bursts with the glass.
+        const pass = passShare(hit, power, hpBefore);
+        addRuin(this.world, hit, hooks?.key ?? "", pass, power);
+        if (pass > 0) {
+          b.vx *= Math.sqrt(pass);
+          b.vy *= Math.sqrt(pass);
+          b.vz *= Math.sqrt(pass);
+          return false;
+        }
+      }
+    }
     [b.x, b.y, b.z] = [px, py, Math.max(0, pz)];
     b.alive = false;
     if (!hooks?.land) this.splash(b, hit);
@@ -707,7 +736,12 @@ export class Runtime {
     // tried stays on the glass (the playtest found it striking twice).
     if (!glass.harm || !hooks.land) return true;
     this.splash(b, hit);
-    if (damageWard(this.world, hit, blow, source, power)) for (const f of glass.replay) this.run(hooks.key, hooks.name, f);
+    const hpBefore = hpAgainst(hit, source);
+    if (damageWard(this.world, hit, blow, source, power)) {
+      // Broken: the blows held back are dealt, scaled by what passed (ruinPass).
+      addRuin(this.world, hit, hooks.key, passShare(hit, power, hpBefore), power);
+      for (const f of glass.replay) this.run(hooks.key, hooks.name, f);
+    }
     return true;
   }
 
@@ -1075,6 +1109,21 @@ export class CreatureHandle {
     return this.raw.data;
   }
   // A ward against harm takes most of a blow meant for someone it protects.
+  // Under a ward this spell broke by two tiers or fewer, a blow that would
+  // kill leaves the person at 1 health, afraid and running (the owner's
+  // scale: a broken shield still saves its people). Not hostile creatures.
+  private spared(blow: number): boolean {
+    const w = this.rt.world;
+    if (!w.ruins.length || hostile(this.raw) || blow < this.raw.hp || !ruinSpares(w, this.spellKey, this.raw.x, this.raw.y)) return false;
+    this.raw.fear = Math.max(this.raw.fear, 8);
+    return true;
+  }
+  private underForeignWard(): boolean {
+    const w = this.rt.world;
+    if (!w.wards.length || hostile(this.raw)) return false;
+    const i = w.idx(Math.max(0, Math.min(w.w - 1, Math.round(this.raw.x))), Math.max(0, Math.min(w.h - 1, Math.round(this.raw.y))));
+    return warded(w, i, WARD.harm) && !ownWard(w, i, this.spellKey);
+  }
   private shielded() {
     return shieldedCreature(this.rt.world, this.raw) && !hostile(this.raw);
   }
@@ -1089,7 +1138,13 @@ export class CreatureHandle {
   }
   hurt(n: number) {
     if (this.underGlass(() => this.hurt(n))) return;
-    const blow = num(n, 0, 1e6, 0) * (this.shielded() ? 0.15 : 1);
+    // Under another spell's ward against harm no blow gets through (it let
+    // 15% through, and Meteor Strike's 80 took 12 from a villager under it).
+    if (this.underForeignWard()) return;
+    const w = this.rt.world;
+    const pass = w.ruins.length ? ruinPass(w, this.spellKey, this.raw.x, this.raw.y) : 1;
+    let blow = num(n, 0, 1e6, 0) * (this.shielded() ? 0.15 : 1) * pass;
+    if (pass < 1 && this.spared(blow)) blow = Math.max(0, this.raw.hp - 1);
     this.raw.hp -= blow;
     // People remember what magic did to them (3.6).
     if (blow > 5 && this.raw.kind === "villager") remember(this.raw, "magic", -0.5);
@@ -1103,6 +1158,10 @@ export class CreatureHandle {
   }
   kill() {
     if (this.underGlass(() => this.kill())) return;
+    if (this.spared(Infinity)) {
+      this.raw.hp = Math.min(this.raw.hp, 1);
+      return;
+    }
     if (this.shielded()) {
       this.raw.hp -= maxHp(this.raw) * 0.15;
       if (this.raw.hp > 0) return;
@@ -1118,9 +1177,19 @@ export class CreatureHandle {
     this.raw.hp = maxHp(this.raw) * 0.6;
   }
   push(dx: number, dy: number, up = 0) {
-    this.raw.vx += num(dx, -200, 200, 0);
-    this.raw.vy += num(dy, -200, 200, 0);
-    this.raw.vz += num(up, -200, 200, 0);
+    // Where this spell broke a ward a moment ago, a push is scaled by what
+    // passed, and where its people are spared, never thrown high enough for
+    // the fall to hurt (creatures.ts: landing faster than 16 hurts).
+    const w = this.rt.world;
+    let p = 1;
+    let most = 200;
+    if (w.ruins.length && !hostile(this.raw)) {
+      p = ruinPass(w, this.spellKey, this.raw.x, this.raw.y);
+      if (ruinSpares(w, this.spellKey, this.raw.x, this.raw.y)) most = 15;
+    }
+    this.raw.vx += num(dx, -200, 200, 0) * p;
+    this.raw.vy += num(dy, -200, 200, 0) * p;
+    this.raw.vz += Math.min(most, num(up, -200, 200, 0) * p);
     if (up > 0) this.raw.z = Math.max(this.raw.z, 0.1);
   }
   // fear needs a point to run from; the others only a duration.
@@ -1398,7 +1467,15 @@ export class SpellApi {
     const name = String(material).toLowerCase();
     const i = this.i(x, y);
     if (this.isFluid(name) && this.fluidBlocked(i)) return;
+    if (this.coverAt(i, name) && this.landBlocked(i)) return;
     this.rt.world.place(i, name, num(amount, 0, 50, 1));
+  }
+  // Would placing this material change a cell's cover (a house, a field, a
+  // tree), or the ground under a building? Paint on bare ground goes on.
+  private coverAt(i: number, name: string): boolean {
+    const w = this.rt.world;
+    const layer = w.materials.find(name)?.layer;
+    return (layer === "cover" && w.cover[i] !== C.NONE) || (layer === "ground" && isBuilding(w.cover[i]));
   }
   private isFluid(name: string): boolean {
     return this.rt.world.materials.find(name)?.layer === "fluid";
@@ -1406,13 +1483,42 @@ export class SpellApi {
   // Fluids a spell pours do not land inside someone else's ward against fluids.
   private fluidBlocked(i: number): boolean {
     const w = this.rt.world;
+    if (w.ruins.length && Math.random() >= this.passAt(i)) return true;
     if (!w.wards.length || !warded(w, i, WARD.fluids) || ownWard(w, i, this.req.key)) return false;
     if (this.rt.glass) this.rt.glass.harm++;
     else if (Math.random() < 0.02) wardHit(w, i, 1, this.source, this.power);
     return true;
   }
+  // 4.7, the owner's report of 7 November ("all of them let a meteor
+  // through"): Meteor Strike's crater and Meteor Storm's craters are dug by
+  // the cast, not the body, so a ward that stopped the meteor still had its
+  // houses cleared and its land dug. What another spell does to the land
+  // inside a ward against harm is held at the glass: its height, its covers
+  // (houses, fields, trees) and the ground under a building do not change.
+  private landBlocked(i: number): boolean {
+    const w = this.rt.world;
+    // Where it broke a ward a moment ago, only the share that passed goes through.
+    if (w.ruins.length && Math.random() >= ruinPass(w, this.req.key, i % w.w, Math.floor(i / w.w))) return true;
+    if (!w.wards.length || !warded(w, i, WARD.harm) || ownWard(w, i, this.req.key)) return false;
+    if (this.rt.glass) this.rt.glass.harm++;
+    else if (Math.random() < 0.02) wardHit(w, i, 1, this.source, this.power);
+    return true;
+  }
+  // For heights, which scale with what passed instead of a coin toss.
+  private landHeld(i: number): boolean {
+    const w = this.rt.world;
+    if (!w.wards.length || !warded(w, i, WARD.harm) || ownWard(w, i, this.req.key)) return false;
+    if (this.rt.glass) this.rt.glass.harm++;
+    else if (Math.random() < 0.02) wardHit(w, i, 1, this.source, this.power);
+    return true;
+  }
+  private passAt(i: number): number {
+    const w = this.rt.world;
+    return w.ruins.length ? ruinPass(w, this.req.key, i % w.w, Math.floor(i / w.w)) : 1;
+  }
   private fireBlocked(i: number): boolean {
     const w = this.rt.world;
+    if (w.ruins.length && Math.random() >= this.passAt(i)) return true;
     if (!w.wards.length || !warded(w, i, WARD.fire)) return false;
     if (this.rt.glass) this.rt.glass.harm++;
     else if (Math.random() < 0.02) wardHit(w, i, 1, this.source, this.power);
@@ -1422,6 +1528,7 @@ export class SpellApi {
     if (!this.inside(x, y)) return;
     const w = this.rt.world;
     const i = this.i(x, y);
+    if ((layer === "cover" || layer === "ground") && this.landBlocked(i)) return;
     if (layer === "cover") w.setCover(i, C.NONE);
     else if (layer === "fluid") w.setFluid(i, F.NONE, 0);
     else if (layer === "gas") w.gasAmt[i] = 0;
@@ -1440,8 +1547,8 @@ export class SpellApi {
     this.rt.world.temp[i] += d;
   }
   raise(x: number, y: number, amount: number) {
-    if (!this.inside(x, y)) return;
-    this.rt.world.height[this.i(x, y)] += num(amount, -50, 50, 0);
+    if (!this.inside(x, y) || this.landHeld(this.i(x, y))) return;
+    this.rt.world.height[this.i(x, y)] += num(amount, -50, 50, 0) * this.passAt(this.i(x, y));
   }
 
   // Shapes: call fn(x, y, k) on every cell, k going from 1 at the center to 0 at the edge.
@@ -1478,14 +1585,40 @@ export class SpellApi {
     // of a body's impact, the body's blow is what the ward takes, and the
     // blast inside is held back with the body's other blows.
     const g = this.rt.glass;
+    const key = this.req.key;
+    const blast = () => {
+      // What a ward it broke a moment ago spent of it (ruinPass).
+      const w = this.rt.world;
+      const p = ruinPass(w, key, x, y);
+      if (p <= 0) return;
+      // The blast's own blows on people (physics.ts) spare those a ward
+      // broken by two tiers or fewer covered: hurt, afraid, alive.
+      const spared = w.ruins.length ? w.creatures.filter((c) => !c.dead && !hostile(c) && ruinSpares(w, key, c.x, c.y)) : [];
+      explode(w, x, y, radius * Math.sqrt(p), force * p);
+      for (const c of spared) {
+        // Not thrown high enough for the fall to kill (landing faster than 16 hurts).
+        c.vz = Math.min(c.vz, 15);
+        if (c.dead || c.hp <= 0) {
+          c.dead = false;
+          c.hp = 1;
+          c.burning = 0;
+          c.fear = Math.max(c.fear, 8);
+        }
+      }
+    };
     if (g && Math.hypot(g.ward.x - x, g.ward.y - y) < g.ward.r + radius) {
       g.harm++;
-      g.replay.push(() => explode(this.rt.world, x, y, radius, force));
+      g.replay.push(blast);
     }
     for (const ward of [...this.rt.world.wards])
-      if (ward !== g?.ward && ward.against & WARD.harm && Math.hypot(ward.x - x, ward.y - y) < ward.r + radius)
-        damageWard(this.rt.world, ward, 15 * force * Math.sqrt(Math.min(radius, 40)), this.source, this.power);
-    explode(this.rt.world, x, y, radius, force);
+      if (ward !== g?.ward && ward.against & WARD.harm && Math.hypot(ward.x - x, ward.y - y) < ward.r + radius) {
+        const hpBefore = hpAgainst(ward, this.source);
+        const d = Math.hypot(x - ward.x, y - ward.y) || 1;
+        ward.hitAt = d > ward.r ? { x: ward.x + ((x - ward.x) / d) * ward.r, y: ward.y + ((y - ward.y) / d) * ward.r, z: 0 } : { x, y, z: ward.r * 0.6 };
+        if (damageWard(this.rt.world, ward, 15 * force * Math.sqrt(Math.min(radius, 40)), this.source, this.power))
+          addRuin(this.rt.world, ward, key, passShare(ward, this.power, hpBefore), this.power);
+      }
+    blast();
   }
   quake(x: number, y: number, r: number, strength = 1) {
     quake(this.rt.world, x, y, num(r, 1, 400, 8), num(strength, 0, 5, 1));
@@ -1516,6 +1649,7 @@ export class SpellApi {
     const fluid = this.isFluid(name);
     forDisc(w, x, y, num(r, 0, 400, 3), (i, k) => {
       if (fluid && this.fluidBlocked(i)) return;
+      if (this.coverAt(i, name) && this.landBlocked(i)) return;
       if (Math.random() < density * (0.4 + 0.6 * k)) w.place(i, name, num(amount, 0, 50, 1));
     });
   }
@@ -1523,7 +1657,7 @@ export class SpellApi {
   // positive melts, boils and eventually sets things alight.
   temperature(x: number, y: number, r: number, delta: number) {
     const w = this.rt.world;
-    const d = num(delta, -500, 3000, 0);
+    const d = num(delta, -500, 3000, 0) * (w.ruins.length ? ruinPass(w, this.req.key, x, y) : 1);
     const guard = d > 0 ? WARD.fire : WARD.cold;
     forDisc(w, x, y, num(r, 0, 400, 3), (i, k) => {
       if (warded(w, i, guard)) return;
@@ -1551,7 +1685,8 @@ export class SpellApi {
     const h = num(height, -60, 60, 0);
     forDisc(w, x, y, num(r, 0, 400, 3), (i, k) => {
       const s = k * k * (3 - 2 * k);
-      w.height[i] += h * s;
+      if (h !== 0 && this.landHeld(i)) return;
+      w.height[i] += h * s * this.passAt(i);
       if (h > 4 && s > 0.6 && isBuilding(w.cover[i])) w.setCover(i, C.RUBBLE);
     });
   }
@@ -1562,7 +1697,7 @@ export class SpellApi {
     const w = this.rt.world;
     const i = this.i(x, y);
     const found = w.materials.find(String(material).toLowerCase());
-    if (!found || found.layer !== "ground") return;
+    if (!found || found.layer !== "ground" || this.landBlocked(i)) return;
     w.ground[i] = found.id;
     w.height[i] += num(voxels, -60, 60, 1) * 2;
     w.setCover(i, C.NONE);
@@ -1925,6 +2060,18 @@ export class SpellApi {
     const w = this.rt.world;
     if (!this.inside(x, y)) return;
     const seconds = num(o.seconds, 1, 600, 20);
+    // Cast again over its own ward, the same spell mends it and renews its
+    // time (the game designer, 4.7): never past its health, never a new tier.
+    const own = w.wards.find((d) => d.owner === this.req.key && Math.hypot(d.x - x, d.y - y) <= d.r);
+    if (own) {
+      own.hp = own.maxHp ?? 100;
+      own.dealt = {};
+      own.pressure = 0;
+      own.until = Math.max(own.until, w.time + seconds);
+      own.hit = w.time;
+      this.rt.wardCalls.set(this.req.key, (this.rt.wardCalls.get(this.req.key) ?? 0) + 1);
+      return;
+    }
     addWard(
       w,
       {
