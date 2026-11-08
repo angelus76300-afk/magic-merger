@@ -403,6 +403,9 @@ function advance(world: World, s: State, sv: Survey): void {
       // A road leaves water only at a bank it can step onto from the deck.
       const i = (sv.y0 + ny) * world.w + sv.x0 + nx;
       const wet = (world.fluid[i] === F.WATER || world.fluid[i] === F.ICE) && world.depth[i] > DEEP;
+      // A bridge runs straight: no bend over the water, where a walker
+      // cutting the corner would step off the planks.
+      if (wet && sv.run[k] > 0 && sv.from[k] >= 0 && j - k !== k - sv.from[k]) continue;
       sv.cost[j] = d;
       sv.from[j] = k;
       if (wet) {
@@ -506,9 +509,10 @@ export function alongRoad(world: World, x: number, y: number, tx: number, ty: nu
   return false;
 }
 
+// A cell's center: cells are centered on whole numbers (world.idx rounds).
 function aimAt(world: World, i: number, out: { x: number; y: number }): boolean {
-  out.x = (i % world.w) + 0.5;
-  out.y = Math.floor(i / world.w) + 0.5;
+  out.x = i % world.w;
+  out.y = Math.floor(i / world.w);
   return true;
 }
 

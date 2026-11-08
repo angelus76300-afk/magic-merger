@@ -72,7 +72,10 @@ export class Paths {
   // Fields are filled one at a time, so they share one bucket queue
   // (Dial's: a bucket per cost, modulo the dearest step), and the cost
   // being taken out.
-  private buckets: number[][] = Array.from({ length: BUCKETS }, () => []);
+  // Each bucket a stack in a typed array (a plain array of numbers cost
+  // twice the old breadth first fill per cell), with its top.
+  private buckets: Int32Array[] = Array.from({ length: BUCKETS }, () => new Int32Array(0));
+  private tops = new Int32Array(BUCKETS);
   private cost = 0;
   private seeded = false;
 
@@ -185,7 +188,7 @@ export class Paths {
       if (f.done) {
         this.pending.shift();
         this.seeded = false;
-        for (const b of this.buckets) b.length = 0;
+        this.tops.fill(0);
       }
     }
     this.filled = BUDGET - budget;
@@ -226,8 +229,11 @@ export class Paths {
   private seed(world: World, f: Field): void {
     this.seeded = true;
     this.cost = 0;
-    for (const b of this.buckets) b.length = 0;
+    const n = world.w * world.h;
+    if (this.buckets[0].length < n) this.buckets = Array.from({ length: BUCKETS }, () => new Int32Array(n));
+    this.tops.fill(0);
     const q = this.buckets[0];
+    const tops = this.tops;
     f.dist.fill(FAR);
     f.made = world.time;
     const B = f.size;
@@ -236,23 +242,23 @@ export class Paths {
         const i = y * world.w + x;
         if (!open(world, i, f.mobility)) continue;
         f.dist[i] = 0;
-        q.push(i);
+        q[tops[0]++] = i;
       }
     // A destination inside a wood or a lake: its nearest open cells around it.
     const cx = Math.min(world.w - 1, f.bx * B + (B >> 1));
     const cy = Math.min(world.h - 1, f.by * B + (B >> 1));
-    for (let r = 1; r <= 6 && !q.length; r++)
+    for (let r = 1; r <= 6 && !tops[0]; r++)
       for (let y = cy - r; y <= cy + r; y++)
         for (let x = cx - r; x <= cx + r; x++) {
           if (x < 0 || y < 0 || x >= world.w || y >= world.h) continue;
           const i = y * world.w + x;
           if (f.dist[i] === FAR && open(world, i, f.mobility)) {
             f.dist[i] = 0;
-            q.push(i);
+            q[tops[0]++] = i;
           }
         }
     // Nothing open at all: a field that leads nowhere, and is done.
-    if (!q.length) f.done = true;
+    if (!tops[0]) f.done = true;
   }
 
   // Cheapest first, four ways (Dial's algorithm: costs are small whole
@@ -269,31 +275,41 @@ export class Paths {
     const ground = world.ground;
     const cover = world.cover;
     const buckets = this.buckets;
+    const tops = this.tops;
+    const height = world.height;
+    const depth = world.depth;
+    const bridges = world.decks.size > 0;
     while (budget > 0) {
-      let q = buckets[this.cost % BUCKETS];
-      for (let k = 0; !q.length && k < BUCKETS; k++) q = buckets[++this.cost % BUCKETS];
-      if (!q.length) {
+      let b = this.cost % BUCKETS;
+      for (let k = 0; !tops[b] && k < BUCKETS; k++) b = ++this.cost % BUCKETS;
+      if (!tops[b]) {
         f.done = true;
         break;
       }
-      const i = q.pop()!;
+      const i = buckets[b][--tops[b]];
       budget--;
       if (dist[i] !== this.cost) continue;
       const x = i % w;
       const y = (i - x) / w;
-      const here = walk ? world.walkLevel(i) : 0;
+      const here = !walk ? 0 : bridges ? world.walkLevel(i) : height[i] + depth[i];
       for (let k = 0; k < 4; k++) {
         const nx = k === 0 ? x + 1 : k === 1 ? x - 1 : x;
         const ny = k === 2 ? y + 1 : k === 3 ? y - 1 : y;
         if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
         const j = ny * w + nx;
-        const step = walk && (ground[j] === G.ROAD || cover[j] === C.BRIDGE) ? ROAD_STEP : STEP;
-        const d = this.cost + step;
+        const d = this.cost + (walk && (ground[j] === G.ROAD || cover[j] === C.BRIDGE) ? ROAD_STEP : STEP);
         if (d > limit || d >= dist[j] || !openFast(world, j, f.mobility, solid)) continue;
         // From j the creature steps onto i.
-        if (walk && here - world.walkLevel(j) > CLIMB) continue;
+        if (walk && here - (bridges ? world.walkLevel(j) : height[j] + depth[j]) > CLIMB) continue;
         dist[j] = d;
-        buckets[d % BUCKETS].push(j);
+        const to = d % BUCKETS;
+        const q = buckets[to];
+        if (tops[to] >= q.length) {
+          const more = new Int32Array(q.length * 2);
+          more.set(q);
+          buckets[to] = more;
+        }
+        buckets[to][tops[to]++] = j;
       }
     }
     return budget;

@@ -7,6 +7,7 @@ import { C, F, G } from "../src/sim/materials";
 import { Mobility, STEP, pathsOf } from "../src/sim/paths";
 import { ROAD, laid, nextPave, noteTrip, pave, roadSpeed, roadsOf, stepRoads, wearMinute } from "../src/sim/roads";
 import { loadWorld, saveWorld } from "../src/sim/save";
+import { seeded } from "../src/sim/noise";
 import { World } from "../src/sim/world";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
@@ -152,7 +153,9 @@ export function roadsChecks(check: Check): void {
 
       // A villager on the deck stays dry and does not drown.
       const deck = road.cells.find((i) => world.cover[i] === C.BRIDGE)!;
-      const c = makeCreature("villager", (deck % 96) + 0.5, Math.floor(deck / 96) + 0.5);
+      const random = Math.random;
+      Math.random = seeded(3);
+      const c = makeCreature("villager", deck % 96, Math.floor(deck / 96));
       world.creatures.push(c);
       const hp = c.hp;
       for (let t = 0; t < 150; t++) {
@@ -160,6 +163,7 @@ export function roadsChecks(check: Check): void {
         world.time += 1 / 30;
         updateCreature(world, c, 1 / 30);
       }
+      Math.random = random;
       const at = Math.round(c.y) * 96 + Math.round(c.x);
       check(
         "a villager on a bridge keeps dry feet",
