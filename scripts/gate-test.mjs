@@ -1,9 +1,21 @@
 // Checks for the merge and deploy gate (scripts/gate.mjs): each condition alone holds a pull request back.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { REPO_OWNER, byOwner, carriedReview, decide, deployable, headRepoOf, lastDeployedFrom, ownerRecords, reviewFor, upToDateFrom } from "./gate.mjs";
+import {
+  REPO_OWNER,
+  byOwner,
+  carriedReview,
+  decide,
+  deployable,
+  headRepoOf,
+  lastDeployedFrom,
+  ownerRecords,
+  reviewFor,
+  sharedChangeFromMain,
+  upToDateFrom,
+} from "./gate.mjs";
 import { classify, readGit } from "./risk.mjs";
 
 let failed = 0;
@@ -319,6 +331,225 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+// 2026-11-08: a merge of main may change docs/IDEAS.md and public/changelog.json with main's lines only.
+// A throwaway repository with main's .gitattributes (union for the two files): the pull request R adds
+// an idea, a changelog entry and code; main adds its own idea and entry at the same places.
+{
+  const root = mkdtempSync(join(tmpdir(), "mm-shared-"));
+  const g = (...args) =>
+    execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "-c", "init.defaultBranch=main", ...args], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  const write = (path, text) => {
+    mkdirSync(join(root, path, ".."), { recursive: true });
+    writeFileSync(join(root, path), text);
+  };
+  const commit = (msg, files) => {
+    for (const [path, text] of Object.entries(files)) write(path, text);
+    g("add", "-A");
+    g("commit", "-qm", msg);
+    return g("rev-parse", "HEAD");
+  };
+  // One line per entry (docs/DAILY.md): union then stacks two new entries as two lines.
+  const entry = (text) => `    { "date": "2026-11-08", "text": "${text}" },\n`;
+  const changelog = (...texts) => `{\n  "entries": [\n${texts.map(entry).join("")}    { "date": "2026-11-01", "text": "old" }\n  ]\n}\n`;
+  const ideas = ({ top = [], backlog = [], built = [], keep = true } = {}) =>
+    [
+      "# Ideas",
+      "",
+      ...top,
+      "## Backlog",
+      "",
+      ...(keep ? ["- old idea"] : []),
+      ...backlog,
+      "-- a line that looks like a header",
+      "",
+      "## Built",
+      "",
+      ...built,
+      "- 2026-11-01 old",
+      "",
+    ].join("\n");
+  const code = (x, tail = "") => `export const x = ${x};\n${"// filler\n".repeat(20)}${tail}`;
+  const classOf = (b, h) => classify(readGit(b, h, root), { branch: "feat", title: "t" }).cls;
+  const reviewOf = (sha) => own(`<!-- mm-review verdict=pass tests=pass sha=${sha} -->`);
+  const carry = (head, comments) => carriedReview({ head, base: "main", comments, owner: REPO_OWNER, git: g, classOf });
+  const toFeat = (from) => g("checkout", "-q", "-B", "feat", from);
+  const mergeMain = (from, ref = "main") => {
+    toFeat(from);
+    g("merge", "-q", "--no-ff", "--no-edit", ref);
+    return g("rev-parse", "HEAD");
+  };
+  const attributes = readFileSync(join(import.meta.dirname, "..", ".gitattributes"), "utf8");
+  try {
+    g("init", "-q");
+    commit("base", { ".gitattributes": attributes, "docs/IDEAS.md": ideas(), "public/changelog.json": changelog(), "src/a.ts": code(1), "src/b.ts": code(1) });
+    g("checkout", "-qb", "feat");
+    const R = commit("the pull request", {
+      "docs/IDEAS.md": ideas({ backlog: ["- mine"], built: ["- 2026-11-08 mine"] }),
+      "public/changelog.json": changelog("mine"),
+      "src/a.ts": code(2),
+    });
+    const reviewed = [reviewOf(R)];
+    g("checkout", "-q", "main");
+    const mainTip = commit("main: another pull request", {
+      "docs/IDEAS.md": ideas({ top: ["- theirs"] }),
+      "public/changelog.json": changelog("theirs"),
+      "src/b.ts": code(3),
+    });
+
+    // Both insert at the same places: union merges them, the merge brings only main's lines.
+    const M = mergeMain(R);
+    const ok = carry(M, reviewed);
+    check("carried: a merge of main that only adds main's lines to the two shared files", ok.from === R && ok.review?.tests === "pass", JSON.stringify(ok));
+    check("the union merge kept both changelog entries as valid JSON", JSON.parse(g("show", `${M}:public/changelog.json`)).entries.length === 3);
+    check("a carried shared-file merge makes a green pull request ready", decide({ ...ready, review: ok.review }).ready);
+    check("refused for a fork, even with the review carried", !decide({ ...ready, review: ok.review, fork: true }).ready);
+
+    // Refused: entries of several lines, as before 2026-11-08. union interleaves them into one object.
+    {
+      const tall = (text) => `    {\n      "date": "2026-11-08",\n      "text": "${text}"\n    },\n`;
+      const tallLog = (...t) => `{\n  "entries": [\n${t.map(tall).join("")}    { "date": "2026-11-01", "text": "old" }\n  ]\n}\n`;
+      g("checkout", "-q", "-B", "tall-main", "main~1");
+      const tallTheirs = commit("main: a tall entry", { "public/changelog.json": tallLog("theirs") });
+      toFeat("main~1");
+      const T = commit("a tall entry", { "public/changelog.json": tallLog("mine") });
+      const TM = mergeMain(T, tallTheirs);
+      g("branch", "-qf", "main", tallTheirs);
+      const broken = carry(TM, [reviewOf(T)]);
+      g("branch", "-qf", "main", mainTip);
+      check(
+        "refused: union of two entries of several lines (the merged changelog is wrong)",
+        broken.review === null && /did not come from main|does not parse/.test(broken.why ?? ""),
+        JSON.stringify(broken),
+      );
+    }
+
+    // Refused: the merge also rewrites one of the pull request's own lines in a shared file.
+    toFeat(R);
+    g("merge", "-q", "--no-ff", "--no-commit", "main");
+    write("public/changelog.json", changelog("mine, and more", "theirs"));
+    g("add", "-A");
+    g("commit", "-qm", "merge main");
+    const rewritten = carry(g("rev-parse", "HEAD"), reviewed);
+    check("refused: the pull request's own changelog line changed in the merge", rewritten.review === null, JSON.stringify(rewritten));
+
+    // Refused: union keeps a line the pull request removed (its own lines changed, though git's merge is clean).
+    g("checkout", "-q", "-B", "base2", "main~1");
+    const withA = commit("an entry a", { "public/changelog.json": changelog("a") });
+    toFeat(withA);
+    const D = commit("the pull request removes entry a", { "public/changelog.json": changelog(), "src/a.ts": code(4) });
+    g("checkout", "-q", "-B", "main2", withA);
+    const mainEdit = commit("main adds an entry right above it", { "public/changelog.json": changelog("theirs", "a") });
+    g("branch", "-qf", "main", mainEdit);
+    const MD = mergeMain(D);
+    const resurrected = JSON.parse(g("show", `${MD}:public/changelog.json`)).entries.some((e) => e.text === "a");
+    const undone = carry(MD, [reviewOf(D)]);
+    check(
+      "refused: a union merge that brings back an entry the pull request removed",
+      resurrected && undone.review === null && /own lines|did not come from main/.test(undone.why ?? ""),
+      `resurrected ${resurrected} ${JSON.stringify(undone)}`,
+    );
+    g("branch", "-qf", "main", mainTip);
+
+    // Refused: main changes another of the pull request's files (src/a.ts), as before.
+    g("checkout", "-q", "main");
+    commit("main edits a.ts too", {
+      "docs/IDEAS.md": ideas({ top: ["- theirs", "- third"] }),
+      "src/a.ts": code(1, "// main\n"),
+    });
+    const MA = mergeMain(R);
+    const other = carry(MA, reviewed);
+    check(
+      "refused: a merge that also changes another of the pull request's files",
+      other.review === null && /own files/.test(other.why ?? ""),
+      JSON.stringify(other),
+    );
+    g("branch", "-qf", "main", mainTip);
+
+    // Refused: a hand edit of a shared file in the merge (the tree differs from git's merge).
+    toFeat(R);
+    g("merge", "-q", "--no-ff", "--no-commit", mainTip);
+    write("docs/IDEAS.md", ideas({ top: ["- theirs"], backlog: ["- mine", "- slipped in"], built: ["- 2026-11-08 mine"] }));
+    g("add", "-A");
+    g("commit", "-qm", "merge main");
+    check("refused: a merge that adds a line of its own to a shared file", carry(g("rev-parse", "HEAD"), reviewed).review === null);
+
+    // The line check alone, without the tree check: a line main never wrote is refused.
+    const fake = commit("not from main", { "docs/IDEAS.md": ideas({ backlog: ["- mine", "- invented"], built: ["- 2026-11-08 mine"] }) });
+    check(
+      "the shared line check refuses lines that did not come from main",
+      /did not come from main/.test(sharedChangeFromMain(g, R, mainTip, fake, "docs/IDEAS.md") ?? ""),
+    );
+    check("the shared line check passes main's own lines", sharedChangeFromMain(g, R, mainTip, M, "docs/IDEAS.md") === null);
+    check("the shared line check passes main's own changelog entry", sharedChangeFromMain(g, R, mainTip, M, "public/changelog.json") === null);
+    // A removed markdown line "-- x" shows as "--- x" inside a hunk: it is a line, not a file header.
+    const fakeGit = (...a) => {
+      if (a[0] === "merge-base") return "mb";
+      if (a[0] === "show") return "{}";
+      const [from, to] = a.slice(-4, -2);
+      if (from === "mb" && to === "S") return "diff --git a/f b/f\nindex 1..2 100644\n--- a/f\n+++ b/f\n@@ -3 +2,0 @@\n--- x";
+      return "";
+    };
+    check("a removed line that starts with -- is a line, not a header", /did not come from main/.test(sharedChangeFromMain(fakeGit, "F", "S", "M", "f") ?? ""));
+    // Fake diffs for the parts no real merge reaches on its own (defence in depth behind the tree check).
+    const diffs =
+      (table) =>
+      (...a) => {
+        if (a[0] === "merge-base") return "mb";
+        if (a[0] === "show") return "{}";
+        const [from, to] = a.slice(-4, -2);
+        return table[`${from}>${to}`] ?? "";
+      };
+    const hunk = (...l) => `diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n${l.join("\n")}`;
+    check(
+      "refused: the merge brings main's lines but the pull request's own lines differ after it",
+      /own lines/.test(
+        sharedChangeFromMain(diffs({ "mb>S": hunk("+t"), "F>M": hunk("+t"), "mb>F": hunk("+mine"), "S>M": hunk("+mine, changed") }), "F", "S", "M", "f") ?? "",
+      ),
+    );
+    check(
+      "main's lines placed in another order by git still count as main's",
+      sharedChangeFromMain(diffs({ "mb>S": hunk("+a", "+b"), "F>M": hunk("+b", "+a") }), "F", "S", "M", "f") === null,
+    );
+    check(
+      "a line's trailing spaces do not count (git output may be trimmed)",
+      sharedChangeFromMain(diffs({ "mb>S": hunk("+a  ", "+b"), "F>M": hunk("+a", "+b") }), "F", "S", "M", "f") === null,
+    );
+    check(
+      "a merged changelog that does not parse carries nothing",
+      /does not parse/.test(
+        sharedChangeFromMain((...a) => (a[0] === "show" ? '{ "entries": [ { "text": "a" "text": "b" } ] }' : ""), "F", "S", "M", "public/changelog.json") ?? "",
+      ),
+    );
+    check(
+      "a diff git cannot show as text carries nothing",
+      /plain text/.test(sharedChangeFromMain(() => "Binary files a/f and b/f differ", "F", "S", "M", "f") ?? ""),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// prettier leaves public/changelog.json alone (one line per entry, for union): check its shape here.
+{
+  let log = null;
+  try {
+    log = JSON.parse(readFileSync(join(import.meta.dirname, "..", "public", "changelog.json"), "utf8"));
+  } catch (e) {
+    log = String(e);
+  }
+  check(
+    "public/changelog.json parses and every entry has a date and a text",
+    Array.isArray(log?.entries) &&
+      log.entries.length > 0 &&
+      log.entries.every((e) => /^\d{4}-\d{2}-\d{2}$/.test(e.date) && typeof e.text === "string" && e.text),
+    typeof log === "string" ? log : "",
+  );
 }
 
 console.log(failed ? `${failed} failed` : "all gate checks passed");
