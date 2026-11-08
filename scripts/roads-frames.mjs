@@ -39,13 +39,20 @@ const info = await page.evaluate(
     e.start();
     const w = e.world;
     return {
-      roads: (w.roads ?? []).map((r) => `${r.a} to ${r.b} (${r.cells.length}): ${r.cells[Math.floor(r.cells.length / 2)] % w.w},${Math.floor(r.cells[Math.floor(r.cells.length / 2)] / w.w)}`),
+      roads: (w.roads ?? []).map(
+        (r) =>
+          `${r.a} to ${r.b} (${r.cells.length}): ${r.cells[Math.floor(r.cells.length / 2)] % w.w},${Math.floor(r.cells[Math.floor(r.cells.length / 2)] / w.w)}`,
+      ),
       villages: w.villages.map((v) => `${Math.round(v.x)},${Math.round(v.y)}`),
+      bridges: [...(w.decks?.keys() ?? [])].map((i) => `${i % w.w},${Math.floor(i / w.w)}`),
     };
   },
   { minutes: Number(minutes) },
 );
 console.log(JSON.stringify(info));
+// "bridge" for tx: look at the first bridge built, or else the middle of the first road.
+let [ax, ay] = [Number(tx), Number(ty)];
+if (tx === "bridge") [ax, ay] = (info.bridges[0] ?? info.roads[0]?.split(": ")[1] ?? "100,100").split(",").map(Number);
 for (const [label, width, height] of SIZES) {
   await page.setViewportSize({ width, height });
   await page.evaluate(
@@ -56,8 +63,9 @@ for (const [label, width, height] of SIZES) {
       e.view.orbit.ty = ty;
       e.view.orbit.dist = Math.max(e.world.w, e.world.h) * dist;
     },
-    { tx: Number(tx), ty: Number(ty), dist: Number(dist) },
+    { tx: ax, ty: ay, dist: Number(dist) },
   );
+  await page.evaluate(() => document.querySelectorAll("body > div").forEach((h) => (h.style.visibility = "hidden")));
   await page.waitForTimeout(Number(process.env.WAIT ?? 3000));
   await page.screenshot({ path: join(out, `${label}-${name}.png`) });
   console.log(label);

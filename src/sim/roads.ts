@@ -454,19 +454,24 @@ function finishSurvey(world: World, s: State, sv: Survey): void {
   });
   world.roadsVersion++;
   link.retry = world.time + 600;
-  tell(world, isWonder(b) ? `${nameOf(world, a)} marked out a road to ${nameOf(world, b)}` : `${nameOf(world, a)} and ${nameOf(world, b)} marked out a road between them`);
+  tell(
+    world,
+    isWonder(b) ? `${nameOf(world, a)} marked out a road to ${nameOf(world, b)}` : `${nameOf(world, a)} and ${nameOf(world, b)} marked out a road between them`,
+  );
 }
 
-// A traveller between two places a road joins walks along its line, past
-// the reach of a flow field: aims a few cells ahead of the nearest cell, or
-// at that cell when off the road. False with no road, near the end, or
-// before a bridge not built yet.
-export function alongRoad(world: World, x: number, y: number, fx: number, fy: number, tx: number, ty: number, out: { x: number; y: number }): boolean {
+// A traveller on a long walk to a place a road reaches (to market and
+// home again) walks along its line, past the reach of a flow field: aims a
+// few cells ahead of the nearest cell, or at that cell when off the road.
+// The road is one with an end near the destination, and either its other
+// end near the walker or a cell of it close by. False with no such road,
+// near the end, or before a bridge not built yet.
+export function alongRoad(world: World, x: number, y: number, tx: number, ty: number, out: { x: number; y: number }): boolean {
   if (Math.hypot(tx - x, ty - y) < 12) return false;
   const near = (px: number, py: number, qx: number, qy: number) => Math.hypot(px - qx, py - qy) < VILLAGE_REACH;
   for (const r of world.roads) {
-    const forward = near(r.ax, r.ay, fx, fy) && near(r.bx, r.by, tx, ty);
-    if (!forward && !(near(r.bx, r.by, fx, fy) && near(r.ax, r.ay, tx, ty))) continue;
+    const forward = near(r.bx, r.by, tx, ty);
+    if (!forward && !near(r.ax, r.ay, tx, ty)) continue;
     let best = -1;
     let bestD = Infinity;
     for (let k = 0; k < r.cells.length; k++) {
@@ -477,6 +482,10 @@ export function alongRoad(world: World, x: number, y: number, fx: number, fy: nu
         best = k;
       }
     }
+    const start = forward ? [r.ax, r.ay] : [r.bx, r.by];
+    if (bestD > 10 && !near(start[0], start[1], x, y)) continue;
+    // Already nearer the end than the road would take it: no use.
+    if (Math.abs(best - (forward ? r.cells.length - 1 : 0)) < 4) return false;
     const dir = forward ? 1 : -1;
     let k = best;
     if (bestD <= 2) {

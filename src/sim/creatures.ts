@@ -733,7 +733,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     // point asked for is only a bend on the way (goals.ts roamAim).
     const m = c.mind;
     // A traveller following a road (4.9) goes to the next bend of it.
-    const trip = drive === "pursue" && m && m.task !== "none" && !(m.task === "trade" && c.data.via);
+    const trip = drive === "pursue" && m && m.task !== "none" && !c.data.via;
     const gx = trip ? (m.target ? m.target.x : m.tx) : c.x + wantX;
     const gy = trip ? (m.target ? m.target.y : m.ty) : c.y + wantY;
     const hunting = mood === "hunt" || mood === "angry";

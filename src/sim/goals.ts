@@ -455,7 +455,9 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
     }
     // Somewhere it cannot reach: give up and think again (a fish spawns where it got to).
     // A trip to another village (4.9) is a long walk, not a lost one.
-    if (m.walk > (strike ? 20 : m.task === "trade" ? 150 : 30)) {
+    // So is the way home from it.
+    const far = m.task === "trade" || ((m.task === "eat" || m.task === "carry" || m.task === "rest") && Math.hypot(tx - c.x, ty - c.y) > 30);
+    if (m.walk > (strike ? 20 : far ? 150 : 30)) {
       if (m.task === "spawn") finish(world, c, k, m);
       else {
         // A home it cannot reach any more (cut off by water, a fallen wall): it settles where it is.
@@ -470,17 +472,16 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
     OUT.x = tx;
     OUT.y = ty;
     OUT.pace = m.pace;
-    if (m.task === "roam") roamAim(world, c, m, d);
-    else if (m.task === "trade") {
-      // 4.9: along the road, when one joins the two places.
-      const trip = c.data.trip as { from: Village } | undefined;
-      c.data.via = trip && (world.tick + c.id) % 10 !== 0 ? c.data.via : trip && alongRoad(world, c.x, c.y, trip.from.x, trip.from.y, m.tx, m.ty, VIA) ? [VIA.x, VIA.y] : undefined;
-      const via = c.data.via as [number, number] | undefined;
-      if (via) {
-        OUT.x = via[0];
-        OUT.y = via[1];
-      }
+    // 4.9: a long walk keeps to a road that goes there.
+    const long = world.roads.length > 0 && (m.task === "trade" || ((m.task === "eat" || m.task === "carry" || m.task === "rest") && d > 30));
+    if (!long) c.data.via = undefined;
+    else if ((world.tick + c.id) % 10 === 0 || c.data.via === undefined) c.data.via = alongRoad(world, c.x, c.y, tx, ty, VIA) ? [VIA.x, VIA.y] : null;
+    const via = c.data.via as [number, number] | null | undefined;
+    if (via) {
+      OUT.x = via[0];
+      OUT.y = via[1];
     }
+    if (m.task === "roam") roamAim(world, c, m, d);
     else if (m.task === "hunt" && t) surround(world, c, t, d);
     return OUT;
   }
@@ -1000,7 +1001,12 @@ function houseSite(world: World, x: number, y: number): number {
       if (hx < 1 || hy < 1 || hx + 2 >= world.w || hy + 2 >= world.h) continue;
       const cells = [hy * world.w + hx, hy * world.w + hx + 1, (hy + 1) * world.w + hx, (hy + 1) * world.w + hx + 1];
       const h0 = world.height[cells[0]];
-      if (cells.some((i) => !dryFree(world, i) || world.ground[i] === G.FIELD || isWay(world.ground[i]) || planned(world, i) || Math.abs(world.height[i] - h0) > 1.2)) continue;
+      if (
+        cells.some(
+          (i) => !dryFree(world, i) || world.ground[i] === G.FIELD || isWay(world.ground[i]) || planned(world, i) || Math.abs(world.height[i] - h0) > 1.2,
+        )
+      )
+        continue;
       return cells[0];
     }
   }
@@ -1010,7 +1016,12 @@ function houseSite(world: World, x: number, y: number): number {
     if (hx < 1 || hy < 1 || hx + 2 >= world.w || hy + 2 >= world.h) continue;
     const cells = [hy * world.w + hx, hy * world.w + hx + 1, (hy + 1) * world.w + hx, (hy + 1) * world.w + hx + 1];
     const h0 = world.height[cells[0]];
-    if (cells.some((i) => !dryFree(world, i) || world.ground[i] === G.FIELD || world.ground[i] === G.ROAD || planned(world, i) || Math.abs(world.height[i] - h0) > 1.2)) continue;
+    if (
+      cells.some(
+        (i) => !dryFree(world, i) || world.ground[i] === G.FIELD || world.ground[i] === G.ROAD || planned(world, i) || Math.abs(world.height[i] - h0) > 1.2,
+      )
+    )
+      continue;
     return cells[0];
   }
   return -1;

@@ -56,6 +56,13 @@ for (const seed of seeds.length ? seeds : [7, 11, 23]) {
       `seed ${seed} min ${String(m).padStart(2)}: villages ${world.villages.length} roads ${world.roads.length} laid ${laidCells}/${total} bridges ${bridges} road cells ${roadCells} (${((roadCells / landCells) * 100).toFixed(2)}% of land) villagers ${world.creatures.filter((c) => !c.dead && c.kind === "villager").length} p95 ${ticks[Math.floor(ticks.length * 0.95)].toFixed(2)} ms`,
     );
   }
-  console.log(`seed ${seed}: first road marked out at minute ${first < 0 ? "never" : first}; ${world.roads.map((r) => `${r.a} to ${r.b} (${r.cells.length})`).join(", ")}`);
-  console.log(world.story.slice(-8).map((l) => "  " + l.text).join("\n"));
+  console.log(
+    `seed ${seed}: first road marked out at minute ${first < 0 ? "never" : first}; ${world.roads.map((r) => `${r.a} to ${r.b} (${r.cells.length})`).join(", ")}`,
+  );
+  console.log(
+    world.story
+      .slice(-8)
+      .map((l) => "  " + l.text)
+      .join("\n"),
+  );
 }

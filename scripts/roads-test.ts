@@ -111,7 +111,7 @@ export function roadsChecks(check: Check): void {
   // road with a bridge, lay it, and walkers cross on its deck.
   {
     const world = flat(96, 40);
-    const x0 = river(world, 6);
+    river(world, 6);
     const a = village(14, 20);
     const b = village(82, 20);
     world.villages = [a, b];
@@ -140,7 +140,11 @@ export function roadsChecks(check: Check): void {
       }
       const all = road.cells.every((_, k) => laid(world, road, k));
       const bridges = road.cells.filter((i) => world.cover[i] === C.BRIDGE).length;
-      check("builders lay the road from both ends, planks over the water for wood", all && bridges === 6 && a.wood + b.wood === 60 - 12, `${jobs} cells laid, ${bridges} planks, wood left ${a.wood + b.wood}`);
+      check(
+        "builders lay the road from both ends, planks over the water for wood",
+        all && bridges === 6 && a.wood + b.wood === 60 - 12,
+        `${jobs} cells laid, ${bridges} planks, wood left ${a.wood + b.wood}`,
+      );
       world.time += 60;
       const after = field(world, 82, 20);
       check("a walker can now cross the river on the bridge", after.dist[20 * 96 + 14] !== 0xffff, `cost ${after.dist[20 * 96 + 14]}`);
@@ -197,7 +201,11 @@ export function roadsChecks(check: Check): void {
     const worn = world.ground.filter((g) => g === G.ROAD).length;
     // The share is of the land within 14 cells of the center, 29 by 29.
     const cap = Math.ceil(29 * 29 * ROAD.dirtShare);
-    check("a path walked hard for minutes running becomes a dirt road, within its share", early === 0 && worn > 0 && worn <= cap, `${early} early, ${worn} after, cap ${cap}`);
+    check(
+      "a path walked hard for minutes running becomes a dirt road, within its share",
+      early === 0 && worn > 0 && worn <= cap,
+      `${early} early, ${worn} after, cap ${cap}`,
+    );
     world.wear.fill(0);
     for (let m = 0; m < ROAD.dirtFade; m++) wearMinute(world);
     const left = world.ground.filter((g) => g === G.ROAD).length;
