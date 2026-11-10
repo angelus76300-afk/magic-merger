@@ -49,9 +49,11 @@ jobs:
     timeout-minutes: 15
     steps:
       # Started by the Gate: this commit must be the head it named, of a pull request of this repository.
+      # Keyed on the input, never on the event's name: the Deploy workflow calls this one, and in a called
+      # workflow github.event_name is the caller's ("workflow_dispatch" when the Gate starts a deploy).
       - name: the pull request the Gate named
         id: pr
-        if: github.event_name == 'workflow_dispatch'
+        if: inputs.pr != ''
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -79,11 +81,12 @@ jobs:
         id: scope
         env:
           EVENT: ${{ github.event_name }}
+          DISPATCHED: ${{ inputs.pr }}
           DRAFT: ${{ github.event.pull_request.draft || steps.pr.outputs.draft }}
           BASE: ${{ github.event.pull_request.base.ref || steps.pr.outputs.base }}
         run: |
           full=true
-          if [ "$EVENT" = "pull_request" ] || [ "$EVENT" = "workflow_dispatch" ]; then
+          if [ "$EVENT" = "pull_request" ] || [ -n "$DISPATCHED" ]; then
             changed=$(git diff --name-only "origin/$BASE...HEAD")
             other=$(printf '%s\n' "$changed" | grep -vE '^(docs/|\.claude/skills/)|\.md$|^\.claude/settings\.json$' || true)
             if [ "$DRAFT" = "true" ] || [ -z "$other" ]; then full=false; fi
@@ -92,7 +95,7 @@ jobs:
           # In the log too: when GitHub lists the job without its steps, the Gate reads this line.
           echo "Full run: $full" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: risk class
-        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'pull_request' || inputs.pr != ''
         env:
           BASE: ${{ github.event.pull_request.base.ref || steps.pr.outputs.base }}
           GITHUB_HEAD_REF: ${{ github.head_ref || steps.pr.outputs.ref }}

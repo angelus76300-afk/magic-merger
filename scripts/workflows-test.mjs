@@ -136,6 +136,11 @@ export function findings(name, text) {
       else if (afterFail.test(job.cond)) out.push(`${name} job ${job.name}: runs even when the job holding the dispatch guard refused`);
     }
   }
+  // 5. 2026-11-10: a workflow another one calls (workflow_call) sees the caller's event name. The Deploy
+  // workflow calls CI, and the Gate starts the Deploy by workflow_dispatch, so a step that asks whether
+  // this run was dispatched by its event name runs inside every deploy. Ask the input instead (inputs.pr).
+  if (triggers.includes("workflow_call") && /github\.event_name\s*==\s*'workflow_dispatch'/.test(text))
+    out.push(`${name}: asks github.event_name == 'workflow_dispatch', which a calling workflow's dispatch also matches: key it on an input`);
   if (triggers.includes("issue_comment"))
     for (const job of jobs)
       if (!/github\.event\.comment\.author_association == 'OWNER'/.test(job.cond))
@@ -283,6 +288,23 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       const d = runGuard(file, with_({ draft: true }));
       check("ci.yml guard: a draft passes with draft=true (CI then runs the light steps)", d.ok && /^draft=true$/m.test(d.out), d.err);
     }
+  }
+  // Rule 5 and CI's scope step as the Deploy workflow calls it: the caller's dispatch, no input, a full run.
+  const ci = readFileSync(join(dir, "ci.yml"), "utf8");
+  const oldGuard = ci.replace("if: inputs.pr != ''", "if: github.event_name == 'workflow_dispatch'");
+  check("ci.yml: a guard keyed on the event's name is caught (Deploy calls CI)", oldGuard !== ci && findings("ci.yml", oldGuard).length > 0);
+  {
+    const lines = ci.split("\n");
+    const at = lines.findIndex((l) => /^\s+id: scope\s*$/.test(l));
+    const runAt = lines.findIndex((l, i) => i > at && /^\s+run: \|\s*$/.test(l));
+    const body = block(lines, runAt).slice(1);
+    const min = Math.min(...body.filter((l) => l.trim()).map(indent));
+    writeFileSync(join(tmp, "out"), "");
+    const r = spawnSync("bash", ["-e", "-c", body.map((l) => l.slice(min)).join("\n")], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH, EVENT: "workflow_dispatch", DISPATCHED: "", GITHUB_OUTPUT: join(tmp, "out"), GITHUB_STEP_SUMMARY: join(tmp, "summary") },
+    });
+    check("ci.yml scope, called by a dispatched Deploy: a full run", r.status === 0 && /^full=true$/m.test(readFileSync(join(tmp, "out"), "utf8")), r.stderr);
   }
   rmSync(tmp, { recursive: true, force: true });
 

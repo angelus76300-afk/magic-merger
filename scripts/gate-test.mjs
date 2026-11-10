@@ -9,6 +9,7 @@ import {
   carriedReview,
   bringUpToDate,
   ciFrom,
+  updateInTurn,
   decide,
   deployable,
   headRepoOf,
@@ -593,7 +594,7 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
 
 // 2026-11-08, the merge queue: which pull request the Gate merges main into (updatable, pickUpdate).
 {
-  const behind = { ...ready, upToDate: false, mergeable: true, headFetched: true };
+  const behind = { ...ready, upToDate: false, mergeable: true, headFetched: true, catchUp: ["src/world.ts", "docs/IDEAS.md"] };
   check("a pull request ready but for being behind main is updatable", updatable(behind));
   check("one already up to date is not", !updatable({ ...behind, upToDate: true }));
   check("one GitHub cannot merge cleanly is not (a conflict stays its builder's)", !updatable({ ...behind, mergeable: false }));
@@ -624,6 +625,43 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
   check("nothing is updated while another is in flight", pickUpdate([q(79, behind), q(90, { ...ready, upToDate: true, ci: "in_progress" })]).update === null);
   check("nothing to update says why", /only behind/.test(pickUpdate([q(1, { ...ready, upToDate: true })]).why));
   check("an empty queue updates nothing", pickUpdate([]).update === null);
+  // Review of #98: a branch whose catch-up brings a workflow change is refused to the Gate's token every
+  // time; it must not hold the queue, and an unknown catch-up is not updated (fail closed).
+  const bringsWorkflow = { ...behind, catchUp: ["src/world.ts", ".github/workflows/ci.yml"] };
+  check("a catch-up that brings a workflow change is not updated", !updatable(bringsWorkflow));
+  check("an unknown catch-up is not updated", !updatable({ ...behind, catchUp: null }));
+  check("the queue passes over it to the next oldest", pickUpdate([q(79, bringsWorkflow), q(83, behind)]).update === 83);
+  {
+    const tried = [];
+    const lines = await updateInTurn(
+      [79, 83, 90],
+      [79, 83, 90].map((n) => ({ number: n, sha: `s${n}` })),
+      async (n) => {
+        tried.push(n);
+        if (n === 79) throw new Error("PUT pulls/79/update-branch: 422 refused");
+        return `merged main into #${n}`;
+      },
+    );
+    check(
+      "a refused update passes the turn to the next in line, and only one is updated",
+      tried.join() === "79,83" && /#83/.test(lines.at(-1)),
+      lines.join(" | "),
+    );
+    const all = [];
+    await updateInTurn(
+      [1, 2, 3, 4],
+      [1, 2, 3, 4].map((n) => ({ number: n, sha: "s" })),
+      async (n) => {
+        all.push(n);
+        throw new Error("refused");
+      },
+    );
+    check("at most three tries in one sweep", all.join() === "1,2,3");
+  }
+  check(
+    "the order lists every candidate, oldest first, for the sweep to try after a refusal",
+    pickUpdate([q(90, behind), q(79, behind), q(83, behind)]).order.join() === "79,83,90",
+  );
 }
 
 // 2026-11-08: GitHub listed finished check jobs with no steps (#88, #89, #95): never read as docs or as a pass.

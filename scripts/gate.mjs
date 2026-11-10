@@ -273,6 +273,9 @@ const RUNNING = new Set(["queued", "in_progress", "waiting", "requested", "pendi
  */
 export function updatable(s) {
   if (s.upToDate !== false || s.mergeable !== true || s.fork !== false || s.draft || s.paused || s.headFetched === false) return false;
+  // 2026-11-10 (review of #98): main's lines that the catch-up would bring must be known, and none of them
+  // a workflow: GitHub refuses that push from the Gate's token, and the queue would stop on it every sweep.
+  if (!Array.isArray(s.catchUp) || s.catchUp.some((p) => p.startsWith(".github/workflows/"))) return false;
   return decide({ ...s, upToDate: true }).ready;
 }
 
@@ -289,9 +292,10 @@ export function inFlight(s) {
 export function pickUpdate(prs) {
   const flying = prs.filter((p) => inFlight(p.state)).map((p) => p.number);
   const candidates = prs.filter((p) => updatable(p.state)).sort((a, b) => a.number - b.number);
-  if (!candidates.length) return { update: null, why: "no ready pull request is only behind main" };
-  if (flying.length) return { update: null, why: `waiting for #${flying.join(", #")} to finish its checks first` };
-  return { update: candidates[0].number, why: null };
+  if (!candidates.length) return { update: null, order: [], why: "no ready pull request is only behind main" };
+  if (flying.length) return { update: null, order: [], why: `waiting for #${flying.join(", #")} to finish its checks first` };
+  // order: the sweep tries the next one when GitHub refuses an update, so one refusal never stops the queue.
+  return { update: candidates[0].number, order: candidates.map((p) => p.number), why: null };
 }
 
 /**
@@ -325,6 +329,27 @@ export async function bringUpToDate({ number, sha, call, sleep, waitMs = 60000 }
     if (names.has("CI") && names.has("Preview")) break;
   }
   return `merged main into #${number} (now ${head.slice(0, 7)}) and started its CI and preview; the carry rules decide on its review`;
+}
+
+/**
+ * The sweep's update, in turn: the first of `order` (at most three) that GitHub lets the Gate update.
+ * A refusal (a conflict GitHub found after all, a push meanwhile) leaves that branch to its builder and
+ * gives the next one its turn now, so one refused branch never holds the queue. Returns the lines to print.
+ *   bring: (number, sha) => promise of what happened, in words; throws when refused
+ */
+export async function updateInTurn(order, queue, bring) {
+  const lines = [];
+  for (const n of order.slice(0, 3)) {
+    const sha = queue.find((p) => p.number === n)?.sha;
+    if (!sha) continue;
+    try {
+      lines.push(`${await bring(n, sha)}.`);
+      break;
+    } catch (e) {
+      lines.push(`Could not bring #${n} up to date (${String(e?.message ?? e).slice(0, 160)}); the next one in line gets its turn.`);
+    }
+  }
+  return lines;
 }
 
 /** Pure decision for a deploy: every change since the last deploy has the OK its class needs. */
@@ -513,7 +538,7 @@ export async function prState(n) {
         return { review, carry: why };
       })(),
       mergeable: pr.mergeable,
-      upToDate: (() => {
+      ...(() => {
         let ancestor = false;
         let moved = null;
         try {
@@ -526,7 +551,8 @@ export async function prState(n) {
             moved = null;
           }
         }
-        return upToDateFrom(ancestor, moved);
+        // What a catch-up merge would bring: the Gate's token may not push a change to a workflow.
+        return { upToDate: upToDateFrom(ancestor, moved), catchUp: ancestor ? [] : moved };
       })(),
       workflows: files.some((f) => f.path.startsWith(".github/workflows/")),
       docsOnly: headFetched && files.every((f) => DOCS_ONLY(f.path)),
@@ -667,18 +693,10 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
           }
         }
       }
-      const { update, why } = pickUpdate(queue);
-      if (update === null) lines.push(`No branch updated: ${why}.`);
-      else {
-        const sha = queue.find((p) => p.number === update).sha;
-        try {
-          lines.push(`${await bringUpToDate({ number: update, sha, call: gh, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) })}.`);
-        } catch (e) {
-          // A conflict GitHub found after all, a push meanwhile, or a branch whose merge would change a
-          // workflow (this token may not): the builder merges main as before.
-          lines.push(`Could not bring #${update} up to date (${String(e?.message ?? e).slice(0, 160)}).`);
-        }
-      }
+      const { order, why } = pickUpdate(queue);
+      if (!order.length) lines.push(`No branch updated: ${why}.`);
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      lines.push(...(await updateInTurn(order, queue, (n, sha) => bringUpToDate({ number: n, sha, call: gh, sleep }))));
     }
     if (!process.argv.includes("--update")) {
       const { update, why } = pickUpdate(states);

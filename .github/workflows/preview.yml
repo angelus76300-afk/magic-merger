@@ -119,8 +119,14 @@ jobs:
         env:
           N: ${{ steps.pr.outputs.number }}
           SHA: ${{ steps.pr.outputs.sha }}
+          EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           case "$N" in ''|*[!0-9]*) echo "not a pull request number: $N"; exit 1;; esac
+          # A dispatch is not cancelled by a builder's push (its own concurrency group): if the branch moved
+          # during the build, this older build must not take the pr-<n> address from the newer one.
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$(gh api "repos/$REPO/pulls/$N" --jq .head.sha)" != "$SHA" ]; then echo "#$N moved during the build: not uploaded"; exit 1; fi
           npx wrangler versions upload --env staging --preview-alias "pr-$N" --message "PR #$N $SHA" | tee upload.log
           url="https://pr-$N-magic-merger-staging.angelus76300.workers.dev"
           echo "url=$url" >> "$GITHUB_OUTPUT"
