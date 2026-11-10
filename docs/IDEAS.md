@@ -125,6 +125,7 @@ Planned in 5.3.
 - **Tiers by shape as well as color**, for color blind players. S, Claude.
 - **A switch for flashes and shakes**, apart from the system's reduced motion. S, Claude.
 - **Text that scales** with the phone's font size without breaking the board. S, Claude.
+- **The page fits a 320 px phone** (found by: ai, the review of #102, 2026-11-10). At 320 px wide the ? button in the top bar pushes the page to 330 px, so the whole screen slides sideways under the thumb. Small phones (an iPhone SE in zoomed mode, older Androids) are 320 wide. Let the top bar shrink the title first. What the player feels: a screen that stays put. What it costs: S, CSS only, and 320 by 640 in a ui-frames run. Claude.
 
 ### Non invasive monetization
 
