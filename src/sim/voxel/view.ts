@@ -321,6 +321,7 @@ export class VoxelView {
   landChanged = true;
   // The roads the pegs were placed for (4.9).
   private roadsDrawn = -1;
+  private sitesDrawn = -1;
   private scannedAt = NaN;
 
   render(visuals: Visuals, time: number, dt: number, reducedMotion: boolean): void {
@@ -338,7 +339,7 @@ export class VoxelView {
     this.terrain.rebuild(this.firstBuild);
     this.firstBuild = false;
     this.lap("terrain");
-    if ((this.terrain.coversChanged || this.roadsDrawn !== world.roadsVersion) && time - this.lastCovers > 0.25) {
+    if ((this.terrain.coversChanged || this.roadsDrawn !== world.roadsVersion || this.sitesDrawn !== world.sitesVersion) && time - this.lastCovers > 0.25) {
       this.terrain.coversChanged = false;
       this.lastCovers = time;
       this.placeCovers();
@@ -548,7 +549,7 @@ export class VoxelView {
     const trees = world.land ? LOOKS[world.land.biome].trees : null;
     const flora = world.flora;
     // Villages of 4.4.5 part B: houses and buildings drawn whole, each its own.
-    const whole = world.settlements.length ? this.buildings.update(world) : null;
+    const whole = world.settlements.length || world.sites.length ? this.buildings.update(world) : null;
     for (let i = 0; i < world.n; i++) {
       const c = world.cover[i];
       if (whole?.has(i) || c === C.WONDER) continue;
@@ -569,6 +570,7 @@ export class VoxelView {
         if (world.cover[i] === C.NONE && world.depth[i] <= 0.3 && !laid(world, r, k)) add("road-peg", i);
       }
     this.roadsDrawn = world.roadsVersion;
+    this.sitesDrawn = world.sitesVersion;
     this.houseCells = [];
     for (const [key, cells] of lists) if (key === "house" || key.startsWith("house-")) for (const i of cells) this.houseCells.push(i);
     const m = this.m;

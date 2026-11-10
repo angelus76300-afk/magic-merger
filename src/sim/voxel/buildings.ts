@@ -5,6 +5,7 @@ import { HOUSE_STYLES, type Settlement } from "../ecology";
 import type { World } from "../world";
 import { pushBox, type Box } from "./models";
 import { columnTop } from "./terrain";
+import { logsLeft, stageOf } from "../sites";
 
 // Every house and building with a job on an island with villages (4.4.5
 // part B), each from its own seed: no two alike. A house is a two by two
@@ -358,6 +359,70 @@ export function jobShape(seed: number, kind: number, style: string): Shape {
   return { boxes: out, windows, chimneys };
 }
 
+// A building going up (4.9 part 2, sites.ts), from the shape it will have:
+// its main walls set the footprint, the height and the color. Stage 0: stakes
+// and a string; 1: a stone sill and a floor; 2: corner posts and the beams on
+// top, with scaffold poles; 3: walls to half height and bare rafters. The
+// logs not used yet lie in a pile at the front.
+export function siteShape(final: Shape, stage: number, logs: number, trim = 0x6a4a2e): Box[] {
+  let main = final.boxes[0];
+  for (const b of final.boxes) if (b.w * b.h * b.d > main.w * main.h * main.d) main = b;
+  const { x: x0, z: z0, w, d } = main;
+  const lift = Math.max(0, main.y);
+  const h = Math.min(1.5, main.h);
+  const out: Box[] = [];
+  const stakeC = 0xc8a06a;
+  const corners: [number, number][] = [
+    [x0, z0],
+    [x0 + w, z0],
+    [x0, z0 + d],
+    [x0 + w, z0 + d],
+  ];
+  if (stage === 0) {
+    for (const [cx, cz] of corners) out.push(B(cx - 0.03, 0, cz - 0.03, 0.06, 0.32, 0.06, stakeC));
+    out.push(B(x0, 0.26, z0 - 0.008, w, 0.016, 0.016, 0xeee6d4));
+    out.push(B(x0, 0.26, z0 + d - 0.008, w, 0.016, 0.016, 0xeee6d4));
+    out.push(B(x0 - 0.008, 0.25, z0, 0.016, 0.016, d, 0xeee6d4));
+    out.push(B(x0 + w - 0.008, 0.25, z0, 0.016, 0.016, d, 0xeee6d4));
+  } else {
+    // The sill, and the floor on it (on stilts, the posts first).
+    if (lift > 0) for (const [cx, cz] of corners) out.push(B(cx - 0.04, 0, cz - 0.04, 0.08, lift + 0.02, 0.08, 0x5b3d24));
+    out.push(B(x0 - 0.03, lift, z0 - 0.03, w + 0.06, 0.12, d + 0.06, lift > 0 ? 0x8a6a44 : 0x8a8680));
+    out.push(B(x0 + 0.02, lift + 0.12, z0 + 0.02, w - 0.04, 0.03, d - 0.04, 0xb08a5a));
+  }
+  const floor = lift + 0.15;
+  if (stage >= 2) {
+    const top = floor + h - 0.1;
+    for (const [cx, cz] of corners) out.push(B(cx - 0.045, floor, cz - 0.045, 0.09, top - floor + 0.06, 0.09, trim));
+    // Posts in the middle of the long sides.
+    if (w > 1.4) for (const cz of [z0, z0 + d]) out.push(B(x0 + w / 2 - 0.04, floor, cz - 0.04, 0.08, top - floor, 0.08, trim));
+    out.push(B(x0 - 0.04, top, z0 - 0.04, w + 0.08, 0.07, 0.08, trim));
+    out.push(B(x0 - 0.04, top, z0 + d - 0.04, w + 0.08, 0.07, 0.08, trim));
+    out.push(B(x0 - 0.04, top + 0.003, z0 + 0.04, 0.08, 0.07, d - 0.08, trim));
+    out.push(B(x0 + w - 0.04, top + 0.003, z0 + 0.04, 0.08, 0.07, d - 0.08, trim));
+    // Scaffold poles just outside the corners, a plank between two of them.
+    for (const [cx, cz] of corners) out.push(B(cx + (cx > x0 ? 0.1 : -0.15), 0, cz + (cz > z0 ? 0.1 : -0.15), 0.05, top + 0.25, 0.05, stakeC));
+    out.push(B(x0 - 0.15, floor + h * 0.45, z0 + d + 0.1, w + 0.3, 0.035, 0.12, 0xb8955f));
+    if (stage >= 3) {
+      // Walls to half height in their own color, and rafters across the top.
+      const half = h * 0.5;
+      const t = 0.07;
+      out.push(B(x0 + 0.05, floor, z0 + 0.01, w - 0.1, half, t, main.color));
+      out.push(B(x0 + 0.05, floor, z0 + d - t - 0.01, w - 0.1, half, t, main.color));
+      out.push(B(x0 + 0.01, floor, z0 + 0.05 + t, t, half, d - 0.1 - 2 * t, main.color));
+      out.push(B(x0 + w - t - 0.01, floor, z0 + 0.05 + t, t, half, d - 0.1 - 2 * t, main.color));
+      const n = Math.max(2, Math.round(w / 0.5));
+      for (let k = 0; k <= n; k++) out.push(B(x0 + (w - 0.06) * (k / n), top + 0.07, z0 - 0.05, 0.06, 0.06, d + 0.1, 0x9a7a50));
+    }
+  }
+  // The log pile at the front, three to a layer.
+  for (let k = 0; k < Math.min(9, logs); k++) {
+    const layer = Math.floor(k / 3);
+    out.push(B(0.12 + layer * 0.06, layer * 0.095, 1.62 + (k % 3) * 0.11 + layer * 0.05, 0.62 - layer * 0.12, 0.09, 0.09, k % 2 ? 0x7a5230 : 0x6e4a2a));
+  }
+  return out;
+}
+
 // A box turned a quarter turn `q` times about the block's middle (1, 1).
 function turn(b: Box, q: number): Box {
   let { x, z, w, d } = b;
@@ -384,6 +449,8 @@ export interface Lights {
 export class Buildings {
   private mesh: Mesh | null = null;
   private key = "";
+  private siteMesh: Mesh | null = null;
+  private siteKey = "";
   readonly lights: Lights = { windows: [], chimneys: [] };
 
   constructor(
@@ -424,6 +491,7 @@ export class Buildings {
       blocks.push({ i, kind: C.HOUSE, s: nearest(world, i) });
       for (const c of cells) drawn.add(c);
     }
+    this.updateSites(world, drawn);
     let key = "";
     for (const b of blocks) {
       const patched = b.kind === C.HOUSE && [b.i, b.i + 1, b.i + W, b.i + W + 1].some((c) => world.patched.has(c));
@@ -496,10 +564,74 @@ export class Buildings {
     return drawn;
   }
 
+  // 4.9 part 2: the sites going up, in a mesh of their own (one more draw
+  // call), rebuilt when a site is staked, moves on a stage or is finished.
+  private updateSites(world: World, drawn: Set<number>): void {
+    const W = world.w;
+    let key = "";
+    for (const t of world.sites) {
+      const cells = [t.i, t.i + 1, t.i + W, t.i + W + 1];
+      if (!cells.every((c) => world.cover[c] === C.SITE)) continue;
+      for (const c of cells) drawn.add(c);
+      key += `${t.i}:${t.kind}:${stageOf(t)}:${logsLeft(t)},`;
+    }
+    if (key === this.siteKey) return;
+    this.siteKey = key;
+    const pos: number[] = [];
+    const col: number[] = [];
+    for (const t of world.sites) {
+      const cells = [t.i, t.i + 1, t.i + W, t.i + W + 1];
+      if (!cells.every((c) => world.cover[c] === C.SITE)) continue;
+      const x = t.i % W;
+      const y = Math.floor(t.i / W);
+      const tops = cells.map((c) => columnTop(world, c));
+      const base = Math.max(...tops);
+      const low = Math.min(...tops);
+      const s = nearest(world, t.i);
+      const style = s ? HOUSE_STYLES[s.style] : "timber";
+      // The same seed as the building it becomes, so its walls match.
+      const seed = hash(t.i, world.seed);
+      const final = t.kind === C.HOUSE ? houseShape(seed, style, (s?.level ?? 0) >= 3, false) : jobShape(seed, t.kind, style);
+      let q = 0;
+      if (s) {
+        const dx = s.x - (x + 1);
+        const dy = s.y - (y + 1);
+        q = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : dy > 0 ? 0 : 2;
+      }
+      const qq = [0, 3, 2, 1][q];
+      const ox = x - W / 2;
+      const oz = y - world.h / 2;
+      const add = (box: Box) => {
+        const r = turn(box, qq);
+        pushBox(pos, col, { ...r, x: r.x + ox, y: r.y + base, z: r.z + oz });
+      };
+      if (base - low > 0.05) add(B(0.05, low - base, 0.05, 1.9, base - low + 0.02, 1.9, 0x7a7068));
+      for (const box of siteShape(final, stageOf(t), logsLeft(t), STYLE[style]?.trim)) add(box);
+    }
+    if (this.siteMesh) {
+      this.scene.remove(this.siteMesh);
+      this.siteMesh.geometry.dispose();
+      this.siteMesh = null;
+    }
+    if (pos.length) {
+      const g = new BufferGeometry();
+      g.setAttribute("position", new BufferAttribute(new Float32Array(pos), 3));
+      g.setAttribute("color", new BufferAttribute(new Float32Array(col), 3));
+      g.computeBoundingSphere();
+      this.siteMesh = new Mesh(g, this.material);
+      this.siteMesh.frustumCulled = false;
+      this.scene.add(this.siteMesh);
+    }
+  }
+
   dispose(): void {
     if (this.mesh) {
       this.scene.remove(this.mesh);
       this.mesh.geometry.dispose();
+    }
+    if (this.siteMesh) {
+      this.scene.remove(this.siteMesh);
+      this.siteMesh.geometry.dispose();
     }
   }
 }
