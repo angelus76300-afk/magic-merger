@@ -22,13 +22,15 @@ import type { World } from "./world";
 // from artifacts.ts but types): its count, the world's story, and its last
 // three deeds. A deed after its first 15 s counts for the five minute test.
 const ARRIVAL = 15;
-// What was done to an artifact rather than by it (worshipped, guarded, robbed,
-// battered, taken): counted apart, for its five minute test. A thing villagers
-// bow to has not acted. Not saved: only a test run reads it.
+// What was done to an artifact rather than by it, counted apart for its five
+// minute test: being worshipped or guarded. A thing villagers bow to has not
+// acted (24 live items passed that test on nothing else). Being taken, robbed
+// or battered still counts: an object is made to be carried and used (4.7).
+// Not saved: only a test run reads it.
 const PASSIVE = new WeakMap<Artifact, number>();
 export const passiveDeeds = (a: Artifact): number => PASSIVE.get(a) ?? 0;
 export function artDeed(world: World, a: Artifact, what: string): void {
-  if (what.startsWith("was ")) PASSIVE.set(a, passiveDeeds(a) + 1);
+  if (/^was (worshipped|guarded) /.test(what)) PASSIVE.set(a, passiveDeeds(a) + 1);
   a.art.actedAt = world.time;
   a.art.deeds++;
   tell(world, `the ${a.name} ${what}`);

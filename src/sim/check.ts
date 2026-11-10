@@ -1040,7 +1040,7 @@ function* actsProbe(req: CastRequest): Generator<void, { ok: boolean; acted: num
   let deedsAt = 0;
   let cellsAt = 0;
   let bodySeconds = 0;
-  // What was done to it (worshipped, guarded, robbed, taken) is not its doing.
+  // Being worshipped or guarded is not its doing.
   const ownDeeds = () => world.landmarks.filter(isArtifact).reduce((sum, a) => sum + (a.art.key === key ? a.art.deeds - passiveDeeds(a) : 0), 0);
   for (let k = 0; k < ACT_SECONDS / TICK && !errors.length; k++) {
     step(world, rt, isl.life);
@@ -1077,7 +1077,7 @@ function* actsProbe(req: CastRequest): Generator<void, { ok: boolean; acted: num
   return {
     ok: false,
     acted: 0,
-    detail: `Placed by a village and left alone for five minutes, it changed nothing after it arrived: no effect, nothing villagers or creatures used, no creature of its own at work, no material spreading (villagers bowing to it, guarding it or carrying it off is their doing, not its own). Make it do what its name does with w.artifact: effects on a trigger (code of its own in act), grants villagers use, or pairs.`,
+    detail: `Placed by a village and left alone for five minutes, it changed nothing after it arrived: no effect, nothing villagers or creatures used, no creature of its own at work, no material spreading (villagers bowing to it or standing guard over it is their doing, not its own). Make it do what its name does with w.artifact: effects on a trigger (code of its own in act), grants villagers use, or pairs.`,
   };
 }
 

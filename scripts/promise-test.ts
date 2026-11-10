@@ -2,7 +2,7 @@
 // test run fails what the engine could not use of a program (it used to pass
 // in silence), a spell that promises healing heals, a summon is alive when
 // the cast is over, protection is asked only of what is about protection,
-// and what villagers do to an item is not the item acting. Each bad program
+// and villagers bowing to an item is not the item acting. Each bad program
 // below is a shape found in the live library; each has its good twin, so a
 // check cannot pass by failing everything.
 import { runCheck } from "../src/sim/check";
@@ -123,7 +123,7 @@ export function promiseChecks(check: Check): void {
   );
   check("promise: the intent call says what protect is not", /When in doubt, not protect/.test(INTENT_SYSTEM));
 
-  // 5. What villagers do to an item is not the item acting.
+  // 5. Villagers bowing to an item or guarding it is not the item acting.
   const idol = item(
     `const spell = { artifacts: [{ name: "Idol", radius: 8, lures: ["villager"], uses: [{ do: "worship", by: ["villager"] }, { do: "guard", by: ["villager"] }] }], *cast(w) { const parts = []; for (let k = 0; k < 8; k++) parts.push([-0.3 + k * 0.02, -0.3 + k * 0.02, k * 0.2, 0.6 - k * 0.04, 0.6 - k * 0.04, 0.2, "#8a8a92"]); w.model(w.x, w.y, parts, { name: "Idol" }); w.artifact(w.x, w.y, "Idol"); } };`,
     ["other"],
