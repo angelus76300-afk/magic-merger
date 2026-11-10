@@ -51,6 +51,7 @@ import {
 import { FORMS } from "../shared/forms";
 import { pickExamples, words } from "../worker/programs";
 import { verdict, type LinkedPull } from "../worker/feedback";
+import { DROP_TILE, dropAt, dropShare } from "../src/sim/voxel/drops";
 import { cronJobs } from "../worker/cron";
 import { draftBrief } from "../shared/feedback";
 import { programToFetch } from "../shared/sync";
@@ -2332,6 +2333,42 @@ pacingChecks(check);
 
 // The mist from afar (2026-11-07): scripts/fog-test.ts.
 fogChecks(check);
+
+// 16. Rain and snow stay over the island when the camera moves (issue #69).
+{
+  const seeds: [number, number, number][] = [];
+  for (let k = 0; k < 200; k++) seeds.push([(k * 0.618) % 1, (k * 0.377) % 1, (k * 0.271) % 1]);
+  const from = { x: 0, y: 4, z: 0 };
+  const to = { x: 7, y: 9, z: -5 };
+  let kept = 0;
+  let inBox = true;
+  for (const snow of [0, 1])
+    for (const s of seeds) {
+      const a = dropAt(s, from, 12.3, snow);
+      const b = dropAt(s, to, 12.3, snow);
+      // A drop still inside both boxes is at the same place over the island.
+      const both = [a, b].every(
+        (p) =>
+          Math.abs(p.x - to.x) < DROP_TILE / 2 - 1 &&
+          Math.abs(p.x - from.x) < DROP_TILE / 2 - 1 &&
+          Math.abs(p.z - to.z) < DROP_TILE / 2 - 1 &&
+          Math.abs(p.z - from.z) < DROP_TILE / 2 - 1 &&
+          p.y - from.y > -12 &&
+          p.y - to.y > -12 &&
+          p.y - from.y < 38 &&
+          p.y - to.y < 38,
+      );
+      if (both && Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) < 1e-6) kept++;
+      else if (both) inBox = false;
+      if (Math.abs(b.x - to.x) > DROP_TILE / 2 || Math.abs(b.z - to.z) > DROP_TILE / 2) inBox = false;
+    }
+  check("a raindrop stays where it was over the island when the camera pans", inBox && kept > 200, `kept ${kept} of 400, in box ${inBox}`);
+  check(
+    "rain shows about as thick on screen close up and far out",
+    dropShare(1, 20) === 1 && Math.abs(dropShare(1, 200) - 1 / 9) < 1e-9,
+    `${dropShare(1, 20)} ${dropShare(1, 200)}`,
+  );
+}
 
 // Roads (4.9): scripts/roads-test.ts.
 roadsChecks(check);

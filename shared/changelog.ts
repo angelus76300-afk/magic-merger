@@ -40,3 +40,34 @@ export function whatIsNew(
     ideas: shipped.filter((i) => i.at > seen),
   };
 }
+
+// 2026-11-08, no shared hot files: a pull request adds its entry as its own file,
+// changelog.d/<YYYY-MM-DD>-<slug>.json holding one entry, so two pull requests never
+// edit the same lines. The build joins them with public/changelog.json (vite.config.ts),
+// newest first: by date, then by file name, last first. A part that is not an entry
+// with a date and a text stops the build, so a broken one never reaches players.
+export interface ChangelogPart {
+  name: string;
+  text: string;
+}
+
+export function joinChangelog(base: { about?: string; entries: ChangelogEntry[] }, parts: ChangelogPart[]): { about?: string; entries: ChangelogEntry[] } {
+  const added = parts
+    .map((p) => {
+      let e: unknown;
+      try {
+        e = JSON.parse(p.text);
+      } catch {
+        throw new Error(`changelog.d/${p.name}: not JSON`);
+      }
+      const entry = e as ChangelogEntry;
+      if (!entry || typeof entry !== "object" || !/^\d{4}-\d{2}-\d{2}$/.test(entry.date ?? "") || typeof entry.text !== "string" || !entry.text.trim())
+        throw new Error(`changelog.d/${p.name}: an entry needs a date (YYYY-MM-DD) and a text`);
+      return { name: p.name, entry };
+    })
+    .sort((a, b) => (a.entry.date === b.entry.date ? b.name.localeCompare(a.name) : b.entry.date.localeCompare(a.entry.date)))
+    .map((p) => p.entry);
+  // Newest first overall: a part is never older than the file it joins, but keep the order honest.
+  const entries = [...added, ...base.entries].sort((a, b) => b.date.localeCompare(a.date));
+  return { ...base, entries };
+}
