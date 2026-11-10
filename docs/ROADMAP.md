@@ -540,6 +540,16 @@ The owner, 5 November: as people discover things and have the resources, they bu
 4. **Vehicles**: carts on roads, boats on rivers and lakes, a ferry, later a flying ship from a spell or a wonder; each a small box model that moves with the 4.3 steering and carries people and goods between villages; trade caravans that monsters can rob.
 5. **Checked**: a village left alone for an hour of simulated time grows from hamlet to town on three seeds; roads join every village that trades; the simulation p95 on a large island stays within the HUD numbers.
 
+### 4.9.5 Wonders review
+
+The owner, 9 November ("wonders: yes"): the wonders on the islands were written one at a time, by different models, and nobody has looked at all of them together. A wonder that is a ball of blocks under a grand name breaks the promise of its name.
+
+1. **Frame every wonder**: each wonder of the pool and each built in wonder, on an island at phone size (390 by 844), from the same three shots, saved under `docs/measurements/`.
+2. **Judge each against its name**: does it look like what it is called, does it do something (an effect the player can see or a creature it draws), is it a fine `w.model` shape and not a ball of voxels, is it sized right for its tier and its land. One line each, with the frame.
+3. **A scored list**: every wonder scored on those four points, worst first, with `decision-matrix` so the order is not a mood. The list is the deliverable even if nothing is rebuilt.
+4. **Rebuild the weak ones**: with the fine box models of 4.7 item 4, one at a time, each tested like a new wonder and framed again; the cost of each rewrite logged in the pull request. Never the whole pool at once, and never a rewrite of a wonder players have already met without its old version kept.
+5. **Cost**: about $3 to $6 of AI, approved by the owner as "wonders: yes" (9 November). Back to the owner only past $12.
+
 ### 5.0 Look closer: select anything
 
 The first person update, part 1. When no spell is selected (or after a cast, when the player is back to nothing selected), a tap selects whatever is there: a creature (today's inspect card, 3.6), a villager, a building with a job, a wonder, a landmark, an artifact or object, a tree or plant, water or a road.
