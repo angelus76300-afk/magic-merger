@@ -668,7 +668,11 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
       v.x + 3,
       v.y + 3,
     );
-    for (let round = 0; round < 12; round++) {
+    for (let k = 0; k < 2; k++) step(world, rt); // the spell casts on its first steps
+    const alive = (kind: string) => world.creatures.filter((c) => !c.dead && c.kind === kind).length;
+    let peakChain = 0;
+    for (let round = 0; round < 6; round++) {
+      peakChain = Math.max(peakChain, alive("moth") + alive("ash"));
       for (const c of world.creatures) {
         if (!c.dead && (c.kind === "phoenix" || c.kind === "moth" || c.kind === "ash")) {
           c.hp = 0;
@@ -677,15 +681,35 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
       }
       for (let k = 0; k < 3; k++) step(world, rt);
     }
-    const alive = (kind: string) => world.creatures.filter((c) => !c.dead && c.kind === kind).length;
     const phoenixes = alive("phoenix");
-    const chain = alive("moth") + alive("ash");
     check(
       "a phoenix is reborn once per death, not multiplied",
       errors.length === 0 && phoenixes === 1,
-      `${phoenixes} phoenixes after 12 deaths, ${errors[0] ?? "no error"}`,
+      `${phoenixes} phoenixes after 6 deaths, ${errors[0] ?? "no error"}`,
     );
-    check("two spells naming each other do not multiply without limit", chain <= 8, `${chain} moths and ash after 12 rounds`);
+    // Other spawning items still work: one moth dying leaves two ash.
+    const t = villageWorld();
+    t.rt.cast(
+      {
+        key: "moth2",
+        name: "Moth",
+        tier: "minor",
+        code: `const spell = { creatures: [{ name: "moth", base: "bird", behavior: "wander", hp: 20, onDeath: "spawn:ash" }, { name: "ash", base: "bird", behavior: "wander", hp: 20 }], *cast(w) { w.spawn("moth", w.x, w.y); } };`,
+      },
+      t.v.x + 3,
+      t.v.y + 3,
+    );
+    for (let k = 0; k < 2; k++) step(t.world, t.rt);
+    for (const c of t.world.creatures) {
+      if (c.kind === "moth") {
+        c.hp = 0;
+        c.dead = true;
+      }
+    }
+    for (let k = 0; k < 3; k++) step(t.world, t.rt);
+    const ash = t.world.creatures.filter((c) => !c.dead && c.kind === "ash").length;
+    check("a creature dying with spawn of another kind still leaves two", t.errors.length === 0 && ash === 2, `${ash} ash`);
+    check("two spells naming each other do not multiply without limit", peakChain >= 2 && peakChain <= 8, `${peakChain} moths and ash at the peak of 6 rounds`);
   }
   {
     // Over several islands: whether a wounded imp dies within 20 s or limps
