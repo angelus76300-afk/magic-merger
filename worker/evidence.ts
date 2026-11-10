@@ -86,11 +86,17 @@ export async function nextEvidence(db: D1Database, entries: Evidence[] = EVIDENC
   // The most cast first: the one players meet most. A stored verdict that is
   // not JSON (one cut at 2000 characters before the review of #45) is read
   // as no verdict: json_extract would throw on it, for every row it scans.
+  // How often each program was cast is counted once, in one pass over `casts`,
+  // and only if a program failed. It was a subquery in the ORDER BY: one scan
+  // of `casts` (no index on pid) for each program that failed, 3.3 million rows
+  // read for 450 of them over 30,000 casts, and the same again at every run of
+  // the cron that found nothing to do.
   const row = await db
     .prepare(
       `SELECT p.* FROM programs p
+       LEFT JOIN (SELECT pid, COUNT(*) AS n FROM casts GROUP BY pid) c ON c.pid = p.id
        WHERE CASE WHEN json_valid(p.checked) THEN json_extract(p.checked, '$.ok') END = 0 AND ${FREE}
-       ORDER BY (SELECT COUNT(*) FROM casts c WHERE c.pid = p.id) DESC, p.id
+       ORDER BY COALESCE(c.n, 0) DESC, p.id
        LIMIT 1`,
     )
     .bind(1, cooled)
