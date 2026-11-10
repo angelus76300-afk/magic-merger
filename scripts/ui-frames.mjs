@@ -1,7 +1,7 @@
 // Frames of every screen players see around the island, for a before and
 // after of an interface change: the real Worker (wrangler dev, a fresh local
 // D1, a stub Claude) and the built game in dist/, at a phone (390 by 844) and
-// the owner's foldable (806 by 968).
+// the owner's foldable (832 by 1000) and a desktop (1440 by 900).
 //   npm run build && node scripts/ui-frames.mjs <out dir> [prefix]
 // It fails (exit code 1) when a visible control is under 44 by 44 px, when the
 // tabs are not at the bottom on a phone or foldable, or when the vote after a
@@ -146,9 +146,9 @@ async function closeDialogs(page) {
   }
 }
 
-async function run(width, height) {
-  const tag = `${width}x${height}`;
-  const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, hasTouch: false });
+async function run(width, height, touch = false) {
+  const tag = `${width}x${height}${touch ? "-touch" : ""}`;
+  const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, hasTouch: touch });
   const page = await ctx.newPage();
   page.on("pageerror", (e) => errors.push(`${tag}: ${e.message}`));
   await page.addInitScript((t) => localStorage.setItem("magic-merger.token", t), ADMIN);
@@ -229,6 +229,29 @@ async function run(width, height) {
   await page.click('.tab[data-view="world-view"]');
   await page.waitForTimeout(3500);
   await shot("05-world");
+  // A filter row cut by its edge says so: it fades while more is out of
+  // sight (on a phone, "Any tier" sat half cut against Grid, 2026-11-07).
+  const cutRow = await page.evaluate(() => {
+    const row = document.querySelector(".spell-tools .filterbar");
+    return !!row && row.scrollLeft + row.clientWidth < row.scrollWidth - 1 && !row.classList.contains("filter-more");
+  });
+  if (cutRow) failures.push(`${tag}: World's filter row is cut at its edge with no fade`);
+  // A name of 60 characters (the most a name can be) stays inside its list.
+  const spill = await page.evaluate(() => {
+    const out = [];
+    for (const sel of [".spell-list", ".inventory-list"]) {
+      const list = document.querySelector(sel);
+      const name = list?.querySelector(".chip .chip-name");
+      if (!list || !name || !list.getClientRects().length) continue;
+      const was = name.textContent;
+      name.textContent = "Thunderous Cascade of the Moonlit Glacier and the Long Night";
+      const over = name.closest(".chip").getBoundingClientRect().right - list.getBoundingClientRect().right;
+      name.textContent = was;
+      if (over > 1) out.push(`${sel} by ${Math.round(over)} px`);
+    }
+    return out;
+  });
+  for (const s of spill) failures.push(`${tag}: a long name runs past ${s}`);
   const castable = page.locator(".chip-castable").first();
   if (await castable.count()) {
     await castable.click();
@@ -240,7 +263,8 @@ async function run(width, height) {
     await shot("06-world-selected");
     const stage = await page.locator("#world-stage").boundingBox();
     // On its side the island's first look panel fills the middle: tap beside it.
-    const [fx, fy] = width > height ? [0.15, 0.8] : [0.5, 0.45];
+    // On a wide screen the island may not reach the stage's edge: tap nearer in.
+    const [fx, fy] = width > height ? (height > 500 ? [0.3, 0.75] : [0.15, 0.8]) : [0.5, 0.45];
     await page.mouse.click(stage.x + stage.width * fx, stage.y + stage.height * fy);
     await page.waitForTimeout(500);
     await page.mouse.click(stage.x + stage.width * fx, stage.y + stage.height * fy);
@@ -259,7 +283,24 @@ async function run(width, height) {
       await shot("07b-world-reasons");
       const wide = await page.evaluate(() => document.documentElement.scrollWidth);
       if (wide > width) failures.push(`${tag}: the vote's reasons make the page ${wide} px wide`);
-      await page.locator(".vote .vote-close").click();
+      // Reasons by form (2026-11-07): a spell's, up to three picked, then Send.
+      const reasons = page.locator(".vote .vote-reason");
+      const labels = await reasons.allInnerTexts();
+      if (!labels.includes("Too weak") || labels.length > 6) failures.push(`${tag}: a spell's reasons are not a spell's: ${labels.join(", ")}`);
+      for (let i = 0; i < Math.min(4, labels.length); i++) await reasons.nth(i).click();
+      const pressed = await page.locator('.vote .vote-reason[aria-pressed="true"]').count();
+      if (pressed !== 3) failures.push(`${tag}: ${pressed} reasons picked after four taps, not 3`);
+      await shot("07c-world-reasons-picked");
+      const island = await page.locator("#world-stage").boundingBox();
+      if (island.height < Math.min(300, height * 0.36)) failures.push(`${tag}: the reasons leave the island ${Math.round(island.height)} px tall`);
+      // Escape closes it even with focus on the island, where a cast leaves it.
+      await page.locator("iframe.world-frame").focus();
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(300);
+      if (await page.locator(".vote").count()) {
+        failures.push(`${tag}: Escape on the island does not close the vote`);
+        await page.locator(".vote .vote-close").click();
+      }
     }
   }
 
@@ -273,7 +314,8 @@ async function run(width, height) {
     // Tabs under the thumb below 1024 px: the bar touches the bottom edge
     // (on a phone on its side, a rail down the left edge, top to bottom).
     const tabsBottom = await page.evaluate(() => document.querySelector(".tabs").getBoundingClientRect().bottom);
-    if (width < 1024 && Math.abs(tabsBottom - height) > 1) failures.push(`${tag}: the tabs end at y ${Math.round(tabsBottom)}, not at the bottom (${height})`);
+    if ((width < 1024 || (touch && width < 1280)) && Math.abs(tabsBottom - height) > 1)
+      failures.push(`${tag}: the tabs end at y ${Math.round(tabsBottom)}, not at the bottom (${height})`);
     await page.waitForTimeout(1200);
     await shot(name);
   }
@@ -295,9 +337,14 @@ async function run(width, height) {
 }
 
 try {
-  await run(390, 844);
-  await run(806, 968);
-  await run(844, 390);
+  // SIZES="390x844,832x1000,1440x900" picks the sizes; by default a phone,
+  // the owner's foldable open and on its side (a touch screen, "t"), a
+  // desktop and a phone on its side.
+  const sizes = (process.env.SIZES ?? "390x844,832x1000,1104x884t,1440x900,844x390").split(",");
+  for (const s of sizes) {
+    const [w, h] = s.replace("t", "").split("x").map(Number);
+    await run(w, h, s.endsWith("t"));
+  }
   console.log(`frames in ${OUT}`);
   if (errors.length) console.log(`page errors:\n${errors.join("\n")}`);
   console.log(

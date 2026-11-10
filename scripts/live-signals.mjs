@@ -104,6 +104,25 @@ async function drift() {
   };
 }
 
+// Rows of (form, stored reason, count) to one count per form and reason, the
+// most common first. Stored reasons are ids joined by commas.
+export function tallyReasons(rows) {
+  const counts = new Map();
+  for (const r of rows ?? []) {
+    for (const reason of String(r.reason ?? "none").split(",")) {
+      const key = `${r.form}\t${reason}`;
+      counts.set(key, (counts.get(key) ?? 0) + Number(r.n));
+    }
+  }
+  return [...counts]
+    .map(([key, n]) => {
+      const [form, reason] = key.split("\t");
+      return { form, reason, n };
+    })
+    .sort((a, b) => b.n - a.n || a.form.localeCompare(b.form) || a.reason.localeCompare(b.reason))
+    .slice(0, 30);
+}
+
 async function signals(hours) {
   const since = Date.now() - hours * 3600_000;
   const out = { at: new Date().toISOString(), hours };
@@ -122,6 +141,18 @@ async function signals(hours) {
       `SELECT v.key, e.name, v.reason, COUNT(*) AS n FROM votes v LEFT JOIN elements e ON e.key = v.key
        WHERE v.up = 0 AND v.at >= ? GROUP BY v.key, v.reason ORDER BY n DESC LIMIT 20`,
       [since],
+    ),
+  );
+  // Reasons by form (2026-11-07): a down vote holds one to three reasons
+  // ("still,body"); each is counted on its own, by the item's form, so the
+  // planner sees what players complain about most.
+  await safe("downReasons", async () =>
+    tallyReasons(
+      await select(
+        `SELECT COALESCE(e.form, e.kind, '?') AS form, v.reason, COUNT(*) AS n FROM votes v LEFT JOIN elements e ON e.key = v.key
+         WHERE v.up = 0 AND v.at >= ? GROUP BY form, v.reason`,
+        [since],
+      ),
     ),
   );
   await safe("reports", () => select(`SELECT key, name, reason, at FROM reports WHERE status = 'open' ORDER BY at DESC LIMIT 20`));

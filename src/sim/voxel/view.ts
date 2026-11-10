@@ -34,14 +34,15 @@ import { Figures, figureMaterials, type Pose } from "./figures";
 import { buildRig, drawScale, paletteOf, ROLES, variantOf, type Rig } from "./rigs";
 import { easeGround, walkGround, type Footing } from "./walk";
 import { gaitOf, hipHeight, lookAround, strideRate } from "./gait";
-import { BUILTIN, C, F, S } from "../materials";
+import { BUILTIN, C, F, G, S } from "../materials";
+import { laid } from "../roads";
 import { envelope, type Body, type Visuals } from "../visuals";
 import { TICK, type World } from "../world";
 import { bodyGeometry } from "./bodies";
 import { daylight } from "../daylight";
 import { MODELS, geometryOf } from "./models";
 import { OrbitCamera } from "./orbit";
-import { CHUNK, Terrain, columnTop, surfaceY } from "./terrain";
+import { CHUNK, Terrain, V, columnTop, surfaceY } from "./terrain";
 import { hexColor, mixColor } from "../colors";
 import { DecorInstances } from "./decor-instances";
 import { Darkness } from "./darkness";
@@ -55,6 +56,7 @@ import { WonderModels } from "./wonders";
 import { PropModels } from "./props";
 import { valueNoise } from "../noise";
 import { Sky } from "./sky";
+import { fogRange } from "./fog";
 
 // What a spell's darkness pulls the sky toward.
 const NIGHT_SKY = 0x04020f;
@@ -317,6 +319,8 @@ export class VoxelView {
   paceMs = 1000 / 30;
   // A cast changed the land outside a tick (Engine.cast).
   landChanged = true;
+  // The roads the pegs were placed for (4.9).
+  private roadsDrawn = -1;
   private scannedAt = NaN;
 
   render(visuals: Visuals, time: number, dt: number, reducedMotion: boolean): void {
@@ -334,7 +338,7 @@ export class VoxelView {
     this.terrain.rebuild(this.firstBuild);
     this.firstBuild = false;
     this.lap("terrain");
-    if (this.terrain.coversChanged && time - this.lastCovers > 0.25) {
+    if ((this.terrain.coversChanged || this.roadsDrawn !== world.roadsVersion) && time - this.lastCovers > 0.25) {
       this.terrain.coversChanged = false;
       this.lastCovers = time;
       this.placeCovers();
@@ -499,6 +503,14 @@ export class VoxelView {
       const along = (x > 0 && world.cover[i - 1] === C.FENCE) || (x < world.w - 1 && world.cover[i + 1] === C.FENCE);
       return along ? "fence-x" : "fence-z";
     }
+    if (c === C.BRIDGE) {
+      // Along the way it carries: the side with more bridge or road.
+      const x = i % world.w;
+      const way = (j: number) => j >= 0 && j < world.n && (world.cover[j] === C.BRIDGE || world.ground[j] === G.ROAD);
+      const ex = (x > 0 && way(i - 1) ? 1 : 0) + (x < world.w - 1 && way(i + 1) ? 1 : 0);
+      const ez = (way(i - world.w) ? 1 : 0) + (way(i + world.w) ? 1 : 0);
+      return ez > ex ? "bridge-z" : "bridge-x";
+    }
     return world.materials.get("cover", c).name;
   }
 
@@ -550,6 +562,13 @@ export class VoxelView {
       }
       add(this.coverKey(i, c, trees, builtinCovers), i);
     }
+    // 4.9: pegs every few cells along a road marked out and not laid yet.
+    for (const r of world.roads)
+      for (let k = 2; k < r.cells.length - 1; k += 4) {
+        const i = r.cells[k];
+        if (world.cover[i] === C.NONE && world.depth[i] <= 0.3 && !laid(world, r, k)) add("road-peg", i);
+      }
+    this.roadsDrawn = world.roadsVersion;
     this.houseCells = [];
     for (const [key, cells] of lists) if (key === "house" || key.startsWith("house-")) for (const i of cells) this.houseCells.push(i);
     const m = this.m;
@@ -568,8 +587,9 @@ export class VoxelView {
         let base = columnTop(world, i);
         if (key === "lily") base = surfaceY(world, i) + 0.01;
         else if (key === "dock") base = Math.max(base, surfaceY(world, i)) - 0.24;
+        else if (key === "bridge-x" || key === "bridge-z") base = world.walkLevel(i) * V - 0.3;
         const p = this.toScene(x + 0.5, y + 0.5, base);
-        if (house) {
+        if (house || key === "bridge-x" || key === "bridge-z") {
           m.makeTranslation(p.x - 0.5, p.y, p.z - 0.5);
         } else if (tree && flora) {
           // Every tree its own (4.4.5): height, girth, a lean and a turn.
@@ -698,11 +718,14 @@ export class VoxelView {
       paintSky(this.skyCanvas, top, low);
       (this.scene.background as CanvasTexture).image = this.skyCanvas;
       (this.scene.background as CanvasTexture).needsUpdate = true;
-      const fog = this.scene.fog as Fog;
-      fog.color.set(fogStep ? hexColor(mixColor(parseInt(low.slice(1), 16), 0xc4c8cc, fogStep * 0.6)) : low);
-      fog.near = this.world.w * 1.6 * (1 - fogStep * 0.85);
-      fog.far = this.world.w * 5 * (1 - fogStep * 0.8);
+      (this.scene.fog as Fog).color.set(fogStep ? hexColor(mixColor(parseInt(low.slice(1), 16), 0xc4c8cc, fogStep * 0.6)) : low);
     }
+    // The mist moves back with the camera, so the island keeps its colours
+    // when zoomed out (fog.ts).
+    const range = fogRange(Math.max(this.world.w, this.world.h), o.dist, fogStep);
+    const fog = this.scene.fog as Fog;
+    fog.near = range.near;
+    fog.far = range.far;
     let n = 0;
     const lights = this.world.settlements.length ? this.buildings.lights : null;
     if (day.night > 0.15 && lights) {

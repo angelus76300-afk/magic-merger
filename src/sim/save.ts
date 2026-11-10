@@ -1,4 +1,5 @@
 import { loadedState } from "./artifacts";
+import { readRoad, restoreDecks, type Road } from "./roads";
 import { dressVillages, restoreCreature, saveMind, KINDS, type Creature, type SavedMind } from "./creatures";
 import { MARKS, MAX_MARKS, MAX_STORY, type Mark, type StoryLine, type Village } from "./kin";
 import { BUILTIN, BUILTIN_BEFORE_4_4_5, FIRST_JOB, LAST_JOB, LAYERS, type Layer } from "./materials";
@@ -52,6 +53,8 @@ export interface SavedWorld {
   props?: Prop[];
   islandName?: string;
   patched?: number[];
+  // Roads laid between villages and to wonders, with their bridges' decks (4.9).
+  roads?: Road[];
 }
 
 export function saveWorld(world: World, owners: Map<string, string>): SavedWorld {
@@ -114,6 +117,7 @@ export function saveWorld(world: World, owners: Map<string, string>): SavedWorld
     ...(world.props.length ? { props: world.props } : {}),
     ...(world.islandName ? { islandName: world.islandName } : {}),
     ...(world.patched.size ? { patched: [...world.patched].slice(0, 4000) } : {}),
+    ...(world.roads.length ? { roads: world.roads.slice(0, MAX_ROADS) } : {}),
   };
 }
 
@@ -285,8 +289,16 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
     }
   }
   dressVillages(world, undressed);
+  // 4.9: roads and the decks of their bridges; an older save has none.
+  world.roads = (Array.isArray(data.roads) ? data.roads : [])
+    .slice(0, MAX_ROADS)
+    .map((r) => readRoad(r, world))
+    .filter((r): r is Road => r !== null);
+  restoreDecks(world);
   return world;
 }
+
+const MAX_ROADS = 24;
 
 function clamp16(v: number): number {
   return Math.max(0, Math.min(65535, Math.round(v)));
