@@ -292,7 +292,14 @@ export function inFlight(s) {
 export function pickUpdate(prs) {
   const flying = prs.filter((p) => inFlight(p.state)).map((p) => p.number);
   const candidates = prs.filter((p) => updatable(p.state)).sort((a, b) => a.number - b.number);
-  if (!candidates.length) return { update: null, order: [], why: "no ready pull request is only behind main" };
+  if (!candidates.length) {
+    // Ready but for being behind, and refused only because the catch-up brings a workflow change.
+    const byHand = prs.filter((p) => !updatable(p.state) && updatable({ ...p.state, catchUp: [] })).map((p) => p.number);
+    const why = byHand.length
+      ? `#${byHand.join(", #")} would be brought up to date, but main's catch-up brings a change to .github/workflows, which the Gate's token may not push: its builder merges main once`
+      : "no ready pull request is only behind main";
+    return { update: null, order: [], why };
+  }
   if (flying.length) return { update: null, order: [], why: `waiting for #${flying.join(", #")} to finish its checks first` };
   // order: the sweep tries the next one when GitHub refuses an update, so one refusal never stops the queue.
   return { update: candidates[0].number, order: candidates.map((p) => p.number), why: null };
@@ -409,12 +416,18 @@ const DOCS_ONLY = (path) => /^(docs\/|\.claude\/skills\/)|\.md$|^\.claude\/setti
  * times, and if the steps still cannot prove which run it was, the Gate waits (and the sweep retries).
  *   ghGet: (path) => json; sleep: (ms) => promise
  */
+/** Whether a workflow run ran at all: not one held for an approval that never came. */
+export const ran = (r) => r?.conclusion !== "action_required" && r?.status !== "action_required";
+
 export async function ciFrom(sha, ghGet, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), tries = 3, ghText = async () => null) {
   const runs = (await ghGet(`actions/runs?head_sha=${sha}&per_page=50`))?.workflow_runs ?? [];
   // 2026-11-10: the Gate's own dispatch (the merge queue) counts only when no run of the pull request's
   // own event exists on this commit: a dispatch refused because the branch moved must not hide it.
   const newest = (rs) => rs.sort((a, b) => b.run_number - a.run_number)[0];
-  const all = runs.filter((r) => r.name === "CI");
+  // A run waiting for an approval never ran (conclusion action_required): GitHub creates one for the
+  // pull_request event when the Gate's token updates a branch (seen live on #102, 10 November). It
+  // proves nothing and must not hide the run the Gate started itself.
+  const all = runs.filter((r) => r.name === "CI" && ran(r));
   const ci = newest(all.filter((r) => r.event === "pull_request")) ?? newest(all);
   if (!ci) return "missing";
   if (ci.status !== "completed") return ci.status;
@@ -465,7 +478,7 @@ const ciOn = (sha) => ciFrom(sha, gh, undefined, 3, ghText);
 /** The preview smoke test of a commit: the newest Preview run whose smoke job ran (a run for a label skips it). */
 async function smokeOn(sha) {
   const runs = ((await gh(`actions/runs?head_sha=${sha}&per_page=50`))?.workflow_runs ?? [])
-    .filter((r) => r.name === "Preview")
+    .filter((r) => r.name === "Preview" && ran(r))
     .sort((a, b) => b.run_number - a.run_number);
   for (const run of runs) {
     if (run.status !== "completed") return run.status;

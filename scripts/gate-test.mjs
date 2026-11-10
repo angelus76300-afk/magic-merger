@@ -9,6 +9,7 @@ import {
   carriedReview,
   bringUpToDate,
   ciFrom,
+  ran,
   updateInTurn,
   decide,
   deployable,
@@ -624,6 +625,12 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
   check("the oldest updatable pull request goes first", pickUpdate([q(83, behind), q(79, behind), q(85, { ...behind, review: null })]).update === 79);
   check("nothing is updated while another is in flight", pickUpdate([q(79, behind), q(90, { ...ready, upToDate: true, ci: "in_progress" })]).update === null);
   check("nothing to update says why", /only behind/.test(pickUpdate([q(1, { ...ready, upToDate: true })]).why));
+  check(
+    "a pull request held only by a workflow catch-up is named, with what to do",
+    /#79 would be brought up to date.*\.github\/workflows.*merges main once/.test(
+      pickUpdate([q(79, { ...behind, catchUp: [".github/workflows/ci.yml"] })]).why,
+    ),
+  );
   check("an empty queue updates nothing", pickUpdate([]).update === null);
   // Review of #98: a branch whose catch-up brings a workflow change is refused to the Gate's token every
   // time; it must not hold the queue, and an unknown catch-up is not updated (fail closed).
@@ -715,6 +722,20 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
   check(
     "a newer failed dispatch does not hide the pull request's own full run",
     (await ciFrom("s", runsOf([run(1, "pull_request", 5), run(2, "workflow_dispatch", 6, "failure")], { 1: step("success") }), noWait)) === "full",
+  );
+  // Seen live on #102 (10 November): the Gate's update made GitHub create pull_request runs held for an
+  // approval (conclusion action_required) beside the runs the Gate dispatched. They never ran.
+  check(
+    "a pull_request run held for an approval does not hide the Gate's dispatched full run",
+    (await ciFrom("s", runsOf([run(1, "pull_request", 5, "action_required"), run(2, "workflow_dispatch", 6)], { 2: step("success") }), noWait)) === "full",
+  );
+  check(
+    "a run that never ran does not count as one",
+    !ran({ status: "completed", conclusion: "action_required" }) && ran({ status: "completed", conclusion: "success" }),
+  );
+  check(
+    "only held runs: CI reads missing, so the Gate waits",
+    (await ciFrom("s", runsOf([run(1, "pull_request", 5, "action_required")], {}), noWait)) === "missing",
   );
   check("a dispatched run alone counts", (await ciFrom("s", runsOf([run(2, "workflow_dispatch", 6)], { 2: step("success") }), noWait)) === "full");
   check(
