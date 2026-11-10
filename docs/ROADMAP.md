@@ -301,7 +301,7 @@ Asked for: the five items of "4.5" below, with the owner's answers on the two op
 2. **The Community tab**: who plays, when, items found, First Discoveries, daily finds and each friend's favorite spell, no recipe; the favorite and a hide switch on the account page and at the foot of the tab.
 3. **What's new**: `public/changelog.json`, a dot on the `?` button and a list since the last visit, "your idea was built" by title.
 4. **Ideas follow pull requests**: the `Ideas` workflow moves `Idea #<n>` to "Waiting for review", then "Done".
-5. **Previews**: a staging Worker with its own D1 (copied nightly, accounts stripped), its own queue and $2 a month; each pull request gets `pr-<n>-magic-merger-staging.angelus76300.workers.dev`. Staging lets nobody in without the admin token.
+5. **Previews**: a staging Worker with its own D1 (copied nightly, accounts stripped), its own queue and $5 a month (raised from $2 on 8 November 2026); each pull request gets `pr-<n>-magic-merger-staging.angelus76300.workers.dev`. Staging lets nobody in without the admin token.
 
 Not done: without `STAGING_ANTHROPIC_API_KEY` the previews run in mock mode (the `CLOUDFLARE_API_TOKEN` secret is set since 5 November and previews upload); the Community tab has no name checks or report button yet (needed before 5.4); "items found" is unknown for friends who play with a link and no account.
 
@@ -355,7 +355,7 @@ Not done: what only the owner can change (4.5.1a), and the planner's schedule (a
 
 ## What the money taught us
 
-The ledger holds $15.41 for November by the morning of 5 November (read in the live `spend` table by the 4.5.1 audit; plus about $3.32 in October before it existed). Since 3.4 the cap is $50 a month, $48 for the game since 4.5 with $2 for the previews. Opus spells are 88% of it. Opus spell calls went from 43 to 96 in one day because the program version bump to 4 rewrote every big spell on its next cast. **Never rewrite spells in bulk again**: new API features stay backward compatible, and spells are rewritten one at a time (an admin button in 3.2, player votes in 3.3).
+The ledger holds $15.41 for November by the morning of 5 November (read in the live `spend` table by the 4.5.1 audit; plus about $3.32 in October before it existed). Since 3.4 the cap is $50 a month, $48 for the game since 4.5 with $2 for the previews (raised to $5 on 8 November 2026, which on one key can pass $50 by $3). Opus spells are 88% of it. Opus spell calls went from 43 to 96 in one day because the program version bump to 4 rewrote every big spell on its next cast. **Never rewrite spells in bulk again**: new API features stay backward compatible, and spells are rewritten one at a time (an admin button in 3.2, player votes in 3.3).
 
 ## Next versions
 
@@ -426,7 +426,7 @@ The owner's social ideas, together because they share one screen: who plays, wha
 2. **The Community tab** (`docs/IDEAS.md`): who plays, each friend's chosen favorite spell, items found and First Discoveries, no recipe shown, hideable.
 3. **What's new in the game**: `public/changelog.json`, one line per merged update, a dot and a list since the player's last visit; a player whose idea was built is told so.
 4. **The Ideas tab follows daily builds**: a pull request that says `Idea #<n>` moves that idea to "Waiting for review" and then "Done".
-5. **A preview for each pull request**, so the owner tries it on a phone before merging: a staging Worker with its own D1 (a copy refreshed nightly, accounts, sessions, invites and emails stripped) and a $2 budget, deployed by CI from a token kept in GitHub's secrets.
+5. **A preview for each pull request**, so the owner tries it on a phone before merging: a staging Worker with its own D1 (a copy refreshed nightly, accounts, sessions, invites and emails stripped) and a $5 budget (first $2), deployed by CI from a token kept in GitHub's secrets.
 
 ### 4.5.1 An audit: every claim checked, and how much the AI can drive (done, see above)
 
@@ -539,6 +539,16 @@ The owner, 5 November: as people discover things and have the resources, they bu
 3. **Roads**: paths worn where villagers walk become dirt roads, then stone roads, then bridges; roads join villages and wonders; walking on them is faster, and the flow fields of 4.3 prefer them.
 4. **Vehicles**: carts on roads, boats on rivers and lakes, a ferry, later a flying ship from a spell or a wonder; each a small box model that moves with the 4.3 steering and carries people and goods between villages; trade caravans that monsters can rob.
 5. **Checked**: a village left alone for an hour of simulated time grows from hamlet to town on three seeds; roads join every village that trades; the simulation p95 on a large island stays within the HUD numbers.
+
+### 4.9.5 Wonders review
+
+The owner, 9 November ("wonders: yes"): the wonders on the islands were written one at a time, by different models, and nobody has looked at all of them together. A wonder that is a ball of blocks under a grand name breaks the promise of its name.
+
+1. **Frame every wonder**: each wonder of the pool and each built in wonder, on an island at phone size (390 by 844), from the same three shots, saved under `docs/measurements/`.
+2. **Judge each against its name**: does it look like what it is called, does it do something (an effect the player can see or a creature it draws), is it a fine `w.model` shape and not a ball of voxels, is it sized right for its tier and its land. One line each, with the frame.
+3. **A scored list**: every wonder scored on those four points, worst first, with `decision-matrix` so the order is not a mood. The list is the deliverable even if nothing is rebuilt.
+4. **Rebuild the weak ones**: with the fine box models of 4.7 item 4, one at a time, each tested like a new wonder and framed again; the cost of each rewrite logged in the pull request. Never the whole pool at once, and never a rewrite of a wonder players have already met without its old version kept.
+5. **Cost**: about $3 to $6 of AI, approved by the owner as "wonders: yes" (9 November). Back to the owner only past $12.
 
 ### 5.0 Look closer: select anything
 

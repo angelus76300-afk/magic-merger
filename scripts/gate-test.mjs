@@ -7,13 +7,19 @@ import {
   REPO_OWNER,
   byOwner,
   carriedReview,
+  bringUpToDate,
+  ciFrom,
+  updateInTurn,
   decide,
   deployable,
   headRepoOf,
+  inFlight,
   lastDeployedFrom,
   ownerRecords,
+  pickUpdate,
   reviewFor,
   sharedChangeFromMain,
+  updatable,
   upToDateFrom,
 } from "./gate.mjs";
 import { classify, readGit } from "./risk.mjs";
@@ -280,13 +286,47 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
     const nm = carry(plain, reviewed);
     check("refused: a non-merge commit after the review", nm.review === null && /not a merge/.test(nm.why), JSON.stringify(nm));
 
-    // Refused: main changed the pull request's own file. Clean for git, but the reviewed code changed.
+    // 2026-11-10, the owner's carry rule: main changed the pull request's own file far from its lines.
+    // Clean for git, only main's lines came in, the pull request's own lines are as reviewed: carried.
     g("checkout", "-q", "main");
     const mainA = commit("main edits a.ts far away", { "src/a.ts": lines(40, { 35: "main" }) });
     toFeat(R);
     g("merge", "-q", "--no-ff", "--no-edit", mainA);
     const theirs = carry(g("rev-parse", "HEAD"), reviewed);
-    check("refused: a clean merge that changes the pull request's own file", theirs.review === null && /own files/.test(theirs.why), JSON.stringify(theirs));
+    check(
+      "carried: a clean merge that brings only main's lines into the pull request's own file",
+      theirs.from === R && theirs.review?.tests === "pass",
+      JSON.stringify(theirs),
+    );
+    // Still refused: the same merge with one more line slipped into that file by hand.
+    toFeat(R);
+    g("merge", "-q", "--no-ff", "--no-commit", mainA);
+    write("src/a.ts", lines(40, { 2: "mine", 35: "main", 20: "slipped in" }));
+    g("add", "-A");
+    g("commit", "-qm", "merge main");
+    const slipped = carry(g("rev-parse", "HEAD"), reviewed);
+    check(
+      "refused: a hand edit in the pull request's own file during a catch-up merge",
+      slipped.review === null && /not a clean merge/.test(slipped.why),
+      JSON.stringify(slipped),
+    );
+    // Still refused: main renamed the pull request's file; git follows the rename, but it is no plain text change.
+    g("checkout", "-q", "main");
+    const before = g("rev-parse", "HEAD");
+    g("mv", "src/a.ts", "src/renamed.ts");
+    g("commit", "-qm", "main renames a.ts");
+    const renamed = g("rev-parse", "HEAD");
+    toFeat(R);
+    let mergedRename = true;
+    try {
+      g("merge", "-q", "--no-ff", "--no-edit", renamed);
+    } catch {
+      mergedRename = false;
+      g("merge", "--abort");
+    }
+    const ren = mergedRename ? carry(g("rev-parse", "HEAD"), reviewed) : { review: null, why: "git did not merge it" };
+    check("refused: a merge where main renamed the pull request's own file", mergedRename && ren.review === null, JSON.stringify(ren));
+    g("branch", "-qf", "main", before);
 
     // Refused: a conflict resolved by hand.
     g("checkout", "-q", "main");
@@ -465,8 +505,8 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
     const MA = mergeMain(R);
     const other = carry(MA, reviewed);
     check(
-      "refused: a merge that also changes another of the pull request's files",
-      other.review === null && /own files/.test(other.why ?? ""),
+      "carried (2026-11-10): a merge that also brings main's lines into another of the pull request's files",
+      other.from === R && other.review?.tests === "pass",
       JSON.stringify(other),
     );
     g("branch", "-qf", "main", mainTip);
@@ -550,6 +590,195 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
       log.entries.every((e) => /^\d{4}-\d{2}-\d{2}$/.test(e.date) && typeof e.text === "string" && e.text),
     typeof log === "string" ? log : "",
   );
+}
+
+// 2026-11-08, the merge queue: which pull request the Gate merges main into (updatable, pickUpdate).
+{
+  const behind = { ...ready, upToDate: false, mergeable: true, headFetched: true, catchUp: ["src/world.ts", "docs/IDEAS.md"] };
+  check("a pull request ready but for being behind main is updatable", updatable(behind));
+  check("one already up to date is not", !updatable({ ...behind, upToDate: true }));
+  check("one GitHub cannot merge cleanly is not (a conflict stays its builder's)", !updatable({ ...behind, mergeable: false }));
+  check("one whose mergeability GitHub has not computed yet is not", !updatable({ ...behind, mergeable: null }));
+  check("a fork is never updated", !updatable({ ...behind, fork: true }));
+  check("unknown fork state is not updated", !updatable({ ...behind, fork: undefined }));
+  check("a draft is not updated", !updatable({ ...behind, draft: true }));
+  check("nothing is updated while paused", !updatable({ ...behind, paused: true }));
+  check("a pull request on hold is not updated", !updatable({ ...behind, labels: ["hold"] }));
+  check("one without a passing review is not updated", !updatable({ ...behind, review: null }));
+  check("one with a blocking review is not updated", !updatable({ ...behind, review: { verdict: "block", tests: "pass" } }));
+  check("one whose CI failed is not updated", !updatable({ ...behind, ci: "failure" }));
+  check("one without its smoke test is not updated", !updatable({ ...behind, smoke: "failure" }));
+  check("red without the owner's yes is not updated", !updatable({ ...behind, cls: "red" }));
+  check("red with the owner's yes is updated", updatable({ ...behind, cls: "red", labels: ["owner-yes"], records: YES }));
+  check("a reviewer's raise to red without a yes is not updated", !updatable({ ...behind, review: { ...pass, raise: "red" } }));
+  check("a head not fetched is not updated", !updatable({ ...behind, headFetched: false }));
+  check("a workflow change is not updated (the Gate cannot merge it anyway)", !updatable({ ...behind, workflows: true }));
+
+  check("an up to date pull request whose CI runs is in flight", inFlight({ ...ready, upToDate: true, ci: "in_progress" }));
+  check("so is one whose preview runs", inFlight({ ...ready, upToDate: true, smoke: "queued" }));
+  check("a finished one is not in flight", !inFlight({ ...ready, upToDate: true }));
+  check("a behind one is not in flight", !inFlight({ ...ready, upToDate: false, ci: "in_progress" }));
+  check("a fork is never in flight (it cannot hold the queue)", !inFlight({ ...ready, upToDate: true, ci: "in_progress", fork: true }));
+
+  const q = (number, state) => ({ number, state });
+  check("the oldest updatable pull request goes first", pickUpdate([q(83, behind), q(79, behind), q(85, { ...behind, review: null })]).update === 79);
+  check("nothing is updated while another is in flight", pickUpdate([q(79, behind), q(90, { ...ready, upToDate: true, ci: "in_progress" })]).update === null);
+  check("nothing to update says why", /only behind/.test(pickUpdate([q(1, { ...ready, upToDate: true })]).why));
+  check("an empty queue updates nothing", pickUpdate([]).update === null);
+  // Review of #98: a branch whose catch-up brings a workflow change is refused to the Gate's token every
+  // time; it must not hold the queue, and an unknown catch-up is not updated (fail closed).
+  const bringsWorkflow = { ...behind, catchUp: ["src/world.ts", ".github/workflows/ci.yml"] };
+  check("a catch-up that brings a workflow change is not updated", !updatable(bringsWorkflow));
+  check("an unknown catch-up is not updated", !updatable({ ...behind, catchUp: null }));
+  check("the queue passes over it to the next oldest", pickUpdate([q(79, bringsWorkflow), q(83, behind)]).update === 83);
+  {
+    const tried = [];
+    const lines = await updateInTurn(
+      [79, 83, 90],
+      [79, 83, 90].map((n) => ({ number: n, sha: `s${n}` })),
+      async (n) => {
+        tried.push(n);
+        if (n === 79) throw new Error("PUT pulls/79/update-branch: 422 refused");
+        return `merged main into #${n}`;
+      },
+    );
+    check(
+      "a refused update passes the turn to the next in line, and only one is updated",
+      tried.join() === "79,83" && /#83/.test(lines.at(-1)),
+      lines.join(" | "),
+    );
+    const all = [];
+    await updateInTurn(
+      [1, 2, 3, 4],
+      [1, 2, 3, 4].map((n) => ({ number: n, sha: "s" })),
+      async (n) => {
+        all.push(n);
+        throw new Error("refused");
+      },
+    );
+    check("at most three tries in one sweep", all.join() === "1,2,3");
+  }
+  check(
+    "the order lists every candidate, oldest first, for the sweep to try after a refusal",
+    pickUpdate([q(90, behind), q(79, behind), q(83, behind)]).order.join() === "79,83,90",
+  );
+}
+
+// 2026-11-08: GitHub listed finished check jobs with no steps (#88, #89, #95): never read as docs or as a pass.
+{
+  const step = (conclusion) => [
+    { name: "lint", conclusion: "success" },
+    { name: "test:worker", conclusion },
+  ];
+  const fake = (pages, run = { name: "CI", run_number: 1, id: 7, status: "completed", conclusion: "success" }) => {
+    let n = 0;
+    return async (path) =>
+      path.startsWith("actions/runs?") ? { workflow_runs: [run] } : { jobs: [{ name: "check", steps: pages[Math.min(n++, pages.length - 1)] }] };
+  };
+  const noWait = async () => {};
+  check("a full run reads full", (await ciFrom("s", fake([step("success")]), noWait)) === "full");
+  check("a light run (test:worker skipped) reads docs", (await ciFrom("s", fake([step("skipped")]), noWait)) === "docs");
+  check("no steps listed is neither docs nor full: it waits", (await ciFrom("s", fake([[]]), noWait)) === "steps not listed by GitHub yet");
+  // The job's log, when GitHub lists no steps (#89's CI): full only when the test:worker step opened in it.
+  const withJob = (log, conclusion = "success") => {
+    const gh = async (path) =>
+      path.startsWith("actions/runs?")
+        ? { workflow_runs: [{ name: "CI", run_number: 1, id: 7, status: "completed", conclusion: "success" }] }
+        : { jobs: [{ name: "check", id: 9, conclusion, steps: [] }] };
+    return ciFrom("s", gh, noWait, 2, async (path) => (path === "actions/jobs/9/logs" ? log : null));
+  };
+  const fullLog = "2026-11-08T03:59:40.4833576Z ##[group]Run npm run test:worker\n... all worker checks passed";
+  check("no steps, but the job log opens test:worker: full", (await withJob(fullLog)) === "full");
+  check("no steps and a log without test:worker: waits", (await withJob("2026-11-08T03:59:05Z ##[group]Run npm run lint")) !== "full");
+  check("no steps, a failed job, a log with test:worker: waits", (await withJob(fullLog, "failure")) !== "full");
+  check("test:worker named inside another line does not count", (await withJob("x echo '##[group]Run npm run test:worker' fake")) !== "full");
+  check("no steps and no log: waits", (await withJob(null)) !== "full");
+  // 2026-11-10: a light run without steps reads docs from its log; anything less waits.
+  const lightLog = [
+    "2026-11-10T22:00:01.1Z ##[group]Run npm run lint",
+    "2026-11-10T22:00:20.1Z Full run: false",
+    "2026-11-10T22:01:30.1Z ##[group]Run npm run test:risk",
+    "2026-11-10T22:01:50.1Z all workflow checks passed",
+  ].join("\n");
+  check("no steps, a light run's log: docs", (await withJob(lightLog)) === "docs");
+  check("no steps, a light log cut before test:risk: waits", (await withJob(lightLog.split("\n").slice(0, 2).join("\n"))) === "steps not listed by GitHub yet");
+  check("no steps, a log without the scope line: waits", (await withJob(lightLog.split("\n").slice(2).join("\n"))) === "steps not listed by GitHub yet");
+  check("no steps, a failed light job: waits", (await withJob(lightLog, "failure")) === "steps not listed by GitHub yet");
+  check(
+    "the scope's script text in the log is not its output",
+    (await withJob(lightLog.replace("Full run: false", '  echo "Full run: $full" | tee'))) !== "docs",
+  );
+  // The Gate's dispatch counts only when the pull request's own event left no run on the commit.
+  const runsOf = (runs, jobsById) => async (path) =>
+    path.startsWith("actions/runs?") ? { workflow_runs: runs } : { jobs: [{ name: "check", steps: jobsById[/runs\/(\d+)\/jobs/.exec(path)[1]] }] };
+  const run = (id, event, run_number, conclusion = "success") => ({ name: "CI", id, event, run_number, status: "completed", conclusion });
+  check(
+    "a newer failed dispatch does not hide the pull request's own full run",
+    (await ciFrom("s", runsOf([run(1, "pull_request", 5), run(2, "workflow_dispatch", 6, "failure")], { 1: step("success") }), noWait)) === "full",
+  );
+  check("a dispatched run alone counts", (await ciFrom("s", runsOf([run(2, "workflow_dispatch", 6)], { 2: step("success") }), noWait)) === "full");
+  check(
+    "a failed run of the pull request's own event is not hidden by a dispatch",
+    (await ciFrom("s", runsOf([run(1, "pull_request", 5, "failure"), run(2, "workflow_dispatch", 6)], { 2: step("success") }), noWait)) === "failure",
+  );
+  check("steps listed on a second fetch are read", (await ciFrom("s", fake([[], step("success")]), noWait)) === "full");
+  check("a check job without test:worker is not docs", (await ciFrom("s", fake([[{ name: "lint", conclusion: "success" }]]), noWait)) !== "docs");
+  check("a failed test:worker is not full", (await ciFrom("s", fake([step("failure")]), noWait)) !== "full");
+  check(
+    "a running CI reads as running",
+    (await ciFrom("s", fake([[]], { name: "CI", run_number: 1, id: 7, status: "in_progress" }), noWait)) === "in_progress",
+  );
+  check("no CI run reads missing", (await ciFrom("s", async () => ({ workflow_runs: [] }), noWait)) === "missing");
+}
+
+// 2026-11-10, "gate token: dispatch": the update, the wait for the new head, the two dispatches.
+{
+  const OLD = "1".repeat(40);
+  const NEW = "2".repeat(40);
+  const fakeGh = ({ moveAfter = 1, runsAfter = 1, refuse = null } = {}) => {
+    const calls = [];
+    let reads = 0;
+    let lists = 0;
+    const call = async (path, init = {}) => {
+      calls.push({ path, method: init.method ?? "GET", body: init.body ? JSON.parse(init.body) : null });
+      if (refuse && path.includes(refuse)) throw new Error(`PUT ${path}: 422 refused`);
+      if (path === "pulls/12") return { head: { sha: ++reads > moveAfter ? NEW : OLD, ref: "claude/roads" } };
+      if (path.startsWith("actions/runs?")) return { workflow_runs: ++lists >= runsAfter ? [{ name: "CI" }, { name: "Preview" }] : [] };
+      return null;
+    };
+    return { call, calls };
+  };
+  const noSleep = async () => {};
+  {
+    const { call, calls } = fakeGh({ moveAfter: 2, runsAfter: 2 });
+    const said = await bringUpToDate({ number: 12, sha: OLD, call, sleep: noSleep });
+    const update = calls.find((c) => c.path === "pulls/12/update-branch");
+    const dispatches = calls.filter((c) => /dispatches$/.test(c.path));
+    check("the update pins the head it judged", update?.method === "PUT" && update.body.expected_head_sha === OLD);
+    check(
+      "CI and Preview are dispatched on the branch, naming the new head",
+      dispatches.map((d) => d.path).join() === "actions/workflows/ci.yml/dispatches,actions/workflows/preview.yml/dispatches" &&
+        dispatches.every((d) => d.body.ref === "claude/roads" && d.body.inputs.sha === NEW && d.body.inputs.pr === "12"),
+      JSON.stringify(dispatches),
+    );
+    check("it waits until both runs are listed", calls.filter((c) => c.path.startsWith("actions/runs?")).length === 2);
+    check("it says what it did", /merged main into #12/.test(said), said);
+  }
+  {
+    const { call, calls } = fakeGh({ moveAfter: 1000 });
+    const said = await bringUpToDate({ number: 12, sha: OLD, call, sleep: noSleep, waitMs: 9000 });
+    check("a head that never moves starts nothing", !calls.some((c) => /dispatches$/.test(c.path)) && /had not moved/.test(said), said);
+  }
+  {
+    const { call, calls } = fakeGh({ refuse: "update-branch" });
+    let threw = false;
+    try {
+      await bringUpToDate({ number: 12, sha: OLD, call, sleep: noSleep });
+    } catch {
+      threw = true;
+    }
+    check("a refused update (a push meanwhile, a conflict) starts nothing and says so", threw && !calls.some((c) => /dispatches$/.test(c.path)));
+  }
 }
 
 console.log(failed ? `${failed} failed` : "all gate checks passed");
