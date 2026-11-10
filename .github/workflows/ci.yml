@@ -17,21 +17,55 @@
 # code, a fork's included once the owner approves the run, so it names no
 # secret and its token only reads (scripts/workflows-test.mjs fails if a job
 # here gains a secret without the same-repository guard).
+#
+# 2026-11-10, the merge queue: the Gate merges main into a ready branch that is
+# only behind, and a push made with its token starts no workflow, so it starts
+# this one with workflow_dispatch on the branch, naming the pull request and the
+# head it expects. The run checks that its commit is that head and reads the
+# base and the draft state from the API; a branch that moved fails the run, and
+# the Gate prefers a run of the pull request's own event on the same commit.
 name: CI
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_call:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Pull request number (the Gate's merge queue)"
+        required: true
+      sha:
+        description: "The head commit the Gate expects"
+        required: true
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 permissions:
   contents: read
+  pull-requests: read
 jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # Started by the Gate: this commit must be the head it named, of a pull request of this repository.
+      - name: the pull request the Gate named
+        id: pr
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ inputs.pr }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          case "$PR" in ''|*[!0-9]*) echo "not a pull request number: $PR"; exit 1;; esac
+          if [ "$GITHUB_SHA" != "$SHA" ]; then echo "the branch moved: this run is on $GITHUB_SHA, the Gate named $SHA"; exit 1; fi
+          gh api "repos/$REPO/pulls/$PR" --jq '[.state, .head.sha, .head.repo.full_name, .base.ref, (.draft | tostring), .head.ref] | @tsv' > "$RUNNER_TEMP/pr.tsv"
+          IFS=$'\t' read -r state head repo base draft ref < "$RUNNER_TEMP/pr.tsv"
+          if [ "$state" != "open" ] || [ "$head" != "$SHA" ] || [ "$repo" != "$REPO" ]; then echo "#$PR is $state at $head from $repo: not this commit of this repository"; exit 1; fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "draft=$draft" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -45,22 +79,23 @@ jobs:
         id: scope
         env:
           EVENT: ${{ github.event_name }}
-          DRAFT: ${{ github.event.pull_request.draft }}
-          BASE: ${{ github.event.pull_request.base.ref }}
+          DRAFT: ${{ github.event.pull_request.draft || steps.pr.outputs.draft }}
+          BASE: ${{ github.event.pull_request.base.ref || steps.pr.outputs.base }}
         run: |
           full=true
-          if [ "$EVENT" = "pull_request" ]; then
+          if [ "$EVENT" = "pull_request" ] || [ "$EVENT" = "workflow_dispatch" ]; then
             changed=$(git diff --name-only "origin/$BASE...HEAD")
             other=$(printf '%s\n' "$changed" | grep -vE '^(docs/|\.claude/skills/)|\.md$|^\.claude/settings\.json$' || true)
             if [ "$DRAFT" = "true" ] || [ -z "$other" ]; then full=false; fi
           fi
           echo "full=$full" >> "$GITHUB_OUTPUT"
-          echo "Full run: $full" >> "$GITHUB_STEP_SUMMARY"
+          # In the log too: when GitHub lists the job without its steps, the Gate reads this line.
+          echo "Full run: $full" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: risk class
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         env:
-          BASE: ${{ github.event.pull_request.base.ref }}
-          GITHUB_HEAD_REF: ${{ github.head_ref }}
+          BASE: ${{ github.event.pull_request.base.ref || steps.pr.outputs.base }}
+          GITHUB_HEAD_REF: ${{ github.head_ref || steps.pr.outputs.ref }}
         run: |
           # main's copy classifies the pull request, so it cannot grade itself.
           if git show "origin/$BASE:scripts/risk.mjs" > "$RUNNER_TEMP/risk.mjs" 2>/dev/null; then cp "$RUNNER_TEMP/risk.mjs" scripts/.risk-main.mjs; else cp scripts/risk.mjs scripts/.risk-main.mjs; fi

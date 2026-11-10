@@ -29,10 +29,6 @@ on:
   pull_request_target:
     types: [labeled, ready_for_review]
   workflow_dispatch:
-    inputs:
-      pr:
-        description: "Pull request number"
-        required: true
 permissions:
   contents: write
   pull-requests: write
@@ -47,9 +43,16 @@ concurrency:
   group: gate
   cancel-in-progress: false
 jobs:
+  # 2026-11-10, the merge queue: every run is one sweep of all open pull requests, oldest first
+  # (scripts/gate.mjs sweep). Whatever woke it, the sweep merges at most one that is ready, then merges
+  # main into the oldest one that waits only for being behind main, and starts CI and Preview on its new
+  # head itself (workflow_dispatch: a push made with this workflow's token starts no workflow, a
+  # dispatch does; the owner's choice of 8 November, "gate token: dispatch"). The dispatched runs wake
+  # the Gate again when they finish, and the carry rules decide on the review. One job, not two: each
+  # job is billed a whole minute (docs/DAILY.md, "GitHub Actions minutes").
   gate:
     if: >-
-      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository) ||
+      (github.event_name == 'workflow_run' && (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'workflow_dispatch') && github.event.workflow_run.head_repository.full_name == github.repository) ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.author_association == 'OWNER' && github.event.comment.user.login == github.repository_owner && (contains(github.event.comment.body, 'mm-review') || contains(github.event.comment.body, 'mm-owner'))) ||
       (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository) ||
       github.event_name == 'workflow_dispatch'
@@ -63,68 +66,13 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-      - name: which pull request
-        id: which
-        env:
-          FROM_RUN: ${{ github.event.workflow_run.pull_requests[0].number }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          FROM_ISSUE: ${{ github.event.issue.number }}
-          FROM_PR: ${{ github.event.pull_request.number }}
-          FROM_INPUT: ${{ inputs.pr }}
-        run: |
-          n="${FROM_RUN:-${FROM_ISSUE:-${FROM_PR:-$FROM_INPUT}}}"
-          if [ -z "$n" ] && [ -n "$HEAD_SHA" ]; then n=$(gh api "repos/${{ github.repository }}/commits/$HEAD_SHA/pulls" --jq '.[0].number // empty'); fi
-          echo "pr=$n" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-node@v4
-        if: steps.which.outputs.pr != ''
-        with:
-          node-version: 22
-      - name: decide, and merge when ready
-        id: gate
-        if: steps.which.outputs.pr != ''
-        env:
-          PR: ${{ steps.which.outputs.pr }}
-        run: |
-          case "$PR" in ''|*[!0-9]*) echo "not a pull request number: $PR"; exit 1;; esac
-          node scripts/gate.mjs pr "$PR" --merge
-      # A merge made with this workflow's token starts no push workflow: start the deploy here.
-      - name: deploy
-        if: steps.gate.outputs.merged == 'true' && steps.gate.outputs.docs != 'true'
-        run: gh workflow run deploy.yml --ref main
-  # 2026-11-08, the merge queue. After every Gate run, every open pull request again, oldest first
-  # (scripts/gate.mjs sweep): it merges one that became ready without an event of its own, then merges
-  # main into the oldest ready pull request that is only behind, so its CI, preview and the carry
-  # rules run without its builder.
-  # GATE_UPDATE_TOKEN (a GitHub App or fine-grained token, contents and pull requests write) is used
-  # for the update alone, because a push made with the Gate's own token starts no workflow; without
-  # it the sweep only says which branch it would update. Same guards as the gate job.
-  sweep:
-    needs: gate
-    if: >-
-      always() && (
-        (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository) ||
-        (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.author_association == 'OWNER' && github.event.comment.user.login == github.repository_owner && (contains(github.event.comment.body, 'mm-review') || contains(github.event.comment.body, 'mm-owner'))) ||
-        (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository) ||
-        github.event_name == 'workflow_dispatch'
-      )
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GITHUB_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: sweep the open pull requests
+      - name: sweep the open pull requests, merge one, bring one up to date
         id: sweep
-        env:
-          GATE_UPDATE_TOKEN: ${{ secrets.GATE_UPDATE_TOKEN }}
         run: node scripts/gate.mjs sweep --merge --update
+      # A merge made with this workflow's token starts no push workflow: start the deploy here.
       - name: deploy
         if: steps.sweep.outputs.merged == 'true' && steps.sweep.outputs.docs != 'true'
         run: gh workflow run deploy.yml --ref main

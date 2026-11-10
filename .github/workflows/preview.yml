@@ -17,35 +17,89 @@
 # here. GitHub already gives a fork's run no secrets; the guard on both jobs
 # says so in this file too, so a later change cannot open it by mistake
 # (scripts/workflows-test.mjs checks every job that names a secret).
+#
+# 2026-11-10, the merge queue: the Gate merges main into a ready branch that is
+# only behind and starts this workflow itself (workflow_dispatch; a push made
+# with its token starts no workflow). Under a dispatch the event carries no pull
+# request, and a guard that reads an empty field must refuse, never allow: the
+# first step reads the pull request from the API and stops the job, before any
+# checkout, unless it is open, of this repository, not a draft, at the head the
+# Gate named, and not a feedback branch without owner-ok. The smoke job needs
+# that job, so it never runs when the guard refused (workflows-test.mjs).
 name: Preview
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, labeled]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Pull request number (the Gate's merge queue)"
+        required: true
+      sha:
+        description: "The head commit the Gate expects"
+        required: true
 permissions:
   contents: read
   deployments: write
 concurrency:
   # A label other than owner-ok must not cancel a preview being built.
-  group: preview-${{ github.event.pull_request.number }}${{ github.event.action == 'labeled' && github.event.label.name != 'owner-ok' && format('-{0}', github.event.label.name) || '' }}
+  # A dispatch gets its own group: it must not cancel a builder's push, nor be cancelled by a label.
+  group: preview-${{ github.event.pull_request.number || github.run_id }}${{ github.event.action == 'labeled' && github.event.label.name != 'owner-ok' && format('-{0}', github.event.label.name) || '' }}
   cancel-in-progress: true
 jobs:
   preview:
     # 4.5.2: no preview for a draft (Actions minutes); the push that marks it ready builds one.
     if: >-
+      github.event_name == 'workflow_dispatch' || (
       github.event.pull_request.head.repo.full_name == github.repository &&
       !github.event.pull_request.draft &&
       (github.event.action != 'labeled' || github.event.label.name == 'owner-ok') &&
-      ((!startsWith(github.head_ref, 'claude/feedback-') && !startsWith(github.event.pull_request.title, 'Feedback:')) || contains(github.event.pull_request.labels.*.name, 'owner-ok'))
+      ((!startsWith(github.head_ref, 'claude/feedback-') && !startsWith(github.event.pull_request.title, 'Feedback:')) || contains(github.event.pull_request.labels.*.name, 'owner-ok')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
       url: ${{ steps.upload.outputs.url }}
+      number: ${{ steps.pr.outputs.number }}
+      sha: ${{ steps.pr.outputs.sha }}
     environment:
       name: preview
       url: ${{ steps.upload.outputs.url }}
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
+      # The guard, before any checkout. Under pull_request the job's if already checked the event.
+      - name: the pull request the Gate named
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          FROM_EVENT: ${{ github.event.pull_request.number }}
+          FROM_EVENT_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ inputs.pr }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          if [ "$EVENT" != "workflow_dispatch" ]; then
+            echo "number=$FROM_EVENT" >> "$GITHUB_OUTPUT"
+            echo "sha=$FROM_EVENT_SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          case "$PR" in ''|*[!0-9]*) echo "not a pull request number: $PR"; exit 1;; esac
+          if [ "$GITHUB_SHA" != "$SHA" ]; then echo "the branch moved: this run is on $GITHUB_SHA, the Gate named $SHA"; exit 1; fi
+          gh api "repos/$REPO/pulls/$PR" > "$RUNNER_TEMP/pr.json"
+          state=$(jq -r '.state' "$RUNNER_TEMP/pr.json")
+          head=$(jq -r '.head.sha' "$RUNNER_TEMP/pr.json")
+          repo=$(jq -r '.head.repo.full_name' "$RUNNER_TEMP/pr.json")
+          draft=$(jq -r '.draft' "$RUNNER_TEMP/pr.json")
+          feedback=$(jq -r '(.head.ref | startswith("claude/feedback-")) or (.title | startswith("Feedback:"))' "$RUNNER_TEMP/pr.json")
+          ownerok=$(jq -r '[.labels[].name] | index("owner-ok") != null' "$RUNNER_TEMP/pr.json")
+          if [ "$state" != "open" ]; then echo "#$PR is $state"; exit 1; fi
+          if [ "$repo" != "$REPO" ]; then echo "#$PR comes from $repo, not this repository"; exit 1; fi
+          if [ "$head" != "$SHA" ]; then echo "#$PR is at $head, the Gate named $SHA"; exit 1; fi
+          if [ "$draft" != "false" ]; then echo "#$PR is a draft"; exit 1; fi
+          if [ "$feedback" != "false" ] && [ "$ownerok" != "true" ]; then echo "#$PR is a feedback pull request without owner-ok"; exit 1; fi
+          echo "number=$PR" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         if: env.CLOUDFLARE_API_TOKEN != ''
       - uses: actions/setup-node@v4
@@ -62,14 +116,19 @@ jobs:
         run: npx wrangler d1 migrations apply magic-merger-staging --remote --env staging
       - id: upload
         if: env.CLOUDFLARE_API_TOKEN != ''
+        env:
+          N: ${{ steps.pr.outputs.number }}
+          SHA: ${{ steps.pr.outputs.sha }}
         run: |
-          npx wrangler versions upload --env staging --preview-alias "pr-${{ github.event.pull_request.number }}" --message "PR #${{ github.event.pull_request.number }} ${{ github.event.pull_request.head.sha }}" | tee upload.log
-          url="https://pr-${{ github.event.pull_request.number }}-magic-merger-staging.angelus76300.workers.dev"
+          case "$N" in ''|*[!0-9]*) echo "not a pull request number: $N"; exit 1;; esac
+          npx wrangler versions upload --env staging --preview-alias "pr-$N" --message "PR #$N $SHA" | tee upload.log
+          url="https://pr-$N-magic-merger-staging.angelus76300.workers.dev"
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Preview: $url (the admin token, five taps on the title, lets you in)" >> "$GITHUB_STEP_SUMMARY"
   smoke:
     needs: preview
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Under a dispatch, needs: preview is the guard: a refused preview job skips this one.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -100,6 +159,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: smoke-preview-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          name: smoke-preview-${{ needs.preview.outputs.number }}-${{ needs.preview.outputs.sha }}
           path: smoke-preview
           retention-days: 14
