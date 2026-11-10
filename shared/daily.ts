@@ -35,3 +35,25 @@ export function dayIn(now: number, zone = DAILY_ZONE): string {
   // en-CA formats as YYYY-MM-DD.
   return new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(now));
 }
+
+// How many days a challenge waited between the night it was set and the day
+// it was found, both Toronto days (YYYY-MM-DD, a forced second one carries
+// "#2" after the date). Null when either day cannot be read.
+export function waitedDays(day: string, foundDay: string | null): number | null {
+  const at = (d: string | null) => {
+    const m = d ? /^(\d{4})-(\d{2})-(\d{2})/.exec(d) : null;
+    return m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
+  };
+  const set = at(day);
+  const found = at(foundDay);
+  if (set === null || found === null) return null;
+  return Math.max(0, Math.round((found - set) / 86_400_000));
+}
+
+// How long a find waited, as the end of "Set 4 Nov, found 6 Nov, ...".
+export function waitedLabel(day: string, foundDay: string | null): string {
+  const n = waitedDays(day, foundDay);
+  if (n === null) return "";
+  if (n === 0) return "the same day";
+  return n === 1 ? "after 1 day" : `after ${n} days`;
+}

@@ -1,5 +1,5 @@
 import * as api from "./api";
-import type { DailyChallenge, DailyResponse } from "../shared/daily";
+import { waitedLabel, type DailyChallenge, type DailyResponse } from "../shared/daily";
 import { TIER_LABEL } from "../shared/tiers";
 
 // 4.5, the Daily tab: every challenge nobody has found yet, then the last
@@ -54,11 +54,7 @@ export class Daily {
     const head = el("div", "daily-head");
     head.append(
       el("h2", "", "Daily challenges"),
-      el(
-        "p",
-        "",
-        "Each night a new item waits to be found, made from two items of the shared pool that nobody had merged together. Here is what it is; how to make it is yours to find. The first to make it has their name on it, for good.",
-      ),
+      el("p", "", "A new item each night, made from two items nobody has merged together yet. Make it first and your name stays on it."),
     );
     this.root.append(head);
     const open = el("section", "daily-group");
@@ -71,15 +67,18 @@ export class Daily {
     this.root.append(open);
     if (data.found.length) {
       const found = el("section", "daily-group");
-      found.append(el("h3", "", "Found"));
-      for (const c of data.found) found.append(card(c));
+      found.append(el("h3", "", `Found (${data.found.length})`));
+      const list = el("ol", "finds");
+      for (const c of data.found) list.append(findRow(c));
+      found.append(list);
       this.root.append(found);
     }
   }
 }
 
+// A challenge still waiting: the whole card, it is the day's riddle.
 function card(c: DailyChallenge): HTMLElement {
-  const box = el("article", `daily-card${c.found ? " daily-found" : ""}${c.mine ? " daily-mine" : ""}`);
+  const box = el("article", "daily-card");
   const title = el("h4", "daily-title");
   title.append(el("span", "daily-emoji", c.emoji), el("span", "daily-name", c.name));
   const facts = el("p", "daily-facts");
@@ -90,9 +89,38 @@ function card(c: DailyChallenge): HTMLElement {
   facts.append(el("span", "daily-day", `set ${shortDay(c.day)}`));
   box.append(title, facts);
   if (c.description) box.append(el("p", "daily-description", c.description));
-  if (c.found) {
-    const who = c.mine ? "you" : (c.foundBy ?? "someone");
-    box.append(el("p", "daily-finder", `Found first by ${who} on ${shortDay(c.foundDay ?? c.day)}`));
-  }
   return box;
+}
+
+// 2026-11-10, the owner's idea of 8 November: a find is one row of a ledger,
+// the item's tile, its name and who found it; a tap opens what it is.
+export function findRow(c: DailyChallenge): HTMLElement {
+  const row = el("li", `find${c.mine ? " find-mine" : ""}`);
+  const more = document.createElement("details");
+  const head = document.createElement("summary");
+  const tile = el("span", "find-tile", c.emoji);
+  tile.dataset.kind = c.kind;
+  if (c.tier) tile.dataset.tier = c.tier;
+  tile.setAttribute("aria-hidden", "true");
+  const main = el("span", "find-main");
+  main.append(el("span", "find-name", c.name));
+  const by = el("span", "find-by");
+  const who = c.mine ? "You" : (c.foundBy ?? "someone");
+  by.append("Found by ", el("strong", "find-who", who));
+  main.append(by);
+  head.append(tile, main, el("span", "find-date", shortDay(c.foundDay ?? c.day)));
+  head.setAttribute("aria-label", `${c.name}, found by ${who}, ${shortDay(c.foundDay ?? c.day)}`);
+  const body = el("div", "find-more");
+  if (c.description) body.append(el("p", "find-description", c.description));
+  const facts = el("p", "daily-facts");
+  const kind = el("span", "daily-kind", c.kind);
+  kind.dataset.kind = c.kind;
+  facts.append(kind);
+  if (c.tier) facts.append(el("span", "daily-tier", TIER_LABEL[c.tier]));
+  body.append(facts);
+  const after = waitedLabel(c.day, c.foundDay);
+  body.append(el("p", "find-when", `Set ${shortDay(c.day)}, found ${shortDay(c.foundDay ?? c.day)}${after ? `, ${after}` : ""}.`));
+  more.append(head, body);
+  row.append(more);
+  return row;
 }
