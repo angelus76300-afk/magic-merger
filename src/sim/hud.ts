@@ -21,6 +21,12 @@ export interface SceneCounts {
   parts: number;
   pixelRatio: number;
   size: number;
+  // Sound (4.8): voices and audio nodes alive, and what the budget merged or held back.
+  voices: number;
+  audioNodes: number;
+  merged: number;
+  dropped: number;
+  beds: number;
 }
 
 export interface PerfSummary {
@@ -40,6 +46,11 @@ export interface PerfSummary {
   parts: number;
   pixelRatio: number;
   size: number;
+  voices: number;
+  audioNodes: number;
+  merged: number;
+  dropped: number;
+  beds: number;
 }
 
 export class FrameStats {
@@ -50,7 +61,20 @@ export class FrameStats {
   private next = 0;
   // Frames skipped because nothing moved (see Engine.frame).
   idle = 0;
-  counts: SceneCounts = { calls: 0, triangles: 0, voxels: 0, creatures: 0, parts: 0, pixelRatio: 1, size: 0 };
+  counts: SceneCounts = {
+    calls: 0,
+    triangles: 0,
+    voxels: 0,
+    creatures: 0,
+    parts: 0,
+    pixelRatio: 1,
+    size: 0,
+    voices: 0,
+    audioNodes: 0,
+    merged: 0,
+    dropped: 0,
+    beds: 0,
+  };
 
   push(s: FrameSample): void {
     this.frame[this.next] = s.frame;
@@ -125,6 +149,7 @@ export class Hud {
       `sim ${s.simP50} / ${s.simP95} ms · draw ${s.renderP50} / ${s.renderP95} ms`,
       `calls ${s.calls} · tris ${k(s.triangles)} · dpr ${s.pixelRatio}`,
       `voxels ${k(s.voxels)} · creatures ${s.creatures} (${k(s.parts)} parts) · idle ${s.idle}`,
+      `sound ${s.voices} voices · ${s.beds} beds · ${s.audioNodes} nodes · ${k(s.merged)} merged · ${k(s.dropped)} held`,
     ].join("\n");
   }
 }

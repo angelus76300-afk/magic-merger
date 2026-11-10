@@ -8,6 +8,9 @@ import { availableParallelism } from "node:os";
 import { Worker } from "node:worker_threads";
 import { guardLoops } from "../shared/spellcode";
 import { KINDS, makeCreature, populate, resetCreatureIds } from "../src/sim/creatures";
+import { interactionChecks } from "./interactions-test";
+import { sizeChecks } from "./sizes-test";
+import { roadsChecks } from "./roads-test";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
 import { logDeeds, mindOf, remember } from "../src/sim/kin";
@@ -29,7 +32,22 @@ import { MOTION_SEEDS, MOTION_SECONDS, type MotionReport } from "./motion-run";
 import { mergeMotion, motionLines, type KindMotion } from "../src/sim/motion";
 import { runCheck, type SceneReport } from "../src/sim/check";
 import { readResult } from "../src/checkresult";
-import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../shared/votes";
+import {
+  DOWN_REASONS,
+  MAX_REASONS,
+  REASONS,
+  REASONS_BY_FORM,
+  downShare,
+  reasonLabel,
+  reasonsFor,
+  storedReasons,
+  voteReasons,
+  votedDown,
+  votedUp,
+  votedWorse,
+  votesNeeded,
+} from "../shared/votes";
+import { FORMS } from "../shared/forms";
 import { pickExamples, words } from "../worker/programs";
 import { verdict, type LinkedPull } from "../worker/feedback";
 import { cronJobs } from "../worker/cron";
@@ -67,6 +85,11 @@ import { Terrain } from "../src/sim/voxel/terrain";
 import { MeshBasicMaterial, type Mesh } from "three";
 import { fixesChecks } from "./fixes-test";
 import { evidenceChecks } from "./evidence-test";
+import { formChecks, keptByFormChecks } from "./forms-test";
+import { creatureChecks } from "./creatures-b-test";
+import { heldChecks } from "./held-test";
+import { pacingChecks } from "./pacing-test";
+import { fogChecks } from "./fog-test";
 
 // No verdict here depends on how fast the machine is (4.1, review M8): the
 // slow cast guard is off unless SLOW_MS is set, and worst ticks are printed,
@@ -1055,6 +1078,13 @@ for (const scenario of SCENARIOS) {
   // 4.4.5 part B: wonders, names, the last ten sets, buildings (wonders-test.ts).
   wonderChecks(check);
   programWonderChecks(check);
+  // 4.6: the seven kinds, the engine's makers, sizes per kind.
+  formChecks(check);
+  keptByFormChecks(check);
+  // 4.6 part B: people are villagers, creatures live, the judge asks.
+  creatureChecks(check);
+  // 4.7: objects that are picked up and used (src/sim/held.ts).
+  heldChecks(check);
   check("a small island is one land", generateWorld(112, 112, 5, resolveLand(mid, 5, 112)).biomeMap === null);
   // 4.4.1: rivers wind instead of running straight with right angle turns
   // (main had a run of 26 cells and a quarter of its river in runs of 8 or
@@ -1637,6 +1667,11 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
   check("a ward keeps lava out and lightning off", inside === 0 && burning === 0 && !errors.length, `${inside} lava cells, ${burning} burning inside`);
 }
 
+// 4.7: the interaction table (effects against wards and materials) and the
+// ward's breaking point (scripts/interactions-test.ts).
+interactionChecks(check);
+sizeChecks(check);
+
 // 9e. The API that grows (3.4.2): a helper is appended to the programs that
 // call it, runs inside them like any spell code, and is refused when it
 // yields, reaches outside the sandbox or is never called by its example.
@@ -1680,7 +1715,7 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
     JOBS.map((job) => buildRig(body("two legs", [], { villager: true }), packLook({ age, job, style: 0, skin: 0, hair: 0, long: false }))),
   );
   check("every villager age and job", looks.every(finite), `${looks.length} looks`);
-  const l = { age: "elder" as const, job: "smith" as const, style: 4, skin: 3, hair: 5, long: true };
+  const l = { age: "elder" as const, job: "smith" as const, style: 4, skin: 3, hair: 5, long: true, calling: "necromancer" as const };
   check("a villager's look packs into one number", JSON.stringify(unpackLook(packLook(l))) === JSON.stringify(l));
 
   const guess = (name: string) => bodyFrom({}, name, KINDS.get("beast")!.body);
@@ -2170,6 +2205,61 @@ check(`five minute scene ran on ${SCENE_STREAMS} streams`, sceneReports.length =
   check("60% up joins the library", votedUp({ up: 3, down: 2 }, 5) && !votedUp({ up: 1, down: 0 }, 2));
   check("rolled back when voted worse", votedWorse({ up: 0, down: 2 }, { up: 1, down: 2 }, 2) && !votedWorse({ up: 1, down: 1 }, { up: 0, down: 1 }, 1));
   check("down share", downShare({ up: 1, down: 3 }) === 0.75 && downShare({ up: 0, down: 0 }) === 0);
+  // Reasons by form (2026-11-07): a creature is judged on how it moves and
+  // behaves, a building on its shape and use, never one list for all.
+  const creature = reasonsFor("creature");
+  check(
+    "a creature shows creature reasons: it barely moved, ignored everyone, not how it behaves",
+    ["still", "aloof", "nature", "body"].every((r) => creature.includes(r as never)) && !creature.includes("float") && !creature.includes("nothing"),
+    creature.join(","),
+  );
+  check(
+    "a building shows building reasons",
+    ["plain", "empty", "float"].every((r) => reasonsFor("building").includes(r as never)),
+    reasonsFor("building").join(","),
+  );
+  check(
+    "every form offers two to six known reasons, Broke the island among them",
+    FORMS.every(
+      (f) =>
+        REASONS_BY_FORM[f].length >= 2 &&
+        REASONS_BY_FORM[f].length <= 6 &&
+        REASONS_BY_FORM[f].includes("broke") &&
+        new Set(REASONS_BY_FORM[f]).size === REASONS_BY_FORM[f].length,
+    ),
+  );
+  check(
+    "labels fit a button (22 letters) and every prompt says what to do",
+    FORMS.every((f) => reasonsFor(f).every((r) => reasonLabel(r, f).length <= 22)) &&
+      Object.values(REASONS).every((d) => d.prompt.length <= 200 && /; (make|give|keep|add|draw|stand|choose|raise)/.test(d.prompt)),
+  );
+  check(
+    "a spell's small reads Too weak, a building's Too small",
+    reasonLabel("small", "spell") === "Too weak" && reasonLabel("small", "building") === "Too small",
+  );
+  check(
+    "the five first reasons stay known: old votes still read",
+    DOWN_REASONS.every((r) => r in REASONS),
+  );
+  check(
+    "a vote takes one to three known reasons, each once",
+    voteReasons({ reasons: ["still", "aloof"] })?.join() === "still,aloof" &&
+      voteReasons({ reason: "boring" })?.join() === "boring" &&
+      voteReasons({ reasons: [] }) === null &&
+      voteReasons({ reasons: ["still", "aloof", "body", "small"] }) === null &&
+      MAX_REASONS === 3 &&
+      voteReasons({ reasons: ["still", "still"] }) === null &&
+      voteReasons({ reasons: ["meh"] }) === null &&
+      voteReasons({ reasons: ["still, aloof"] }) === null &&
+      voteReasons({}) === null,
+  );
+  check(
+    "stored reasons read back, old single ones too, unknown parts dropped",
+    storedReasons("boring").join() === "boring" &&
+      storedReasons("still,body").join() === "still,body" &&
+      storedReasons("gone,small").join() === "small" &&
+      storedReasons(null).length === 0,
+  );
   const library = [
     { key: "inferno", name: "Inferno", tier: "grand", kind: "spell", description: "A roaring fire that burns the forest", code: "a" },
     { key: "golem", name: "Golem", tier: "minor", kind: "artifact", description: "A stone giant who guards villagers", code: "b" },
@@ -2292,6 +2382,15 @@ await fixesChecks(check);
 
 // 14. Rewrites by evidence (daily 2026-11-05): scripts/evidence-test.ts.
 await evidenceChecks(check);
+
+// 15. The World's frame pacing (2026-11-07): scripts/pacing-test.ts.
+pacingChecks(check);
+
+// The mist from afar (2026-11-07): scripts/fog-test.ts.
+fogChecks(check);
+
+// Roads (4.9): scripts/roads-test.ts.
+roadsChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);

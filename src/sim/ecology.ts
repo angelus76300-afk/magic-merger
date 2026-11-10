@@ -1,4 +1,5 @@
 import { C, F, G } from "./materials";
+import { wearMinute } from "./roads";
 import { Rng, fbm, valueNoise } from "./noise";
 import { seedRoll, type Biome } from "./land-options";
 import type { World } from "./world";
@@ -649,7 +650,12 @@ export function woodland(world: World, i: number): boolean {
 // jungle, stone where there is little wood or on volcanic ground, timber
 // where the forest is close.
 export function dressSettlements(world: World, biomes: readonly Biome[]): void {
-  for (const s of world.settlements) {
+  for (const s of world.settlements) dressSettlement(world, s, biomes);
+}
+
+// The house style of one village, from its land and what grows round it.
+export function dressSettlement(world: World, s: Settlement, biomes: readonly Biome[]): void {
+  {
     const cx = Math.round(s.x);
     const cy = Math.round(s.y);
     let trees = 0;
@@ -668,6 +674,12 @@ export function dressSettlements(world: World, biomes: readonly Biome[]): void {
     else if (biome === "volcanic" || trees < 25) style = "stone";
     s.style = HOUSE_STYLES.indexOf(style);
   }
+}
+
+// A new village's well, as a fresh island's villages get theirs.
+export function firstWell(world: World, s: Settlement): void {
+  s.level = Math.max(1, s.level);
+  build(world, s, 1);
 }
 
 // What a village has to spend, by the stores of the village nearest to it.
@@ -801,11 +813,16 @@ function build(world: World, s: Settlement, level: number): boolean {
 
 // Paths wear in where villagers walk (once a second from lifeCycle): grass
 // walked over often enough turns to a path, and a path no one walks greens
-// over again (physics.ts). Every minute the count halves.
+// over again (physics.ts). Every minute the count halves, and a path walked
+// hard enough for long enough becomes a dirt road (4.9, roads.ts).
 export function wearPaths(world: World): void {
   if (!world.wear) world.wear = new Uint8Array(world.n);
   const wear = world.wear;
-  if (world.tick % 1800 < 30) for (let i = 0; i < world.n; i++) wear[i] >>= 1;
+  if (world.tick % 1800 < 30) {
+    // 4.9: paths walked hard for minutes running tread into dirt roads.
+    wearMinute(world);
+    for (let i = 0; i < world.n; i++) wear[i] >>= 1;
+  }
   for (const c of world.creatures) {
     if (c.dead || c.kind !== "villager") continue;
     const x = Math.round(c.x);

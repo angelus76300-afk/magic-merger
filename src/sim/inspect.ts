@@ -1,8 +1,10 @@
 import { abilitiesOf } from "./abilities";
 import { jobOf, TASK_WORDS } from "./goals";
 import { villageOf } from "./kin";
+import { roadsOf } from "./roads";
 import { unpackLook } from "./villagers";
 import { isArtifact, type Artifact } from "./artifacts";
+import { holding } from "./held";
 import type { Creature, CreatureKind } from "./creatures";
 import type { World } from "./world";
 
@@ -48,16 +50,33 @@ export function inspect(world: World, c: Creature, kindOf: (c: Creature) => Crea
     const job = jobOf(c);
     title = look.age === "child" ? "Child" : job === "none" ? (look.age === "elder" ? "Elder" : "Villager") : cap(job);
     subtitle = look.age === "elder" ? "an elder of the village" : look.age === "child" ? "a child of the village" : "a villager";
+    // 4.6 part B: a person made by a merge carries its item's name, and its
+    // calling or job beneath it ("Necromancer, the village's necromancer").
+    if (m?.title) {
+      const what = look.calling && look.calling !== "none" ? look.calling : job === "none" ? "villager" : job;
+      subtitle = what.toLowerCase() === m.title.toLowerCase() ? "a villager" : `a ${what} of the village`;
+      title = m.title;
+    }
   }
   if (m?.tame) subtitle = `tamed by a village`;
   const rows: [string, string][] = [];
   const goal = m?.goal ?? k.goal ?? "explore";
   // A job a spell hired it for, by its own name; then its usual job.
-  const job = c.kind === "villager" && goal !== "worship" ? (m?.job ?? JOB_WORDS[jobOf(c)]) : undefined;
+  const calling = c.kind === "villager" ? unpackLook(c.look).calling : undefined;
+  const job =
+    c.kind === "villager" && calling && CALLING_WORDS[calling]
+      ? CALLING_WORDS[calling]
+      : c.kind === "villager" && goal !== "worship"
+        ? (m?.job ?? JOB_WORDS[jobOf(c)])
+        : undefined;
   const age = c.kind === "villager" ? unpackLook(c.look).age : "adult";
   rows.push(["Wants to", age === "child" ? "play and pick berries" : age === "elder" && goal === "tend" ? "plant flowers" : (job ?? GOAL_WORDS[goal] ?? goal)]);
   rows.push(["Doing", c.dead ? "nothing any more" : (moodWords(c) ?? m?.action ?? TASK_WORDS.none)]);
   if (m?.did) rows.push(["Last did", m.did]);
+  // 4.7: an object in hand (held.ts), with its charges when it has some.
+  const held = holding(world, c);
+  if (held)
+    rows.push(["Holds", `the ${held.name}${held.art.charges !== null ? ` (${held.art.charges} ${held.art.charges === 1 ? "charge" : "charges"})` : ""}`]);
   if (m?.carry) rows.push(["Carrying", m.carry]);
   else if (c.data.carry !== undefined) rows.push(["Carrying", "treasure"]);
   if (m?.memory.length) {
@@ -80,8 +99,25 @@ export function inspect(world: World, c: Creature, kindOf: (c: Creature) => Crea
     ]);
   }
   if (c.kind === "villager") {
+    // Who shares its home (4.6 part B): the household it lives with.
+    const home = world.creatures.filter((o) => o !== c && !o.dead && o.kind === "villager" && Math.hypot(o.homeX - c.homeX, o.homeY - c.homeY) < 1.3);
+    if (home.length)
+      rows.push([
+        "Lives with",
+        home
+          .slice(0, 3)
+          .map((o) => {
+            const l = unpackLook(o.look);
+            const j = jobOf(o);
+            return `a ${l.age === "child" ? "child" : l.age === "elder" ? "elder" : j === "none" ? "villager" : j}`;
+          })
+          .join(", ") + (home.length > 3 ? ` and ${home.length - 3} more` : ""),
+      ]);
     const v = villageOf(world, c.homeX, c.homeY);
     if (v) rows.push(["Village stores", `food ${Math.floor(v.food)}, wood ${Math.floor(v.wood)}, gold ${Math.floor(v.gold)}`]);
+    // 4.9: where its village's roads go, and what they wait for.
+    const roads = v ? roadsOf(world, v) : [];
+    if (roads.length) rows.push(["Roads", roads.slice(0, 3).join("; ")]);
   }
   if (m && m.lair >= 0 && c.kind !== "villager") {
     const mark = world.marks.find((mk) => Math.abs(mk.x - (m.lair % world.w)) <= 3 && Math.abs(mk.y - Math.floor(m.lair / world.w)) <= 3);
@@ -101,6 +137,13 @@ function moodWords(c: Creature): string | null {
   if (c.fear > 0) return "terrified";
   return null;
 }
+
+const CALLING_WORDS: Record<string, string> = {
+  necromancer: "keep the graves and raise the dead at night",
+  blacksmith: "work the forge",
+  knight: "guard the village",
+  mage: "study magic and drive off enemies",
+};
 
 const JOB_WORDS: Record<string, string> = {
   none: "gather berries",

@@ -1,13 +1,14 @@
 import { C, F, G, S } from "./materials";
 import { explode, forDisc, setBlastSpawn } from "./physics";
 import { lull, names, social, stepLandmarks, TAGS, type Mood } from "./social";
-import { WARD, warded } from "./wards";
+import { WARD, damageWard, warded } from "./wards";
 import { daylight } from "./daylight";
 import type { World } from "./world";
 import { body, type BodySpec } from "./body";
 import { SPECIES, habitatCell, habitatCellSure, targetOf } from "./wildlife";
 import { keepBalance, stepMovers } from "./balance";
 import { growSettlements, wearPaths } from "./ecology";
+import { roadSpeed, stepRoads } from "./roads";
 import { DRAGON, stepWonders } from "./wonders";
 import { growBuildings, stepBuildings } from "./buildings";
 import { packLook, randomLook, shirtOf, sizeOf, unpackLook } from "./villagers";
@@ -182,6 +183,38 @@ for (const k of [
       active: "always",
     },
   }),
+  // 4.6 part B: the dead a villager necromancer raises (villagers.ts). Bound
+  // to it: they follow the village's people and stand guard over them until
+  // dawn crumbles them, never hunting the living of their own village.
+  kind({
+    name: "thrall",
+    speed: 2,
+    hp: 45,
+    radius: 0.55,
+    color: 0xb8c4a8,
+    tags: ["undead"],
+    body: body("two legs", ["glowing eyes"], { color2: 0x9a7aff }),
+    goal: "guard",
+    ai: {
+      mode: "follow",
+      prey: ["wolf", "boar", "bear", "risen"],
+      leader: ["villager"],
+      attack: 8,
+      sense: 8,
+      aura: null,
+      auraRadius: 4,
+      auraPower: 1,
+      leaves: null,
+      weak: ["light"],
+      immune: [],
+      lifespan: 120,
+      onDeath: null,
+      lures: [],
+      scares: ["rabbit", "deer"],
+      converts: false,
+      active: "always",
+    },
+  }),
 ]) {
   k.goal ??= kindGoal(k, undefined);
   k.abilities ??= abilitiesFromName(k.name);
@@ -310,7 +343,7 @@ export function dress(c: Creature, style: number): void {
 }
 
 // Which village's clothes a point belongs to: the nearest villager's.
-function styleNear(world: World, x: number, y: number): number {
+export function styleNear(world: World, x: number, y: number): number {
   let best = -1;
   let bestD = 30;
   for (const o of world.creatures) {
@@ -364,6 +397,8 @@ export interface SavedMind {
   goal?: string;
   job?: string | null;
   mem?: [string, number][];
+  // 4.6 part B: a person's own name and what it last did.
+  ti?: string;
 }
 
 export function saveMind(c: Creature): SavedMind | undefined {
@@ -382,6 +417,7 @@ export function saveMind(c: Creature): SavedMind | undefined {
     goal: m.goal,
     job: m.job,
     mem: m.memory.map((e) => [e.kind, r(e.feel)]),
+    ...(m.title ? { ti: m.title } : {}),
   };
 }
 
@@ -399,6 +435,7 @@ function restoreMind(c: Creature, s: SavedMind): void {
   if (s.goal === "worship") m.goal = "worship";
   // A spell's own job, kept by name: it works again once that spell's rules are loaded.
   if (typeof s.job === "string" && s.job) m.job = s.job.slice(0, 40);
+  if (typeof s.ti === "string" && s.ti.trim()) m.title = s.ti.trim().slice(0, 32);
   if (Array.isArray(s.mem))
     m.memory = s.mem
       .filter((e) => Array.isArray(e) && typeof e[0] === "string" && typeof e[1] === "number" && Number.isFinite(e[1]))
@@ -427,15 +464,17 @@ function blocked(world: World, x: number, y: number, c: Creature, k: CreatureKin
   if (k.aquatic) return !wet(world, i, 0.6);
   // Solid covers by id from a table (4.3: steering asks this many times a tick).
   if (solidCovers(world)[world.cover[i]]) return true;
+  // A bridge's deck carries walkers over the water (4.9).
+  const deck = world.cover[i] === C.BRIDGE && world.onDeck(i);
   // Deep water and any lava are walls for those who would die in them.
   const f = world.fluid[i];
-  if (f !== F.NONE && f !== F.ICE && world.depth[i] > 0.05) {
+  if (!deck && f !== F.NONE && f !== F.ICE && world.depth[i] > 0.05) {
     if (f === F.LAVA && !k.fireproof) return true;
     if (world.depth[i] > 1 && !k.swims) return true;
   }
   // Cliffs: too steep a step up (ice and fluids count as the surface you walk on).
-  const here = world.level(world.idx(Math.max(0, Math.min(world.w - 1, fx)), Math.max(0, Math.min(world.h - 1, fy))));
-  return world.level(i) - here > 1.6;
+  const here = world.walkLevel(world.idx(Math.max(0, Math.min(world.w - 1, fx)), Math.max(0, Math.min(world.h - 1, fy))));
+  return world.walkLevel(i) - here > 1.6;
 }
 
 const TIMED = ["frozen", "fear", "sleep", "calm", "levitate", "stun"] as const;
@@ -465,6 +504,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
 
   const i = world.idx(Math.max(0, Math.min(world.w - 1, c.x)), Math.max(0, Math.min(world.h - 1, c.y)));
   const onGround = c.z < 0.5 && !k.flying && c.levitate <= 0;
+  // On a bridge's deck: dry feet whatever the water under it (4.9).
+  const onDeck = onGround && !k.aquatic && world.cover[i] === C.BRIDGE && world.onDeck(i);
 
   const ai = k.ai;
   const weak = (e: string) => !!ai && ai.weak.includes(e);
@@ -497,10 +538,10 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   if (onGround) {
     if (world.fire[i] > 0.25 && !k.fireproof && !immune("fire")) c.burning = Math.max(c.burning, 3);
     const fluid = world.materials.get("fluid", world.fluid[i]);
-    if (world.depth[i] > 0.05 && fluid.hurts > 0 && !(k.fireproof && world.fluid[i] === F.LAVA) && !(immune("acid") && world.fluid[i] === F.ACID))
+    if (!onDeck && world.depth[i] > 0.05 && fluid.hurts > 0 && !(k.fireproof && world.fluid[i] === F.LAVA) && !(immune("acid") && world.fluid[i] === F.ACID))
       c.hp -= fluid.hurts * dt;
     if (world.fluid[i] === F.WATER && world.depth[i] > 0.25) c.burning = 0;
-    if (world.fluid[i] === F.WATER && world.depth[i] > 1.4 && !k.swims && !immune("water")) {
+    if (!onDeck && world.fluid[i] === F.WATER && world.depth[i] > 1.4 && !k.swims && !immune("water")) {
       c.drowning += dt;
       if (c.drowning > 4) c.hp -= 12 * dt;
     } else c.drowning = Math.max(0, c.drowning - dt);
@@ -683,13 +724,16 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     let speed = 0;
     if (len > 0 && pace > 0) {
       speed = k.speed * pace * Math.sqrt(c.size);
-      if (onGround && world.depth[i] > 0.3 && world.fluid[i] !== F.ICE) speed *= 0.5;
-      if (onGround && world.fluid[i] === F.MUD) speed *= 0.3;
+      if (onGround && !onDeck && world.depth[i] > 0.3 && world.fluid[i] !== F.ICE) speed *= 0.5;
+      if (onGround && !onDeck && world.fluid[i] === F.MUD) speed *= 0.3;
+      // Faster on a path, a road or a bridge (4.9, roads.ts).
+      if (onGround && !k.aquatic) speed *= roadSpeed(world, i);
     }
     // The end of the trip, for its flow field: the task's place, when the
     // point asked for is only a bend on the way (goals.ts roamAim).
     const m = c.mind;
-    const trip = drive === "pursue" && m && m.task !== "none";
+    // A traveller following a road (4.9) goes to the next bend of it.
+    const trip = drive === "pursue" && m && m.task !== "none" && !c.data.via;
     const gx = trip ? (m.target ? m.target.x : m.tx) : c.x + wantX;
     const gy = trip ? (m.target ? m.target.y : m.ty) : c.y + wantY;
     const hunting = mood === "hunt" || mood === "angry";
@@ -1246,7 +1290,10 @@ function keepOut(world: World): void {
         c.vx -= inward * ux;
         c.vy -= inward * uy;
       }
-      ward.hit = world.time;
+      // Each push wears the ward a little (4.7): a hostile pressing on it is
+      // pushed about every tick, so about 3 a second each; raiders crack a
+      // ward, never break it (wards.ts, PRESSURE).
+      damageWard(world, ward, 0.1, "creatures");
     }
   }
 }
@@ -1280,6 +1327,8 @@ export function lifeCycle(world: World, dt: number): void {
     if (Math.random() < dt * 0.2) keepBalance(world, makeCreature);
     if (world.tick % 60 === 7) stepMovers(world);
     if (world.tick % 30 === 11) wearPaths(world);
+    // 4.9: villages that trade lay roads between them.
+    stepRoads(world);
     if (world.tick % 600 === 13) growSettlements(world);
     // 4.4.5 part B: what wonders and buildings with a job do.
     if (world.tick % 600 === 13) growBuildings(world);

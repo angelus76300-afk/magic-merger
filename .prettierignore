@@ -4,7 +4,10 @@ package-lock.json
 lab/legacy
 lab/spells
 lab/solutions
+lab/creatures
 migrations
 .wrangler
 # Third party skills, kept as published (docs/SKILLS.md)
 .claude/skills
+# One line per changelog entry, so union merges two entries without a conflict (docs/DAILY.md)
+public/changelog.json

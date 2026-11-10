@@ -36,7 +36,8 @@ export function openCard(store: Store, key: string, first = false): void {
   d.querySelector(".card-emoji")!.textContent = element.emoji;
   d.querySelector(".card-name")!.textContent = element.name;
   const kind = d.querySelector<HTMLElement>(".card-kind")!;
-  kind.textContent = element.kind;
+  // 4.6: what it is, of the seven kinds, when the merge said so.
+  kind.textContent = element.form && element.form !== "spell" ? element.form : element.kind;
   kind.dataset.kind = element.kind;
   const tier = TIER_LABEL[element.tier ?? tierFromDepth(element.depth)];
   d.querySelector(".card-depth")!.textContent = element.depth === 0 ? `Primal force · ${tier}` : `${tier} · depth ${element.depth}`;
@@ -135,7 +136,7 @@ export function openCard(store: Store, key: string, first = false): void {
   d.querySelector<HTMLButtonElement>(".card-new-description")!.onclick = () => showDescription(true);
   // The only way a stored spell is ever written again: one at a time, by the
   // admin, after seeing what it costs. A version bump never does it.
-  const label = isSpell ? "Rewrite this spell" : "Rewrite this artifact";
+  const label = isSpell ? "Rewrite this spell" : `Rewrite this ${element.form && element.form !== "spell" ? element.form : "thing"}`;
   const newSpell = d.querySelector<HTMLButtonElement>(".card-new-spell")!;
   newSpell.textContent = label;
   newSpell.onclick = async () => {
@@ -189,10 +190,13 @@ function versionText(v: {
   judged: unknown;
 }): string {
   const checked = v.checked as { ok?: boolean; problem?: string } | null;
-  const judged = v.judged as { score?: number; reason?: string; alive?: string } | null;
+  const judged = v.judged as { score?: number; reason?: string; alive?: string; like?: string } | null;
   const parts = [`#${v.id} ${v.status}`, `${v.origin}, ${shortModel(v.model)}`, `${v.up} up ${v.down} down${v.library ? " (library)" : ""}`];
   if (checked) parts.push(checked.ok ? "test ok" : `test ${checked.problem ?? "failed"}`);
-  if (judged) parts.push(`judge ${judged.score}/5 ${judged.reason}${judged.alive === "no" ? ", creatures not alive" : ""}`);
+  if (judged)
+    parts.push(
+      `judge ${judged.score}/5 ${judged.reason}${judged.alive === "no" ? ", creatures not alive" : ""}${judged.like === "no" ? ", not like its name" : judged.like === "partly" ? ", partly like its name" : ""}`,
+    );
   return parts.join(" · ");
 }
 

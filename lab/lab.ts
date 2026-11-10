@@ -9,6 +9,9 @@ import { Engine, type WorldSize } from "../src/sim/engine";
 import { LAYERS } from "../src/sim/materials";
 import { TICK, type World } from "../src/sim/world";
 import { SCENARIOS } from "../src/sim/scenarios";
+import { resolveLand } from "../src/sim/land-options";
+import { daylight } from "../src/sim/daylight";
+import { WORLD_SIZES } from "../src/sim/engine";
 
 interface LabOptions {
   tier?: Tier;
@@ -35,6 +38,16 @@ interface LabOptions {
   // 4.4.5 part C: a wonder is cast as an artifact with its own reach.
   kind?: "spell" | "artifact";
   reach?: number;
+  // 4.6: a player's island (land.ts, with its seeded villages), not the island before 4.4.
+  land?: boolean;
+  // 4.6: the kind it is written as, for its fine models and makers; 4.7: it sets the reach, as in the game.
+  form?: string;
+  // 4.6: keep the camera on the newest fine model, wonder or village it made.
+  focusMade?: boolean;
+  // 4.6 part B: keep the camera on the first creature or person it made.
+  follow?: boolean;
+  // 4.6 part B: night falls this many seconds after the cast.
+  nightIn?: number;
 }
 
 // A water cell on the island's border, or one next to land at least two
@@ -129,9 +142,10 @@ async function runSpell(code: string, options: LabOptions = {}) {
   const overlay = document.getElementById("overlay") as HTMLCanvasElement;
   const errors: string[] = [];
   current?.dispose();
-  const engine = Engine.create(canvas, overlay, options.size ?? "medium", { onError: (_k, _n, m) => errors.push(m), onTap: () => {} }, seed, {
-    preserveDrawingBuffer: true,
-  });
+  const size = options.size ?? "medium";
+  const cells = WORLD_SIZES[size] ?? WORLD_SIZES.medium;
+  const land = options.land ? resolveLand({ warmth: 0.5, water: 0.5, relief: 0.5, forest: 0.5 }, seed, cells) : undefined;
+  const engine = Engine.create(canvas, overlay, size, { onError: (_k, _n, m) => errors.push(m), onTap: () => {} }, seed, { preserveDrawingBuffer: true }, land);
   current = engine;
   (window as unknown as { labEngine: Engine }).labEngine = engine;
   const world = engine.world;
@@ -162,7 +176,15 @@ async function runSpell(code: string, options: LabOptions = {}) {
   const creaturesBefore = creatures(world);
   const started = performance.now();
   const ok = engine.cast(
-    { key: "lab", name: "Lab", tier, code, ...(options.kind ? { kind: options.kind } : {}), ...(options.reach ? { reach: options.reach } : {}) },
+    {
+      key: "lab",
+      name: "Lab",
+      tier,
+      code,
+      ...(options.kind ? { kind: options.kind } : {}),
+      ...(options.reach ? { reach: options.reach } : {}),
+      ...(options.form ? { form: options.form } : {}),
+    },
     target.x,
     target.y,
   );
@@ -174,7 +196,33 @@ async function runSpell(code: string, options: LabOptions = {}) {
   if (options.profile) engine.view.profile = profile;
   const stepMs: number[] = [];
   const renderMs: number[] = [];
+  const made0 = { props: world.props.length, wonders: world.wonders.length, settlements: world.settlements.length };
   for (let tick = 0; tick <= last; tick++) {
+    // 4.6: the camera on what the item made (a building settles a few cells from the spot, a village far off).
+    if (options.focusMade) {
+      const p = world.props.length > made0.props ? world.props[world.props.length - 1] : null;
+      const w = world.wonders.length > made0.wonders ? world.wonders[world.wonders.length - 1] : null;
+      const s = world.settlements.length > made0.settlements ? world.settlements[world.settlements.length - 1] : null;
+      const at = s ?? p ?? w;
+      if (at) {
+        engine.view.orbit.tx = at.x;
+        engine.view.orbit.ty = at.y;
+      }
+    }
+    if (options.follow) {
+      const mine =
+        engine.runtime.people.get("lab")?.find((c) => !c.dead) ??
+        world.creatures.find((c) => !c.dead && engine.runtime.owners.get(`creature:${c.kind}`) === "lab");
+      if (mine) {
+        engine.view.orbit.tx += (mine.x - engine.view.orbit.tx) * 0.2;
+        engine.view.orbit.ty += (mine.y - engine.view.orbit.ty) * 0.2;
+      }
+    }
+    if (options.nightIn !== undefined && tick === 1) {
+      let t = world.time;
+      while (daylight(t + options.nightIn).night < 0.7 && t < world.time + 400) t += 1;
+      world.time = t;
+    }
     const t0 = performance.now();
     engine.step();
     const t1 = performance.now();
@@ -215,7 +263,8 @@ function quantiles(list: number[]): [number, number, number] {
 // times and places, and reports how the objective evolved.
 async function runScenario(
   id: string,
-  options: { seconds?: number; casts?: { t: number; x: number; y: number; code: string; tier: string }[]; shots?: number[] } = {},
+  // `village`: casts given at x = -1 land on the scenario's first village, and the camera looks there (4.7's ward frames).
+  options: { seconds?: number; casts?: { t: number; x: number; y: number; code: string; tier: string }[]; shots?: number[]; village?: { dist: number } } = {},
 ) {
   seedRandom(5);
   const def = SCENARIOS.find((s) => s.id === id)!;
@@ -230,6 +279,15 @@ async function runScenario(
   engine.view.orbit.tx = focus.x;
   engine.view.orbit.ty = focus.y;
   engine.view.orbit.dist = focus.dist;
+  let at = { x: focus.x, y: focus.y };
+  if (options.village) {
+    const i = world.cover.findIndex((c) => c === C.HOUSE);
+    if (i >= 0) at = { x: (i % world.w) + 3, y: Math.floor(i / world.w) + 3 };
+    engine.view.orbit.tx = at.x;
+    engine.view.orbit.ty = at.y;
+    engine.view.orbit.dist = options.village.dist;
+    engine.runtime.camera = null;
+  }
   const timeline: { t: number; text: string; status: string }[] = [];
   const frames: { t: number; png: string }[] = [];
   const shots = (options.shots ?? []).map((s) => Math.round(s / TICK));
@@ -237,7 +295,8 @@ async function runScenario(
   let status = "playing";
   for (let tick = 0; tick <= ticks; tick++) {
     for (const c of options.casts ?? [])
-      if (Math.round(c.t / TICK) === tick) engine.cast({ key: `lab${c.t}`, name: "Lab", tier: isTier(c.tier) ? c.tier : "major", code: c.code }, c.x, c.y);
+      if (Math.round(c.t / TICK) === tick)
+        engine.cast({ key: `lab${c.t}`, name: "Lab", tier: isTier(c.tier) ? c.tier : "major", code: c.code }, c.x < 0 ? at.x : c.x, c.x < 0 ? at.y : c.y);
     engine.step();
     run.tick(world);
     if (tick % 30 === 0 || shots.includes(tick)) {

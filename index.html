@@ -19,8 +19,6 @@
         >preview</span
       >
       <span id="admin-badge" class="badge badge-admin" hidden role="button" tabindex="0" title="">admin</span>
-      <button id="account-chip" class="account-chip" hidden></button>
-      <button id="help" class="help" aria-label="Your account, sync and help">?</button>
       <nav class="tabs" role="tablist">
         <button class="tab" role="tab" data-view="craft-view" aria-selected="true">Craft</button>
         <button class="tab" role="tab" data-view="world-view" aria-selected="false">World</button>
@@ -29,6 +27,8 @@
         <button class="tab" role="tab" data-view="community-view" aria-selected="false">Community</button>
         <button class="tab" role="tab" data-view="feedback-view" aria-selected="false">Ideas</button>
       </nav>
+      <button id="account-chip" class="account-chip" hidden></button>
+      <button id="help" class="help" aria-label="Your account, sync and help">?</button>
     </header>
 
     <main id="craft-view" class="view craft">
@@ -62,10 +62,10 @@
           </div>
         </div>
         <div class="world-tools">
-          <button id="world-challenges">Challenges</button>
-          <button id="world-chronicle">Chronicle</button>
-          <button id="world-add">+ Villager</button>
-          <button id="world-reset">Reset</button>
+          <button id="world-challenges" title="Challenges">Challenges</button>
+          <button id="world-chronicle" title="The island's chronicle">Chronicle</button>
+          <button id="world-add" title="Add a villager">+ Villager</button>
+          <button id="world-reset" title="A new island">Reset</button>
           <button id="world-sound" aria-pressed="true">Sound on</button>
         </div>
       </div>

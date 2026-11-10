@@ -1,6 +1,6 @@
 import { body, BUILDS, isItem, type BodySpec, type Build, type Feature, type ModelBox, type Plan } from "../body";
 import { scaleColor } from "../colors";
-import { GRAY_HAIR, HAIRS, SKINS, STYLES, unpackLook, type Look } from "../villagers";
+import { CALLINGS, GRAY_HAIR, HAIRS, SKINS, STYLES, unpackLook, type Calling, type Look } from "../villagers";
 import { separate } from "./faces";
 
 // A creature's figure as boxes (3.5), in units of its size, standing on y 0
@@ -842,7 +842,7 @@ function model(B: Builder, boxes: ModelBox[]): number {
 // Which variant of a kind a creature is, for the rig cache.
 // Read every frame, so straight from the bits (villagers.ts): age, job, long hair.
 export function variantOf(spec: BodySpec, look: number): number {
-  if (spec.villager) return (look & 63) | (((look >> 15) & 1) << 6);
+  if (spec.villager) return (look & 63) | (((look >> 15) & 1) << 6) | (((look >> 16) & 7) << 7);
   return spec.vary?.length ? look & ((1 << spec.vary.length) - 1) : 0;
 }
 
@@ -855,6 +855,13 @@ const JOB_FEATURES: Record<string, Feature[]> = {
   priest: ["hood", "book"],
   merchant: ["cap", "basket"],
   builder: ["cap", "hammer"],
+};
+// 4.6 part B: a person's calling dresses it instead of its job (villagers.ts).
+const CALLING_FEATURES: Partial<Record<Calling, Feature[]>> = {
+  necromancer: ["hood", "staff"],
+  blacksmith: ["apron", "hammer"],
+  knight: ["armor", "sword", "shield"],
+  mage: ["hat", "staff"],
 };
 
 export function buildRig(spec: BodySpec, look = 0): Rig {
@@ -873,7 +880,7 @@ export function buildRig(spec: BodySpec, look = 0): Rig {
       if (look & (1 << n) && !features.includes(f)) features.push(f);
     });
     if (villager) {
-      features.push(...(JOB_FEATURES[villager.job] ?? []));
+      features.push(...(CALLING_FEATURES[villager.calling ?? "none"] ?? JOB_FEATURES[villager.job] ?? []));
       if (villager.age === "elder") {
         lean = 0.16;
         if (!villager.long) features.push("beard");
@@ -993,6 +1000,8 @@ export function naturalHeight(spec: BodySpec, radius: number): number | null {
 // The scale a figure is drawn at, in scene units per figure unit. size is the
 // creature's own (children 0.68). Villagers keep the size their radius gives:
 // they are the measure.
+// The cap holds after size too (4.7 item 2): a creature a spell grew is drawn
+// at MAX_HEIGHT villagers at most, where before a size of 6 drew a giant of 19.
 export function drawScale(spec: BodySpec, radius: number, rig: Rig, size = 1): number {
   const V = villagerUnits();
   const natural = naturalHeight(spec, radius);
@@ -1000,7 +1009,10 @@ export function drawScale(spec: BodySpec, radius: number, rig: Rig, size = 1): n
   const h = units * rig.height;
   if (h > MAX_HEIGHT * V) units *= (MAX_HEIGHT * V) / h;
   else if (h < MIN_HEIGHT * V) units *= (MIN_HEIGHT * V) / h;
-  return units * size;
+  units *= size;
+  const tall = units * rig.height;
+  if (tall > MAX_HEIGHT * V) units *= (MAX_HEIGHT * V) / tall;
+  return units;
 }
 
 // Colors per role for one creature, written into out (length ROLES).
@@ -1020,6 +1032,15 @@ export function paletteOf(out: number[], rig: Rig, spec: BodySpec, color: number
     out[R.PANTS] = style.pants;
     out[R.HAT] = style.hat;
     out[R.CLOTH] = style.cloth;
+    // A calling's robe and hood (villagers.ts): the necromancer's near black, the mage's night blue.
+    const calling = CALLINGS[(look >> 16) & 7];
+    if (calling === "necromancer") {
+      out[R.CLOTH] = 0x2e2238;
+      out[R.PANTS] = 0x241c2c;
+    } else if (calling === "mage") {
+      out[R.HAT] = 0x24386e;
+      out[R.CLOTH] = 0x1c2a52;
+    }
   } else {
     out[R.SKIN] = scaleColor(color, 1.15);
     out[R.HAIR] = scaleColor(color, 0.5);

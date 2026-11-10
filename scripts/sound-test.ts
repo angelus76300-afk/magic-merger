@@ -1,0 +1,978 @@
+// 4.8 items 1, 2 and 9, in Node: every voice rendered offline (no NaN, a
+// bounded length, peak and loudness in a range), sounds placed by the camera,
+// and a busy island's events through the budget. Run by `npm test`.
+//
+// Node has no Web Audio, so this file carries a small one: oscillators,
+// gains, biquad filters (the formulas of the Web Audio spec), buffer sources
+// and the automation the voices use, rendered sample by sample.
+
+import { MusicPlayer, VOICE_NAMES, bedMaker, makeVoice, voiceFor, whiteNoise, type Synth } from "../src/sim/sound";
+import { Composer, MoodTracker, PHRASE_BARS, TENSION_IN, TENSION_OUT, hz, inKey, scoreOf } from "../src/sim/music";
+import { CRAFT_VOICES, CraftSound, nameMotif, tierNotes, tierRoot, type CraftVoice } from "../src/craftsound";
+import { SOUND_DEFAULTS, readSentSettings, readSoundSettings, writeSoundSetting } from "../src/sim/soundsettings";
+import {
+  BEDS,
+  CALLS,
+  CALL_CELLS,
+  CallClock,
+  chooseCall,
+  type Caller,
+  HEARD,
+  HYSTERESIS,
+  SPECIES_GAP,
+  chooseBeds,
+  sampleBeds,
+  silentBeds,
+  type BedLevels,
+} from "../src/sim/ambience";
+import { C, F } from "../src/sim/materials";
+import { daylight } from "../src/sim/daylight";
+import {
+  MAX_VOICES,
+  MERGE_CAP,
+  ROUTINE_CELLS,
+  SoundBudget,
+  castOwns,
+  eventAt,
+  tierSize,
+  cooldownOf,
+  listenerAt,
+  place,
+  routineHeard,
+  sameSpot,
+  type Listener,
+} from "../src/sim/soundplace";
+import { generateWorld } from "../src/sim/world";
+import { populate } from "../src/sim/creatures";
+import { stepWorld } from "../src/sim/tick";
+import { Runtime } from "../src/sim/runtime";
+import { TICK } from "../src/sim/world";
+
+const RATE = 22050;
+
+type Ev = { kind: "set" | "lin" | "exp" | "target"; t: number; v: number; tc?: number };
+
+class Param {
+  private evs: Ev[] = [];
+  readonly inputs: Node[] = [];
+  constructor(public value: number) {}
+  setValueAtTime(v: number, t: number) {
+    this.evs.push({ kind: "set", t, v });
+    return this;
+  }
+  linearRampToValueAtTime(v: number, t: number) {
+    this.evs.push({ kind: "lin", t, v });
+    return this;
+  }
+  exponentialRampToValueAtTime(v: number, t: number) {
+    if (v === 0) throw new Error("exponential ramp to 0 is an error in Web Audio");
+    this.evs.push({ kind: "exp", t, v });
+    return this;
+  }
+  setTargetAtTime(v: number, t: number, tc: number) {
+    this.evs.push({ kind: "target", t, v, tc });
+    return this;
+  }
+  // The value at time t, as the Web Audio spec computes it, plus modulation.
+  at(t: number, i: number): number {
+    let v = this.value;
+    let prevT = 0;
+    let prevV = this.value;
+    for (const e of this.evs) {
+      if (e.kind === "set" || e.kind === "target") {
+        if (e.t > t) break;
+        if (e.kind === "set") v = e.v;
+        else v = e.v + (prevV - e.v) * Math.exp(-(t - e.t) / (e.tc ?? 1));
+        prevT = e.t;
+        prevV = e.kind === "set" ? e.v : v;
+        continue;
+      }
+      // A ramp runs from the previous event to its own time.
+      if (t >= e.t) {
+        v = e.v;
+        prevT = e.t;
+        prevV = e.v;
+        continue;
+      }
+      const k = (t - prevT) / Math.max(1e-9, e.t - prevT);
+      if (e.kind === "lin") v = prevV + (e.v - prevV) * k;
+      else v = prevV > 0 && e.v > 0 ? prevV * Math.pow(e.v / prevV, k) : prevV;
+      break;
+    }
+    for (const n of this.inputs) v += n.out(i);
+    return v;
+  }
+}
+
+abstract class Node {
+  readonly inputs: Node[] = [];
+  private cacheI = -1;
+  private cacheV = 0;
+  connect<T extends Node | Param>(to: T): T {
+    if (to instanceof Param) to.inputs.push(this);
+    else (to as Node).inputs.push(this);
+    return to;
+  }
+  disconnect() {}
+  protected sum(i: number): number {
+    let v = 0;
+    for (const n of this.inputs) v += n.out(i);
+    return v;
+  }
+  out(i: number): number {
+    if (i !== this.cacheI) {
+      this.cacheI = i;
+      this.cacheV = this.compute(i, i / RATE);
+    }
+    return this.cacheV;
+  }
+  protected abstract compute(i: number, t: number): number;
+}
+
+class Gain extends Node {
+  readonly gain = new Param(1);
+  protected compute(i: number, t: number) {
+    return this.sum(i) * this.gain.at(t, i);
+  }
+}
+
+class Scheduled extends Node {
+  protected startT = Infinity;
+  protected stopT = Infinity;
+  started = 0;
+  start(t = 0) {
+    this.startT = t;
+    this.started++;
+  }
+  stop(t = 0) {
+    this.stopT = t;
+  }
+  protected live(t: number) {
+    return t >= this.startT && t < this.stopT;
+  }
+  protected compute(_i: number, _t: number) {
+    return 0;
+  }
+}
+
+class Osc extends Scheduled {
+  type: OscillatorType = "sine";
+  readonly frequency = new Param(440);
+  readonly detune = new Param(0);
+  private phase = 0;
+  protected compute(i: number, t: number) {
+    if (!this.live(t)) return 0;
+    const f = this.frequency.at(t, i) * Math.pow(2, this.detune.at(t, i) / 1200);
+    this.phase = (this.phase + f / RATE) % 1;
+    const p = this.phase < 0 ? this.phase + 1 : this.phase;
+    switch (this.type) {
+      case "square":
+        return p < 0.5 ? 1 : -1;
+      case "sawtooth":
+        return 2 * p - 1;
+      case "triangle":
+        return 1 - 4 * Math.abs(p - 0.5);
+      default:
+        return Math.sin(2 * Math.PI * p);
+    }
+  }
+}
+
+class Source extends Scheduled {
+  buffer: FakeBuffer | null = null;
+  loop = false;
+  readonly playbackRate = new Param(1);
+  private offset = 0;
+  start(t = 0, offset = 0) {
+    super.start(t);
+    this.offset = offset;
+  }
+  protected compute(i: number, t: number) {
+    if (!this.live(t) || !this.buffer) return 0;
+    const data = this.buffer.data;
+    let k = Math.floor((t - this.startT + this.offset) * RATE * this.playbackRate.at(t, i));
+    if (this.loop) k %= data.length;
+    return k >= 0 && k < data.length ? data[k] : 0;
+  }
+}
+
+class Biquad extends Node {
+  type: BiquadFilterType = "lowpass";
+  readonly frequency = new Param(350);
+  readonly Q = new Param(1);
+  readonly gain = new Param(0);
+  private x1 = 0;
+  private x2 = 0;
+  private y1 = 0;
+  private y2 = 0;
+  protected compute(i: number, t: number) {
+    const x = this.sum(i);
+    const f = Math.max(10, Math.min(RATE / 2 - 1, this.frequency.at(t, i)));
+    const q = Math.max(0.0001, this.Q.at(t, i));
+    const w = (2 * Math.PI * f) / RATE;
+    const cos = Math.cos(w);
+    const sin = Math.sin(w);
+    let b0: number, b1: number, b2: number;
+    let alpha: number;
+    if (this.type === "bandpass") {
+      alpha = sin / (2 * q);
+      b0 = alpha;
+      b1 = 0;
+      b2 = -alpha;
+    } else if (this.type === "highpass") {
+      alpha = sin / (2 * Math.pow(10, q / 20));
+      b0 = (1 + cos) / 2;
+      b1 = -(1 + cos);
+      b2 = b0;
+    } else {
+      // Web Audio's lowpass reads Q in dB.
+      alpha = sin / (2 * Math.pow(10, q / 20));
+      b0 = (1 - cos) / 2;
+      b1 = 1 - cos;
+      b2 = b0;
+    }
+    const a0 = 1 + alpha;
+    const a1 = -2 * cos;
+    const a2 = 1 - alpha;
+    const y = (b0 * x + b1 * this.x1 + b2 * this.x2 - a1 * this.y1 - a2 * this.y2) / a0;
+    this.x2 = this.x1;
+    this.x1 = x;
+    this.y2 = this.y1;
+    this.y1 = y;
+    return y;
+  }
+}
+
+class Sink extends Node {
+  protected compute(i: number) {
+    return this.sum(i);
+  }
+}
+
+class FakeBuffer {
+  readonly data: Float32Array;
+  constructor(length: number) {
+    this.data = new Float32Array(length);
+  }
+  get duration() {
+    return this.data.length / RATE;
+  }
+  getChannelData() {
+    return this.data;
+  }
+}
+
+class Offline {
+  readonly sampleRate = RATE;
+  currentTime = 0;
+  readonly nodes: Node[] = [];
+  private add<T extends Node>(n: T): T {
+    this.nodes.push(n);
+    return n;
+  }
+  createOscillator() {
+    return this.add(new Osc());
+  }
+  createGain() {
+    return this.add(new Gain());
+  }
+  createBiquadFilter() {
+    return this.add(new Biquad());
+  }
+  createBufferSource() {
+    return this.add(new Source());
+  }
+  createBuffer(_channels: number, length: number) {
+    return new FakeBuffer(length);
+  }
+}
+
+let failures = 0;
+let passes = 0;
+function check(ok: boolean, what: string): void {
+  if (ok) passes++;
+  else {
+    failures++;
+    console.error(`FAIL ${what}`);
+  }
+}
+
+interface Render {
+  seconds: number;
+  peak: number;
+  // Loudest 50 ms window, as RMS.
+  loud: number;
+  nan: boolean;
+  tail: number;
+  nodes: number;
+}
+
+// Voices draw on Math.random (a crackle's pops, the noise). Each render runs
+// on a seeded stream instead, so a run of this file is the same every time:
+// unseeded, the loudness ratio below landed between 8.2 and 10.6 and failed
+// about one run in three.
+function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function render(name: string, size: number, pitch = 1, seed = 1): Render {
+  const shared = Math.random;
+  Math.random = seeded(seed);
+  try {
+    return renderNow(name, size, pitch);
+  } finally {
+    Math.random = shared;
+  }
+}
+
+// A voice's usual loudness: the mean of several renders, so one quiet draw
+// of a crackle's pops does not stand for the voice.
+const LOUDNESS_RENDERS = 8;
+
+function renderNow(name: string, size: number, pitch: number): Render {
+  const ctx = new Offline();
+  const noise = whiteNoise(ctx as unknown as BaseAudioContext);
+  const sink = new Sink();
+  const voice = makeVoice(name, noise)!;
+  const seconds = voice(ctx as unknown as Synth, sink as unknown as AudioNode, 0, size, pitch);
+  const n = Math.ceil((seconds + 0.25) * RATE);
+  const win = Math.round(0.05 * RATE);
+  let peak = 0;
+  let nan = false;
+  let acc = 0;
+  let loud = 0;
+  const sq = new Float32Array(n);
+  let tail = 0;
+  for (let i = 0; i < n; i++) {
+    const v = sink.out(i);
+    if (!Number.isFinite(v)) nan = true;
+    peak = Math.max(peak, Math.abs(v));
+    sq[i] = v * v;
+    acc += sq[i];
+    if (i >= win) acc -= sq[i - win];
+    if (i >= win - 1) loud = Math.max(loud, Math.sqrt(Math.max(0, acc) / win));
+    // Anything after the voice says it ended.
+    if (i / RATE > seconds + 0.05) tail = Math.max(tail, Math.abs(v));
+  }
+  return { seconds, peak, loud, nan, tail, nodes: ctx.nodes.length };
+}
+
+// 1. Every voice, offline.
+const loudness: Record<string, number> = {};
+for (const name of VOICE_NAMES) {
+  for (const size of [0, 0.5, 1]) {
+    const r = render(name, size, size === 0.5 ? 1.08 : 1);
+    check(!r.nan, `voice ${name} at size ${size}: no NaN`);
+    check(r.seconds > 0 && r.seconds <= 8, `voice ${name} at size ${size}: length ${r.seconds.toFixed(2)} s is within 8 s`);
+    check(r.peak > 0.01, `voice ${name} at size ${size}: it sounds (peak ${r.peak.toFixed(3)})`);
+    check(r.peak <= 1.2, `voice ${name} at size ${size}: peak ${r.peak.toFixed(3)} under 1.2`);
+    check(r.tail < 0.01, `voice ${name} at size ${size}: silent after the length it reports (${r.tail.toFixed(4)})`);
+    check(r.nodes <= 24, `voice ${name} at size ${size}: ${r.nodes} nodes, at most 24`);
+    if (size === 0.5) {
+      let sum = r.loud;
+      for (let seed = 2; seed <= LOUDNESS_RENDERS; seed++) sum += render(name, size, 1.08, seed).loud;
+      loudness[name] = sum / LOUDNESS_RENDERS;
+    }
+  }
+}
+const louds = Object.values(loudness);
+const loudest = Math.max(...louds);
+const quietest = Math.min(...louds);
+check(
+  loudest / quietest <= 10,
+  `no voice is ten times louder than another: ${Object.entries(loudness)
+    .map(([k, v]) => `${k} ${v.toFixed(3)}`)
+    .join(", ")}`,
+);
+
+console.log(
+  `voice loudness (loudest 50 ms, RMS, size 0.5): ${Object.entries(loudness)
+    .map(([k, v]) => `${k} ${v.toFixed(3)}`)
+    .join(", ")}; ratio ${(loudest / quietest).toFixed(1)}`,
+);
+
+// Names spells use map to a voice or to silence, as before.
+check(voiceFor("chime") === "chime" && voiceFor("Thunder") === "rumble" && voiceFor("nonsense") === null, "names map to voices as before 4.8");
+// 4.8 item 5: names stored programs already use play richer voices; bell and
+// thunder keep theirs until part 5 (scripts/sim-test.ts checks them).
+check(
+  voiceFor("twinkle") === "sparkle" &&
+    voiceFor("glass") === "crystal" &&
+    voiceFor("wind") === "wind" &&
+    voiceFor("splash") === "splash" &&
+    voiceFor("choir") === "choir" &&
+    voiceFor("bell") === "chime" &&
+    voiceFor("thunder") === "rumble",
+  "old names play the new voices; bell and thunder are unchanged",
+);
+
+// 2. Placement.
+const ear: Listener = listenerAt(100, 100, 20, 0);
+const here = place(ear, 100, 100);
+const far = place(ear, 220, 100);
+check(here.gain === 1 && here.pan === 0, "a sound at the camera's point is full and centered");
+check(far.gain < 0.25 && far.cutoff < here.cutoff, `a sound 120 cells away is quieter (${far.gain.toFixed(2)}) and duller (${Math.round(far.cutoff)} Hz)`);
+check(far.cutoff >= 1800, "a far chime is dulled, never filtered away: cutoff at least 1.8 kHz");
+// theta 0: screen right on the ground is +x.
+check(place(ear, 130, 100).pan > 0.5 && place(ear, 70, 100).pan < -0.5, "east is right and west is left at theta 0");
+const turned = listenerAt(100, 100, 20, Math.PI);
+check(place(turned, 130, 100).pan < -0.5, "turning the camera half round swaps left and right");
+const zoomedOut = listenerAt(100, 100, 120, 0);
+check(place(zoomedOut, 180, 160).gain === 1 && place(zoomedOut, 200, 100).gain > 0.8, "zoomed out the island is heard as a whole");
+check(Math.abs(place(ear, 101, 100).pan) < 0.05, "a sound right under the camera is not thrown to one side");
+check(routineHeard(ear, 110, 100) && !routineHeard(ear, 100 + ROUTINE_CELLS + 5, 100), "routine work is heard only near the camera");
+check(!routineHeard(zoomedOut, 101, 100), "zoomed out, single tool hits are not heard");
+
+// A sound with no place belongs to the player's cast only while one runs.
+check(castOwns(2, true), "a spell's own sound, 2 s into its running cast, takes the cast's place");
+check(!castOwns(2, false), "once no cast runs, a sound with no place (a creature's explosion) is not put at the old cast");
+check(!castOwns(120, true), "two minutes on, a sound with no place is never put at the old cast, even while something runs");
+
+// 3. The budget, by hand.
+{
+  const b = new SoundBudget();
+  const a1 = b.admit("chime", 0.8, 0, { x: 10, y: 10, ref: 20 });
+  check(a1.play, "a first chime plays");
+  b.start("chime", 0.8, 0, 1, { x: 10, y: 10, ref: 20 });
+  const merged = b.admit("chime", 0.8, 0.05, { x: 11, y: 10, ref: 20 });
+  check(!merged.play && merged.why === "merged" && merged.merge?.boost === 1.4, "a second chime at the same spot within 100 ms merges and is louder");
+  for (let i = 0; i < 5; i++) b.admit("chime", 0.8, 0.06, { x: 11, y: 10, ref: 20 });
+  check(b.playing[0].boost <= MERGE_CAP, "merging is capped");
+  check(!b.admit("chime", 0.8, 0.11, { x: 10, y: 10, ref: 20 }).play, "a chime inside its cooldown at the same spot waits");
+  check(b.admit("chime", 0.8, 0.05, { x: 100, y: 10, ref: 20 }).play, "a chime far away is its own sound, not merged into the first");
+  const own = new SoundBudget();
+  own.start("chime", 0.2, 0, 1, { x: 10, y: 10, ref: 20 });
+  const answer = own.admit("chime", 0.8, 0.105, { x: 10, y: 10, ref: 20, priority: true });
+  check(answer.play, "the player's own cast skips the cooldown");
+  const full = new SoundBudget(3);
+  for (let i = 0; i < 3; i++) full.start(`v${i}`, 0.2 + i * 0.1, 0, 5, { x: i * 50, y: 0 });
+  check(!full.admit("boom", 0.1, 0.5, { x: 0, y: 0 }).play, "when full, a sound quieter than all playing does not start");
+  const loudNew = full.admit("boom", 0.9, 0.5, { x: 0, y: 0 });
+  check(loudNew.play && loudNew.drop?.voice === "v0", "when full, a louder sound drops the quietest");
+}
+
+// 4. A busy island: every sound it makes through the budget, at the camera's
+// point over a village, with spells landing. No name starts again at one
+// spot faster than its cooldown, and never more than MAX_VOICES at once.
+{
+  const world = generateWorld(128, 128, 4242);
+  populate(world);
+  const rt = new Runtime(world, (key, _name, message) => console.error(`spell ${key}: ${message}`));
+  const village = world.creatures.find((c) => c.kind === "villager") ?? { x: 64, y: 64 };
+  const ear = listenerAt(village.x, village.y, 18, 0.7);
+  const spell = {
+    key: "test:storm",
+    name: "Storm",
+    tier: "major" as const,
+    code: `const spell = { *cast(w) { for (let i = 0; i < 40; i++) { w.sound("chime", 0.6); w.sound("boom", 0.8); w.sound("crackle", 0.5); yield 0.05; } } };`,
+  };
+  const b = new SoundBudget();
+  const starts: { voice: string; t: number; x: number; y: number }[] = [];
+  let events = 0;
+  let maxLive = 0;
+  for (let tick = 0; tick < 30 * 60; tick++) {
+    if (tick % 150 === 0) rt.cast(spell, village.x + (tick % 300 ? 8 : -6), village.y);
+    stepWorld(world, rt);
+    const now = tick * TICK;
+    for (const e of world.events.splice(0)) {
+      if (e.kind !== "sound") continue;
+      events++;
+      const voice = voiceFor(e.name);
+      if (!voice) continue;
+      const x = e.x ?? village.x;
+      const y = e.y ?? village.y;
+      if (e.routine && !routineHeard(ear, x, y)) continue;
+      const level = (0.4 + 0.6 * e.size) * place(ear, x, y).gain * (e.routine ? 0.3 : 1);
+      const ask = { x, y, routine: e.routine, ref: ear.ref };
+      const ok = b.admit(voice, level, now, ask);
+      if (!ok.play) continue;
+      b.start(voice, level, now, 1, ask);
+      starts.push({ voice, t: now, x, y });
+      maxLive = Math.max(maxLive, b.playing.length);
+    }
+  }
+  check(events > 200, `the busy island made sounds: ${events} events in a minute`);
+  let tooSoon = "";
+  for (let i = 0; i < starts.length && !tooSoon; i++)
+    for (let j = i + 1; j < starts.length; j++) {
+      const a = starts[i];
+      const c = starts[j];
+      if (c.t - a.t >= 2) break;
+      if (c.voice === a.voice && Math.hypot(c.x - a.x, c.y - a.y) <= sameSpot(ear.ref) && c.t - a.t < cooldownOf(a.voice) - 1e-9) {
+        tooSoon = `${a.voice} at ${a.t.toFixed(2)} s and again at ${c.t.toFixed(2)} s`;
+        break;
+      }
+    }
+  check(!tooSoon, `no name repeats at one spot faster than its cooldown${tooSoon ? `: ${tooSoon}` : ""}`);
+  check(maxLive <= MAX_VOICES, `at most ${MAX_VOICES} voices at once (${maxLive})`);
+  const s = b.stats;
+  check(s.merged + s.cooled > 0, `the budget held back repeats: ${s.played} played, ${s.merged} merged, ${s.cooled} in cooldown, ${s.full} over the budget`);
+  console.log(
+    `busy island, one minute: ${events} sound events, ${s.played} played, ${s.merged} merged, ${s.cooled} in cooldown, ${s.far} too far, ${s.full} over budget, at most ${maxLive} voices`,
+  );
+}
+
+// 5. Ambience (4.8, item 3).
+{
+  // At most two calm beds, the second at most half the first; fire and rain on top.
+  const busy: BedLevels = { surf: 0.9, leaves: 0.7, fire: 0.4, lava: 0.3, edge: 0.6, rain: 0.5, birds: 0.6, crickets: 0 };
+  const pick = chooseBeds(busy, []);
+  const calm = Object.entries(pick.levels).filter(([b, v]) => v > 0 && !["fire", "rain", "birds", "crickets"].includes(b));
+  check(
+    calm.length === HEARD && pick.levels.surf === 0.9 && pick.levels.leaves === 0.45,
+    `two calm beds heard at most, the second at most half: ${JSON.stringify(pick.levels)}`,
+  );
+  check(pick.levels.fire === 0.4 && pick.levels.rain === 0.5 && pick.levels.birds === 0.6, "fire, rain and birds are heard on top of the two washes");
+  // Hysteresis: a bed heard keeps its slot against one that leads by less than 0.15.
+  const close = { ...silentBeds(), surf: 0.5, leaves: 0.6, edge: 0.3 };
+  check(chooseBeds(close, ["surf", "edge"]).heard.join() === "surf,leaves", "a bed heard is not swapped for one leading by less than the hysteresis");
+  check(
+    chooseBeds({ ...close, leaves: 0.5 + HYSTERESIS + 0.1 }, ["surf", "edge"]).heard[0] === "leaves",
+    "a bed leading by more than the hysteresis takes the first slot",
+  );
+
+  // On a built island: forest, sea and the void past the rim are found where they are.
+  const world = generateWorld(128, 128, 4242);
+  let forest = -1;
+  let sea = -1;
+  for (let i = 0; i < world.n && (forest < 0 || sea < 0); i += 7) {
+    const x = i % world.w;
+    const y = Math.floor(i / world.w);
+    if (x < 10 || y < 10 || x > world.w - 10 || y > world.h - 10) continue;
+    let trees = 0;
+    let water = 0;
+    for (let dy = -4; dy <= 4; dy++)
+      for (let dx = -4; dx <= 4; dx++) {
+        const j = (y + dy) * world.w + x + dx;
+        if (world.cover[j] === C.TREE) trees++;
+        if (world.fluid[j] === F.WATER) water++;
+      }
+    if (forest < 0 && trees > 40) forest = i;
+    if (sea < 0 && water > 70) sea = i;
+  }
+  const at = (i: number, time: number) => sampleBeds(world, i % world.w, Math.floor(i / world.w), 15, time);
+  const day = 30;
+  let night = day;
+  while (daylight(night).night < 0.95) night += 5;
+  const wood = at(forest, day);
+  const woodNight = at(forest, night);
+  check(forest >= 0 && wood.leaves > 0.4 && wood.birds > 0.3 && wood.crickets === 0, `a forest by day: leaves and birds, no crickets ${JSON.stringify(wood)}`);
+  check(woodNight.birds < wood.birds && woodNight.crickets > 0.1, `the same forest at night: crickets, fewer birds ${JSON.stringify(woodNight)}`);
+  const water = at(sea, day);
+  check(sea >= 0 && water.surf + water.edge > 0.3 && water.leaves < wood.leaves, `over water: surf or open sea ${JSON.stringify(water)}`);
+  check(sampleBeds(world, -40, -40, 15, day).edge === 1, "past the island's rim: only the edge wind");
+  check(sampleBeds(world, 64, 64, 15, day, () => 0.8).rain === 0.8, "rain comes from the weather where the camera looks");
+
+  // Bounded and at phone frequencies: every bed rendered 3 s, then through a
+  // 300 Hz high pass (phone speakers barely play lower).
+  const bedLevels: string[] = [];
+  for (const bed of BEDS) {
+    for (const phone of [false, true]) {
+      const ctx = new Offline();
+      const sink = new Sink();
+      let into: Node = sink;
+      if (phone) {
+        const hp = ctx.createBiquadFilter();
+        hp.type = "highpass";
+        hp.frequency.value = 300;
+        hp.connect(sink);
+        into = hp;
+      }
+      const shared = Math.random;
+      Math.random = seeded(7);
+      try {
+        const made = bedMaker(bed)(ctx as unknown as AudioContext, whiteNoise(ctx as unknown as BaseAudioContext), into as unknown as AudioNode, 0);
+        for (let t = 0; t < 3; t += 0.25) made.tick?.(t, 1);
+        made.stop(3);
+      } finally {
+        Math.random = shared;
+      }
+      const n = Math.round(3.1 * RATE);
+      let peak = 0;
+      let sum = 0;
+      let nan = false;
+      for (let i = 0; i < n; i++) {
+        const v = sink.out(i);
+        if (!Number.isFinite(v)) nan = true;
+        peak = Math.max(peak, Math.abs(v));
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / n);
+      if (!phone) check(!nan && peak <= 1.2 && rms > 0.005, `bed ${bed}: sounds and stays bounded (peak ${peak.toFixed(3)}, rms ${rms.toFixed(4)})`);
+      else check(rms > 0.003, `bed ${bed}: still heard above 300 Hz, as on a phone (rms ${rms.toFixed(4)})`);
+      bedLevels.push(`${bed}${phone ? " >300Hz" : ""} ${rms.toFixed(3)}`);
+    }
+  }
+  console.log(`bed levels (RMS over 3 s at full level): ${bedLevels.join(", ")}`);
+}
+
+// 6. Creature calls (item 4): about 0.4 a second, never more than 1, one per
+// species per 4 s, one per creature per 20 s.
+{
+  const clock = new CallClock();
+  const species = Object.keys(CALLS);
+  const calls: { t: number; species: string; id: number }[] = [];
+  // 40 creatures of 10 kinds all wanting to call, 10 looks a second, 2 minutes.
+  for (let k = 0; k < 1200; k++) {
+    const t = k / 10;
+    for (let id = 0; id < 40; id++) {
+      const sp = species[id % species.length];
+      if (clock.may(id, sp, CALLS[sp].voice, t)) {
+        clock.called(id, sp, t);
+        calls.push({ t, species: sp, id });
+        break;
+      }
+    }
+  }
+  const perSecond = calls.length / 120;
+  let maxInOne = 0;
+  for (const c of calls) maxInOne = Math.max(maxInOne, calls.filter((d) => d.t >= c.t && d.t < c.t + 1).length);
+  const sameSpecies = calls.some((c, i) => calls.slice(i + 1).some((d) => d.species === c.species && d.t - c.t < SPECIES_GAP - 1e-9));
+  const sameCreature = calls.some((c, i) => calls.slice(i + 1).some((d) => d.id === c.id && d.t - c.t < 20 - 1e-9));
+  check(
+    maxInOne <= 1 && perSecond <= 1,
+    `never more than one call a second (${calls.length} calls in 2 minutes, ${perSecond.toFixed(2)} a second, busiest second ${maxInOne})`,
+  );
+  check(!sameSpecies && !sameCreature, "one call per species per 4 s, and per creature per 20 s");
+  check(CALL_CELLS === 25, "calls are heard within 25 cells of the camera's point at most");
+}
+
+// 7. Music (4.8, item 6).
+{
+  // The island's seed sets its key, mode and tempo, the same every time.
+  const a = scoreOf(11);
+  check(JSON.stringify(a) === JSON.stringify(scoreOf(11)), "the same island has the same music");
+  const keys = new Set(Array.from({ length: 24 }, (_, k) => `${scoreOf(k).root}:${scoreOf(k).mode}`));
+  check(keys.size >= 10, `islands have music of their own: ${keys.size} keys and modes in 24 seeds`);
+  check(
+    [...Array(24).keys()].every((k) => scoreOf(k).bpm >= 58 && scoreOf(k).bpm <= 76),
+    "tempo stays between 58 and 76 BPM",
+  );
+
+  // 400 bars by day: every note in the key it was written in, about half the time resting.
+  const run = (seed: number, bars: number, mood: (bar: number) => { night: number; tense: boolean }) => {
+    const c = new Composer(seed);
+    const out = [];
+    for (let b = 0; b < bars; b++) out.push(c.next(mood(b)));
+    return out;
+  };
+  const day = run(11, 400, () => ({ night: 0, tense: false }));
+  const offKey = day.flatMap((b) => b.notes.filter((n) => !inKey(b.root, b.mode, n.midi)));
+  check(offKey.length === 0, `every note is in the key (${offKey.length} out of key)`);
+  const restShare = day.filter((b) => b.rest).length / day.length;
+  check(restShare >= 0.3 && restShare <= 0.65, `music rests about half the time: ${(restShare * 100).toFixed(0)}% of bars`);
+  const melodyDay = day.filter((b) => b.notes.some((n) => n.layer === "melody")).length;
+  const night = run(11, 400, () => ({ night: 1, tense: false }));
+  const melodyNight = night.filter((b) => b.notes.some((n) => n.layer === "melody")).length;
+  check(
+    night.every((b) => !b.notes.some((n) => n.layer === "bass")),
+    "no bass at night",
+  );
+  check(melodyNight < melodyDay, `the melody is rarer at night (${melodyNight} bars against ${melodyDay} by day)`);
+  check(
+    night.every((b) => b.mode === "aeolian"),
+    "night plays in the relative minor",
+  );
+  const tense = run(11, 200, () => ({ night: 0, tense: true }));
+  const playing = tense.filter((b) => !b.rest);
+  check(
+    playing.length > 0 && playing.every((b) => !b.notes.some((n) => n.layer === "melody") && b.notes.filter((n) => n.layer === "bass").length === 8),
+    "in tension: no melody, the bass pulses in eighths",
+  );
+  // Night falls mid phrase: the key waits for the next phrase.
+  const c = new Composer(5);
+  const first = c.next({ night: 0, tense: false });
+  let changedMid = false;
+  for (let b = 1; b < PHRASE_BARS; b++) if (c.next({ night: 1, tense: false }).root !== first.root) changedMid = true;
+  check(!changedMid, "the key changes only when a phrase starts, not in its middle");
+
+  // Tension comes after 3 s of threat and goes after 12 s without.
+  const t = new MoodTracker();
+  let s2 = false;
+  for (let k = 0; k < 8; k++) s2 = t.update(1, 0.25);
+  check(!s2, "2 s of threat is not yet tension");
+  for (let k = 0; k < 4; k++) s2 = t.update(1, 0.25);
+  check(s2, `${TENSION_IN} s of threat is tension`);
+  for (let k = 0; k < 40; k++) s2 = t.update(0, 0.25);
+  check(s2, "10 s of calm keeps the tension");
+  for (let k = 0; k < 8; k++) s2 = t.update(0, 0.25);
+  check(!s2, `${TENSION_OUT} s of calm ends it`);
+
+  // A spell's chime is pulled into the key.
+  const k = new Composer(11);
+  k.next({ night: 0, tense: false });
+  const key = k.current;
+  const tuned = [523, 659, 784, 1046, 1500].map((f) => k.snap(f * 2));
+  check(
+    tuned.every((f) => inKey(key.root, key.mode, Math.round(69 + 12 * Math.log2(f / 440)))) &&
+      tuned.every((f, i) => Math.abs(Math.log2(f / ([523, 659, 784, 1046, 1500][i] * 2))) < 0.1),
+    "a chime's notes move to the nearest notes of the key, never more than a whole tone",
+  );
+
+  // 30 s of music rendered offline: bounded, no NaN, notes in time.
+  const ctx = new Offline();
+  const sink = new Sink();
+  const player = new MusicPlayer(ctx as unknown as BaseAudioContext, sink as unknown as AudioNode, 11, false);
+  player.keep = true;
+  for (let tt = 0; tt < 30; tt += 0.1) {
+    player.mood(0, 0, tt);
+    player.schedule(tt);
+  }
+  const n = Math.round(30 * RATE);
+  let peak = 0;
+  let nan = false;
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const v = sink.out(i);
+    if (!Number.isFinite(v)) nan = true;
+    peak = Math.max(peak, Math.abs(v));
+    sum += v * v;
+  }
+  const late = player.played.filter((p, i) => i > 0 && p.at < player.played[i - 1].at - 8);
+  check(!nan && peak > 0.005 && peak < 0.5, `30 s of music: no NaN, peak ${peak.toFixed(3)} (under 0.5, under the effects)`);
+  check(
+    player.played.length > 20 && late.length === 0,
+    `notes are scheduled in order: ${player.played.length} notes in 30 s, rms ${Math.sqrt(sum / n).toFixed(4)}`,
+  );
+  check(ctx.nodes.length / 30 < 12, `about ${(ctx.nodes.length / 30).toFixed(1)} nodes made a second, under 12`);
+  check(Math.abs(hz(69) - 440) < 1e-9, "note 69 is 440 Hz");
+
+  // A burst of big sounds keeps the music down to its end (review of #86).
+  {
+    const dctx = new Offline();
+    const p2 = new MusicPlayer(dctx as unknown as BaseAudioContext, new Sink() as unknown as AudioNode, 3, false);
+    for (let tt = 5; tt <= 15; tt += 0.25) {
+      if (tt <= 10) p2.duck(tt);
+      p2.mood(0, 0, tt);
+    }
+    const gain = (p2 as unknown as { bus: { gain: Param } }).bus.gain;
+    const at = (tt: number) => gain.at(tt, Math.round(tt * RATE));
+    check(at(9.9) < 0.2 && at(4.9) > 0.2, `the music stays down through a 5 s burst (${at(4.9).toFixed(3)} before, ${at(9.9).toFixed(3)} at its end)`);
+    check(at(14.9) > 0.23, `and comes back after it (${at(14.9).toFixed(3)} at 15 s)`);
+  }
+}
+
+// 8. Settings (item 8): music off on a first visit, volumes kept per device.
+{
+  const store = new Map<string, string>();
+  const fake = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+  check(JSON.stringify(readSoundSettings(fake)) === JSON.stringify(SOUND_DEFAULTS) && !SOUND_DEFAULTS.music, "music is off on a first visit");
+  writeSoundSetting("music", true, fake);
+  writeSoundSetting("musicVolume", 0.35, fake);
+  writeSoundSetting("mono", true, fake);
+  const back = readSoundSettings(fake);
+  check(back.music && back.musicVolume === 0.35 && back.mono && back.effectsVolume === 1, "a setting written is read back");
+  store.set("magic-merger.volume.effects", "7");
+  check(readSoundSettings(fake).effectsVolume === 1, "a volume out of range is held to 0..1");
+  // What crosses into the World's frame is checked field by field.
+  const sent = readSentSettings({ type: "sound-settings", settings: { music: true, musicVolume: 9, effectsVolume: "loud", mono: 1 } });
+  check(!!sent && sent.music && sent.musicVolume === 1 && sent.effectsVolume === 1 && !sent.mono, "settings sent into the frame are clamped and typed");
+  check(readSentSettings({ type: "other", settings: {} }) === null && readSentSettings("x") === null, "any other message is not a setting");
+}
+
+// 9. The Craft view (4.8, item 7): what is heard most is quietest.
+{
+  const loud = (voice: CraftVoice) => {
+    const ctx = new Offline();
+    const sink = new Sink();
+    const shared = Math.random;
+    Math.random = seeded(5);
+    let seconds = 0;
+    try {
+      seconds = voice(ctx as unknown as Synth & BaseAudioContext, sink as unknown as AudioNode, 0);
+    } finally {
+      Math.random = shared;
+    }
+    const n = Math.ceil((seconds + 0.1) * RATE);
+    let peak = 0;
+    let nan = false;
+    for (let i = 0; i < n; i++) {
+      const v = sink.out(i);
+      if (!Number.isFinite(v)) nan = true;
+      peak = Math.max(peak, Math.abs(v));
+    }
+    return { peak, nan, seconds };
+  };
+  const v = {
+    pickUp: loud(CRAFT_VOICES.pickUp()),
+    place: loud(CRAFT_VOICES.place()),
+    clink: loud(CRAFT_VOICES.clink()),
+    known: loud(CRAFT_VOICES.known("Steam")),
+    loop: loud(CRAFT_VOICES.loop()),
+    fresh: loud(CRAFT_VOICES.fresh("minor")),
+    freshCosmic: loud(CRAFT_VOICES.fresh("cosmic")),
+    first: loud(CRAFT_VOICES.first("major")),
+    refuse: loud(CRAFT_VOICES.refuse()),
+    puff: loud(CRAFT_VOICES.puff()),
+  };
+  check(
+    Object.values(v).every((r) => !r.nan && r.peak > 0.005 && r.peak < 0.5 && r.seconds <= 2),
+    `every Craft sound renders, bounded, at most 2 s: ${Object.entries(v)
+      .map(([k, r]) => `${k} ${r.peak.toFixed(3)}`)
+      .join(", ")}`,
+  );
+  check(
+    v.pickUp.peak < v.known.peak && v.loop.peak < v.known.peak && v.known.peak < v.fresh.peak && v.fresh.peak <= v.first.peak * 1.2,
+    "what is heard most is quietest: pick up and loop under known, known under new, new up to a First Discovery",
+  );
+  check(v.known.peak / v.fresh.peak < 0.5, `a known result is well under a new one (${(20 * Math.log10(v.known.peak / v.fresh.peak)).toFixed(1)} dB)`);
+  check(v.refuse.peak <= v.known.peak * 1.2, "a refusal is never louder than a known result");
+  check(
+    v.freshCosmic.seconds > v.fresh.seconds && tierRoot("cosmic") < tierRoot("cantrip") && tierNotes("cosmic") > tierNotes("cantrip"),
+    "a higher tier sounds lower and longer",
+  );
+  const motifs = new Set(["Steam", "Mud", "Lava", "Cloud", "Storm", "Golem", "Phoenix", "Glass"].map((n) => nameMotif(n).join()));
+  check(
+    motifs.size >= 6 && nameMotif(" Steam").join() === nameMotif("steam").join(),
+    `known items have motifs of their own: ${motifs.size} for 8 names, the same for the same name`,
+  );
+}
+
+// 10. A spell's sound comes from its center and is as big as its tier (4.8, part 5b).
+{
+  const world = generateWorld(96, 96, 77);
+  const rt = new Runtime(world, () => {});
+  const heard = (tier: "cantrip" | "major" | "cosmic") => {
+    world.events.length = 0;
+    rt.cast({ key: `t-${tier}`, name: "Bell", tier, code: "const spell = { *cast(w) { w.sound('chime', 0.5); } };" }, 40, 50);
+    for (let k = 0; k < 3; k++) stepWorld(world, rt);
+    return world.events.find((e) => e.kind === "sound") as { x?: number; y?: number; size: number } | undefined;
+  };
+  const small = heard("cantrip");
+  const mid = heard("major");
+  const big = heard("cosmic");
+  check(!!mid && mid.x === 40 && mid.y === 50, `w.sound is heard from the spell's center (${mid?.x}, ${mid?.y})`);
+  check(
+    !!small && !!big && small.size < mid!.size && mid!.size < big.size && big.size <= 1,
+    `a spell's tier scales its sound: cantrip ${small?.size}, major ${mid?.size}, cosmic ${big?.size}`,
+  );
+  check(tierSize(1, "cosmic") === 1 && tierSize(-1, "major") === 0 && tierSize(0.5, "unknown") === 0.5, "a scaled size stays within 0 to 1");
+
+  // Review of #95: the player's own cast keeps its priority (cooldown skip,
+  // never dropped, the island's motif); a creature's spell does not take it.
+  const ownAt = eventAt({ x: mid!.x, y: mid!.y }, { x: 40, y: 50 }, true);
+  check(ownAt?.priority === true && ownAt.x === 40, "a sound of the player's fresh cast, from its center, has priority");
+  check(eventAt({ x: 40, y: 50 }, { x: 40, y: 50 }, false)?.priority === false, "after the window it has none");
+  check(eventAt({ x: 10, y: 10 }, { x: 40, y: 50 }, true)?.priority === false, "a creature's placed sound in the window has none");
+  check(eventAt({ x: 40, y: 50, routine: true }, { x: 40, y: 50 }, true)?.priority === false, "routine work at the cast's cell has none");
+  const loose = eventAt({}, { x: 40, y: 50 }, true);
+  check(loose?.x === 40 && loose.priority === true && eventAt({}, null, true) === undefined, "an unplaced sound belongs to the running cast, else to nobody");
+}
+
+// 11. Which creature calls (review of #76: a pure function, with checks).
+{
+  const c = (id: number, hp: number, plan = "four legs", kind = "deer"): Caller => ({ id, x: 0, y: 0, hp, kind, plan });
+  const never = () => 0.99;
+  const hurtFirst = chooseCall(
+    [c(1, 50), c(2, 80)],
+    new Map([
+      [1, 50],
+      [2, 90],
+      [9, 1],
+    ]),
+    0.5,
+    false,
+    new CallClock(),
+    100,
+    never,
+  );
+  check(hurtFirst?.caller.id === 2 && hurtFirst.why === "hurt", "a creature hurt since the last look calls first");
+  const arrives = chooseCall([c(1, 50), c(3, 80)], new Map([[1, 50]]), 0.5, false, new CallClock(), 100, never);
+  check(arrives?.caller.id === 3 && arrives.why === "arrived", "a creature just come into view calls");
+  check(chooseCall([c(1, 50)], new Map(), 0.5, false, new CallClock(), 100, never) === null, "on the first look nobody counts as arrived");
+  // A long hidden tab: 600 s since the last look would make an idle call certain; it is held to 1 s.
+  const idle = chooseCall([c(1, 50)], new Map([[1, 50]]), 600, false, new CallClock(), 100, () => 0.5);
+  check(idle === null, "after a long gap, an idle call is not certain (seconds held to 1)");
+  check(
+    chooseCall([c(5, 50, "four legs", "wolf")], new Map([[5, 60]]), 0.5, true, new CallClock(), 100, never)?.voice === "howl",
+    "a wolf hurt at night howls",
+  );
+  check(chooseCall([c(6, 50, "fish")], new Map([[6, 60]]), 0.5, false, new CallClock(), 100, never) === null, "a fish never calls");
+  const busy = new CallClock();
+  busy.called(2, "deer", 99.5);
+  check(chooseCall([c(2, 50)], new Map([[2, 60]]), 0.5, false, busy, 100, never) === null, "the gaps between calls are kept");
+}
+
+// 12. The Craft swell waits for the last merge in flight (review of #87).
+{
+  const g = globalThis as unknown as { window?: unknown; document?: unknown };
+  const had = { window: g.window, document: g.document };
+  const timers = new Set<number>();
+  let next = 1;
+  g.window = {
+    setTimeout: () => (timers.add(next), next++),
+    clearTimeout: (id: number) => timers.delete(id),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  g.document = { addEventListener: () => {}, hidden: false };
+  try {
+    const cs = new CraftSound();
+    cs.startWait();
+    cs.startWait();
+    cs.stopWait();
+    const afterFirst = cs.waiting === 1 && timers.size === 1;
+    cs.stopWait();
+    check(
+      afterFirst && (cs.waiting as number) === 0 && (timers.size as number) === 0,
+      "two merges in flight: the first answer keeps the swell, the second ends it",
+    );
+  } finally {
+    g.window = had.window;
+    g.document = had.document;
+  }
+  const many = [
+    "Fire",
+    "Water",
+    "Earth",
+    "Air",
+    "Steam",
+    "Mud",
+    "Lava",
+    "Dust",
+    "Cloud",
+    "Rain",
+    "Storm",
+    "Stone",
+    "Sand",
+    "Glass",
+    "Life",
+    "Plant",
+    "Tree",
+    "Forest",
+    "Swamp",
+    "Ice",
+    "Snow",
+    "Metal",
+    "Gold",
+    "Sword",
+    "Golem",
+    "Dragon",
+    "Phoenix",
+    "Spirit",
+    "Ghost",
+    "Light",
+    "Darkness",
+    "Moon",
+    "Sun",
+    "Star",
+    "Meteor",
+    "Time",
+    "Void",
+    "Crystal",
+    "Lightning",
+    "Ocean",
+  ];
+  const distinct = new Set(many.map((n) => nameMotif(n).join())).size;
+  check(distinct >= 15, `40 common names have ${distinct} motifs between them (at least 15)`);
+}
+
+console.log(`sound: ${passes} checks passed${failures ? `, ${failures} failed` : ""}`);
+if (failures) process.exit(1);

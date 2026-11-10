@@ -2,6 +2,7 @@
 import type { SpellProgram } from "./spellcode";
 import type { Tier } from "./tiers";
 import type { DownReason } from "./votes";
+import type { Form } from "./forms";
 
 // A spell can be cast in the World tab. An artifact is anything magical that
 // cannot be cast: an object, material, creature, place, person or idea.
@@ -15,6 +16,9 @@ export interface GameElement {
   depth: number;
   // How powerful it is, chosen once at merge time. Older elements may lack it.
   tier?: Tier;
+  // 4.6: which of the seven kinds it is (shared/forms.ts). Elements merged
+  // before 4.6 lack it until the library is sorted again.
+  form?: Form;
 }
 
 export interface MergeRequest {
@@ -55,6 +59,8 @@ export interface SpellRequest {
   effort?: string;
   // 4.2: this page understands "still being written" (writing below).
   ahead?: boolean;
+  // Admin only: asked by a session (scripts/rewrite-one.mjs), held to SESSION_REWRITES_PER_DAY.
+  session?: boolean;
 }
 
 export interface SpellResponse {
@@ -79,7 +85,7 @@ export interface CheckRequest {
   name: string;
   id: number;
   ok: boolean;
-  problem: "crash" | "nothing" | "wiped" | "promise" | "idle" | null;
+  problem: "crash" | "nothing" | "wiped" | "promise" | "idle" | "size" | "kind" | "look" | "fit" | null;
   detail: string;
   stats?: Record<string, number>;
   // A live program tested again against a promise it never faced (3.6).
@@ -101,7 +107,9 @@ export interface VoteRequest {
   name: string;
   id: number;
   up: boolean;
-  // Required on a down vote.
+  // One to three on a down vote (reasons by form, 2026-11-07).
+  reasons?: DownReason[];
+  // The one reason of a client from before reasons by form; still read.
   reason?: DownReason;
 }
 

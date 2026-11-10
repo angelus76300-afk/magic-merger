@@ -53,6 +53,12 @@ function send(msg: FromWorld): void {
   window.parent.postMessage(msg, "*");
 }
 
+// Keys pressed on the island stay in this frame: Escape is passed up so the
+// vote after a cast closes as it does elsewhere on the page.
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") send({ type: "escape" });
+});
+
 const hooks = {
   onError: (key: string, name: string, message: string) => send({ type: "error", key, name, message }),
   onTap: (x: number, y: number) => {
@@ -71,7 +77,10 @@ const hooks = {
       }
       return;
     }
-    if (engine.cast(selected, x, y)) send({ type: "cast", key: selected.key });
+    if (engine.cast(selected, x, y)) {
+      send({ type: "cast", key: selected.key });
+      saveSoon();
+    }
   },
 };
 
@@ -201,6 +210,17 @@ function showFirstLook(): void {
   send({ type: "island", name: world.islandName ?? "", signature: signatureOf(world.wonders.map((w) => w.kind)) });
   if (!world.wonders.length && !world.islandName) return;
   stopLook = firstLook(engine, lookCard, window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
+}
+
+// A cast is saved 2 s after it lands, not at the next 10 s tick: a reload
+// right after a cast lost it (2026-11-07), since the save asked on leaving the
+// page is compressed asynchronously and the page is gone before it is written.
+// Casts in a row push the save back, up to 2 s after the last one.
+let soonTimer = 0;
+const SAVE_AFTER_CAST_MS = 2000;
+function saveSoon(): void {
+  clearTimeout(soonTimer);
+  soonTimer = window.setTimeout(save, SAVE_AFTER_CAST_MS);
 }
 
 // Challenge worlds are never saved: only the sandbox is the player's.

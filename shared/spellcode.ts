@@ -23,6 +23,10 @@ export interface SpellProgram {
   trial?: boolean;
   // What it was written to keep (shared/promises.ts): its test run checks it.
   intents?: string[];
+  // 4.6: the kind it was written as (shared/forms.ts), and whether its item
+  // says it is giant: its test run holds it to that kind's size.
+  form?: string;
+  giant?: boolean;
 }
 
 type Node = { type: string; start: number; end: number; body?: Node | Node[] } & Record<string, unknown>;

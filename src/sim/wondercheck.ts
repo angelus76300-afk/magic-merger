@@ -32,7 +32,9 @@ export interface IslandResult {
   seed: number;
   land: Biome;
   at: { x: number; y: number } | null;
-  built: { cells: number; voxels: number };
+  // 4.7: parts, the fine boxes of its models (w.model), are built too: a
+  // wonder drawn as the island's own are need not stand a voxel.
+  built: { cells: number; voxels: number; parts: number };
   voxels: number;
   extraMs: number;
   acted: number;
@@ -117,7 +119,7 @@ export function checkIsland(def: WonderDef, seed: number, land: Biome, size: num
     seed,
     land,
     at: null,
-    built: { cells: 0, voxels: 0 },
+    built: { cells: 0, voxels: 0, parts: 0 },
     voxels: 0,
     extraMs: 0,
     acted: 0,
@@ -136,7 +138,8 @@ export function checkIsland(def: WonderDef, seed: number, land: Biome, size: num
     Math.random = randomA;
     raiseWonders(world, rt);
     if (w.state !== 1) errors.push("its program did not compile");
-    out.built = { cells: differs(world, control), voxels: world.decor.size - control.decor.size };
+    const parts = (wd: World) => wd.props.reduce((n, p) => n + p.boxes.length, 0);
+    out.built = { cells: differs(world, control), voxels: world.decor.size - control.decor.size, parts: parts(world) - parts(control) };
     const key = defRequest(def).key;
     const own = w.own ?? [];
     const owned = (what: string) => rt.owners.get(what) === key;
@@ -222,7 +225,7 @@ function verdictOf(def: WonderDef, islands: IslandResult[], last: boolean): Wond
   for (const r of islands) {
     const where = `on island ${r.seed} (${r.land})`;
     if (r.errors.length) return fail("crash", `It crashed ${where}: ${r.errors[0]}`);
-    if (r.built.cells < 3 && r.built.voxels < 4) return fail("nothing", `It built nothing visible ${where}.`);
+    if (r.built.cells < 3 && r.built.voxels < 4 && r.built.parts < 4) return fail("nothing", `It built nothing visible ${where}.`);
     if (r.voxels > MAX_VOXELS) return fail("voxels", `It used ${r.voxels} voxels ${where}, past ${MAX_VOXELS}.`);
     if (r.extraMs > MAX_EXTRA_MS) return fail("slow", `It cost ${r.extraMs.toFixed(2)} ms a tick ${where}, past ${MAX_EXTRA_MS}.`);
     if (r.acted <= 0)

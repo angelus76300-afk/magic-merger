@@ -301,7 +301,7 @@ Asked for: the five items of "4.5" below, with the owner's answers on the two op
 2. **The Community tab**: who plays, when, items found, First Discoveries, daily finds and each friend's favorite spell, no recipe; the favorite and a hide switch on the account page and at the foot of the tab.
 3. **What's new**: `public/changelog.json`, a dot on the `?` button and a list since the last visit, "your idea was built" by title.
 4. **Ideas follow pull requests**: the `Ideas` workflow moves `Idea #<n>` to "Waiting for review", then "Done".
-5. **Previews**: a staging Worker with its own D1 (copied nightly, accounts stripped), its own queue and $2 a month; each pull request gets `pr-<n>-magic-merger-staging.angelus76300.workers.dev`. Staging lets nobody in without the admin token.
+5. **Previews**: a staging Worker with its own D1 (copied nightly, accounts stripped), its own queue and $5 a month (raised from $2 on 8 November 2026); each pull request gets `pr-<n>-magic-merger-staging.angelus76300.workers.dev`. Staging lets nobody in without the admin token.
 
 Not done: without `STAGING_ANTHROPIC_API_KEY` the previews run in mock mode (the `CLOUDFLARE_API_TOKEN` secret is set since 5 November and previews upload); the Community tab has no name checks or report button yet (needed before 5.4); "items found" is unknown for friends who play with a link and no account.
 
@@ -355,7 +355,7 @@ Not done: what only the owner can change (4.5.1a), and the planner's schedule (a
 
 ## What the money taught us
 
-The ledger holds $15.41 for November by the morning of 5 November (read in the live `spend` table by the 4.5.1 audit; plus about $3.32 in October before it existed). Since 3.4 the cap is $50 a month, $48 for the game since 4.5 with $2 for the previews. Opus spells are 88% of it. Opus spell calls went from 43 to 96 in one day because the program version bump to 4 rewrote every big spell on its next cast. **Never rewrite spells in bulk again**: new API features stay backward compatible, and spells are rewritten one at a time (an admin button in 3.2, player votes in 3.3).
+The ledger holds $15.41 for November by the morning of 5 November (read in the live `spend` table by the 4.5.1 audit; plus about $3.32 in October before it existed). Since 3.4 the cap is $50 a month, $48 for the game since 4.5 with $2 for the previews (raised to $5 on 8 November 2026, which on one key can pass $50 by $3). Opus spells are 88% of it. Opus spell calls went from 43 to 96 in one day because the program version bump to 4 rewrote every big spell on its next cast. **Never rewrite spells in bulk again**: new API features stay backward compatible, and spells are rewritten one at a time (an admin button in 3.2, player votes in 3.3).
 
 ## Next versions
 
@@ -426,7 +426,7 @@ The owner's social ideas, together because they share one screen: who plays, wha
 2. **The Community tab** (`docs/IDEAS.md`): who plays, each friend's chosen favorite spell, items found and First Discoveries, no recipe shown, hideable.
 3. **What's new in the game**: `public/changelog.json`, one line per merged update, a dot and a list since the player's last visit; a player whose idea was built is told so.
 4. **The Ideas tab follows daily builds**: a pull request that says `Idea #<n>` moves that idea to "Waiting for review" and then "Done".
-5. **A preview for each pull request**, so the owner tries it on a phone before merging: a staging Worker with its own D1 (a copy refreshed nightly, accounts, sessions, invites and emails stripped) and a $2 budget, deployed by CI from a token kept in GitHub's secrets.
+5. **A preview for each pull request**, so the owner tries it on a phone before merging: a staging Worker with its own D1 (a copy refreshed nightly, accounts, sessions, invites and emails stripped) and a $5 budget (first $2), deployed by CI from a token kept in GitHub's secrets.
 
 ### 4.5.1 An audit: every claim checked, and how much the AI can drive (done, see above)
 
@@ -468,6 +468,8 @@ The owner, 5 November: the owner wants to touch three things only: questions fro
 9. **Measured**: the share of merged pull requests that needed no owner action, the bugs the owner found first versus those the AI found first, the owner's minutes per week, the rollbacks and their causes; a red item merged without a yes is a failure of this version.
 
 ### 4.6 Every item is what it is: creatures, objects, buildings, places and land
+
+Part A built in PR #50 (`docs/DESIGN.md`, "Every item is what it is"): seven kinds at the merge, the engine's makers, sizes checked, a prompt section per kind, the library's sort and rewrites by form after the owner's approval. Part B (creatures as living things) built in its own pull request on top of A (`docs/DESIGN.md`, "Creatures worth creating"), with the owner's change of 7 November first: a person item is one of the island's own villagers, with a calling from its name. Still open from item 8: the Serpent and Human of the live library rewritten (the list is in `docs/measurements/creatures-4.6b.md`, waiting for the owner) and ten new items from the writer itself on a preview. At the owner's request, the fine box models of 4.7 item 4 came with part A for items (`w.model`); wonders written as programs keep theirs for 4.7.
 
 The owner, 5 November: creatures made by merges are poor ("just take the serpent or the human"), artifacts, creatures and buildings should be handled differently, "a lot of the things we create do not make sense... a giant book", and some items should shape the land ("a floating island"; "the village spell should actually create a village as the generation does"). Read in the live programs: **Serpent** is an artifact of twelve stone spheres in a line that never moves; **Human** is a villager with glowing eyes; **Village** is "a brass Village Lantern Charm" ringed by a few wooden boxes, not a village. The cause is structural: an item is either a spell or an artifact (`elements.kind`), and every artifact is written the same way, as a voxel thing of a few cells' reach, whether it is a book, a dragon, a temple or a town. Meanwhile the engine already knows how to make each of these properly: bodies, goals and steering for creatures (3.5, 3.6, 4.3), seeded buildings and villages (4.4.5 part B), land, lakes, rivers and floating rocks (4.4, 4.4.5), wonders (4.4.5).
 
@@ -537,6 +539,16 @@ The owner, 5 November: as people discover things and have the resources, they bu
 3. **Roads**: paths worn where villagers walk become dirt roads, then stone roads, then bridges; roads join villages and wonders; walking on them is faster, and the flow fields of 4.3 prefer them.
 4. **Vehicles**: carts on roads, boats on rivers and lakes, a ferry, later a flying ship from a spell or a wonder; each a small box model that moves with the 4.3 steering and carries people and goods between villages; trade caravans that monsters can rob.
 5. **Checked**: a village left alone for an hour of simulated time grows from hamlet to town on three seeds; roads join every village that trades; the simulation p95 on a large island stays within the HUD numbers.
+
+### 4.9.5 Wonders review
+
+The owner, 9 November ("wonders: yes"): the wonders on the islands were written one at a time, by different models, and nobody has looked at all of them together. A wonder that is a ball of blocks under a grand name breaks the promise of its name.
+
+1. **Frame every wonder**: each wonder of the pool and each built in wonder, on an island at phone size (390 by 844), from the same three shots, saved under `docs/measurements/`.
+2. **Judge each against its name**: does it look like what it is called, does it do something (an effect the player can see or a creature it draws), is it a fine `w.model` shape and not a ball of voxels, is it sized right for its tier and its land. One line each, with the frame.
+3. **A scored list**: every wonder scored on those four points, worst first, with `decision-matrix` so the order is not a mood. The list is the deliverable even if nothing is rebuilt.
+4. **Rebuild the weak ones**: with the fine box models of 4.7 item 4, one at a time, each tested like a new wonder and framed again; the cost of each rewrite logged in the pull request. Never the whole pool at once, and never a rewrite of a wonder players have already met without its old version kept.
+5. **Cost**: about $3 to $6 of AI, approved by the owner as "wonders: yes" (9 November). Back to the owner only past $12.
 
 ### 5.0 Look closer: select anything
 

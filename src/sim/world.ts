@@ -14,8 +14,10 @@ import { placeWonders, settleWonders, type Wonder, type WonderDef } from "./wond
 import { layOutVillages } from "./buildings";
 import { CreatureGrid } from "./crowd";
 import type { Landmark, Presence } from "./social";
-import type { Ward } from "./wards";
+import type { Ruin, Ward } from "./wards";
+import type { Prop } from "./props";
 import type { Death, Mark, Village } from "./kin";
+import type { Road } from "./roads";
 
 export const TICK = 1 / 30;
 export const AMBIENT = 15;
@@ -23,7 +25,10 @@ export const AMBIENT = 15;
 // Moments the view turns into sound and screen effects. The simulation only
 // records them; whoever draws the world decides what to do with them.
 export type WorldEvent =
-  | { kind: "sound"; name: string; size: number }
+  // Where it happened, in cells (4.8): heard nearer or farther, left or
+  // right. Without a place a spell's sound belongs to its cast. `routine`
+  // is everyday work, heard only near the camera.
+  | { kind: "sound"; name: string; size: number; x?: number; y?: number; routine?: boolean }
   | { kind: "shake"; amount: number; seconds: number }
   | { kind: "flash"; color: number; strength: number }
   | { kind: "error"; spell: string; message: string }
@@ -75,6 +80,13 @@ export class World {
   // Places spells keep safe for a while (wards.ts), and what each cell is
   // protected against, as bits.
   wards: Ward[] = [];
+  // Wards broken a moment ago (wards.ts, Ruin): not saved.
+  ruins: Ruin[] = [];
+  // The slow motion of a shatter (wards.ts, breakWard): until this world
+  // time the page runs the island at SLOW_FACTOR. Not saved; headless runs
+  // and tests ignore it.
+  slowUntil = -1;
+  lastSlow = -10;
   readonly wardMask: Uint8Array;
   // Gifts villagers have brought home; every few build a house.
   wealth = 0;
@@ -113,10 +125,18 @@ export class World {
   settlements: Settlement[] = [];
   // How often villagers walked over each cell lately: paths wear in (not saved).
   wear: Uint8Array | null = null;
+  // Roads villages laid between them and to wonders (4.9, roads.ts), saved;
+  // the deck height of each bridge cell; and a counter the view redraws on.
+  roads: Road[] = [];
+  readonly decks = new Map<number, number>();
+  roadsVersion = 0;
   // Wonders and the island's name (4.4.5 part B, wonders.ts); none on the
   // old island and the challenges. House cells rebuilt after a fire wear a
   // patched roof.
   wonders: Wonder[] = [];
+  // 4.6: fine box models of what items look like (props.ts), and a counter the view rebuilds them on.
+  props: Prop[] = [];
+  propsVersion = 0;
   islandName: string | null = null;
   readonly patched = new Set<number>();
 
@@ -170,6 +190,19 @@ export class World {
     return this.height[i] + this.depth[i];
   }
 
+  // Where a walker stands: on a bridge's deck (4.9), else the surface.
+  walkLevel(i: number): number {
+    const deck = this.cover[i] === C.BRIDGE ? this.decks.get(i) : undefined;
+    return deck !== undefined && deck >= this.height[i] + this.depth[i] - 0.3 ? deck : this.height[i] + this.depth[i];
+  }
+
+  // A bridge a walker can cross here, its deck above the water.
+  onDeck(i: number): boolean {
+    if (this.cover[i] !== C.BRIDGE) return false;
+    const deck = this.decks.get(i);
+    return deck !== undefined && deck >= this.height[i] + this.depth[i] - 0.3;
+  }
+
   setCover(i: number, id: number): void {
     this.cover[i] = id;
     const m = this.materials.get("cover", id);
@@ -209,9 +242,15 @@ export class World {
     const i = Math.round(y) * this.w + Math.round(x);
     const top = Math.round(this.height[i] * 0.5);
     if (level < top) return false;
-    if (level < top + 2 && this.cover[i] !== C.NONE) this.setCover(i, C.NONE);
+    if (level < top + 2 && this.cover[i] !== C.NONE) {
+      if (this.voxelGuard?.(i)) return false;
+      this.setCover(i, C.NONE);
+    }
     return true;
   }
+  // Set by the runtime while a spell's code runs: true where that spell may
+  // not clear a cover to put a voxel (another spell's ward against harm).
+  voxelGuard: ((i: number) => boolean) | null = null;
 
   setVoxel(x: number, y: number, level: number, color: number | null, kind: number = VK.STONE): void {
     if (!this.inside(Math.round(x), Math.round(y)) || level < -60 || level > 380) return;
@@ -466,14 +505,16 @@ function landScore(world: World, cx: number, cy: number, r: number, top = 24, mi
 }
 
 // Houses are 2 by 2 blocks around a square, with fields on the outskirts.
-export function buildVillage(world: World, cx: number, cy: number, rng: Rng): void {
+export function buildVillage(world: World, cx: number, cy: number, rng: Rng, count = 0): void {
   const { w } = world;
   const base = world.height[world.idx(cx, cy)];
   const flatten = (x: number, y: number) => {
     const i = y * w + x;
     world.height[i] = base + (world.height[i] - base) * 0.3;
   };
-  const houses = rng.int(5, 9);
+  // Drawn even when a count is given, so a fresh island's stream is unchanged.
+  const drawn = rng.int(5, 9);
+  const houses = count > 0 ? count : drawn;
   for (let k = 0; k < houses; k++) {
     const a = (k / houses) * Math.PI * 2 + rng.range(-0.3, 0.3);
     const d = rng.range(4, 8);
