@@ -2,6 +2,7 @@ import { C, FIRST_JOB, G, LAST_JOB } from "./materials";
 import type { World } from "./world";
 import type { Creature } from "./creatures";
 import type { Settlement } from "./ecology";
+import { daylight } from "./daylight";
 import { tell, villageOf, type Village } from "./kin";
 
 // Building sites (4.9, part 2). On islands of 4.4.5 and later a house or a
@@ -242,8 +243,14 @@ export function checkSites(world: World): void {
     const y = Math.floor(s.i / world.w);
     const t = settlementNear(world, x, y);
     if (cells.some((j) => world.cover[j] !== C.SITE)) {
-      for (const j of cells) if (world.cover[j] === C.SITE) world.setCover(j, C.NONE);
-      if (cells.some((j) => world.ground[j] === G.ASH)) tell(world, `the ${kindName(s.kind)} going up in ${t?.name || "the village"} burned`);
+      const burned = cells.some((j) => world.ground[j] === G.ASH);
+      for (const j of cells) {
+        if (world.cover[j] !== C.SITE) continue;
+        world.setCover(j, C.NONE);
+        // What had not burned through yet goes with the rest.
+        if (burned) world.ground[j] = G.ASH;
+      }
+      if (burned) tell(world, `the ${kindName(s.kind)} going up in ${t?.name || "the village"} burned`);
       continue;
     }
     const v = villageOf(world, x + 1, y + 1);
@@ -262,7 +269,10 @@ export function checkSites(world: World): void {
 export function siteLine(world: World, v: Village): string | null {
   const list = sitesOf(world, v);
   if (!list.length) return null;
-  return list.map((s) => `a ${kindName(s.kind)}, ${STAGE_NAMES[stageOf(s)]} (${stageOf(s) + 1} of ${SITE.stages.length})`).join("; ");
+  // A non-breaking space keeps "(3 of 4)" on one line on a narrow phone; at
+  // night the village sleeps, and the card says why the work stopped.
+  const night = daylight(world.time).night > 0.5 ? ", work stops for the night" : "";
+  return list.map((s) => `a ${kindName(s.kind)}, ${STAGE_NAMES[stageOf(s)]} (${stageOf(s) + 1}\u00a0of\u00a0${SITE.stages.length})`).join("; ") + night;
 }
 
 // A saved site, checked; null when it does not fit the island.

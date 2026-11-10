@@ -4,7 +4,7 @@
 import { populate, resetCreatureIds } from "../src/sim/creatures";
 import type { Village } from "../src/sim/kin";
 import { DEFAULT_LAND, resolveLand } from "../src/sim/land";
-import { C } from "../src/sim/materials";
+import { C, G } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
 import { explode, stepPhysics } from "../src/sim/physics";
 import { Runtime } from "../src/sim/runtime";
@@ -97,9 +97,12 @@ export function sitesChecks(check: Check): void {
     const line = siteLine(world, v);
     check(
       "the villager's card says what its village is raising",
-      line === "a house, being staked out (1 of 4); a smithy, being staked out (1 of 4)",
+      line === "a house, being staked out (1\u00a0of\u00a04); a smithy, being staked out (1\u00a0of\u00a04)",
       line ?? "none",
     );
+    // Day 0 starts in the morning; 270 s in is the middle of the night.
+    world.time = 270;
+    check("at night the card says the work stopped", !!siteLine(world, v)?.endsWith(", work stops for the night"), siteLine(world, v) ?? "none");
   }
 
   // 4. A site burns to ash, never to rubble (rubble is rebuilt for free as a
@@ -114,7 +117,10 @@ export function sitesChecks(check: Check): void {
     checkSites(world);
     check(
       "a site that burns leaves ash, no rubble, and the village is told",
-      covers.every((c) => c !== C.SITE && c !== C.RUBBLE) && !world.sites.length && world.story.some((l) => l.text === "the house going up in Ashby burned"),
+      covers.every((c) => c !== C.SITE && c !== C.RUBBLE) &&
+        cellsOf(world, s.i).every((j) => world.ground[j] === G.ASH) &&
+        !world.sites.length &&
+        world.story.some((l) => l.text === "the house going up in Ashby burned"),
       `covers ${covers.join(" ")}, ground ${cellsOf(world, s.i)
         .map((j) => world.ground[j])
         .join(" ")}`,
