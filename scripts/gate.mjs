@@ -294,7 +294,12 @@ export function pickUpdate(prs) {
   const candidates = prs.filter((p) => updatable(p.state)).sort((a, b) => a.number - b.number);
   if (!candidates.length) {
     // Ready but for being behind, and refused only because the catch-up brings a workflow change.
-    const byHand = prs.filter((p) => !updatable(p.state) && updatable({ ...p.state, catchUp: [] })).map((p) => p.number);
+    // Only a catch-up that is known and holds a workflow path: an unknown one (null, git failed) is not named here.
+    const byHand = prs
+      .filter(
+        (p) => Array.isArray(p.state.catchUp) && p.state.catchUp.some((x) => x.startsWith(".github/workflows/")) && updatable({ ...p.state, catchUp: [] }),
+      )
+      .map((p) => p.number);
     const why = byHand.length
       ? `#${byHand.join(", #")} would be brought up to date, but main's catch-up brings a change to .github/workflows, which the Gate's token may not push: its builder merges main once`
       : "no ready pull request is only behind main";
@@ -409,6 +414,9 @@ export function upToDateFrom(ancestor, moved) {
 
 const DOCS_ONLY = (path) => /^(docs\/|\.claude\/skills\/)|\.md$|^\.claude\/settings\.json$/.test(path);
 
+/** Whether a workflow run ran at all: not one held for an approval that never came. */
+export const ran = (r) => r?.conclusion !== "action_required" && r?.status !== "action_required";
+
 /**
  * CI on a commit: "full" when the check job ran every step, "docs" when it ran the light ones on a docs
  * only change. 2026-11-08: GitHub sometimes lists a finished check job with no steps (#88, #89, #95,
@@ -416,8 +424,6 @@ const DOCS_ONLY = (path) => /^(docs\/|\.claude\/skills\/)|\.md$|^\.claude\/setti
  * times, and if the steps still cannot prove which run it was, the Gate waits (and the sweep retries).
  *   ghGet: (path) => json; sleep: (ms) => promise
  */
-/** Whether a workflow run ran at all: not one held for an approval that never came. */
-export const ran = (r) => r?.conclusion !== "action_required" && r?.status !== "action_required";
 
 export async function ciFrom(sha, ghGet, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), tries = 3, ghText = async () => null) {
   const runs = (await ghGet(`actions/runs?head_sha=${sha}&per_page=50`))?.workflow_runs ?? [];
@@ -475,14 +481,14 @@ async function ghText(path) {
 }
 const ciOn = (sha) => ciFrom(sha, gh, undefined, 3, ghText);
 
-/** The preview smoke test of a commit: the newest Preview run whose smoke job ran (a run for a label skips it). */
-async function smokeOn(sha) {
-  const runs = ((await gh(`actions/runs?head_sha=${sha}&per_page=50`))?.workflow_runs ?? [])
+/** The preview smoke test of a commit: the newest Preview run that ran and whose smoke job ran (a run for a label skips it). ghGet: (path) => json */
+export async function smokeFrom(sha, ghGet) {
+  const runs = ((await ghGet(`actions/runs?head_sha=${sha}&per_page=50`))?.workflow_runs ?? [])
     .filter((r) => r.name === "Preview" && ran(r))
     .sort((a, b) => b.run_number - a.run_number);
   for (const run of runs) {
     if (run.status !== "completed") return run.status;
-    const jobs = (await gh(`actions/runs/${run.id}/jobs`))?.jobs ?? [];
+    const jobs = (await ghGet(`actions/runs/${run.id}/jobs`))?.jobs ?? [];
     const smoke = jobs.find((j) => j.name === "smoke");
     if (smoke && smoke.conclusion !== "skipped") return smoke.conclusion === "success" ? "pass" : smoke.conclusion;
   }
@@ -541,7 +547,7 @@ export async function prState(n) {
       fork: headRepoOf(pr) !== REPO.toLowerCase(),
       paused: await paused(),
       ci: await ciOn(sha),
-      smoke: await smokeOn(sha),
+      smoke: await smokeFrom(sha, gh),
       ...(() => {
         // A review of the head itself, or one carried across clean merges of main (carriedReview).
         if (!headFetched) return { review: reviewFor(comments, sha, REPO_OWNER), carry: null };

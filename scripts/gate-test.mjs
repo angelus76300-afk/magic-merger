@@ -10,6 +10,7 @@ import {
   bringUpToDate,
   ciFrom,
   ran,
+  smokeFrom,
   updateInTurn,
   decide,
   deployable,
@@ -626,6 +627,11 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
   check("nothing is updated while another is in flight", pickUpdate([q(79, behind), q(90, { ...ready, upToDate: true, ci: "in_progress" })]).update === null);
   check("nothing to update says why", /only behind/.test(pickUpdate([q(1, { ...ready, upToDate: true })]).why));
   check(
+    "an unknown catch-up (git failed) is not named as a workflow catch-up",
+    !/would be brought up to date/.test(pickUpdate([q(79, { ...behind, catchUp: null })]).why),
+    pickUpdate([q(79, { ...behind, catchUp: null })]).why,
+  );
+  check(
     "a pull request held only by a workflow catch-up is named, with what to do",
     /#79 would be brought up to date.*\.github\/workflows.*merges main once/.test(
       pickUpdate([q(79, { ...behind, catchUp: [".github/workflows/ci.yml"] })]).why,
@@ -737,6 +743,18 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
     "only held runs: CI reads missing, so the Gate waits",
     (await ciFrom("s", runsOf([run(1, "pull_request", 5, "action_required")], {}), noWait)) === "missing",
   );
+  // The preview smoke, the same way (review of #107): a held Preview run newer than one that passed hides nothing.
+  {
+    const preview = (id, run_number, conclusion, status = "completed") => ({ name: "Preview", id, run_number, status, conclusion, event: "pull_request" });
+    const smokeGh = (runs, smokeById) => async (path) =>
+      path.startsWith("actions/runs?") ? { workflow_runs: runs } : { jobs: [{ name: "smoke", conclusion: smokeById[/runs\/(\d+)\/jobs/.exec(path)[1]] }] };
+    check(
+      "a held Preview run newer than one that passed does not hide its smoke",
+      (await smokeFrom("s", smokeGh([preview(1, 5, "success"), preview(2, 6, "action_required")], { 1: "success" }))) === "pass",
+    );
+    check("only held Preview runs: the smoke reads missing", (await smokeFrom("s", smokeGh([preview(2, 6, "action_required")], {}))) === "missing");
+    check("a running Preview reads running", (await smokeFrom("s", smokeGh([preview(1, 5, null, "in_progress")], {}))) === "in_progress");
+  }
   check("a dispatched run alone counts", (await ciFrom("s", runsOf([run(2, "workflow_dispatch", 6)], { 2: step("success") }), noWait)) === "full");
   check(
     "a failed run of the pull request's own event is not hidden by a dispatch",
