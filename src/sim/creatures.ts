@@ -999,6 +999,9 @@ function sideEffects(world: World, c: Creature, ai: Behavior, i: number, onGroun
     });
 }
 
+// How many deaths deep a line of creatures born from deaths may go (onDeath: "spawn:").
+const DEATH_LINE = 3;
+
 function deathOf(world: World, c: Creature, what: string): void {
   if (what === "explode") explode(world, c.x, c.y, 3 + c.size * 2, 1);
   else if (what === "fire") forDisc(world, c.x, c.y, 2.5, (j) => (world.fire[j] = Math.max(world.fire[j], 0.8)));
@@ -1016,8 +1019,19 @@ function deathOf(world: World, c: Creature, what: string): void {
     });
   else if (what.startsWith("spawn:")) {
     const kind = what.slice(6);
-    if (KINDS.has(kind) && world.creatures.length < 600)
-      for (let n = 0; n < 2; n++) world.creatures.push(makeCreature(kind, c.x + Math.random() - 0.5, c.y + Math.random() - 0.5));
+    // Born of a death, a creature carries how many deaths deep its line is. A creature
+    // that names its own kind (a Phoenix) is reborn once per death, not doubled, and
+    // stays one. Other kinds leave two, and no such line goes past DEATH_LINE deaths,
+    // so two spells naming each other cannot multiply forever.
+    const own = kind === c.kind;
+    const line = ((c.data.deathLine as number | undefined) ?? 0) + (own ? 0 : 1);
+    const count = own ? 1 : 2;
+    if (KINDS.has(kind) && world.creatures.length < 600 && line <= DEATH_LINE)
+      for (let n = 0; n < count; n++) {
+        const born = makeCreature(kind, c.x + Math.random() - 0.5, c.y + Math.random() - 0.5);
+        born.data.deathLine = line;
+        world.creatures.push(born);
+      }
   } else forDisc(world, c.x, c.y, 2, (j) => world.place(j, what, 0.6));
 }
 

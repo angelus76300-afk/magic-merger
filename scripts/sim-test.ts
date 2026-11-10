@@ -655,6 +655,35 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
     check("vampires turn villagers at night", errors.length === 0 && vampires > 2, `${vampires} vampires`);
   }
   {
+    // A Phoenix that names itself in onDeath is reborn once per death, not multiplied
+    // (one stored Phoenix became 262 on an island). Spells naming each other are capped too.
+    const { world, rt, errors, v } = villageWorld();
+    rt.cast(
+      {
+        key: "phx",
+        name: "Phoenix",
+        tier: "minor",
+        code: `const spell = { creatures: [{ name: "phoenix", base: "bird", behavior: "wander", hp: 20, onDeath: "spawn:phoenix" }, { name: "moth", base: "bird", behavior: "wander", hp: 20, onDeath: "spawn:ash" }, { name: "ash", base: "bird", behavior: "wander", hp: 20, onDeath: "spawn:moth" }], *cast(w) { w.spawn("phoenix", w.x, w.y); w.spawn("moth", w.x + 2, w.y); } };`,
+      },
+      v.x + 3,
+      v.y + 3,
+    );
+    for (let round = 0; round < 12; round++) {
+      for (const c of world.creatures) {
+        if (!c.dead && (c.kind === "phoenix" || c.kind === "moth" || c.kind === "ash")) {
+          c.hp = 0;
+          c.dead = true;
+        }
+      }
+      for (let k = 0; k < 3; k++) step(world, rt);
+    }
+    const alive = (kind: string) => world.creatures.filter((c) => !c.dead && c.kind === kind).length;
+    const phoenixes = alive("phoenix");
+    const chain = alive("moth") + alive("ash");
+    check("a phoenix is reborn once per death, not multiplied", errors.length === 0 && phoenixes === 1, `${phoenixes} phoenixes after 12 deaths, ${errors[0] ?? "no error"}`);
+    check("two spells naming each other do not multiply without limit", chain <= 8, `${chain} moths and ash after 12 rounds`);
+  }
+  {
     // Over several islands: whether a wounded imp dies within 20 s or limps
     // away depends on the seed (about 3 in 4 die, before and after 3.5, over
     // 52 seeds); what must hold is that the mob always hurts it badly.
