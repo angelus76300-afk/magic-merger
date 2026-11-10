@@ -2212,6 +2212,12 @@ input[type="checkbox"] {
   color: var(--muted);
 }
 
+/* Open, the whole finder's name shows, however long. */
+.find details[open] .find-by {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .find-who {
   font-weight: 700;
   color: var(--text);

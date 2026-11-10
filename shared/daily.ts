@@ -57,3 +57,12 @@ export function waitedLabel(day: string, foundDay: string | null): string {
   if (n === 0) return "the same day";
   return n === 1 ? "after 1 day" : `after ${n} days`;
 }
+
+// "5 Nov", from the YYYY-MM-DD the Worker sends (a forced second one reads "5 Nov #2").
+export function shortDay(day: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(.*)$/.exec(day);
+  if (!m) return day;
+  const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const extra = m[4].trim();
+  return `${date.getDate()} ${date.toLocaleString("en", { month: "short" })}${extra ? ` ${extra}` : ""}`;
+}

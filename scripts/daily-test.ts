@@ -1,6 +1,6 @@
 // The Daily tab's finds (2026-11-10): how long a challenge waited before it
 // was found, read from the two Toronto days the Worker sends.
-import { waitedDays, waitedLabel } from "../shared/daily";
+import { shortDay, waitedDays, waitedLabel } from "../shared/daily";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
@@ -21,4 +21,11 @@ export function dailyChecks(check: Check): void {
     const text = waitedLabel(day, found);
     check(`daily waited ${day} to ${found}`, got === days && text === label, `${got} "${text}", expected ${days} "${label}"`);
   }
+  // A forced second challenge reads "5 Nov #2", with its space (playtest of the finds).
+  for (const [day, want] of [
+    ["2026-11-05", "5 Nov"],
+    ["2026-11-05#2", "5 Nov #2"],
+    ["not a day", "not a day"],
+  ])
+    check(`daily short day ${day}`, shortDay(day) === want, `"${shortDay(day)}", expected "${want}"`);
 }

@@ -1,5 +1,5 @@
 import * as api from "./api";
-import { waitedLabel, type DailyChallenge, type DailyResponse } from "../shared/daily";
+import { shortDay, waitedLabel, type DailyChallenge, type DailyResponse } from "../shared/daily";
 import { TIER_LABEL } from "../shared/tiers";
 
 // 4.5, the Daily tab: every challenge nobody has found yet, then the last
@@ -12,14 +12,6 @@ const el = (tag: string, cls = "", text = "") => {
   if (text) e.textContent = text;
   return e;
 };
-
-// "5 Nov", from the YYYY-MM-DD the Worker sends (a forced second one reads "5 Nov #2").
-export function shortDay(day: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})(.*)$/.exec(day);
-  if (!m) return day;
-  const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  return `${date.getDate()} ${date.toLocaleString("en", { month: "short" })}${m[4]}`;
-}
 
 export class Daily {
   private loaded: DailyResponse | null = null;
@@ -50,6 +42,9 @@ export class Daily {
   }
 
   private render(data: DailyResponse): void {
+    // The tab is drawn again on every visit: the finds a player opened stay
+    // open, so the list does not jump under their thumb.
+    const opened = new Set([...this.root.querySelectorAll(".find details[open]")].map((d) => d.closest<HTMLElement>(".find")?.dataset.id));
     this.root.textContent = "";
     const head = el("div", "daily-head");
     head.append(
@@ -69,7 +64,11 @@ export class Daily {
       const found = el("section", "daily-group");
       found.append(el("h3", "", `Found (${data.found.length})`));
       const list = el("ol", "finds");
-      for (const c of data.found) list.append(findRow(c));
+      for (const c of data.found) {
+        const row = findRow(c);
+        if (opened.has(row.dataset.id)) row.querySelector("details")!.open = true;
+        list.append(row);
+      }
       found.append(list);
       this.root.append(found);
     }
@@ -96,6 +95,7 @@ function card(c: DailyChallenge): HTMLElement {
 // the item's tile, its name and who found it; a tap opens what it is.
 export function findRow(c: DailyChallenge): HTMLElement {
   const row = el("li", `find${c.mine ? " find-mine" : ""}`);
+  row.dataset.id = String(c.id);
   const more = document.createElement("details");
   const head = document.createElement("summary");
   const tile = el("span", "find-tile", c.emoji);
@@ -106,7 +106,8 @@ export function findRow(c: DailyChallenge): HTMLElement {
   main.append(el("span", "find-name", c.name));
   const by = el("span", "find-by");
   const who = c.mine ? "You" : (c.foundBy ?? "someone");
-  by.append("Found by ", el("strong", "find-who", who));
+  // A finder whose account is gone is "someone", in plain type: not a name.
+  by.append("Found by ", c.mine || c.foundBy ? el("strong", "find-who", who) : who);
   main.append(by);
   head.append(tile, main, el("span", "find-date", shortDay(c.foundDay ?? c.day)));
   head.setAttribute("aria-label", `${c.name}, found by ${who}, ${shortDay(c.foundDay ?? c.day)}`);
