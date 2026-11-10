@@ -44,7 +44,7 @@ import {
   type Ward,
 } from "./wards";
 import { makeBuilding, makePerson, makeVillage, makeWonder, shapeLand } from "./makers";
-import { addProp, propBounds, readProp, shadeParts } from "./props";
+import { FINE_BOX, MAX_PROP_BOXES, addProp, propBounds, readProp, shadeParts } from "./props";
 
 // Runs spell programs. A program is JavaScript that defines `spell`:
 //
@@ -75,6 +75,9 @@ export interface CastRequest {
   form?: string;
   giant?: boolean;
 }
+
+// The statuses a creature can be given (aliases included): any other name does nothing.
+const STATUSES = ["burn", "burning", "freeze", "frozen", "fear", "sleep", "calm", "levitate", "stun"];
 
 interface SpellObject {
   materials?: unknown[];
@@ -187,6 +190,28 @@ export class Runtime {
   // 4.6: how many wards each program raised (w.ward), and the cells of each
   // tree it planted (w.tree), for its test run. Not saved.
   readonly wardCalls = new Map<string, number>();
+  // What the engine could not use of what each program wrote, in words for
+  // its writer: an effect it does not know, a model's boxes too thin to draw,
+  // a status or a kind with no such name. The engine used to ignore these
+  // without a word, so the test run passed an item whose main effect never
+  // ran (the review of 10 November: 48 live programs). Not saved.
+  readonly dropped = new Map<string, string[]>();
+  drop(key: string, note: string): void {
+    const list = this.dropped.get(key) ?? [];
+    if (list.length < 8 && !list.includes(note)) list.push(note);
+    this.dropped.set(key, list);
+  }
+  // The artifacts a program declared (spell.artifacts) and never placed with
+  // w.artifact: declaring one places nothing, so none of its effects ever runs.
+  readonly placedArt = new Set<string>();
+  unplaced(key: string): string[] {
+    const out: string[] = [];
+    for (const k of this.artDefs.keys()) {
+      const at = k.indexOf("|");
+      if (k.slice(0, at) === key && !this.placedArt.has(k)) out.push(k.slice(at + 1));
+    }
+    return out;
+  }
   readonly planted = new Map<string, number[][]>();
   // A spell's creature named like one of the island's animals ("wolf") is
   // kept as its own kind ("wolf#<spell>"), so summoning wolves that hunt
@@ -1202,6 +1227,8 @@ export class CreatureHandle {
       : 0;
     if ((name === "burn" || name === "burning") && ward & WARD.fire) return;
     if ((name === "freeze" || name === "frozen") && ward & WARD.cold) return;
+    if (!STATUSES.includes(name))
+      this.rt.drop(this.spellKey, `status "${String(name).slice(0, 30)}" does not exist (burn, freeze, fear, sleep, calm, levitate, stun): it did nothing`);
     switch (name) {
       case "burn":
       case "burning":
@@ -1914,6 +1941,14 @@ export class SpellApi {
       turn: o.turn,
       boxes: Array.isArray(boxes) ? boxes : [],
     });
+    const given = Array.isArray(boxes) ? boxes.length : 0;
+    const kept = p ? p.boxes.length : 0;
+    // A fifth of its parts or three of them gone is a look the writer did not draw.
+    if (given - kept >= Math.max(3, Math.ceil(given * 0.2)))
+      this.rt.drop(
+        this.req.key,
+        `w.model drew ${kept} of ${given} boxes: a box under ${FINE_BOX} on any side is not drawn (make a thin thing ${FINE_BOX} thick), and a model keeps ${MAX_PROP_BOXES} boxes at most`,
+      );
     if (!p) return null;
     // Each part a slightly different shade, as the wonders' parts are; vary: 0 keeps the colors exact.
     shadeParts(p, num(o.vary, 0, 0.3, 0.07));
@@ -1960,6 +1995,11 @@ export class SpellApi {
     const w = this.rt.world;
     if (w.creatures.length > 600 || !this.inside(x, y)) return null;
     const name = this.rt.kindFor(this.req.key, kind);
+    if (!KINDS.has(name))
+      this.rt.drop(
+        this.req.key,
+        `w.spawn("${String(kind).slice(0, 30)}") names no creature kind: declare it in spell.creatures, or it arrives as a plain beast`,
+      );
     const c = makeCreature(KINDS.has(name) ? name : "beast", x, y);
     w.creatures.push(c);
     return new CreatureHandle(c, this.rt, this.req.key);
@@ -2150,6 +2190,7 @@ export class SpellApi {
     const name = (typeof asked.name === "string" ? asked.name : this.req.name).slice(0, 40);
     const def = this.rt.artDefs.get(`${this.req.key}|${name.toLowerCase()}`) ?? {};
     const all: Record<string, unknown> = { ...def, ...asked };
+    this.rt.placedArt.add(`${this.req.key}|${name.toLowerCase()}`);
     if (!this.rt.artDefs.has(`${this.req.key}|${name.toLowerCase()}`)) this.rt.keepArtifactCode(this.req.key, name.toLowerCase(), all);
     const aura = ["heal", "fear", "calm", "sleep", "burn", "freeze", "hurt"].includes(all.aura as string) ? (all.aura as string) : null;
     const radius = num(all.radius, 1, 40, 6);
@@ -2164,7 +2205,7 @@ export class SpellApi {
       radius,
       aura,
       power: num(all.power, 0, 10, 1),
-      art: artifactState(all, this.req.key, this.req.tier, w.time, radius),
+      art: artifactState(all, this.req.key, this.req.tier, w.time, radius, (note) => this.rt.drop(this.req.key, `${name}: ${note}`)),
     };
     // 4.7: an object can be carried (held.ts); its kind when the spell carries one.
     if (this.req.form) a.art.form = this.req.form;

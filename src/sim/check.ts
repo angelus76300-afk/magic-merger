@@ -1,12 +1,13 @@
 import { parseIntents } from "../../shared/promises";
 import { REFERENCE_SIDE, TIERS, TIER_REACH, type Tier } from "../../shared/tiers";
 import { KINDS, kindOf, makeCreature, populate, resetCreatureIds, type Creature } from "./creatures";
-import { abilitiesOf, unfitDefence } from "./abilities";
+import { abilitiesOf, promisesProtection, unfitDefence } from "./abilities";
 import { daylight } from "./daylight";
 import { C } from "./materials";
 import { unpackLook } from "./villagers";
 import { Runtime, type CastRequest } from "./runtime";
 import { isArtifact, resetArtifactIds } from "./artifacts";
+import { passiveDeeds } from "./held";
 import { logCatches } from "./kin";
 import { seeded } from "./noise";
 import { stepHeadless } from "./tick";
@@ -69,6 +70,10 @@ const SEED = 11;
 const MIN_CELLS = 3;
 const MIN_VOXELS = 4;
 const MIN_CREATURES = 1;
+// Health given back, over everyone who was there, for a promise to heal to be
+// kept: the wounded villager by the target gets 2 a second from its own rest,
+// in both runs, so anything a spell adds shows.
+const HEALED = 3;
 // Past this share of the land changed, or with almost every villager and house
 // gone, the spell wiped the island. Cosmic spells may (DESIGN.md, decisions).
 const WIPED_SHARE: Partial<Record<Tier, number>> = { legendary: 0.9 };
@@ -86,15 +91,32 @@ interface Snapshot {
   villagers: number;
   houses: number;
   landmarks: number;
+  // For the promises of healing and summoning: cells of living plants, cells
+  // on fire, the health of everyone alive (summed), the living that burn, and
+  // the living creatures born or brought since the cast.
+  plants: number;
+  burning: number;
+  // The health of each living creature that was there at the cast, by id.
+  hp: Map<number, number>;
+  aflame: number;
+  brought: number;
 }
 
 function snapshot(world: World): Snapshot {
   const fire = new Uint8Array(world.n);
   let houses = 0;
+  let plants = 0;
+  let burning = 0;
   for (let i = 0; i < world.n; i++) {
     fire[i] = world.fire[i] > 0.1 ? 1 : 0;
-    if (world.cover[i] === C.HOUSE) houses++;
+    burning += fire[i];
+    const c = world.cover[i];
+    if (c === C.HOUSE) houses++;
+    else if (c === C.TREE || c === C.BUSH || c === C.CROP || c === C.FLOWER) plants++;
   }
+  const hp = new Map<number, number>();
+  let aflame = 0;
+  let brought = 0;
   // Each creature that was there at the cast, by id: alive or dead, kind,
   // what it is going through. Those born later (ids are not shared between
   // the two runs) are counted by kind.
@@ -102,6 +124,12 @@ function snapshot(world: World): Snapshot {
   let villagers = 0;
   for (const c of world.creatures) {
     if (!c.dead && c.kind === "villager") villagers++;
+    if (!c.dead) {
+      // Of those who were there at the cast: a creature brought is not a wound healed.
+      if (c.id <= baseId) hp.set(c.id, Math.max(0, c.hp));
+      if (c.burning > 0) aflame++;
+      if (c.id > baseId) brought++;
+    }
     if (c.id > baseId) {
       if (c.dead) continue;
       const k = `new:${c.kind}`;
@@ -123,6 +151,11 @@ function snapshot(world: World): Snapshot {
     villagers,
     houses,
     landmarks: world.landmarks.length,
+    plants,
+    burning,
+    hp,
+    aflame,
+    brought,
   };
 }
 
@@ -167,6 +200,8 @@ interface Island {
   // throws particles must not change which way a deer wanders (3.5: with
   // wildlife, that alone passed a spell that did nothing).
   life: () => number;
+  // The villager who lies dead by the target (another stands there wounded).
+  corpse: number;
 }
 
 // Creatures with a higher id were born after the cast.
@@ -202,7 +237,7 @@ function island(errors: string[], streams = 0): Island {
   if (near[1]) Object.assign(near[1], { x: target.x - 1, y: target.y, hp: 35 });
   const land = new Uint8Array(world.n);
   for (let i = 0; i < world.n; i++) land[i] = world.depth[i] > 0.5 ? 0 : 1;
-  return { world, rt, target, land, random: seeded(SEED + 1 + streams * 101), life };
+  return { world, rt, target, land, random: seeded(SEED + 1 + streams * 101), life, corpse: near[0]?.id ?? -1 };
 }
 
 // Seeded randomness (noise.ts), the same for the control and the spell run;
@@ -274,6 +309,17 @@ export function resetCheckCaches(): void {
   probeCache.clear();
 }
 
+// Did someone who was there at the cast become another kind of creature (a
+// villager turned, a beast transformed)?
+function changedKind(a: Snapshot, b: Snapshot): boolean {
+  for (const [id, state] of b.creatures) {
+    if (id.startsWith("new:") || state === "dead") continue;
+    const was = a.creatures.get(id);
+    if (was && was !== "dead" && was.split(":")[0] !== state.split(":")[0]) return true;
+  }
+  return false;
+}
+
 function* check(req: CastRequest): Generator<void, CheckResult> {
   const big = TIERS.indexOf(req.tier) >= TIERS.indexOf("legendary");
   const cap = big ? 26 : 14;
@@ -297,6 +343,20 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
   let seconds = 0;
   let quietFor = 0;
   let last = snapshot(world);
+  // What a promise to heal or to summon is judged on, against the control at
+  // the same second: the best of the cast for healing (a mend is a mend even
+  // if a wolf bites later), the end of it for a summon (it must still be there).
+  const mended = { health: 0, raised: false, plants: 0, quenched: 0 };
+  // Health gained over the control, creature by creature: a wolf's bite
+  // elsewhere does not hide a wound closed here.
+  const gained = (ref: Snapshot, now: Snapshot) => {
+    let sum = 0;
+    for (const [id, v] of now.hp) {
+      const was = ref.hp.get(id);
+      if (was !== undefined && v > was) sum += v - was;
+    }
+    return sum;
+  };
   while (started && !errors.length && seconds < cap) {
     for (let k = 0; k < 1 / TICK && !errors.length; k++) {
       const t0 = performance.now();
@@ -319,6 +379,10 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
     cells = Math.max(cells, changedCells(ref, last, land));
     voxels = Math.max(voxels, Math.abs(ref.decor - last.decor));
     creatures = Math.max(creatures, changedCreatures(ref, last) + Math.abs(ref.landmarks - last.landmarks));
+    mended.health = Math.max(mended.health, gained(ref, last));
+    mended.raised ||= !ref.hp.has(isl.corpse) && last.hp.has(isl.corpse);
+    mended.plants = Math.max(mended.plants, last.plants - ref.plants);
+    mended.quenched = Math.max(mended.quenched, ref.burning - last.burning, (ref.aflame - last.aflame) * 3);
     // Done two seconds after the cast and its bodies are over, after four at least.
     quietFor = rt.busy() || rt.visuals.bodies.length || world.wards.length ? 0 : quietFor + 1;
     if (seconds >= 4 && quietFor >= 2) break;
@@ -363,6 +427,43 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
       };
     }
   }
+  // What its writer wrote and the engine could not use: it never happened, so
+  // the item is not what was meant, whatever else it did.
+  const lost = [
+    ...(rt.dropped.get(`check:${req.key}`) ?? []),
+    ...rt
+      .unplaced(`check:${req.key}`)
+      .map((n) => `spell.artifacts declares "${n}" and cast never calls w.artifact(x, y, "${n}"): declaring places nothing, so none of its effects ran`),
+  ];
+  if (lost.length) {
+    const look = lost.every((l) => l.startsWith("w.model"));
+    return {
+      ok: false,
+      problem: look ? "look" : "idle",
+      detail: `Part of what was written never happened, because the engine could not use it: ${lost.slice(0, 3).join("; ")}.`.slice(0, 400),
+      stats,
+    };
+  }
+  // The promise of its main intent (shared/promises.ts), where the cast itself
+  // shows it. A spell only: an item's healing or creatures come with what it
+  // is, and its own tests follow it for minutes.
+  const main = parseIntents(req.intents)[0];
+  if (req.kind !== "artifact" && main === "heal" && mended.health < HEALED && !mended.raised && mended.plants < MIN_CELLS && mended.quenched < MIN_CELLS) {
+    return {
+      ok: false,
+      problem: "promise",
+      detail: `It promises to heal, but it healed nothing: a villager stood wounded (35 of 100 health) one cell from where it was cast and another lay dead beside it, and neither was better for it; nothing grew back and no fire went out. Heal with c.heal(n) on w.creatures(x, y, r) whatever their health, raise the dead with revive() on w.corpses(x, y, r), or mend the land with w.grow.`,
+      stats,
+    };
+  }
+  if (req.kind !== "artifact" && main === "summon" && last.brought - ref.brought < 1 && !changedKind(ref, last) && !mended.raised) {
+    return {
+      ok: false,
+      problem: "promise",
+      detail: `It promises to bring a creature, but when the cast was over nothing it brought was alive and nothing had been turned into something else (${seconds} s after the cast, by day). Spawn it with w.spawn (or w.person for a human) and let it live: no lifespan of a few seconds, and a creature weak to light must not arrive in the open by day.`,
+      stats,
+    };
+  }
   // 4.6: an item is the size of its kind, and is that kind of thing at all.
   if (isForm(req.form) && req.form !== "spell") {
     const found = formCheck(
@@ -387,7 +488,7 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
   let result: CheckResult = { ok: true, problem: null, detail, stats };
   // 4.6: a settlement is made on open ground away from the village the probe
   // attacks; what it promises is the village it makes, checked above.
-  if (parseIntents(req.intents).includes("protect") && req.form !== "settlement") {
+  if (promisesProtection(req.name, parseIntents(req.intents)) && parseIntents(req.intents).includes("protect") && req.form !== "settlement") {
     phase = "protect";
     const probe = yield* protectProbe(req);
     const withSaved = { ...stats, saved: probe.saved };
@@ -507,6 +608,10 @@ export function* creatureProbe(req: CastRequest): Generator<void, CreatureLife> 
   const name = req.name;
   const fail = (why: string): CreatureLife => ({ ok: false, acted, detail: `${name} was followed for two minutes as a living thing: ${why}`, ...life });
   if (!start.size) return fail("nothing of its own was alive two seconds after it arrived.");
+  if (!own().length)
+    return fail(
+      "everything it brought was dead before the two minutes were over, by day and with no one attacking it. A creature weak to light, or with a lifespan of seconds, does not live: let it bear the day (hide, sleep, or lose the weakness).",
+    );
   if (moved < 3)
     return fail(`it never moved more than ${life.moved} cells from where it arrived. Give it a speed, a goal and a body that walks, swims or flies.`);
   if (working < 3 && deeds <= 0)
@@ -926,7 +1031,8 @@ function* actsProbe(req: CastRequest): Generator<void, { ok: boolean; acted: num
   let deedsAt = 0;
   let cellsAt = 0;
   let bodySeconds = 0;
-  const ownDeeds = () => world.landmarks.filter(isArtifact).reduce((sum, a) => sum + (a.art.key === key ? a.art.deeds : 0), 0);
+  // What was done to it (worshipped, guarded, robbed, taken) is not its doing.
+  const ownDeeds = () => world.landmarks.filter(isArtifact).reduce((sum, a) => sum + (a.art.key === key ? a.art.deeds - passiveDeeds(a) : 0), 0);
   for (let k = 0; k < ACT_SECONDS / TICK && !errors.length; k++) {
     step(world, rt, isl.life);
     if (k === Math.round(ACT_FROM / TICK)) {
@@ -948,7 +1054,7 @@ function* actsProbe(req: CastRequest): Generator<void, { ok: boolean; acted: num
   // Its own deeds count from the start: a Phoenix Feather that revives the
   // corpse beside it at once has acted. What else changed counts after the
   // arrival, when the placing itself is over.
-  const artDeeds = own.reduce((sum, a) => sum + a.art.deeds, 0);
+  const artDeeds = own.reduce((sum, a) => sum + a.art.deeds - passiveDeeds(a), 0);
   const kinDeeds = Math.max(0, creatureDeeds() - deedsAt);
   const spread = Math.abs(materialCells() - cellsAt);
   const acted = artDeeds + kinDeeds + (spread >= MIN_CELLS ? 1 : 0) + (bodySeconds >= 30 ? 1 : 0);
@@ -962,7 +1068,7 @@ function* actsProbe(req: CastRequest): Generator<void, { ok: boolean; acted: num
   return {
     ok: false,
     acted: 0,
-    detail: `Placed by a village and left alone for five minutes, it changed nothing after it arrived: no effect, nothing villagers or creatures used, no creature of its own at work, no material spreading. Make it act with w.artifact: effects on a trigger, grants villagers use, uses creatures act on, or pairs.`,
+    detail: `Placed by a village and left alone for five minutes, it changed nothing after it arrived: no effect, nothing villagers or creatures used, no creature of its own at work, no material spreading (villagers bowing to it, guarding it or carrying it off is their doing, not its own). Make it do what its name does with w.artifact: effects on a trigger (code of its own in act), grants villagers use, or pairs.`,
   };
 }
 
