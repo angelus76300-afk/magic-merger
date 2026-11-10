@@ -3,7 +3,9 @@
 // not wake it. Reads .github/workflows/*.yml as text (no YAML dependency: the files keep the
 // two space indent prettier gives them).
 //   node scripts/workflows-test.mjs [dir]   (part of npm run test:risk; dir defaults to .github/workflows)
-import { readFileSync, readdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -74,6 +76,21 @@ function runLines(lines) {
 const TAINTED =
   /\$\{\{[^}]*(github\.head_ref|pull_request\.(title|body|head\.ref|head\.label)|comment\.body|issue\.(title|body)|label\.name|head_commit\.message|review\.body|workflow_run\.head_branch|inputs\.)[^}]*\}\}/;
 
+// What the guard reads from the API under a dispatch: the state, this repository, the head the caller named,
+// not a draft, and a feedback branch only with owner-ok. Each must stop the job (exit 1).
+const DISPATCH_GUARD = [/\.state\b/, /\.head\.repo\.full_name/, /\.head\.sha/, /\.draft\b/, /claude\/feedback-/, /Feedback:/, /owner-ok/, /GITHUB_SHA/];
+
+/** Whether a job's first step that runs anything is the dispatch guard, before any checkout. */
+function dispatchGuarded(lines) {
+  const at = lines.findIndex((l) => /^\s+-\s+(name|uses|run|id):/.test(l));
+  if (at < 0 || /uses:\s*actions\/checkout@/.test(lines[at])) return false;
+  const step = block(lines, at);
+  const text = step.join("\n");
+  // The step stops the job: an if on it would let the job go on without it.
+  if (step.some((l, i) => i > 0 && /^\s+if:/.test(l) && indent(l) === indent(lines[at]) + 2)) return false;
+  return DISPATCH_GUARD.every((re) => re.test(text)) && (text.match(/exit 1/g) ?? []).length >= 6;
+}
+
 /** Every finding for one workflow file, as text; empty when it is safe. */
 export function findings(name, text) {
   const out = [];
@@ -101,6 +118,29 @@ export function findings(name, text) {
         if (/\b(npm|npx|yarn|pnpm)\b|\bmake\b|\.\/node_modules/.test(l))
           out.push(`${name} job ${job.name}: runs a package script or tool from the tree: ${l.trim()}`);
   }
+  // 4. 2026-11-10, the merge queue: a workflow that runs a pull request's code and may also be started by
+  // workflow_dispatch reads no pull request from the event then, and a guard on an empty field must not
+  // pass. Each job that names a secret refuses on its own, before any checkout, from the API (DISPATCH_GUARD),
+  // or needs a job that does; and nothing in it runs after a failed step (always(), failure(), cancelled()).
+  if (fromPr && triggers.includes("workflow_dispatch")) {
+    const guarded = new Set(jobs.filter((j) => dispatchGuarded(j.lines)).map((j) => j.name));
+    for (const job of jobs) {
+      if (!/\bsecrets\./.test(job.text)) continue;
+      const needs = (/^\s+needs:\s*\[?([^\]\n]*)\]?\s*$/m.exec(job.text)?.[1] ?? "").split(/[,\s]+/).filter(Boolean);
+      const afterFail = /\b(always|failure|cancelled)\(\)/;
+      if (guarded.has(job.name)) {
+        if (afterFail.test(job.text)) out.push(`${name} job ${job.name}: a step may run after the dispatch guard refused`);
+      } else if (!needs.some((n) => guarded.has(n)))
+        out.push(`${name} job ${job.name}: names a secret under workflow_dispatch without the pull request guard before its checkout`);
+      // A job that only needs the guarded one runs when that one refused if its own if says always().
+      else if (afterFail.test(job.cond)) out.push(`${name} job ${job.name}: runs even when the job holding the dispatch guard refused`);
+    }
+  }
+  // 5. 2026-11-10: a workflow another one calls (workflow_call) sees the caller's event name. The Deploy
+  // workflow calls CI, and the Gate starts the Deploy by workflow_dispatch, so a step that asks whether
+  // this run was dispatched by its event name runs inside every deploy. Ask the input instead (inputs.pr).
+  if (triggers.includes("workflow_call") && /github\.event_name\s*==\s*'workflow_dispatch'/.test(text))
+    out.push(`${name}: asks github.event_name == 'workflow_dispatch', which a calling workflow's dispatch also matches: key it on an input`);
   if (triggers.includes("issue_comment"))
     for (const job of jobs)
       if (!/github\.event\.comment\.author_association == 'OWNER'/.test(job.cond))
@@ -149,6 +189,124 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       comment.replace("if: github.event.issue.pull_request", "if: github.event.issue.pull_request && github.event.comment.author_association == 'OWNER'"),
     ).length === 0,
   );
+
+  // The dispatch guard (rule 4), on the real preview.yml: taking out any part of it is caught.
+  const preview = readFileSync(join(dir, "preview.yml"), "utf8");
+  check("preview.yml: the preview job is guarded under a dispatch", dispatchGuarded(parse(preview).jobs.find((j) => j.name === "preview").lines));
+  for (const [what, from, to] of [
+    ["the guard taken out", / {6}# The guard, before any checkout[\s\S]*?(?= {6}- uses: actions\/checkout@v4)/, ""],
+    ["the repository check taken out", /head\.repo\.full_name/g, "head.repo.name"],
+    ["the owner-ok check taken out", /owner-ok/g, "owner-yes"],
+    ["the head check taken out", /\.head\.sha/g, ".head.ref"],
+    ["the guard given an if", / {8}id: pr\n/, "        id: pr\n        if: github.event_name == 'workflow_dispatch'\n"],
+    ["a step that runs after a refusal", / {6}- id: upload\n/, "      - id: upload\n        if: always()\n"],
+    ["the smoke job no longer needing the guarded one", / {4}needs: preview\n/, "    needs: []\n"],
+    [
+      "the smoke job run even after a refusal",
+      / {4}if: github\.event_name == 'workflow_dispatch' \|\| github\.event\.pull_request\.head\.repo/,
+      "    if: always() || github.event.pull_request.head.repo",
+    ],
+  ]) {
+    const broken = preview.replace(from, to);
+    check(
+      `preview.yml with ${what} is caught`,
+      broken !== preview && findings("preview.yml", broken).length > 0,
+      broken === preview ? "the edit did not apply" : "",
+    );
+  }
+
+  // The guard scripts themselves, run in bash with a fake gh that answers from a pull request record:
+  // each thing that must refuse makes the step fail, and a good dispatch passes with its outputs.
+  const guardScript = (file) => {
+    const lines = readFileSync(join(dir, file), "utf8").split("\n");
+    const at = lines.findIndex((l) => /^\s+id: pr\s*$/.test(l));
+    const runAt = lines.findIndex((l, i) => i > at && /^\s+run: \|\s*$/.test(l));
+    const body = block(lines, runAt).slice(1);
+    const min = Math.min(...body.filter((l) => l.trim()).map(indent));
+    return body.map((l) => l.slice(min)).join("\n");
+  };
+  const tmp = mkdtempSync(join(tmpdir(), "mm-guard-"));
+  // gh api <path> [--jq <expr>]: the record, through jq -r when asked, as gh does.
+  writeFileSync(join(tmp, "gh"), `#!/bin/bash\nif [ "$3" = "--jq" ]; then jq -r "$4" "$PR_JSON"; else cat "$PR_JSON"; fi\n`);
+  chmodSync(join(tmp, "gh"), 0o755);
+  const SHA = "a".repeat(40);
+  const good = {
+    state: "open",
+    draft: false,
+    title: "Roads",
+    labels: [],
+    head: { sha: SHA, ref: "claude/roads", repo: { full_name: "o/r" } },
+    base: { ref: "main" },
+  };
+  const runGuard = (file, pr, env = {}) => {
+    writeFileSync(join(tmp, "record.json"), JSON.stringify(pr));
+    writeFileSync(join(tmp, "out"), "");
+    const r = spawnSync("bash", ["-e", "-c", guardScript(file)], {
+      encoding: "utf8",
+      env: {
+        PATH: `${tmp}:${process.env.PATH}`,
+        PR_JSON: join(tmp, "record.json"),
+        GITHUB_OUTPUT: join(tmp, "out"),
+        RUNNER_TEMP: tmp,
+        GITHUB_SHA: SHA,
+        REPO: "o/r",
+        EVENT: "workflow_dispatch",
+        PR: "12",
+        SHA,
+        ...env,
+      },
+    });
+    return { ok: r.status === 0, out: readFileSync(join(tmp, "out"), "utf8"), err: r.stdout + r.stderr };
+  };
+  const with_ = (patch) => ({ ...good, ...patch, head: { ...good.head, ...(patch.head ?? {}), repo: { ...good.head.repo, ...(patch.head?.repo ?? {}) } } });
+  for (const file of ["ci.yml", "preview.yml"]) {
+    const r = runGuard(file, good);
+    check(`${file} guard: a good dispatch passes`, r.ok && /^base=main$|^number=12$/m.test(r.out), r.err + r.out);
+    for (const [what, pr, env] of [
+      ["a closed pull request", with_({ state: "closed" })],
+      ["a fork", with_({ head: { repo: { full_name: "stranger/r" } } })],
+      ["a head that moved on GitHub", with_({ head: { sha: "b".repeat(40) } })],
+      ["a branch that moved since the dispatch", good, { GITHUB_SHA: "c".repeat(40) }],
+      ["a pull request number that is not a number", good, { PR: "12; rm -rf /" }],
+      ...(file === "preview.yml"
+        ? [
+            ["a draft", with_({ draft: true })],
+            ["a feedback branch without owner-ok", with_({ head: { ref: "claude/feedback-sound" } })],
+            ["a Feedback: title without owner-ok", with_({ title: "Feedback: the sound" })],
+          ]
+        : []),
+    ])
+      check(`${file} guard refuses ${what}`, !runGuard(file, pr, env).ok);
+    if (file === "preview.yml") {
+      check(
+        "preview.yml guard: a feedback branch with owner-ok passes",
+        runGuard(file, with_({ head: { ref: "claude/feedback-x" }, labels: [{ name: "owner-ok" }] })).ok,
+      );
+      const ev = runGuard(file, good, { EVENT: "pull_request", FROM_EVENT: "7", FROM_EVENT_SHA: SHA, PR: "", SHA: "" });
+      check("preview.yml guard: under pull_request it passes the event's number on", ev.ok && /^number=7$/m.test(ev.out), ev.err);
+    } else {
+      const d = runGuard(file, with_({ draft: true }));
+      check("ci.yml guard: a draft passes with draft=true (CI then runs the light steps)", d.ok && /^draft=true$/m.test(d.out), d.err);
+    }
+  }
+  // Rule 5 and CI's scope step as the Deploy workflow calls it: the caller's dispatch, no input, a full run.
+  const ci = readFileSync(join(dir, "ci.yml"), "utf8");
+  const oldGuard = ci.replace("if: inputs.pr != ''", "if: github.event_name == 'workflow_dispatch'");
+  check("ci.yml: a guard keyed on the event's name is caught (Deploy calls CI)", oldGuard !== ci && findings("ci.yml", oldGuard).length > 0);
+  {
+    const lines = ci.split("\n");
+    const at = lines.findIndex((l) => /^\s+id: scope\s*$/.test(l));
+    const runAt = lines.findIndex((l, i) => i > at && /^\s+run: \|\s*$/.test(l));
+    const body = block(lines, runAt).slice(1);
+    const min = Math.min(...body.filter((l) => l.trim()).map(indent));
+    writeFileSync(join(tmp, "out"), "");
+    const r = spawnSync("bash", ["-e", "-c", body.map((l) => l.slice(min)).join("\n")], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH, EVENT: "workflow_dispatch", DISPATCHED: "", GITHUB_OUTPUT: join(tmp, "out"), GITHUB_STEP_SUMMARY: join(tmp, "summary") },
+    });
+    check("ci.yml scope, called by a dispatched Deploy: a full run", r.status === 0 && /^full=true$/m.test(readFileSync(join(tmp, "out"), "utf8")), r.stderr);
+  }
+  rmSync(tmp, { recursive: true, force: true });
 
   console.log(failed ? `${failed} failed` : "all workflow checks passed");
   process.exit(failed ? 1 : 0);
