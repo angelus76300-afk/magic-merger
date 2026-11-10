@@ -504,7 +504,13 @@ function* check(req: CastRequest): Generator<void, CheckResult> {
     if (!probe.ok) return { ok: false, problem: "idle", detail: probe.detail, stats: withLife };
     return { ok: true, problem: null, detail: `${result.detail} ${probe.detail}`, stats: withLife };
   }
-  if (req.kind === "artifact" && !actsByMaking(req.form, before, world)) {
+  // A protection that has just kept a village from fire, lava, a blast and
+  // raiders has done what it is for: in five minutes of peace it waits, and
+  // waiting is not failing (its villagers' bows no longer count for it).
+  const guarded = typeof result.stats.saved === "number";
+  // Recorded as having acted (the Worker reads `acted` to know an artifact faced this test).
+  if (req.kind === "artifact" && guarded) result = { ...result, stats: { ...result.stats, acted: 1 } };
+  if (req.kind === "artifact" && !guarded && !actsByMaking(req.form, before, world)) {
     phase = "acts";
     const acts = yield* actsProbe(req);
     const withActed = { ...result.stats, acted: acts.acted };
@@ -558,6 +564,8 @@ export function* creatureProbe(req: CastRequest): Generator<void, CreatureLife> 
   const ownDeeds = () => own().reduce((sum, c) => sum + (c.mind?.deeds ?? 0), 0);
   const used = () => own().reduce((sum, c) => sum + Number(c.data.used ?? 0), 0);
   let deedsAt = 0;
+  // When the last of its own died, if they all did.
+  let diedAt = 0;
   for (let k = 0; k < CREATURE_SECONDS / TICK && !errors.length; k++) {
     step(world, rt, isl.life);
     // Two seconds in, after the arrival: what it has, and night set to fall.
@@ -572,6 +580,7 @@ export function* creatureProbe(req: CastRequest): Generator<void, CreatureLife> 
       }
     }
     if (k > 2 / TICK && k % 30 === 0) {
+      if (start.size && !diedAt && !own().length) diedAt = Math.round(k * TICK);
       for (const c of own()) {
         const s = start.get(c);
         if (s) moved = Math.max(moved, Math.hypot(c.x - s.x, c.y - s.y));
@@ -610,7 +619,7 @@ export function* creatureProbe(req: CastRequest): Generator<void, CreatureLife> 
   if (!start.size) return fail("nothing of its own was alive two seconds after it arrived.");
   if (!own().length)
     return fail(
-      "everything it brought was dead before the two minutes were over, by day and with no one attacking it. A creature weak to light, or with a lifespan of seconds, does not live: let it bear the day (hide, sleep, or lose the weakness).",
+      `everything it brought was dead ${diedAt} s after it arrived, placed by a village in the morning as a player would. What kills it there: daylight on a creature weak to light, a lifespan of seconds, or the villagers, who fight what scares or hunts them and find it asleep by day. Let it live through its first day: health for a fight, no weakness to light in the open, and awake or hidden when it arrives.`,
     );
   if (moved < 3)
     return fail(`it never moved more than ${life.moved} cells from where it arrived. Give it a speed, a goal and a body that walks, swims or flies.`);

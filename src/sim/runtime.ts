@@ -1134,6 +1134,11 @@ export class CreatureHandle {
   get data() {
     return this.raw.data;
   }
+  // `b.data = {...}` is what a writer tries first: it crashed the whole cast
+  // ("which has only a getter"). Taken as its fields, as w.body takes them.
+  set data(v: Record<string, unknown>) {
+    if (v && typeof v === "object") Object.assign(this.raw.data, v);
+  }
   // A ward against harm takes most of a blow meant for someone it protects.
   // Under a ward this spell broke by two tiers or fewer, a blow that would
   // kill leaves the person at 1 health, afraid and running (the owner's
@@ -1342,6 +1347,11 @@ export class BodyHandle {
   }
   get data() {
     return this.raw.data;
+  }
+  // `b.data = {...}` is what a writer tries first: it crashed the whole cast
+  // ("which has only a getter"). Taken as its fields, as w.body takes them.
+  set data(v: Record<string, unknown>) {
+    if (v && typeof v === "object") Object.assign(this.raw.data, v);
   }
   set color(v: string | number) {
     this.raw.color = colorOr(v, this.raw.color);
