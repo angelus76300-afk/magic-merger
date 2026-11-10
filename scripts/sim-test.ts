@@ -680,7 +680,11 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
     const alive = (kind: string) => world.creatures.filter((c) => !c.dead && c.kind === kind).length;
     const phoenixes = alive("phoenix");
     const chain = alive("moth") + alive("ash");
-    check("a phoenix is reborn once per death, not multiplied", errors.length === 0 && phoenixes === 1, `${phoenixes} phoenixes after 12 deaths, ${errors[0] ?? "no error"}`);
+    check(
+      "a phoenix is reborn once per death, not multiplied",
+      errors.length === 0 && phoenixes === 1,
+      `${phoenixes} phoenixes after 12 deaths, ${errors[0] ?? "no error"}`,
+    );
     check("two spells naming each other do not multiply without limit", chain <= 8, `${chain} moths and ash after 12 rounds`);
   }
   {
