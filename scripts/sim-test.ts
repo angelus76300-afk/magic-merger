@@ -10,6 +10,7 @@ import { guardLoops } from "../shared/spellcode";
 import { KINDS, makeCreature, populate, resetCreatureIds } from "../src/sim/creatures";
 import { interactionChecks } from "./interactions-test";
 import { sizeChecks } from "./sizes-test";
+import { roadsChecks } from "./roads-test";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
 import { logDeeds, mindOf, remember } from "../src/sim/kin";
@@ -31,7 +32,22 @@ import { MOTION_SEEDS, MOTION_SECONDS, type MotionReport } from "./motion-run";
 import { mergeMotion, motionLines, type KindMotion } from "../src/sim/motion";
 import { runCheck, type SceneReport } from "../src/sim/check";
 import { readResult } from "../src/checkresult";
-import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../shared/votes";
+import {
+  DOWN_REASONS,
+  MAX_REASONS,
+  REASONS,
+  REASONS_BY_FORM,
+  downShare,
+  reasonLabel,
+  reasonsFor,
+  storedReasons,
+  voteReasons,
+  votedDown,
+  votedUp,
+  votedWorse,
+  votesNeeded,
+} from "../shared/votes";
+import { FORMS } from "../shared/forms";
 import { pickExamples, words } from "../worker/programs";
 import { verdict, type LinkedPull } from "../worker/feedback";
 import { cronJobs } from "../worker/cron";
@@ -2132,6 +2148,61 @@ sizeChecks(check);
   check("60% up joins the library", votedUp({ up: 3, down: 2 }, 5) && !votedUp({ up: 1, down: 0 }, 2));
   check("rolled back when voted worse", votedWorse({ up: 0, down: 2 }, { up: 1, down: 2 }, 2) && !votedWorse({ up: 1, down: 1 }, { up: 0, down: 1 }, 1));
   check("down share", downShare({ up: 1, down: 3 }) === 0.75 && downShare({ up: 0, down: 0 }) === 0);
+  // Reasons by form (2026-11-07): a creature is judged on how it moves and
+  // behaves, a building on its shape and use, never one list for all.
+  const creature = reasonsFor("creature");
+  check(
+    "a creature shows creature reasons: it barely moved, ignored everyone, not how it behaves",
+    ["still", "aloof", "nature", "body"].every((r) => creature.includes(r as never)) && !creature.includes("float") && !creature.includes("nothing"),
+    creature.join(","),
+  );
+  check(
+    "a building shows building reasons",
+    ["plain", "empty", "float"].every((r) => reasonsFor("building").includes(r as never)),
+    reasonsFor("building").join(","),
+  );
+  check(
+    "every form offers two to six known reasons, Broke the island among them",
+    FORMS.every(
+      (f) =>
+        REASONS_BY_FORM[f].length >= 2 &&
+        REASONS_BY_FORM[f].length <= 6 &&
+        REASONS_BY_FORM[f].includes("broke") &&
+        new Set(REASONS_BY_FORM[f]).size === REASONS_BY_FORM[f].length,
+    ),
+  );
+  check(
+    "labels fit a button (22 letters) and every prompt says what to do",
+    FORMS.every((f) => reasonsFor(f).every((r) => reasonLabel(r, f).length <= 22)) &&
+      Object.values(REASONS).every((d) => d.prompt.length <= 200 && /; (make|give|keep|add|draw|stand|choose|raise)/.test(d.prompt)),
+  );
+  check(
+    "a spell's small reads Too weak, a building's Too small",
+    reasonLabel("small", "spell") === "Too weak" && reasonLabel("small", "building") === "Too small",
+  );
+  check(
+    "the five first reasons stay known: old votes still read",
+    DOWN_REASONS.every((r) => r in REASONS),
+  );
+  check(
+    "a vote takes one to three known reasons, each once",
+    voteReasons({ reasons: ["still", "aloof"] })?.join() === "still,aloof" &&
+      voteReasons({ reason: "boring" })?.join() === "boring" &&
+      voteReasons({ reasons: [] }) === null &&
+      voteReasons({ reasons: ["still", "aloof", "body", "small"] }) === null &&
+      MAX_REASONS === 3 &&
+      voteReasons({ reasons: ["still", "still"] }) === null &&
+      voteReasons({ reasons: ["meh"] }) === null &&
+      voteReasons({ reasons: ["still, aloof"] }) === null &&
+      voteReasons({}) === null,
+  );
+  check(
+    "stored reasons read back, old single ones too, unknown parts dropped",
+    storedReasons("boring").join() === "boring" &&
+      storedReasons("still,body").join() === "still,body" &&
+      storedReasons("gone,small").join() === "small" &&
+      storedReasons(null).length === 0,
+  );
   const library = [
     { key: "inferno", name: "Inferno", tier: "grand", kind: "spell", description: "A roaring fire that burns the forest", code: "a" },
     { key: "golem", name: "Golem", tier: "minor", kind: "artifact", description: "A stone giant who guards villagers", code: "b" },
@@ -2260,6 +2331,9 @@ pacingChecks(check);
 
 // The mist from afar (2026-11-07): scripts/fog-test.ts.
 fogChecks(check);
+
+// Roads (4.9): scripts/roads-test.ts.
+roadsChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);

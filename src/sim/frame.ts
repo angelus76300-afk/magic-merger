@@ -53,6 +53,12 @@ function send(msg: FromWorld): void {
   window.parent.postMessage(msg, "*");
 }
 
+// Keys pressed on the island stay in this frame: Escape is passed up so the
+// vote after a cast closes as it does elsewhere on the page.
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") send({ type: "escape" });
+});
+
 const hooks = {
   onError: (key: string, name: string, message: string) => send({ type: "error", key, name, message }),
   onTap: (x: number, y: number) => {

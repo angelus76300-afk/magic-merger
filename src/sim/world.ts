@@ -17,6 +17,7 @@ import type { Landmark, Presence } from "./social";
 import type { Ruin, Ward } from "./wards";
 import type { Prop } from "./props";
 import type { Death, Mark, Village } from "./kin";
+import type { Road } from "./roads";
 
 export const TICK = 1 / 30;
 export const AMBIENT = 15;
@@ -124,6 +125,11 @@ export class World {
   settlements: Settlement[] = [];
   // How often villagers walked over each cell lately: paths wear in (not saved).
   wear: Uint8Array | null = null;
+  // Roads villages laid between them and to wonders (4.9, roads.ts), saved;
+  // the deck height of each bridge cell; and a counter the view redraws on.
+  roads: Road[] = [];
+  readonly decks = new Map<number, number>();
+  roadsVersion = 0;
   // Wonders and the island's name (4.4.5 part B, wonders.ts); none on the
   // old island and the challenges. House cells rebuilt after a fire wear a
   // patched roof.
@@ -182,6 +188,19 @@ export class World {
   // Surface height: terrain plus whatever fluid lies on it.
   level(i: number): number {
     return this.height[i] + this.depth[i];
+  }
+
+  // Where a walker stands: on a bridge's deck (4.9), else the surface.
+  walkLevel(i: number): number {
+    const deck = this.cover[i] === C.BRIDGE ? this.decks.get(i) : undefined;
+    return deck !== undefined && deck >= this.height[i] + this.depth[i] - 0.3 ? deck : this.height[i] + this.depth[i];
+  }
+
+  // A bridge a walker can cross here, its deck above the water.
+  onDeck(i: number): boolean {
+    if (this.cover[i] !== C.BRIDGE) return false;
+    const deck = this.decks.get(i);
+    return deck !== undefined && deck >= this.height[i] + this.depth[i] - 0.3;
   }
 
   setCover(i: number, id: number): void {

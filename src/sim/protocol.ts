@@ -41,6 +41,7 @@ export function readFromWorld(data: unknown): FromWorld | null {
     case "ready":
     case "alive":
     case "tap-without-spell":
+    case "escape":
       return { type: m.type };
     case "save":
       return m.data && typeof m.data === "object" ? { type: "save", data: m.data as SavedWorld } : null;
@@ -91,6 +92,8 @@ export type FromWorld =
   | { type: "save"; data: SavedWorld }
   | { type: "cast"; key: string }
   | { type: "tap-without-spell" }
+  // Escape pressed on the island: the page closes what it shows (the vote).
+  | { type: "escape" }
   | { type: "error"; key: string; name: string; message: string }
   | { type: "objective"; id: string; text: string; status: "playing" | "won" | "lost" }
   | { type: "perf"; sample: Record<string, number> }

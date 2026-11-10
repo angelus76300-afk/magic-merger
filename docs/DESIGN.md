@@ -962,6 +962,36 @@ The roadmap: "a staff throws its fireball, a potion heals once, a lantern lights
 
 `npm test` (`scripts/held-test.ts`) checks who may carry what, a guard walking to a staff and taking it, a staff burning a goblin that comes at its guard twelve cells from where it lay, a potion kept at 80% health and drunk at 30%, the drop at death, the theft by a goblin written with no behavior, the idle drop, a loaded world, a storm lantern drawn as a post, the scale in a hand, and a legendary wand casting at major from a hand. Each of the staff, potion, cast, theft, post and scale checks was seen to fail with its rule taken out.
 
+## Builders: roads (4.9, part 1)
+
+Villages join up. Everything is in `src/sim/roads.ts`; the tuning knobs are `ROAD` at its top. The game designer agent set the order of 4.9: roads first (paths already wore in, so a road is visible within minutes on any island, old saves too), then building sites and a plan from needs, then crafts. Stone roads wait for masonry (part 3): a stone road with no stone in the stores and no craft would not keep its name's promise.
+
+### Two ways a road comes to be
+
+1. **Worn in.** Paths wore into the grass since 4.4.5 (`ecology.ts`, `wearPaths`: a villager's cell counted once a second, the count halved every minute). Now a path near a village whose count stays at 32 or more (about 16 villagers a minute) for 3 minutes running is trodden into a **dirt road**, darker and rutted. Worn roads never cover more than 12% of the land within 14 cells of a village's center, and one nobody walks for 10 minutes goes back to a path. The main street of a new village is a dirt road from the start.
+2. **Laid.** About every minute and a half a village sends someone to market (to a village within 110 cells, nearer ones more often) or, one time in three when one is near, to see a wonder. A merchant taking food to a poorer village counts too. Each departure counts, arrived or turned back: a river or a cliff that turns travellers back is the reason to build. After 4 departures between two villages (5 to a wonder) the village **surveys** a way once: the cheapest walk on a four way grid (Dial's algorithm, 600 cells a tick, one survey at a time, inside the box round both ends with a margin of 24 cells), costing 4 a cell on grass, 3 on a path or a road, 12 through a field, 10 over water, never through solid covers or up a step of more than 1.5, and over at most 8 cells of water at a time. The chronicle says "Galley and Morwyn marked out a road between them", and red-ragged pegs show the line every four cells.
+
+Builders then lay it from the village's own end, a cell every 3 seconds (`goals.ts`, the task `pave`, "laying a road"). Builders do it seven times in ten before building houses; plain villagers, woodcutters and farmers with nothing to do lend a hand half the time. A tree on the line is felled for the village's wood; flowers, crops and bushes are cleared; a house or a wonder that has grown there since is gone round (the cell counts as laid).
+
+**Bridges.** Over water, a cell is a **bridge** cover, paid 2 wood a cell from the village's stores; without the wood the road waits ("a bridge waits for wood" on the card). Its deck runs straight from one bank's height to the other's, at least 0.35 above the water, and is saved with the road. A bridge burns like any wooden cover, and the road being still marked, builders put it back.
+
+Limits: 3 roads at a village, 12 on an island, none between places closer than 30 cells or between two halves of one named village, and none where the roads already join two places by a way at most twice the walk across the grid (through a third village). On three large islands left alone for 15 minutes, roads are under 1.5% of the land.
+
+### Walking on them
+
+- **Faster**: 1.1 times on a path, 1.3 times on a dirt road and a bridge (`creatures.ts`, every walker, wolves too).
+- **Preferred**: a flow field (4.3, `paths.ts`) is now the cost of the walk, not its number of steps: 4 a step, 3 a step along a road or a bridge, filled cheapest first with a bucket per cost. Walkers take a road up to a third longer than the way across the grass. With no road every cost is exactly 4 times the old count, so nothing moved on islands without one (checked cell for cell in `npm test`).
+- **Followed**: a long walk to market, or home from it, past the 64 steps a field reaches, follows the road's line toward the end near its destination, and stops at a bridge not built yet. The walk to another village may take 150 seconds instead of 30 before it counts as lost, and so may the walk home from it, so a traveller does not settle in the village it visited. All of this is on islands of 4.4.5 and later, where paths wear in; the challenges and the island from before keep their villagers exactly as they were.
+- **Crossed**: on a bridge's deck a walker stands at the deck's height (`world.walkLevel`), its feet dry: no drowning, no slowing in water. Fish swim under it.
+
+### Seen and saved
+
+A dirt road is a ground (`dirt road`, after `path`), a bridge a cover (`bridge`, after the job buildings): planks across the way, rails both sides, posts into the water, turned along the road. The villager's card has a **Roads** line: "to Morwyn, 64% laid; to the Healing Baths, a bridge waits for wood". Roads are saved as a list of cells with the decks of their bridges (`roads` in the save); an island saved before has none, loads as it was, and grows its own. Worn wear is not saved, as before.
+
+### Found on the way
+
+A merchant's trip to a village beyond the 64 steps of a flow field walks straight and gives up after 5 seconds without getting closer, at the first river or cliff; main does the same. In the first build of this change, on a large island with villages in its corners (seed 23), 63 of 65 trips in 3 minutes, merchants' food trips among them, were dropped and none arrived, so no road was ever marked out. Departures counting, roads followed and the longer walk fix it where a road is laid.
+
 ## Challenges
 
 Hand-made islands with a hazard and a goal (`src/sim/scenarios.ts`, titles in `scenario-list.ts` so the game page does not load the engine to list them). A challenge builds its own world, runs a `tick` every frame (a volcano vent, a rising sea, the sun drying fields) and a `check` twice a second that returns progress text and playing, won or lost. It never touches the player's island: the iframe keeps the sandbox save in memory and restores it on leaving.
