@@ -1,0 +1,3 @@
+section: Gameplay
+
+- **Sealed until cast** (the game designer agent, the review of 10 November; lens 9, the numbers: 338 of 483 live programs were never cast by anyone). An item's tile carries a small seal until its first cast; the cast breaks it and writes one measured line on the card ("Last time: put out 40 burning cells", the backlog's own idea under Gameplay). What the player feels: a collection to finish, and a reason to carry each merge to the island. What it adds: the join between the two halves of the game, with no idea handed to the player. Cost: S, no paid call. Risk: it stands near the declined "discoveries made in the World"; the discovery stays on the board, but it is the owner's call.
