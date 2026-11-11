@@ -366,13 +366,3 @@ export function becomeChecks(check: Check): void {
   }
   storyOn(null);
 }
-
-// Run on its own while building: esbuild scripts/become-test.ts --bundle --platform=node --format=esm.
-if (process.argv[1]?.includes("become-test")) {
-  let failures = 0;
-  becomeChecks((name, ok, detail = "") => {
-    console.log(`${ok ? "ok  " : "FAIL"} ${name}${detail ? `: ${detail}` : ""}`);
-    if (!ok) failures++;
-  });
-  process.exit(failures ? 1 : 0);
-}
