@@ -11,6 +11,8 @@ import { KINDS, makeCreature, populate, resetCreatureIds } from "../src/sim/crea
 import { interactionChecks } from "./interactions-test";
 import { sizeChecks } from "./sizes-test";
 import { roadsChecks } from "./roads-test";
+import { sitesChecks } from "./sites-test";
+import { dailyChecks } from "./daily-test";
 import { monsterChecks } from "./monsters-test";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
@@ -58,6 +60,9 @@ import { draftBrief } from "../shared/feedback";
 import { programToFetch } from "../shared/sync";
 import { mergeDiscoveries } from "../shared/account";
 import { helperProblem, withLibrary } from "../worker/evolve";
+import { apiSurfaceChecks } from "./api-surface-test";
+import { programChecks } from "./programs-test";
+import { saveChecks } from "./saves-test";
 import { body, bodyFrom, BUILDS, EXTRA, FEATURES, ITEMS, MAX_MODEL_BOXES, modelOf, planOfModel, PLANS, stillModelColor } from "../src/sim/body";
 import type { BodySpec, Feature, ModelBox } from "../src/sim/body";
 import { sharedFaces } from "../src/sim/voxel/faces";
@@ -90,6 +95,7 @@ import { fixesChecks } from "./fixes-test";
 import { evidenceChecks } from "./evidence-test";
 import { formChecks, keptByFormChecks } from "./forms-test";
 import { creatureChecks } from "./creatures-b-test";
+import { promiseChecks } from "./promise-test";
 import { heldChecks } from "./held-test";
 import { pacingChecks } from "./pacing-test";
 import { fogChecks } from "./fog-test";
@@ -257,6 +263,13 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   check(`old programs still run (${files.length})`, files.length > 0 && broken.length === 0, broken[0] ?? "");
   Math.random = shared;
 }
+
+// 2c. The guards of stored spells and saved islands (review of 10 November):
+// the World API's surface against its snapshot, today's program shapes
+// (versions 4 to 6) doing what they visibly do, and the golden island saves.
+apiSurfaceChecks(check);
+programChecks(check);
+saveChecks(check);
 
 // 3. A spell that loops forever is stopped, not frozen.
 {
@@ -1039,6 +1052,8 @@ for (const scenario of SCENARIOS) {
   keptByFormChecks(check);
   // 4.6 part B: people are villagers, creatures live, the judge asks.
   creatureChecks(check);
+  // The review of 10 November: what the engine drops, promises of healing and summoning, protection only where it fits.
+  promiseChecks(check);
   // 4.7: objects that are picked up and used (src/sim/held.ts).
   heldChecks(check);
   check("a small island is one land", generateWorld(112, 112, 5, resolveLand(mid, 5, 112)).biomeMap === null);
@@ -2412,6 +2427,8 @@ fogChecks(check);
 
 // Roads (4.9): scripts/roads-test.ts.
 roadsChecks(check);
+sitesChecks(check);
+dailyChecks(check);
 monsterChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");

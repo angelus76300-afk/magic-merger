@@ -3546,7 +3546,7 @@ const signIn = async (key, count) => {
   await startDev({ EVIDENCE_REWRITES: "1" });
   await reset();
   const now = Date.now();
-  await db.prepare("DELETE FROM job_runs WHERE job = 'evidence'").run();
+  await db.prepare("DELETE FROM job_runs WHERE job IN ('evidence', 'evidence-scan')").run();
   await db
     .prepare(
       "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('dim lamp', 'Dim Lamp', '🪔', 'spell', 2, 'minor', 'A small lamp that keeps a house safe from fire.', 'protect', ?)",
@@ -3594,6 +3594,8 @@ const signIn = async (key, count) => {
     `${spellCalls - s0} calls, ${await runs()} runs`,
   );
   await reset();
+  // That look at the programs is noted (scanDue), and the next is six hours away: the rest of the section is another day.
+  await db.prepare("DELETE FROM job_runs WHERE job = 'evidence-scan'").run();
 
   const s1 = spellCalls;
   await fire();
@@ -3636,7 +3638,7 @@ const signIn = async (key, count) => {
   );
 
   // The next day: not the same program again (it has a rewrite from it now).
-  await db.prepare("DELETE FROM job_runs WHERE job = 'evidence'").run();
+  await db.prepare("DELETE FROM job_runs WHERE job IN ('evidence', 'evidence-scan')").run();
   await db.prepare("UPDATE programs SET status = 'live' WHERE id = ?").bind(lamp).run();
   await db
     .prepare("UPDATE programs SET status = 'retired' WHERE id = ?")
@@ -3654,7 +3656,7 @@ const signIn = async (key, count) => {
 
   // The owner's idea (5 November): a program whose refresh candidate failed
   // its own test gets one informed retry, told what that candidate's test found.
-  await db.prepare("DELETE FROM job_runs WHERE job = 'evidence'").run();
+  await db.prepare("DELETE FROM job_runs WHERE job IN ('evidence', 'evidence-scan')").run();
   await db
     .prepare(
       "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('frayed ward', 'Frayed Ward', '🧶', 'spell', 2, 'minor', 'A ward of old thread.', 'protect', ?)",
@@ -3735,7 +3737,7 @@ const signIn = async (key, count) => {
   killDev();
   await new Promise((r) => setTimeout(r, 1500));
   await startDev({ EVIDENCE_REWRITES: "1", STAGING: "1" });
-  await db.prepare("DELETE FROM job_runs WHERE job = 'evidence'").run();
+  await db.prepare("DELETE FROM job_runs WHERE job IN ('evidence', 'evidence-scan')").run();
   await db.prepare("UPDATE rewrites SET status = 'failed' WHERE key = 'dim lamp'").run();
   const s5 = spellCalls;
   await fetch(`${BASE}/cdn-cgi/handler/scheduled?cron=*/10+*+*+*+*`);

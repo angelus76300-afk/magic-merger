@@ -16,6 +16,7 @@ export default tseslint.config(
       "node_modules",
       ".wrangler",
       ".claude/skills",
+      "lab/programs",
       "lab/legacy",
       "lab/spells",
       "lab/solutions",
