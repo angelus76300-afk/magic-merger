@@ -7,9 +7,14 @@
 # the pull request, only sends its description; a pull request from a fork is
 # skipped (2026-11-06, the repository is public: a stranger's description must
 # not move an idea).
+#
+# 2026-11-11, "credentials: yes": MM_TOKEN is production's admin token, so it lives in the
+# environment "production", which only main may use. pull_request_target runs main's copy of this
+# file, on main, so a branch that edits it gets no token. It checks out nothing and runs no code from
+# the pull request: the description goes to the Worker as data, through env.
 name: Ideas
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, edited, reopened, ready_for_review, closed]
 permissions:
   contents: read
@@ -18,6 +23,7 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    environment: production
     env:
       MM_URL: ${{ secrets.MM_URL }}
       MM_TOKEN: ${{ secrets.MM_TOKEN }}
