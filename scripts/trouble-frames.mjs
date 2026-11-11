@@ -17,7 +17,9 @@ try {
   await page.addInitScript((t) => {
     try {
       localStorage.setItem("magic-merger.token", t);
-    } catch {}
+    } catch {
+      // the sandboxed frames have no storage
+    }
   }, game.ADMIN);
   await page.goto(game.BASE + "/");
   await page.waitForSelector(".chip-inventory", { timeout: 30000 });
