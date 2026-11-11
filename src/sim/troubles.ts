@@ -57,7 +57,7 @@ export interface Trouble {
   warded: number;
   // What the player cast at it, newest last: the item's key and name, its emoji, and when.
   // What was cast at it: `n` is what burned then, `low` the seconds since that the fire has been
-  // held under three tenths of it while the wind kept lighting the front. Three such seconds
+  // out while the wind kept trying to light the front. Three such seconds
   // make it the answer: the wind drops (`answer`), and the fire dies. A Fire thrown at the fire
   // holds nothing down, and the playtest saw it given a stone under an earlier rule.
   casts: { key: string; name: string; emoji: string; t: number; n: number; low: number }[];
@@ -309,7 +309,8 @@ export function stepTrouble(world: World, dt: number): TroubleEnd | null {
   if (driven && !t.answer)
     for (const c of t.casts) {
       if (world.time - c.t > 12) continue;
-      c.low = f.cells <= Math.max(0, Math.floor(c.n * 0.3)) ? c.low + dt : 0;
+      // Out, not merely lower: a fire's size swings by itself between a peak and a third of it.
+      c.low = f.cells <= 1 ? c.low + dt : 0;
       if (c.low >= 3) t.answer = { key: c.key, name: c.name, emoji: c.emoji, t: c.t };
     }
   if (driven && !t.answer) {
