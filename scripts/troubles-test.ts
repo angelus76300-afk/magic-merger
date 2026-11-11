@@ -5,7 +5,7 @@ import { populate } from "../src/sim/creatures";
 import { Director } from "../src/sim/director";
 import { storyOn, tell } from "../src/sim/kin";
 import { DEFAULT_LAND, resolveLand } from "../src/sim/land";
-import { C, F } from "../src/sim/materials";
+import { C } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
 import { Runtime } from "../src/sim/runtime";
 import { loadWorld, saveWorld } from "../src/sim/save";
@@ -42,16 +42,10 @@ function burn(
     for (let k = 0; k < 30; k++) stepHeadless(world, rt);
     seconds++;
     if (answerAt !== null && seconds === answerAt) {
-      // The item is cast, and then does its work as rain would: every fire out, and the ground
-      // between the fire and the houses under water, so the front finds nothing to burn.
+      // The item is cast, and then does its work: every fire out, and what was hot enough to catch again cooled.
       noteCast(world, "rain", "Rain", "", t.x, t.y);
       world.fire.fill(0);
-      for (let i = 0; i < world.n; i++) {
-        world.temp[i] = Math.min(world.temp[i], 20);
-        const cx = i % world.w;
-        const cy = Math.floor(i / world.w);
-        if (Math.hypot(cx - t.x, cy - t.y) < 40 && world.cover[i] !== C.HOUSE) world.setFluid(i, F.WATER, 0.6);
-      }
+      for (let i = 0; i < world.n; i++) world.temp[i] = Math.min(world.temp[i], 20);
     }
   }
   storyOn(null);

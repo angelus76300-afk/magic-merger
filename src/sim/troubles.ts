@@ -66,6 +66,12 @@ export interface Trouble {
   width: number;
   // It reached what it may take, and died down round the houses by itself.
   capped?: boolean;
+  // What burned at the last look. A cell that stops burning while it could still burn was put out
+  // by something (burning itself turns ground to ash and trees to nothing). When half of the fire
+  // is put out that way within a look, the wind stalls for eight seconds: time for an item that
+  // works to finish its work, and none for one that does nothing. Not saved.
+  alight?: Set<number>;
+  stallUntil?: number;
 }
 
 // What a village keeps of the item that saved it: one stone, one line.
@@ -102,6 +108,7 @@ const ANSWER_WITHIN = 60;
 // half a minute (measured on five islands).
 const FRONT_PACE = 0.26;
 const FEED_FOR = 300;
+const STALL_FOR = 8;
 
 const DIRS = ["east", "south-east", "south", "south-west", "west", "north-west", "north", "north-east"];
 function direction(dx: number, dy: number): string {
@@ -256,6 +263,14 @@ export function startWildfire(world: World, random: () => number = Math.random):
   return null;
 }
 
+function burningNow(world: World, t: Trouble): Set<number> {
+  const alight = new Set<number>();
+  near(world, (t.x + t.vx) / 2, (t.y + t.vy) / 2, REACH, (i) => {
+    if (world.fire[i] > 0.05) alight.add(i);
+  });
+  return alight;
+}
+
 /** The player cast this near the trouble: it may be the answer. */
 export function noteCast(world: World, key: string, name: string, emoji: string, x: number, y: number): void {
   const t = world.trouble;
@@ -276,6 +291,14 @@ export function stepTrouble(world: World, dt: number): TroubleEnd | null {
   t.seen = houses;
   t.checks++;
   if (world.wardMask[Math.round(t.vy) * world.w + Math.round(t.vx)] & WARD.fire) t.warded++;
+  if (t.alight && t.alight.size) {
+    let out = 0;
+    for (const i of t.alight) {
+      if (world.fire[i] > 0.05) continue;
+      if (world.cover[i] === C.TREE || world.cover[i] === C.HOUSE || world.materials.get("ground", world.ground[i]).flammable > 0) out++;
+    }
+    if (out >= Math.max(3, t.alight.size * 0.5)) t.stallUntil = world.time + STALL_FOR;
+  }
   const cast = t.casts.length ? world.time - t.casts[t.casts.length - 1].t : Infinity;
   // Its front advances from where it began; what ran ahead of it dies down.
   // Not while the player's own magic is at work: what a cast sets alight is the cast's doing.
@@ -320,7 +343,7 @@ export function stepTrouble(world: World, dt: number): TroubleEnd | null {
       c.low = f.cells <= 1 ? c.low + dt : 0;
       if (c.low >= 3) t.answer = { key: c.key, name: c.name, emoji: c.emoji, t: c.t };
     }
-  if (driven && !t.answer) {
+  if (driven && !t.answer && world.time >= (t.stallUntil ?? 0)) {
     const d = Math.hypot(t.hx - t.x, t.hy - t.y) || 1;
     const reach = Math.min(t.front, d);
     let ex = t.x + ((t.hx - t.x) / d) * reach;
@@ -355,12 +378,15 @@ export function stepTrouble(world: World, dt: number): TroubleEnd | null {
       if (lit) {
         t.embers++;
         t.calm = 0;
+        t.alight = burningNow(world, t);
         return null;
       }
       // Nothing to light across its whole width, nor for eight cells on: the front waits there.
       t.front -= dt * FRONT_PACE;
     }
   }
+  // What burns now, after what the trouble itself lit or let die: only what something else puts out counts.
+  t.alight = burningNow(world, t);
   t.calm = f.cells === 0 ? t.calm + dt : 0;
   if (t.calm < 3) return null;
   return endTrouble(world, t);
