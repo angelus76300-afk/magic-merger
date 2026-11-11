@@ -64,7 +64,7 @@ export function restore(save: SavedWorld, rules: CastRequest[]): World | null {
   });
 }
 
-// The built-in materials in their order on 11 November 2026. A save stores
+// The built-in materials in their order on 11 November 2026 (with #105's building site). A save stores
 // ids, so these never move: a new built-in goes at the end of its layer.
 const PINNED: Record<Layer, string[]> = {
   ground: ["grass", "dirt", "sand", "rock", "snow", "ash", "basalt", "crystal", "field", "path", "dirt road"],
@@ -110,6 +110,7 @@ const PINNED: Record<Layer, string[]> = {
     "lumber yard",
     "fisher hut",
     "bridge",
+    "building site",
   ],
   gas: ["none", "smoke", "steam", "poison"],
 };
