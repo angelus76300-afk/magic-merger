@@ -28,6 +28,9 @@ permissions:
 jobs:
   night:
     runs-on: ubuntu-latest
+    # 2026-11-11, "credentials: yes": production's secrets live in the GitHub environment "production",
+    # which only main may use; a branch or a dispatch on a branch gets none of them.
+    environment: production
     timeout-minutes: 30
     env:
       # Production's admin token, for read only routes; staging's own when it exists (audit 4.5.1, risk 1).

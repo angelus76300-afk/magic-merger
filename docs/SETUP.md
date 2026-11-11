@@ -274,6 +274,14 @@ Your checklist, in this order. Each line is a setting only you can change.
 10. Staging's own admin token: a new Actions secret `STAGING_ADMIN_TOKEN`, the second value, and the same name and value in the sessions' environment. The Staging workflow copies it to the staging Worker on its next run (Actions > Staging > Run workflow to do it now); previews, the reviewer and the night's checks then use it instead of production's.
 11. On the account page, signed in as yourself: check that the passkeys listed are all yours.
 
+**The production environment** (2026-11-11, "credentials: yes"). Since the pull request "Production secrets only on main", Deploy, Staging, Night, Judge and Ideas read `CLOUDFLARE_API_TOKEN` and `MM_TOKEN` from the GitHub environment `production`, which only `main` may use (Ideas runs main's copy through `pull_request_target`). A branch, or a run dispatched on a branch, gets neither. `scripts/workflows-test.mjs` fails if a job names either secret outside it. The preview is the one exception, with its own environment. Before you delete the two repository-level secrets:
+
+12. Settings > Environments > `preview` > Add environment secret `CLOUDFLARE_API_TOKEN`: a token of its own, made in Cloudflare (My Profile > API Tokens > Create Token > "Edit Cloudflare Workers" template, account `angelus76300`, then add **D1: Edit**). It still reaches the whole account, since Cloudflare cannot limit a token to one Worker; its own token means you can revoke it alone, and production's token is no longer in reach of a branch.
+13. Check that the repository secret `STAGING_ADMIN_TOKEN` exists (step 10): the preview's smoke test uses it once `MM_TOKEN` is gone.
+14. After one green Deploy run since the merge: Settings > Secrets and variables > Actions > Repository secrets, delete `CLOUDFLARE_API_TOKEN` and `MM_TOKEN`. Then open any ready pull request's Preview run and check that it still uploaded and its smoke passed.
+
+What stays open: the preview job runs a branch's own copy of `preview.yml` with the preview token, so a branch can still print that token (review of 10 November, section 3, item 2). Closing it means building the preview without secrets and uploading it from a workflow on `main` (`workflow_run`), which can only be tested once merged; it is listed as its own step.
+
 **Things to know**
 
 - Your email address is the author of the squash merges made on github.com (46 commits today). It becomes visible in the history; rewriting history to remove it is not worth the risk. To keep it out of future merges: GitHub Settings > Emails > **Keep my email addresses private**. Session commits use `noreply@anthropic.com`.
