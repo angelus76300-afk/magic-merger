@@ -303,8 +303,9 @@ function see(world: World, c: Creature, k: CreatureKind, kindOf: (c: Creature) =
 }
 
 const VILLAGER_HP = 100;
-// How near a villager stands to a creature to face it with others (a mob, a guard's two).
-const FACE = 4;
+// How near a creature villagers stand to face it together (a mob, a guard's two):
+// close enough to have seen it (they notice a threat at nine cells).
+const FACE = 8;
 
 function madeKind(t: Creature, tk: CreatureKind): boolean {
   return !tk.native && !BUILT_IN.has(t.kind);

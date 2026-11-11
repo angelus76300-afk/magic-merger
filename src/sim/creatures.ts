@@ -883,9 +883,10 @@ function arrivalAwake(world: World, c: Creature, k: CreatureKind, i: number, bur
     return !(burnsByDay && !shaded(world, i));
   }
   if (at < 0) return false;
-  const lair = c.mind?.lair ?? -1;
-  const atDen = lair >= 0 && Math.hypot((lair % world.w) - c.x, Math.floor(lair / world.w) - c.y) < 1.5;
-  if (world.time - at >= ARRIVAL_AWAKE || world.time < at || shaded(world, i) || atDen) {
+  // Only one that daylight burns ends its minute early, in the shade. A den
+  // does not end it: a den is dug where the creature lies, so it was "reached"
+  // the moment it landed (the playtest of 2026-11-11: a Werewolf asleep at 1 s).
+  if (world.time - at >= ARRIVAL_AWAKE || world.time < at || (burnsByDay && shaded(world, i))) {
     c.data.arrived = -1;
     return false;
   }
@@ -1032,6 +1033,9 @@ function sideEffects(world: World, c: Creature, ai: Behavior, i: number, onGroun
     deed(c, `left ${ai.leaves} where it walked`);
   }
   if (!ai.aura || world.tick % 8 !== c.id % 8) return;
+  // Asleep, a creature an item made touches no one with a harmful aura (a vampire
+  // asleep by the houses froze 11 villagers in two minutes, none of them thawed).
+  if (c.data.mood === "asleep" && ai.aura !== "heal" && ai.aura !== "calm" && !kindOf(c).native && !BUILTIN_KINDS.has(c.kind)) return;
   const r = ai.auraRadius;
   const p = ai.auraPower;
   let touched = 0;

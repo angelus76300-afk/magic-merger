@@ -92,6 +92,8 @@ export interface MonsterLife {
   medianLife: number;
   // Of its creatures, how many were alive at the end of the day and at the end of the run.
   aliveAtDusk: number;
+  // The median of how far each of its creatures went from where it arrived in its first minute (cells).
+  movedFirstMinute: number;
   aliveAtEnd: number;
   // Villagers at the start, and dead after five minutes beyond those dead on the island left alone.
   villagers: number;
@@ -170,6 +172,7 @@ export function monsterLife(p: MonsterProgram): MonsterLife {
   const villagers = villagersAlive(world);
   rt.cast({ key, name: p.name, tier: "major", code: p.code, kind: "artifact", form: "creature" }, target.x, target.y);
   const born = new Map<Creature, number>();
+  const from = new Map<Creature, { x: number; y: number; far: number }>();
   const died = new Map<Creature, number>();
   const causes = { villagers: 0, daylight: 0, other: 0 };
   // What last took health from each, by the tick it was seen losing it.
@@ -189,6 +192,9 @@ export function monsterLife(p: MonsterProgram): MonsterLife {
     for (const c of world.creatures) {
       if (rt.owners.get(`creature:${c.kind}`) !== key) continue;
       if (!born.has(c)) born.set(c, t);
+      if (!from.has(c)) from.set(c, { x: c.x, y: c.y, far: 0 });
+      const f = from.get(c)!;
+      if (!c.dead && t - born.get(c)! <= 60) f.far = Math.max(f.far, Math.hypot(c.x - f.x, c.y - f.y));
       if (!died.has(c) && c.hp < (lastHp.get(c) ?? c.hp)) lastCause.set(c, causeOf(c));
       lastHp.set(c, c.hp);
       if (c.dead && !died.has(c)) {
@@ -208,6 +214,7 @@ export function monsterLife(p: MonsterProgram): MonsterLife {
     placed: born.size,
     medianLife: Math.round(median(lives) * 10) / 10,
     aliveAtDusk,
+    movedFirstMinute: Math.round(median([...from.values()].map((f) => f.far)) * 10) / 10,
     aliveAtEnd: [...born.keys()].filter((c) => !died.has(c)).length,
     villagers,
     killed: Math.max(0, left - end),
@@ -232,18 +239,18 @@ const diedOf = (r: MonsterLife) =>
 
 export function monsterTable(rows: MonsterLife[]): string {
   const lines = [
-    "| Monster | Placed | Median life by day (s) | Alive at dusk | Died by day of | Alive at 5 min | Villagers killed in 5 min | Villagers left |",
-    "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    "| Monster | Placed | Median life by day (s) | Moved in its first minute (cells) | Alive at dusk | Died by day of | Alive at 5 min | Villagers killed in 5 min | Villagers left |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
   ];
   for (const r of rows)
     lines.push(
-      `| ${r.name} | ${r.placed} | ${r.medianLife} | ${r.aliveAtDusk} | ${diedOf(r)} | ${r.aliveAtEnd} | ${r.killed} of ${r.villagers} | ${Math.round(r.villagersLeft * 100)}% |`,
+      `| ${r.name} | ${r.placed} | ${r.medianLife} | ${r.movedFirstMinute} | ${r.aliveAtDusk} | ${diedOf(r)} | ${r.aliveAtEnd} | ${r.killed} of ${r.villagers} | ${Math.round(r.villagersLeft * 100)}% |`,
     );
-  lines.push(`| **Median of the ${rows.length}** | | **${median(rows.map((r) => r.medianLife))}** | | | | | |`);
+  lines.push(`| **Median of the ${rows.length}** | | **${median(rows.map((r) => r.medianLife))}** | | | | | | |`);
   const hostile = rows.filter((r) => MONSTERS.find((m) => m.name === r.name)?.hostile);
   if (hostile.length && hostile.length < rows.length)
     lines.push(
-      `| **Median of the ${hostile.length} monsters** | | **${median(hostile.map((r) => r.medianLife))}** | | | | ${hostile.reduce((n, r) => n + r.killed, 0)} in all | |`,
+      `| **Median of the ${hostile.length} monsters** | | **${median(hostile.map((r) => r.medianLife))}** | | | | | ${hostile.reduce((n, r) => n + r.killed, 0)} in all | |`,
     );
   return lines.join("\n");
 }

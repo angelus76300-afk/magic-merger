@@ -626,14 +626,10 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   check("blight spreads", errors.length === 0 && spread > start * 2, `${start} then ${spread} cells${errors[0] ? ", " + errors[0] : ""}`);
   check("wolves hunt villagers", villagers() < before, `${before} then ${villagers()} villagers`);
   // 2026-11-11: a made creature daylight burns has its first minute to reach the
-  // shade (DESIGN, "Monsters that live"); caught in the open after it, it burns.
+  // shade (DESIGN, "Monsters that live"), so the ghouls are not burnt yet; that
+  // they burn when caught in the open after it is in monsters-test.ts.
   const ghouls = world.creatures.filter((c) => c.kind === "ghoul");
-  const held = ghouls.map((c) => ({ c, x: c.x, y: c.y }));
-  for (let k = 0; k < 30 * 62; k++) {
-    for (const h of held) Object.assign(h.c, { x: h.x, y: h.y });
-    step(world, rt);
-  }
-  check("ghouls burn by day, caught in the open after their first minute", ghouls.length === 3 && ghouls.every((c) => c.dead));
+  check("ghouls are not burnt by day in their first minute", ghouls.length === 3 && ghouls.every((c) => !c.dead));
   for (let i = 0; i < world.n; i++) if (world.layerName("ground", world.ground[i]) === "blight") world.fire[i] = 1;
   for (let k = 0; k < 30 * 2; k++) step(world, rt);
   check("blight burns away", count() < spread * 0.3, `${count()} left`);
@@ -1203,8 +1199,8 @@ await idleDone;
   );
   const wolf = rows.find((r) => r.name === "Werewolf (review)");
   check(
-    "monsters: the review's werewolf lives through the day by the village",
-    !!wolf && wolf.aliveAtDusk === wolf.placed && wolf.medianLife >= DAY_SECONDS,
+    "monsters: the review's werewolf is awake on arrival (it goes more than 10 cells in its first minute) and lives through the day",
+    !!wolf && wolf.movedFirstMinute > 10 && wolf.aliveAtDusk === wolf.placed && wolf.medianLife >= DAY_SECONDS,
     lives,
   );
   const fell = rows.filter((r) => r.villagersLeft < 0.7);
