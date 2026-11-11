@@ -12,7 +12,8 @@ import { Hud } from "./hud";
 import { SCENARIOS } from "./scenarios";
 import { firstLook, villageView, type Pose } from "./firstlook";
 import { fireOf, startWildfire, stoneAt, stoneLine, troubleLine, type Stone } from "./troubles";
-import { Director, lifeLine, nameOf, type Shot } from "./director";
+import { Director, lifeLine, nameOf, whoIs, type Shot } from "./director";
+import { act, checkHeld, possess, possessed, powersOf, release, steerBy, thoughtOf } from "./possess";
 import { castOnScreen, watchCast } from "./voxel/castview";
 import { LAND_REDRAW } from "./voxel/terrain";
 import { readDef, setFinders, signatureOf, wonderInfo, type WonderDef } from "./wonders";
@@ -67,6 +68,8 @@ let lastTouch = 0;
 let touring = false;
 let swallowTap = false;
 let quietUntil = 0;
+// The creature the player is (Become, possess.ts), or null.
+let riding: Creature | null = null;
 canvas.addEventListener(
   "pointerdown",
   () => {
@@ -99,6 +102,10 @@ const hooks = {
       return;
     }
     if (engine.view.orbit.watching) return;
+    // While the player is a creature (Become, 2026-11-12) a tap on the island
+    // does nothing: casting while possessed is out of this first version. The
+    // page's spell selection still works; the player lets go first to cast.
+    if (riding) return;
     if (!selected) {
       // A stone a village raised to the item that saved it (troubles.ts).
       const stone = stoneAt(engine.world, x, y);
@@ -252,7 +259,20 @@ function drawInspect(): void {
       closeInspect();
       startWatch(c);
     });
-    card.append(follow);
+    // Become, beside Follow: the player is this creature until they let go.
+    // Not in a challenge, where the island is a puzzle to solve with spells.
+    if (scenario) card.append(follow);
+    else {
+      const become = el("button", "follow become", "Become");
+      (become as HTMLButtonElement).type = "button";
+      become.addEventListener("click", () => {
+        closeInspect();
+        startBecome(c);
+      });
+      const pair = el("div", "pair");
+      pair.append(follow, become);
+      card.append(pair);
+    }
   }
   reportInspect();
 }
@@ -308,7 +328,7 @@ function hush(): void {
 }
 
 function startWatch(pin: Creature | null = null, at: { x: number; y: number; who: number } | null = null): void {
-  if (!engine || scenario) return;
+  if (!engine || scenario || riding) return;
   const o = engine.view.orbit;
   if (!watching) watchBack = { tx: o.tx, ty: o.ty, dist: o.dist, phi: o.phi, theta: o.theta };
   stopLook?.();
@@ -418,14 +438,250 @@ watchEl.addEventListener("click", () => {
 });
 storyEl.addEventListener("click", () => {
   lastTouch = performance.now();
-  if (watching) return;
+  if (watching || riding) return;
   if (lineGoes) startWatch(null, lineGoes);
 });
+
+// Become anything (2026-11-12, possess.ts): the player is one creature. The
+// camera rides behind it (orbit.ts chase), the story line says who you are
+// and what it thinks, a fixed stick walks it, its own abilities are buttons,
+// and Let go ends it with the camera left where it is. Nothing of it is saved
+// and nothing is sent: the frame keeps its own count for the checks.
+const stickEl = document.getElementById("stick") as HTMLElement;
+const knobEl = stickEl.firstElementChild as HTMLElement;
+const powersEl = document.getElementById("powers") as HTMLElement;
+const letGoEl = document.getElementById("letgo") as HTMLButtonElement;
+const becomeStats = { presses: 0, seconds: [] as number[] };
+let rideStart = 0;
+let rideName = "";
+let fellTimer = 0;
+let powerNote: { text: string; until: number } | null = null;
+// The thumb on the stick: where it is (-1 to 1, y down) and the camera's turn
+// when it came down. The stick points along the ground as the player saw it
+// then: measured against the camera as it swings, a push down would turn the
+// creature round, the camera with it, and the creature round again.
+const stick = { x: 0, y: 0, id: -1, theta: 0 };
+
+const POWER_WORDS: Record<string, string> = {
+  "breathe fire": "Fire",
+  heal: "Heal",
+  summon: "Call",
+  teleport: "Blink",
+  freeze: "Freeze",
+  lightning: "Bolt",
+  grow: "Grow",
+  "raise the dead": "Raise",
+  shield: "Shield",
+  dig: "Dig",
+  flood: "Flood",
+  steal: "Steal",
+  cast: "Cast",
+};
+
+function riderName(c: Creature): string {
+  if (!engine) return "";
+  const who = whoIs(engine.world, c);
+  return c.kind === "villager" ? who : who[0].toLowerCase() + who.slice(1);
+}
+
+function startBecome(c: Creature): void {
+  if (!engine || scenario || c.dead) return;
+  stopWatch(false);
+  if (!possess(engine.world, c)) return;
+  riding = c;
+  becomeStats.presses++;
+  rideStart = performance.now();
+  rideName = riderName(c);
+  clearTimeout(lineTimer);
+  clearTimeout(fellTimer);
+  lineGoes = null;
+  powerNote = null;
+  document.body.classList.add("possessed");
+  stickEl.hidden = false;
+  letGoEl.hidden = false;
+  watchEl.hidden = true;
+  powersEl.replaceChildren();
+  drawPowers();
+  tellRider();
+  engine.view.orbit.chase(c.x, c.y, c.z, c.hd, kindOf(c).radius * c.size);
+  lastTouch = performance.now();
+}
+
+function endBecome(why: "let go" | "fell" | "gone"): void {
+  const c = riding;
+  if (!c) return;
+  riding = null;
+  if (engine) {
+    release(engine.world, why);
+    // The camera stays where it is: it does not fly back.
+    engine.view.orbit.unchase();
+  }
+  becomeStats.seconds.push(Math.round((performance.now() - rideStart) / 100) / 10);
+  stick.x = stick.y = 0;
+  stick.id = -1;
+  knobEl.style.transform = "";
+  document.body.classList.remove("possessed");
+  stickEl.hidden = true;
+  letGoEl.hidden = true;
+  powersEl.hidden = true;
+  watchEl.hidden = !!scenario;
+  lastTouch = performance.now();
+  if (why !== "fell" || !engine) return hush();
+  const name = c.kind === "villager" ? (c.mind?.title ?? nameOf(engine.world, c)) : `The ${c.kind.split("#")[0]}`;
+  const line = `${name} fell`;
+  say(line, false);
+  fellTimer = window.setTimeout(() => caption === line && hush(), 3000);
+}
+
+// "You are Mira the fisher", and under it what she thinks now.
+function tellRider(): void {
+  if (!riding || !engine) return;
+  const note = powerNote && performance.now() < powerNote.until ? powerNote.text : "";
+  const thought = note || thoughtOf(engine.world, riding);
+  const line = `You are ${rideName}`;
+  const key = `${line}|${thought}`;
+  if (caption === key && !storyEl.hidden && !storyEl.classList.contains("out")) return;
+  caption = key;
+  storyEl.replaceChildren(el("span", "line", line), el("span", "thought", thought));
+  storyEl.hidden = false;
+  storyEl.classList.remove("out");
+  reportInspect();
+}
+
+function drawPowers(): void {
+  if (!riding || !engine) return;
+  const list = powersOf(engine.world, riding);
+  powersEl.hidden = !list.length;
+  if (powersEl.childElementCount !== list.length) {
+    powersEl.replaceChildren(
+      ...list.map((p, n) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.setAttribute("aria-label", p.spec.do === "cast" && p.spec.spell ? `Cast ${p.spec.spell}` : p.spec.do[0].toUpperCase() + p.spec.do.slice(1));
+        b.append(el("span", "", POWER_WORDS[p.spec.do] ?? "Do"));
+        b.addEventListener("click", () => usePower(n));
+        return b;
+      }),
+    );
+  }
+  list.forEach((p, n) => {
+    const b = powersEl.children[n] as HTMLElement;
+    const ready = p.left <= 0 ? 100 : Math.round(Math.max(0, Math.min(1, 1 - p.left / Math.max(1, p.every))) * 100);
+    b.style.setProperty("--ready", `${ready}%`);
+    b.classList.toggle("cooling", p.left > 0);
+  });
+}
+
+function usePower(n: number): void {
+  if (!riding || !engine) return;
+  lastTouch = performance.now();
+  const spec = powersOf(engine.world, riding)[n]?.spec;
+  const r = act(engine.world, n);
+  if (r === "nothing" && spec) powerNote = { text: `${POWER_WORDS[spec.do] ?? "That"}: nothing in reach`, until: performance.now() + 1800 };
+  else if (r === "done") powerNote = null;
+  if (r === "done" || r === "nothing") saveSoon();
+  drawPowers();
+  tellRider();
+}
+
+function moveStick(e: PointerEvent): void {
+  const r = stickEl.getBoundingClientRect();
+  const reach = r.width / 2 - 14;
+  let dx = e.clientX - (r.left + r.width / 2);
+  let dy = e.clientY - (r.top + r.height / 2);
+  const d = Math.hypot(dx, dy);
+  if (d > reach) {
+    dx *= reach / d;
+    dy *= reach / d;
+  }
+  knobEl.style.transform = `translate(${Math.round(dx)}px, ${Math.round(dy)}px)`;
+  stick.x = dx / reach;
+  stick.y = dy / reach;
+  lastTouch = performance.now();
+}
+
+// The stick keeps its own pointer: a thumb on it never turns the camera or casts.
+stickEl.addEventListener("pointerdown", (e) => {
+  if (!riding || !engine) return;
+  e.preventDefault();
+  e.stopPropagation();
+  stickEl.setPointerCapture(e.pointerId);
+  stick.id = e.pointerId;
+  stick.theta = engine.view.orbit.theta;
+  moveStick(e);
+});
+stickEl.addEventListener("pointermove", (e) => {
+  if (e.pointerId === stick.id) moveStick(e);
+});
+const stickUp = (e: PointerEvent) => {
+  if (e.pointerId !== stick.id) return;
+  stick.x = stick.y = 0;
+  stick.id = -1;
+  knobEl.style.transform = "";
+};
+stickEl.addEventListener("pointerup", stickUp);
+stickEl.addEventListener("pointercancel", stickUp);
+stickEl.addEventListener("lostpointercapture", stickUp);
+letGoEl.addEventListener("click", () => endBecome("let go"));
+
+// Every frame while possessed: the stick to the creature, the camera to it.
+function ride(): void {
+  requestAnimationFrame(ride);
+  if (!riding || !engine) return;
+  const world = engine.world;
+  const why = checkHeld(world);
+  if (why || !possessed(world)) return endBecome(why ?? "gone");
+  steerBy(world, stick.x, stick.y, stick.id >= 0 ? stick.theta : engine.view.orbit.theta);
+  const c = riding;
+  engine.view.orbit.chase(c.x, c.y, c.z, c.hd, kindOf(c).radius * c.size);
+}
+requestAnimationFrame(ride);
+
+// For the checks (scripts/become-frames.mjs): how many times Become was pressed, the seconds of each
+// time, their median, and where the creature is. `find`: the screen point of a living creature of
+// that kind near the middle of the view, for a real tap on it. Nothing of this is sent anywhere.
+(window as unknown as { __mmBecome?: (find?: string) => unknown }).__mmBecome = (find) => {
+  const s = [...becomeStats.seconds].sort((a, b) => a - b);
+  const median = s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : 0;
+  const c = riding;
+  let tap: { x: number; y: number } | null = null;
+  if (find && engine) {
+    const rect = canvas.getBoundingClientRect();
+    let best = Infinity;
+    for (const o of engine.world.creatures) {
+      if (o.dead || o.kind.split("#")[0] !== find) continue;
+      const at = castOnScreen(engine, o.x, o.y, []);
+      if (!at || at.y < 140 || at.y > rect.height - 150 || at.x < 30 || at.x > rect.width - 70) continue;
+      const d = Math.hypot(at.x - rect.width / 2, at.y - rect.height / 2);
+      if (d < best) {
+        best = d;
+        tap = { x: at.x, y: at.y };
+      }
+    }
+  }
+  return {
+    presses: becomeStats.presses,
+    times: becomeStats.seconds.length,
+    seconds: becomeStats.seconds,
+    median,
+    riding: c ? { who: rideName, kind: c.kind, x: c.x, y: c.y, z: c.z, hd: c.hd, hp: c.hp } : null,
+    chasing: engine?.view.orbit.chasing ?? false,
+    caption,
+    tap,
+  };
+};
 
 window.setInterval(() => {
   if (!engine) return;
   const now = performance.now();
-  watchEl.hidden = !!scenario;
+  watchEl.hidden = !!scenario || !!riding;
+  if (riding) {
+    // Nothing takes the camera while you are a creature: no watch, no news line.
+    toldUntil = engine.world.time;
+    tellRider();
+    drawPowers();
+    return;
+  }
   if (watching) {
     // A drag, a pinch or a spell's own shot took the camera: the watch is over, the view stays.
     if (!engine.view.orbit.watching && now >= watchUntilFree && director.shot) return stopWatch(false);
@@ -474,7 +730,7 @@ window.setInterval(() => {
     world.troubleEnd = null;
     troubleSaid = "";
     lineGoes = null;
-    if (!watching) hush();
+    if (!watching && !riding) hush();
     send({ type: "trouble", running: false, text: end.line[0].toUpperCase() + end.line.slice(1), key: end.by?.key, outcome: end.outcome });
     saveSoon();
     return;
@@ -487,11 +743,12 @@ window.setInterval(() => {
       send({ type: "trouble", running: true, text });
     }
     // The line stays on the island while it lasts, for those not watching: a tap goes there.
-    if (!card.hidden && !watching && !storyEl.hidden) {
+    // While you are a creature its line has the place; the trouble's comes back after Let go.
+    if (!card.hidden && !watching && !riding && !storyEl.hidden) {
       lineGoes = null;
       hush();
     }
-    if (!watching && !touring && card.hidden && (caption !== text || storyEl.hidden)) {
+    if (!watching && !touring && !riding && card.hidden && (caption !== text || storyEl.hidden)) {
       const f = fireOf(world, t);
       clearTimeout(lineTimer);
       lineGoes = { x: f.x, y: f.y, who: 0 };
@@ -536,6 +793,8 @@ window.setInterval(() => {
 }, 2000);
 
 function mount(next: Engine): void {
+  // Another island or a challenge: whoever the player was stays on the old one.
+  endBecome("gone");
   closeInspect();
   stopWatch(false);
   director = new Director();

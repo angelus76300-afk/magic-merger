@@ -20,6 +20,10 @@ export class OrbitCamera implements CameraControl {
   // The island tells its stories (2026-11-11, director.ts): a subject the
   // camera keeps in frame, moving with it, until the player touches the view.
   private watched: { x: number; y: number; dist: number } | null = null;
+  // Become anything (2026-11-12, possess.ts): behind and above the creature
+  // the player is, turned the way it faces. Touches never end it: a drag
+  // turns the view a little round the creature (nudge) and eases back.
+  private chased: { x: number; y: number; z: number; hd: number; dist: number; nudge: number; tilt: number; still: number } | null = null;
   private shake = 0;
   private shakeTime = 0;
   readonly minDist = 8;
@@ -54,6 +58,8 @@ export class OrbitCamera implements CameraControl {
   }
 
   focus(x: number, y: number, r: number, seconds: number, now: number): void {
+    // Nothing takes the camera from the creature the player is, not even a spell's shot.
+    if (this.chased) return;
     // A spell's own shot comes before the story being watched.
     this.watched = null;
     if (!this.saved) this.saved = { tx: this.tx, ty: this.ty, dist: this.dist, phi: this.phi };
@@ -77,6 +83,7 @@ export class OrbitCamera implements CameraControl {
   flyTo(tx: number, ty: number, dist: number, phi: number, seconds: number, theta?: number): void {
     this.saved = null;
     this.watched = null;
+    this.chased = null;
     this.returnAt = 0;
     const turn = theta === undefined ? undefined : this.theta + Math.atan2(Math.sin(theta - this.theta), Math.cos(theta - this.theta));
     this.goal = { tx, ty, dist: Math.max(this.minDist, Math.min(this.maxDist * 0.5, dist)), phi, speed: 1 / Math.max(0.2, seconds), theta: turn };
@@ -84,6 +91,7 @@ export class OrbitCamera implements CameraControl {
 
   // Keeps (x, y) in the middle from `dist` away, called again as the subject moves.
   watch(x: number, y: number, dist: number): void {
+    if (this.chased) return;
     this.goal = null;
     this.saved = null;
     this.returnAt = 0;
@@ -98,6 +106,35 @@ export class OrbitCamera implements CameraControl {
     return this.watched !== null;
   }
 
+  // Behind the creature at (x, y), z above the ground, facing `heading`
+  // (radians, 0 along +x as creatures.ts hd). Called again as it moves. `size`:
+  // its radius in cells, so a dragon is not filmed from as close as a rabbit.
+  chase(x: number, y: number, z: number, heading: number, size = 0.6): void {
+    if (!this.chased) {
+      this.goal = null;
+      this.saved = null;
+      this.returnAt = 0;
+      this.watched = null;
+      // Close enough that the creature is the subject on a folded phone (344 px wide).
+      const dist = Math.max(9, Math.min(24, 8 + size * 7));
+      this.chased = { x, y, z, hd: heading, dist, nudge: 0, tilt: 0, still: 9 };
+      return;
+    }
+    this.chased.x = x;
+    this.chased.y = y;
+    this.chased.z = z;
+    this.chased.hd = heading;
+  }
+
+  // Let go: the camera stays where it is, it does not fly back.
+  unchase(): void {
+    this.chased = null;
+  }
+
+  get chasing(): boolean {
+    return this.chased !== null;
+  }
+
   // A slow turn while a shot holds, so the place is seen from more than one side.
   spin(radians: number): void {
     this.theta += radians;
@@ -106,7 +143,7 @@ export class OrbitCamera implements CameraControl {
   // True while the camera moves on its own: flying to a spell, coming back,
   // shaking. The engine keeps drawing frames for it.
   animating(): boolean {
-    return this.goal !== null || this.watched !== null || (this.shakeTime > 0 && this.shake > 0.001);
+    return this.goal !== null || this.watched !== null || this.chased !== null || (this.shakeTime > 0 && this.shake > 0.001);
   }
 
   addShake(amount: number, seconds: number): void {
@@ -123,18 +160,31 @@ export class OrbitCamera implements CameraControl {
   }
 
   orbit(dx: number, dy: number): void {
+    if (this.chased) {
+      // A look round the creature, never away from it.
+      this.chased.nudge = Math.max(-0.9, Math.min(0.9, this.chased.nudge - dx * 0.006));
+      this.chased.tilt = Math.max(-0.35, Math.min(0.3, this.chased.tilt - dy * 0.004));
+      this.chased.still = 0;
+      return;
+    }
     this.release();
     this.theta -= dx * 0.006;
     this.phi = Math.max(0.25, Math.min(1.45, this.phi - dy * 0.005));
   }
 
   zoom(factor: number): void {
+    if (this.chased) {
+      this.chased.dist = Math.max(6, Math.min(30, this.chased.dist / factor));
+      return;
+    }
     this.release();
     this.dist = Math.max(this.minDist, Math.min(this.maxDist * 0.5, this.dist / factor));
   }
 
   // Pans along the ground, in screen pixels.
   pan(dx: number, dy: number, viewH: number): void {
+    // The view stays on the creature the player is.
+    if (this.chased) return;
     this.release();
     const perPixel = (this.dist * Math.tan((this.camera.fov * Math.PI) / 360) * 2) / Math.max(1, viewH);
     // Screen right on the ground is (cos, -sin); screen up is away from the
@@ -169,8 +219,31 @@ export class OrbitCamera implements CameraControl {
       this.phi += (0.98 - this.phi) * Math.min(1, dt * 1.2);
       if (!reducedMotion) this.theta += dt * 0.035;
     }
-    // Look at the ground under the target, eased so hills do not jerk the view.
-    this.th += (groundAt(this.tx, this.ty) - this.th) * Math.min(1, dt * 3);
+    const ch = this.chased;
+    if (ch) {
+      // Follows the creature closely (its steps come thirty times a second;
+      // the ease keeps the frame from trembling) and turns to be behind it.
+      // With reduced motion the turn is a slow ease, never a swing.
+      const k = Math.min(1, dt * 6);
+      this.tx += (ch.x - this.tx) * k;
+      this.ty += (ch.y - this.ty) * k;
+      ch.still += dt;
+      if (ch.still > 1.2) {
+        const back = Math.min(1, dt * 1.5);
+        ch.nudge -= ch.nudge * back;
+        ch.tilt -= ch.tilt * back;
+      }
+      // The camera's offset along the ground is (sin theta, cos theta): behind is minus the heading.
+      const behind = Math.atan2(-Math.cos(ch.hd), -Math.sin(ch.hd)) + ch.nudge;
+      const turn = Math.atan2(Math.sin(behind - this.theta), Math.cos(behind - this.theta));
+      this.theta += turn * Math.min(1, dt * (reducedMotion ? 0.8 : 2.6));
+      this.phi += (1.1 + ch.tilt - this.phi) * Math.min(1, dt * (reducedMotion ? 1 : 3));
+      this.dist = Math.exp(Math.log(this.dist) + (Math.log(ch.dist) - Math.log(this.dist)) * Math.min(1, dt * (reducedMotion ? 1.2 : 2.5)));
+    }
+    // Look at the ground under the target, eased so hills do not jerk the view;
+    // a creature the player is, at its own height (a bird in the air).
+    const lift = ch ? ch.z + 1 : 0;
+    this.th += (groundAt(this.tx, this.ty) + lift - this.th) * Math.min(1, dt * 3);
     const target = new Vector3(this.tx - this.worldW / 2, this.th, this.ty - this.worldH / 2);
     const offset = new Vector3(Math.sin(this.phi) * Math.sin(this.theta), Math.cos(this.phi), Math.sin(this.phi) * Math.cos(this.theta)).multiplyScalar(
       this.dist,

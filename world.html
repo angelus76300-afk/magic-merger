@@ -187,6 +187,127 @@
           sans-serif;
         cursor: pointer;
       }
+      #inspect .pair {
+        display: flex;
+        gap: 8px;
+      }
+      #inspect .pair .follow {
+        flex: 1;
+      }
+      #inspect .follow.become {
+        background: #1b2440;
+        color: #ffc23d;
+        box-shadow: 0 3px 0 #05080f;
+      }
+      /* Become anything (2026-11-12, possess.ts): the creature's name and its
+         thought in the story line, a fixed stick at the bottom left in the
+         Watch button's place, its own abilities at the bottom right, and Let go. */
+      body.possessed #story {
+        max-width: calc(100% - 92px);
+        cursor: default;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+      }
+      #story .thought {
+        color: #a9b2cf;
+        font-size: 13px;
+        font-weight: 500;
+      }
+      #letgo {
+        position: absolute;
+        right: 10px;
+        top: 10px;
+        min-width: 44px;
+        height: 44px;
+        box-sizing: border-box;
+        padding: 0 12px;
+        border: 2px solid #05080f;
+        border-radius: 10px;
+        background: #ffc23d;
+        color: #1a1405;
+        font:
+          700 13px/1 system-ui,
+          sans-serif;
+        box-shadow: 0 3px 0 #05080f;
+        cursor: pointer;
+      }
+      #stick {
+        position: absolute;
+        left: 12px;
+        bottom: 12px;
+        width: 112px;
+        height: 112px;
+        box-sizing: border-box;
+        border: 2px solid #05080f;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(27, 36, 64, 0.55) 0 55%, rgba(27, 36, 64, 0.8) 56%);
+        box-shadow:
+          inset 0 0 0 2px rgba(255, 194, 61, 0.35),
+          0 3px 0 #05080f;
+        touch-action: none;
+        cursor: grab;
+      }
+      #stick i {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 48px;
+        height: 48px;
+        margin: -24px 0 0 -24px;
+        box-sizing: border-box;
+        border: 2px solid #05080f;
+        border-radius: 50%;
+        background: #ffc23d;
+        box-shadow: 0 3px 0 #05080f;
+        pointer-events: none;
+      }
+      #powers {
+        position: absolute;
+        right: 12px;
+        bottom: 16px;
+        display: flex;
+        gap: 10px;
+      }
+      /* Below 700 px the host's tool rail runs down the right edge: the buttons keep clear of it. */
+      @media (max-width: 699px) {
+        #powers {
+          right: 62px;
+        }
+      }
+      #powers button {
+        position: relative;
+        width: 56px;
+        height: 56px;
+        padding: 0;
+        border: 2px solid #05080f;
+        border-radius: 50%;
+        background: conic-gradient(#ffc23d var(--ready, 100%), #3a4466 0);
+        color: #1a1405;
+        font:
+          800 11px/1.1 system-ui,
+          sans-serif;
+        box-shadow: 0 3px 0 #05080f;
+        cursor: pointer;
+      }
+      #powers button span {
+        position: absolute;
+        inset: 5px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        background: #ffd77a;
+      }
+      #powers button.cooling span {
+        background: #1b2440;
+        color: #a9b2cf;
+      }
+      #letgo[hidden],
+      #stick[hidden],
+      #powers[hidden] {
+        display: none;
+      }
       #inspect .close {
         border: 0;
         background: none;
@@ -308,6 +429,9 @@
       </svg>
       <span>Watch</span>
     </button>
+    <div id="stick" hidden role="application" aria-label="Walk: push the stick the way to go"><i></i></div>
+    <div id="powers" hidden></div>
+    <button id="letgo" type="button" hidden>Let go</button>
     <script type="module" src="/src/sim/frame.ts"></script>
   </body>
 </html>
