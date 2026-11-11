@@ -141,6 +141,11 @@ export function findings(name, text) {
   // this run was dispatched by its event name runs inside every deploy. Ask the input instead (inputs.pr).
   if (triggers.includes("workflow_call") && /github\.event_name\s*==\s*'workflow_dispatch'/.test(text))
     out.push(`${name}: asks github.event_name == 'workflow_dispatch', which a calling workflow's dispatch also matches: key it on an input`);
+  // 6. 2026-11-10: a schedule that every job's if skips runs nothing, silently (the Gate's 15 minute sweep).
+  if (triggers.includes("schedule"))
+    for (const job of jobs)
+      if (job.cond && !/github\.event_name == 'schedule'/.test(job.cond) && !/needs\./.test(job.cond))
+        out.push(`${name} job ${job.name}: its if never lets the schedule through`);
   if (triggers.includes("issue_comment"))
     for (const job of jobs)
       if (!/github\.event\.comment\.author_association == 'OWNER'/.test(job.cond))
@@ -289,6 +294,13 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       check("ci.yml guard: a draft passes with draft=true (CI then runs the light steps)", d.ok && /^draft=true$/m.test(d.out), d.err);
     }
   }
+  const gate = readFileSync(join(dir, "gate.yml"), "utf8");
+  check("gate.yml: the Gate sweeps on a schedule", parse(gate).triggers.includes("schedule"));
+  const skipped = gate.replace(
+    "github.event_name == 'workflow_dispatch' ||\n      github.event_name == 'schedule'",
+    "github.event_name == 'workflow_dispatch'",
+  );
+  check("gate.yml: a schedule its job's if skips is caught", skipped !== gate && findings("gate.yml", skipped).length > 0);
   // Rule 5 and CI's scope step as the Deploy workflow calls it: the caller's dispatch, no input, a full run.
   const ci = readFileSync(join(dir, "ci.yml"), "utf8");
   const oldGuard = ci.replace("if: inputs.pr != ''", "if: github.event_name == 'workflow_dispatch'");

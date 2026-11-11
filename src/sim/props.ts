@@ -44,7 +44,8 @@ export const MAX_PROP_BOXES = 80;
 // A prop reaches 12 cells from its center and 60 voxels up at most.
 const REACH = 12;
 const UP = 60;
-const FINE = 0.05;
+export const FINE_BOX = 0.05;
+const FINE = FINE_BOX;
 
 const clamp = (v: unknown, lo: number, hi: number, fallback: number) => {
   const n = typeof v === "number" && Number.isFinite(v) ? v : fallback;
