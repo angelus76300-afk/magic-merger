@@ -47,6 +47,12 @@ export function readFromWorld(data: unknown): FromWorld | null {
       return m.data && typeof m.data === "object" ? { type: "save", data: m.data as SavedWorld } : null;
     case "cast":
       return str(m.key, 120) ? { type: "cast", key: m.key as string } : null;
+    case "cast-view": {
+      const px = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 && v < 1e5 ? v : null);
+      return typeof m.n === "number" && Number.isInteger(m.n) && m.n >= 0 ? { type: "cast-view", n: m.n, x: px(m.x), y: px(m.y) } : null;
+    }
+    case "inspect":
+      return typeof m.bottom === "number" && Number.isFinite(m.bottom) ? { type: "inspect", bottom: Math.max(0, Math.min(2000, m.bottom)) } : null;
     case "error":
       return str(m.key, 120) && str(m.name, 120) && typeof m.message === "string"
         ? { type: "error", key: m.key as string, name: m.name as string, message: m.message.slice(0, 400) }
@@ -91,6 +97,13 @@ export type FromWorld =
   | { type: "alive" }
   | { type: "save"; data: SavedWorld }
   | { type: "cast"; key: string }
+  // Where the n-th cast of this frame is on screen, four times a second for
+  // three seconds after it lands, in the frame's CSS pixels; null when it is
+  // off screen or under the frame's own cards (firstcast.ts reads it).
+  | { type: "cast-view"; n: number; x: number | null; y: number | null }
+  // The bottom of the inspect card in the frame's CSS pixels, 0 when it is
+  // closed: the page's toasts stack below it, never over its name.
+  | { type: "inspect"; bottom: number }
   | { type: "tap-without-spell" }
   // Escape pressed on the island: the page closes what it shows (the vote).
   | { type: "escape" }
