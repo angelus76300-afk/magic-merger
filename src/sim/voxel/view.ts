@@ -153,6 +153,8 @@ export class VoxelView {
   private domes = new Domes(this.scene);
   private lights: Sprite[] = [];
   private clouds: InstancedMesh;
+  // Rain seen from afar, under a front's cloud.
+  private rainShafts: InstancedMesh;
   // Materials tinted by the time of day (fire and glows are not).
   private lit: MeshBasicMaterial[] = [];
   private windows!: InstancedMesh;
@@ -251,6 +253,14 @@ export class VoxelView {
     this.dullPoints = pointCloud(world.particles.capacity, false, this.glowTexture);
     this.scene.add(this.glowPoints, this.dullPoints);
     this.clouds = this.makeClouds();
+    this.rainShafts = new InstancedMesh(
+      geometryOf(MODELS.puff),
+      new MeshBasicMaterial({ color: 0xc4d2e4, transparent: true, opacity: 0.2, depthWrite: false }),
+      80,
+    );
+    this.rainShafts.frustumCulled = false;
+    this.rainShafts.count = 0;
+    this.scene.add(this.rainShafts);
     this.decorMesh = this.instanced("puff", basic, 20000);
     this.decorGlow = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true }), 20000);
     this.decorInstances = new DecorInstances([this.decorMesh, this.decorGlow], 20000, world.w / 2, world.h / 2);
@@ -1269,7 +1279,7 @@ export class VoxelView {
   }
 
   private makeClouds(): InstancedMesh {
-    const mesh = new InstancedMesh(geometryOf(MODELS.puff), new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9 }), 240);
+    const mesh = new InstancedMesh(geometryOf(MODELS.puff), new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9 }), 260);
     withColors(mesh);
     mesh.frustumCulled = false;
     this.scene.add(mesh);
@@ -1296,21 +1306,51 @@ export class VoxelView {
         n++;
       }
     }
-    // A front of rain or snow is a mass of grey cloud over the island, where it rains (weather.ts):
-    // seen from afar it is a shape that crosses the map with the wind.
+    // A front of rain or snow (weather.ts) is a storm cloud in the island's own blocks: a dark flat
+    // base where it rains, lighter layers heaped toward the middle, a bright top. Seen from afar
+    // it is a shape that crosses the map with the wind, with thin shafts of rain under it.
+    let shafts = 0;
     for (const f of GRAPHICS.weather ? fronts(world, time).slice(0, 2) : []) {
-      for (let k = 0; k < 60; k++) {
-        // The same puffs in the same places of the front every frame: a golden angle spiral.
-        const a = k * 2.399963;
-        const d = Math.sqrt((k + 0.5) / 60) * f.r * 0.92;
-        const s = (4 + (k % 5)) * (0.4 + 0.6 * f.amount);
-        this.m.makeScale(s * 1.5, s * 0.55, s * 1.2);
-        this.m.setPosition(f.x - world.w / 2 + Math.cos(a) * d, 44 + (k % 4) * 2.2, f.y - world.h / 2 + Math.sin(a) * d);
-        this.clouds.setMatrixAt(n, this.m);
-        this.clouds.setColorAt(n, this.col.setHex(f.kind === "snow" ? (k % 2 ? 0xe6ecf3 : 0xd3dbe6) : k % 2 ? 0x8d98a8 : 0x7a8596));
-        n++;
+      const grow = 0.45 + 0.55 * f.amount;
+      const snow = f.kind === "snow";
+      const fx = f.x - world.w / 2;
+      const fz = f.y - world.h / 2;
+      // The same blocks in the same places of the front every frame: a hash of the block's number.
+      const h = (k: number, salt: number) => {
+        const v = Math.sin(k * 127.1 + salt * 311.7) * 43758.5453;
+        return v - Math.floor(v);
+      };
+      const layer = (count: number, reach: number, y: number, size: number, thick: number, color: number, salt: number) => {
+        for (let k = 0; k < count; k++) {
+          const a = h(k, salt) * Math.PI * 2;
+          const d = Math.sqrt(h(k, salt + 1)) * f.r * reach;
+          const sx = size * (0.8 + h(k, salt + 2) * 0.7) * grow;
+          const sz = size * (0.7 + h(k, salt + 3) * 0.6) * grow;
+          this.m.makeScale(sx, thick * (0.8 + h(k, salt + 4) * 0.5), sz);
+          this.m.setPosition(fx + Math.cos(a) * d, y + h(k, salt + 5) * thick * 0.5, fz + Math.sin(a) * d);
+          this.clouds.setMatrixAt(n, this.m);
+          this.clouds.setColorAt(n, this.col.setHex(color));
+          n++;
+        }
+      };
+      layer(30, 0.9, 46, f.r * 0.34, 3, snow ? 0xb9c3d1 : 0x566173, 1);
+      layer(22, 0.68, 50, f.r * 0.3, 4.5, snow ? 0xd5dce6 : 0x7f8a9c, 11);
+      layer(14, 0.42, 55, f.r * 0.26, 5.5, snow ? 0xeef2f7 : 0xb7c0cd, 21);
+      layer(6, 0.2, 61, f.r * 0.2, 5, 0xffffff, 31);
+      if (snow) continue;
+      // Shafts of rain from the base to the ground, a third of them resting at any moment.
+      const beat = Math.floor(time * 5);
+      for (let k = 0; k < 40 && shafts < 80; k++) {
+        if (h(k + beat * 7, 41) < 0.34) continue;
+        const a = h(k, 42) * Math.PI * 2;
+        const d = Math.sqrt(h(k, 43)) * f.r * 0.8;
+        this.m.makeScale(0.5, 46, 0.5);
+        this.m.setPosition(fx + Math.cos(a) * d, 23, fz + Math.sin(a) * d);
+        this.rainShafts.setMatrixAt(shafts++, this.m);
       }
     }
+    this.rainShafts.count = shafts;
+    this.rainShafts.instanceMatrix.needsUpdate = true;
     this.clouds.count = n;
     this.clouds.instanceMatrix.needsUpdate = true;
     if (this.clouds.instanceColor) this.clouds.instanceColor.needsUpdate = true;
