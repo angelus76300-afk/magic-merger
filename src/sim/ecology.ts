@@ -721,7 +721,7 @@ export function growSettlements(world: World, fresh = false): void {
       continue;
     }
     s.level = next;
-    if (build(world, s, next) && !fresh) tell(world, `a village ${BUILT[next]}`);
+    if (build(world, s, next) && !fresh) tell(world, `a village ${BUILT[next]}`, { x: s.x, y: s.y });
   }
 }
 

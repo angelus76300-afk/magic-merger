@@ -1400,7 +1400,7 @@ export function lifeCycle(world: World, dt: number): void {
     c.hp = maxHp(c);
     c.color = shirtOf(look);
     world.creatures.push(c);
-    tell(world, "a child was born in the village");
+    tell(world, "a child was born in the village", { x: c.x, y: c.y, who: c });
     return;
   }
 }

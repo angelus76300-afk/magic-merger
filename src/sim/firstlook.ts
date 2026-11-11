@@ -6,8 +6,8 @@ import { floatAt, wonderInfo, type WonderInfo } from "./wonders";
 // what it does, then down to a village where play starts. About four
 // seconds a shot; a tap anywhere or Skip ends it at once. With reduced
 // motion the camera stays put and the card alone tells the same.
-// Since 2026-11-11 it waits for the island's first cast (frame.ts): it then
-// ends where the player was (`back`), and calls `onEnd` however it ends.
+// It ends at `back` (over a village, where play starts) and calls `onEnd`
+// however it ends; a tap that ends it casts nothing (frame.ts).
 
 const SHOT = 3.6;
 const RARITY: Record<string, string> = { common: "", uncommon: "uncommon", rare: "rare", legendary: "legendary" };

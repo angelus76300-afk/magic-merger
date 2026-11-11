@@ -289,13 +289,14 @@ export function growBuildings(world: World): void {
       } else if (!covers.some((c) => c === C.RUBBLE || c === job.kind || c === C.HOUSE)) {
         // Gone for good (a crater, a flood): it may be raised again elsewhere.
         s.jobs = s.jobs!.filter((j) => j !== job);
-        tell(world, `${s.name || "a village"} lost its ${JOB_BY_ID.get(job.kind)?.name ?? "building"}`);
+        tell(world, `${s.name || "a village"} lost its ${JOB_BY_ID.get(job.kind)?.name ?? "building"}`, { x: s.x, y: s.y });
       }
     }
     if (!v) return;
     const tier = tierOf(housesOf(world, s));
     const had = tiers.get(s);
-    if (had && had !== tier && tier !== "hamlet" && (had === "hamlet" || tier === "town")) tell(world, `${s.name || "a village"} grew into a ${tier}`);
+    if (had && had !== tier && tier !== "hamlet" && (had === "hamlet" || tier === "town"))
+      tell(world, `${s.name || "a village"} grew into a ${tier}`, { x: s.x, y: s.y });
     tiers.set(s, tier);
     // A new building: stores to spare, its turn come, room in the tier.
     const built = s.jobs?.length ?? 0;
@@ -323,7 +324,7 @@ export function growBuildings(world: World): void {
       } else if (next && raise(world, s, next, rng)) {
         if (v.wood >= 4) v.wood -= 4;
         else v.gold -= 3;
-        tell(world, `${s.name || "a village"} built a ${next.name}`);
+        tell(world, `${s.name || "a village"} built a ${next.name}`, { x: s.x, y: s.y });
       }
     }
     // The granary: a surplus is put away, and given back when food runs out.
@@ -337,7 +338,7 @@ export function growBuildings(world: World): void {
         const back = Math.min(6, s.store);
         s.store -= back;
         v.food += back;
-        tell(world, `${s.name || "a village"} opened its granary`);
+        tell(world, `${s.name || "a village"} opened its granary`, { x: s.x, y: s.y });
       }
     }
     // Market days, one day in two: a little gold, and food to the poorest.
@@ -438,7 +439,7 @@ export function stepBuildings(
       }
       if (world.time - (spotted.get(s) ?? -999) > 60) {
         spotted.set(s, world.time);
-        tell(world, `the watchtower of ${s.name || "a village"} spotted a ${foe.kind.split("#")[0]}`);
+        tell(world, `the watchtower of ${s.name || "a village"} spotted a ${foe.kind.split("#")[0]}`, { x: foe.x, y: foe.y, who: foe });
       }
     }
   }

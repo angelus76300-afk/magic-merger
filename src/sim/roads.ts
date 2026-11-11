@@ -575,7 +575,8 @@ export function pave(world: World, job: PaveJob, v: Village | null): boolean {
     v.wood -= ROAD.bridgeWood;
     world.decks.set(cell, road.decks[k]);
     world.setCover(cell, C.BRIDGE);
-    if (!road.cells.some((i, t) => road.decks[t] !== LAND && world.cover[i] !== C.BRIDGE)) tell(world, `a bridge on the road from ${road.a} to ${road.b}`);
+    if (!road.cells.some((i, t) => road.decks[t] !== LAND && world.cover[i] !== C.BRIDGE))
+      tell(world, `a bridge on the road from ${road.a} to ${road.b}`, { x: cell % world.w, y: Math.floor(cell / world.w) });
     return true;
   }
   const c = world.cover[cell];
@@ -583,7 +584,8 @@ export function pave(world: World, job: PaveJob, v: Village | null): boolean {
   if (c === C.TREE && v) v.wood++;
   if (c !== C.NONE && c !== C.WELL && c !== C.FENCE) world.setCover(cell, C.NONE);
   world.ground[cell] = G.ROAD;
-  if (road.cells.every((_, t) => laid(world, road, t))) tell(world, `the road from ${road.a} to ${road.b} is finished`);
+  if (road.cells.every((_, t) => laid(world, road, t)))
+    tell(world, `the road from ${road.a} to ${road.b} is finished`, { x: cell % world.w, y: Math.floor(cell / world.w) });
   return true;
 }
 
