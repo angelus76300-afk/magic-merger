@@ -151,6 +151,14 @@ Every row of `spend` carries the invite that triggered it: merges, descriptions,
 
 The test seeds the month at $49.995 and sends two merges at once, five times: one passes, one gets "the magic is spent for this month", and the month never passes $50. With the check written as a read then an insert, both pass every time (tried, then reverted).
 
+### The hold reads running totals (4.7)
+
+The hold summed every `spend` row of the month on each paid call: 4,205 rows per call on 10 November, growing by about 470 a day, 47% of the database's rows read (review of 10 November, section 3 item 4). It now reads the month's spend from `spend_totals`: one row for the whole game (`*`) and one per invite, per UTC month (`migrations/0020_spend_totals.sql`). Triggers on `spend` keep it, so every way a ledger row is written (a settled call, a collected batch, a hold the sweep bills) adds to the totals in the same statement, inside the same batch that settles the hold. The rule is the same `INSERT ... SELECT ... WHERE`, so two calls at the last cent still cannot both pass, and the caps refuse at the same amounts: `scripts/budget-reads-test.mjs` compares the hold with the old sum over the ledger at 48 amounts around the monthly budget and an invite's allowance.
+
+Measured on a local D1 with 5,000 ledger rows: a hold read 5,005 rows (the admin) and 5,245 (an invite) before, 6 and 7 now, the same as with 10 rows. An invite's spend for the health check: 240 rows before, 1 now. The ahead jobs' month check (`claimWrite`) reads the same total.
+
+`spend` stays the truth. The migration fills the totals of every month from it once, at deploy, so the caps are right from the first call after it. Once a day the cron (`spend totals`) sums the month's ledger and compares: a total more than a cent away is logged as an error (`guard: spend-totals`) and the month's totals are rebuilt from the ledger in one batch. That check reads the month's ledger once a day (about twice its rows), instead of once per call.
+
 ### A bug guard, not a play limit
 
 1. **Identical requests in flight are answered once.** Merges (by pair), descriptions, spells and repairs (by name) and test runs (by program) take a key in `inflight`; an identical request waits until the first is done and then finds what it stored. Two friends discovering the same pair at the same second make one Claude call. A repair waits and then serves the fix already waiting for its test run instead of mending again.
