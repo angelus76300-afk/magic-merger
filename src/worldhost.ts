@@ -26,6 +26,7 @@ import { WORLD_AT_KEY, WORLD_KEY, packIsland, readIslandText } from "./island-st
 import { isFrozen } from "./device-save";
 import { BIG_SIZES, readHeadroom, sizesOffered, writeHeadroom } from "./headroom";
 import { DEFAULT_LAND, MIXED_FROM, readChoice as readLandChoice, type LandChoice } from "./sim/land-options";
+import { newerSave } from "./sim/save-guard";
 
 export { WORLD_AT_KEY, WORLD_KEY } from "./island-store";
 const MUTE_KEY = "magic-merger.muted";
@@ -125,6 +126,10 @@ export class WorldHost {
   // The save this tab last loaded or wrote (its WORLD_AT_KEY): another tab's
   // newer save is never overwritten by this one's older island.
   private islandAt: string | null = null;
+  // The stored island was saved by newer code than this page (a Deploy
+  // rollback, a tab left open since before an update): it is not loaded,
+  // and this page writes nothing over it (save-guard.ts).
+  private newerIsland: string | null = null;
 
   constructor(
     private store: Store,
@@ -647,6 +652,17 @@ export class WorldHost {
     } catch {
       save = null;
     }
+    const newer = newerSave(save);
+    if (newer) {
+      console.warn(`The saved island is kept aside: ${newer}`);
+      if (!this.newerIsland)
+        toast(
+          "Your island was saved by a newer version of the game, so this page shows a new one and saves nothing. Your island is untouched: reload the page later to get it back.",
+          "error",
+        );
+      this.newerIsland = newer;
+      save = null;
+    }
     if (frame !== this.frame || !frame.contentWindow) return;
     const choice = readChoice();
     frame.contentWindow.postMessage(
@@ -743,7 +759,7 @@ export class WorldHost {
     this.saving = this.saving.then(() => this.writeIslandNow(data));
   }
   private async writeIslandNow(data: SavedWorld): Promise<void> {
-    if (!this.owner || isFrozen()) return;
+    if (!this.owner || isFrozen() || this.newerIsland) return;
     if (!this.island && readAt() !== this.islandAt) return;
     let value: string;
     try {
