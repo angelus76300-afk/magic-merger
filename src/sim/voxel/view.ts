@@ -1,3 +1,5 @@
+import { GRAPHICS } from "./graphics";
+import { fronts } from "../weather";
 import {
   AdditiveBlending,
   BufferAttribute,
@@ -1267,7 +1269,7 @@ export class VoxelView {
   }
 
   private makeClouds(): InstancedMesh {
-    const mesh = new InstancedMesh(geometryOf(MODELS.puff), new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9 }), 120);
+    const mesh = new InstancedMesh(geometryOf(MODELS.puff), new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9 }), 240);
     withColors(mesh);
     mesh.frustumCulled = false;
     this.scene.add(mesh);
@@ -1291,6 +1293,21 @@ export class VoxelView {
         this.m.setPosition(cx + (k - 4) * 2.4, cy + ((k * 5) % 3) * 0.8, cz + ((k * 3) % 5) - 2);
         this.clouds.setMatrixAt(n, this.m);
         this.clouds.setColorAt(n, this.col.setHex(k % 2 ? 0xffffff : 0xf0f4f8));
+        n++;
+      }
+    }
+    // A front of rain or snow is a mass of grey cloud over the island, where it rains (weather.ts):
+    // seen from afar it is a shape that crosses the map with the wind.
+    for (const f of GRAPHICS.weather ? fronts(world, time).slice(0, 2) : []) {
+      for (let k = 0; k < 60; k++) {
+        // The same puffs in the same places of the front every frame: a golden angle spiral.
+        const a = k * 2.399963;
+        const d = Math.sqrt((k + 0.5) / 60) * f.r * 0.92;
+        const s = (4 + (k % 5)) * (0.4 + 0.6 * f.amount);
+        this.m.makeScale(s * 1.5, s * 0.55, s * 1.2);
+        this.m.setPosition(f.x - world.w / 2 + Math.cos(a) * d, 44 + (k % 4) * 2.2, f.y - world.h / 2 + Math.sin(a) * d);
+        this.clouds.setMatrixAt(n, this.m);
+        this.clouds.setColorAt(n, this.col.setHex(f.kind === "snow" ? (k % 2 ? 0xe6ecf3 : 0xd3dbe6) : k % 2 ? 0x8d98a8 : 0x7a8596));
         n++;
       }
     }

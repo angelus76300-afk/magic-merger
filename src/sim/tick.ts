@@ -2,6 +2,7 @@ import { lifeCycle, updateCreature } from "./creatures";
 import { stepPhysics } from "./physics";
 import type { Runtime } from "./runtime";
 import { stepTrouble } from "./troubles";
+import { wetFires } from "./weather";
 import { TICK, type World } from "./world";
 
 // One tick of the simulation, the same for the engine, the test run
@@ -32,6 +33,8 @@ export function stepWorld(world: World, rt: Runtime, opts: { life?: () => number
   opts.mark?.("life");
   // A trouble running on the island (troubles.ts), looked at five times a second.
   if (world.trouble && world.tick % 6 === 0) world.troubleEnd = stepTrouble(world, 6 * TICK) ?? world.troubleEnd;
+  // Rain puts out what burns under it, on the player's island (weather.ts).
+  if (world.weather && world.tick % 6 === 3) wetFires(world, 6 * TICK);
   rt.step(TICK);
   world.particles.update(TICK);
 }

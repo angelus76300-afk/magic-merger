@@ -49,6 +49,9 @@ interface ChunkMeshes {
   fluid: Mesh | null;
 }
 
+// Chunks changed at once from which the land is redrawn whole in one frame (rebuild).
+const BURST_CHUNKS = 10;
+
 export class Terrain {
   readonly cols: number;
   readonly rows: number;
@@ -58,6 +61,7 @@ export class Terrain {
   // Each wet cell's surface as last drawn, and which cells are drawn wet (4.4).
   private fluidLevel: Float32Array;
   private wet: Uint8Array;
+  private burstAt = -1e9;
   private dirtyLand = new Set<number>();
   private dirtyFluid = new Set<number>();
   // Chunks to redraw only because water flowed (4.4): one every third frame
@@ -147,7 +151,17 @@ export class Terrain {
   // one of each kind), so a big fire never stalls a frame; everything when
   // `all` (first frame).
   rebuild(all = false): void {
-    const until = all ? Infinity : performance.now() + 3;
+    // A big spell changes the whole island at once (the owner's report, 11 November: "the
+    // rendering is bad, like by sections, and doesn't update all at once"). Three milliseconds a
+    // frame redraws it a few chunks at a time, for seconds. When many chunks changed in one go,
+    // they are all redrawn in this frame: one long frame under the spell's flash instead of a
+    // land that changes piece by piece. Not twice within a second, and with a larger share of
+    // each frame while a backlog lasts, so a fire that spreads everywhere never stalls every frame.
+    const now = performance.now();
+    const backlog = this.dirtyLand.size + this.dirtyFluid.size;
+    const burst = !all && backlog >= BURST_CHUNKS && now - this.burstAt > 1000;
+    if (burst) this.burstAt = now;
+    const until = all || burst ? Infinity : now + (backlog >= BURST_CHUNKS ? 8 : 3);
     let first = true;
     for (const c of this.dirtyLand) {
       if (!first && performance.now() > until) break;

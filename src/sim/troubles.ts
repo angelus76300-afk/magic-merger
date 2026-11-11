@@ -3,6 +3,7 @@ import type { Settlement } from "./ecology";
 import { pile, tell } from "./kin";
 import { C } from "./materials";
 import { WARD } from "./wards";
+import { fallingAt } from "./weather";
 import type { World } from "./world";
 
 // The island needs you (2026-11-11). Merging never needed the island and the
@@ -72,6 +73,8 @@ export interface Trouble {
   // works to finish its work, and none for one that does nothing. Not saved.
   alight?: Set<number>;
   stallUntil?: number;
+  // Rain fell hard on it at some point.
+  rained?: boolean;
 }
 
 // What a village keeps of the item that saved it: one stone, one line.
@@ -346,7 +349,11 @@ export function stepTrouble(world: World, dt: number): TroubleEnd | null {
       c.low = f.cells <= 1 ? c.low + dt : 0;
       if (c.low >= 3) t.answer = { key: c.key, name: c.name, emoji: c.emoji, t: c.t };
     }
-  if (driven && !t.answer && world.time >= (t.stallUntil ?? 0)) {
+  // Under hard rain the wind lights nothing: a front crossing the fire is the island's own answer.
+  const rain = world.weather ? fallingAt(world, f.x, f.y, world.time) : null;
+  const raining = !!rain && rain.kind === "rain" && rain.amount > 0.5;
+  if (raining) t.rained = true;
+  if (driven && !t.answer && !raining && world.time >= (t.stallUntil ?? 0)) {
     const d = Math.hypot(t.hx - t.x, t.hy - t.y) || 1;
     const reach = Math.min(t.front, d);
     let ex = t.x + ((t.hx - t.x) / d) * reach;
@@ -422,7 +429,9 @@ function endTrouble(world: World, t: Trouble): TroubleEnd {
       : outcome === "held"
         ? `the fire burned out round ${t.name}, held behind its shield`
         : outcome === "spent"
-          ? `the fire by ${t.name} burned itself out`
+          ? t.rained
+            ? `the rain put out the fire by ${t.name}`
+            : `the fire by ${t.name} burned itself out`
           : outcome === "lost"
             ? `the fire took ${loss} of ${t.name}`
             : by

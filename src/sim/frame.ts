@@ -537,6 +537,8 @@ function mount(next: Engine): void {
   engine?.dispose();
   unbind?.();
   engine = next;
+  // Weather is real on the player's island, never in a challenge.
+  engine.world.weather = !scenario;
   engine.runtime.setLibrary(library);
   engine.sound.muted = muted;
   unbind = engine.bindInput();
