@@ -1,0 +1,181 @@
+import { abilitiesOf, enemyOf, fireAbility } from "./abilities";
+import { life, mindOf, type AbilitySpec, type Mind } from "./kin";
+import { names } from "./social";
+import type { Creature } from "./creatures";
+import type { World } from "./world";
+
+// Become anything (2026-11-12, the most voted player idea): the player takes
+// one creature and plays it. Pure, so Node can test it (scripts/become-test.ts).
+//
+// What possession is: the creature's own thinking is paused (its decisions in
+// creatures.ts updateCreature and goals.ts pursue are skipped while it is
+// ridden), and a stick says where it walks instead. The step itself is the
+// engine's own (steer.ts, with the creature's own blocked()): nothing walks
+// through a wall, into deep water or off the island that could not before.
+// Everything else is unchanged: others see it, fear it and hunt it as any
+// creature. Its abilities fire on demand, with their trigger skipped and the
+// same cooldown (m.ready) and cast cap as the engine's (abilities.ts).
+//
+// Possession is of the moment: it lives in this module only, never on the
+// creature or the world, so a save never sees it (save.ts is unchanged).
+
+export interface Possession {
+  world: World;
+  c: Creature;
+  // Where the stick points on the ground (a unit vector) and how far it is pushed (0 to 1).
+  wx: number;
+  wy: number;
+  push: number;
+  // World time it began.
+  since: number;
+  // Its own goal when it was taken: the island may send it somewhere meanwhile
+  // (a wonder calling villagers, balance.ts sending animals out), and release
+  // gives it back what it was doing.
+  own: Pick<Mind, "task" | "tx" | "ty" | "cell" | "target" | "pace" | "work" | "action">;
+}
+
+export type Ended = "let go" | "fell" | "gone";
+
+let current: Possession | null = null;
+let ended: { c: Creature; why: Ended } | null = null;
+
+// Below this push the stick is at rest: a thumb resting on it does not walk.
+export const DEAD_ZONE = 0.12;
+
+export function possess(world: World, c: Creature): Possession | null {
+  if (c.dead || c.hp <= 0 || !world.creatures.includes(c)) return null;
+  if (current) release(current.world);
+  ended = null;
+  const { task, tx, ty, cell, target, pace, work, action } = mindOf(c);
+  current = { world, c, wx: Math.cos(c.hd), wy: Math.sin(c.hd), push: 0, since: world.time, own: { task, tx, ty, cell, target, pace, work, action } };
+  return current;
+}
+
+export function possessed(world: World): Possession | null {
+  return current && current.world === world ? current : null;
+}
+
+// Asked for every creature every tick (creatures.ts): one comparison.
+export function ridden(c: Creature): Possession | null {
+  return current !== null && current.c === c ? current : null;
+}
+
+// The stick in screen terms (x right, y down, each -1 to 1) and the camera's
+// turn (orbit.ts theta): screen up is away from the camera along the ground.
+export function stickDir(sx: number, sy: number, theta: number): { x: number; y: number; push: number } {
+  const push = Math.min(1, Math.hypot(sx, sy));
+  if (push < DEAD_ZONE) return { x: 0, y: 0, push: 0 };
+  const cos = Math.cos(theta);
+  const sin = Math.sin(theta);
+  // Screen right on the ground is (cos, -sin), screen up (-sin, -cos): orbit.ts pan().
+  const x = sx * cos + sy * sin;
+  const y = -sx * sin + sy * cos;
+  const n = Math.hypot(x, y) || 1;
+  return { x: x / n, y: y / n, push };
+}
+
+export function steerBy(world: World, sx: number, sy: number, theta: number): void {
+  const p = possessed(world);
+  if (!p) return;
+  const d = stickDir(sx, sy, theta);
+  p.push = d.push;
+  if (d.push > 0) {
+    p.wx = d.x;
+    p.wy = d.y;
+  }
+}
+
+// What updateCreature walks toward this tick, in place of its own decision:
+// a point four cells along the stick, at the stick's push of its own speed.
+export function riderAim(p: Possession): { x: number; y: number; pace: number } {
+  return p.push < DEAD_ZONE ? { x: 0, y: 0, pace: 0 } : { x: p.wx * 4, y: p.wy * 4, pace: p.push };
+}
+
+export interface Power {
+  spec: AbilitySpec;
+  // Seconds before it can fire again, and the cooldown it counts down from.
+  left: number;
+  every: number;
+}
+
+// Its own abilities, two at most (what fits beside the stick at 344 px).
+export function powersOf(world: World, c: Creature): Power[] {
+  const list = abilitiesOf(c, life.kindOf(c)).slice(0, 2);
+  const m = mindOf(c);
+  return list.map((spec, n) => ({ spec, left: Math.max(0, (m.ready[n] ?? 0) - world.time), every: spec.every }));
+}
+
+// Fires ability n now, its trigger skipped: "done", "nothing" (nobody to do
+// it on: it may try again in three seconds, as the engine's own), "cooling".
+export function act(world: World, n: number): "done" | "nothing" | "cooling" | null {
+  const p = possessed(world);
+  if (!p || p.c.dead || n < 0 || n > 1) return null;
+  const c = p.c;
+  const k = life.kindOf(c);
+  const list = abilitiesOf(c, k);
+  const a = list[n];
+  if (!a) return null;
+  const m = mindOf(c);
+  if (world.time < (m.ready[n] ?? 0)) return "cooling";
+  return fireAbility(world, c, k, m, n, a, enemyOf(world, c, k)) ? "done" : "nothing";
+}
+
+// Let go: the creature's own mind takes over where it left off.
+export function release(world: World, why: Ended = "let go"): Creature | null {
+  const p = possessed(world);
+  if (!p) return null;
+  current = null;
+  ended = { c: p.c, why };
+  if (!p.c.dead) {
+    const m = mindOf(p.c);
+    Object.assign(m, p.own);
+    if (m.target?.dead) m.target = null;
+    // Measured afresh from where the player left it, so the task is not dropped as stalled.
+    m.walk = 0;
+    m.near = Infinity;
+    m.stall = 0;
+  }
+  return p.c;
+}
+
+// At 0 health the player is thrown out at once (creatures.ts calls this as it
+// dies); the creature lives or dies by the simulation's own rules.
+export function throwOut(c: Creature): void {
+  if (current && current.c === c) release(current.world, "fell");
+}
+
+// Looked at by the frame: still held, or why not. A creature taken off the
+// island (eaten, lifeCycle's cleanup) ends it too.
+export function checkHeld(world: World): Ended | null {
+  const p = possessed(world);
+  if (p) {
+    if (p.c.dead || p.c.hp <= 0) release(world, "fell");
+    else if (!world.creatures.includes(p.c)) release(world, "gone");
+    else return null;
+  }
+  const e = ended;
+  ended = null;
+  return e?.why ?? null;
+}
+
+const kindWord = (c: Creature): string => c.kind.split("#")[0];
+
+// Its own thought while you are it: what scares it, what it wants, how it feels.
+export function thoughtOf(world: World, c: Creature): string {
+  const k = life.kindOf(c);
+  const m = mindOf(c);
+  const parts: string[] = [];
+  if (c.burning > 0) parts.push("burning");
+  const enemy = enemyOf(world, c, k, 10);
+  if (enemy) {
+    const prey = k.ai?.prey ?? [];
+    const hunts = k.ai?.mode === "hunt" && (prey.length ? names(prey, enemy.kind) : true);
+    parts.push(hunts ? `wants the ${kindWord(enemy)}` : `afraid of the ${kindWord(enemy)}`);
+  }
+  if (c.hp < life.maxHp(c) * 0.4) parts.push("hurt");
+  if (m.hunger > 0.6) parts.push("hungry");
+  if (m.tired > 0.7) parts.push("tired");
+  if (!parts.length) parts.push(/^[a-z]+ing\b/.test(m.action) && m.action !== "looking around" ? `thinks of ${m.action}` : "calm");
+  const s = parts.slice(0, 3).join(", ");
+  return s[0].toUpperCase() + s.slice(1);
+}

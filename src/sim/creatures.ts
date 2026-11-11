@@ -17,6 +17,7 @@ import { abilitiesFromName, useAbilities } from "./abilities";
 import { stepArtifacts } from "./artifacts";
 import { meter } from "./motion";
 import { steer } from "./steer";
+import { riderAim, ridden, throwOut } from "./possess";
 import { alarm, calmDown, fleeing } from "./flight";
 import { pathsOf, solidCovers } from "./paths";
 import { LOADS, deed, harmed, life, newMind, noteDeath, reborn, storyOn, tell, villageOf, type AbilitySpec, type Goal, type Mind } from "./kin";
@@ -484,7 +485,10 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   const k = kindOf(c);
   freeWorld = world;
   storyOn(world);
+  // The player is this creature (possess.ts): its own decisions are skipped below.
+  const rider = ridden(c);
   if (c.dead) {
+    if (rider) throwOut(c);
     if (c.deadFor === 0) {
       noteDeath(world, c);
       if (k.ai?.onDeath) deathOf(world, c, k.ai.onDeath);
@@ -576,6 +580,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   if (c.hp <= 0) {
     c.dead = true;
     c.burning = 0;
+    // At 0 health the player is thrown out at once; the body is the simulation's.
+    if (rider) throwOut(c);
     return;
   }
 
@@ -593,7 +599,16 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   let socialMood: Mood = null;
   // Which decision drove this tick's step, for the motion meter (4.3).
   let drive = busy ? "asleep" : "idle";
-  if (!busy) {
+  if (rider && !busy) {
+    // Become anything (2026-11-12): the stick says where it goes, in place of
+    // everything it would decide (fear, needs, goals, behavior, wandering).
+    // Its mind is left as it was, so releasing it gives its own goal back.
+    const aim = riderAim(rider);
+    wantX = aim.x;
+    wantY = aim.y;
+    pace = aim.pace;
+    drive = "possessed";
+  } else if (!busy) {
     // Danger is probed every third tick and remembered in between (3.6: goals
     // keep creatures on the move, and this was the dearest part of a tick).
     let dangerDir = c.data.danger as { x: number; y: number } | null | undefined;
@@ -732,7 +747,9 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   // them. A flight or a chase runs through its point; anything else slows
   // down to arrive.
   const chase = mood === "fear" || mood === "angry" || mood === "hunt" || drive === "fear" || drive === "burning" || drive === "danger" || drive === "flee";
-  const arrive = !chase || drive === "shelter";
+  // Ridden, it goes straight where the stick points: no flow field that would
+  // take it another way round, only its own feelers and walls (steer.ts).
+  const arrive = !rider && (!chase || drive === "shelter");
   const len = Math.hypot(wantX, wantY);
   let wanted = 0;
   {
@@ -752,7 +769,18 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     const gx = trip ? (m.target ? m.target.x : m.tx) : c.x + wantX;
     const gy = trip ? (m.target ? m.target.y : m.ty) : c.y + wantY;
     const hunting = mood === "hunt" || mood === "angry";
+    const ox = c.x;
+    const oy = c.y;
     const stepped = steer(world, c, k, c.x + wantX, c.y + wantY, busy ? 0 : speed, arrive, hunting, dt, blocked, gx, gy);
+    // Ridden, the same walls hold where it stands, not only ahead: steer.ts lets a creature move
+    // freely in the cell it is in, and a player pushing into the sea for a minute walked along a
+    // shore line until its centre rounded into the deep cell, then on into it (a fish onto the
+    // beach). Its own mind never pushes a wall that long.
+    if (rider && blocked(world, c.x, c.y, c, k, ox, oy) && !blocked(world, ox, oy, c, k, ox, oy)) {
+      c.x = ox;
+      c.y = oy;
+      c.sp *= 0.3;
+    }
     wanted = stepped.wanted;
     if (stepped.jammed && speed > 0) {
       // Boxed in (born between trees and houses): after a while, out to the
@@ -789,7 +817,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   c.x = Math.max(0.5, Math.min(world.w - 1.5, c.x));
   c.y = Math.max(0.5, Math.min(world.h - 1.5, c.y));
   if (ai && !busy) sideEffects(world, c, ai, i, onGround, dt);
-  if (!busy && (k.abilities?.length || c.kind === "villager")) useAbilities(world, c, k);
+  // Ridden, its abilities fire only when the player presses them (possess.ts act).
+  if (!busy && !rider && (k.abilities?.length || c.kind === "villager")) useAbilities(world, c, k);
   if (c.fear > 0 || c.burning > 0) mood = "fear";
   c.data.mood = busy ? (c.sleep > 0 ? "asleep" : null) : mood;
   const idle = idleOf(c, busy);

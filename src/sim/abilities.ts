@@ -224,21 +224,29 @@ export function useAbilities(world: World, c: Creature, k: CreatureKind): void {
     }
     if (!fire) continue;
     if (a.do === "cast") enemy ??= enemyOf(world, c, k);
-    // A spell's own ability runs its code; a library spell goes through the
-    // runtime, at a creature's tier (minor at most); the twelve run here.
-    const at = enemy ?? c;
-    const done =
-      a.do === "cast" && a.spell
-        ? !!world.magic?.cast(a.spell, at.x, at.y, CREATURE_CAST_CAP, c.kind, !!enemy)
-        : a.run
-          ? a.run(c, enemy ?? null)
-          : perform(world, c, k, m, a.do as AbilityName, enemy ?? null);
-    if (done && (a.run || a.do === "cast")) deed(c, a.do === "cast" ? `cast ${a.spell}` : a.do);
-    // 4.6 part B: counted for the creature probe of the test run (check.ts).
-    if (done) c.data.used = Number(c.data.used ?? 0) + 1;
-    // Nothing to do it on: look again in a few seconds instead of a full cooldown.
-    m.ready[n] = world.time + (done ? a.every : 3);
+    fireAbility(world, c, k, m, n, a, enemy ?? null);
   }
+}
+
+// Does ability n now and starts its cooldown; true when it found something to
+// do it on. Shared with the player's own button while they are the creature
+// (possess.ts, 2026-11-12): the same cast cap and the same cooldown.
+export function fireAbility(world: World, c: Creature, k: CreatureKind, m: Mind, n: number, a: AbilitySpec, enemy: Creature | null): boolean {
+  // A spell's own ability runs its code; a library spell goes through the
+  // runtime, at a creature's tier (minor at most); the twelve run here.
+  const at = enemy ?? c;
+  const done =
+    a.do === "cast" && a.spell
+      ? !!world.magic?.cast(a.spell, at.x, at.y, CREATURE_CAST_CAP, c.kind, !!enemy)
+      : a.run
+        ? a.run(c, enemy)
+        : perform(world, c, k, m, a.do as AbilityName, enemy);
+  if (done && (a.run || a.do === "cast")) deed(c, a.do === "cast" ? `cast ${a.spell}` : a.do);
+  // 4.6 part B: counted for the creature probe of the test run (check.ts).
+  if (done) c.data.used = Number(c.data.used ?? 0) + 1;
+  // Nothing to do it on: look again in a few seconds instead of a full cooldown.
+  m.ready[n] = world.time + (done ? a.every : 3);
+  return done;
 }
 
 function sameSide(c: Creature, kind: string): boolean {
