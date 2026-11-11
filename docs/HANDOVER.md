@@ -53,4 +53,40 @@ Pace rules in force: at most 2 builders while the weekly limit reads "warning", 
 
 ## The planner's part
 
-To be added by the planner: its routines and triggers, the approvals log, the dashboard and its scripts.
+The planner is the session "Magic Merger daily planner" (session_01NxvtApFG2JjVSbpSNYmAKn, Opus, permission mode auto). It is the owner's one point of contact: the owner types answers there (or "Send to Claude" from their own account), and only the planner records approvals, as the label owner-ok or owner-yes plus a comment whose first line is `<!-- mm-owner ok -->` or `<!-- mm-owner yes -->`, quoting the owner and naming the files read. A GitHub comment never counts as the owner's. The planner never edits repository files itself; builders do.
+
+### The owner's list and what they approved
+
+Issue #51 is the owner's list ("## Open" is what waits for them; "## Approved concepts" is every yes, with the owner's words and date). Read it first. Approvals given on 10 and 11 November: wonders review 4.9.5 ($3 to $6, back to the owner only past $12), Z Fold sizes in every check ("folds: yes"), the hours rule ("hours: fill"), "carry: as is", "d1: Tuesday", "credentials: yes" (owner's settings done 11 November), "promise: yes", "spend: yes", "lighter pipeline: yes", "gate schedule: yes", "pipeline: planner starts it", "order: first session first", "risk rules: yes".
+
+### Owner preferences
+
+Toronto time; the weekly Claude limit resets Tuesday 5 PM Toronto (22:00 UTC in winter), and the last hour before it is used, not saved. Messages to the owner: a few short paragraphs, goal, what was done, a choice with the recommended option first, answers by name ("x: y"), never by pull request number. Reviews and audits are artifact pages. At most 5 sessions running at once (3 builders plus reviewers); at the weekly warning, 2 builders. Reviewers and small fixes on Sonnet, big work on Opus, nothing above Opus except a director the owner names. Archive sessions when their work is live.
+
+### Scheduled tasks (claude-code-remote triggers)
+
+| Name                               | Id                            | When                   | State on 11 Nov | Does                                                                                |
+| ---------------------------------- | ----------------------------- | ---------------------- | --------------- | ----------------------------------------------------------------------------------- |
+| Magic Merger usage guard           | trig_01Tggcc9Enezm8EpZUGnkPX4 | 5 past each hour       | on              | usage guard, starts the Gate by dispatch, stuck queue, archiving, dashboard refresh |
+| Magic Merger: night run            | trig_01AcQLWkxcWTUteMnfxqKoKz | 1:13 AM Toronto        | paused 11 Nov   | night checks and the night's builders (DAILY.md)                                    |
+| Magic Merger: today's prompt       | trig_01ApquU2rkgAU91wVpvEXBrm | 7:36 AM Toronto        | on              | morning brief                                                                       |
+| 20 items rebuilt for their kind    | trig_01HRc4vbeXeuFqGFUuSAgbzX | 00:07 UTC              | paused 11 Nov   | the library rebuild by kind, 20 a day, cost guard $5.30                             |
+| Check database reads after the fix | trig_019dYQJYTpCQZ4xhNyYNyQtE | 12 Nov 01:30 UTC, once | on              | rows read for 11 November after PR #101                                             |
+
+A fresh planner recreates them from this table and the prompts kept in each trigger (get_trigger shows them).
+
+### The dashboard
+
+"Magic Merger Glance", https://claude.ai/artifact/RFaACWNCA4PnbThqVFJXef, pinned in the owner's sidebar, made from the Dashboard Artifact type. Its page is the store document files/index.html (the game's Lantern night look, numbers in the reading font). Eleven datasets (status, spend, d1, queue, live, next, choices, calls, rebuild, updates, roadmap) point at one uploaded glance.json. To refresh: run `node scripts/planner/to-dashboard.mjs <dir>` (it runs collect.mjs: GitHub, the live game's /api/spend and /api/admin/refresh-report with ADMIN_TOKEN, Cloudflare D1 analytics with CLOUDFLARE_API_TOKEN, issue #51's Open section) to write glance.json, upload it as an asset of the dashboard, update the eleven datasets' source.url in one batch, delete the old asset. scripts/planner/planner.json is the planner's own snapshot (mode, usage, working, next, roadmap, updates).
+
+### Known traps
+
+- GitHub runs this repository's schedules 6 to 10 hours late: the Gate's 15 minute schedule is a bonus; the hourly guard dispatches the Gate (`gh api -X POST repos/angelus76300-afk/magic-merger/actions/workflows/gate.yml/dispatches -f ref=main`; `gh workflow run` fails through the session proxy because GraphQL is blocked).
+- A workflow change on main stops the Gate from catching branches up; each builder merges main once by hand (the lighter pipeline builder is fixing this).
+- A red workflow change is merged by the planner by hand after review and the recorded yes.
+- Seven sessions at once hit the 5-hour limit on 10 November; the weekly limit reached warning six hours into the week.
+- The safety check refuses some actions (starting a pipeline builder from the director, a test write on production, recording a yes the owner did not give): stop and ask the owner, never route around it.
+
+### State at handover (11 November, 04:40 UTC)
+
+Paused for the owner's experiment (a fresh Fable session leading the roadmap): no new builders; night run and daily rebuild off. Finishing: monsters (#111), the lighter pipeline and credentials workflows (session_01NxvtAnFb4NaPuHZVs1BFBx), first cast (#110), Phoenix (#108), risk rules (#113, yes recorded). Waiting for the owner after the credentials PR: delete the two repository-level secrets. Next in order: a newcomer's first minutes, spend, Builders 4.9 part 3 (island life seen from the normal zoom), wonders review 4.9.5.
