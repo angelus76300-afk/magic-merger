@@ -834,12 +834,28 @@ function effectOf(raw: Record<string, unknown>, index: string): { do: ArtEffectN
   };
 }
 
+// Why effectOf took nothing from an effect or a pair, for its writer.
+function whyNoEffect(raw: Record<string, unknown>): string {
+  const d = raw.do ?? raw.effect;
+  if (typeof d === "function") return "its do is a function; do takes a name, and code of its own goes in act(self, w, target)";
+  if (d === undefined || d === "") return "it has no do and no act";
+  return `"${String(d).slice(0, 30)}" is not an effect (${ART_EFFECTS.filter((e) => e !== "cast" && e !== "summon").join(", ")}, summon:<kind>, cast:<spell>, or code of its own in act)`;
+}
+
 let nextArt = 1;
 
 // The state of an artifact from what `w.artifact` was given. Functions are
 // not kept (a save holds data); the runtime keeps them by the index each one
 // is given here.
-export function artifactState(o: Record<string, unknown>, key: string, tier: Tier, now: number, radius: number): ArtState {
+export function artifactState(
+  o: Record<string, unknown>,
+  key: string,
+  tier: Tier,
+  now: number,
+  radius: number,
+  // Told what it could not use, in words for the program's writer (the test run reads them).
+  dropped: (note: string) => void = () => undefined,
+): ArtState {
   const id = nextArt++;
   const charges = o.charges === undefined ? null : num(o.charges, 0, 99, 3);
   const fuel = o.fuel === undefined ? null : num(o.fuel, 1, 3600, 300);
@@ -849,7 +865,10 @@ export function artifactState(o: Record<string, unknown>, key: string, tier: Tie
     if (!raw || typeof raw !== "object") return;
     const r = raw as Record<string, unknown>;
     const what = effectOf(r, `effect:${n}`);
-    if (!what) return;
+    if (!what) {
+      dropped(`effect ${n + 1} was ignored: ${whyNoEffect(r)}`);
+      return;
+    }
     const w = String(r.when ?? r.on ?? "every")
       .trim()
       .toLowerCase();
@@ -897,6 +916,7 @@ export function artifactState(o: Record<string, unknown>, key: string, tier: Tie
       .toLowerCase()
       .slice(0, 40);
     const what = effectOf(r, `pair:${n}`);
+    if (partner && !what) dropped(`pair ${n + 1} was ignored: ${whyNoEffect(r)}`);
     if (!partner || !what) return;
     pairs.push({
       with: partner,

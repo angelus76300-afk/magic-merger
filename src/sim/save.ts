@@ -1,8 +1,9 @@
 import { loadedState } from "./artifacts";
 import { readRoad, restoreDecks, type Road } from "./roads";
+import { cellsOf, readSite, type Site } from "./sites";
 import { dressVillages, restoreCreature, saveMind, KINDS, type Creature, type SavedMind } from "./creatures";
 import { MARKS, MAX_MARKS, MAX_STORY, type Mark, type StoryLine, type Village } from "./kin";
-import { BUILTIN, BUILTIN_BEFORE_4_4_5, FIRST_JOB, LAST_JOB, LAYERS, type Layer } from "./materials";
+import { BUILTIN, C, BUILTIN_BEFORE_4_4_5, FIRST_JOB, LAST_JOB, LAYERS, type Layer } from "./materials";
 import { MAX_WONDERS, readWonder, type Wonder } from "./wonders";
 import { MAX_PROPS, readProp, type Prop } from "./props";
 import { World } from "./world";
@@ -56,6 +57,8 @@ export interface SavedWorld {
   patched?: number[];
   // Roads laid between villages and to wonders, with their bridges' decks (4.9).
   roads?: Road[];
+  // Houses and buildings going up, and the work done on each (4.9 part 2).
+  sites?: { i: number; kind: number; work: number; logs: number }[];
 }
 
 export function saveWorld(world: World, owners: Map<string, string>): SavedWorld {
@@ -119,6 +122,9 @@ export function saveWorld(world: World, owners: Map<string, string>): SavedWorld
     ...(world.islandName ? { islandName: world.islandName } : {}),
     ...(world.patched.size ? { patched: [...world.patched].slice(0, 4000) } : {}),
     ...(world.roads.length ? { roads: world.roads.slice(0, MAX_ROADS) } : {}),
+    ...(world.sites.length
+      ? { sites: world.sites.slice(0, MAX_SITES).map((t) => ({ i: t.i, kind: t.kind, work: Math.round(t.work * 10) / 10, logs: t.logs })) }
+      : {}),
   };
 }
 
@@ -297,10 +303,21 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
     .map((r) => readRoad(r, world))
     .filter((r): r is Road => r !== null);
   restoreDecks(world);
+  // 4.9 part 2: sites going up; a site cell with no site, or a site whose
+  // cells are no longer a site, is cleared.
+  const sites: Site[] = [];
+  for (const raw of Array.isArray(data.sites) ? data.sites.slice(0, MAX_SITES) : []) {
+    const t = readSite(world, raw);
+    if (t && cellsOf(world, t.i).every((j) => world.cover[j] === C.SITE) && !sites.some((o) => o.i === t.i)) sites.push(t);
+  }
+  world.sites = sites;
+  const held = new Set(sites.flatMap((t) => cellsOf(world, t.i)));
+  for (let i = 0; i < world.n; i++) if (world.cover[i] === C.SITE && !held.has(i)) world.cover[i] = C.NONE;
   return world;
 }
 
 const MAX_ROADS = 24;
+const MAX_SITES = 64;
 
 function clamp16(v: number): number {
   return Math.max(0, Math.min(65535, Math.round(v)));

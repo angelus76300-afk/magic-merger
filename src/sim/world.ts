@@ -18,6 +18,7 @@ import type { Ruin, Ward } from "./wards";
 import type { Prop } from "./props";
 import type { Death, Mark, Village } from "./kin";
 import type { Road } from "./roads";
+import type { Site } from "./sites";
 
 export const TICK = 1 / 30;
 export const AMBIENT = 15;
@@ -130,6 +131,10 @@ export class World {
   roads: Road[] = [];
   readonly decks = new Map<number, number>();
   roadsVersion = 0;
+  // Houses and buildings going up (4.9 part 2, sites.ts), saved; and a
+  // counter the view redraws them on.
+  sites: Site[] = [];
+  sitesVersion = 0;
   // Wonders and the island's name (4.4.5 part B, wonders.ts); none on the
   // old island and the challenges. House cells rebuilt after a fire wear a
   // patched roof.
