@@ -158,7 +158,7 @@ export function makeVillage(
       world.creatures.push(c);
       made++;
     }
-  tell(world, `a new village was founded${s.name ? `: ${s.name}` : ""}`);
+  tell(world, `a new village was founded${s.name ? `: ${s.name}` : ""}`, { x: at.x, y: at.y });
   return { x: at.x, y: at.y, name: s.name ?? "", houses: Math.round(homes.length / 4), villagers: made };
 }
 
@@ -206,7 +206,7 @@ export function makeBuilding(world: World, x: number, y: number, job: string): B
   const by = Math.floor(at / world.w);
   const s = settlementNear(world, bx, by);
   if (s && id !== C.HOUSE) (s.jobs ??= []).push({ kind: id, i: at });
-  if (id !== C.HOUSE) tell(world, s?.name ? `${s.name} raised a ${name}` : `a ${name} was raised`);
+  if (id !== C.HOUSE) tell(world, s?.name ? `${s.name} raised a ${name}` : `a ${name} was raised`, { x: bx, y: by });
   // Beside it: the first open cell of the ring round its block.
   let beside = { x: bx + 2, y: by };
   for (const [dx, dy] of [
@@ -476,7 +476,7 @@ export function makeWonder(world: World, kind: string, x: number, y: number, see
   const k = kind.toLowerCase().trim();
   if (!WONDER_KINDS.has(k)) return null;
   const w = placeWonderAt(world, k, x, y, seed);
-  if (w) tell(world, `${w.name} appeared`);
+  if (w) tell(world, `${w.name} appeared`, { x: w.x, y: w.y });
   return w;
 }
 
@@ -601,6 +601,6 @@ export function makePerson(
   if (calling === "blacksmith" && center && smithyNear(world, home.x, home.y) < 0) forge = !!makeBuilding(world, home.x + 3, home.y, "smithy");
   const household = world.creatures.filter((o) => o !== c && !o.dead && o.kind === "villager" && Math.hypot(o.homeX - c.homeX, o.homeY - c.homeY) < 1.3).length;
   const noun = title ? title.toLowerCase() : calling !== "none" ? calling : "newcomer";
-  tell(world, where ? `a ${noun} came to live in ${where}` : `a ${noun} came to the island`);
+  tell(world, where ? `a ${noun} came to live in ${where}` : `a ${noun} came to the island`, { x: c.x, y: c.y, who: c });
   return { x: c.x, y: c.y, job: look.job, calling: look.calling, title, village: center ? (s?.name ?? "") : null, household, forge, creature: c };
 }

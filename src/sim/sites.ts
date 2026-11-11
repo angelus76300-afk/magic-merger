@@ -143,7 +143,7 @@ export function stake(world: World, i: number, kind: number, logs: number): Site
   world.sitesVersion++;
   if (kind !== C.HOUSE) {
     const t = settlementNear(world, i % world.w, Math.floor(i / world.w));
-    tell(world, `${t?.name || "a village"} is raising a ${kindName(kind)}`);
+    tell(world, `${t?.name || "a village"} is raising a ${kindName(kind)}`, { x: i % world.w, y: Math.floor(i / world.w) });
   }
   return s;
 }
@@ -228,7 +228,7 @@ function finishSite(world: World, s: Site): void {
   const t = settlementNear(world, x, y);
   if (t) {
     (t.jobs ??= []).push({ kind: s.kind, i: s.i });
-    tell(world, `${t.name || "a village"} built a ${kindName(s.kind)}`);
+    tell(world, `${t.name || "a village"} built a ${kindName(s.kind)}`, { x, y });
   }
 }
 
@@ -250,7 +250,7 @@ export function checkSites(world: World): void {
         // What had not burned through yet goes with the rest.
         if (burned) world.ground[j] = G.ASH;
       }
-      if (burned) tell(world, `the ${kindName(s.kind)} going up in ${t?.name || "the village"} burned`);
+      if (burned) tell(world, `the ${kindName(s.kind)} going up in ${t?.name || "the village"} burned`, { x: s.i % world.w, y: Math.floor(s.i / world.w) });
       continue;
     }
     const v = villageOf(world, x + 1, y + 1);

@@ -2,6 +2,46 @@
 
 So the project can stop and restart from fresh sessions with nothing lost. Two parts: the director's (the session that reviewed the project on 10 November and led it for a while) and the planner's. Keep it current: a session that takes a decision the next one must know adds a line here.
 
+## The lead session's part (from 11 November 2026, 13:00 UTC)
+
+An experiment the owner asked for: one session leads and builds, instead of a planner starting builders and reviewers. The lead is "Magic Merger lead session" (session_01NxvtApgb2CBkVZn1xvQR2w). The owner talks to it directly. It builds updates, not fixes: something seen within thirty seconds of opening the game, shipped whole under a name. One fresh Sonnet reviewer per pull request, one round unless it finds something real. The planner and its night run stay paused meanwhile.
+
+### The order, and why
+
+1. **The island tells its stories** (the camera goes to what is happening). First, because the content exists and was not shown: an untouched island tells about sixty story lines in ten minutes and the screen showed none. Everything after stands on its happenings and its camera.
+2. **One game instead of two**: troubles on the home island that only magic not yet made can answer, and tiers that climb. Needs 1, since a drought nobody sees is not a need. No hints (declined by the owner).
+3. **Become anything** (take control): the follow camera of 1 is half of it.
+4. Items worth showing a friend: needs the owner's yes with a cost (prompts, money, stored spells).
+5. Towns read from the sky, then speed measured on the real Fold.
+
+### Where each piece is
+
+| Work                                                   | State                                                                                                    |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| The island tells its stories (#121)                    | Built, 21 checks, frames at both Fold sizes; in review. `docs/DESIGN.md`, "The island tells its stories" |
+| The tour of a new island plays when the island appears | In #121, at the owner's word of 11 November (it waited for the first cast for a day, #110)               |
+
+### Decisions taken, and why
+
+| Decision                                                                         | Why                                                                                                                 |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Happenings are not saved                                                         | A happening is of the moment; the saved story and the golden save stay as they are, and the update is green         |
+| What is going on beats what just happened                                        | A story line is told after the kill; a camera that leaves then arrives at a body (the game designer's challenge)    |
+| A tap during the watch returns the view and casts nothing; a drag keeps the view | The camera forgetting where the player was is a bug of the review; a cast under a moving camera would land anywhere |
+| The watch starts by itself after 15 s (40 s with a spell in hand)                | The owner's test is an untouched island that is never boring; looking for where to cast is not idleness             |
+| Villager names come from the look and the home                                   | Both are saved, ids are not stable across a reload                                                                  |
+
+### The experiment's tally
+
+| Measure                               | Lead session                                  | Old setup, 5 to 10 November                          |
+| ------------------------------------- | --------------------------------------------- | ---------------------------------------------------- |
+| Updates live, by name                 | 0 (The island tells its stories is in review) | 35 pull requests merged, almost all small            |
+| Pull requests that needed a later fix | 0 of 0                                        | 6 of 35                                              |
+| Sessions started                      | 0 so far (1 reviewer to come)                 | about 95 review rounds, 40 re-reading merges of main |
+| Subagents                             | 2 (game designer, playtester)                 |                                                      |
+| The owner's time asked for            | 0 questions                                   |                                                      |
+| Usage                                 | not read yet                                  | paused 78 of 130 hours by limits                     |
+
 ## The director's part (written 11 November 2026, 03:55 UTC)
 
 ### What was observed

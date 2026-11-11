@@ -151,6 +151,14 @@ export class WorldHost {
     });
     // Leaving the page saves the island once; coming back takes it again,
     // from where another tab left it if one saved since.
+    // The island watches its stories by itself when left alone (frame.ts): not behind a dialog of the page.
+    let away = false;
+    window.setInterval(() => {
+      const now = !this.shown || !!document.querySelector("dialog[open]");
+      if (now === away) return;
+      away = now;
+      this.send({ type: "away", away });
+    }, 500);
     document.addEventListener("visibilitychange", () => {
       if (!this.shown) return;
       if (document.hidden) this.send({ type: "visible", visible: false });

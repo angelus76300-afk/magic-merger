@@ -33,7 +33,7 @@ export function artDeed(world: World, a: Artifact, what: string): void {
   if (/^was (worshipped|guarded) /.test(what)) PASSIVE.set(a, passiveDeeds(a) + 1);
   a.art.actedAt = world.time;
   a.art.deeds++;
-  tell(world, `the ${a.name} ${what}`);
+  tell(world, `the ${a.name} ${what}`, { x: a.x, y: a.y });
   if (world.time - a.art.placed > ARRIVAL) a.art.later++;
   a.art.did = [what, ...a.art.did.filter((d) => d !== what)].slice(0, 3);
 }

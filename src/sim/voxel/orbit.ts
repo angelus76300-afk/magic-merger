@@ -17,6 +17,9 @@ export class OrbitCamera implements CameraControl {
   private goal: { tx: number; ty: number; dist: number; phi: number; speed: number; theta?: number } | null = null;
   private saved: { tx: number; ty: number; dist: number; phi: number } | null = null;
   private returnAt = 0;
+  // The island tells its stories (2026-11-11, director.ts): a subject the
+  // camera keeps in frame, moving with it, until the player touches the view.
+  private watched: { x: number; y: number; dist: number } | null = null;
   private shake = 0;
   private shakeTime = 0;
   readonly minDist = 8;
@@ -51,6 +54,8 @@ export class OrbitCamera implements CameraControl {
   }
 
   focus(x: number, y: number, r: number, seconds: number, now: number): void {
+    // A spell's own shot comes before the story being watched.
+    this.watched = null;
     if (!this.saved) this.saved = { tx: this.tx, ty: this.ty, dist: this.dist, phi: this.phi };
     const dist = Math.max(this.minDist, Math.min(this.maxDist, this.distanceFor(Math.max(3, r))));
     // Far shots look more from above, so the whole island reads as a shape.
@@ -71,9 +76,26 @@ export class OrbitCamera implements CameraControl {
   // With `theta`, it also turns to look from that side (the shorter way round).
   flyTo(tx: number, ty: number, dist: number, phi: number, seconds: number, theta?: number): void {
     this.saved = null;
+    this.watched = null;
     this.returnAt = 0;
     const turn = theta === undefined ? undefined : this.theta + Math.atan2(Math.sin(theta - this.theta), Math.cos(theta - this.theta));
     this.goal = { tx, ty, dist: Math.max(this.minDist, Math.min(this.maxDist * 0.5, dist)), phi, speed: 1 / Math.max(0.2, seconds), theta: turn };
+  }
+
+  // Keeps (x, y) in the middle from `dist` away, called again as the subject moves.
+  watch(x: number, y: number, dist: number): void {
+    this.goal = null;
+    this.saved = null;
+    this.returnAt = 0;
+    this.watched = { x, y, dist: Math.max(this.minDist * 1.5, Math.min(this.maxDist * 0.5, dist)) };
+  }
+
+  unwatch(): void {
+    this.watched = null;
+  }
+
+  get watching(): boolean {
+    return this.watched !== null;
   }
 
   // A slow turn while a shot holds, so the place is seen from more than one side.
@@ -84,7 +106,7 @@ export class OrbitCamera implements CameraControl {
   // True while the camera moves on its own: flying to a spell, coming back,
   // shaking. The engine keeps drawing frames for it.
   animating(): boolean {
-    return this.goal !== null || (this.shakeTime > 0 && this.shake > 0.001);
+    return this.goal !== null || this.watched !== null || (this.shakeTime > 0 && this.shake > 0.001);
   }
 
   addShake(amount: number, seconds: number): void {
@@ -94,6 +116,7 @@ export class OrbitCamera implements CameraControl {
 
   // The player takes over: a spell's shot is dropped and not undone later.
   private release(): void {
+    this.watched = null;
     this.goal = null;
     this.saved = null;
     this.returnAt = 0;
@@ -136,6 +159,16 @@ export class OrbitCamera implements CameraControl {
       this.dist = Math.exp(Math.log(this.dist) + (Math.log(this.goal.dist) - Math.log(this.dist)) * k);
       if (Math.abs(this.dist - this.goal.dist) / this.goal.dist < 0.01 && Math.hypot(this.goal.tx - this.tx, this.goal.ty - this.ty) < 0.2) this.goal = null;
     }
+    if (this.watched && !this.goal) {
+      // Eased, never snapped: a cut is a glide of about a second, and a
+      // walking subject is followed without the frame trembling.
+      const k = Math.min(1, dt * 2.2);
+      this.tx += (this.watched.x - this.tx) * k;
+      this.ty += (this.watched.y - this.ty) * k;
+      this.dist = Math.exp(Math.log(this.dist) + (Math.log(this.watched.dist) - Math.log(this.dist)) * Math.min(1, dt * 1.6));
+      this.phi += (0.98 - this.phi) * Math.min(1, dt * 1.2);
+      if (!reducedMotion) this.theta += dt * 0.035;
+    }
     // Look at the ground under the target, eased so hills do not jerk the view.
     this.th += (groundAt(this.tx, this.ty) - this.th) * Math.min(1, dt * 3);
     const target = new Vector3(this.tx - this.worldW / 2, this.th, this.ty - this.worldH / 2);
@@ -143,6 +176,11 @@ export class OrbitCamera implements CameraControl {
       this.dist,
     );
     this.camera.position.copy(target).add(offset);
+    // Never inside a hill: close to a villager on a slope, the eye would sit
+    // under the ground behind it and the screen fill with sand (the preview, 11 November).
+    const ex = this.camera.position.x + this.worldW / 2;
+    const ey = this.camera.position.z + this.worldH / 2;
+    if (ex >= 0 && ey >= 0 && ex < this.worldW && ey < this.worldH) this.camera.position.y = Math.max(this.camera.position.y, groundAt(ex, ey) + 2.5);
     if (this.shakeTime > 0 && !reducedMotion) {
       this.shakeTime -= dt;
       const s = this.shake * Math.min(1, this.dist / 60);

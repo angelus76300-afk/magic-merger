@@ -1213,7 +1213,7 @@ export function stepWonders(world: World, spawn: Spawn, life: WonderLife): void 
           let risen = 0;
           for (const c of world.crowd.near(world, w.x, w.y, 20)) if (!c.dead && c.kind === "risen") risen++;
           for (let k = risen; k < 3; k++) spawn("risen", w.x + Math.cos(k * 2.1) * 2.5, w.y + Math.sin(k * 2.1) * 2.5);
-          tell(world, `the dead rose from ${w.name} under the full moon`);
+          tell(world, `the dead rose from ${w.name} under the full moon`, { x: w.x, y: w.y });
         }
         break;
       case "frozen waterfall":
@@ -1493,7 +1493,7 @@ function frozenFall(world: World, w: Wonder): void {
   disc(world, w.x, w.y, 7, (i) => {
     if (world.fluid[i] === F.ICE) world.setFluid(i, F.WATER, world.depth[i]);
   });
-  tell(world, `${w.name} thawed and runs again`);
+  tell(world, `${w.name} thawed and runs again`, { x: w.x, y: w.y });
 }
 
 function dance(world: World, w: Wonder, kindOf: (c: Creature) => { native: boolean }): void {
@@ -1520,7 +1520,7 @@ function dance(world: World, w: Wonder, kindOf: (c: Creature) => { native: boole
   }
   if (n && w.state !== dayOf(world.time)) {
     w.state = dayOf(world.time);
-    tell(world, `creatures danced round ${w.name} under the stars`);
+    tell(world, `creatures danced round ${w.name} under the stars`, { x: w.x, y: w.y });
   }
 }
 
@@ -1544,7 +1544,7 @@ function hoard(world: World, w: Wonder, spawn: Spawn): void {
   } else if (w.state === 1) {
     // Awake but gone: killed.
     w.state = 2;
-    tell(world, `the dragon of ${w.name} was slain`);
+    tell(world, `the dragon of ${w.name} was slain`, { x: w.x, y: w.y });
     return;
   }
   // Thieves.
@@ -1584,7 +1584,7 @@ export function wake(world: World, w: Wonder, spawn: Spawn): void {
   w.state = 1;
   w.t = 60;
   world.emit({ kind: "sound", name: "rumble", size: 0.8, x: w.x + 0.5, y: w.y + 0.5 });
-  tell(world, `the dragon of ${w.name} woke up`);
+  tell(world, `the dragon of ${w.name} woke up`, { x: w.x, y: w.y });
 }
 
 // A blast near a wonder that stands above the land takes it away; near a
@@ -1598,7 +1598,7 @@ export function blastWonders(world: World, x: number, y: number, r: number, spaw
       return true;
     }
     if (!WONDER_KINDS.get(w.kind)?.standing || d > r * 0.6 || w.kind === "floating rock") return true;
-    tell(world, `${w.name} was destroyed`);
+    tell(world, `${w.name} was destroyed`, { x: w.x, y: w.y });
     disc(world, w.x, w.y, 4, (i) => {
       if (world.cover[i] === C.WONDER) world.setCover(i, C.RUBBLE);
     });

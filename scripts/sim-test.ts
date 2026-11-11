@@ -12,6 +12,7 @@ import { interactionChecks } from "./interactions-test";
 import { sizeChecks } from "./sizes-test";
 import { roadsChecks } from "./roads-test";
 import { sitesChecks } from "./sites-test";
+import { directorChecks } from "./director-test";
 import { dailyChecks } from "./daily-test";
 import { monsterChecks } from "./monsters-test";
 import { goalOfCreature } from "../src/sim/goals";
@@ -2498,6 +2499,7 @@ fogChecks(check);
 // Roads (4.9): scripts/roads-test.ts.
 roadsChecks(check);
 sitesChecks(check);
+directorChecks(check);
 dailyChecks(check);
 monsterChecks(check);
 
