@@ -11,6 +11,7 @@ import { KINDS, makeCreature, populate, resetCreatureIds } from "../src/sim/crea
 import { interactionChecks } from "./interactions-test";
 import { sizeChecks } from "./sizes-test";
 import { roadsChecks } from "./roads-test";
+import { sitesChecks } from "./sites-test";
 import { dailyChecks } from "./daily-test";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
@@ -89,6 +90,7 @@ import { fixesChecks } from "./fixes-test";
 import { evidenceChecks } from "./evidence-test";
 import { formChecks, keptByFormChecks } from "./forms-test";
 import { creatureChecks } from "./creatures-b-test";
+import { promiseChecks } from "./promise-test";
 import { heldChecks } from "./held-test";
 import { pacingChecks } from "./pacing-test";
 import { fogChecks } from "./fog-test";
@@ -1028,6 +1030,8 @@ for (const scenario of SCENARIOS) {
   keptByFormChecks(check);
   // 4.6 part B: people are villagers, creatures live, the judge asks.
   creatureChecks(check);
+  // The review of 10 November: what the engine drops, promises of healing and summoning, protection only where it fits.
+  promiseChecks(check);
   // 4.7: objects that are picked up and used (src/sim/held.ts).
   heldChecks(check);
   check("a small island is one land", generateWorld(112, 112, 5, resolveLand(mid, 5, 112)).biomeMap === null);
@@ -2372,6 +2376,7 @@ fogChecks(check);
 
 // Roads (4.9): scripts/roads-test.ts.
 roadsChecks(check);
+sitesChecks(check);
 dailyChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
