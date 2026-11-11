@@ -10,6 +10,7 @@ import { BIOMES, applyLand, readLand, type LandOptions } from "./land";
 import type { Landmark } from "./social";
 import { packLook, unpackLook } from "./villagers";
 import { HOUSE_STYLES, type Refuge, type Settlement } from "./ecology";
+import { newerSave } from "./save-guard";
 
 // A saved world, compact enough for localStorage: each layer is quantized
 // into bytes and base64 encoded. Materials and creatures that spells defined
@@ -145,7 +146,8 @@ const MAX_SPRINGS = 40_000;
 // Rebuilds a world. Custom materials missing from the table (their spell is
 // gone) fall back to plain ground or nothing.
 export function loadWorld(data: SavedWorld, prepare: (world: World) => void): World | null {
-  if (data?.version !== 2) return null;
+  // A save from newer code is never read in part: the page keeps it aside (save-guard.ts).
+  if (data?.version !== 2 || newerSave(data)) return null;
   const world = new World(data.w, data.h, data.seed);
   const ok = (v: unknown) => typeof v === "number" && Number.isFinite(v);
   // The biome first: its colors are the built-in materials', which a spell's
