@@ -324,8 +324,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const gate = readFileSync(join(dir, "gate.yml"), "utf8");
   check("gate.yml: the Gate sweeps on a schedule", parse(gate).triggers.includes("schedule"));
   check(
-    "gate.yml: the Gate follows the CI it starts (its own runs never wake it)",
-    /node scripts\/gate\.mjs sweep --merge --update --follow/.test(gate) && /timeout-minutes: 150/.test(gate),
+    "gate.yml: the Gate follows the CI it starts, and the deploy is started by gate.mjs after each merge, not at the job's end",
+    /node scripts\/gate\.mjs sweep --merge --update --follow/.test(gate) && /timeout-minutes: 150/.test(gate) && !/gh workflow run deploy\.yml/.test(gate),
   );
   const skipped = gate.replace(
     "github.event_name == 'workflow_dispatch' ||\n      github.event_name == 'schedule'",

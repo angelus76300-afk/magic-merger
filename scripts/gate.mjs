@@ -321,15 +321,35 @@ export async function bringUpToDate({ number, sha, call, sleep, waitMs = 30000 }
 }
 
 /**
+ * Squash one ready pull request, pinned to the head it judged, and start the deploy at once unless it
+ * changes only docs (a merge made with the Gate's token starts no push workflow). 2026-11-11, review of
+ * #117: a merge in an early round of --follow must not wait for the job's end to deploy.
+ *   call: (path, init?) => json (throws on an error). Throws only when the merge is refused; a deploy that
+ *   cannot be started is said in the result (the next Deploy run deploys every merge since the last one).
+ */
+export async function mergeOne({ number, sha, title, docsOnly, call }) {
+  await call(`pulls/${number}/merge`, { method: "PUT", body: JSON.stringify({ merge_method: "squash", sha, commit_title: `${title} (#${number})` }) });
+  if (docsOnly) return "merged (docs only, no deploy)";
+  try {
+    await call(`actions/workflows/deploy.yml/dispatches`, { method: "POST", body: JSON.stringify({ ref: "main" }) });
+  } catch (e) {
+    return `merged, but the deploy could not be started (${String(e?.message ?? e).slice(0, 120)})`;
+  }
+  return "merged, deploy started";
+}
+
+/**
  * 2026-11-11, the Gate follows its own retest: wait until the CI run named `name` (retestName) has
- * finished, reading the dispatched runs of ci.yml every 30 s, at most timeoutMs. Returns its conclusion,
+ * finished, reading the dispatched runs of ci.yml every 30 s, at most timeoutMs (notFoundMs if it never shows). Returns its conclusion,
  * or "still running" / "not found" when the wait ends without one; the sweep runs again either way.
  *   call: (path) => json; sleep: (ms) => promise
  */
-export async function waitForRun({ name, call, sleep, timeoutMs = 40 * 60000, everyMs = 30000 }) {
+export async function waitForRun({ name, call, sleep, timeoutMs = 30 * 60000, notFoundMs = 3 * 60000, everyMs = 30000 }) {
   let seen = false;
   for (let waited = 0; waited <= timeoutMs; waited += everyMs) {
     if (waited) await sleep(everyMs);
+    // A run that never appears is not waited for long (review of #117: keep the rounds under the job timeout).
+    if (!seen && waited > notFoundMs) return "not found";
     let runs = [];
     try {
       runs = (await call(`actions/workflows/ci.yml/runs?event=workflow_dispatch&per_page=30`))?.workflow_runs ?? [];
@@ -702,8 +722,6 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     const ROUNDS = 4;
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const all = [];
-    let mergedAny = false;
-    let docsAll = true;
     for (let round = 1; round <= (follow ? ROUNDS : 1); round++) {
       const open = (await gh(`pulls?state=open&per_page=100&sort=created&direction=asc`)) ?? [];
       const lines = [`### Sweep${follow ? ` ${round}` : ""} of ${open.length} open pull requests`];
@@ -721,20 +739,16 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
         if (!state.open) continue;
         const d = decide(state);
         if (d.ready && !merged && process.argv.includes("--merge")) {
+          let said;
           try {
             // sha: GitHub refuses if the head moved since it was judged.
-            await gh(`pulls/${p.number}/merge`, {
-              method: "PUT",
-              body: JSON.stringify({ merge_method: "squash", sha: pr.head.sha, commit_title: `${pr.title} (#${p.number})` }),
-            });
+            said = await mergeOne({ number: p.number, sha: pr.head.sha, title: pr.title, docsOnly: state.docsOnly, call: gh });
           } catch (e) {
             lines.push(`- #${p.number}: ready, but GitHub refused the merge (${String(e?.message ?? e).slice(0, 160)})`);
             continue;
           }
           merged = true;
-          mergedAny = true;
-          docsAll = docsAll && state.docsOnly;
-          lines.push(`- merged #${p.number} (${d.cls})`);
+          lines.push(`- #${p.number} (${d.cls}): ${said}`);
           continue;
         }
         states.push({ number: p.number, state, sha: pr.head.sha });
@@ -774,7 +788,6 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       const end = await waitForRun({ name: started, call: gh, sleep });
       all.push(`Waited for "${started}": ${end}. Sweeping again.`);
     }
-    if (mergedAny && process.env.GITHUB_OUTPUT) execFileSync("sh", ["-c", `echo merged=true >> "$GITHUB_OUTPUT"; echo docs=${docsAll} >> "$GITHUB_OUTPUT"`]);
     summary(all.join("\n\n"));
   } else if (cmd === "deploy") {
     const s = await deployState(arg, process.argv[4]);

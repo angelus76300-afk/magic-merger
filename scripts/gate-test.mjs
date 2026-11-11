@@ -10,6 +10,7 @@ import {
   bringUpToDate,
   retestName,
   waitForRun,
+  mergeOne,
   ciFrom,
   ran,
   smokeFrom,
@@ -896,12 +897,65 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
     check("the wait is bounded", end === "still running" && calls.length === 4, `${end}, ${calls.length} reads`);
   }
   {
+    const { call, calls } = seq([[]]);
+    const end = await waitForRun({ name: NAME, call, sleep: noSleep });
+    check("a run that never shows is given up after a few minutes, not 30", end === "not found" && calls.length <= 8, `${end}, ${calls.length} reads`);
+  }
+  {
     const { call } = seq([new Error("502"), [run("completed", "success")]]);
     check("a failed read is tried again, not taken as an end", (await waitForRun({ name: NAME, call, sleep: noSleep })) === "success");
   }
   {
     const { call } = seq([[run("completed", "failure", NAME, 4), run("completed", "success", NAME, 5)]]);
     check("the newest run of that name decides", (await waitForRun({ name: NAME, call, sleep: noSleep })) === "success");
+  }
+}
+
+// Review of #117: a merge starts its deploy at once, not when the --follow job ends.
+{
+  const fake = ({ refuseMerge = false, refuseDeploy = false } = {}) => {
+    const calls = [];
+    const call = async (path, init = {}) => {
+      calls.push({ path, method: init.method ?? "GET", body: init.body ? JSON.parse(init.body) : null });
+      if (refuseMerge && path.endsWith("/merge")) throw new Error(`PUT ${path}: 405 not mergeable`);
+      if (refuseDeploy && path.endsWith("/dispatches")) throw new Error(`POST ${path}: 500`);
+      return null;
+    };
+    return { call, calls };
+  };
+  const one = { number: 12, sha: "1".repeat(40), title: "Roads" };
+  {
+    const { call, calls } = fake();
+    const said = await mergeOne({ ...one, docsOnly: false, call });
+    check(
+      "a merge pinned to its head, then the deploy started right after it",
+      calls.map((c) => c.path).join() === "pulls/12/merge,actions/workflows/deploy.yml/dispatches" &&
+        calls[0].body.sha === one.sha &&
+        calls[0].body.merge_method === "squash" &&
+        calls[1].body.ref === "main" &&
+        /deploy started/.test(said),
+      JSON.stringify(calls),
+    );
+  }
+  {
+    const { call, calls } = fake();
+    await mergeOne({ ...one, docsOnly: true, call });
+    check("a docs only merge starts no deploy", calls.length === 1 && calls[0].path === "pulls/12/merge");
+  }
+  {
+    const { call, calls } = fake({ refuseMerge: true });
+    let threw = false;
+    try {
+      await mergeOne({ ...one, docsOnly: false, call });
+    } catch {
+      threw = true;
+    }
+    check("a refused merge throws and starts no deploy", threw && !calls.some((c) => c.path.endsWith("/dispatches")));
+  }
+  {
+    const { call } = fake({ refuseDeploy: true });
+    const said = await mergeOne({ ...one, docsOnly: false, call });
+    check("a deploy that cannot start is said, and the merge still counts", /merged, but the deploy could not be started/.test(said), said);
   }
 }
 

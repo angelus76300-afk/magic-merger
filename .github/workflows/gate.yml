@@ -62,7 +62,8 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule'
     runs-on: ubuntu-latest
-    # Up to 4 rounds of a sweep and a wait of at most 40 minutes for the CI it started (--follow).
+    # Up to 4 rounds of a sweep and a wait of at most 30 minutes for the CI it started (--follow):
+    # 4 x 30 min stays under this timeout with room for the sweeps.
     timeout-minutes: 150
     env:
       GH_TOKEN: ${{ github.token }}
@@ -78,7 +79,6 @@ jobs:
       - name: sweep the open pull requests, merge one, test one again with the main of now
         id: sweep
         run: node scripts/gate.mjs sweep --merge --update --follow
-      # A merge made with this workflow's token starts no push workflow: start the deploy here.
-      - name: deploy
-        if: steps.sweep.outputs.merged == 'true' && steps.sweep.outputs.docs != 'true'
-        run: gh workflow run deploy.yml --ref main
+      # A merge made with this workflow's token starts no push workflow: scripts/gate.mjs starts the
+      # deploy itself right after each merge that is not docs only (mergeOne), so a merge made in an early
+      # round of --follow deploys at once, and a job killed by its timeout leaves nothing undeployed.
