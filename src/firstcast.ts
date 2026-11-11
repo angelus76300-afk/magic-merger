@@ -5,6 +5,9 @@
 // seconds in a row: seconds from page load, on the page's root as
 // data-first-cast-seen, which scripts/first-cast.mjs reads.
 
+import { setToastFloor } from "./toast";
+import "./firstcast.css";
+
 const SEEN_MS = 2000;
 
 export class FirstCastProbe {
@@ -41,4 +44,74 @@ function inSight(frame: HTMLIFrameElement, x: number, y: number): boolean {
     if (px >= b.left && px <= b.right && py >= b.top && py <= b.bottom) return false;
   }
   return true;
+}
+
+const HINT_KEY = "magic-merger.hint.move";
+const HINT_AFTER_MS = 3000;
+const NEWS_AFTER_MS = 4500;
+
+// What waits for the first cast of this visit to land and be held for three
+// seconds: one line on how to move the island (shown once per browser), then
+// what the World had to say (the week's new wonders).
+export class FirstCastGuide {
+  private landed = false;
+  private waiting: (() => void)[] = [];
+  private hint: HTMLElement | null = null;
+
+  afterFirstCast(say: () => void): void {
+    if (this.landed) say();
+    else this.waiting.push(say);
+  }
+
+  cast(stage: HTMLElement): void {
+    if (this.landed) return;
+    this.landed = true;
+    window.setTimeout(() => this.showHint(stage), HINT_AFTER_MS);
+    window.setTimeout(() => {
+      for (const say of this.waiting.splice(0)) say();
+    }, NEWS_AFTER_MS);
+  }
+
+  private showHint(stage: HTMLElement): void {
+    if (readSeen() || !stage.isConnected || !stage.getClientRects().length) return;
+    writeSeen();
+    const touch = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+    const box = document.createElement("div");
+    box.className = "move-hint";
+    box.setAttribute("role", "status");
+    const text = document.createElement("p");
+    text.textContent = touch
+      ? "One finger turns the island. Two fingers move it; pinch to zoom."
+      : "Drag to turn the island. Shift drag moves it; the wheel zooms.";
+    const ok = document.createElement("button");
+    ok.type = "button";
+    ok.textContent = "Got it";
+    ok.addEventListener("click", () => this.hideHint());
+    box.append(text, ok);
+    stage.append(box);
+    this.hint = box;
+    setToastFloor("hint", box.getBoundingClientRect().bottom);
+  }
+
+  hideHint(): void {
+    this.hint?.remove();
+    this.hint = null;
+    setToastFloor("hint", 0);
+  }
+}
+
+function readSeen(): boolean {
+  try {
+    return localStorage.getItem(HINT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeSeen(): void {
+  try {
+    localStorage.setItem(HINT_KEY, "1");
+  } catch {
+    // Storage full or off: the hint may show once more, no harm.
+  }
 }

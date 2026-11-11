@@ -20,8 +20,8 @@ import type { CastRequest } from "./sim/runtime";
 import type { SavedWorld } from "./sim/save";
 import { WORLD_SIZES, type WorldSize } from "./sim/sizes";
 import type { Store } from "./store";
-import { toast } from "./toast";
-import { FirstCastProbe } from "./firstcast";
+import { setToastFloor, toast } from "./toast";
+import { FirstCastGuide, FirstCastProbe } from "./firstcast";
 import { isQuotaError, warnStorageFull } from "./quota";
 import { WORLD_AT_KEY, WORLD_KEY, packIsland, readIslandText } from "./island-store";
 import { isFrozen } from "./device-save";
@@ -95,6 +95,8 @@ export class WorldHost {
   private expanded = readFlag(EXPAND_KEY);
   private checker = new Checker();
   private firstCast = new FirstCastProbe();
+  // What waits for the first cast to land: the hint, the week's news (2026-11-11).
+  private guide = new FirstCastGuide();
   private testing = new Set<string>();
   // 4.2: programs the Worker said it is writing, since when.
   private writing = new Map<string, number>();
@@ -369,6 +371,8 @@ export class WorldHost {
 
   hide(): void {
     this.shown = false;
+    setToastFloor("inspect", 0);
+    this.guide.hideHint();
     this.send({ type: "visible", visible: false });
   }
 
@@ -585,6 +589,7 @@ export class WorldHost {
         timeline.step(msg.key, this.store.get(msg.key)!.element.name, "cast");
         this.castInAttempt.push(msg.key);
         markUsed(msg.key);
+        if (!this.challenge) this.guide.cast(this.el.stage);
         void this.afterCast(msg.key);
         // In a grid the bar covers the island: fold it once a spell is used,
         // unless the player sized it by hand (the grip, below).
@@ -597,6 +602,9 @@ export class WorldHost {
         this.firstCast.view(this.frame, msg.n, msg.x, msg.y);
         break;
       case "inspect":
+        // Toasts stack below the island's inspect card (review of 10 November, bug 4).
+        setToastFloor("inspect", msg.bottom && this.frame ? this.frame.getBoundingClientRect().top + msg.bottom : 0);
+        if (msg.bottom) this.guide.hideHint();
         break;
       case "error":
         if (this.store.get(msg.key)) void this.repair(msg.key, msg.name, msg.message);
@@ -900,10 +908,16 @@ export class WorldHost {
     this.send({ type: "wonders", list: pool.wonders });
     const seen = readSeenWonders();
     const fresh = pool.week.filter((w) => !seen.includes(w.id));
-    if (fresh.length) {
-      writeSeenWonders([...seen, ...fresh.map((w) => w.id)]);
-      toast(`New on islands this week: ${listOf(fresh.map(wonderLabel))}. A new island may have them.`, "special");
-    }
+    // Said once, after the first cast has landed and been seen, never over
+    // it (2026-11-11), in one or two lines: the New island dialog lists them all.
+    if (fresh.length)
+      this.guide.afterFirstCast(() => {
+        if (!this.shown) return;
+        writeSeenWonders([...readSeenWonders(), ...fresh.map((w) => w.id)]);
+        const names = [...new Set(fresh.map((w) => w.kind))];
+        const said = names.length > 3 ? [...names.slice(0, 3), `${names.length - 3} more`] : names;
+        toast(`New on islands this week: ${listOf(said)}. A new island may have them.`, "special");
+      });
   }
 
   // The frame HUD, toggled by a long press on the title. Remembered per browser.

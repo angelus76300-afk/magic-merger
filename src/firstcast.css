@@ -1,0 +1,66 @@
+/* A first cast the newcomer sees (2026-11-11). Its own file: style.css and
+   theme.css are shared by many pull requests at once. */
+
+/* One line, once, after the first cast: how to move the island. At the top
+   of the island, clear of the tool rail; toasts stack below it (toast.ts). */
+.move-hint {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(440px, calc(100% - 20px));
+  box-sizing: border-box;
+  padding: 6px 6px 6px 14px;
+  border: 1px solid var(--lantern-hi);
+  border-radius: var(--radius);
+  background: rgb(21 29 51 / 94%);
+  color: var(--text);
+  box-shadow:
+    0 3px 0 var(--lip),
+    0 12px 26px rgb(0 0 0 / 45%);
+  animation: move-hint-in 0.25s ease-out;
+}
+
+.move-hint p {
+  margin: 0;
+  font: 600 15px/1.35 var(--font-body);
+}
+
+.move-hint button {
+  flex: none;
+  min-width: 64px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--lantern-hi);
+  border-radius: var(--radius);
+  background: var(--lantern);
+  color: var(--lantern-ink);
+  font: 700 15px/1 var(--font-body);
+  box-shadow: 0 3px 0 var(--lantern-lip);
+  cursor: pointer;
+}
+
+@keyframes move-hint-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .move-hint {
+    animation: none;
+  }
+}
+
+/* Craft below 700 px: with under 20 items the search and the filters only
+   take room from the list (177 px at 344 wide, 6 of the 8 forces in sight). */
+@media (max-width: 699px) {
+  .inventory.inventory-few #search,
+  .inventory.inventory-few .inventory-filters {
+    display: none;
+  }
+}

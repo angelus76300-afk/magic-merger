@@ -169,6 +169,9 @@ async function once(run) {
     if (/Tap the island to (cast|place)/.test(await page.locator("#world-status").innerText())) break;
     await page.waitForTimeout(500);
   }
+  // A person reads the line before tapping: a tap 15 ms after the chip's
+  // reached the frame before the spell did (2026-11-11), which no hand does.
+  await page.waitForTimeout(800);
   const taps = [];
   let seen = null;
   while ((await since()) < LIMIT_S) {
@@ -193,8 +196,8 @@ async function once(run) {
   await ctx.close();
   // The tap whose cast was seen: the last one at least two seconds before.
   const at = seen === null ? null : Number(seen);
-  const tap = at === null ? null : taps.filter((t) => t <= at - 1.9).length;
-  return { run, seen: at, tap, taps, errors };
+  const from = at === null ? null : taps.filter((t) => t <= at - 1.9).length;
+  return { run, seen: at, tap: from, taps, errors };
 }
 
 const results = [];

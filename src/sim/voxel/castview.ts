@@ -1,5 +1,5 @@
 import { Vector3 } from "three";
-import type { Engine } from "./engine";
+import type { Engine } from "../engine";
 
 // Where a cast is on screen (the first cast seen, 2026-11-11): the cell
 // projected through the camera, in the frame's CSS pixels, or null when it

@@ -6,6 +6,8 @@ import { floatAt, wonderInfo, type WonderInfo } from "./wonders";
 // what it does, then down to a village where play starts. About four
 // seconds a shot; a tap anywhere or Skip ends it at once. With reduced
 // motion the camera stays put and the card alone tells the same.
+// Since 2026-11-11 it waits for the island's first cast (frame.ts): it then
+// ends where the player was (`back`), and calls `onEnd` however it ends.
 
 const SHOT = 3.6;
 const RARITY: Record<string, string> = { common: "", uncommon: "uncommon", rare: "rare", legendary: "legendary" };
@@ -24,13 +26,27 @@ function listOf(items: string[]): string {
 
 const COUNT = ["no wonders", "one wonder", "two wonders", "three wonders", "four wonders", "five wonders"];
 
-export function firstLook(engine: Engine, card: HTMLElement, reducedMotion: boolean): () => void {
+export interface Pose {
+  tx: number;
+  ty: number;
+  dist: number;
+  phi: number;
+}
+
+// Where play starts on a new island: over a village, looking down at it.
+export function villageView(engine: Engine): Pose {
+  const world = engine.world;
+  const orbit = engine.view.orbit;
+  const home = world.creatures.find((c) => c.kind === "villager");
+  return { tx: home?.x ?? orbit.tx, ty: home?.y ?? orbit.ty, dist: Math.max(world.w, world.h) * 0.42, phi: 0.95 };
+}
+
+export function firstLook(engine: Engine, card: HTMLElement, reducedMotion: boolean, back?: Pose, onEnd?: () => void): () => void {
   const world = engine.world;
   const orbit = engine.view.orbit;
   const wonders: WonderInfo[] = world.wonders.map(wonderInfo);
   const name = world.islandName ?? "A new island";
-  const home = world.creatures.find((c) => c.kind === "villager");
-  const end = { tx: home?.x ?? orbit.tx, ty: home?.y ?? orbit.ty, dist: Math.max(world.w, world.h) * 0.42 };
+  const end = back ?? villageView(engine);
   let timer = 0;
   let spin = 0;
   let done = false;
@@ -48,7 +64,8 @@ export function firstLook(engine: Engine, card: HTMLElement, reducedMotion: bool
     clearInterval(spin);
     card.hidden = true;
     engine.canvas.removeEventListener("pointerdown", stop);
-    if (!reducedMotion) orbit.flyTo(end.tx, end.ty, end.dist, 0.95, 1.6);
+    if (!reducedMotion) orbit.flyTo(end.tx, end.ty, end.dist, end.phi, 1.6);
+    onEnd?.();
   }
   const intro = `${COUNT[Math.min(5, wonders.length)][0].toUpperCase()}${COUNT[Math.min(5, wonders.length)].slice(1)}: ${listOf(wonders.map((w) => w.label))}`;
   engine.canvas.addEventListener("pointerdown", stop);
