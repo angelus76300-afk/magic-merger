@@ -776,7 +776,10 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     // freely in the cell it is in, and a player pushing into the sea for a minute walked along a
     // shore line until its centre rounded into the deep cell, then on into it (a fish onto the
     // beach). Its own mind never pushes a wall that long.
-    if (rider && blocked(world, c.x, c.y, c, k, ox, oy) && !blocked(world, ox, oy, c, k, ox, oy)) {
+    // And the island's rim: wading on the shallow shelf, a player reached the edge of the world,
+    // where the island ends in the void (the frames of 12 November). Its own mind never goes there.
+    const rim = (x: number, y: number) => x < 3 || y < 3 || x > world.w - 4 || y > world.h - 4;
+    if (rider && (blocked(world, c.x, c.y, c, k, ox, oy) || (rim(c.x, c.y) && !rim(ox, oy))) && !blocked(world, ox, oy, c, k, ox, oy)) {
       c.x = ox;
       c.y = oy;
       c.sp *= 0.3;

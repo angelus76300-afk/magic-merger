@@ -374,11 +374,14 @@ let marked: Creature | null = null;
 const pointerEl = document.getElementById("pointer") as HTMLElement;
 function point(): void {
   requestAnimationFrame(point);
-  const c = watching && engine && marked && !marked.dead ? marked : null;
+  // The creature the player is has it too: under a roof or a tree it is still found at a glance (frames of 12 November).
+  const c = watching && engine && marked && !marked.dead ? marked : riding && engine && !riding.dead ? riding : null;
   const at = c && engine ? castOnScreen(engine, c.x, c.y, []) : null;
   pointerEl.hidden = !at;
-  if (!at || !c) return;
-  const lift = watchStats.px * (1.25 * Math.max(0.6, c.size) + 0.35) + c.z * watchStats.px * 0.5;
+  if (!at || !c || !engine) return;
+  const o = engine.view.orbit;
+  const px = riding === c ? canvas.getBoundingClientRect().height / (2 * o.dist * Math.tan((o.camera.fov * Math.PI) / 360)) : watchStats.px;
+  const lift = px * (1.25 * Math.max(0.6, c.size) + 0.35) + c.z * px * (riding === c ? 1 : 0.5);
   pointerEl.style.transform = `translate(${Math.round(at.x)}px, ${Math.round(at.y - lift)}px)`;
 }
 requestAnimationFrame(point);
@@ -649,7 +652,8 @@ requestAnimationFrame(ride);
     const rect = canvas.getBoundingClientRect();
     let best = Infinity;
     for (const o of engine.world.creatures) {
-      if (o.dead || o.kind.split("#")[0] !== find) continue;
+      // "power": any creature with an ability of its own.
+      if (o.dead || (find === "power" ? !powersOf(engine.world, o).length : o.kind.split("#")[0] !== find)) continue;
       const at = castOnScreen(engine, o.x, o.y, []);
       if (!at || at.y < 140 || at.y > rect.height - 150 || at.x < 30 || at.x > rect.width - 70) continue;
       const d = Math.hypot(at.x - rect.width / 2, at.y - rect.height / 2);

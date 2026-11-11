@@ -157,10 +157,25 @@ export function becomeChecks(check: Check): void {
       if (deep(c.x - 0.15, c.y - 0.15) && deep(c.x + 0.15, c.y - 0.15) && deep(c.x - 0.15, c.y + 0.15) && deep(c.x + 0.15, c.y + 0.15)) wet++;
       else if (deep(c.x, c.y)) edge++;
     });
+    // Then toward the nearest edge of the world, across whatever shallows lie that way.
+    const edges = [
+      { d: c.x, x: -1, y: 0 },
+      { d: c.y, x: 0, y: -1 },
+      { d: world.w - c.x, x: 1, y: 0 },
+      { d: world.h - c.y, x: 0, y: 1 },
+    ].sort((a, b) => a.d - b.d);
+    push(world, edges[0].x, edges[0].y);
+    run(world, rt, 40, () => {
+      awake(c);
+      c.hp = Math.max(c.hp, 50);
+      if (Math.min(c.x, c.y, world.w - 1 - c.x, world.h - 1 - c.y) < 2.9) outside++;
+      drown = Math.max(drown, c.drowning);
+      if (deep(c.x - 0.15, c.y - 0.15) && deep(c.x + 0.15, c.y - 0.15) && deep(c.x - 0.15, c.y + 0.15) && deep(c.x + 0.15, c.y + 0.15)) wet++;
+    });
     check(
       "become: pushed toward the sea, a villager never walks into deep water or off the island",
       wet === 0 && outside === 0 && drown < 0.5,
-      `sea ${sea.d.toFixed(0)} cells away, ended ${Math.hypot(c.x - sea.x, c.y - sea.y).toFixed(0)} cells from it; ${wet} ticks in deep water, ${edge} on its edge, drowning at most ${drown.toFixed(2)} s`,
+      `sea ${sea.d.toFixed(0)} cells away, ended ${Math.hypot(c.x - sea.x, c.y - sea.y).toFixed(0)} cells from it; ${wet} ticks in deep water, ${edge} on its edge, drowning at most ${drown.toFixed(2)} s; then toward the world's edge ${edges[0].d.toFixed(0)} cells away, ${outside} ticks past the rim, ended ${Math.min(c.x, c.y, world.w - 1 - c.x, world.h - 1 - c.y).toFixed(1)} cells from it`,
     );
   }
 
@@ -219,8 +234,8 @@ export function becomeChecks(check: Check): void {
       const moved = Math.hypot(fish.x - start.x, fish.y - start.y);
       check(
         "become: a possessed fish swims and stays in water",
-        !fish.dead && dry === 0 && edge < 10 && hp - fish.hp < 3 && moved > 1,
-        `${dry} ticks on land, ${edge} on the water's edge, ${(hp - fish.hp).toFixed(1)} hp lost, swam ${moved.toFixed(1)} cells toward land ${land.d.toFixed(0)} cells away`,
+        dry === 0 && edge < 10 && (fish.dead || hp - fish.hp < 3) && moved > 1,
+        `${dry} ticks on land, ${edge} on the water's edge, ${(hp - fish.hp).toFixed(1)} hp lost${fish.dead ? ` (caught: ${String(fish.data.eaten ?? "dead")})` : ""}, swam ${moved.toFixed(1)} cells toward land ${land.d.toFixed(0)} cells away`,
       );
       release(world);
     }

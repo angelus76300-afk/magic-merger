@@ -214,10 +214,12 @@
         font-size: 13px;
         font-weight: 500;
       }
+      /* Below the host's row of tools on a desktop (Chronicle, Sound: 44 px from
+         10 px), above its rail on a phone (from about 240 px down the frame). */
       #letgo {
         position: absolute;
         right: 10px;
-        top: 10px;
+        top: 64px;
         min-width: 44px;
         height: 44px;
         box-sizing: border-box;
@@ -262,18 +264,15 @@
         box-shadow: 0 3px 0 #05080f;
         pointer-events: none;
       }
+      /* On a phone, a Fold and a tablet the host's tool rail runs down the right
+         edge to the bottom of the frame (44 px and a 10 px margin): the buttons
+         keep clear of it at every width (the Sound button covered one at 700 px). */
       #powers {
         position: absolute;
-        right: 12px;
+        right: 62px;
         bottom: 16px;
         display: flex;
         gap: 10px;
-      }
-      /* Below 700 px the host's tool rail runs down the right edge: the buttons keep clear of it. */
-      @media (max-width: 699px) {
-        #powers {
-          right: 62px;
-        }
       }
       #powers button {
         position: relative;

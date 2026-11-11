@@ -116,7 +116,7 @@ export class OrbitCamera implements CameraControl {
       this.returnAt = 0;
       this.watched = null;
       // Close enough that the creature is the subject on a folded phone (344 px wide).
-      const dist = Math.max(9, Math.min(24, 8 + size * 7));
+      const dist = Math.max(9, Math.min(24, 7.5 + size * 6.5));
       this.chased = { x, y, z, hd: heading, dist, nudge: 0, tilt: 0, still: 9 };
       return;
     }
@@ -237,7 +237,7 @@ export class OrbitCamera implements CameraControl {
       const behind = Math.atan2(-Math.cos(ch.hd), -Math.sin(ch.hd)) + ch.nudge;
       const turn = Math.atan2(Math.sin(behind - this.theta), Math.cos(behind - this.theta));
       this.theta += turn * Math.min(1, dt * (reducedMotion ? 0.8 : 2.6));
-      this.phi += (1.1 + ch.tilt - this.phi) * Math.min(1, dt * (reducedMotion ? 1 : 3));
+      this.phi += (0.9 + ch.tilt - this.phi) * Math.min(1, dt * (reducedMotion ? 1 : 3));
       this.dist = Math.exp(Math.log(this.dist) + (Math.log(ch.dist) - Math.log(this.dist)) * Math.min(1, dt * (reducedMotion ? 1.2 : 2.5)));
     }
     // Look at the ground under the target, eased so hills do not jerk the view;
