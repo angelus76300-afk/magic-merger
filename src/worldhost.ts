@@ -21,6 +21,7 @@ import type { SavedWorld } from "./sim/save";
 import { WORLD_SIZES, type WorldSize } from "./sim/sizes";
 import type { Store } from "./store";
 import { toast } from "./toast";
+import { FirstCastProbe } from "./firstcast";
 import { isQuotaError, warnStorageFull } from "./quota";
 import { WORLD_AT_KEY, WORLD_KEY, packIsland, readIslandText } from "./island-store";
 import { isFrozen } from "./device-save";
@@ -93,6 +94,7 @@ export class WorldHost {
   );
   private expanded = readFlag(EXPAND_KEY);
   private checker = new Checker();
+  private firstCast = new FirstCastProbe();
   private testing = new Set<string>();
   // 4.2: programs the Worker said it is writing, since when.
   private writing = new Map<string, number>();
@@ -590,6 +592,11 @@ export class WorldHost {
           this.expanded = false;
           this.showExpand();
         }
+        break;
+      case "cast-view":
+        this.firstCast.view(this.frame, msg.n, msg.x, msg.y);
+        break;
+      case "inspect":
         break;
       case "error":
         if (this.store.get(msg.key)) void this.repair(msg.key, msg.name, msg.message);

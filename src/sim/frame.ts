@@ -11,6 +11,7 @@ import type { SavedWorld } from "./save";
 import { Hud } from "./hud";
 import { SCENARIOS } from "./scenarios";
 import { firstLook } from "./firstlook";
+import { castOnScreen, watchCast } from "./castview";
 import { readDef, setFinders, signatureOf, wonderInfo, type WonderDef } from "./wonders";
 
 // The pool of wonders written as programs (4.4.5 part C), checked: the page
@@ -48,6 +49,8 @@ let scenario: string | null = null;
 let hud: Hud | null = null;
 let hudOn = false;
 let perfTimer = 0;
+// Casts made in this frame, numbered for the page's first cast probe.
+let casts = 0;
 
 function send(msg: FromWorld): void {
   window.parent.postMessage(msg, "*");
@@ -80,6 +83,12 @@ const hooks = {
     if (engine.cast(selected, x, y)) {
       send({ type: "cast", key: selected.key });
       saveSoon();
+      // Where the cast is on screen for the next three seconds (castview.ts).
+      const n = casts++;
+      watchCast(
+        () => (engine ? castOnScreen(engine, x, y, [card, lookCard]) : null),
+        (at) => send({ type: "cast-view", n, x: at?.x ?? null, y: at?.y ?? null }),
+      );
     }
   },
 };
