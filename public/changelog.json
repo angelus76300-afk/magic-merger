@@ -2,10 +2,6 @@
   "about": "What's new in Magic Merger, one line per merged update, newest first. Players read it in the ? menu. A builder adds a line in the same pull request (docs/DAILY.md); idea is the Ideas tab id the update built, when it came from one.",
   "entries": [
     {
-      "date": "2026-11-10",
-      "text": "Houses now go up where you can see them. A village stakes out the ground and pays its wood, which lies there as a pile of logs, then its builders lay the footing, raise the frame and put up the walls before the roof goes on. Granaries, smithies and taverns go up the same way. A fire takes a house that is still going up. Tap a villager to see what its village is building."
-    },
-    {
       "date": "2026-11-08",
       "text": "Villages now build roads. People go to market in the next village and to see the wonders; villages that keep sending people mark out a road, then lay it cell by cell, with a plank bridge where a river is in the way. Busy lanes in a village are trodden into dirt roads. Everyone walks faster on a road and keeps to it, and the villager's card says where its village's roads go."
     },

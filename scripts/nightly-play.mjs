@@ -1,4 +1,4 @@
-// 4.5.2: the nightly long session on a random island, at phone size (docs/DAILY.md, "The night").
+// 4.5.2: the nightly long session on a random island, at phone size, then folded and unfolded (docs/DAILY.md, "The night").
 //
 //   MM_TOKEN=... node scripts/nightly-play.mjs <staging url> [--minutes 10] [--seed n] [--out dir]
 //
@@ -9,10 +9,17 @@
 // things floating, stuck, overlapping, flickering, invisible, nothing
 // happening after a cast), plus what a script can tell alone: page errors,
 // frame times in the page, and frames that never change.
+//
+// 2026-11-10, "folds: yes": the owner plays on a Z Fold, so the same session is
+// folded a third of the way through (344 by 882) and unfolded at two thirds
+// (700 by 830), as a player opens the phone mid-game (scripts/sizes.mjs). Right
+// after each change: a frame, and a finding if the page is wider than the
+// screen or the island's stage no longer fills its place. Same length as before.
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { FOLD } from "./sizes.mjs";
 
 const { chromium } = createRequire(import.meta.url)("playwright");
 const BASE = (process.argv[2] ?? "").replace(/\/$/, "");
@@ -89,7 +96,29 @@ try {
     window.__mmFrames = times;
   });
   const steps = Math.max(1, Math.round((MINUTES * 60) / 30));
+  // Fold at a third, unfold at two thirds (at least one frame apart from the cast and from each other).
+  const resizeAt = new Map([
+    [Math.max(3, Math.round(steps / 3)), FOLD[0]],
+    [Math.max(4, Math.round((2 * steps) / 3)), FOLD[1]],
+  ]);
+  let size = { name: "phone", width: 390, height: 844 };
   for (let i = 0; i <= steps; i++) {
+    const next = resizeAt.get(i);
+    if (next && i <= steps) {
+      await page.setViewportSize({ width: next.width, height: next.height });
+      size = next;
+      await page.waitForTimeout(1500);
+      const look = await page.evaluate(() => {
+        const stage = document.querySelector("#world-stage")?.getBoundingClientRect();
+        return { wide: document.documentElement.scrollWidth, stage: stage ? { w: Math.round(stage.width), h: Math.round(stage.height) } : null };
+      });
+      if (look.wide > next.width) note("wider than the screen", `${next.name} ${next.width}x${next.height}: the page is ${look.wide} px wide`);
+      if (!look.stage || look.stage.w < next.width * 0.9 || look.stage.h < 200)
+        note("island not filling the screen", `${next.name} ${next.width}x${next.height}: stage ${JSON.stringify(look.stage)}`);
+      const p = join(OUT, `t${String(i * 30).padStart(4, "0")}s-${next.name}-now.jpg`);
+      await page.screenshot({ path: p, type: "jpeg", quality: 70 });
+      console.log(`${next.name}: ${next.width}x${next.height}`);
+    }
     if (i === 2) {
       // One spell from the spell bar, cast in the middle of the island.
       await closeDialogs(page);
@@ -104,7 +133,7 @@ try {
     }
     const path = join(OUT, `t${String(i * 30).padStart(4, "0")}s.jpg`);
     await page.screenshot({ path, type: "jpeg", quality: 70 });
-    frames.push({ path, at: i * 30, hash: createHash("sha1").update(readFileSync(path)).digest("hex") });
+    frames.push({ path, at: i * 30, size: size.name, hash: createHash("sha1").update(readFileSync(path)).digest("hex") });
     if (i < steps) await page.waitForTimeout(30000);
   }
   const times = await page.evaluate(() => window.__mmFrames ?? []);

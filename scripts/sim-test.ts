@@ -12,6 +12,7 @@ import { interactionChecks } from "./interactions-test";
 import { sizeChecks } from "./sizes-test";
 import { roadsChecks } from "./roads-test";
 import { sitesChecks } from "./sites-test";
+import { dailyChecks } from "./daily-test";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
 import { logDeeds, mindOf, remember } from "../src/sim/kin";
@@ -2373,6 +2374,7 @@ fogChecks(check);
 // Roads (4.9): scripts/roads-test.ts.
 roadsChecks(check);
 sitesChecks(check);
+dailyChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);
