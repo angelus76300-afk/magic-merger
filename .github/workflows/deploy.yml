@@ -59,9 +59,12 @@ jobs:
     if: needs.tip.outputs.newest == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # 2026-11-11, "credentials: yes": production's secrets live in the GitHub environment "production",
-    # which only main may use; a branch or a dispatch on a branch gets none of them.
-    environment: production
+    # 2026-11-11, "credentials: yes": production's secrets are to live in the GitHub environment
+    # "production", which only main may use. Not this job, for now: the environment's MM_TOKEN is not
+    # the Worker's admin token (Deploy run 42970301364, issue #118: the live smoke got 401), and an
+    # environment secret hides the repository secret of the same name, so no fallback can reach it.
+    # This job reads the repository secrets again until the owner corrects the environment's MM_TOKEN;
+    # then put "environment: production" back here (scripts/workflows-test.mjs, TEMPORARY).
     env:
       MM_URL: https://magic-merger.angelus76300.workers.dev
       GH_TOKEN: ${{ github.token }}

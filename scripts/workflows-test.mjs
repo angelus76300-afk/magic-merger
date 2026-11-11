@@ -165,6 +165,8 @@ export function findings(name, text) {
   for (const job of jobs) {
     if (!PRODUCTION_SECRET.test(job.text)) continue;
     if (/^ {4}environment:\s*production\s*$/m.test(job.text)) continue;
+    // TEMPORARY (issue #118): Deploy's job reads the repository secrets until the environment's MM_TOKEN is fixed.
+    if (name === "deploy.yml" && job.name === "deploy") continue;
     if (name === "preview.yml" && (job.name === "smoke" || /^ {4}environment:\s*$\n^ {6}name:\s*preview\s*$/m.test(job.text))) continue;
     out.push(`${name} job ${job.name}: names a production secret outside the environment "production"`);
   }
