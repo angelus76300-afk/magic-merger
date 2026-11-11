@@ -71,6 +71,35 @@
         letter-spacing: 0.04em;
         text-transform: uppercase;
       }
+      #pointer {
+        position: absolute;
+        left: -9px;
+        top: -14px;
+        width: 0;
+        height: 0;
+        border: 9px solid transparent;
+        border-top: 13px solid #ffc23d;
+        border-bottom: 0;
+        filter: drop-shadow(0 2px 0 #05080f) drop-shadow(0 0 6px rgba(255, 194, 61, 0.7));
+        pointer-events: none;
+        animation: pointer-bob 0.9s ease-in-out infinite alternate;
+      }
+      #pointer[hidden] {
+        display: none;
+      }
+      @keyframes pointer-bob {
+        from {
+          margin-top: -4px;
+        }
+        to {
+          margin-top: 3px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #pointer {
+          animation: none;
+        }
+      }
       #watch {
         position: absolute;
         left: 10px;
@@ -116,7 +145,8 @@
         position: absolute;
         left: 10px;
         top: 10px;
-        width: min(300px, calc(100% - 20px));
+        /* Clear of the page's tools on the right edge of a folded phone. */
+        width: min(300px, calc(100% - 78px));
         box-sizing: border-box;
         padding: 10px 12px;
         border-radius: 12px;
@@ -161,9 +191,12 @@
         border: 0;
         background: none;
         color: #f3eedf;
-        font-size: 20px;
+        font-size: 22px;
         line-height: 1;
-        padding: 0 2px;
+        min-width: 44px;
+        min-height: 44px;
+        margin: -8px -10px -8px 0;
+        padding: 0;
         cursor: pointer;
       }
       #inspect .bar {
@@ -266,6 +299,7 @@
     <canvas id="overlay"></canvas>
     <div id="inspect" hidden aria-live="polite"></div>
     <div id="first-look" hidden aria-live="polite"></div>
+    <div id="pointer" hidden></div>
     <button id="story" type="button" hidden aria-live="polite"></button>
     <button id="watch" type="button" aria-pressed="false" title="Watch the island: the camera goes to what is happening">
       <svg viewBox="0 0 24 24" aria-hidden="true">

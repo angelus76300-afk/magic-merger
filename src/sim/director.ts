@@ -68,16 +68,23 @@ const LIFE: Record<string, number> = {
   beg: 22,
   repair: 26,
 };
+const MOVING = new Set(["herd", "graze", "patrol", "carry", "trade", "beg", "feed"]);
 const AGAIN = 60;
 const WIDE_EVERY = 6;
 // A wonder stands still: not again for three minutes. The same sort of shot (a house going up) not within forty seconds.
 const WONDER_AGAIN = 180;
-const SORT_AGAIN = 40;
+const SORT_AGAIN = 75;
 
 /** A villager's own name, the same after a reload: from what is saved of it (its look and its home). */
 export function nameOf(world: World, c: Creature): string {
   const seed = (Math.imul(c.look | 0, 2654435761) ^ Math.imul(Math.round(c.homeX) + 7, 40503) ^ Math.imul(Math.round(c.homeY) + 3, 69069)) >>> 0;
-  return wordOf(new Rng(seed || 1), world.land?.biome ?? "temperate");
+  const rng = new Rng(seed || 1);
+  // Never a village's own name: "Ishir the guard" in Ishir reads as the village.
+  for (let tries = 0; tries < 4; tries++) {
+    const name = wordOf(rng, world.land?.biome ?? "temperate");
+    if (!world.settlements.some((s) => s.name === name)) return name;
+  }
+  return wordOf(rng, world.land?.biome ?? "temperate");
 }
 
 const kindWord = (c: Creature): string => c.kind.split("#")[0];
@@ -90,8 +97,8 @@ export function whoIs(world: World, c: Creature): string {
   const title = c.mind?.title;
   if (title) return title;
   const job = jobOf(c);
-  const what = look.age === "child" ? "a child" : look.age === "elder" ? "an elder" : job === "none" ? "" : `the ${job}`;
-  return what ? `${nameOf(world, c)}, ${what},` : nameOf(world, c);
+  const name = nameOf(world, c);
+  return look.age === "child" ? `Little ${name}` : look.age === "elder" ? `Old ${name}` : job === "none" ? name : `${name} the ${job}`;
 }
 
 const lower = (c: Creature): string => (c.kind === "villager" ? "a villager" : `${article(kindWord(c)).toLowerCase()} ${kindWord(c)}`);
@@ -119,7 +126,7 @@ export function lifeLine(world: World, c: Creature): string {
   let action = c.mind?.action ?? "";
   const who = whoIs(world, c);
   if (action === "carrying it home") action = `carrying ${typeof c.mind?.carry === "string" ? c.mind.carry : "a load"} home`;
-  return /^[a-z]+ing\b/.test(action) || action.startsWith("on ") ? `${who} is ${action}` : `${who}: ${action || "looking around"}`;
+  return /^([a-z]+ing|on|at|in)\b/.test(action) ? `${who} is ${action}` : `${who}, ${action || "looking around"}`;
 }
 
 const capital = (s: string): string => (s ? s[0].toUpperCase() + s.slice(1) : s);
@@ -293,7 +300,9 @@ export class Director {
       else if (task === "raise" || task === "build" || task === "pave") {
         const cell = c.mind!.cell;
         if (cell >= 0 && !workers.has(cell) && Math.hypot(c.x - (cell % world.w), c.y - Math.floor(cell / world.w)) < 4) workers.set(cell, c);
-      } else if (LIFE[task] !== undefined && this.random() < 0.25) add("life", `c${c.id}`, task, LIFE[task], c.x, c.y, 5, lifeLine(world, c), [6, 10], c.id);
+      } else if (LIFE[task] !== undefined && (MOVING.has(task) || (c.mind?.work ?? 0) > 0) && this.random() < 0.25)
+        // Shown at the work, not on the way to it: "is fishing" in the village square is no picture.
+        add("life", `c${c.id}`, task, LIFE[task], c.x, c.y, 5, lifeLine(world, c), [6, 10], c.id);
     }
     // A building going up, while someone works on it.
     for (const s of world.sites) {
@@ -354,7 +363,7 @@ export class Director {
     }
     if (this.sinceWide >= WIDE_EVERY) {
       const v = world.settlements.length ? world.settlements[Math.floor(this.random() * world.settlements.length)] : null;
-      if (v) add("wide", `v${Math.round(v.x)}:${Math.round(v.y)}`, "wide", 33, v.x, v.y, 20, v.name || "The village", [5, 7]);
+      if (v) add("wide", `v${Math.round(v.x)}:${Math.round(v.y)}`, "wide", 33, v.x, v.y, 20, v.name ? `The village of ${v.name}` : "The village", [5, 7]);
       else add("wide", "island", "wide", 33, world.w / 2, world.h / 2, world.w * 0.4, world.islandName ?? "The island", [5, 7]);
     }
 

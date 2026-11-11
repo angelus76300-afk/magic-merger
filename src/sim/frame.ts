@@ -11,7 +11,7 @@ import type { SavedWorld } from "./save";
 import { Hud } from "./hud";
 import { SCENARIOS } from "./scenarios";
 import { firstLook, villageView, type Pose } from "./firstlook";
-import { Director, lifeLine, type Shot } from "./director";
+import { Director, lifeLine, nameOf, type Shot } from "./director";
 import { castOnScreen, watchCast } from "./voxel/castview";
 import { readDef, setFinders, signatureOf, wonderInfo, type WonderDef } from "./wonders";
 
@@ -64,6 +64,7 @@ let holdUntil = 0;
 let lastTouch = 0;
 let touring = false;
 let swallowTap = false;
+let quietUntil = 0;
 canvas.addEventListener(
   "pointerdown",
   () => {
@@ -89,7 +90,7 @@ const hooks = {
     if (!engine) return;
     // A tap that ended the tour of the island only ends it (2026-11-11): it
     // cast where the tour's camera pointed, and the camera then flew away.
-    if (swallowTap) {
+    if (swallowTap || performance.now() < quietUntil) {
       swallowTap = false;
       return;
     }
@@ -174,7 +175,12 @@ function closeInspect(): void {
 // its bottom edge is told whenever it changes, 0 once it is closed.
 let inspectBottom = -1;
 function reportInspect(): void {
-  const bottom = card.hidden ? 0 : Math.ceil(card.getBoundingClientRect().bottom);
+  // The story line counts too: a toast never lands on it.
+  const line = document.getElementById("story");
+  const bottom = Math.max(
+    card.hidden ? 0 : Math.ceil(card.getBoundingClientRect().bottom),
+    line && !line.hidden && !line.classList.contains("out") ? Math.ceil(line.getBoundingClientRect().bottom) : 0,
+  );
   if (bottom === inspectBottom) return;
   inspectBottom = bottom;
   send({ type: "inspect", bottom });
@@ -196,7 +202,13 @@ function drawInspect(): void {
   close.setAttribute("aria-label", "Close");
   close.addEventListener("click", closeInspect);
   const head = el("div", "head");
-  head.append(el("strong", "title", info.title), el("span", "sub", info.dead ? "dead" : info.subtitle), close);
+  // A villager is known by its name, as in the line that tells its story (director.ts).
+  const named = !a && inspected && inspected.kind === "villager" && !inspected.mind?.title ? nameOf(engine.world, inspected) : "";
+  head.append(
+    el("strong", "title", named || info.title),
+    el("span", "sub", info.dead ? "dead" : named ? `${info.title.toLowerCase()}, ${info.subtitle}` : info.subtitle),
+    close,
+  );
   const bars = el("div", "bars");
   for (const b of info.bars) {
     const row = el("div", "bar");
@@ -262,11 +274,13 @@ function say(text: string, go: boolean): void {
   storyEl.replaceChildren(el("span", "line", text), ...(go ? [el("span", "go", "Go")] : []));
   storyEl.hidden = !text;
   storyEl.classList.remove("out");
+  reportInspect();
 }
 
 function hush(): void {
   caption = "";
   storyEl.classList.add("out");
+  reportInspect();
   window.setTimeout(() => {
     if (!caption) storyEl.hidden = true;
   }, 400);
@@ -300,25 +314,38 @@ function stopWatch(back: boolean): void {
   watchEl.setAttribute("aria-pressed", "false");
   watchEl.lastElementChild!.textContent = "Watch";
   hush();
-  mark(null);
+  marked = null;
   lastTouch = performance.now();
   if (!engine) return;
   const o = engine.view.orbit;
   o.unwatch();
-  if (back && watchBack) o.flyTo(watchBack.tx, watchBack.ty, watchBack.dist, watchBack.phi, 1.2);
+  // Back where the player was, turned as they had it; taps in the next moment cast nothing (a double tap did).
+  if (back && watchBack) {
+    o.flyTo(watchBack.tx, watchBack.ty, watchBack.dist, watchBack.phi, 1.2, watchBack.theta);
+    quietUntil = performance.now() + 700;
+  }
   watchBack = null;
 }
 
-// The one the line is about wears the same light as a creature whose card is open.
+// The one the line is about has a pointer over its head: in a crowd of
+// villagers the line alone does not say which (playtest, 11 November).
 let marked: Creature | null = null;
-function mark(c: Creature | null): void {
-  if (marked === c) return;
-  if (marked && marked !== inspected) delete marked.data.inspected;
-  marked = c;
-  if (c) c.data.inspected = true;
+const pointerEl = document.getElementById("pointer") as HTMLElement;
+function point(): void {
+  requestAnimationFrame(point);
+  const c = watching && engine && marked && !marked.dead ? marked : null;
+  const at = c && engine ? castOnScreen(engine, c.x, c.y, []) : null;
+  pointerEl.hidden = !at;
+  if (!at || !c) return;
+  const lift = watchStats.px * (1.25 * Math.max(0.6, c.size) + 0.35) + c.z * watchStats.px * 0.5;
+  pointerEl.style.transform = `translate(${Math.round(at.x)}px, ${Math.round(at.y - lift)}px)`;
 }
+requestAnimationFrame(point);
 
 let watchUntilFree = 0;
+let autoStartedAt = -1e9;
+// The page shows something over the island (a dialog, another tab): nobody is watching.
+let away = false;
 function stepWatch(): void {
   if (!engine || !watching) return;
   const o = engine.view.orbit;
@@ -338,7 +365,7 @@ function stepWatch(): void {
   }
   // Close enough that a villager reads, never so close that it fills a wide screen.
   o.watch(shot.x, shot.y, Math.max(22, o.distanceFor(shot.r)));
-  mark(shot.who ? (engine.world.creatures.find((k) => k.id === shot.who) ?? null) : null);
+  marked = shot.who ? (engine.world.creatures.find((k) => k.id === shot.who) ?? null) : null;
   say(line, false);
   measureWatch(shot);
 }
@@ -363,6 +390,8 @@ canvas.addEventListener("pointerup", () => {
 });
 watchEl.addEventListener("click", () => {
   lastTouch = performance.now();
+  // It started by itself as the thumb came down: the press meant "watch", not "stop".
+  if (watching && performance.now() - autoStartedAt < 1500) return;
   if (watching) stopWatch(true);
   else startWatch();
 });
@@ -400,10 +429,13 @@ window.setInterval(() => {
   // Left alone: the camera goes to the stories by itself. Never during a
   // challenge, the tour or a card, or
   // with reduced motion (the button still starts it).
-  if (scenario || touring || !card.hidden || now < holdUntil || document.hidden || reduced()) return;
+  if (scenario || touring || away || !card.hidden || now < holdUntil || document.hidden || reduced()) return;
   const idle = now - lastTouch;
   const need = now - lastCastAt < 30_000 ? IDLE_CAST_MS : selected ? IDLE_SPELL_MS : IDLE_MS;
-  if (idle >= need) startWatch();
+  if (idle >= need) {
+    autoStartedAt = now;
+    startWatch();
+  }
 }, 250);
 
 // Library spells creatures and artifacts cast (3.7): asked of the page by
@@ -626,6 +658,11 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       break;
     case "sandbox":
       if (scenario) openSandbox();
+      break;
+    case "away":
+      away = msg.away;
+      if (away) stopWatch(false);
+      else lastTouch = performance.now();
       break;
     case "hud":
       showHud(msg.on);

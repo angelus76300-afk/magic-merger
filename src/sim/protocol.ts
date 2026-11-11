@@ -26,6 +26,8 @@ export type ToWorld =
   | { type: "scenario"; id: string; ahead?: number }
   | { type: "sandbox" }
   | { type: "hud"; on: boolean }
+  // Something of the page covers the island (a dialog) or the island is not the tab shown: it does not start watching by itself.
+  | { type: "away"; away: boolean }
   // Spells from the shared library the world asked for by name (3.7).
   | { type: "library"; spells: CastRequest[] }
   // What the island's chronicle is written from (3.7).
