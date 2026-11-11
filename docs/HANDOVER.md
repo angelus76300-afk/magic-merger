@@ -18,7 +18,7 @@ An experiment the owner asked for: one session leads and builds, instead of a pl
 
 | Work                                                   | State                                                                                                                                                                                                                                                                                                                            |
 | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The island tells its stories (#121)                    | Built, 21 checks, frames at both Fold sizes; in review. `docs/DESIGN.md`, "The island tells its stories"                                                                                                                                                                                                                         |
+| The island tells its stories (#121)                    | Live since 18:27 UTC on 11 November. `docs/DESIGN.md`, "The island tells its stories"                                                                                                                                                                                                                                            |
 | The tour of a new island plays when the island appears | In #121, at the owner's word of 11 November (it waited for the first cast for a day, #110)                                                                                                                                                                                                                                       |
 | The island needs you: the wildfire (#123)              | Built on the stories branch: engine, save field, camera, lines, Craft line, switch, stone, card line; 14 checks. The owner: "troubles: on", "size: village", "tiers: keep". Design page https://claude.ai/artifact/Lxi1Le5vyN38PVdzXxrmCL. Next troubles in order: drought, high water; a raid needs boats and raiders that live |
 | Production deploys                                     | Failed from 06:08 to 17:54 UTC on 11 November: the environment `production` held a wrong `MM_TOKEN`, then a Cloudflare token without D1. The owner fixed both; the Deploy of 17:54 passed. Issues #118 and #120 can be closed                                                                                                    |
@@ -34,16 +34,24 @@ An experiment the owner asked for: one session leads and builds, instead of a pl
 | The watch starts by itself after 15 s (40 s with a spell in hand)                | The owner's test is an untouched island that is never boring; looking for where to cast is not idleness             |
 | Villager names come from the look and the home                                   | Both are saved, ids are not stable across a reload                                                                  |
 
+### How the lead session works the pipeline while the planner is paused
+
+- The Gate does not wake by itself: start it with `actions_run_trigger` (`run_workflow`, `gate.yml`, ref `main`) once a pull request is green and reviewed.
+- After a workflow change lands on main, the Gate cannot bring a branch up to date: merge main into the branch by hand and ask the same reviewer session for its verdict on the merge commit.
+- The owner's yes is recorded by the lead session as the planner did (label and an `mm-owner` comment quoting the owner), saying it was typed in the lead session. A red workflow change is merged by the lead session only on the owner's explicit "merge" for it.
+- The dashboard: write `scripts/planner/planner.json`, run `node scripts/planner/to-dashboard.mjs <dir>`, upload `glance.json` as an asset of the dashboard, point the eleven datasets at it in one batch, delete the old asset.
+- `test:worker` has one check that can read a row before the Worker's queue wrote it ("votes: the rewrite is recorded, and paid by the voter"): it failed once in CI on a merge commit and passed on a re-run. Make it wait for the row when next in the Worker.
+
 ### The experiment's tally
 
-| Measure                               | Lead session                                  | Old setup, 5 to 10 November                          |
-| ------------------------------------- | --------------------------------------------- | ---------------------------------------------------- |
-| Updates live, by name                 | 0 (The island tells its stories is in review) | 35 pull requests merged, almost all small            |
-| Pull requests that needed a later fix | 0 of 0                                        | 6 of 35                                              |
-| Sessions started                      | 0 so far (1 reviewer to come)                 | about 95 review rounds, 40 re-reading merges of main |
-| Subagents                             | 2 (game designer, playtester)                 |                                                      |
-| The owner's time asked for            | 0 questions                                   |                                                      |
-| Usage                                 | not read yet                                  | paused 78 of 130 hours by limits                     |
+| Measure                               | Lead session                                                                                                          | Old setup, 5 to 10 November                          |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Updates live, by name                 | 1: The island tells its stories (live 18:27 UTC, 11 November). Built and in playtest: The island needs you (wildfire) | 35 pull requests merged, almost all small            |
+| Pull requests that needed a later fix | 0 of 0                                                                                                                | 6 of 35                                              |
+| Sessions started                      | 0 so far (1 reviewer to come)                                                                                         | about 95 review rounds, 40 re-reading merges of main |
+| Subagents                             | 2 (game designer, playtester)                                                                                         |                                                      |
+| The owner's time asked for            | 0 questions                                                                                                           |                                                      |
+| Usage                                 | The weekly limit read "warning" at 17:49 UTC on 11 November. Two reviewer sessions cost $0.38 and $1.47               | paused 78 of 130 hours by limits                     |
 
 ## The director's part (written 11 November 2026, 03:55 UTC)
 
