@@ -154,7 +154,7 @@ function woodsFor(world: World, s: Settlement, random: () => number): { x: numbe
   let best: { x: number; y: number } | null = null;
   let bestScore = 0;
   const wind = Math.hypot(world.wind.x, world.wind.y) || 1;
-  for (let k = 0; k < 40; k++) {
+  for (let k = 0; k < 80; k++) {
     const a = random() * Math.PI * 2;
     const d = 20 + random() * 14;
     const x = Math.round(s.x + Math.cos(a) * d);
@@ -167,6 +167,13 @@ function woodsFor(world: World, s: Settlement, random: () => number): { x: numbe
       if (world.cover[i] === C.WONDER || world.cover[i] === C.HOUSE) bad = true;
     });
     if (bad || trees < 8 || world.wonders.some((w) => Math.hypot(w.x - x, w.y - y) < w.r + 8)) continue;
+    // Well away from every house, not only from the village's center: on the preview's island a
+    // house stood at the wood's edge and burned twenty seconds after the first line.
+    let close = false;
+    near(world, x, y, 16, (i) => {
+      if (world.cover[i] === C.HOUSE) close = true;
+    });
+    if (close) continue;
     // The fire needs a way to the village: on sand and rock it dies where it started.
     let fuel = 0;
     const steps = Math.floor(d);

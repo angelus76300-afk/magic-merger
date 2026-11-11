@@ -173,6 +173,9 @@ export function troubleChecks(check: Check): void {
     let trees = 0;
     for (let i = 0; i < w2.n; i++) if (w2.cover[i] === C.TREE && w2.fire[i] > 0) trees++;
     check("troubles: it starts in the woods", trees > 0, String(trees));
+    let nearest = Infinity;
+    for (let i = 0; i < w2.n; i++) if (w2.cover[i] === C.HOUSE) nearest = Math.min(nearest, Math.hypot((i % w2.w) - t.x, Math.floor(i / w2.w) - t.y));
+    check("troubles: and at least sixteen cells from every house", nearest >= 16, nearest.toFixed(1));
     storyOn(null);
   }
 }
