@@ -14,6 +14,7 @@ import { firstLook, villageView, type Pose } from "./firstlook";
 import { fireOf, startWildfire, stoneAt, stoneLine, troubleLine, type Stone } from "./troubles";
 import { Director, lifeLine, nameOf, type Shot } from "./director";
 import { castOnScreen, watchCast } from "./voxel/castview";
+import { LAND } from "./voxel/terrain";
 import { readDef, setFinders, signatureOf, wonderInfo, type WonderDef } from "./wonders";
 
 // The pool of wonders written as programs (4.4.5 part C), checked: the page
@@ -502,6 +503,15 @@ window.setInterval(() => {
   if (!startWildfire(world)) world.troubleNext = world.time + 120;
   else saveSoon();
 }, 1000);
+
+// For the measure of a big spell: turns the one frame redraw of the land on or off and gives the
+// longest run of frames in which the land had chunks left to redraw since the last call.
+(window as unknown as { __mmLand?: (burst?: boolean) => { max: number; last: number } }).__mmLand = (burst) => {
+  if (burst !== undefined) LAND.burst = burst;
+  const out = { max: LAND.maxLag, last: LAND.lastLag };
+  LAND.maxLag = 0;
+  return out;
+};
 
 // For the checks that play a trouble in a browser (scripts/trouble-frames.mjs): starts one now, or says how it stands.
 (window as unknown as { __mmTrouble?: (peek?: boolean) => string }).__mmTrouble = (peek = false) => {
