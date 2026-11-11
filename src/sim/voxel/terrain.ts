@@ -51,7 +51,7 @@ interface ChunkMeshes {
 
 // For the measure of a big spell (scripts and the frame's own hook): the switch of the one frame
 // redraw, and the longest run of frames with land left to redraw.
-export const LAND = { burst: true, maxLag: 0, lastLag: 0 };
+export const LAND_REDRAW = { burst: true, maxLag: 0, lastLag: 0 };
 // Chunks changed at once from which the land is redrawn whole in one frame (rebuild).
 const BURST_CHUNKS = 10;
 
@@ -163,16 +163,16 @@ export class Terrain {
     // each frame while a backlog lasts, so a fire that spreads everywhere never stalls every frame.
     const now = performance.now();
     const backlog = this.dirtyLand.size + this.dirtyFluid.size;
-    const burst = !all && LAND.burst && backlog >= BURST_CHUNKS && now - this.burstAt > 1000;
+    const burst = !all && LAND_REDRAW.burst && backlog >= BURST_CHUNKS && now - this.burstAt > 1000;
     if (burst) this.burstAt = now;
-    const until = all || burst ? Infinity : now + (LAND.burst && backlog >= BURST_CHUNKS ? 8 : 3);
+    const until = all || burst ? Infinity : now + (LAND_REDRAW.burst && backlog >= BURST_CHUNKS ? 8 : 3);
     // How many frames in a row the land had chunks left to redraw: what "by sections" is, counted.
     if (backlog > 0) this.lag++;
     else {
-      if (this.lag > 0) LAND.lastLag = this.lag;
+      if (this.lag > 0) LAND_REDRAW.lastLag = this.lag;
       this.lag = 0;
     }
-    LAND.maxLag = Math.max(LAND.maxLag, this.lag);
+    LAND_REDRAW.maxLag = Math.max(LAND_REDRAW.maxLag, this.lag);
     let first = true;
     for (const c of this.dirtyLand) {
       if (!first && performance.now() > until) break;

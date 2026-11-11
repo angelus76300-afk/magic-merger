@@ -14,7 +14,7 @@ import { firstLook, villageView, type Pose } from "./firstlook";
 import { fireOf, startWildfire, stoneAt, stoneLine, troubleLine, type Stone } from "./troubles";
 import { Director, lifeLine, nameOf, type Shot } from "./director";
 import { castOnScreen, watchCast } from "./voxel/castview";
-import { LAND } from "./voxel/terrain";
+import { LAND_REDRAW } from "./voxel/terrain";
 import { readDef, setFinders, signatureOf, wonderInfo, type WonderDef } from "./wonders";
 
 // The pool of wonders written as programs (4.4.5 part C), checked: the page
@@ -507,9 +507,9 @@ window.setInterval(() => {
 // For the measure of a big spell: turns the one frame redraw of the land on or off and gives the
 // longest run of frames in which the land had chunks left to redraw since the last call.
 (window as unknown as { __mmLand?: (burst?: boolean) => { max: number; last: number } }).__mmLand = (burst) => {
-  if (burst !== undefined) LAND.burst = burst;
-  const out = { max: LAND.maxLag, last: LAND.lastLag };
-  LAND.maxLag = 0;
+  if (burst !== undefined) LAND_REDRAW.burst = burst;
+  const out = { max: LAND_REDRAW.maxLag, last: LAND_REDRAW.lastLag };
+  LAND_REDRAW.maxLag = 0;
   return out;
 };
 
