@@ -124,6 +124,28 @@ export function monsterChecks(check: Check): void {
     );
   }
 
+  // 1c. Water hurts what is in it, not a flier above it.
+  {
+    const { world, rt } = open();
+    let lake = -1;
+    for (let i = 0; i < world.n && lake < 0; i++) if (world.depth[i] > 1) lake = i;
+    const x = (lake % world.w) + 0.5;
+    const y = Math.floor(lake / world.w) + 0.5;
+    const code = `const spell = { creatures: [{ name: "marsh light", base: "spirit", flying: true, hp: 30, behavior: "wander", weak: ["water"] }], *cast(w) { w.spawn("marsh light", w.x, w.y); } };`;
+    rt.cast({ key: "t:marsh", name: "Marsh Light", tier: "minor", code, kind: "artifact", form: "creature" }, x, y);
+    stepHeadless(world, rt);
+    const light = world.creatures.find((c) => c.kind.startsWith("marsh light"));
+    for (let k = 0; k < 3 / TICK && light; k++) {
+      Object.assign(light, { x, y, z: 2 });
+      stepHeadless(world, rt);
+    }
+    check(
+      "monsters: a flier weak to water is not hurt flying above a lake",
+      lake >= 0 && !!light && !light.dead && light.hp >= 30,
+      `health ${light && Math.round(light.hp)}`,
+    );
+  }
+
   // 2. Villagers respect strength, against a creature an item made.
   {
     const { world, rt, at } = open();

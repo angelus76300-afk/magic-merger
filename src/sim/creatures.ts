@@ -515,7 +515,10 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     const age = ((c.data.age as number) ?? 0) + dt;
     c.data.age = age;
     if (ai.lifespan > 0 && age > ai.lifespan) c.hp = 0;
-    if (weak("water") && world.fluid[i] === F.WATER && world.depth[i] > 0.05) c.hp -= 40 * dt;
+    // Water hurts what is in it, not a flier above it (2026-11-11: a wisp awake on
+    // arrival died at two blocks over a lake).
+    const above = k.flying && c.z > 0.5;
+    if (weak("water") && !above && world.fluid[i] === F.WATER && world.depth[i] > 0.05) c.hp -= 40 * dt;
     if (weak("water") && world.gas[i] === S.STEAM) c.hp -= 10 * dt;
     if (weak("cold") && world.temp[i] < 2) c.hp -= 25 * dt;
     if (weak("fire") && (c.burning > 0 || world.temp[i] > 80)) c.hp -= 30 * dt;
