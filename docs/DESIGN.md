@@ -1059,7 +1059,7 @@ Villagers have a name (`nameOf`), made from what a save keeps of them, their loo
 
 ### Watching
 
-In the World frame (`frame.ts`): the Watch button, or the island left alone for 15 seconds (40 with a spell in hand, 12 in the half minute after a cast), starts it. Never during a challenge, the tour of a new island, an open card, on a new island before its first cast, or with reduced motion (the button still works). The camera eases to the shot and follows (`OrbitCamera.watch`), no closer than a villager needs to be read. A tap on the island ends it, casts nothing and brings the view back where it was; a drag or a pinch ends it and keeps the view where the story is. A spell's own camera shot comes before the watch.
+In the World frame (`frame.ts`): the Watch button, or the island left alone for 15 seconds (40 with a spell in hand, 12 in the half minute after a cast), starts it. Never during a challenge, the tour of a new island, an open card, or with reduced motion (the button still works). The camera eases to the shot and follows (`OrbitCamera.watch`), no closer than a villager needs to be read. A tap on the island ends it, casts nothing and brings the view back where it was; a drag or a pinch ends it and keeps the view where the story is. A spell's own camera shot comes before the watch.
 
 When nobody watches, a happening of weight 3 shows as one line on the island for five seconds, at most one every thirty; a tap on it goes there. A tapped creature's card has Follow, the same camera held on that one.
 
@@ -1068,3 +1068,7 @@ Nothing here gives the player an idea or a recipe: the island shows what it does
 ### Held to
 
 `scripts/director-test.ts` in `npm test`: the save holds no happening; a hunt going on beats a line about something over; six untouched minutes give a shot every second, 25 to 60 shots, none longer than 21 s, no subject twice in a minute. `scripts/watch-frames.mjs` plays it in a browser at the owner's Fold sizes and gives the number: the share of ten second windows in which the subject of the line is on screen with a villager at least 24 px tall. Before: 0. After: over 0.9 at 344 by 882 and 700 by 830.
+
+### The tour of a new island plays when the island appears
+
+For a day (10 to 11 November) the tour of a new island's wonders waited for the island's first cast, so that a newcomer's first tap was not spent on it. The owner did not like an island that arrives without its presentation. The tour plays at once again; what protected the first cast stays: a tap during the tour ends it and casts nothing, and the camera holds a cast for three seconds.

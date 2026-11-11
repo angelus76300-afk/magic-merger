@@ -54,16 +54,15 @@ let perfTimer = 0;
 let casts = 0;
 
 // A first cast the newcomer sees (2026-11-11, review of 10 November): the
-// tour of a new island's wonders waits until the island's first cast has
-// landed, the camera has held it for three seconds and the player has left
-// the island alone for eight; a tap during the tour ends it and casts nothing.
+// camera holds a cast for three seconds, and a tap during the tour of a new
+// island ends the tour and casts nothing (it cast where the tour's camera
+// pointed). The tour itself plays when the island appears: for a day it
+// waited for the island's first cast, and the owner did not like an island
+// that arrives without its presentation (11 November).
 const HOLD_MS = 3000;
-const QUIET_MS = 8000;
-let islandCasts = 0;
 let holdUntil = 0;
 let lastTouch = 0;
 let touring = false;
-let tourWaiting = false;
 let swallowTap = false;
 canvas.addEventListener(
   "pointerdown",
@@ -74,13 +73,6 @@ canvas.addEventListener(
   },
   { capture: true },
 );
-window.setInterval(() => {
-  const now = performance.now();
-  if (!engine || scenario || !tourWaiting || !islandCasts || now < holdUntil || now - lastTouch < QUIET_MS) return;
-  tourWaiting = false;
-  startTour(engine);
-}, 500);
-
 function send(msg: FromWorld): void {
   window.parent.postMessage(msg, "*");
 }
@@ -122,7 +114,6 @@ const hooks = {
       // The camera holds the cast for three seconds: nothing of the frame
       // moves it before then (the tour of the island waits, below).
       holdUntil = performance.now() + HOLD_MS;
-      islandCasts++;
       director.castAt(x, y, engine.world.time);
       lastCastAt = performance.now();
       // Where the cast is on screen for the next three seconds (castview.ts).
@@ -407,9 +398,9 @@ window.setInterval(() => {
     }, LINE_MS);
   }
   // Left alone: the camera goes to the stories by itself. Never during a
-  // challenge, the tour or a card, on a new island before its first cast, or
+  // challenge, the tour or a card, or
   // with reduced motion (the button still starts it).
-  if (scenario || touring || !card.hidden || (tourWaiting && !islandCasts) || now < holdUntil || document.hidden || reduced()) return;
+  if (scenario || touring || !card.hidden || now < holdUntil || document.hidden || reduced()) return;
   const idle = now - lastTouch;
   const need = now - lastCastAt < 30_000 ? IDLE_CAST_MS : selected ? IDLE_SPELL_MS : IDLE_MS;
   if (idle >= need) startWatch();
@@ -434,7 +425,6 @@ function mount(next: Engine): void {
   toldUntil = Infinity;
   stopLook?.();
   stopLook = null;
-  tourWaiting = false;
   touring = false;
   lookCard.hidden = true;
   engine?.dispose();
@@ -470,25 +460,15 @@ function showFirstLook(): void {
   if (!engine) return;
   const world = engine.world;
   send({ type: "island", name: world.islandName ?? "", signature: signatureOf(world.wonders.map((w) => w.kind)) });
-  // Play starts over a village; the tour waits for the first cast (above).
-  const start = villageView(engine);
-  engine.view.orbit.flyTo(start.tx, start.ty, start.dist, start.phi, 0.2);
-  islandCasts = 0;
-  tourWaiting = world.wonders.length > 0 || !!world.islandName;
+  // The island is presented as it appears, and play starts over a village when the tour ends.
+  if (world.wonders.length > 0 || world.islandName) startTour(engine, villageView(engine));
 }
 
-function startTour(on: Engine): void {
-  const o = on.view.orbit;
+function startTour(on: Engine, back: Pose): void {
   touring = true;
-  stopLook = firstLook(
-    on,
-    lookCard,
-    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
-    { tx: o.tx, ty: o.ty, dist: o.dist, phi: o.phi, theta: o.theta },
-    () => {
-      touring = false;
-    },
-  );
+  stopLook = firstLook(on, lookCard, window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false, back, () => {
+    touring = false;
+  });
 }
 
 // A cast is saved 2 s after it lands, not at the next 10 s tick: a reload
