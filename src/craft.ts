@@ -42,6 +42,10 @@ export function chipElement(element: GameElement, tag: "div" | "button" = "div")
 // 4.8: the Craft view's own small sounds (craftsound.ts).
 const sound = new CraftSound();
 
+// Below this many items the Craft list folds its search and filters away on
+// a narrow screen (2026-11-11): 10 fit at 344 wide without them.
+const FEW_ITEMS = 10;
+
 // The Craft tab: a board where chips are dropped onto each other, and the
 // inventory of everything discovered so far.
 export class Craft {
@@ -49,6 +53,7 @@ export class Craft {
   // Chips waiting for a merge answer cannot be touched.
   private busy = new Set<number>();
   private hovered: HTMLElement | null = null;
+  private filtersUsed = false;
   private tappedChip: number | null = null;
   // Called when this player finds something they did not have yet.
   // writing: the Worker started its program at the merge (4.2).
@@ -110,16 +115,29 @@ export class Craft {
       (d) => elementKey(d.element.name),
     );
     this.count.textContent = shown.length === all.length ? `${all.length} discovered` : `${shown.length} of ${all.length}`;
+    // Under 10 items, nothing to search: on a narrow screen the search and
+    // the filters fold away (firstcast.css), unless one is or was in use this
+    // visit (clearing a filter must not pull the row from under the finger).
+    if (this.search.value || this.filters.state.kind !== "all" || this.filters.state.tier !== "any") this.filtersUsed = true;
+    this.inventory.classList.toggle("inventory-few", all.length < FEW_ITEMS && !this.filtersUsed);
 
     const fragment = document.createDocumentFragment();
     for (const { element } of shown) {
       const item = chipElement(element, "button");
       item.classList.add("chip-inventory");
       item.title = `Add ${element.name} to the board`;
+      item.dataset.key = elementKey(element.name);
       this.wireInventoryItem(item, elementKey(element.name));
       fragment.append(item);
     }
     this.list.replaceChildren(fragment);
+  }
+
+  // A new item is scrolled into sight in the list (at 344 wide the list
+  // shows three rows once there are 59 items, 2026-11-10).
+  private showInList(key: string): void {
+    const item = [...this.list.querySelectorAll<HTMLElement>(".chip-inventory")].find((el) => el.dataset.key === key);
+    item?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }
 
   private wireInventoryItem(item: HTMLElement, key: string): void {
@@ -325,7 +343,10 @@ export class Craft {
         // Let the chip pop first, then celebrate with its card.
         window.setTimeout(() => openCard(this.store, chip.key, true), 700);
       } else if (newForMe) toast(`New: ${label}`);
-      if (newForMe) this.renderInventory();
+      if (newForMe) {
+        this.renderInventory();
+        this.showInList(chip.key);
+      }
       if (newForMe) this.onNewElement(chip.key, result.writing === true);
     } catch (err) {
       sound.stopWait();
