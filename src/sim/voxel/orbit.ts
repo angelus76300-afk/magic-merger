@@ -176,6 +176,11 @@ export class OrbitCamera implements CameraControl {
       this.dist,
     );
     this.camera.position.copy(target).add(offset);
+    // Never inside a hill: close to a villager on a slope, the eye would sit
+    // under the ground behind it and the screen fill with sand (the preview, 11 November).
+    const ex = this.camera.position.x + this.worldW / 2;
+    const ey = this.camera.position.z + this.worldH / 2;
+    if (ex >= 0 && ey >= 0 && ex < this.worldW && ey < this.worldH) this.camera.position.y = Math.max(this.camera.position.y, groundAt(ex, ey) + 2.5);
     if (this.shakeTime > 0 && !reducedMotion) {
       this.shakeTime -= dt;
       const s = this.shake * Math.min(1, this.dist / 60);

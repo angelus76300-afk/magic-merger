@@ -224,9 +224,13 @@ export class Director {
     }
     const o = s.other ? this.byId.get(s.other) : undefined;
     if (o && !o.dead && Math.hypot(o.x - c.x, o.y - c.y) < 40) {
-      s.x = (c.x + o.x) / 2;
-      s.y = (c.y + o.y) / 2;
-      s.r = Math.max(5, Math.hypot(o.x - c.x, o.y - c.y) / 2 + 4);
+      // Both in frame while they are near; from afar the frame stays on the
+      // one the line names, leaning toward the other, or both are specks.
+      const far = Math.hypot(o.x - c.x, o.y - c.y);
+      const lean = far <= 12 ? 0.5 : 6 / far;
+      s.x = c.x + (o.x - c.x) * lean;
+      s.y = c.y + (o.y - c.y) * lean;
+      s.r = Math.max(5, Math.min(far, 12) / 2 + 4);
     } else {
       s.x = c.x;
       s.y = c.y;
@@ -359,7 +363,7 @@ export class Director {
     for (const w of world.wonders) {
       // A rock that floats is looked at where it floats now.
       const at = w.kind === "floating rock" ? floatAt(world, w, now) : w;
-      add("wonder", `w${w.seed}`, "wonder", 11, at.x, at.y, Math.max(8, w.r * 1.4), capital(w.name), [6, 8]);
+      add("wonder", `w${w.seed}`, "wonder", 8, at.x, at.y, Math.max(8, w.r * 1.4), capital(w.name), [6, 8]);
     }
     if (this.sinceWide >= WIDE_EVERY) {
       const v = world.settlements.length ? world.settlements[Math.floor(this.random() * world.settlements.length)] : null;

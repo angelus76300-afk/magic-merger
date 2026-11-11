@@ -60,6 +60,16 @@ export function directorChecks(check: Check): void {
       !!d.shot && Math.abs(d.shot.x - 24) < 0.1 && d.shot.r >= 8,
       JSON.stringify(d.shot && [d.shot.x, d.shot.r]),
     );
+    // From afar the frame stays close on the hunter, leaning toward its prey: both in frame would be two specks.
+    deer.x = 56;
+    world.time += 0.3;
+    d.update(world);
+    check(
+      "director: a far prey does not widen the frame past reading",
+      !!d.shot && d.shot.r <= 10 && d.shot.x > 20 && d.shot.x < 30,
+      JSON.stringify(d.shot && [d.shot.x, d.shot.r]),
+    );
+    deer.x = 28;
     // The hunt ends: the shot is over within three seconds, and the tavern has its turn.
     m.task = "none";
     m.target = null;
