@@ -13,6 +13,7 @@ import { sizeChecks } from "./sizes-test";
 import { roadsChecks } from "./roads-test";
 import { sitesChecks } from "./sites-test";
 import { dailyChecks } from "./daily-test";
+import { monsterChecks } from "./monsters-test";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
 import { logDeeds, mindOf, remember } from "../src/sim/kin";
@@ -31,6 +32,7 @@ import { capByDepth } from "../shared/tiers";
 import { joinsBoth } from "../worker/prompts";
 import type { Job } from "./challenge-worker";
 import { MOTION_SEEDS, MOTION_SECONDS, type MotionReport } from "./motion-run";
+import { DAY_SECONDS, MONSTERS, median, type MonsterLife } from "./monsters-run";
 import { mergeMotion, motionLines, type KindMotion } from "../src/sim/motion";
 import { runCheck, type SceneReport } from "../src/sim/check";
 import { readResult } from "../src/checkresult";
@@ -123,6 +125,8 @@ const idle: Job[] = [
   { balance: "mixed", seed: 33, seconds: WIPE_AT + RECOVER_SECONDS, size: 208, wipeAt: WIPE_AT },
   ...BIOMES.map((balance, k) => ({ balance, seed: 51 + k, seconds: BALANCE_SECONDS, size: 112, wipeAt: -1 })),
   { balance: "temperate", seed: 3, seconds: WIPE_AT + RECOVER_SECONDS, size: 152, wipeAt: WIPE_AT },
+  // Monsters that live through their first day (2026-11-11): ten creature programs placed by the village.
+  ...MONSTERS.map((_, monster) => ({ monster })),
   ...Array.from({ length: SCENE_STREAMS }, (_, n) => ({ scene: n, seconds: SCENE_SECONDS })),
   // 4.4: every biome left alone for three simulated minutes, each on its
   // own shape (the shapes go round), so every biome and every shape lives.
@@ -146,6 +150,7 @@ const motion: Record<string, KindMotion> = {};
 const motionErrors: string[] = [];
 const lands: LandLife[] = [];
 const balances: Balance[] = [];
+const monsterRows: MonsterLife[] = [];
 const nextIdle = new Int32Array(new SharedArrayBuffer(4));
 const idleDone = Promise.all(
   Array.from({ length: Math.min(4, Math.max(2, availableParallelism() - 1)) }, () => {
@@ -162,8 +167,10 @@ const idleDone = Promise.all(
         rate,
         land,
         balance,
+        monster,
       }: {
         job: Job;
+        monster?: MonsterLife;
         land?: LandLife;
         balance?: Balance;
         motion?: MotionReport;
@@ -173,7 +180,8 @@ const idleDone = Promise.all(
         report?: SceneReport;
         verified?: { ok: boolean; wins: number; runs: number };
       }) => {
-        if (balance) balances.push(balance);
+        if (monster) monsterRows.push(monster);
+        else if (balance) balances.push(balance);
         else if (land) lands.push(land);
         else if (rate && "rate" in job) challengeRates.set(job.rate, rate);
         else if (moved) {
@@ -630,7 +638,11 @@ saveChecks(check);
   const spread = count();
   check("blight spreads", errors.length === 0 && spread > start * 2, `${start} then ${spread} cells${errors[0] ? ", " + errors[0] : ""}`);
   check("wolves hunt villagers", villagers() < before, `${before} then ${villagers()} villagers`);
-  check("ghouls burn by day", world.creatures.filter((c) => c.kind === "ghoul" && !c.dead).length === 0);
+  // 2026-11-11: a made creature daylight burns has its first minute to reach the
+  // shade (DESIGN, "Monsters that live"), so the ghouls are not burnt yet; that
+  // they burn when caught in the open after it is in monsters-test.ts.
+  const ghouls = world.creatures.filter((c) => c.kind === "ghoul");
+  check("ghouls are not burnt by day in their first minute", ghouls.length === 3 && ghouls.every((c) => !c.dead));
   for (let i = 0; i < world.n; i++) if (world.layerName("ground", world.ground[i]) === "blight") world.fire[i] = 1;
   for (let k = 0; k < 30 * 2; k++) step(world, rt);
   check("blight burns away", count() < spread * 0.3, `${count()} left`);
@@ -1180,6 +1192,35 @@ for (const scenario of SCENARIOS) {
 }
 
 await idleDone;
+// Monsters that live through their first day (2026-11-11, monsters-run.ts):
+// placed six cells from a house in the morning, the six monsters' median life
+// by day is over two minutes, the werewolf of the review of 10 November (dead
+// in 4 s before: asleep on arrival, then struck by a mob) lives through the
+// day, and no monster takes the island below the creature probe's 70% of
+// villagers ("the island did not hold").
+{
+  const rows = MONSTERS.map((m) => monsterRows.find((r) => r.name === m.name)!).filter(Boolean);
+  const lives = rows.map((r) => `${r.name} ${r.medianLife}`).join(", ");
+  check(
+    "monsters: all ten were followed, without an error",
+    rows.length === MONSTERS.length && rows.every((r) => !r.errors.length),
+    rows.flatMap((r) => r.errors).join("; "),
+  );
+  const hostile = rows.filter((r) => MONSTERS.find((m) => m.name === r.name)?.hostile);
+  check(
+    "monsters: the median life by day of a placed monster (the six that scare, hunt or turn people) is over 120 s",
+    hostile.length === 6 && median(hostile.map((r) => r.medianLife)) > 120,
+    lives,
+  );
+  const wolf = rows.find((r) => r.name === "Werewolf (review)");
+  check(
+    "monsters: the review's werewolf is awake on arrival (it goes more than 10 cells in its first minute) and lives through the day",
+    !!wolf && wolf.movedFirstMinute > 10 && wolf.aliveAtDusk === wolf.placed && wolf.medianLife >= DAY_SECONDS,
+    lives,
+  );
+  const fell = rows.filter((r) => r.villagersLeft < 0.7);
+  check("monsters: none leaves fewer than 70% of the villagers in five minutes", !fell.length, fell.map((r) => `${r.name} ${r.villagersLeft}`).join(", "));
+}
 // 4.4: every biome generated, populated and left alone for three minutes:
 // no species dies out, villages stand, rivers keep running, the sea does not
 // rise, nothing floods or burns by itself, the volcano keeps its lava.
@@ -2388,6 +2429,7 @@ fogChecks(check);
 roadsChecks(check);
 sitesChecks(check);
 dailyChecks(check);
+monsterChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);

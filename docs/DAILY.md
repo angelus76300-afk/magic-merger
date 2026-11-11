@@ -178,7 +178,7 @@ The night run looks at the frames as a person would (the vision check: a model r
 
 ## Usage guard
 
-Builders and reviewers share the owner's plan limits. When the 5-hour limit warns, the planner pauses the builders and reviewers (it tells them to stop at a safe point) and resumes them at its reset. It paces the weekly limit to its reset, on Tuesday: at most two builders running at once, and no new builder until one finishes.
+Builders and reviewers share the owner's plan limits. When the 5-hour limit warns, the planner pauses the builders and reviewers (it tells them to stop at a safe point) and resumes them at its reset. It paces the weekly limit to its reset, on Tuesday: at most two builders running at once while it reads "warning", and no new builder until one finishes. The hook `.claude/hooks/session-cap.mjs` holds the outer limit in code (2026-11-11, "lighter pipeline: yes"): a session that already has 3 builders running that it started itself is refused a fourth `create_session` (reviewers do not count) until it archives one that finished or reads it as finished with `get_session`. It counts from the caller's own transcript, so builders started by another session are counted by that session only.
 
 ## GitHub Actions minutes
 

@@ -274,9 +274,33 @@ Your checklist, in this order. Each line is a setting only you can change.
 10. Staging's own admin token: a new Actions secret `STAGING_ADMIN_TOKEN`, the second value, and the same name and value in the sessions' environment. The Staging workflow copies it to the staging Worker on its next run (Actions > Staging > Run workflow to do it now); previews, the reviewer and the night's checks then use it instead of production's.
 11. On the account page, signed in as yourself: check that the passkeys listed are all yours.
 
+**The production environment** (2026-11-11, "credentials: yes"). Since the pull request "Production secrets only on main", Deploy, Staging, Night, Judge and Ideas read `CLOUDFLARE_API_TOKEN` and `MM_TOKEN` from the GitHub environment `production`, which only `main` may use (Ideas runs main's copy through `pull_request_target`). A branch, or a run dispatched on a branch, gets neither. `scripts/workflows-test.mjs` fails if a job names either secret outside it. The preview is the one exception, with its own environment. Before you delete the two repository-level secrets:
+
+12. Settings > Environments > `preview` > Add environment secret `CLOUDFLARE_API_TOKEN`: a token of its own, made in Cloudflare (My Profile > API Tokens > Create Token > "Edit Cloudflare Workers" template, account `angelus76300`, then add **D1: Edit**). It still reaches the whole account, since Cloudflare cannot limit a token to one Worker; its own token means you can revoke it alone, and production's token is no longer in reach of a branch.
+13. Check that the repository secret `STAGING_ADMIN_TOKEN` exists (step 10): the preview's smoke test uses it once `MM_TOKEN` is gone.
+14. After one green Deploy run since the merge: Settings > Secrets and variables > Actions > Repository secrets, delete `CLOUDFLARE_API_TOKEN` and `MM_TOKEN`. Then open any ready pull request's Preview run and check that it still uploaded and its smoke passed.
+
+What stays open: the preview job runs a branch's own copy of `preview.yml` with the preview token, so a branch can still print that token (review of 10 November, section 3, item 2). Closing it means building the preview without secrets and uploading it from a workflow on `main` (`workflow_run`), which can only be tested once merged; it is listed as its own step.
+
 **Things to know**
 
 - Your email address is the author of the squash merges made on github.com (46 commits today). It becomes visible in the history; rewriting history to remove it is not worth the risk. To keep it out of future merges: GitHub Settings > Emails > **Keep my email addresses private**. Session commits use `noreply@anthropic.com`.
 - Issues become public, the Ideas routine's included. They hold the brief and the idea's text, never a player's name. The only one today, #14, is your own test.
 - The game's addresses, the Cloudflare account id in `wrangler.jsonc` and the names of the secrets are public from now on. None of them lets anyone act: every admin route needs the token's value, and staging lets nobody in without it.
 - A GitHub environment with a required reviewer is free on a public repository, so previews could wait for your approval (ROADMAP 4.5.1a item 1). Not set up: your answer of 5 November was to keep previews as they are, and a required reviewer would also stop the Gate from merging green work at night.
+
+## 8. A ruleset on main: required checks, no bypass (2026-11-11)
+
+What it adds: nothing reaches `main` unless CI passed on the pull request, whoever merges it (the Gate, the planner, a session acting as your account). Today that holds only in the Gate's own code. Free on a public repository. About 5 minutes, on github.com, signed in as yourself.
+
+1. Settings > Rules > Rulesets. Open the ruleset `main` from section 7, step 6 (or New ruleset > New branch ruleset, named `main`, Enforcement status **Active**, Target branches > Add target > **Include default branch**).
+2. **Bypass list: leave it empty.** Every session acts as your account, so a rule you may bypass does not stop a session.
+3. Tick **Restrict deletions** and **Block force pushes** (already on if section 7 was done).
+4. Tick **Require a pull request before merging**. Required approvals: **0** (every session posts as you, so an approval proves nothing, and you cannot approve your own pull requests). Allowed merge methods: **Squash** only.
+5. Tick **Require status checks to pass**. Add the check **`check`** (the CI job; type `check` and pick the one from GitHub Actions). Leave **Require branches to be up to date before merging unticked**: CI already tests the head merged with `main`, and the Gate tests it again when `main` moves, so ticking it would bring back the catch-up pushes this pipeline removed.
+6. Leave **Require deployments to succeed**, **Require signed commits** and **Require code scanning results** unticked: none of the pipeline's merges would pass them.
+7. **Create** (or **Save changes**).
+
+To check it worked: open any pull request that is not merged. The merge box lists `check` as **Required**. A direct push to `main` from a session is refused with "Changes must be made through a pull request".
+
+If something stops merging after this: the Gate's summary (Actions > Gate, the newest run) names the reason. To undo, set the ruleset's Enforcement status to **Disabled**; nothing else changes.

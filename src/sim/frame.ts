@@ -10,7 +10,8 @@ import type { CastRequest, Runtime } from "./runtime";
 import type { SavedWorld } from "./save";
 import { Hud } from "./hud";
 import { SCENARIOS } from "./scenarios";
-import { firstLook } from "./firstlook";
+import { firstLook, villageView } from "./firstlook";
+import { castOnScreen, watchCast } from "./voxel/castview";
 import { readDef, setFinders, signatureOf, wonderInfo, type WonderDef } from "./wonders";
 
 // The pool of wonders written as programs (4.4.5 part C), checked: the page
@@ -48,6 +49,35 @@ let scenario: string | null = null;
 let hud: Hud | null = null;
 let hudOn = false;
 let perfTimer = 0;
+// Casts made in this frame, numbered for the page's first cast probe.
+let casts = 0;
+
+// A first cast the newcomer sees (2026-11-11, review of 10 November): the
+// tour of a new island's wonders waits until the island's first cast has
+// landed, the camera has held it for three seconds and the player has left
+// the island alone for eight; a tap during the tour ends it and casts nothing.
+const HOLD_MS = 3000;
+const QUIET_MS = 8000;
+let islandCasts = 0;
+let holdUntil = 0;
+let lastTouch = 0;
+let touring = false;
+let tourWaiting = false;
+let swallowTap = false;
+canvas.addEventListener(
+  "pointerdown",
+  () => {
+    swallowTap = touring;
+    lastTouch = performance.now();
+  },
+  { capture: true },
+);
+window.setInterval(() => {
+  const now = performance.now();
+  if (!engine || scenario || !tourWaiting || !islandCasts || now < holdUntil || now - lastTouch < QUIET_MS) return;
+  tourWaiting = false;
+  startTour(engine);
+}, 500);
 
 function send(msg: FromWorld): void {
   window.parent.postMessage(msg, "*");
@@ -63,6 +93,12 @@ const hooks = {
   onError: (key: string, name: string, message: string) => send({ type: "error", key, name, message }),
   onTap: (x: number, y: number) => {
     if (!engine) return;
+    // A tap that ended the tour of the island only ends it (2026-11-11): it
+    // cast where the tour's camera pointed, and the camera then flew away.
+    if (swallowTap) {
+      swallowTap = false;
+      return;
+    }
     if (!selected) {
       // No spell in hand: a tap on a creature shows what it is doing (3.6).
       const c = creatureAt(engine.world, x, y);
@@ -80,6 +116,16 @@ const hooks = {
     if (engine.cast(selected, x, y)) {
       send({ type: "cast", key: selected.key });
       saveSoon();
+      // The camera holds the cast for three seconds: nothing of the frame
+      // moves it before then (the tour of the island waits, below).
+      holdUntil = performance.now() + HOLD_MS;
+      islandCasts++;
+      // Where the cast is on screen for the next three seconds (castview.ts).
+      const n = casts++;
+      watchCast(
+        () => (engine ? castOnScreen(engine, x, y, [card, lookCard]) : null),
+        (at) => send({ type: "cast-view", n, x: at?.x ?? null, y: at?.y ?? null }),
+      );
     }
   },
 };
@@ -98,6 +144,7 @@ function showInspect(c: Creature | null, a: Artifact | null = null): void {
   if (c) c.data.inspected = true;
   drawInspect();
   card.hidden = false;
+  reportInspect();
   clearInterval(inspectTimer);
   inspectTimer = window.setInterval(drawInspect, 500);
 }
@@ -115,6 +162,7 @@ function showWonder(info: ReturnType<typeof wonderInfo>): void {
   if (info.by) rows.append(el("dt", "", "Found by"), el("dd", "", info.by));
   card.replaceChildren(head, rows);
   card.hidden = false;
+  reportInspect();
 }
 
 function closeInspect(): void {
@@ -123,6 +171,17 @@ function closeInspect(): void {
   inspectedArtifact = null;
   card.hidden = true;
   clearInterval(inspectTimer);
+  reportInspect();
+}
+
+// The page's toasts stack below the card, never over its name (2026-11-11):
+// its bottom edge is told whenever it changes, 0 once it is closed.
+let inspectBottom = -1;
+function reportInspect(): void {
+  const bottom = card.hidden ? 0 : Math.ceil(card.getBoundingClientRect().bottom);
+  if (bottom === inspectBottom) return;
+  inspectBottom = bottom;
+  send({ type: "inspect", bottom });
 }
 
 function el(tag: string, cls: string, text = ""): HTMLElement {
@@ -156,6 +215,7 @@ function drawInspect(): void {
   const rows = el("dl", "rows");
   for (const [k, v] of info.rows) rows.append(el("dt", "", k), el("dd", "", v));
   card.replaceChildren(head, bars, rows);
+  reportInspect();
 }
 
 // Library spells creatures and artifacts cast (3.7): asked of the page by
@@ -174,6 +234,8 @@ function mount(next: Engine): void {
   closeInspect();
   stopLook?.();
   stopLook = null;
+  tourWaiting = false;
+  touring = false;
   lookCard.hidden = true;
   engine?.dispose();
   unbind?.();
@@ -208,8 +270,25 @@ function showFirstLook(): void {
   if (!engine) return;
   const world = engine.world;
   send({ type: "island", name: world.islandName ?? "", signature: signatureOf(world.wonders.map((w) => w.kind)) });
-  if (!world.wonders.length && !world.islandName) return;
-  stopLook = firstLook(engine, lookCard, window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
+  // Play starts over a village; the tour waits for the first cast (above).
+  const start = villageView(engine);
+  engine.view.orbit.flyTo(start.tx, start.ty, start.dist, start.phi, 0.2);
+  islandCasts = 0;
+  tourWaiting = world.wonders.length > 0 || !!world.islandName;
+}
+
+function startTour(on: Engine): void {
+  const o = on.view.orbit;
+  touring = true;
+  stopLook = firstLook(
+    on,
+    lookCard,
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+    { tx: o.tx, ty: o.ty, dist: o.dist, phi: o.phi, theta: o.theta },
+    () => {
+      touring = false;
+    },
+  );
 }
 
 // A cast is saved 2 s after it lands, not at the next 10 s tick: a reload
