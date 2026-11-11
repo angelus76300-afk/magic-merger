@@ -169,7 +169,7 @@ export const RULES = [
   {
     id: "R11",
     cls: "red",
-    what: "CI, deploys and secrets (.github/, .gitattributes), the agreements (CLAUDE.md, .claude/), the rules (docs/DAILY.md, docs/FEEDBACK.md, docs/REVIEWER.md) and their checks (scripts/risk.mjs, scripts/gate.mjs, scripts/smoke.mjs, the deploy error check and the loop metrics, with their tests)",
+    what: "CI, deploys and secrets (.github/, .gitattributes), the agreements (CLAUDE.md, .claude/), the rules (docs/DAILY.md, docs/FEEDBACK.md, docs/REVIEWER.md) and their checks (scripts/risk.mjs, scripts/gate.mjs, scripts/smoke.mjs and the sizes it checks, the deploy error check and the loop metrics, with their tests)",
     file: any([
       ".github/",
       ".claude/",
@@ -185,6 +185,7 @@ export const RULES = [
       "scripts/workflows-test.mjs",
       "scripts/gate.mjs",
       "scripts/smoke.mjs",
+      "scripts/sizes.mjs",
       "scripts/live-signals.mjs",
       "scripts/loop-metrics.mjs",
     ]),

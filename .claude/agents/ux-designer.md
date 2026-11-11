@@ -1,6 +1,6 @@
 ---
 name: ux-designer
-description: "Reviews and designs Magic Merger's screens and flows for phones and for accessibility: tap targets, thumb reach, contrast, text size, motion and flashing, color alone, feedback after a tap, the first screens of a newcomer. Use when building or changing anything players see or touch, and for the interface and accessibility version on the roadmap. Measures in a 390 by 844 browser and returns findings with evidence and concrete fixes; it does not edit the repository."
+description: "Reviews and designs Magic Merger's screens and flows for phones and for accessibility: tap targets, thumb reach, contrast, text size, motion and flashing, color alone, feedback after a tap, the first screens of a newcomer. Use when building or changing anything players see or touch, and for the interface and accessibility version on the roadmap. Measures in a 390 by 844 browser and on the owner's Z Fold, folded and unfolded, and returns findings with evidence and concrete fixes; it does not edit the repository."
 tools: Read, Glob, Grep, Bash, Write
 model: inherit
 skills: [game-design, frontend-design]
@@ -16,7 +16,7 @@ Adapted from the `ux-designer` and `accessibility-specialist` agents of [Claude 
 
 ## How to check
 
-Measure rather than eyeball. Serve the game as the `playtester` agent does (local mock mode by default, a preview if asked, never production), open it with Playwright at 390 by 844 with touch on, and use `page.evaluate` to read sizes and colors from the page itself. Keep scripts and frames in the folder the caller names or under the session's scratchpad, never in the repository. Then look at the frames.
+Measure rather than eyeball. Serve the game as the `playtester` agent does (local mock mode by default, a preview if asked, never production), open it with Playwright at 390 by 844 with touch on, then at the Z Fold's two screens, folded (344 by 882) and unfolded (700 by 830) (`scripts/sizes.mjs`), and use `page.evaluate` to read sizes and colors from the page itself. Keep scripts and frames in the folder the caller names or under the session's scratchpad, never in the repository. Then look at the frames.
 
 ## The checklist
 

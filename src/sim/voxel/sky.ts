@@ -17,6 +17,7 @@ import { DAY_LENGTH, MOON_DAYS, dayOf } from "../daylight";
 import { LOOKS, biomeAt, type Weather } from "../land";
 import { seeded } from "../noise";
 import type { World } from "../world";
+import { DROP_SHADER, dropShare } from "./drops";
 import { GRAPHICS } from "./graphics";
 
 // The sky of 4.4: a sun and a moon that cross it with the day, stars at
@@ -81,7 +82,9 @@ export function skyBodies(time: number): { sun: number; sunAz: number; moon: num
 const FAR = 1500;
 const DIR = new Vector3();
 const STARS = 700;
-const DROPS = 2400;
+// Enough for the tile of drops.ts to be as thick close up as the old box
+// was (2400 in a box of 30); far out a ninth of them show, as before.
+const DROPS = 21600;
 
 export class Sky {
   private group = new Group();
@@ -132,35 +135,25 @@ export class Sky {
     });
     this.stars = new Points(starGeometry, this.starMaterial);
     this.stars.frustumCulled = false;
-    // Rain and snow: points in a box around the camera's target, falling in
+    // Rain and snow: points fixed over the island (drops.ts), falling in
     // the vertex shader, so a frame costs nothing on the CPU.
     const drop = new Float32Array(DROPS * 3);
     for (let k = 0; k < DROPS * 3; k++) drop[k] = rand();
+    const rank = new Float32Array(DROPS);
+    for (let k = 0; k < DROPS; k++) rank[k] = rand();
     const dropGeometry = new BufferGeometry();
     dropGeometry.setAttribute("position", new BufferAttribute(drop, 3));
+    dropGeometry.setAttribute("rank", new BufferAttribute(rank, 1));
     this.dropMaterial = new ShaderMaterial({
       uniforms: {
         time: { value: 0 },
         center: { value: [0, 0, 0] },
-        box: { value: 60 },
-        amount: { value: 0 },
+        share: { value: 0 },
         snow: { value: 0 },
         tint: { value: new Color(0xffffff) },
         pixels: { value: 1 },
       },
-      vertexShader: `uniform float time; uniform vec3 center; uniform float box; uniform float amount; uniform float snow; uniform float pixels;
-        varying float vShow;
-        void main() {
-          vec3 p = position;
-          vShow = step(p.x * 0.37 + p.z * 0.63, amount);
-          float fall = mix(0.9, 0.12, snow);
-          p.y = fract(p.y - time * fall);
-          p.x = fract(p.x + snow * 0.05 * sin(time * 0.7 + p.z * 40.0) + time * 0.02);
-          vec3 w = center + vec3((p.x - 0.5) * box, (p.y - 0.25) * box * 0.6, (p.z - 0.5) * box);
-          vec4 mv = modelViewMatrix * vec4(w, 1.0);
-          gl_PointSize = mix(16.0, 6.0, snow) * pixels * 40.0 / max(4.0, -mv.z);
-          gl_Position = projectionMatrix * mv;
-        }`,
+      vertexShader: DROP_SHADER,
       fragmentShader: `uniform float snow; uniform vec3 tint; varying float vShow;
         void main() {
           if (vShow < 0.5) discard;
@@ -183,7 +176,8 @@ export class Sky {
     scene.add(this.group, this.drops);
   }
 
-  // Places the sky around the camera and the weather around its target.
+  // Places the sky around the camera; the rain and snow stay over the
+  // island and are drawn around the camera's target.
   // `night` is daylight's (0 to 1); `target` in scene units.
   update(time: number, night: number, camera: PerspectiveCamera, target: { x: number; y: number; z: number }, dist: number, pixels: number): void {
     // The weather of the region the camera looks at; moving to another
@@ -243,8 +237,7 @@ export class Sky {
       const u = this.dropMaterial.uniforms;
       u.time.value = time;
       u.center.value = [target.x, target.y, target.z];
-      u.box.value = Math.min(90, Math.max(30, dist * 0.9));
-      u.amount.value = cover;
+      u.share.value = dropShare(cover, dist);
       u.snow.value = this.weather.kind === "snow" ? 1 : 0;
       (u.tint.value as Color).setHex(this.weather.kind === "snow" ? 0xffffff : 0xb8c8dc).multiplyScalar(1 - night * 0.6);
       u.pixels.value = pixels;
