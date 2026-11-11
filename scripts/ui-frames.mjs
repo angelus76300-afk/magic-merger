@@ -1,7 +1,9 @@
 // Frames of every screen players see around the island, for a before and
 // after of an interface change: the real Worker (wrangler dev, a fresh local
-// D1, a stub Claude) and the built game in dist/, at a phone (390 by 844) and
-// the owner's foldable (832 by 1000) and a desktop (1440 by 900).
+// D1, a stub Claude) and the built game in dist/, at the five sizes every check
+// uses (scripts/sizes.mjs): a phone (390 by 844), the owner's Z Fold folded (344 by
+// 882) and unfolded (700 by 830), a foldable open (832 by 1000) and a desktop
+// (1440 by 900), plus a foldable and a phone on their side.
 //   npm run build && node scripts/ui-frames.mjs <out dir> [prefix]
 // It fails (exit code 1) when a visible control is under 44 by 44 px, when the
 // tabs are not at the bottom on a phone or foldable, or when the vote after a
@@ -14,6 +16,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { FRAME_SIZES } from "./sizes.mjs";
 
 const OUT = resolve(process.argv[2] ?? "frames");
 const PREFIX = process.argv[3] ?? "";
@@ -337,10 +340,9 @@ async function run(width, height, touch = false) {
 }
 
 try {
-  // SIZES="390x844,832x1000,1440x900" picks the sizes; by default a phone,
-  // the owner's foldable open and on its side (a touch screen, "t"), a
-  // desktop and a phone on its side.
-  const sizes = (process.env.SIZES ?? "390x844,832x1000,1104x884t,1440x900,844x390").split(",");
+  // SIZES="390x844,344x882t,1440x900" picks the sizes ("t": a touch screen); by
+  // default the five sizes, then a foldable and a phone on their side.
+  const sizes = (process.env.SIZES ?? FRAME_SIZES.join(",")).split(",");
   for (const s of sizes) {
     const [w, h] = s.replace("t", "").split("x").map(Number);
     await run(w, h, s.endsWith("t"));

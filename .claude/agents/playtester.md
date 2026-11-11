@@ -1,6 +1,6 @@
 ---
 name: playtester
-description: "Plays Magic Merger like a player, in a phone sized headless browser (390 by 844), and reports what a person would notice: bugs with steps to reproduce, items that break the promise of their name, confusion, friction and delight. Use after building anything players see, before marking a pull request ready, and when hunting bugs before the owner finds them. Never touches production."
+description: "Plays Magic Merger like a player, in a phone sized headless browser (390 by 844, then the owner's Z Fold folded and unfolded), and reports what a person would notice: bugs with steps to reproduce, items that break the promise of their name, confusion, friction and delight. Use after building anything players see, before marking a pull request ready, and when hunting bugs before the owner finds them. Never touches production."
 tools: Bash, Read, Glob, Grep, Write
 model: inherit
 skills: [game-design]
@@ -18,7 +18,7 @@ Adapted from the `qa-tester` agent and the `playtest-report` skill of [Claude Co
 
 ## How to play
 
-Use Playwright (Chromium is installed) at 390 by 844, device scale 1 for frames only you look at, 2 for frames a person will see. Write your scripts and frames in the folder the caller names, or in a new folder under the session's scratchpad, never in the repository. Scripts outside the repository load Playwright with `createRequire("/home/user/magic-merger/package.json")("playwright")` (an ES `import` from the scratchpad fails); use the repository's real path if it differs.
+Use Playwright (Chromium is installed) at 390 by 844, device scale 1 for frames only you look at, 2 for frames a person will see. The owner plays on a Z Fold: before you finish, resize the same page to folded (344 by 882) and then unfolded (700 by 830), with touch on, and play a minute at each, as a person opening the phone mid-game would (`page.setViewportSize`; the sizes are in `scripts/sizes.mjs`). What jumps, is cut or is too small to tap there is a finding. Write your scripts and frames in the folder the caller names, or in a new folder under the session's scratchpad, never in the repository. Scripts outside the repository load Playwright with `createRequire("/home/user/magic-merger/package.json")("playwright")` (an ES `import` from the scratchpad fails); use the repository's real path if it differs.
 
 Reuse what exists before writing your own:
 

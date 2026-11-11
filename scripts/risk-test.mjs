@@ -4,6 +4,7 @@
 //   npm run test:risk
 import { readFileSync } from "node:fs";
 import { classify, parseDiff, RULES, sectionsOf } from "./risk.mjs";
+import { FRAME_SIZES, SIZES } from "./sizes.mjs";
 
 let failed = 0;
 const check = (name, ok, detail = "") => {
@@ -213,6 +214,26 @@ check(
   listed.every((id) => RULES.some((r) => r.id === id)),
   listed.join(","),
 );
+
+// 2026-11-10, "folds: yes": the sizes every check uses are one list, red like the checks, and the rule says them.
+check("the sizes the checks use are red", cls([file("scripts/sizes.mjs", ["export const SIZES = [];"])]) === "red");
+{
+  const rule = readFileSync("CLAUDE.md", "utf8");
+  const said = SIZES.filter((z) => rule.includes(`${z.width} by ${z.height}`));
+  check(
+    "CLAUDE.md names the five sizes of scripts/sizes.mjs, the Z Fold's two among them",
+    SIZES.length === 5 && said.length === 5 && /five sizes/.test(rule) && SIZES.some((z) => z.width === 344) && SIZES.some((z) => z.width === 700),
+    SIZES.filter((z) => !said.includes(z))
+      .map((z) => `${z.width} by ${z.height}`)
+      .join(", "),
+  );
+  check(
+    "ui-frames takes every one of them by default",
+    SIZES.every((z) => FRAME_SIZES.includes(`${z.width}x${z.height}${z.touch ? "t" : ""}`)),
+  );
+  for (const script of ["scripts/smoke.mjs", "scripts/ui-frames.mjs", "scripts/nightly-play.mjs"])
+    check(`${script} reads its sizes from scripts/sizes.mjs`, /from "\.\/sizes\.mjs"/.test(readFileSync(script, "utf8")));
+}
 
 console.log(failed ? `${failed} failed` : "all risk checks passed");
 process.exit(failed ? 1 : 0);
