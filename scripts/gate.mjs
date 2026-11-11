@@ -1,7 +1,8 @@
 // 4.5.2: what may merge and what may deploy (docs/DAILY.md, "Risk classes").
 //
 //   node scripts/gate.mjs pr <number> [--merge]   is this pull request ready? With --merge, squash it.
-//   node scripts/gate.mjs sweep [--merge] [--update]   every open pull request (the merge queue, the Gate's one job).
+//   node scripts/gate.mjs sweep [--merge] [--update]   every open pull request (the merge queue, the Gate's one job;
+//                                                      --update starts CI again on one that CI tested with an older main).
 //   node scripts/gate.mjs deploy <sha> <deployments.json>   may main at <sha> go to production?
 //
 // Runs in GitHub Actions with GITHUB_TOKEN and GITHUB_REPOSITORY, from main's
@@ -18,8 +19,8 @@ import { classify, readGit } from "./risk.mjs";
 const ORDER = { green: 0, amber: 1, red: 2 };
 export const LABELS = { amber: "owner-ok", red: "owner-yes", hold: "hold", pause: "pause" };
 // A marker counts only at the start of a line, never quoted inside prose.
-// tests=pass: the reviewer ran npm test on that commit in its session and it passed (4.5.2: the
-// simulation's tests left GitHub Actions to save its minutes).
+// tests=pass|fail: the reviewer ran npm test in its session. Read and kept (a fail sticks), but since
+// 2026-11-11 CI runs npm test on the merge result, and the Gate asks the reviewer for it no longer.
 // Its fields may come in any order: verdict and sha are needed, raise and tests are optional.
 const REVIEW = /^<!--\s*mm-review\s+((?:[a-z]+=[0-9a-z]+\s*)+)-->/gm;
 const reviewFields = (text) => {
@@ -170,7 +171,7 @@ export function carriedReview({ head, base, comments, owner, git, classOf, limit
       c = parents[0];
     }
     if (!found) return no("no reviewed commit within reach of the head");
-    if (found.review.verdict !== "pass" || found.review.tests !== "pass") return no(`the review of ${found.sha.slice(0, 7)} did not pass with tests=pass`);
+    if (found.review.verdict !== "pass") return no(`the review of ${found.sha.slice(0, 7)} did not pass`);
     const ownFiles = new Set(
       git("diff", "--name-only", "--no-renames", git("merge-base", base, found.sha), found.sha)
         .split("\n")
@@ -246,107 +247,127 @@ export function decide(s) {
   if (s.smoke !== "pass" && !s.docsOnly) reasons.push(`preview smoke test not passed (${s.smoke})`);
   if (!s.review) reasons.push(`no independent review of the head commit${s.carry ? ` (an earlier review was not carried: ${s.carry})` : ""}`);
   else if (s.review.verdict !== "pass") reasons.push("the review blocks it");
-  if (!s.docsOnly && s.review?.tests !== "pass") reasons.push("npm test not reported passing on the head commit (the reviewer's tests=pass)");
+  // A reviewer's tests=fail still holds it: the reviewer saw npm test fail on this commit.
+  if (s.review?.tests === "fail") reasons.push("the reviewer reported npm test failing on the head commit");
   const records = s.records ?? new Set();
   const yes = s.labels.includes(LABELS.red) && records.has("yes");
   const ok = yes || (s.labels.includes(LABELS.amber) && records.has("ok"));
   if (cls === "amber" && !ok) reasons.push("amber: waits for the owner's OK in the morning brief (label owner-ok and the planner's mm-owner record)");
   if (cls === "red" && !yes) reasons.push("red: waits for the owner's explicit yes (label owner-yes and the planner's mm-owner record)");
   if (s.mergeable === false) reasons.push("conflicts with main");
-  // npm test runs in sessions on the head commit, not in Actions on what main becomes: the head must
-  // already contain main, or two pull requests tested apart could deploy together untested.
-  if (s.upToDate === false && !s.docsOnly) reasons.push("behind main: merge main into the branch, then the reviewer runs npm test on the new head");
+  // 2026-11-11: CI runs npm test on the head merged with main. upToDate: that main is the main of now
+  // (or main moved since only by docs), so two pull requests tested apart never deploy together untested.
+  // The branch itself need not contain main: the Gate starts CI again (retest), it pushes nothing.
+  if (s.upToDate === false && !s.docsOnly) reasons.push("CI tested it with an older main: the Gate starts CI again on the main of now (no push to the branch)");
   if (s.workflows) reasons.push("changes .github/workflows: the Gate's token cannot merge it; the planner merges it by hand after the owner's yes");
   return { cls, ready: reasons.length === 0, reasons };
 }
 
-// --- The merge queue (2026-11-08) ---
-// A ready pull request that is only behind main waited for its builder to merge main in. The Gate now
-// does it, one pull request at a time, oldest first, then lets the carry rules (carriedReview) decide.
+// --- The merge queue (2026-11-08; 2026-11-11 without pushes) ---
+// A ready pull request whose CI tested an older main waits for a new test. The Gate starts it, one
+// pull request at a time, oldest first: CI by workflow_dispatch on main, which merges main into the
+// head in the runner and pushes nothing (2026-11-11). The head does not move, so the review and the
+// preview of the head stand, and a workflow change on main stops nothing (the Gate's token may not
+// push one, and no longer needs to).
 
 const RUNNING = new Set(["queued", "in_progress", "waiting", "requested", "pending"]);
 
 /**
- * Whether the Gate may merge main into this pull request: everything it waits for is there except
- * being up to date, and GitHub says main merges into it without a conflict. Its head must be fully
- * green and reviewed already, so an update never turns a waiting pull request into a merge by itself.
+ * Whether the Gate may start CI again on this pull request: everything it waits for is there except a
+ * test with the main of now, and GitHub says main merges into it without a conflict.
  */
 export function updatable(s) {
   if (s.upToDate !== false || s.mergeable !== true || s.fork !== false || s.draft || s.paused || s.headFetched === false) return false;
-  // 2026-11-10 (review of #98): main's lines that the catch-up would bring must be known, and none of them
-  // a workflow: GitHub refuses that push from the Gate's token, and the queue would stop on it every sweep.
-  if (!Array.isArray(s.catchUp) || s.catchUp.some((p) => p.startsWith(".github/workflows/"))) return false;
   return decide({ ...s, upToDate: true }).ready;
 }
 
-/** A pull request that is up to date and still waits for its CI or preview: it may merge soon. */
+/** A pull request that would be ready once its running CI or preview finishes: it may merge soon. */
 export function inFlight(s) {
-  return s.upToDate === true && !s.draft && s.fork === false && (RUNNING.has(s.ci) || RUNNING.has(s.smoke));
+  if (s.draft || s.fork !== false || !(RUNNING.has(s.ci) || RUNNING.has(s.smoke))) return false;
+  return decide({ ...s, ci: "full", smoke: "pass", upToDate: true }).ready;
 }
 
 /**
- * Which pull request the sweep updates: the oldest one that is updatable, and none while another is
- * in flight (updating a second one would only make one of them stale again when the first merges).
- * prs: [{ number, state }]. Returns { update: number | null, why }.
+ * Which pull request the sweep tests again: the oldest one that is updatable, and none while another is
+ * in flight (a second test would only be made stale by the first one's merge).
+ * prs: [{ number, state }]. Returns { update: number | null, order, why }.
  */
 export function pickUpdate(prs) {
   const flying = prs.filter((p) => inFlight(p.state)).map((p) => p.number);
   const candidates = prs.filter((p) => updatable(p.state)).sort((a, b) => a.number - b.number);
-  if (!candidates.length) {
-    // Ready but for being behind, and refused only because the catch-up brings a workflow change.
-    // Only a catch-up that is known and holds a workflow path: an unknown one (null, git failed) is not named here.
-    const byHand = prs
-      .filter(
-        (p) => Array.isArray(p.state.catchUp) && p.state.catchUp.some((x) => x.startsWith(".github/workflows/")) && updatable({ ...p.state, catchUp: [] }),
-      )
-      .map((p) => p.number);
-    const why = byHand.length
-      ? `#${byHand.join(", #")} would be brought up to date, but main's catch-up brings a change to .github/workflows, which the Gate's token may not push: its builder merges main once`
-      : "no ready pull request is only behind main";
-    return { update: null, order: [], why };
-  }
+  if (!candidates.length) return { update: null, order: [], why: "no ready pull request waits only for a test with the main of now" };
   if (flying.length) return { update: null, order: [], why: `waiting for #${flying.join(", #")} to finish its checks first` };
-  // order: the sweep tries the next one when GitHub refuses an update, so one refusal never stops the queue.
+  // order: the sweep tries the next one when a dispatch is refused, so one refusal never stops the queue.
   return { update: candidates[0].number, order: candidates.map((p) => p.number), why: null };
 }
 
+/** The name a CI run the Gate starts carries (run-name in ci.yml): how the Gate finds it again. */
+export const retestName = (number, sha) => `CI for #${number} at ${sha}`;
+
 /**
- * 2026-11-10, "gate token: dispatch" (the owner's choice, 8 November): merge main into the branch with
- * the Gate's own token, wait for the new head, then start CI and Preview on it by workflow_dispatch
- * (a push made with this token starts no workflow; a dispatch does). Each dispatched run checks that
- * its commit is the head named here. Waits until both runs are listed, so the next sweep sees them
- * in flight and updates no second branch meanwhile. Returns what happened, in words.
+ * 2026-11-11: start CI on main's copy of ci.yml for this pull request's head (inputs pr and sha), which
+ * merges main in, runs everything, npm test included, and pushes nothing. Waits until the run is listed,
+ * so the next sweep sees it in flight and starts no second one meanwhile. Returns what happened, in words.
  *   call: (path, init?) => json (throws on an error); sleep: (ms) => promise
  */
-export async function bringUpToDate({ number, sha, call, sleep, waitMs = 60000 }) {
-  // expected_head_sha: if the builder pushed meanwhile, GitHub refuses and nothing changes.
-  await call(`pulls/${number}/update-branch`, { method: "PUT", body: JSON.stringify({ expected_head_sha: sha }) });
-  let head = null;
-  let ref = null;
+export async function bringUpToDate({ number, sha, call, sleep, waitMs = 30000 }) {
+  await call(`actions/workflows/ci.yml/dispatches`, { method: "POST", body: JSON.stringify({ ref: "main", inputs: { pr: String(number), sha } }) });
   for (let waited = 0; waited <= waitMs; waited += 3000) {
     if (waited) await sleep(3000);
-    const pr = await call(`pulls/${number}`);
-    if (pr?.head?.sha && pr.head.sha !== sha) {
-      head = pr.head.sha;
-      ref = pr.head.ref;
-      break;
-    }
+    const runs = (await call(`actions/workflows/ci.yml/runs?event=workflow_dispatch&per_page=30`))?.workflow_runs ?? [];
+    if (runs.some((r) => r.display_title === retestName(number, sha))) break;
   }
-  if (!head) return `asked GitHub to merge main into #${number}, but its head had not moved after ${waitMs / 1000} s: the next sweep looks again`;
-  for (const wf of ["ci.yml", "preview.yml"])
-    await call(`actions/workflows/${wf}/dispatches`, { method: "POST", body: JSON.stringify({ ref, inputs: { pr: String(number), sha: head } }) });
-  for (let waited = 0; waited <= 30000; waited += 3000) {
-    if (waited) await sleep(3000);
-    const names = new Set(((await call(`actions/runs?head_sha=${head}&per_page=50`))?.workflow_runs ?? []).map((r) => r.name));
-    if (names.has("CI") && names.has("Preview")) break;
-  }
-  return `merged main into #${number} (now ${head.slice(0, 7)}) and started its CI and preview; the carry rules decide on its review`;
+  return `started CI on #${number} (${sha.slice(0, 7)}) merged with the main of now; it merges once that passes`;
 }
 
 /**
- * The sweep's update, in turn: the first of `order` (at most three) that GitHub lets the Gate update.
- * A refusal (a conflict GitHub found after all, a push meanwhile) leaves that branch to its builder and
- * gives the next one its turn now, so one refused branch never holds the queue. Returns the lines to print.
+ * Squash one ready pull request, pinned to the head it judged, and start the deploy at once unless it
+ * changes only docs (a merge made with the Gate's token starts no push workflow). 2026-11-11, review of
+ * #117: a merge in an early round of --follow must not wait for the job's end to deploy.
+ *   call: (path, init?) => json (throws on an error). Throws only when the merge is refused; a deploy that
+ *   cannot be started is said in the result (the next Deploy run deploys every merge since the last one).
+ */
+export async function mergeOne({ number, sha, title, docsOnly, call }) {
+  await call(`pulls/${number}/merge`, { method: "PUT", body: JSON.stringify({ merge_method: "squash", sha, commit_title: `${title} (#${number})` }) });
+  if (docsOnly) return "merged (docs only, no deploy)";
+  try {
+    await call(`actions/workflows/deploy.yml/dispatches`, { method: "POST", body: JSON.stringify({ ref: "main" }) });
+  } catch (e) {
+    return `merged, but the deploy could not be started (${String(e?.message ?? e).slice(0, 120)})`;
+  }
+  return "merged, deploy started";
+}
+
+/**
+ * 2026-11-11, the Gate follows its own retest: wait until the CI run named `name` (retestName) has
+ * finished, reading the dispatched runs of ci.yml every 30 s, at most timeoutMs (notFoundMs if it never shows). Returns its conclusion,
+ * or "still running" / "not found" when the wait ends without one; the sweep runs again either way.
+ *   call: (path) => json; sleep: (ms) => promise
+ */
+export async function waitForRun({ name, call, sleep, timeoutMs = 30 * 60000, notFoundMs = 3 * 60000, everyMs = 30000 }) {
+  let seen = false;
+  for (let waited = 0; waited <= timeoutMs; waited += everyMs) {
+    if (waited) await sleep(everyMs);
+    // A run that never appears is not waited for long (review of #117: keep the rounds under the job timeout).
+    if (!seen && waited > notFoundMs) return "not found";
+    let runs = [];
+    try {
+      runs = (await call(`actions/workflows/ci.yml/runs?event=workflow_dispatch&per_page=30`))?.workflow_runs ?? [];
+    } catch {
+      continue; // a failed read: try again at the next tick
+    }
+    const run = runs.filter((r) => r.display_title === name).sort((a, b) => b.run_number - a.run_number)[0];
+    if (!run) continue;
+    seen = true;
+    if (run.status === "completed") return run.conclusion ?? "completed";
+  }
+  return seen ? "still running" : "not found";
+}
+
+/**
+ * The sweep's test, in turn: the first of `order` (at most three) that GitHub lets the Gate start.
+ * A refusal gives the next one its turn now, so one refused pull request never holds the queue.
+ * Returns the lines to print.
  *   bring: (number, sha) => promise of what happened, in words; throws when refused
  */
 export async function updateInTurn(order, queue, bring) {
@@ -358,7 +379,7 @@ export async function updateInTurn(order, queue, bring) {
       lines.push(`${await bring(n, sha)}.`);
       break;
     } catch (e) {
-      lines.push(`Could not bring #${n} up to date (${String(e?.message ?? e).slice(0, 160)}); the next one in line gets its turn.`);
+      lines.push(`Could not start CI on #${n} (${String(e?.message ?? e).slice(0, 160)}); the next one in line gets its turn.`);
     }
   }
   return lines;
@@ -404,8 +425,8 @@ async function paused() {
 // Nothing here runs in the game: docs, the skills, the changelog, the sessions' permission rules.
 // (Not the changelog: players read public/changelog.json in the live game.)
 /**
- * Whether a branch counts as containing main: it does, or main moved since only by docs (nothing
- * npm test sees changed). moved: the paths main changed since the branch's base, null if unknown.
+ * Whether CI's test still holds for the main of now: it tested with it, or main moved since only by docs
+ * (nothing npm test sees changed). moved: the paths main changed since the tested main, null if unknown.
  */
 export function upToDateFrom(ancestor, moved) {
   if (ancestor) return true;
@@ -425,33 +446,60 @@ export const ran = (r) => r?.conclusion !== "action_required" && r?.status !== "
  *   ghGet: (path) => json; sleep: (ms) => promise
  */
 
-export async function ciFrom(sha, ghGet, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), tries = 3, ghText = async () => null) {
+export async function ciFrom(sha, ghGet, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), tries = 3, ghText = async () => null, out = {}) {
   const runs = (await ghGet(`actions/runs?head_sha=${sha}&per_page=50`))?.workflow_runs ?? [];
-  // 2026-11-10: the Gate's own dispatch (the merge queue) counts only when no run of the pull request's
-  // own event exists on this commit: a dispatch refused because the branch moved must not hide it.
+  // 2026-11-11: the Gate's own runs are dispatched on main (head_sha is main's), named after the head.
+  const dispatched = ((await ghGet(`actions/workflows/ci.yml/runs?event=workflow_dispatch&per_page=50`))?.workflow_runs ?? []).filter(
+    (r) => typeof r.display_title === "string" && /^CI for #\d+ at [0-9a-f]{40}$/.test(r.display_title) && r.display_title.endsWith(` at ${sha}`),
+  );
   const newest = (rs) => rs.sort((a, b) => b.run_number - a.run_number)[0];
-  // A run waiting for an approval never ran (conclusion action_required): GitHub creates one for the
-  // pull_request event when the Gate's token updates a branch (seen live on #102, 10 November). It
-  // proves nothing and must not hide the run the Gate started itself.
-  const all = runs.filter((r) => r.name === "CI" && ran(r));
-  const ci = newest(all.filter((r) => r.event === "pull_request")) ?? newest(all);
+  // A run waiting for an approval never ran (conclusion action_required): it proves nothing and must
+  // not hide another run (seen live on #102, 10 November).
+  const seen = new Set();
+  const all = [...runs, ...dispatched].filter((r) => r.name === "CI" && ran(r) && !seen.has(r.id) && seen.add(r.id));
+  // The newest run decides: a test with a newer main that fails must hold the pull request.
+  const ci = newest(all);
   if (!ci) return "missing";
   if (ci.status !== "completed") return ci.status;
   if (ci.conclusion !== "success") return ci.conclusion;
   let job = null;
+  const mainOf = async (j) => {
+    // The main the run merged with: its notice, else its log line (scripts in ci.yml, "merge with main").
+    try {
+      const notes = (await ghGet(`check-runs/${j.id}/annotations`)) ?? [];
+      const n = notes.find((a) => a?.title === "Tested with main" && /^[0-9a-f]{40}$/.test(String(a.message ?? "").trim()));
+      if (n) return String(n.message).trim();
+    } catch {
+      // read from the log below
+    }
+    try {
+      const log = await ghText(`actions/jobs/${j.id}/logs`);
+      const m = typeof log === "string" ? /^\S*\s?Tested with main: ([0-9a-f]{40})\s*$/m.exec(log) : null;
+      if (m) return m[1];
+    } catch {
+      // unknown: the Gate tests again
+    }
+    return null;
+  };
   for (let i = 0; i < tries; i++) {
     if (i) await sleep(5000 * i);
     const jobs = (await ghGet(`actions/runs/${ci.id}/jobs`))?.jobs ?? [];
     job = jobs.find((j) => j.name === "check") ?? job;
     const steps = job?.steps ?? [];
     if (!steps.length) continue;
-    const test = steps.find((st) => st.name === "test:worker");
-    if (test?.conclusion === "success") return "full";
+    const worker = steps.find((st) => st.name === "test:worker");
+    const test = steps.find((st) => st.name === "test");
+    if (worker?.conclusion === "success" && test?.conclusion === "success") {
+      out.main = await mainOf(job);
+      return "full";
+    }
     // The light run skips test:worker; any other state of it is not a full pass.
-    return test?.conclusion === "skipped" ? "docs" : `test:worker ${test?.conclusion ?? "not found"}`;
+    if (worker?.conclusion === "skipped") return "docs";
+    if (worker?.conclusion === "success") return `test ${test?.conclusion ?? "not found"}`;
+    return `test:worker ${worker?.conclusion ?? "not found"}`;
   }
   // Still no steps (#89's run kept none after a re-run): the job's own log shows which steps ran. Only
-  // a successful check job whose log opens the test:worker step counts as full; anything else waits.
+  // a successful check job whose log opens the test and test:worker steps counts as full; anything else waits.
   if (job?.id && job.conclusion === "success") {
     let log = null;
     try {
@@ -459,7 +507,10 @@ export async function ciFrom(sha, ghGet, sleep = (ms) => new Promise((r) => setT
     } catch {
       log = null;
     }
-    if (typeof log === "string" && /^\S*\s?##\[group\]Run npm run test:worker\s*$/m.test(log)) return "full";
+    if (typeof log === "string" && /^\S*\s?##\[group\]Run npm run test:worker\s*$/m.test(log) && /^\S*\s?##\[group\]Run npm test\s*$/m.test(log)) {
+      out.main = await mainOf(job);
+      return "full";
+    }
     // A light run: the scope step said so in the log, and the last step that always runs began (the job
     // succeeded, so every step that began passed); test:worker never began.
     if (
@@ -479,7 +530,7 @@ async function ghText(path) {
   if (!res.ok) throw new Error(`GET ${path}: ${res.status}`);
   return res.text();
 }
-const ciOn = (sha) => ciFrom(sha, gh, undefined, 3, ghText);
+const ciOn = (sha, out) => ciFrom(sha, gh, undefined, 3, ghText, out);
 
 /** The preview smoke test of a commit: the newest Preview run that ran and whose smoke job ran (a run for a label skips it). ghGet: (path) => json */
 export async function smokeFrom(sha, ghGet) {
@@ -534,6 +585,8 @@ export async function prState(n) {
   const files = headFetched ? readGit(`origin/${pr.base.ref}`, sha) : [];
   const { cls, hits } = classify(files, { branch: pr.head.ref, title: pr.title });
   const comments = await allComments(n);
+  const tested = {};
+  const ci = await ciOn(sha, tested);
   return {
     pr,
     hits,
@@ -546,7 +599,8 @@ export async function prState(n) {
       draft: pr.draft,
       fork: headRepoOf(pr) !== REPO.toLowerCase(),
       paused: await paused(),
-      ci: await ciOn(sha),
+      ci,
+      testedMain: tested.main ?? null,
       smoke: await smokeFrom(sha, gh),
       ...(() => {
         // A review of the head itself, or one carried across clean merges of main (carriedReview).
@@ -557,21 +611,19 @@ export async function prState(n) {
         return { review, carry: why };
       })(),
       mergeable: pr.mergeable,
-      ...(() => {
-        let ancestor = false;
+      // 2026-11-11: up to date means CI tested the head merged with the main of now (or main moved since
+      // only by docs). The branch itself need not contain main.
+      upToDate: (() => {
+        const now = git("rev-parse", `origin/${pr.base.ref}`);
+        if (!tested.main) return false;
         let moved = null;
         try {
-          git("merge-base", "--is-ancestor", `origin/${pr.base.ref}`, sha);
-          ancestor = true;
+          git("merge-base", "--is-ancestor", tested.main, now);
+          moved = git("diff", "--name-only", tested.main, now).split("\n").filter(Boolean);
         } catch {
-          try {
-            moved = git("diff", "--name-only", `${sha}...origin/${pr.base.ref}`).split("\n").filter(Boolean);
-          } catch {
-            moved = null;
-          }
+          moved = null; // not on main any more, or not fetched: test again
         }
-        // What a catch-up merge would bring: the Gate's token may not push a change to a workflow.
-        return { upToDate: upToDateFrom(ancestor, moved), catchUp: ancestor ? [] : moved };
+        return upToDateFrom(tested.main === now, moved);
       })(),
       workflows: files.some((f) => f.path.startsWith(".github/workflows/")),
       docsOnly: headFetched && files.every((f) => DOCS_ONLY(f.path)),
@@ -662,66 +714,81 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     }
   } else if (cmd === "sweep") {
     // After a merge, and after any Gate run: every open pull request again, oldest first. Merges at most
-    // one (each merge leaves the others behind main), then updates at most one branch (pickUpdate).
-    const open = (await gh(`pulls?state=open&per_page=100&sort=created&direction=asc`)) ?? [];
-    const lines = [`### Sweep of ${open.length} open pull requests`];
-    let merged = false;
-    const states = [];
-    for (const p of open) {
-      if (p.draft || headRepoOf(p) !== REPO.toLowerCase()) continue;
-      let pr, state;
-      try {
-        ({ pr, state } = await prState(p.number));
-      } catch (e) {
-        lines.push(`- #${p.number}: could not be read (${String(e?.message ?? e).slice(0, 120)})`);
-        continue;
-      }
-      if (!state.open) continue;
-      const d = decide(state);
-      if (d.ready && !merged && process.argv.includes("--merge")) {
+    // one per round (each merge leaves the others behind main), then starts CI again on at most one.
+    // 2026-11-11, --follow: a CI run the Gate starts itself never wakes it (a run started with its token
+    // starts no workflow_run), and GitHub ran the 15 minute schedule once in four hours that day. So the
+    // Gate waits here for the run it started and sweeps again, up to ROUNDS rounds in one job.
+    const follow = process.argv.includes("--follow");
+    const ROUNDS = 4;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const all = [];
+    for (let round = 1; round <= (follow ? ROUNDS : 1); round++) {
+      const open = (await gh(`pulls?state=open&per_page=100&sort=created&direction=asc`)) ?? [];
+      const lines = [`### Sweep${follow ? ` ${round}` : ""} of ${open.length} open pull requests`];
+      let merged = false;
+      const states = [];
+      for (const p of open) {
+        if (p.draft || headRepoOf(p) !== REPO.toLowerCase()) continue;
+        let pr, state;
         try {
-          // sha: GitHub refuses if the head moved since it was judged.
-          await gh(`pulls/${p.number}/merge`, {
-            method: "PUT",
-            body: JSON.stringify({ merge_method: "squash", sha: pr.head.sha, commit_title: `${pr.title} (#${p.number})` }),
-          });
+          ({ pr, state } = await prState(p.number));
         } catch (e) {
-          lines.push(`- #${p.number}: ready, but GitHub refused the merge (${String(e?.message ?? e).slice(0, 160)})`);
+          lines.push(`- #${p.number}: could not be read (${String(e?.message ?? e).slice(0, 120)})`);
           continue;
         }
-        merged = true;
-        lines.push(`- merged #${p.number} (${d.cls})`);
-        if (process.env.GITHUB_OUTPUT) execFileSync("sh", ["-c", `echo merged=true >> "$GITHUB_OUTPUT"; echo docs=${state.docsOnly} >> "$GITHUB_OUTPUT"`]);
-        continue;
-      }
-      states.push({ number: p.number, state, sha: pr.head.sha });
-      lines.push(`- #${p.number} (${d.cls}): ${d.ready ? "ready" : d.reasons.join("; ")}`);
-    }
-    if (process.argv.includes("--update")) {
-      // A merge just now left every other branch behind main, and a merge made with the Gate's token
-      // starts no new Gate run: read them again before choosing, or the queue would stop here.
-      let queue = states;
-      if (merged) {
-        queue = [];
-        for (const p of states) {
+        if (!state.open) continue;
+        const d = decide(state);
+        if (d.ready && !merged && process.argv.includes("--merge")) {
+          let said;
           try {
-            const { pr, state } = await prState(p.number);
-            if (state.open) queue.push({ number: p.number, state, sha: pr.head.sha });
-          } catch {
-            // left for the next sweep
+            // sha: GitHub refuses if the head moved since it was judged.
+            said = await mergeOne({ number: p.number, sha: pr.head.sha, title: pr.title, docsOnly: state.docsOnly, call: gh });
+          } catch (e) {
+            lines.push(`- #${p.number}: ready, but GitHub refused the merge (${String(e?.message ?? e).slice(0, 160)})`);
+            continue;
+          }
+          merged = true;
+          lines.push(`- #${p.number} (${d.cls}): ${said}`);
+          continue;
+        }
+        states.push({ number: p.number, state, sha: pr.head.sha });
+        lines.push(`- #${p.number} (${d.cls}): ${d.ready ? "ready" : d.reasons.join("; ")}`);
+      }
+      let started = null;
+      if (process.argv.includes("--update")) {
+        // A merge just now left every other branch behind main, and a merge made with the Gate's token
+        // starts no new Gate run: read them again before choosing, or the queue would stop here.
+        let queue = states;
+        if (merged) {
+          queue = [];
+          for (const p of states) {
+            try {
+              const { pr, state } = await prState(p.number);
+              if (state.open) queue.push({ number: p.number, state, sha: pr.head.sha });
+            } catch {
+              // left for the next sweep
+            }
           }
         }
+        const { order, why } = pickUpdate(queue);
+        if (!order.length) lines.push(`No CI started: ${why}.`);
+        lines.push(
+          ...(await updateInTurn(order, queue, async (n, sha) => {
+            const said = await bringUpToDate({ number: n, sha, call: gh, sleep });
+            started = retestName(n, sha);
+            return said;
+          })),
+        );
+      } else {
+        const { update, why } = pickUpdate(states);
+        lines.push(update === null ? `No CI to start: ${why}.` : `Would start CI again on #${update} (with --update).`);
       }
-      const { order, why } = pickUpdate(queue);
-      if (!order.length) lines.push(`No branch updated: ${why}.`);
-      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-      lines.push(...(await updateInTurn(order, queue, (n, sha) => bringUpToDate({ number: n, sha, call: gh, sleep }))));
+      all.push(lines.join("\n"));
+      if (!follow || !started || round === ROUNDS) break;
+      const end = await waitForRun({ name: started, call: gh, sleep });
+      all.push(`Waited for "${started}": ${end}. Sweeping again.`);
     }
-    if (!process.argv.includes("--update")) {
-      const { update, why } = pickUpdate(states);
-      lines.push(update === null ? `No branch to bring up to date: ${why}.` : `Would bring #${update} up to date (with --update).`);
-    }
-    summary(lines.join("\n"));
+    summary(all.join("\n\n"));
   } else if (cmd === "deploy") {
     const s = await deployState(arg, process.argv[4]);
     const d = deployable(s);
