@@ -44,6 +44,19 @@ An experiment the owner asked for: one session leads and builds, instead of a pl
 - The dashboard: write `scripts/planner/planner.json`, run `node scripts/planner/to-dashboard.mjs <dir>`, upload `glance.json` as an asset of the dashboard, point the eleven datasets at it in one batch, delete the old asset.
 - `test:worker` has one check that can read a row before the Worker's queue wrote it ("votes: the rewrite is recorded, and paid by the voter"): it failed once in CI on a merge commit and passed on a re-run. Make it wait for the row when next in the Worker.
 
+### Next to build: "Become anything", first version (designed and challenged, 11 November)
+
+What the player gets: tap a creature, press Become on its card, and play as it. Decided after the game designer's challenge, so that it is built once:
+
+1. **Become, chase camera, fixed stick, Let go, the line "You are Mira the fisher".** The camera needs its own mode, `orbit.chase(x, y, z, heading)`: `watch` takes no heading or height and lets go at a touch. The stick is fixed at the bottom left, in the Watch button's place while possessed, and captures its own pointer; a floating stick would eat the tap that casts.
+2. **Walkers and swimmers steer through the engine's own steering** (`steer.ts`, `motion.ts`); the possessed creature's thinking is paused, everything else unchanged. **Flyers hold their altitude and the stick only banks**: altitude is a constant per kind, there is no climb or glide.
+3. **The creature's own abilities as buttons, two at most at 344 px**, calling the ability with its trigger skipped and the same `m.ready` cooldown and the creature cast cap as they are. No hold to repeat.
+4. **Cut from the first version**: the context action ("Do"), climb and glide, a death camera, road laying, casting spells while possessed (the tools are hidden; Let go first).
+5. **Guards**: at 0 health the player is thrown out and the creature lives or dies by the simulation's own rules. Fighting a trouble by hand slows it and never ends it: the right item must still matter.
+6. **Its thought line stays on screen** while you are it ("hungry", "afraid of the wolf"): a point without a goal system (`lifeLine` exists).
+7. **The number**: median seconds possessed per Become. Under 20 it is a toy tried once; over 60, add the Do button next (one unlabelled button that sets the creature's own task on what is in front, `setTask`, with an icon of the target and no words). The simulation's p95 stays unchanged.
+   No paid call, no save change, stored spells untouched: green.
+
 ### The owner's words of 11 November, and what follows from them
 
 - "troubles: on", "size: village", "tiers: keep (but we could imagine reworking the classification system)": the wildfire. A proposal for what tiers should mean is owed after its numbers.
