@@ -55,6 +55,7 @@ Most of these are planned together in 5.3.
 - **A rune circle** on the ground where a spell is cast, its color by tier. S, Claude.
 - **Spell cards with a picture**: a frame of the spell's own test run as its thumbnail. M, Claude.
 - **Lanterns at night** in villages, and glowing windows. S, Claude.
+- **Puddles and wet ground after rain**: when a spell of rain eases out, the ground under it stays darker and shinier for a minute and small puddles shine on flat cells, then dry. The player feels the weather happened to the island, not just in front of the camera, and a burnt patch next to a wet one tells a story. View only, like the weather (no saving, no simulation change); one darkening term in the terrain shader. S, Claude.
 
 - **Wonders written by Claude drawn like the built-in ones**: today a daily wonder can only place whole-cell voxels, so it comes out as towers of cubes (`docs/visual-checks/4.4.5-c/program-wonders.jpg`) while the seventeen built-in wonders are box models with fine parts (`src/sim/voxel/wonders.ts`). Give the wonder program a look of up to about 60 boxes of any size and the same helpers the built-ins use (lump, tree, column, arch, ring, crystal cluster, a part that glows at night), drawn by the same renderer for one or two draw calls and no voxel budget; keep voxels for what must burn, fall or be climbed. In the prompt, one built-in wonder as an example and "a clear silhouette, varied proportions, few fine parts" instead of "solid, dense shapes". No new paid call. S, Claude. Planned in 4.7.
 

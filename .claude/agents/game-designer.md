@@ -36,7 +36,7 @@ A design the builder can work from, in this shape, as short as the feature allow
 1. **The feeling** it targets and the loop it feeds.
 2. **The rules**, precise enough to build without guessing.
 3. **The numbers**, each with its knob kind (feel, curve, gate), range and reason.
-4. **Edge cases**: zero, maximum, two at once, offline, a phone at 390 by 844, a player who never reads text.
+4. **Edge cases**: zero, maximum, two at once, offline, a phone at 390 by 844 and the owner's Z Fold, folded and unfolded, a player who never reads text.
 5. **The degenerate case** and its guard.
 6. **How a playtest will tell** whether it worked: what to look at, and one number before and after.
 7. **Owner questions**, only if any: each with options and a recommendation.
