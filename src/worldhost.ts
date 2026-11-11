@@ -954,7 +954,7 @@ export class WorldHost {
       this.send({ type: "troubles", on: box.checked });
     });
     const words = document.createElement("span");
-    words.textContent = "Troubles come to my villages (a fire in the woods, for a start). Off: nothing happens that I did not cast.";
+    words.textContent = "Troubles come to my villages (a fire in the woods, for a start). Off: no trouble comes by itself.";
     troubles.append(box, words);
     d.replaceChildren(title, grid, hint, fresh, troubles, warn, actions);
     d.showModal();

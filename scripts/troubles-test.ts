@@ -3,9 +3,9 @@
 // what is left of the village, kept in the save, and first for the director.
 import { populate } from "../src/sim/creatures";
 import { Director } from "../src/sim/director";
-import { storyOn } from "../src/sim/kin";
+import { storyOn, tell } from "../src/sim/kin";
 import { DEFAULT_LAND, resolveLand } from "../src/sim/land";
-import { C } from "../src/sim/materials";
+import { C, F } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
 import { Runtime } from "../src/sim/runtime";
 import { loadWorld, saveWorld } from "../src/sim/save";
@@ -42,10 +42,16 @@ function burn(
     for (let k = 0; k < 30; k++) stepHeadless(world, rt);
     seconds++;
     if (answerAt !== null && seconds === answerAt) {
-      world.fire.fill(0);
-      // What was hot enough to catch again is cooled too, as rain would.
-      for (let i = 0; i < world.n; i++) world.temp[i] = Math.min(world.temp[i], 20);
+      // The item is cast, and then does its work as rain would: every fire out, and the ground
+      // between the fire and the houses under water, so the front finds nothing to burn.
       noteCast(world, "rain", "Rain", "", t.x, t.y);
+      world.fire.fill(0);
+      for (let i = 0; i < world.n; i++) {
+        world.temp[i] = Math.min(world.temp[i], 20);
+        const cx = i % world.w;
+        const cy = Math.floor(i / world.w);
+        if (Math.hypot(cx - t.x, cy - t.y) < 40 && world.cover[i] !== C.HOUSE) world.setFluid(i, F.WATER, 0.6);
+      }
     }
   }
   storyOn(null);
@@ -89,6 +95,30 @@ export function troubleChecks(check: Check): void {
       back?.stones.length === 1 && back.stones[0].item === "Rain" && back.troubles === 1 && back.trouble === null,
     );
   }
+  // 2b. A cast that does not reduce the fire earns nothing: Fire thrown at the fire is no answer (the playtest saw it thanked).
+  {
+    const { world, rt } = island(2026);
+    const t = startWildfire(world, seeded(2026))!;
+    let seconds = 0;
+    while (world.trouble && seconds < 400) {
+      for (let k = 0; k < 30; k++) stepHeadless(world, rt);
+      seconds++;
+      // Every ten seconds an item is cast at it that changes nothing.
+      if (seconds % 10 === 0 && world.trouble) noteCast(world, "fire", "Fire", "", t.x, t.y);
+    }
+    const end = world.troubleEnd;
+    check(
+      "troubles: an item that did not reduce the fire gets no thanks and no stone",
+      !!end && end.by === null && end.outcome !== "saved" && world.stones.length === 0 && !/Fire (put out|stopped)/.test(end.line),
+      `${end?.outcome}: ${end?.line}`,
+    );
+    check(
+      "troubles: such casts were noted, and the fire went on to the houses",
+      t.casts.length > 0 && t.stage === 3,
+      `${t.casts.length} casts, stage ${t.stage}`,
+    );
+    storyOn(null);
+  }
   // 3. A trouble running is saved and goes on after a reload; what is not a trouble in a save is dropped.
   {
     const { world, rt } = island(21);
@@ -109,6 +139,14 @@ export function troubleChecks(check: Check): void {
     const d = new Director(() => 0.5);
     const shot = d.update(world).shot;
     check("troubles: the director's camera goes to the trouble first", shot?.sort === "trouble" && shot.caption === troubleLine(world.trouble!), shot?.caption);
+    // While it lasts the watch shows nothing else, whatever happens elsewhere, and leaves it when it is over.
+    tell(world, "a child was born in the village", { x: 5, y: 5 });
+    world.time += 30;
+    check("troubles: the watch stays on the trouble while it lasts", d.update(world).shot?.sort === "trouble");
+    const was = world.trouble;
+    world.trouble = null;
+    check("troubles: and goes back to the island's stories when it is over", d.update(world).shot?.sort !== "trouble");
+    world.trouble = was;
     storyOn(null);
   }
   // 4. Its size follows the island's history: from the fourth trouble it may take a third of the village.

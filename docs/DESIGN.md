@@ -1081,7 +1081,7 @@ Measured before: merging never needed the island and the island never needed a m
 
 Something that happens to one of the player's villages and that the right item answers (`troubles.ts`). One at a time, at most one every ten minutes of island time, the first after three. The World frame starts one only while the player is playing: a touch in the last minute, no tour, no challenge, nothing of the page over the island, the island's switch on. The island stops while the player is on the Craft tab, so a trouble waits for them there; the board shows one line of it.
 
-It is shown, never explained. The story tells what is seen ("fire in the woods north-west of Kapan", "the fire is coming toward Kapan", "Kapan is burning"), the director's camera goes to it first and comes back to it every twenty five seconds, and the line stays on the island with Go for those not watching. No objective, no hint, no recipe: the owner declined them.
+It is shown, never explained. The story tells what is seen ("fire in the woods north-west of Kapan", "the fire is coming toward Kapan", "Kapan is burning"), while it lasts the watch shows nothing else (the front, then the front and the village in turn once houses burn), and the line stays on the island with Go for those not watching. No objective, no hint, no recipe: the owner declined them.
 
 ### The wildfire
 
@@ -1091,7 +1091,11 @@ It never ends on a clock. It ends when nothing has burned for three seconds. It 
 
 ### How it ended
 
-By what is left of the village: saved (nothing lost, and an item cast at it within forty seconds of the end), scarred (a house or people lost), lost (the cap reached, from the fourth trouble on), held (nothing lost, but the village sat under a shield more than half the time: a dome is not an answer), spent (it burned out with nobody's help). Fit beats power: a spell that ends the fire and the village with it leaves a village lost.
+By what is left of the village: saved (nothing lost, and an item answered it), scarred (a house or people lost), lost (the cap reached, from the fourth trouble on), held (nothing lost, but the village sat under a shield more than half the time: a dome is not an answer), spent (it burned out with nobody's help). Fit beats power: a spell that ends the fire and the village with it leaves a village lost.
+
+**What counts as an answer.** While the wind drives the fire, an item cast at it that holds the fire under three tenths of what burned, for three seconds, against the wind's relighting. Then the wind drops and the fire dies. A moment's quiet is not an answer (the front flares up again), and neither is anything cast at it that changes nothing: the first playtest saw Fire thrown at the fire given a stone, under a rule that thanked the last cast. The front does not light ground under water, frozen ground or ground behind a shield against fire. A tap on the island while watching, with a spell in hand, casts it there.
+
+**Its width.** A hamlet's fire is three cells wide, a village's seven, a town's twelve, and each trouble an island has had adds two, up to eight more. The first playtest saved a hamlet with Water from the starting bar and felt no reason to go to the board; a front wider than a small spell covers is that reason.
 
 A village saved by an item raises a stone to it by its plaza, one per village; a tap reads it. The stone does nothing: no bonus, no currency (village mana was declined). The player's own card of that item gains the line, kept on their device and never shown to others, since it would be a recipe.
 

@@ -56,7 +56,16 @@ export interface Trouble {
   checks: number;
   warded: number;
   // What the player cast at it, newest last: the item's key and name, its emoji, and when.
-  casts: { key: string; name: string; emoji: string; t: number }[];
+  // What was cast at it: `n` is what burned then, `low` the seconds since that the fire has been
+  // held under three tenths of it while the wind kept lighting the front. Three such seconds
+  // make it the answer: the wind drops (`answer`), and the fire dies. A Fire thrown at the fire
+  // holds nothing down, and the playtest saw it given a stone under an earlier rule.
+  casts: { key: string; name: string; emoji: string; t: number; n: number; low: number }[];
+  answer?: { key: string; name: string; emoji: string; t: number };
+  // How wide its front is, in cells either side of its way to the house.
+  width: number;
+  // It reached what it may take, and died down round the houses by itself.
+  capped?: boolean;
 }
 
 // What a village keeps of the item that saved it: one stone, one line.
@@ -87,7 +96,7 @@ const REACH = 46;
 export const TROUBLE_EVERY = 600;
 export const TROUBLE_FIRST = 180;
 // A cast counts as the answer when the fire is out within this many seconds of it.
-const ANSWER_WITHIN = 40;
+const ANSWER_WITHIN = 60;
 // The fire's front comes on at a pace a player can read and answer: cells a
 // second. Left to the engine a brush fire is over, or in the houses, within
 // half a minute (measured on five islands).
@@ -223,6 +232,9 @@ export function startWildfire(world: World, random: () => number = Math.random):
       // A house is four cells. At most a third of the village; one house in an island's first three troubles.
       cap: early ? 4 : Math.max(4, Math.floor(houses / 12) * 4),
       front: r + 2,
+      // A hamlet's brush fire is a few cells wide; a village's and a town's are fronts no small
+      // spell covers, and each trouble the island has had makes the next one wider.
+      width: (tier === "town" ? 6 : tier === "village" ? 3.5 : 1.5) + Math.min(4, world.troubles),
       embers: 0,
       calm: 0,
       checks: 0,
@@ -243,7 +255,7 @@ export function noteCast(world: World, key: string, name: string, emoji: string,
   if (!t) return;
   const f = fireOf(world, t);
   if (Math.hypot(x - t.vx, y - t.vy) > REACH && Math.hypot(x - f.x, y - f.y) > REACH / 2) return;
-  t.casts.push({ key, name, emoji, t: world.time });
+  t.casts.push({ key, name, emoji, t: world.time, n: f.cells, low: 0 });
   if (t.casts.length > 12) t.casts.shift();
 }
 
@@ -272,7 +284,7 @@ export function stepTrouble(world: World, dt: number): TroubleEnd | null {
   near(world, t.vx, t.vy, 20, (i) => {
     if (world.fire[i] > 0.05 && world.cover[i] === C.HOUSE) burning++;
   });
-  if (t.stage === 1 && f.dist < 14) {
+  if (t.stage === 1 && t.front >= Math.hypot(t.hx - t.x, t.hy - t.y) * 0.55) {
     t.stage = 2;
     tell(world, `the fire is coming toward ${t.name}`, { x: f.x, y: f.y, weight: 3 });
   }
@@ -281,36 +293,55 @@ export function stepTrouble(world: World, dt: number): TroubleEnd | null {
     tell(world, `${t.name} is burning`, { x: t.vx, y: t.vy, weight: 3 });
   }
   // It has taken what it may: round the houses it dies down by itself.
-  if (t.lost + burning > t.cap || t.lost >= t.cap)
+  if (t.lost + burning > t.cap || t.lost >= t.cap) {
+    t.capped = true;
     near(world, t.vx, t.vy, 22, (i) => {
       world.fire[i] = 0;
     });
+  }
   // The wind carries it on: at its front the fire is kept alight on whatever
   // burns there, until it reaches the houses or the player's magic meets it.
   // Left to the engine it starves behind its own front on thin ground.
   // Five minutes at most: a fire that cannot reach the house burns out.
-  if (cast > 15 && t.stage < 3 && t.lost < t.cap && world.time - t.t0 < FEED_FOR) {
+  // While the wind drives it, an item that holds the fire down for three seconds against the
+  // wind's relighting is its answer. A moment's quiet is not: the front flares up again.
+  const driven = t.stage < 3 && !t.capped && t.lost < t.cap && world.time - t.t0 < FEED_FOR;
+  if (driven && !t.answer)
+    for (const c of t.casts) {
+      if (world.time - c.t > 12) continue;
+      c.low = f.cells <= Math.max(0, Math.floor(c.n * 0.3)) ? c.low + dt : 0;
+      if (c.low >= 3) t.answer = { key: c.key, name: c.name, emoji: c.emoji, t: c.t };
+    }
+  if (driven && !t.answer) {
     const d = Math.hypot(t.hx - t.x, t.hy - t.y) || 1;
     const reach = Math.min(t.front, d);
     let ex = t.x + ((t.hx - t.x) / d) * reach;
     let ey = t.y + ((t.hy - t.y) / d) * reach;
     let alight = 0;
-    near(world, ex, ey, 3, (i) => {
+    near(world, ex, ey, 3 + t.width, (i) => {
       if (world.fire[i] > 0.05) alight++;
     });
-    if (alight < 2) {
+    if (alight < 2 + t.width) {
       let lit = 0;
       // Over a stream or bare rock the wind carries sparks on: the next ground that burns, up to eight cells ahead.
       for (let ahead = 0; ahead <= 8 && !lit && reach + ahead <= d; ahead += 2) {
         ex = t.x + ((t.hx - t.x) / d) * (reach + ahead);
         ey = t.y + ((t.hy - t.y) / d) * (reach + ahead);
-        near(world, ex, ey, 2.5, (i) => {
-          if (lit >= 3 || world.depth[i] > 0.1 || world.cover[i] === C.WONDER) return;
-          if (world.cover[i] === C.TREE || world.cover[i] === C.HOUSE || world.materials.get("ground", world.ground[i]).flammable > 0) {
-            world.fire[i] = 1;
-            lit++;
-          }
-        });
+        // Across its whole width: the front is a line, not a point.
+        const px = -(t.hy - t.y) / d;
+        const py = (t.hx - t.x) / d;
+        for (let side = -t.width; side <= t.width; side += 1.5) {
+          let here = 0;
+          near(world, ex + px * side, ey + py * side, 1.6, (i) => {
+            // Not under water, not frozen, not behind a shield against fire.
+            if (here >= 2 || world.depth[i] > 0.1 || world.temp[i] < 2 || world.wardMask[i] & WARD.fire || world.cover[i] === C.WONDER) return;
+            if (world.cover[i] === C.TREE || world.cover[i] === C.HOUSE || world.materials.get("ground", world.ground[i]).flammable > 0) {
+              world.fire[i] = 1;
+              here++;
+            }
+          });
+          lit += here;
+        }
         if (lit && ahead) t.front = reach + ahead;
       }
       if (lit) {
@@ -318,6 +349,8 @@ export function stepTrouble(world: World, dt: number): TroubleEnd | null {
         t.calm = 0;
         return null;
       }
+      // Nothing to light across its whole width, nor for eight cells on: the front waits there.
+      t.front -= dt * FRONT_PACE;
     }
   }
   t.calm = f.cells === 0 ? t.calm + dt : 0;
@@ -330,7 +363,10 @@ function endTrouble(world: World, t: Trouble): TroubleEnd {
   world.troubleNext = world.time + TROUBLE_EVERY;
   const housesLost = Math.ceil(t.lost / 4);
   const people = peopleOf(world, t.vx, t.vy);
-  const last = t.casts[t.casts.length - 1];
+  // At the houses the wind no longer drives it: an item cast in the last twenty seconds that
+  // left every house standing has the benefit of the doubt.
+  const late = t.casts[t.casts.length - 1];
+  const last = t.answer ?? (t.stage === 3 && !t.capped && t.lost === 0 && late && world.time - late.t <= 20 ? late : undefined);
   const answered = !!last && world.time - last.t <= ANSWER_WITHIN;
   const held = t.warded > t.checks / 2;
   let outcome: Outcome;
@@ -425,7 +461,9 @@ export function readTroubles(v: unknown): { n: number; next: number; now: Troubl
         text((c as Record<string, unknown>).key, 120) &&
         text((c as Record<string, unknown>).name, 120) &&
         text((c as Record<string, unknown>).emoji, 16) &&
-        num((c as Record<string, unknown>).t),
+        num((c as Record<string, unknown>).t) &&
+        num((c as Record<string, unknown>).n) &&
+        num((c as Record<string, unknown>).low),
     );
     now = {
       kind: "wildfire",
@@ -444,6 +482,8 @@ export function readTroubles(v: unknown): { n: number; next: number; now: Troubl
       seen: t.seen as number,
       cap: t.cap as number,
       front: num(t.front) ? t.front : 6,
+      width: num(t.width) ? t.width : 1.5,
+      capped: t.capped === true,
       embers: num(t.embers) ? t.embers : 0,
       calm: 0,
       checks: num(t.checks) ? t.checks : 0,

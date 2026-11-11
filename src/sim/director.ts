@@ -186,7 +186,32 @@ export class Director {
     const now = world.time;
     this.byId.clear();
     for (const c of world.creatures) this.byId.set(c.id, c);
-    const cur = this.shot;
+    let cur = this.shot;
+    // A trouble by a village (troubles.ts) is all the watch shows while it lasts: its line
+    // follows its stage at once, and the frame goes from the fire's front to the village
+    // and back every ten seconds once the houses burn.
+    const trouble = world.trouble;
+    if (trouble && !(cur && cur.sort === "pin")) {
+      const f = fireOf(world, trouble);
+      const onVillage = trouble.stage === 3 && Math.floor(now / 10) % 2 === 0;
+      const key = `t${onVillage ? "v" : "f"}`;
+      const cut = !cur || cur.sort !== "trouble" || cur.key !== key;
+      const shot: Shot = cut
+        ? { kind: "drama", key, sort: "trouble", who: 0, other: 0, x: 0, y: 0, r: 9, caption: "", score: 95, since: now, least: now, until: Infinity }
+        : cur!;
+      shot.x = onVillage ? trouble.vx : f.x;
+      shot.y = onVillage ? trouble.vy : f.y;
+      shot.r = 9 + trouble.width;
+      shot.caption = troubleLine(trouble);
+      if (cut) this.take(shot, now);
+      return { shot, cut };
+    }
+    // The trouble is over: the island's own stories again, at once.
+    if (cur && cur.sort === "trouble") {
+      this.shot = null;
+      this.nextLook = 0;
+      cur = null;
+    }
     if (cur) this.track(world);
     if (cur && cur.least === Infinity) return { shot: cur, cut: false };
     if (cur && now < cur.least) return { shot: cur, cut: false };
@@ -287,24 +312,6 @@ export class Director {
       if (kind !== "drama" && kind !== "news" && alike !== undefined && now - alike < SORT_AGAIN) s -= 22;
       out.push({ kind, key, sort, who, other, x, y, r, caption, score: s + this.random() * 6, since: now, least: now + hold[0], until: now + hold[1] });
     };
-
-    // 0. A trouble by a village (troubles.ts) comes before everything, and the
-    // camera comes back to it every twenty five seconds while it lasts.
-    const trouble = world.trouble;
-    if (trouble) {
-      const f = fireOf(world, trouble);
-      add(
-        "drama",
-        `t${trouble.stage}:${Math.floor(now / 25)}`,
-        "trouble",
-        95,
-        trouble.stage === 3 ? trouble.vx : f.x,
-        trouble.stage === 3 ? trouble.vy : f.y,
-        9,
-        troubleLine(trouble),
-        [8, 16],
-      );
-    }
 
     // 1. What is going on.
     const workers = new Map<number, Creature>();

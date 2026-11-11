@@ -69,7 +69,9 @@ let quietUntil = 0;
 canvas.addEventListener(
   "pointerdown",
   () => {
-    swallowTap = touring || watching;
+    // A tap that ends the tour or the watch casts nothing, unless a spell is in hand while
+    // watching: then the tap is the cast, on what the camera shows (playtest, 11 November).
+    swallowTap = touring || (watching && !selected);
     tapEndsWatch = watching;
     lastTouch = performance.now();
   },
@@ -172,9 +174,9 @@ function showStone(s: Stone): void {
   close.setAttribute("aria-label", "Close");
   close.addEventListener("click", closeInspect);
   const head = el("div", "head");
-  head.append(el("strong", "title", `The stone of ${s.village}`), el("span", "sub", "raised by its people"), close);
+  head.append(el("strong", "title", `The stone of ${s.village}`), el("span", "sub", ""), close);
   const rows = el("dl", "rows");
-  rows.append(el("dt", "", "Says"), el("dd", "", stoneLine(s)));
+  rows.append(el("dt", "", "Says"), el("dd", "", stoneLine(s)), el("dt", "", "Raised"), el("dd", "", "by its people"));
   card.replaceChildren(head, rows);
   card.hidden = false;
   reportInspect();
@@ -403,7 +405,7 @@ function measureWatch(shot: Shot): void {
 
 canvas.addEventListener("pointerup", () => {
   // Still watching when the finger lifts: it was a tap, not a drag. The camera goes back.
-  if (tapEndsWatch && watching && engine?.view.orbit.watching) stopWatch(true);
+  if (tapEndsWatch && watching && engine?.view.orbit.watching) stopWatch(!selected);
   tapEndsWatch = false;
 });
 watchEl.addEventListener("click", () => {
@@ -433,7 +435,7 @@ window.setInterval(() => {
   if (toldUntil === Infinity) toldUntil = world.time;
   const news = world.happenings.filter((h) => h.t > toldUntil && h.weight >= 3);
   toldUntil = world.time;
-  if (news.length && !scenario && !touring && now - lineAt > LINE_EVERY_MS && card.hidden) {
+  if (news.length && !scenario && !touring && !world.trouble && now - lineAt > LINE_EVERY_MS && card.hidden) {
     const h = news[news.length - 1];
     lineAt = now;
     lineGoes = { x: h.x, y: h.y, who: h.who };
@@ -470,6 +472,8 @@ window.setInterval(() => {
   if (end) {
     world.troubleEnd = null;
     troubleSaid = "";
+    lineGoes = null;
+    if (!watching) hush();
     send({ type: "trouble", running: false, text: end.line[0].toUpperCase() + end.line.slice(1), key: end.by?.key, outcome: end.outcome });
     saveSoon();
     return;
@@ -482,6 +486,10 @@ window.setInterval(() => {
       send({ type: "trouble", running: true, text });
     }
     // The line stays on the island while it lasts, for those not watching: a tap goes there.
+    if (!card.hidden && !watching && !storyEl.hidden) {
+      lineGoes = null;
+      hush();
+    }
     if (!watching && !touring && card.hidden && (caption !== text || storyEl.hidden)) {
       const f = fireOf(world, t);
       clearTimeout(lineTimer);
