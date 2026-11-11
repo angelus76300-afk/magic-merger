@@ -297,7 +297,10 @@ export function stepTrouble(world: World, dt: number): TroubleEnd | null {
       if (world.fire[i] > 0.05) continue;
       if (world.cover[i] === C.TREE || world.cover[i] === C.HOUSE || world.materials.get("ground", world.ground[i]).flammable > 0) out++;
     }
-    if (out >= Math.max(3, t.alight.size * 0.5)) t.stallUntil = world.time + STALL_FOR;
+    // Only after the player's cast: villagers with buckets and a stream in its way put cells out
+    // too, and a small fire would end in seconds for no reason anyone saw.
+    const recent = t.casts.length > 0 && world.time - t.casts[t.casts.length - 1].t <= 12;
+    if (recent && out >= Math.max(3, t.alight.size * 0.5)) t.stallUntil = world.time + STALL_FOR;
   }
   const cast = t.casts.length ? world.time - t.casts[t.casts.length - 1].t : Infinity;
   // Its front advances from where it began; what ran ahead of it dies down.
@@ -366,7 +369,10 @@ export function stepTrouble(world: World, dt: number): TroubleEnd | null {
           near(world, ex + px * side, ey + py * side, 1.6, (i) => {
             // Not under water, not frozen, not behind a shield against fire.
             if (here >= 2 || world.depth[i] > 0.1 || world.temp[i] < 2 || world.wardMask[i] & WARD.fire || world.cover[i] === C.WONDER) return;
-            if (world.cover[i] === C.TREE || world.cover[i] === C.HOUSE || world.materials.get("ground", world.ground[i]).flammable > 0) {
+            // A house is lit by the wind only where the front arrives, at the house it was making
+            // for: one standing beside its way catches from the fire itself, or not at all.
+            const house = world.cover[i] === C.HOUSE && reach + ahead >= d - 1;
+            if (world.cover[i] === C.TREE || house || world.materials.get("ground", world.ground[i]).flammable > 0) {
               world.fire[i] = 1;
               here++;
             }
