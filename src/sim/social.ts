@@ -261,6 +261,9 @@ function see(world: World, c: Creature, k: CreatureKind, kindOf: (c: Creature) =
   }
   // Guards stand and fight (3.6); a mob of villagers stands up to a threat they can handle.
   // Nobody on foot can strike what flies above them.
+  // Against a creature an item made, a mob is those who face it, near it,
+  // not every villager near this one (in a village that was the whole crowd).
+  if (seen.threat && madeKind(seen.threat, kindOf(seen.threat))) allies = facing(world, c, seen.threat);
   const stands = !seen.threat || standsUpTo(c, seen.threat, kindOf(seen.threat), allies);
   if (seen.threat && seen.threat.z > 1.5 && !guardingHigh(seen)) seen.fight = 0;
   else if (
@@ -300,21 +303,38 @@ function see(world: World, c: Creature, k: CreatureKind, kindOf: (c: Creature) =
 }
 
 const VILLAGER_HP = 100;
+// How near a villager stands to a creature to face it with others (a mob, a guard's two).
+const FACE = 4;
+
+function madeKind(t: Creature, tk: CreatureKind): boolean {
+  return !tk.native && !BUILT_IN.has(t.kind);
+}
+
+// Villagers other than c who face the creature t: alive, within FACE cells of it.
+export function facing(world: World, c: Creature, t: Creature): number {
+  let n = 0;
+  for (const o of world.crowd.near(world, t.x, t.y, FACE)) if (o !== c && !o.dead && o.kind === "villager" && Math.hypot(o.x - t.x, o.y - t.y) < FACE) n++;
+  return n;
+}
 
 // Villagers respect strength (2026-11-11), against a creature an item or a
 // spell made. They stand up only to one that is a danger to people: it hunts
 // them, turns them, burns or hurts those around it, or has hurt one of them.
 // What only scares them they run from, and get used to after a while. And
 // never alone against one with more than twice their health: a guard then
-// goes in only with two others beside it, as a mob does (three or more).
+// goes in only with two others facing it, as a mob does (three or more), and
+// never against one asleep that has struck no one.
 // The island's own animals and the engine's kinds keep the rules of 3.6, so
 // a mob of four still brings down a bear.
 export function standsUpTo(c: Creature, t: Creature, tk: CreatureKind, allies: number): boolean {
-  if (c.kind !== "villager" || tk.native || BUILT_IN.has(t.kind)) return true;
+  if (c.kind !== "villager" || !madeKind(t, tk)) return true;
   // Hurt to a third of its health, it breaks off and runs.
   if (c.hp < VILLAGER_HP / 3) return false;
+  // Never against one asleep that has struck no one.
+  const struck = feeling(c, t.kind) <= -1;
+  if ((t.data.mood === "asleep" || t.sleep > 0) && !struck) return false;
   const ai = tk.ai;
-  const danger = hunts(t, tk, c) || !!ai?.converts || ai?.aura === "hurt" || ai?.aura === "burn" || feeling(c, t.kind) <= -1;
+  const danger = hunts(t, tk, c) || !!ai?.converts || ai?.aura === "hurt" || ai?.aura === "burn" || struck;
   if (!danger) return false;
   return t.hp <= 2 * c.hp || allies >= 2;
 }

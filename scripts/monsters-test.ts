@@ -5,7 +5,8 @@ import { ARRIVAL_AWAKE, KINDS, kindOf, makeCreature, resetCreatureIds, type Crea
 import { daylight } from "../src/sim/daylight";
 import { seeded } from "../src/sim/noise";
 import { Runtime } from "../src/sim/runtime";
-import { standsUpTo, strikeBack } from "../src/sim/social";
+import { facing, standsUpTo, strikeBack } from "../src/sim/social";
+import { C } from "../src/sim/materials";
 import { stepHeadless } from "../src/sim/tick";
 import { TICK, generateWorld, type World } from "../src/sim/world";
 
@@ -89,6 +90,38 @@ export function monsterChecks(check: Check): void {
       walked > 2 && !ghoul.dead && daylight(world.time).night < 0.3,
       `walked ${walked.toFixed(1)} cells, health ${Math.round(ghoul.hp)}`,
     );
+    // A spell that tears its shade away (a fire, a flood) exposes it: it burns again.
+    const before = ghoul.hp;
+    const gx = Math.round(ghoul.x);
+    const gy = Math.round(ghoul.y);
+    for (let dy = -4; dy <= 4; dy++)
+      for (let dx = -4; dx <= 4; dx++) {
+        const x = gx + dx;
+        const y = gy + dy;
+        if (world.inside(x, y) && (world.cover[y * world.w + x] === C.TREE || world.cover[y * world.w + x] === C.HOUSE))
+          world.setCover(y * world.w + x, C.NONE);
+      }
+    for (let k = 0; k < 2 / TICK && !ghoul.dead; k++) stepHeadless(world, rt);
+    check("monsters: its shade torn away, it burns again", ghoul.dead || ghoul.hp < before, `health ${Math.round(before)} then ${Math.round(ghoul.hp)}`);
+  }
+  // And caught in the open by day after its first minute, it still burns.
+  {
+    const { world, rt, at } = open();
+    const code = `const spell = { creatures: [{ name: "pale ghoul", base: "spirit", body: "two legs", flying: false, hp: 30, behavior: "wander", weak: ["light"] }], *cast(w) { w.spawn("pale ghoul", w.x, w.y); } };`;
+    rt.cast({ key: "t:ghoul2", name: "Pale Ghoul", tier: "minor", code, kind: "artifact", form: "creature" }, at.x, at.y);
+    stepHeadless(world, rt);
+    const ghoul = world.creatures.find((c) => c.kind.startsWith("pale ghoul"))!;
+    let at60 = 0;
+    for (let k = 0; k < (ARRIVAL_AWAKE + 5) / TICK && !ghoul.dead; k++) {
+      Object.assign(ghoul, { x: at.x, y: at.y });
+      stepHeadless(world, rt);
+      if (k === Math.round((ARRIVAL_AWAKE - 2) / TICK)) at60 = ghoul.hp;
+    }
+    check(
+      "monsters: caught in the open by day after its first minute, it still burns",
+      at60 >= 30 && (ghoul.dead || ghoul.hp < at60),
+      `health ${Math.round(at60)} at ${ARRIVAL_AWAKE - 2} s, ${Math.round(ghoul.hp)} at ${ARRIVAL_AWAKE + 5} s`,
+    );
   }
 
   // 2. Villagers respect strength, against a creature an item made.
@@ -121,8 +154,21 @@ export function monsterChecks(check: Check): void {
     check("monsters: they stand up to one that hunts people, with under twice their health", says(hunter, 0) && says(hunter, 4));
     check("monsters: never alone against one with more than twice their health, in threes they do", !says(giant, 0) && !says(giant, 1) && says(giant, 2));
     check("monsters: the island's own animals keep the old rules (a mob still faces a bear)", KINDS.get("bear")?.native === true && says(bear, 3));
+    hunter.data.mood = "asleep";
+    check("monsters: never against one asleep that has struck no one", !says(hunter, 4));
+    hunter.data.mood = undefined;
     villager.hp = 30;
     check("monsters: hurt to a third of its health, a villager breaks off", !says(hunter, 4));
+    // A mob is those who face it: villagers near the creature, not near each other.
+    villager.hp = 100;
+    const crowd = [0, 1, 2, 3].map((n) => makeCreature("villager", at.x + 12 + n * 0.5, at.y + 12));
+    const near = [0, 1].map((n) => makeCreature("villager", hunter.x + 1 + n, hunter.y));
+    world.creatures.push(...crowd, ...near);
+    check(
+      "monsters: a mob is counted near the creature, not near the villager",
+      facing(world, crowd[0], hunter) === 2,
+      `${facing(world, crowd[0], hunter)} face it`,
+    );
   }
 
   // 3. The exchange of blows: an awake made creature strikes back at the villager striking it.

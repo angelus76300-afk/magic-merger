@@ -625,7 +625,15 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   const spread = count();
   check("blight spreads", errors.length === 0 && spread > start * 2, `${start} then ${spread} cells${errors[0] ? ", " + errors[0] : ""}`);
   check("wolves hunt villagers", villagers() < before, `${before} then ${villagers()} villagers`);
-  check("ghouls burn by day", world.creatures.filter((c) => c.kind === "ghoul" && !c.dead).length === 0);
+  // 2026-11-11: a made creature daylight burns has its first minute to reach the
+  // shade (DESIGN, "Monsters that live"); caught in the open after it, it burns.
+  const ghouls = world.creatures.filter((c) => c.kind === "ghoul");
+  const held = ghouls.map((c) => ({ c, x: c.x, y: c.y }));
+  for (let k = 0; k < 30 * 62; k++) {
+    for (const h of held) Object.assign(h.c, { x: h.x, y: h.y });
+    step(world, rt);
+  }
+  check("ghouls burn by day, caught in the open after their first minute", ghouls.length === 3 && ghouls.every((c) => c.dead));
   for (let i = 0; i < world.n; i++) if (world.layerName("ground", world.ground[i]) === "blight") world.fire[i] = 1;
   for (let k = 0; k < 30 * 2; k++) step(world, rt);
   check("blight burns away", count() < spread * 0.3, `${count()} left`);
@@ -1174,7 +1182,7 @@ for (const scenario of SCENARIOS) {
 
 await idleDone;
 // Monsters that live through their first day (2026-11-11, monsters-run.ts):
-// placed six cells from a house in the morning, the ten programs' median life
+// placed six cells from a house in the morning, the six monsters' median life
 // by day is over two minutes, the werewolf of the review of 10 November (dead
 // in 4 s before: asleep on arrival, then struck by a mob) lives through the
 // day, and no monster takes the island below the creature probe's 70% of
@@ -1187,7 +1195,12 @@ await idleDone;
     rows.length === MONSTERS.length && rows.every((r) => !r.errors.length),
     rows.flatMap((r) => r.errors).join("; "),
   );
-  check("monsters: the median life by day of a placed monster is over 120 s", median(rows.map((r) => r.medianLife)) > 120, lives);
+  const hostile = rows.filter((r) => MONSTERS.find((m) => m.name === r.name)?.hostile);
+  check(
+    "monsters: the median life by day of a placed monster (the six that scare, hunt or turn people) is over 120 s",
+    hostile.length === 6 && median(hostile.map((r) => r.medianLife)) > 120,
+    lives,
+  );
   const wolf = rows.find((r) => r.name === "Werewolf (review)");
   check(
     "monsters: the review's werewolf lives through the day by the village",

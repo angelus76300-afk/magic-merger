@@ -34,7 +34,7 @@ import type { Behavior, Creature, CreatureKind } from "./creatures";
 import type { World } from "./world";
 import { artifactVisit, useArtifact, type Visit } from "./artifacts";
 import { meter } from "./motion";
-import { standsUpTo, strikeBack } from "./social";
+import { facing, standsUpTo, strikeBack } from "./social";
 
 // Goals (3.6): nothing on the island just stands there. Every creature has a
 // goal from a small vocabulary (kin.ts, GOALS), needs that come before it
@@ -622,7 +622,7 @@ function urgent(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
         }
       }
       if (worst) {
-        const goes = job === "guard" && standsUpTo(c, worst, life.kindOf(worst), alliesOf(world, c));
+        const goes = job === "guard" && standsUpTo(c, worst, life.kindOf(worst), facing(world, c, worst));
         if (goes) setTask(m, "fight", worst.x, worst.y, 1.3, -1, worst);
         else setTask(m, "avoid", c.x + (c.x - worst.x) * 1.5, c.y + (c.y - worst.y) * 1.5, 1.4);
         m.action = `${goes ? "going for" : "keeping away from"} the ${base(worst.kind)} that hurt them`;
@@ -1038,7 +1038,7 @@ function guardVillage(world: World, c: Creature, m: Mind, v: { x: number; y: num
   // 4.4.5 part B: from a watchtower, guards see twice as far.
   const foe = intruder(world, c, v.x, v.y, world.settlements.length && hasJob(world, v.x, v.y, C.WATCHTOWER) ? 30 : 15);
   // Not alone against what has more than twice its health (social.ts, standsUpTo).
-  if (foe && standsUpTo(c, foe, life.kindOf(foe), alliesOf(world, c))) {
+  if (foe && standsUpTo(c, foe, life.kindOf(foe), facing(world, c, foe))) {
     setTask(m, "fight", foe.x, foe.y, 1.3, -1, foe);
     m.action = `driving off a ${base(foe.kind)}`;
     return;
@@ -1062,13 +1062,6 @@ function guardVillage(world: World, c: Creature, m: Mind, v: { x: number; y: num
 
 // Something near a place that threatens what lives there: a hunter of people,
 // a thief, a raider, a bear, or a kind remembered for harm.
-// Villagers close enough to stand with it (within six cells, as social.ts counts a mob).
-function alliesOf(world: World, c: Creature): number {
-  let n = 0;
-  for (const o of world.crowd.near(world, c.x, c.y, 6)) if (o !== c && !o.dead && o.kind === "villager" && Math.hypot(o.x - c.x, o.y - c.y) < 6) n++;
-  return n;
-}
-
 function intruder(world: World, c: Creature, x: number, y: number, r: number): Creature | null {
   let best: Creature | null = null;
   let bestD = r;

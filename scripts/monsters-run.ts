@@ -34,6 +34,8 @@ export interface MonsterProgram {
   // Where its shape comes from.
   from: string;
   code: string;
+  // A monster: it scares, hunts or turns people (the others of the ten are peaceful).
+  hostile?: boolean;
 }
 
 const lab = (file: string) => readFileSync(join("lab", file), "utf8");
@@ -50,6 +52,7 @@ export const MONSTERS: MonsterProgram[] = [
   {
     name: "Werewolf (review)",
     from: "the review's shape",
+    hostile: true,
     code: `const spell = { creatures: [
       { name: "werewolf", base: "beast", body: "four legs", color: "#5a4a3a", features: ["tail", "glowing eyes"],
         speed: 2.6, hp: 80, radius: 0.6, behavior: "hunt", goal: "hunt", prey: ["deer", "sheep"], attack: 18, sense: 14,
@@ -59,15 +62,16 @@ export const MONSTERS: MonsterProgram[] = [
   {
     name: "Undead (review)",
     from: "the review's shape",
+    hostile: true,
     code: `const spell = { creatures: [
       { name: "undead", base: "spirit", body: "two legs", color: "#7a8a6a", features: ["glowing eyes"],
         speed: 1.2, hp: 140, radius: 0.45, behavior: "guard", goal: "guard", attack: 10, sense: 10, scares: ["villager"] } ],
       ${spawnAll("undead", 3)} };`,
   },
-  { name: "Werewolf", from: "live", code: lab("monsters/werewolf.js") },
-  { name: "Undead Horde", from: "live", code: lab("monsters/undead-horde.js") },
-  { name: "Vampire", from: "live", code: lab("monsters/vampire.js") },
-  { name: "Succubus", from: "live", code: lab("monsters/succubus.js") },
+  { name: "Werewolf", from: "live", hostile: true, code: lab("monsters/werewolf.js") },
+  { name: "Undead Horde", from: "live", hostile: true, code: lab("monsters/undead-horde.js") },
+  { name: "Vampire", from: "live", hostile: true, code: lab("monsters/vampire.js") },
+  { name: "Succubus", from: "live", hostile: true, code: lab("monsters/succubus.js") },
   { name: "Serpent", from: "worker/prompts.ts", code: FORM_EXAMPLES.creature.code },
   {
     name: "Grove wisps",
@@ -142,6 +146,12 @@ function controlVillagers(): number {
   return control;
 }
 
+// The creature a villager's social sense has it fighting (social.ts keeps it in data.social).
+const struckBy = (o: Creature): Creature | null => {
+  const seen = o.data.social as { threat?: Creature | null; fight?: number } | undefined;
+  return seen && (seen.fight ?? 0) > 0 ? (seen.threat ?? null) : null;
+};
+
 export function median(values: number[]): number {
   if (!values.length) return 0;
   const s = [...values].sort((a, b) => a - b);
@@ -167,7 +177,7 @@ export function monsterLife(p: MonsterProgram): MonsterLife {
   const lastCause = new Map<Creature, keyof typeof causes>();
   const causeOf = (c: Creature): keyof typeof causes => {
     for (const o of world.crowd.near(world, c.x, c.y, 3))
-      if (o.kind === "villager" && !o.dead && (o.data.mood === "angry" || (o.mind?.task === "fight" && o.mind.target === c))) return "villagers";
+      if (o.kind === "villager" && !o.dead && (struckBy(o) === c || (o.mind?.task === "fight" && o.mind.target === c))) return "villagers";
     const ai = kindOf(c).ai;
     if (ai?.weak.includes("light") && daylight(world.time).night < 0.3) return "daylight";
     return "other";
@@ -230,6 +240,11 @@ export function monsterTable(rows: MonsterLife[]): string {
       `| ${r.name} | ${r.placed} | ${r.medianLife} | ${r.aliveAtDusk} | ${diedOf(r)} | ${r.aliveAtEnd} | ${r.killed} of ${r.villagers} | ${Math.round(r.villagersLeft * 100)}% |`,
     );
   lines.push(`| **Median of the ${rows.length}** | | **${median(rows.map((r) => r.medianLife))}** | | | | | |`);
+  const hostile = rows.filter((r) => MONSTERS.find((m) => m.name === r.name)?.hostile);
+  if (hostile.length && hostile.length < rows.length)
+    lines.push(
+      `| **Median of the ${hostile.length} monsters** | | **${median(hostile.map((r) => r.medianLife))}** | | | | ${hostile.reduce((n, r) => n + r.killed, 0)} in all | |`,
+    );
   return lines.join("\n");
 }
 
