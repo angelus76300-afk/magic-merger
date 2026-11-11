@@ -58,9 +58,19 @@ const NAME_ABILITIES: [string[], AbilitySpec][] = [
 // to protect or heal, or a name that says so (the guardians above, the
 // healers, and the few beings known to mend: a troll, a hydra, a phoenix).
 const DEFENDERS =
-  /\b(knight|paladin|guardian|golem|templar|sentinel|defender|protector|shield|ward|warden|aegis|bastion|bulwark|sanctuary|turtle|tortoise|armadillo|guard|priest|priestess|cleric|healer|saint|angel|unicorn|nymph|troll|hydra|phoenix|mender)s?\b/i;
+  /\b(knight|paladin|guardian|golem|templar|sentinel|defender|protector|shield|ward|warden|aegis|bastion|bulwark|sanctuary|turtle|tortoise|armadillo|guard|priest|priestess|cleric|healer|saint|angel|archangel|seraph|seraphim|cherub|valkyrie|sentry|keeper|barrier|fortress|citadel|haven|refuge|ark|unicorn|nymph|troll|hydra|phoenix|mender)s?\b/i;
+// Is protection what this item is about? Its name says so, or protect is its
+// main intent. A second intent does not count: the intent call gave protect
+// to 123 live items of which 23 are about protection (62 of the 64 second
+// intents were not: Gold, Clay, Ice, Werewolf, Dinosaur), each was then told
+// its test would attack a village, and 127 programs raised a dome (the review
+// of 10 November).
+export function promisesProtection(name: string, intents: readonly string[]): boolean {
+  return DEFENDERS.test(name) || intents[0] === "protect";
+}
+
 export function unfitDefence(name: string, intents: readonly string[], abilities: readonly AbilitySpec[], wards: number): string | null {
-  if (DEFENDERS.test(name) || intents.includes("protect")) return null;
+  if (promisesProtection(name, intents)) return null;
   const shield = abilities.some((a) => a.do === "shield");
   const mends = !intents.includes("heal") && abilities.some((a) => a.do === "heal" && a.when === "hurt");
   if (!shield && !mends && wards <= 0) return null;
