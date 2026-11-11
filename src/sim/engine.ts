@@ -129,7 +129,7 @@ export class Engine {
     // What the cast changed before the next tick is drawn too (view.ts, scan).
     this.view.landChanged = true;
     // The player's magic is part of the island's story (3.7).
-    if (ok) tell(this.world, `a mage ${req.kind === "artifact" ? "placed" : "cast"} ${req.name}`);
+    if (ok) tell(this.world, `a mage ${req.kind === "artifact" ? "placed" : "cast"} ${req.name}`, { x, y, weight: 0 });
     return ok;
   }
 

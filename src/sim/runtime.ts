@@ -271,7 +271,7 @@ export class Runtime {
     this.lastLibrary = this.world.time;
     this.libraryLog.push({ name: req.name, tier, by: by.split("#")[0], t: this.world.time });
     if (this.libraryLog.length > 20) this.libraryLog.shift();
-    tell(this.world, `the ${by.split("#")[0]} cast ${req.name}`);
+    tell(this.world, `the ${by.split("#")[0]} cast ${req.name}`, { x, y });
     return true;
   }
 

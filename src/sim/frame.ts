@@ -10,7 +10,8 @@ import type { CastRequest, Runtime } from "./runtime";
 import type { SavedWorld } from "./save";
 import { Hud } from "./hud";
 import { SCENARIOS } from "./scenarios";
-import { firstLook, villageView } from "./firstlook";
+import { firstLook, villageView, type Pose } from "./firstlook";
+import { Director, lifeLine, type Shot } from "./director";
 import { castOnScreen, watchCast } from "./voxel/castview";
 import { readDef, setFinders, signatureOf, wonderInfo, type WonderDef } from "./wonders";
 
@@ -67,7 +68,8 @@ let swallowTap = false;
 canvas.addEventListener(
   "pointerdown",
   () => {
-    swallowTap = touring;
+    swallowTap = touring || watching;
+    tapEndsWatch = watching;
     lastTouch = performance.now();
   },
   { capture: true },
@@ -99,6 +101,7 @@ const hooks = {
       swallowTap = false;
       return;
     }
+    if (engine.view.orbit.watching) return;
     if (!selected) {
       // No spell in hand: a tap on a creature shows what it is doing (3.6).
       const c = creatureAt(engine.world, x, y);
@@ -120,6 +123,8 @@ const hooks = {
       // moves it before then (the tour of the island waits, below).
       holdUntil = performance.now() + HOLD_MS;
       islandCasts++;
+      director.castAt(x, y, engine.world.time);
+      lastCastAt = performance.now();
       // Where the cast is on screen for the next three seconds (castview.ts).
       const n = casts++;
       watchCast(
@@ -215,8 +220,200 @@ function drawInspect(): void {
   const rows = el("dl", "rows");
   for (const [k, v] of info.rows) rows.append(el("dt", "", k), el("dd", "", v));
   card.replaceChildren(head, bars, rows);
+  if (inspected && !inspected.dead) {
+    const follow = el("button", "follow", "Follow");
+    (follow as HTMLButtonElement).type = "button";
+    const c = inspected;
+    follow.addEventListener("click", () => {
+      closeInspect();
+      startWatch(c);
+    });
+    card.append(follow);
+  }
   reportInspect();
 }
+
+// The island tells its stories (2026-11-11, director.ts). Left alone for a
+// while, or on the Watch button, the camera goes to what is happening and
+// follows it, close enough to read, with one line saying what it is. A tap on
+// the island gives the camera back where it was and casts nothing; a drag or
+// a pinch keeps it where the story is. When nobody watches, a line of weight
+// 3 (a life begins or ends, a wonder wakes) shows for a few seconds, at most
+// one every thirty: a tap on it goes there.
+const IDLE_MS = 15_000;
+const IDLE_SPELL_MS = 40_000;
+// For thirty seconds after a cast, what it did to people comes first.
+const IDLE_CAST_MS = 12_000;
+const LINE_MS = 5000;
+const LINE_EVERY_MS = 30_000;
+const storyEl = document.getElementById("story") as HTMLButtonElement;
+const watchEl = document.getElementById("watch") as HTMLButtonElement;
+const reduced = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+let director = new Director();
+let watching = false;
+let pinned = false;
+let tapEndsWatch = false;
+let watchBack: Pose | null = null;
+let lastCastAt = -1e9;
+let caption = "";
+// Happenings told up to this world time; Infinity until the island has run a moment.
+let toldUntil = Infinity;
+let lineAt = -1e9;
+let lineTimer = 0;
+let lineGoes: { x: number; y: number; who: number } | null = null;
+// What the watch showed, for the checks (scripts/watch-frames.mjs): seconds watched and seconds its subject was on screen.
+const watchStats = { watched: 0, shots: 0, caption: "", px: 0, onScreen: false };
+(window as unknown as { __mmWatch?: () => typeof watchStats }).__mmWatch = () => ({ ...watchStats, caption });
+
+function say(text: string, go: boolean): void {
+  if (text === caption && !storyEl.hidden && !storyEl.classList.contains("out")) return;
+  caption = text;
+  storyEl.replaceChildren(el("span", "line", text), ...(go ? [el("span", "go", "Go")] : []));
+  storyEl.hidden = !text;
+  storyEl.classList.remove("out");
+}
+
+function hush(): void {
+  caption = "";
+  storyEl.classList.add("out");
+  window.setTimeout(() => {
+    if (!caption) storyEl.hidden = true;
+  }, 400);
+}
+
+function startWatch(pin: Creature | null = null, at: { x: number; y: number; who: number } | null = null): void {
+  if (!engine || scenario) return;
+  const o = engine.view.orbit;
+  if (!watching) watchBack = { tx: o.tx, ty: o.ty, dist: o.dist, phi: o.phi, theta: o.theta };
+  stopLook?.();
+  watching = true;
+  pinned = !!pin;
+  clearTimeout(lineTimer);
+  lineGoes = null;
+  watchEl.setAttribute("aria-pressed", "true");
+  watchEl.lastElementChild!.textContent = "Watching";
+  director.reset();
+  const who = pin ?? (at?.who ? engine.world.creatures.find((c) => c.id === at.who && !c.dead) : null) ?? null;
+  if (who) director.pin(engine.world, who);
+  // A line about a place: the camera goes there first; the director takes over after a few seconds.
+  if (!who && at) o.watch(at.x, at.y, o.distanceFor(8));
+  watchUntilFree = !who && at ? performance.now() + 5000 : 0;
+  if (who && !pin) window.setTimeout(() => !pinned && watching && director.reset(), 6000);
+  stepWatch();
+}
+
+function stopWatch(back: boolean): void {
+  if (!watching) return;
+  watching = false;
+  pinned = false;
+  watchEl.setAttribute("aria-pressed", "false");
+  watchEl.lastElementChild!.textContent = "Watch";
+  hush();
+  mark(null);
+  lastTouch = performance.now();
+  if (!engine) return;
+  const o = engine.view.orbit;
+  o.unwatch();
+  if (back && watchBack) o.flyTo(watchBack.tx, watchBack.ty, watchBack.dist, watchBack.phi, 1.2);
+  watchBack = null;
+}
+
+// The one the line is about wears the same light as a creature whose card is open.
+let marked: Creature | null = null;
+function mark(c: Creature | null): void {
+  if (marked === c) return;
+  if (marked && marked !== inspected) delete marked.data.inspected;
+  marked = c;
+  if (c) c.data.inspected = true;
+}
+
+let watchUntilFree = 0;
+function stepWatch(): void {
+  if (!engine || !watching) return;
+  const o = engine.view.orbit;
+  if (performance.now() < watchUntilFree) return;
+  const { shot } = director.update(engine.world);
+  if (!shot) return;
+  let line = shot.caption;
+  if (shot.sort === "pin") {
+    const c = engine.world.creatures.find((k) => k.id === shot.who);
+    // The one followed is gone: back to the island's own stories.
+    if (!c || c.dead) {
+      pinned = false;
+      director.reset();
+      return;
+    }
+    line = lifeLine(engine.world, c);
+  }
+  // Close enough that a villager reads, never so close that it fills a wide screen.
+  o.watch(shot.x, shot.y, Math.max(22, o.distanceFor(shot.r)));
+  mark(shot.who ? (engine.world.creatures.find((k) => k.id === shot.who) ?? null) : null);
+  say(line, false);
+  measureWatch(shot);
+}
+
+// How large the subject is on screen, and whether it is on it: the number the update is held to.
+function measureWatch(shot: Shot): void {
+  if (!engine) return;
+  const at = castOnScreen(engine, shot.x, shot.y, []);
+  const o = engine.view.orbit;
+  const rect = canvas.getBoundingClientRect();
+  watchStats.px = rect.height / (2 * o.dist * Math.tan((o.camera.fov * Math.PI) / 360));
+  watchStats.onScreen = !!at;
+  watchStats.shots = director.cuts;
+  watchStats.caption = shot.caption;
+  watchStats.watched += 0.25;
+}
+
+canvas.addEventListener("pointerup", () => {
+  // Still watching when the finger lifts: it was a tap, not a drag. The camera goes back.
+  if (tapEndsWatch && watching && engine?.view.orbit.watching) stopWatch(true);
+  tapEndsWatch = false;
+});
+watchEl.addEventListener("click", () => {
+  lastTouch = performance.now();
+  if (watching) stopWatch(true);
+  else startWatch();
+});
+storyEl.addEventListener("click", () => {
+  lastTouch = performance.now();
+  if (watching) return;
+  if (lineGoes) startWatch(null, lineGoes);
+});
+
+window.setInterval(() => {
+  if (!engine) return;
+  const now = performance.now();
+  watchEl.hidden = !!scenario;
+  if (watching) {
+    // A drag, a pinch or a spell's own shot took the camera: the watch is over, the view stays.
+    if (!engine.view.orbit.watching && now >= watchUntilFree && director.shot) return stopWatch(false);
+    return stepWatch();
+  }
+  const world = engine.world;
+  // A line when something big happens, for those not watching.
+  if (toldUntil === Infinity) toldUntil = world.time;
+  const news = world.happenings.filter((h) => h.t > toldUntil && h.weight >= 3);
+  toldUntil = world.time;
+  if (news.length && !scenario && !touring && now - lineAt > LINE_EVERY_MS && card.hidden) {
+    const h = news[news.length - 1];
+    lineAt = now;
+    lineGoes = { x: h.x, y: h.y, who: h.who };
+    say(h.text[0].toUpperCase() + h.text.slice(1), true);
+    clearTimeout(lineTimer);
+    lineTimer = window.setTimeout(() => {
+      lineGoes = null;
+      hush();
+    }, LINE_MS);
+  }
+  // Left alone: the camera goes to the stories by itself. Never during a
+  // challenge, the tour or a card, on a new island before its first cast, or
+  // with reduced motion (the button still starts it).
+  if (scenario || touring || !card.hidden || (tourWaiting && !islandCasts) || now < holdUntil || document.hidden || reduced()) return;
+  const idle = now - lastTouch;
+  const need = now - lastCastAt < 30_000 ? IDLE_CAST_MS : selected ? IDLE_SPELL_MS : IDLE_MS;
+  if (idle >= need) startWatch();
+}, 250);
 
 // Library spells creatures and artifacts cast (3.7): asked of the page by
 // name, kept for every world this frame runs.
@@ -232,6 +429,9 @@ window.setInterval(() => {
 
 function mount(next: Engine): void {
   closeInspect();
+  stopWatch(false);
+  director = new Director();
+  toldUntil = Infinity;
   stopLook?.();
   stopLook = null;
   tourWaiting = false;
@@ -460,6 +660,7 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
         engine.resize();
         engine.start();
       } else {
+        stopWatch(false);
         engine.stop();
         save();
       }

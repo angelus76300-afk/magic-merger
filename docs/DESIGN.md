@@ -1042,3 +1042,29 @@ From the review of 10 November (`docs/REVIEW-2026-11-10.md`, section 6): 21 of 4
 6. **The writer plans first.** The answer begins with `plan`: what the name promises, what the player sees in the first seconds and a minute later, and what fits no other name. The prompt names every sound the engine has, says what the engine drops, and its examples no longer open with a chime.
 
 Measured on 20 names written before and after (the method and its limits are in the review): 11 then 17 pass the stricter test at the first write; wards 6 then 3, the 3 left on names about protection; a blind reading 2.95 then 3.60 of 5. On the 483 live programs, measured only: 44 that passed now fail, 4 that failed a protection they never promised now pass. Checked by `scripts/promise-test.ts` in `npm test` (26 checks; each of the six rules switched off fails at least one).
+
+## The island tells its stories (11 November 2026)
+
+Measured before: an untouched medium island tells about sixty story lines in ten minutes (a wolf kills a deer, a villager fights a bear, two taverns go up, a deer is tamed), and a player saw none of it. The camera stood still, far enough that a villager is a speck, and the lines were behind the chronicle's icon. The simulation was never the problem; the telling was.
+
+### Happenings
+
+A story line told with a place is also a happening (`kin.ts`, `tell(world, text, at)`): where, whom it is about, and a weight (3 a life begins or ends, a fight, a wonder wakes; 2 something made or tamed; 1 the rest; 0 the player's own cast). The last forty are kept on the world and never saved: the saved story is what it was, and a save from before or after reads the same.
+
+### The director
+
+`director.ts` chooses a shot: whom or where, how wide, and one line. Three sources by score. What is going on comes first (a raid, a fight, a hunt, a theft, something burning, a building with someone at work on it), because a line is told after the kill and a camera that leaves then arrives at a body. Then what just happened and left something to see (a birth, a building finished), then everyday life when the island is quiet (a fisher, a herd, a wonder). Rules that keep ten minutes from being the same minute: a shot holds 5 to 20 seconds, the same subject is not shown twice in a minute, two everyday shots of the same task never follow each other, a flight across the island costs score, a wide view of a village comes every six cuts, a wonder not again for three minutes. Hunter and prey are framed together. A dead subject is left within two seconds. For thirty seconds after the player's cast, what happens round it comes first: the camera shows what the spell did to people.
+
+Villagers have a name (`nameOf`), made from what a save keeps of them, their look and their home, so it is the same after a reload. No call.
+
+### Watching
+
+In the World frame (`frame.ts`): the Watch button, or the island left alone for 15 seconds (40 with a spell in hand, 12 in the half minute after a cast), starts it. Never during a challenge, the tour of a new island, an open card, on a new island before its first cast, or with reduced motion (the button still works). The camera eases to the shot and follows (`OrbitCamera.watch`), no closer than a villager needs to be read. A tap on the island ends it, casts nothing and brings the view back where it was; a drag or a pinch ends it and keeps the view where the story is. A spell's own camera shot comes before the watch.
+
+When nobody watches, a happening of weight 3 shows as one line on the island for five seconds, at most one every thirty; a tap on it goes there. A tapped creature's card has Follow, the same camera held on that one.
+
+Nothing here gives the player an idea or a recipe: the island shows what it does.
+
+### Held to
+
+`scripts/director-test.ts` in `npm test`: the save holds no happening; a hunt going on beats a line about something over; six untouched minutes give a shot every second, 25 to 60 shots, none longer than 21 s, no subject twice in a minute. `scripts/watch-frames.mjs` plays it in a browser at the owner's Fold sizes and gives the number: the share of ten second windows in which the subject of the line is on screen with a villager at least 24 px tall. Before: 0. After: over 0.9 at 344 by 882 and 700 by 830.
