@@ -680,6 +680,8 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
     check("vampires turn villagers at night", errors.length === 0 && vampires > 2, `${vampires} vampires`);
   }
   {
+    // (The islands below reseed Math.random; put the stream back after, so later tests are unchanged.)
+    const streamBefore = Math.random;
     // A Phoenix that names itself in onDeath is reborn once per death, not multiplied
     // (one stored Phoenix became 262 on an island). Spells naming each other are capped too.
     const { world, rt, errors, v } = villageWorld();
@@ -735,6 +737,7 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
     const ash = t.world.creatures.filter((c) => !c.dead && c.kind === "ash").length;
     check("a creature dying with spawn of another kind still leaves two", t.errors.length === 0 && ash === 2, `${ash} ash`);
     check("two spells naming each other do not multiply without limit", peakChain >= 2 && peakChain <= 8, `${peakChain} moths and ash at the peak of 6 rounds`);
+    Math.random = streamBefore;
   }
   {
     // Over several islands: whether a wounded imp dies within 20 s or limps
