@@ -1,9 +1,10 @@
 import { C, F, G } from "./materials";
 import type { World } from "./world";
 import { unpackLook } from "./villagers";
-import { deed, harmed, remember, villageOf } from "./kin";
+import { deed, feeling, harmed, remember, villageOf } from "./kin";
 import { meter } from "./motion";
 import { alarm, alarmOf, calmDown, fleeing } from "./flight";
+import { WARD, warded } from "./wards";
 import type { Creature, CreatureKind } from "./creatures";
 
 // How creatures notice each other and the things spells put in the world.
@@ -40,6 +41,10 @@ export interface Landmark extends Presence {
 }
 
 export type Mood = "fear" | "lured" | "carry" | "angry" | "hunt" | "asleep" | null;
+
+// The kinds the engine itself defines (creatures.ts fills it): what is not
+// in it was made by an item or a spell.
+export const BUILT_IN = new Set<string>();
 
 // Extra words that name a kind: the island's animals are all "beast" (3.5),
 // so a scarecrow or honey written before them still works on deer and bears.
@@ -122,7 +127,7 @@ export function social(world: World, c: Creature, k: CreatureKind, kindOf: (c: C
       }
     }
     if (seen.fight) {
-      attack(world, c, t, seen.fight, dt);
+      attack(world, c, t, seen.fight, dt, kindOf);
       return { x: t.x, y: t.y, pace: 1.3, mood: "angry" };
     }
     // A place that scares the threat is a refuge: run there if one is near.
@@ -256,10 +261,19 @@ function see(world: World, c: Creature, k: CreatureKind, kindOf: (c: Creature) =
   }
   // Guards stand and fight (3.6); a mob of villagers stands up to a threat they can handle.
   // Nobody on foot can strike what flies above them.
+  const stands = !seen.threat || standsUpTo(c, seen.threat, kindOf(seen.threat), allies);
   if (seen.threat && seen.threat.z > 1.5 && !guardingHigh(seen)) seen.fight = 0;
-  else if (seen.threat && !seen.fight && c.kind === "villager" && unpackLook(c.look).job === "guard" && c.hp > 40 && seen.threat.hp < 130 * (allies + 1))
+  else if (
+    seen.threat &&
+    !seen.fight &&
+    stands &&
+    c.kind === "villager" &&
+    unpackLook(c.look).job === "guard" &&
+    c.hp > 40 &&
+    seen.threat.hp < 130 * (allies + 1)
+  )
     seen.fight = 16;
-  if (seen.threat && !seen.fight && c.kind === "villager" && allies >= 2 && seen.threat.z <= 1.5) {
+  if (seen.threat && !seen.fight && stands && c.kind === "villager" && allies >= 2 && seen.threat.z <= 1.5) {
     const t = seen.threat;
     if (t.hp < 90 * (allies + 1)) seen.fight = 8;
   }
@@ -285,11 +299,31 @@ function see(world: World, c: Creature, k: CreatureKind, kindOf: (c: Creature) =
   return seen;
 }
 
+const VILLAGER_HP = 100;
+
+// Villagers respect strength (2026-11-11), against a creature an item or a
+// spell made. They stand up only to one that is a danger to people: it hunts
+// them, turns them, burns or hurts those around it, or has hurt one of them.
+// What only scares them they run from, and get used to after a while. And
+// never alone against one with more than twice their health: a guard then
+// goes in only with two others beside it, as a mob does (three or more).
+// The island's own animals and the engine's kinds keep the rules of 3.6, so
+// a mob of four still brings down a bear.
+export function standsUpTo(c: Creature, t: Creature, tk: CreatureKind, allies: number): boolean {
+  if (c.kind !== "villager" || tk.native || BUILT_IN.has(t.kind)) return true;
+  // Hurt to a third of its health, it breaks off and runs.
+  if (c.hp < VILLAGER_HP / 3) return false;
+  const ai = tk.ai;
+  const danger = hunts(t, tk, c) || !!ai?.converts || ai?.aura === "hurt" || ai?.aura === "burn" || feeling(c, t.kind) <= -1;
+  if (!danger) return false;
+  return t.hp <= 2 * c.hp || allies >= 2;
+}
+
 function guardingHigh(seen: Seen): boolean {
   return seen.fight > 0 && seen.fight !== 8 && seen.fight !== 16;
 }
 
-function attack(world: World, c: Creature, t: Creature, dps: number, dt: number): void {
+function attack(world: World, c: Creature, t: Creature, dps: number, dt: number, kindOf: (c: Creature) => CreatureKind): void {
   if (Math.hypot(t.x - c.x, t.y - c.y) > 1.6 + t.size * 0.5) return;
   t.hp -= dps * dt;
   // Remembered by both sides, and counted as something it did (3.6).
@@ -300,6 +334,27 @@ function attack(world: World, c: Creature, t: Creature, dps: number, dt: number)
   }
   harmed(world, t, c, dps * dt);
   if (t.hp <= 0) t.dead = true;
+  else strikeBack(world, t, kindOf(t), c, dt);
+}
+
+// The exchange of blows (2026-11-11): a creature an item or a spell made, awake,
+// strikes back at a villager striking it, with its own attack and at one of them
+// at a time, so a fight costs the village what the creature can do. Before, a
+// creature asleep or set on other prey took a mob's blows and gave none.
+export function strikeBack(world: World, t: Creature, tk: CreatureKind, c: Creature, dt: number): void {
+  if (c.kind !== "villager" || t.dead || BUILT_IN.has(t.kind)) return;
+  const a = tk.ai?.attack ?? 0;
+  if (tk.native || a <= 0 || t.sleep > 0 || t.stun > 0 || t.frozen > 0 || t.data.mood === "asleep") return;
+  const foe = t.data.foe as number | undefined;
+  const at = (t.data.foeAt as number | undefined) ?? -Infinity;
+  if (foe !== undefined && foe !== c.id && world.tick - at <= 2) return;
+  t.data.foe = c.id;
+  t.data.foeAt = world.tick;
+  const i = world.idx(Math.max(0, Math.min(world.w - 1, c.x)), Math.max(0, Math.min(world.h - 1, c.y)));
+  const blow = a * dt * (warded(world, i, WARD.harm) ? 0.15 : 1);
+  c.hp -= blow;
+  harmed(world, c, t, blow);
+  if (c.hp <= 0) c.dead = true;
 }
 
 // Picks up the thing at a lure: the cell is cleared and carried home.

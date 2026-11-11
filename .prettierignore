@@ -5,6 +5,7 @@ lab/legacy
 lab/spells
 lab/solutions
 lab/creatures
+lab/monsters
 migrations
 .wrangler
 # Third party skills, kept as published (docs/SKILLS.md)

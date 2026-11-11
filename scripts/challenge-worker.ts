@@ -12,6 +12,7 @@ import { Runtime } from "../src/sim/runtime";
 import { measureMotion } from "./motion-run";
 import { landLife } from "./land-life";
 import { balanceRun } from "./balance-run";
+import { MONSTERS, monsterLife } from "./monsters-run";
 import type { Biome, Shape } from "../src/sim/land";
 
 // As in sim-test.ts (review M8): no verdict depends on the machine's speed.
@@ -28,12 +29,15 @@ export type Job =
   | { rate: string }
   | { biome: Biome | "mixed"; shape: Shape; seed: number; seconds: number; size?: number }
   // 4.4.5: half an hour of wild numbers, or a wipe and ten minutes after.
-  | { balance: Biome | "mixed"; seed: number; seconds: number; size: number; wipeAt: number };
+  | { balance: Biome | "mixed"; seed: number; seconds: number; size: number; wipeAt: number }
+  // 2026-11-11: a monster placed by the village, followed five minutes (monsters-run.ts).
+  | { monster: number };
 
 const { jobs, next } = workerData as { jobs: Job[]; next: Int32Array };
 for (let k = Atomics.add(next, 0, 1); k < jobs.length; k = Atomics.add(next, 0, 1)) {
   const job = jobs[k];
-  if ("motion" in job) parentPort!.postMessage({ job, motion: measureMotion(job.motion) });
+  if ("monster" in job) parentPort!.postMessage({ job, monster: monsterLife(MONSTERS[job.monster]) });
+  else if ("motion" in job) parentPort!.postMessage({ job, motion: measureMotion(job.motion) });
   else if ("balance" in job) parentPort!.postMessage({ job, balance: balanceRun(job.balance, job.seed, job.seconds, job.size, job.wipeAt) });
   else if ("biome" in job) parentPort!.postMessage({ job, land: landLife(job.biome, job.shape, job.seed, job.seconds, job.size) });
   else if ("rate" in job) {

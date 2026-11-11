@@ -22,6 +22,7 @@ export default tseslint.config(
       "lab/promises",
       "lab/artifacts",
       "lab/creatures",
+      "lab/monsters",
     ],
   },
   js.configs.recommended,

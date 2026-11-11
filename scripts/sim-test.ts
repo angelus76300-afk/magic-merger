@@ -11,6 +11,7 @@ import { KINDS, makeCreature, populate, resetCreatureIds } from "../src/sim/crea
 import { interactionChecks } from "./interactions-test";
 import { sizeChecks } from "./sizes-test";
 import { roadsChecks } from "./roads-test";
+import { monsterChecks } from "./monsters-test";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
 import { logDeeds, mindOf, remember } from "../src/sim/kin";
@@ -29,6 +30,7 @@ import { capByDepth } from "../shared/tiers";
 import { joinsBoth } from "../worker/prompts";
 import type { Job } from "./challenge-worker";
 import { MOTION_SEEDS, MOTION_SECONDS, type MotionReport } from "./motion-run";
+import { DAY_SECONDS, MONSTERS, median, type MonsterLife } from "./monsters-run";
 import { mergeMotion, motionLines, type KindMotion } from "../src/sim/motion";
 import { runCheck, type SceneReport } from "../src/sim/check";
 import { readResult } from "../src/checkresult";
@@ -117,6 +119,8 @@ const idle: Job[] = [
   { balance: "mixed", seed: 33, seconds: WIPE_AT + RECOVER_SECONDS, size: 208, wipeAt: WIPE_AT },
   ...BIOMES.map((balance, k) => ({ balance, seed: 51 + k, seconds: BALANCE_SECONDS, size: 112, wipeAt: -1 })),
   { balance: "temperate", seed: 3, seconds: WIPE_AT + RECOVER_SECONDS, size: 152, wipeAt: WIPE_AT },
+  // Monsters that live through their first day (2026-11-11): ten creature programs placed by the village.
+  ...MONSTERS.map((_, monster) => ({ monster })),
   ...Array.from({ length: SCENE_STREAMS }, (_, n) => ({ scene: n, seconds: SCENE_SECONDS })),
   // 4.4: every biome left alone for three simulated minutes, each on its
   // own shape (the shapes go round), so every biome and every shape lives.
@@ -140,6 +144,7 @@ const motion: Record<string, KindMotion> = {};
 const motionErrors: string[] = [];
 const lands: LandLife[] = [];
 const balances: Balance[] = [];
+const monsterRows: MonsterLife[] = [];
 const nextIdle = new Int32Array(new SharedArrayBuffer(4));
 const idleDone = Promise.all(
   Array.from({ length: Math.min(4, Math.max(2, availableParallelism() - 1)) }, () => {
@@ -156,8 +161,10 @@ const idleDone = Promise.all(
         rate,
         land,
         balance,
+        monster,
       }: {
         job: Job;
+        monster?: MonsterLife;
         land?: LandLife;
         balance?: Balance;
         motion?: MotionReport;
@@ -167,7 +174,8 @@ const idleDone = Promise.all(
         report?: SceneReport;
         verified?: { ok: boolean; wins: number; runs: number };
       }) => {
-        if (balance) balances.push(balance);
+        if (monster) monsterRows.push(monster);
+        else if (balance) balances.push(balance);
         else if (land) lands.push(land);
         else if (rate && "rate" in job) challengeRates.set(job.rate, rate);
         else if (moved) {
@@ -1165,6 +1173,30 @@ for (const scenario of SCENARIOS) {
 }
 
 await idleDone;
+// Monsters that live through their first day (2026-11-11, monsters-run.ts):
+// placed six cells from a house in the morning, the ten programs' median life
+// by day is over two minutes, the werewolf of the review of 10 November (dead
+// in 4 s before: asleep on arrival, then struck by a mob) lives through the
+// day, and no monster takes the island below the creature probe's 70% of
+// villagers ("the island did not hold").
+{
+  const rows = MONSTERS.map((m) => monsterRows.find((r) => r.name === m.name)!).filter(Boolean);
+  const lives = rows.map((r) => `${r.name} ${r.medianLife}`).join(", ");
+  check(
+    "monsters: all ten were followed, without an error",
+    rows.length === MONSTERS.length && rows.every((r) => !r.errors.length),
+    rows.flatMap((r) => r.errors).join("; "),
+  );
+  check("monsters: the median life by day of a placed monster is over 120 s", median(rows.map((r) => r.medianLife)) > 120, lives);
+  const wolf = rows.find((r) => r.name === "Werewolf (review)");
+  check(
+    "monsters: the review's werewolf lives through the day by the village",
+    !!wolf && wolf.aliveAtDusk === wolf.placed && wolf.medianLife >= DAY_SECONDS,
+    lives,
+  );
+  const fell = rows.filter((r) => r.villagersLeft < 0.7);
+  check("monsters: none leaves fewer than 70% of the villagers in five minutes", !fell.length, fell.map((r) => `${r.name} ${r.villagersLeft}`).join(", "));
+}
 // 4.4: every biome generated, populated and left alone for three minutes:
 // no species dies out, villages stand, rivers keep running, the sea does not
 // rise, nothing floods or burns by itself, the volcano keeps its lava.
@@ -2371,6 +2403,7 @@ fogChecks(check);
 
 // Roads (4.9): scripts/roads-test.ts.
 roadsChecks(check);
+monsterChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);
