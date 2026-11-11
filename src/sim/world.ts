@@ -1,5 +1,6 @@
 import type { ArtHooks } from "./artifacts";
 import type { Happening, StoryLine } from "./kin";
+import { TROUBLE_FIRST, type Stone, type Trouble, type TroubleEnd } from "./troubles";
 import type { Creature } from "./creatures";
 import { C, F, G, MaterialTable, type Layer } from "./materials";
 import { Rng, fbm, valueNoise } from "./noise";
@@ -136,6 +137,15 @@ export class World {
   // Houses and buildings going up (4.9 part 2, sites.ts), saved; and a
   // counter the view redraws them on.
   sites: Site[] = [];
+  // The island needs you (troubles.ts): the trouble running now, how many
+  // this island has had, when the next may start, and the stones villages
+  // raised to the items that saved them. Saved.
+  trouble: Trouble | null = null;
+  troubles = 0;
+  troubleNext = TROUBLE_FIRST;
+  stones: Stone[] = [];
+  // How the last trouble ended, until the frame has told it (not saved).
+  troubleEnd: TroubleEnd | null = null;
   sitesVersion = 0;
   // Wonders and the island's name (4.4.5 part B, wonders.ts); none on the
   // old island and the challenges. House cells rebuilt after a fire wear a
