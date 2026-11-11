@@ -26,7 +26,7 @@
 
 .move-hint p {
   margin: 0;
-  font: 600 15px/1.35 var(--font-body);
+  font: 600 16px/1.35 var(--font-body);
 }
 
 .move-hint button {
@@ -56,8 +56,9 @@
   }
 }
 
-/* Craft below 700 px: with under 20 items the search and the filters only
-   take room from the list (177 px at 344 wide, 6 of the 8 forces in sight). */
+/* Craft below 700 px: with under 10 items the search and the filters only
+   take room from the list (177 px at 344 wide, 6 of the 8 forces in sight;
+   10 items fit without them). */
 @media (max-width: 699px) {
   .inventory.inventory-few #search,
   .inventory.inventory-few .inventory-filters {

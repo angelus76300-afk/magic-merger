@@ -49,14 +49,19 @@ function inSight(frame: HTMLIFrameElement, x: number, y: number): boolean {
 const HINT_KEY = "magic-merger.hint.move";
 const HINT_AFTER_MS = 3000;
 const NEWS_AFTER_MS = 4500;
+// Shown this long, the hint counts as read; it closes itself a little later.
+const HINT_READ_MS = 8000;
+const HINT_CLOSE_MS = 12000;
 
 // What waits for the first cast of this visit to land and be held for three
-// seconds: one line on how to move the island (shown once per browser), then
-// what the World had to say (the week's new wonders).
+// seconds: one line on how to move the island (until it was read once in
+// this browser), then what the World had to say (the week's new wonders).
 export class FirstCastGuide {
   private landed = false;
   private waiting: (() => void)[] = [];
   private hint: HTMLElement | null = null;
+  private timers: number[] = [];
+  private place: (() => void) | null = null;
 
   afterFirstCast(say: () => void): void {
     if (this.landed) say();
@@ -73,30 +78,63 @@ export class FirstCastGuide {
   }
 
   private showHint(stage: HTMLElement): void {
-    if (readSeen() || !stage.isConnected || !stage.getClientRects().length) return;
-    writeSeen();
+    if (this.hint || readSeen() || !stage.isConnected || !stage.getClientRects().length) return;
     const touch = window.matchMedia?.("(pointer: coarse)").matches ?? false;
     const box = document.createElement("div");
     box.className = "move-hint";
     box.setAttribute("role", "status");
     const text = document.createElement("p");
     text.textContent = touch
-      ? "One finger turns the island. Two fingers move it; pinch to zoom."
-      : "Drag to turn the island. Shift drag moves it; the wheel zooms.";
+      ? "Drag to turn the island. Drag with two fingers to move it; pinch to zoom."
+      : "Drag to turn the island. Right\u2011drag or Shift\u2011drag moves it; scroll to zoom.";
     const ok = document.createElement("button");
     ok.type = "button";
     ok.textContent = "Got it";
-    ok.addEventListener("click", () => this.hideHint());
+    ok.addEventListener("click", () => {
+      writeSeen();
+      this.hideHint();
+    });
     box.append(text, ok);
     stage.append(box);
     this.hint = box;
-    setToastFloor("hint", box.getBoundingClientRect().bottom);
+    // Below the World's buttons where they make a row along the top of the
+    // island (a laptop with a mouse); beside the rail on a phone. Measured
+    // again when the window changes, as when a Fold opens.
+    this.place = () => {
+      const top = stage.getBoundingClientRect().top;
+      box.style.top = "";
+      const hint = box.getBoundingClientRect();
+      let below = 0;
+      for (const b of document.querySelectorAll<HTMLElement>(".world-tools button, .world-tools select")) {
+        const r = b.getBoundingClientRect();
+        if (r.width && r.top < hint.bottom && r.bottom > hint.top && r.left < hint.right && r.right > hint.left) below = Math.max(below, r.bottom);
+      }
+      if (below) box.style.top = `${Math.round(below - top + 8)}px`;
+      setToastFloor("hint", box.getBoundingClientRect().bottom);
+    };
+    this.place();
+    window.addEventListener("resize", this.place);
+    this.timers.push(
+      window.setTimeout(writeSeen, HINT_READ_MS),
+      window.setTimeout(() => this.hideHint(), HINT_CLOSE_MS),
+    );
   }
 
+  // Closed by the player, by the inspect card or by leaving the World. Taken
+  // away before it could be read, it comes back after the next cast.
   hideHint(): void {
-    this.hint?.remove();
+    if (!this.hint) return;
+    for (const t of this.timers.splice(0)) clearTimeout(t);
+    if (this.place) window.removeEventListener("resize", this.place);
+    this.place = null;
+    this.hint.remove();
     this.hint = null;
     setToastFloor("hint", 0);
+  }
+
+  // A cast after the hint was taken away unread brings it back once.
+  again(stage: HTMLElement): void {
+    if (this.landed && !this.hint && !readSeen()) window.setTimeout(() => this.showHint(stage), HINT_AFTER_MS);
   }
 }
 

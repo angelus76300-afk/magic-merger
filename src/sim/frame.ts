@@ -284,7 +284,7 @@ function startTour(on: Engine): void {
     on,
     lookCard,
     window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
-    { tx: o.tx, ty: o.ty, dist: o.dist, phi: o.phi },
+    { tx: o.tx, ty: o.ty, dist: o.dist, phi: o.phi, theta: o.theta },
     () => {
       touring = false;
     },

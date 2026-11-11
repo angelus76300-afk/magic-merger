@@ -43,8 +43,8 @@ export function chipElement(element: GameElement, tag: "div" | "button" = "div")
 const sound = new CraftSound();
 
 // Below this many items the Craft list folds its search and filters away on
-// a narrow screen (2026-11-11).
-const FEW_ITEMS = 20;
+// a narrow screen (2026-11-11): 10 fit at 344 wide without them.
+const FEW_ITEMS = 10;
 
 // The Craft tab: a board where chips are dropped onto each other, and the
 // inventory of everything discovered so far.
@@ -53,6 +53,7 @@ export class Craft {
   // Chips waiting for a merge answer cannot be touched.
   private busy = new Set<number>();
   private hovered: HTMLElement | null = null;
+  private filtersUsed = false;
   private tappedChip: number | null = null;
   // Called when this player finds something they did not have yet.
   // writing: the Worker started its program at the merge (4.2).
@@ -114,10 +115,11 @@ export class Craft {
       (d) => elementKey(d.element.name),
     );
     this.count.textContent = shown.length === all.length ? `${all.length} discovered` : `${shown.length} of ${all.length}`;
-    // Under 20 items, nothing to search: on a narrow screen the search and
-    // the filters fold away (firstcast.css), unless one is in use.
-    const plain = !this.search.value && this.filters.state.kind === "all" && this.filters.state.tier === "any";
-    this.inventory.classList.toggle("inventory-few", all.length < FEW_ITEMS && plain);
+    // Under 10 items, nothing to search: on a narrow screen the search and
+    // the filters fold away (firstcast.css), unless one is or was in use this
+    // visit (clearing a filter must not pull the row from under the finger).
+    if (this.search.value || this.filters.state.kind !== "all" || this.filters.state.tier !== "any") this.filtersUsed = true;
+    this.inventory.classList.toggle("inventory-few", all.length < FEW_ITEMS && !this.filtersUsed);
 
     const fragment = document.createDocumentFragment();
     for (const { element } of shown) {

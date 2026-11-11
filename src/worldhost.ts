@@ -589,7 +589,10 @@ export class WorldHost {
         timeline.step(msg.key, this.store.get(msg.key)!.element.name, "cast");
         this.castInAttempt.push(msg.key);
         markUsed(msg.key);
-        if (!this.challenge) this.guide.cast(this.el.stage);
+        if (!this.challenge) {
+          this.guide.again(this.el.stage);
+          this.guide.cast(this.el.stage);
+        }
         void this.afterCast(msg.key);
         // In a grid the bar covers the island: fold it once a spell is used,
         // unless the player sized it by hand (the grip, below).

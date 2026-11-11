@@ -31,6 +31,8 @@ export interface Pose {
   ty: number;
   dist: number;
   phi: number;
+  // The way the camera faces; a pose without it keeps the current one.
+  theta?: number;
 }
 
 // Where play starts on a new island: over a village, looking down at it.
@@ -64,11 +66,15 @@ export function firstLook(engine: Engine, card: HTMLElement, reducedMotion: bool
     clearInterval(spin);
     card.hidden = true;
     engine.canvas.removeEventListener("pointerdown", stop);
-    if (!reducedMotion) orbit.flyTo(end.tx, end.ty, end.dist, end.phi, 1.6);
+    card.removeEventListener("pointerdown", stop);
+    if (!reducedMotion) orbit.flyTo(end.tx, end.ty, end.dist, end.phi, 1.6, end.theta);
     onEnd?.();
   }
   const intro = `${COUNT[Math.min(5, wonders.length)][0].toUpperCase()}${COUNT[Math.min(5, wonders.length)].slice(1)}: ${listOf(wonders.map((w) => w.label))}`;
   engine.canvas.addEventListener("pointerdown", stop);
+  // The card sits over the middle of a narrow island: a tap on it ends the
+  // tour too, as a tap anywhere else does (playtest, 2026-11-11).
+  card.addEventListener("pointerdown", stop);
   if (reducedMotion) {
     show(name, intro, "");
     timer = window.setTimeout(stop, 7000);
