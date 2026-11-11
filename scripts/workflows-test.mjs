@@ -76,6 +76,8 @@ function runLines(lines) {
 const TAINTED =
   /\$\{\{[^}]*(github\.head_ref|pull_request\.(title|body|head\.ref|head\.label)|comment\.body|issue\.(title|body)|label\.name|head_commit\.message|review\.body|workflow_run\.head_branch|inputs\.)[^}]*\}\}/;
 
+const PRODUCTION_SECRET = /\$\{\{[^}]*secrets\.(CLOUDFLARE_API_TOKEN|MM_TOKEN)\b/;
+
 // What the guard reads from the API under a dispatch: the state, this repository, the head the caller named,
 // not a draft, and a feedback branch only with owner-ok. Each must stop the job (exit 1).
 const DISPATCH_GUARD = [/\.state\b/, /\.head\.repo\.full_name/, /\.head\.sha/, /\.draft\b/, /claude\/feedback-/, /Feedback:/, /owner-ok/, /GITHUB_SHA/];
@@ -156,6 +158,16 @@ export function findings(name, text) {
         out.push(`${name} job ${job.name}: a fork's finished run wakes it (no head_repository guard in its if)`);
   if (triggers.includes("pull_request_target"))
     for (const job of jobs) if (!job.cond.includes(SAME_REPO)) out.push(`${name} job ${job.name}: a fork's pull_request_target wakes it`);
+  // 2026-11-11, "credentials: yes": production's Cloudflare token and admin token are given only to a job
+  // on the environment "production", which only main may use. The preview is the one exception: its
+  // upload uses the "preview" environment's own token, and its smoke falls back to MM_TOKEN only while
+  // a repository-level copy still exists (docs/SETUP.md, section 7, "The production environment").
+  for (const job of jobs) {
+    if (!PRODUCTION_SECRET.test(job.text)) continue;
+    if (/^ {4}environment:\s*production\s*$/m.test(job.text)) continue;
+    if (name === "preview.yml" && (job.name === "smoke" || /^ {4}environment:\s*$\n^ {6}name:\s*preview\s*$/m.test(job.text))) continue;
+    out.push(`${name} job ${job.name}: names a production secret outside the environment "production"`);
+  }
   return out;
 }
 
@@ -185,6 +197,19 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   check("a title through env passes", findings("x", injected.replace(`echo "\${{ github.event.pull_request.title }}"`, 'echo "$TITLE"')).length === 0);
   const target = `on:\n  pull_request_target:\njobs:\n  a:\n    if: ${SAME_REPO}\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: \${{ github.event.pull_request.head.sha }}\n      - run: npm ci\n`;
   check("pull_request_target checking out the head and running npm is caught twice over", findings("x", target).length === 3, findings("x", target).join("; "));
+  {
+    const prod = `on:\n  workflow_dispatch:\njobs:\n  a:\n    runs-on: ubuntu-latest\n    env:\n      T: \${{ secrets.CLOUDFLARE_API_TOKEN }}\n    steps:\n      - run: echo\n`;
+    check("a production secret outside the environment production is caught", findings("x", prod).length === 1, findings("x", prod).join("; "));
+    check(
+      "the same job on the environment production passes",
+      findings("x", prod.replace("    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    environment: production\n")).length === 0,
+    );
+    check("MM_TOKEN counts too", findings("x", prod.replace("CLOUDFLARE_API_TOKEN", "MM_TOKEN")).length === 1);
+    check(
+      "another environment does not count",
+      findings("x", prod.replace("    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    environment: staging\n")).length === 1,
+    );
+  }
   const comment = `on:\n  issue_comment:\njobs:\n  a:\n    if: github.event.issue.pull_request\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo\n`;
   check("an issue_comment job anyone can wake is caught", findings("x", comment).length === 1);
   check(
