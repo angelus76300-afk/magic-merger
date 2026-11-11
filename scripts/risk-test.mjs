@@ -204,6 +204,62 @@ check(
 );
 check("a line under Next versions is not", !sectionsOf([{ oldStart: 8, oldLines: 1, newStart: 8, newLines: 1 }], doc, doc).includes("Decisions taken"));
 
+// A9, A10: what stored spells and saved islands depend on (2026-11-10 review, section 2, point 1).
+check("A9 an API entry removed", rules([file("scripts/api-surface.json", [], ['      "burnVoxels",'])]) === "A9");
+check("A9 an API entry renamed", rules([file("scripts/api-surface.json", ['      "burnVoxel",'], ['      "burnVoxels",'])]) === "A9");
+check(
+  "A9 an option key removed from a one line list",
+  rules([file("scripts/api-surface.json", ['  "SpellApi.burst(o)": ["color", "count"],'], ['  "SpellApi.burst(o)": ["color", "count", "drag"],'])]) === "A9",
+);
+check("A9 the snapshot deleted", rules([file("scripts/api-surface.json", [], ['{"members": {}}'], { status: "D" })]) === "A9");
+check("A9 an entry added stays green", rules([file("scripts/api-surface.json", ['      "bloom",'], [])]) === "");
+check(
+  "A9 an entry added after the last one of a list stays green",
+  rules([file("scripts/api-surface.json", ['      "zap",', '      "zip"'], ['      "zap"'])]) === "",
+);
+check(
+  "A9 a list reflowed or reindented stays green",
+  rules([file("scripts/api-surface.json", ['    "BodyHandle": ["age",', '      "alive"],'], ['    "BodyHandle": ["age", "alive"],'])]) === "",
+);
+check("A10 save.ts", rules([file("src/sim/save.ts", ["const SAVE_VERSION = 9;"], ["const SAVE_VERSION = 8;"])]) === "A10");
+check("A10 a golden save edited", rules([file("lab/saves/island-2026-11-11.json", ['{"commit":"x"}'], ['{"commit":"y"}'])]) === "A10");
+check("A10 a golden save deleted", rules([file("lab/saves/island-2026-11-11.json", [], ['{"commit":"y"}'], { status: "D" })]) === "A10");
+check("A10 a new golden save stays green", rules([file("lab/saves/island-2027-01-01.json", ['{"commit":"z"}'], [], { status: "A" })]) === "");
+{
+  const mat = (ground, fluid = ['make("none", "fluid", [0]),']) =>
+    `export const BUILTIN = {\n  ground: [\n${ground.map((n) => `    make("${n}", "ground", [1]),`).join("\n")}\n  ],\n  fluid: [\n${fluid.map((l) => `    ${l}`).join("\n")}\n  ],\n};\n`;
+  const old = mat(["grass", "dirt", "sand"]);
+  const edit = (newText, added, removed) => file("src/sim/materials.ts", added, removed, { oldText: old, newText });
+  check("A10 a material inserted in the middle", rules([edit(mat(["grass", "dirt", "clay", "sand"]), ['    make("clay", "ground", [1]),'], [])]) === "A10");
+  check(
+    "A10 a material renamed",
+    rules([edit(mat(["grass", "mud", "sand"]), ['    make("mud", "ground", [1]),'], ['    make("dirt", "ground", [1]),'])]) === "A10",
+  );
+  check(
+    "A10 two materials swapped",
+    rules([edit(mat(["grass", "sand", "dirt"]), ['    make("sand", "ground", [1]),'], ['    make("dirt", "ground", [1]),'])]) === "A10",
+  );
+  check("A10 a material removed", rules([edit(mat(["grass", "sand"]), [], ['    make("dirt", "ground", [1]),'])]) === "A10");
+  check(
+    "A10 a material added at the end of its layer stays green",
+    rules([edit(mat(["grass", "dirt", "sand", "clay"]), ['    make("clay", "ground", [1]),'], [])]) === "",
+  );
+  check(
+    "A10 a new material at the end of another layer stays green",
+    rules([edit(mat(["grass", "dirt", "sand"], ['make("none", "fluid", [0]),', 'make("brine", "fluid", [2]),']), ['    make("brine", "fluid", [2]),'], [])]) ===
+      "",
+  );
+  check(
+    "A10 a colour or a property edited stays green",
+    rules([edit(mat(["grass", "dirt", "sand"]), ['    make("dirt", "ground", [2], { flow: 1 }),'], ['    make("dirt", "ground", [1]),'])]) === "",
+  );
+  check(
+    "A10 an edit outside the table stays green",
+    rules([file("src/sim/materials.ts", ["export const F = {};"], ["export const F = { NONE: 0 };"], { oldText: old, newText: old })]) === "",
+  );
+  check("A10 without the file's text, a touched make( line counts", rules([file("src/sim/materials.ts", ['    make("clay", "ground", [1]),'], [])]) === "A10");
+}
+
 // The rules the owner reads are the rules the script runs.
 const daily = readFileSync("docs/DAILY.md", "utf8");
 const table = daily.slice(daily.indexOf("## Risk classes"), daily.indexOf("\n## ", daily.indexOf("## Risk classes") + 5));

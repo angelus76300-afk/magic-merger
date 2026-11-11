@@ -1,7 +1,8 @@
 import { C, F, G } from "./materials";
+import { SITE, STAGE_WORDS, canStake, handsOn, kindName, siteToWork, standBy, sitesOf, sitesOn, stageOf, stake, work as workSite, type Site } from "./sites";
 import { MIN_PEOPLE, alongRoad, claim, isWay, nextPave, noteTrip, pave, planned, type PaveJob } from "./roads";
 import type { Wonder } from "./wonders";
-import { hasJob, settlementNear, tavernFor } from "./buildings";
+import { hasJob, housesOf, settlementNear, tavernFor, tierOf } from "./buildings";
 import { VK } from "./voxels";
 import { daylight } from "./daylight";
 import { names, type Plan } from "./social";
@@ -34,6 +35,7 @@ import type { Behavior, Creature, CreatureKind } from "./creatures";
 import type { World } from "./world";
 import { artifactVisit, useArtifact, type Visit } from "./artifacts";
 import { meter } from "./motion";
+import { facing, standsUpTo, strikeBack } from "./social";
 
 // Goals (3.6): nothing on the island just stands there. Every creature has a
 // goal from a small vocabulary (kin.ts, GOALS), needs that come before it
@@ -213,6 +215,7 @@ const DURATION: Partial<Record<Task, number>> = {
   carry: 0.3,
   trade: 0.5,
   pave: 3,
+  raise: 4,
   roam: 0,
   herd: 0,
   patrol: 1,
@@ -224,6 +227,7 @@ const REACH: Partial<Record<Task, number>> = {
   use: 2.2,
   trade: 4,
   pave: 1.6,
+  raise: 1.6,
   forge: 2.4,
   fish: 2.6,
   fell: 1.9,
@@ -252,6 +256,7 @@ export const TASK_WORDS: Record<Task, string> = {
   fish: "fishing",
   build: "building a house",
   pave: "laying a road",
+  raise: "building a house",
   repair: "rebuilding a ruin",
   dam: "building a dam",
   take: "taking treasure",
@@ -513,6 +518,7 @@ function hit(world: World, c: Creature, k: CreatureKind, m: Mind, t: Creature, d
   m.work += dt;
   t.hp -= blow;
   harmed(world, t, c, blow);
+  if (t.hp > 0) strikeBack(world, t, life.kindOf(t), c, dt);
   if (t.kind === "villager" && t.fear <= 0 && m.task === "hunt") {
     t.fear = 3;
     t.fearX = c.x;
@@ -620,9 +626,10 @@ function urgent(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
         }
       }
       if (worst) {
-        if (job === "guard") setTask(m, "fight", worst.x, worst.y, 1.3, -1, worst);
+        const goes = job === "guard" && standsUpTo(c, worst, life.kindOf(worst), facing(world, c, worst));
+        if (goes) setTask(m, "fight", worst.x, worst.y, 1.3, -1, worst);
         else setTask(m, "avoid", c.x + (c.x - worst.x) * 1.5, c.y + (c.y - worst.y) * 1.5, 1.4);
-        m.action = `${job === "guard" ? "going for" : "keeping away from"} the ${base(worst.kind)} that hurt them`;
+        m.action = `${goes ? "going for" : "keeping away from"} the ${base(worst.kind)} that hurt them`;
         return true;
       }
     }
@@ -824,9 +831,15 @@ function work(world: World, c: Creature, m: Mind): void {
   const hired = m.job ? CUSTOM_GOALS.get(m.job) : undefined;
   if (hired && customTask(world, c, m, hired)) return;
   if (job !== "guard" && job !== "priest" && goToMarket(world, c, m, v)) return;
+  // 4.9 part 2: a villager with no trade lends a hand on a house going up
+  // half the time, before its chores.
+  if (job === "none" && world.sites.length && Math.random() < 0.5 && raiseSite(world, m, v)) return;
   job2(world, c, m, v, job);
   // Nothing for its job right now: lend a hand on a road, or a chore, so
   // nobody just stands there.
+  // 4.9 part 2: or on a house going up.
+  if (m.task === "none" && (job === "none" || job === "woodcutter" || job === "farmer") && world.sites.length && Math.random() < 0.5 && raiseSite(world, m, v))
+    return;
   if (m.task === "none" && (job === "none" || job === "woodcutter" || job === "farmer") && world.roads.length && Math.random() < 0.5 && layRoad(world, c, m, v))
     return;
   if (m.task === "none" && !forage(world, c, m) && Math.random() < 0.25) plantFlowers(world, c, m, true);
@@ -917,15 +930,52 @@ export function smithyNear(world: World, x: number, y: number): number {
 function build(world: World, c: Creature, m: Mind, v: Village): void {
   const ruin = findCell(world, v.x, v.y, 14, 20, (i) => world.cover[i] === C.RUBBLE);
   if (ruin >= 0) return cellTask(world, m, "repair", ruin);
+  // 4.9 part 2: a house or building the village began comes first.
+  if (world.sites.length && raiseSite(world, m, v)) return;
   // 4.9: a road the village marked out is laid, most of the time.
   if (world.roads.length && Math.random() < 0.7 && layRoad(world, c, m, v)) return;
   const cap = 12 + Math.floor(v.gold / 4);
-  if (v.wood >= 5 && v.houses < cap && v.people >= v.houses * 1.2) {
+  if (
+    v.wood >= SITE.houseWood &&
+    v.houses + houseSitesOf(world, v) < cap &&
+    v.people >= v.houses * 1.2 &&
+    (!sitesOn(world) || canStake(world, v, C.HOUSE, isTown(world, v)))
+  ) {
     const site = houseSite(world, v.x, v.y);
+    // Since 4.9 part 2 it is staked out and paid now, and raised in stages.
+    if (site >= 0 && sitesOn(world)) {
+      v.wood -= SITE.houseWood;
+      return raiseOn(world, m, stake(world, site, C.HOUSE, SITE.houseWood));
+    }
     if (site >= 0) return cellTask(world, m, "build", site);
   }
   if (v.wood < 5 && fellTree(world, c, m, v)) return;
   forage(world, c, m);
+}
+
+// 4.9 part 2: to work on a site of its village, if one needs hands.
+function raiseSite(world: World, m: Mind, v: Village): boolean {
+  const s = siteToWork(world, v);
+  if (!s) return false;
+  raiseOn(world, m, s);
+  return true;
+}
+
+function raiseOn(world: World, m: Mind, s: Site): void {
+  // Beside the block, each hand on its own side; the task keeps the site's cell.
+  const at = standBy(world, s, handsOn(world, s));
+  if (at < 0) return cellTask(world, m, "raise", s.i);
+  setTask(m, "raise", at % world.w, Math.floor(at / world.w), 1, s.i);
+  m.action = `${STAGE_WORDS[stageOf(s)]} a ${kindName(s.kind)}`;
+}
+
+function isTown(world: World, v: Village): boolean {
+  const s = settlementNear(world, v.x, v.y);
+  return !!s && tierOf(housesOf(world, s)) === "town";
+}
+
+function houseSitesOf(world: World, v: Village): number {
+  return world.sites.length ? sitesOf(world, v).filter((s) => s.kind === C.HOUSE).length : 0;
 }
 
 // A 2 by 2 spot of dry, free, flat land near a village; its top left cell.
@@ -1034,7 +1084,8 @@ function houseSite(world: World, x: number, y: number): number {
 function guardVillage(world: World, c: Creature, m: Mind, v: { x: number; y: number }): void {
   // 4.4.5 part B: from a watchtower, guards see twice as far.
   const foe = intruder(world, c, v.x, v.y, world.settlements.length && hasJob(world, v.x, v.y, C.WATCHTOWER) ? 30 : 15);
-  if (foe) {
+  // Not alone against what has more than twice its health (social.ts, standsUpTo).
+  if (foe && standsUpTo(c, foe, life.kindOf(foe), facing(world, c, foe))) {
     setTask(m, "fight", foe.x, foe.y, 1.3, -1, foe);
     m.action = `driving off a ${base(foe.kind)}`;
     return;
@@ -1841,6 +1892,12 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       if (world.settlements.length) world.patched.add(i);
       deed(c, "rebuilt a house");
       return;
+    case "raise": {
+      const s = world.sites.find((o) => i >= 0 && (o.i === i || o.i + 1 === i || o.i + world.w === i || o.i + world.w + 1 === i));
+      const done = s ? workSite(world, s, DURATION.raise!, c) : null;
+      if (s && done) deed(c, done === "finished" ? `finished a ${kindName(s.kind)}` : `worked on a ${kindName(s.kind)}`);
+      return;
+    }
     case "build": {
       if (!v || v.wood < 5) return;
       const cells = [i, i + 1, i + world.w, i + world.w + 1];

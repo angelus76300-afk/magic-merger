@@ -166,6 +166,7 @@ export type Task =
   | "use"
   | "forge"
   | "pave"
+  | "raise"
   | "custom";
 
 export function newMind(goal: Goal | string): Mind {

@@ -63,6 +63,8 @@ Amber, exactly:
 | A6   | amber | checks taken out of a test file: more `check(` calls removed than added, a `process.exit(` added, or the `check` helper changed                                                                                                                                                                              |
 | A7   | amber | a pull request from the Ideas tab's routine (a `claude/feedback-*` branch or a title starting with `Feedback:`): players' words in code; its preview waits for `owner-ok` too                                                                                                                                |
 | A8   | amber | code that runs with production secrets outside the Worker: the scheduled runners (`scripts/*runner*`, `scripts/admin-api.ts`, `scripts/nightly-play.mjs`), the build config (`vite.config.*`), a script line that calls an `/api/admin/` route                                                               |
+| A9   | amber | an entry removed from or renamed in `scripts/api-surface.json`, the World API snapshot: stored spells may call it (adding entries stays green)                                                                                                                                                               |
+| A10  | amber | what saved islands depend on: `src/sim/save.ts`, a golden save of `lab/saves/` changed or deleted (a new one stays green), the order of the built-in materials in `src/sim/materials.ts` (a material added at the end of its layer stays green)                                                              |
 
 Everything else is green: the simulation, the view, the interface, the Worker's game logic, tests that grow, docs outside the owner's sections, the changelog.
 
@@ -176,7 +178,7 @@ The night run looks at the frames as a person would (the vision check: a model r
 
 ## Usage guard
 
-Builders and reviewers share the owner's plan limits. When the 5-hour limit warns, the planner pauses the builders and reviewers (it tells them to stop at a safe point) and resumes them at its reset. It paces the weekly limit to its reset, on Tuesday: at most two builders running at once, and no new builder until one finishes.
+Builders and reviewers share the owner's plan limits. When the 5-hour limit warns, the planner pauses the builders and reviewers (it tells them to stop at a safe point) and resumes them at its reset. It paces the weekly limit to its reset, on Tuesday: at most two builders running at once while it reads "warning", and no new builder until one finishes. The hook `.claude/hooks/session-cap.mjs` holds the outer limit in code (2026-11-11, "lighter pipeline: yes"): a session that already has 3 builders running that it started itself is refused a fourth `create_session` (reviewers do not count) until it archives one that finished or reads it as finished with `get_session`. It counts from the caller's own transcript, so builders started by another session are counted by that session only.
 
 ## GitHub Actions minutes
 
