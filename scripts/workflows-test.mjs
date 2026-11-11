@@ -345,6 +345,18 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   }
   rmSync(tmp, { recursive: true, force: true });
 
+  // The browser install survives Ubuntu's package servers being out of reach (11 November 2026):
+  // every workflow that installs it with --with-deps falls back to the browser alone.
+  for (const name of readdirSync(new URL("../.github/workflows/", import.meta.url))) {
+    const text = readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8");
+    const installs = text.split("\n").filter((l) => !l.trim().startsWith("#") && l.includes("install --with-deps"));
+    check(
+      `${name}: a browser install that needs the package servers falls back to the browser alone`,
+      installs.every((l) => /install --with-deps chromium \|\| .*playwright" install chromium\s*$/.test(l)),
+      installs.join(" | "),
+    );
+  }
+
   console.log(failed ? `${failed} failed` : "all workflow checks passed");
   process.exit(failed ? 1 : 0);
 }
