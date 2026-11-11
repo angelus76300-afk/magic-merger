@@ -1,3 +1,4 @@
+import { addDeed, countTrouble, setTroublesOn, troubleCounts, troublesOn } from "./troubles";
 import type { ChronicleDigest } from "../shared/chronicle";
 import { elementKey } from "../shared/elements";
 import { castRequest } from "./cast-request";
@@ -653,11 +654,31 @@ export class WorldHost {
         this.lastPerf = now;
         api.sendPerf({
           ...msg.sample,
+          ...troubleCounts(),
           screen: `${screen.width}x${screen.height}@${window.devicePixelRatio}`,
           cores: navigator.hardwareConcurrency ?? 0,
           // 4.2: the last items made castable here, step by step.
           creation: timeline.recent(4).map(compactCreation),
         });
+        break;
+      }
+      case "trouble": {
+        // The island needs you: the Craft tab says what is seen of a trouble while the island waits there.
+        const line = document.getElementById("board-trouble");
+        if (msg.running) {
+          if (!this.troubleBegan) this.troubleBegan = Date.now();
+          if (line) {
+            line.textContent = msg.text;
+            line.hidden = false;
+          }
+          break;
+        }
+        if (line) line.hidden = true;
+        toast(msg.text);
+        const saved = msg.outcome === "saved" && !!msg.key && !!this.store.get(msg.key);
+        if (saved) addDeed(msg.key!, msg.text);
+        countTrouble(!!msg.key, msg.key ? (this.store.get(msg.key)?.discoveredAt ?? null) : null, this.troubleBegan);
+        this.troubleBegan = 0;
         break;
       }
       case "objective":
@@ -698,6 +719,7 @@ export class WorldHost {
         size: choice.size,
         land: choice.land,
         rules: save ? this.rulesFor(save) : [],
+        troubles: troublesOn(),
         muted: this.muted,
         recent: readRecentSets(),
         wonders: readPool(),
@@ -817,6 +839,8 @@ export class WorldHost {
   // large islands and bigger mix several lands). The
   // sizes past Large are offered only where this device's own frame numbers
   // show the headroom (headroom.ts); none is ever chosen by default.
+  // When the trouble running on the island began, for "answered by an item made since" (troubles.ts).
+  private troubleBegan = 0;
   private resetDialog: HTMLDialogElement | null = null;
   private openReset(): void {
     const d = (this.resetDialog ??= document.createElement("dialog"));
@@ -918,7 +942,21 @@ export class WorldHost {
     const grid = document.createElement("div");
     grid.className = "reset-fields";
     grid.append(field("Size", size), field("Warmth", warmth), field("Water", water), field("Mountains", relief), field("Forest", forest), field("Seed", seed));
-    d.replaceChildren(title, grid, hint, fresh, warn, actions);
+    // The island needs you: troubles start on the player's island unless they say no. It
+    // holds for the island they have now too, at once.
+    const troubles = document.createElement("label");
+    troubles.className = "reset-troubles";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = troublesOn();
+    box.addEventListener("change", () => {
+      setTroublesOn(box.checked);
+      this.send({ type: "troubles", on: box.checked });
+    });
+    const words = document.createElement("span");
+    words.textContent = "Troubles come to my villages (a fire in the woods, for a start). Off: no trouble comes by itself.";
+    troubles.append(box, words);
+    d.replaceChildren(title, grid, hint, fresh, troubles, warn, actions);
     d.showModal();
   }
 

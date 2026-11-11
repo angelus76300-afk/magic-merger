@@ -13,6 +13,7 @@ import { sizeChecks } from "./sizes-test";
 import { roadsChecks } from "./roads-test";
 import { sitesChecks } from "./sites-test";
 import { directorChecks } from "./director-test";
+import { troubleChecks } from "./troubles-test";
 import { dailyChecks } from "./daily-test";
 import { monsterChecks } from "./monsters-test";
 import { goalOfCreature } from "../src/sim/goals";
@@ -2500,6 +2501,7 @@ fogChecks(check);
 roadsChecks(check);
 sitesChecks(check);
 directorChecks(check);
+troubleChecks(check);
 dailyChecks(check);
 monsterChecks(check);
 
