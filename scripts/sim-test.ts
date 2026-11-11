@@ -1056,6 +1056,76 @@ for (const scenario of SCENARIOS) {
   creatureChecks(check);
   // The review of 10 November: what the engine drops, promises of healing and summoning, protection only where it fits.
   promiseChecks(check);
+  {
+    // Run after creatureChecks: its blacksmith check depends on the creature ids and the
+    // random stream the sections before it leave, which these islands would change.
+    const villageWorld = () => {
+      seed(8);
+      const world = generateWorld(112, 112, 4);
+      populate(world);
+      const errors: string[] = [];
+      const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
+      const v = world.creatures.find((c) => c.kind === "villager")!;
+      return { world, rt, errors, v };
+    };
+    const streamBefore = Math.random;
+    // A Phoenix that names itself in onDeath is reborn once per death, not multiplied
+    // (one stored Phoenix became 262 on an island). Spells naming each other are capped too.
+    const { world, rt, errors, v } = villageWorld();
+    rt.cast(
+      {
+        key: "phx",
+        name: "Phoenix",
+        tier: "minor",
+        code: `const spell = { creatures: [{ name: "phoenix", base: "bird", behavior: "wander", hp: 20, onDeath: "spawn:phoenix" }, { name: "moth", base: "bird", behavior: "wander", hp: 20, onDeath: "spawn:ash" }, { name: "ash", base: "bird", behavior: "wander", hp: 20, onDeath: "spawn:moth" }], *cast(w) { w.spawn("phoenix", w.x, w.y); w.spawn("moth", w.x + 2, w.y); } };`,
+      },
+      v.x + 3,
+      v.y + 3,
+    );
+    for (let k = 0; k < 2; k++) step(world, rt); // the spell casts on its first steps
+    const alive = (kind: string) => world.creatures.filter((c) => !c.dead && c.kind === kind).length;
+    let peakChain = 0;
+    for (let round = 0; round < 6; round++) {
+      peakChain = Math.max(peakChain, alive("moth") + alive("ash"));
+      for (const c of world.creatures) {
+        if (!c.dead && (c.kind === "phoenix" || c.kind === "moth" || c.kind === "ash")) {
+          c.hp = 0;
+          c.dead = true;
+        }
+      }
+      for (let k = 0; k < 3; k++) step(world, rt);
+    }
+    const phoenixes = alive("phoenix");
+    check(
+      "a phoenix is reborn once per death, not multiplied",
+      errors.length === 0 && phoenixes === 1,
+      `${phoenixes} phoenixes after 6 deaths, ${errors[0] ?? "no error"}`,
+    );
+    // Other spawning items still work: one moth dying leaves two ash.
+    const t = villageWorld();
+    t.rt.cast(
+      {
+        key: "moth2",
+        name: "Moth",
+        tier: "minor",
+        code: `const spell = { creatures: [{ name: "moth", base: "bird", behavior: "wander", hp: 20, onDeath: "spawn:ash" }, { name: "ash", base: "bird", behavior: "wander", hp: 20 }], *cast(w) { w.spawn("moth", w.x, w.y); } };`,
+      },
+      t.v.x + 3,
+      t.v.y + 3,
+    );
+    for (let k = 0; k < 2; k++) step(t.world, t.rt);
+    for (const c of t.world.creatures) {
+      if (c.kind === "moth") {
+        c.hp = 0;
+        c.dead = true;
+      }
+    }
+    for (let k = 0; k < 3; k++) step(t.world, t.rt);
+    const ash = t.world.creatures.filter((c) => !c.dead && c.kind === "ash").length;
+    check("a creature dying with spawn of another kind still leaves two", t.errors.length === 0 && ash === 2, `${ash} ash`);
+    check("two spells naming each other do not multiply without limit", peakChain >= 2 && peakChain <= 8, `${peakChain} moths and ash at the peak of 6 rounds`);
+    Math.random = streamBefore;
+  }
   // 4.7: objects that are picked up and used (src/sim/held.ts).
   heldChecks(check);
   check("a small island is one land", generateWorld(112, 112, 5, resolveLand(mid, 5, 112)).biomeMap === null);

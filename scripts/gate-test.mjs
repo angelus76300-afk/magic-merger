@@ -8,6 +8,9 @@ import {
   byOwner,
   carriedReview,
   bringUpToDate,
+  retestName,
+  waitForRun,
+  mergeOne,
   ciFrom,
   ran,
   smokeFrom,
@@ -61,7 +64,8 @@ check(
 );
 check("no smoke test waits", !decide({ ...ready, smoke: "failure" }).ready);
 check("no review waits", !decide({ ...ready, review: null }).ready);
-check("a review without npm test waits", !decide({ ...ready, review: { verdict: "pass", raise: null, tests: null } }).ready);
+// 2026-11-11: CI runs npm test on the merge result; a review need not say tests=pass any more.
+check("a review without tests=pass is ready (CI ran npm test)", decide({ ...ready, review: { verdict: "pass", raise: null, tests: null } }).ready);
 check("npm test failed waits", !decide({ ...ready, review: { verdict: "pass", raise: null, tests: "fail" } }).ready);
 check(
   "docs only need no npm test",
@@ -258,7 +262,7 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
       JSON.stringify(carry(M2, [...reviewed, reviewOf(M1, "verdict=block tests=pass")])),
     );
     check("a blocked review is not carried", carry(M1, [reviewOf(R, "verdict=block tests=pass")]).review === null);
-    check("a review without tests=pass is not carried", carry(M1, [reviewOf(R, "verdict=pass")]).review === null);
+    check("a review without tests=pass is carried (CI runs npm test now)", carry(M1, [reviewOf(R, "verdict=pass")]).from === R);
     check("a stranger's review of R is not carried", carry(M1, [stranger(`<!-- mm-review verdict=pass tests=pass sha=${R} -->`)]).review === null);
 
     // Refused: a merge commit that also edits a pull request file by hand.
@@ -619,31 +623,21 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
   check("an up to date pull request whose CI runs is in flight", inFlight({ ...ready, upToDate: true, ci: "in_progress" }));
   check("so is one whose preview runs", inFlight({ ...ready, upToDate: true, smoke: "queued" }));
   check("a finished one is not in flight", !inFlight({ ...ready, upToDate: true }));
-  check("a behind one is not in flight", !inFlight({ ...ready, upToDate: false, ci: "in_progress" }));
+  check("one whose test with the main of now runs is in flight", inFlight({ ...ready, upToDate: false, ci: "in_progress" }));
+  check("a running CI on a pull request with no review is not in flight (it cannot hold the queue)", !inFlight({ ...ready, ci: "in_progress", review: null }));
+  check("a running CI on a draft is not in flight", !inFlight({ ...ready, ci: "in_progress", draft: true }));
   check("a fork is never in flight (it cannot hold the queue)", !inFlight({ ...ready, upToDate: true, ci: "in_progress", fork: true }));
 
   const q = (number, state) => ({ number, state });
   check("the oldest updatable pull request goes first", pickUpdate([q(83, behind), q(79, behind), q(85, { ...behind, review: null })]).update === 79);
   check("nothing is updated while another is in flight", pickUpdate([q(79, behind), q(90, { ...ready, upToDate: true, ci: "in_progress" })]).update === null);
-  check("nothing to update says why", /only behind/.test(pickUpdate([q(1, { ...ready, upToDate: true })]).why));
-  check(
-    "an unknown catch-up (git failed) is not named as a workflow catch-up",
-    !/would be brought up to date/.test(pickUpdate([q(79, { ...behind, catchUp: null })]).why),
-    pickUpdate([q(79, { ...behind, catchUp: null })]).why,
-  );
-  check(
-    "a pull request held only by a workflow catch-up is named, with what to do",
-    /#79 would be brought up to date.*\.github\/workflows.*merges main once/.test(
-      pickUpdate([q(79, { ...behind, catchUp: [".github/workflows/ci.yml"] })]).why,
-    ),
-  );
+  check("nothing to update says why", /test with the main of now/.test(pickUpdate([q(1, { ...ready, upToDate: true })]).why));
   check("an empty queue updates nothing", pickUpdate([]).update === null);
-  // Review of #98: a branch whose catch-up brings a workflow change is refused to the Gate's token every
-  // time; it must not hold the queue, and an unknown catch-up is not updated (fail closed).
-  const bringsWorkflow = { ...behind, catchUp: ["src/world.ts", ".github/workflows/ci.yml"] };
-  check("a catch-up that brings a workflow change is not updated", !updatable(bringsWorkflow));
-  check("an unknown catch-up is not updated", !updatable({ ...behind, catchUp: null }));
-  check("the queue passes over it to the next oldest", pickUpdate([q(79, bringsWorkflow), q(83, behind)]).update === 83);
+  // 2026-11-11: the Gate pushes nothing, so main's workflow changes no longer stop a branch (10 November, twice).
+  check(
+    "a branch behind a workflow change on main is tested again like any other",
+    updatable({ ...behind, catchUp: [".github/workflows/ci.yml"] }) && pickUpdate([q(79, { ...behind, catchUp: [".github/workflows/ci.yml"] })]).update === 79,
+  );
   {
     const tried = [];
     const lines = await updateInTurn(
@@ -679,8 +673,9 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
 
 // 2026-11-08: GitHub listed finished check jobs with no steps (#88, #89, #95): never read as docs or as a pass.
 {
-  const step = (conclusion) => [
+  const step = (conclusion, test = conclusion === "skipped" ? "skipped" : "success") => [
     { name: "lint", conclusion: "success" },
+    { name: "test", conclusion: test },
     { name: "test:worker", conclusion },
   ];
   const fake = (pages, run = { name: "CI", run_number: 1, id: 7, status: "completed", conclusion: "success" }) => {
@@ -700,8 +695,9 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
         : { jobs: [{ name: "check", id: 9, conclusion, steps: [] }] };
     return ciFrom("s", gh, noWait, 2, async (path) => (path === "actions/jobs/9/logs" ? log : null));
   };
-  const fullLog = "2026-11-08T03:59:40.4833576Z ##[group]Run npm run test:worker\n... all worker checks passed";
-  check("no steps, but the job log opens test:worker: full", (await withJob(fullLog)) === "full");
+  const fullLog = "2026-11-08T03:59:30.1Z ##[group]Run npm test\n2026-11-08T03:59:40.4833576Z ##[group]Run npm run test:worker\n... all worker checks passed";
+  check("no steps, but the job log opens test and test:worker: full", (await withJob(fullLog)) === "full");
+  check("no steps, a log with test:worker but no npm test: waits", (await withJob(fullLog.split("\n").slice(1).join("\n"))) !== "full");
   check("no steps and a log without test:worker: waits", (await withJob("2026-11-08T03:59:05Z ##[group]Run npm run lint")) !== "full");
   check("no steps, a failed job, a log with test:worker: waits", (await withJob(fullLog, "failure")) !== "full");
   check("test:worker named inside another line does not count", (await withJob("x echo '##[group]Run npm run test:worker' fake")) !== "full");
@@ -722,13 +718,62 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
     (await withJob(lightLog.replace("Full run: false", '  echo "Full run: $full" | tee'))) !== "docs",
   );
   // The Gate's dispatch counts only when the pull request's own event left no run on the commit.
-  const runsOf = (runs, jobsById) => async (path) =>
-    path.startsWith("actions/runs?") ? { workflow_runs: runs } : { jobs: [{ name: "check", steps: jobsById[/runs\/(\d+)\/jobs/.exec(path)[1]] }] };
+  const H = "a".repeat(40);
+  const M = "b".repeat(40);
+  // runs: listed by head_sha; onMain: the Gate's dispatches on main (2026-11-11), listed by workflow.
+  const runsOf =
+    (runs, jobsById, onMain = [], notes = {}) =>
+    async (path) => {
+      if (path.startsWith("actions/runs?")) return { workflow_runs: runs };
+      if (path.startsWith("actions/workflows/ci.yml/runs?")) return { workflow_runs: onMain };
+      const note = /^check-runs\/(\d+)\/annotations$/.exec(path);
+      if (note) return notes[note[1]] ?? [];
+      const id = /runs\/(\d+)\/jobs/.exec(path)[1];
+      return { jobs: [{ name: "check", id: Number(id) * 10, steps: jobsById[id] }] };
+    };
   const run = (id, event, run_number, conclusion = "success") => ({ name: "CI", id, event, run_number, status: "completed", conclusion });
+  // 2026-11-11: the newest run decides: a newer test (with a newer main) that fails holds the pull request.
   check(
-    "a newer failed dispatch does not hide the pull request's own full run",
-    (await ciFrom("s", runsOf([run(1, "pull_request", 5), run(2, "workflow_dispatch", 6, "failure")], { 1: step("success") }), noWait)) === "full",
+    "a newer failed dispatch holds the pull request",
+    (await ciFrom("s", runsOf([run(1, "pull_request", 5), run(2, "workflow_dispatch", 6, "failure")], { 1: step("success") }), noWait)) === "failure",
   );
+  {
+    const onMain = (id, n, title, conclusion = "success") => ({ ...run(id, "workflow_dispatch", n, conclusion), display_title: title });
+    const out = {};
+    const r = await ciFrom(
+      H,
+      runsOf([run(1, "pull_request", 5, "failure")], { 3: step("success") }, [onMain(3, 7, `CI for #12 at ${H}`)], {
+        30: [{ title: "Tested with main", message: M }],
+      }),
+      noWait,
+      3,
+      async () => null,
+      out,
+    );
+    check("the Gate's run on main, named after the head, is found and decides", r === "full", r);
+    check("the main it tested is read from its notice", out.main === M, JSON.stringify(out));
+    const other = await ciFrom(H, runsOf([], { 3: step("success") }, [onMain(3, 7, `CI for #12 at ${"c".repeat(40)}`)]), noWait);
+    check("a run on main named after another head does not count", other === "missing", other);
+    const forged = await ciFrom(H, runsOf([], { 3: step("success") }, [onMain(3, 7, `my CI for #12 at ${H}`)]), noWait);
+    check("a run name that only ends with the head does not count", forged === "missing", forged);
+    const logOut = {};
+    await ciFrom(
+      H,
+      runsOf([run(4, "pull_request", 8)], { 4: step("success") }),
+      noWait,
+      3,
+      async () => `2026-11-11T01:00:00.1Z Tested with main: ${M}\n`,
+      logOut,
+    );
+    check("without a notice, the tested main is read from the log", logOut.main === M, JSON.stringify(logOut));
+    const none = {};
+    await ciFrom(H, runsOf([run(4, "pull_request", 8)], { 4: step("success") }), noWait, 3, async () => '  echo "Tested with main: $main"', none);
+    check("an older run without the line leaves the tested main unknown (the Gate tests again)", !none.main, JSON.stringify(none));
+    check(
+      "a full test:worker with npm test failed is not full",
+      (await ciFrom("s", runsOf([run(5, "pull_request", 9)], { 5: step("success", "failure") }), noWait)) !== "full",
+    );
+  }
   // Seen live on #102 (10 November): the Gate's update made GitHub create pull_request runs held for an
   // approval (conclusion action_required) beside the runs the Gate dispatched. They never ran.
   check(
@@ -757,8 +802,8 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
   }
   check("a dispatched run alone counts", (await ciFrom("s", runsOf([run(2, "workflow_dispatch", 6)], { 2: step("success") }), noWait)) === "full");
   check(
-    "a failed run of the pull request's own event is not hidden by a dispatch",
-    (await ciFrom("s", runsOf([run(1, "pull_request", 5, "failure"), run(2, "workflow_dispatch", 6)], { 2: step("success") }), noWait)) === "failure",
+    "a newer passing test decides over an older failed one",
+    (await ciFrom("s", runsOf([run(1, "pull_request", 5, "failure"), run(2, "workflow_dispatch", 6)], { 2: step("success") }), noWait)) === "full",
   );
   check("steps listed on a second fetch are read", (await ciFrom("s", fake([[], step("success")]), noWait)) === "full");
   check("a check job without test:worker is not docs", (await ciFrom("s", fake([[{ name: "lint", conclusion: "success" }]]), noWait)) !== "docs");
@@ -770,53 +815,147 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
   check("no CI run reads missing", (await ciFrom("s", async () => ({ workflow_runs: [] }), noWait)) === "missing");
 }
 
-// 2026-11-10, "gate token: dispatch": the update, the wait for the new head, the two dispatches.
+// 2026-11-11: the retest. CI is dispatched on main, naming the pull request and its head; nothing is pushed.
 {
-  const OLD = "1".repeat(40);
-  const NEW = "2".repeat(40);
-  const fakeGh = ({ moveAfter = 1, runsAfter = 1, refuse = null } = {}) => {
+  const HEAD = "1".repeat(40);
+  const fakeGh = ({ listedAfter = 1, refuse = false } = {}) => {
     const calls = [];
-    let reads = 0;
     let lists = 0;
     const call = async (path, init = {}) => {
       calls.push({ path, method: init.method ?? "GET", body: init.body ? JSON.parse(init.body) : null });
-      if (refuse && path.includes(refuse)) throw new Error(`PUT ${path}: 422 refused`);
-      if (path === "pulls/12") return { head: { sha: ++reads > moveAfter ? NEW : OLD, ref: "claude/roads" } };
-      if (path.startsWith("actions/runs?")) return { workflow_runs: ++lists >= runsAfter ? [{ name: "CI" }, { name: "Preview" }] : [] };
+      if (refuse && /dispatches$/.test(path)) throw new Error(`POST ${path}: 422 refused`);
+      if (path.startsWith("actions/workflows/ci.yml/runs?"))
+        return { workflow_runs: ++lists >= listedAfter ? [{ name: "CI", display_title: retestName(12, HEAD) }] : [] };
       return null;
     };
     return { call, calls };
   };
   const noSleep = async () => {};
   {
-    const { call, calls } = fakeGh({ moveAfter: 2, runsAfter: 2 });
-    const said = await bringUpToDate({ number: 12, sha: OLD, call, sleep: noSleep });
-    const update = calls.find((c) => c.path === "pulls/12/update-branch");
+    const { call, calls } = fakeGh({ listedAfter: 2 });
+    const said = await bringUpToDate({ number: 12, sha: HEAD, call, sleep: noSleep });
     const dispatches = calls.filter((c) => /dispatches$/.test(c.path));
-    check("the update pins the head it judged", update?.method === "PUT" && update.body.expected_head_sha === OLD);
     check(
-      "CI and Preview are dispatched on the branch, naming the new head",
-      dispatches.map((d) => d.path).join() === "actions/workflows/ci.yml/dispatches,actions/workflows/preview.yml/dispatches" &&
-        dispatches.every((d) => d.body.ref === "claude/roads" && d.body.inputs.sha === NEW && d.body.inputs.pr === "12"),
+      "CI alone is dispatched, on main, naming the pull request and its head",
+      dispatches.length === 1 &&
+        dispatches[0].path === "actions/workflows/ci.yml/dispatches" &&
+        dispatches[0].body.ref === "main" &&
+        dispatches[0].body.inputs.sha === HEAD &&
+        dispatches[0].body.inputs.pr === "12",
       JSON.stringify(dispatches),
     );
-    check("it waits until both runs are listed", calls.filter((c) => c.path.startsWith("actions/runs?")).length === 2);
-    check("it says what it did", /merged main into #12/.test(said), said);
+    check("nothing is pushed to the branch", !calls.some((c) => /update-branch|merges|git\/refs/.test(c.path)));
+    check("it waits until the run is listed", calls.filter((c) => c.path.startsWith("actions/workflows/ci.yml/runs?")).length === 2);
+    check("it says what it did", /started CI on #12/.test(said), said);
+    check("the run name matches ci.yml's run-name", retestName(12, HEAD) === `CI for #12 at ${HEAD}`);
   }
   {
-    const { call, calls } = fakeGh({ moveAfter: 1000 });
-    const said = await bringUpToDate({ number: 12, sha: OLD, call, sleep: noSleep, waitMs: 9000 });
-    check("a head that never moves starts nothing", !calls.some((c) => /dispatches$/.test(c.path)) && /had not moved/.test(said), said);
-  }
-  {
-    const { call, calls } = fakeGh({ refuse: "update-branch" });
+    const { call } = fakeGh({ refuse: true });
     let threw = false;
     try {
-      await bringUpToDate({ number: 12, sha: OLD, call, sleep: noSleep });
+      await bringUpToDate({ number: 12, sha: HEAD, call, sleep: noSleep });
     } catch {
       threw = true;
     }
-    check("a refused update (a push meanwhile, a conflict) starts nothing and says so", threw && !calls.some((c) => /dispatches$/.test(c.path)));
+    check("a refused dispatch throws, so the next in line gets its turn", threw);
+  }
+}
+
+// 2026-11-11, --follow: the Gate waits for the CI run it started, then sweeps again.
+{
+  const NAME = retestName(12, "1".repeat(40));
+  const seq = (pages) => {
+    let i = 0;
+    const calls = [];
+    return {
+      calls,
+      call: async (path) => {
+        calls.push(path);
+        const page = pages[Math.min(i++, pages.length - 1)];
+        if (page instanceof Error) throw page;
+        return { workflow_runs: page };
+      },
+    };
+  };
+  const run = (status, conclusion = null, title = NAME, run_number = 5) => ({ display_title: title, status, conclusion, run_number });
+  const noSleep = async () => {};
+  {
+    const { call } = seq([[], [run("queued")], [run("in_progress")], [run("completed", "success")]]);
+    check("it waits until the run it started has finished, and says how", (await waitForRun({ name: NAME, call, sleep: noSleep })) === "success");
+  }
+  {
+    const { call } = seq([[run("completed", "failure")]]);
+    check("a failed run ends the wait with its conclusion", (await waitForRun({ name: NAME, call, sleep: noSleep })) === "failure");
+  }
+  {
+    const { call } = seq([[run("completed", "success", "CI for #13 at " + "1".repeat(40))]]);
+    check("another pull request's run is not this one", (await waitForRun({ name: NAME, call, sleep: noSleep, timeoutMs: 90000 })) === "not found");
+  }
+  {
+    const { call, calls } = seq([[run("in_progress")]]);
+    const end = await waitForRun({ name: NAME, call, sleep: noSleep, timeoutMs: 90000 });
+    check("the wait is bounded", end === "still running" && calls.length === 4, `${end}, ${calls.length} reads`);
+  }
+  {
+    const { call, calls } = seq([[]]);
+    const end = await waitForRun({ name: NAME, call, sleep: noSleep });
+    check("a run that never shows is given up after a few minutes, not 30", end === "not found" && calls.length <= 8, `${end}, ${calls.length} reads`);
+  }
+  {
+    const { call } = seq([new Error("502"), [run("completed", "success")]]);
+    check("a failed read is tried again, not taken as an end", (await waitForRun({ name: NAME, call, sleep: noSleep })) === "success");
+  }
+  {
+    const { call } = seq([[run("completed", "failure", NAME, 4), run("completed", "success", NAME, 5)]]);
+    check("the newest run of that name decides", (await waitForRun({ name: NAME, call, sleep: noSleep })) === "success");
+  }
+}
+
+// Review of #117: a merge starts its deploy at once, not when the --follow job ends.
+{
+  const fake = ({ refuseMerge = false, refuseDeploy = false } = {}) => {
+    const calls = [];
+    const call = async (path, init = {}) => {
+      calls.push({ path, method: init.method ?? "GET", body: init.body ? JSON.parse(init.body) : null });
+      if (refuseMerge && path.endsWith("/merge")) throw new Error(`PUT ${path}: 405 not mergeable`);
+      if (refuseDeploy && path.endsWith("/dispatches")) throw new Error(`POST ${path}: 500`);
+      return null;
+    };
+    return { call, calls };
+  };
+  const one = { number: 12, sha: "1".repeat(40), title: "Roads" };
+  {
+    const { call, calls } = fake();
+    const said = await mergeOne({ ...one, docsOnly: false, call });
+    check(
+      "a merge pinned to its head, then the deploy started right after it",
+      calls.map((c) => c.path).join() === "pulls/12/merge,actions/workflows/deploy.yml/dispatches" &&
+        calls[0].body.sha === one.sha &&
+        calls[0].body.merge_method === "squash" &&
+        calls[1].body.ref === "main" &&
+        /deploy started/.test(said),
+      JSON.stringify(calls),
+    );
+  }
+  {
+    const { call, calls } = fake();
+    await mergeOne({ ...one, docsOnly: true, call });
+    check("a docs only merge starts no deploy", calls.length === 1 && calls[0].path === "pulls/12/merge");
+  }
+  {
+    const { call, calls } = fake({ refuseMerge: true });
+    let threw = false;
+    try {
+      await mergeOne({ ...one, docsOnly: false, call });
+    } catch {
+      threw = true;
+    }
+    check("a refused merge throws and starts no deploy", threw && !calls.some((c) => c.path.endsWith("/dispatches")));
+  }
+  {
+    const { call } = fake({ refuseDeploy: true });
+    const said = await mergeOne({ ...one, docsOnly: false, call });
+    check("a deploy that cannot start is said, and the merge still counts", /merged, but the deploy could not be started/.test(said), said);
   }
 }
 
