@@ -752,6 +752,15 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
     );
     check("the Gate's run on main, named after the head, is found and decides", r === "full", r);
     check("the main it tested is read from its notice", out.main === M, JSON.stringify(out));
+    // 2026-11-11: what GitHub really lists since ci.yml has a run-name: the run's name is that name, the
+    // workflow is told by its path. The Gate held #123 and #125 on a passed CI by matching the name.
+    const real = (id, n, event, name, path = ".github/workflows/ci.yml") => ({ ...run(id, event, n), name, display_title: name, path });
+    const named = await ciFrom(H, runsOf([], { 3: step("success") }, [real(3, 7, "workflow_dispatch", `CI for #12 at ${H}`)]), noWait);
+    check("a run named by its run-name is read by its workflow file", named === "full", named);
+    const titled = await ciFrom(H, runsOf([real(4, 8, "pull_request", "Wildfire comes to the villages")], { 4: step("success") }), noWait);
+    check("a pull request's run, named after its title, is read too", titled === "full", titled);
+    const alien = await ciFrom(H, runsOf([real(5, 9, "pull_request", "CI", ".github/workflows/other.yml")], { 5: step("success") }), noWait);
+    check("another workflow that calls itself CI does not count", alien === "missing", alien);
     const other = await ciFrom(H, runsOf([], { 3: step("success") }, [onMain(3, 7, `CI for #12 at ${"c".repeat(40)}`)]), noWait);
     check("a run on main named after another head does not count", other === "missing", other);
     const forged = await ciFrom(H, runsOf([], { 3: step("success") }, [onMain(3, 7, `my CI for #12 at ${H}`)]), noWait);
