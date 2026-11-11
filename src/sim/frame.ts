@@ -11,6 +11,7 @@ import type { SavedWorld } from "./save";
 import { Hud } from "./hud";
 import { SCENARIOS } from "./scenarios";
 import { firstLook, villageView, type Pose } from "./firstlook";
+import { fireOf, startWildfire, stoneAt, stoneLine, troubleLine, type Stone } from "./troubles";
 import { Director, lifeLine, nameOf, type Shot } from "./director";
 import { castOnScreen, watchCast } from "./voxel/castview";
 import { readDef, setFinders, signatureOf, wonderInfo, type WonderDef } from "./wonders";
@@ -96,6 +97,9 @@ const hooks = {
     }
     if (engine.view.orbit.watching) return;
     if (!selected) {
+      // A stone a village raised to the item that saved it (troubles.ts).
+      const stone = stoneAt(engine.world, x, y);
+      if (stone) return showStone(stone);
       // No spell in hand: a tap on a creature shows what it is doing (3.6).
       const c = creatureAt(engine.world, x, y);
       const a = c ? null : artifactAt(engine.world, x, y);
@@ -157,6 +161,20 @@ function showWonder(info: ReturnType<typeof wonderInfo>): void {
   const rows = el("dl", "rows");
   rows.append(el("dt", "", "Rarity"), el("dd", "", info.rarity), el("dt", "", "Does"), el("dd", "", info.does));
   if (info.by) rows.append(el("dt", "", "Found by"), el("dd", "", info.by));
+  card.replaceChildren(head, rows);
+  card.hidden = false;
+  reportInspect();
+}
+
+function showStone(s: Stone): void {
+  closeInspect();
+  const close = el("button", "close", "×");
+  close.setAttribute("aria-label", "Close");
+  close.addEventListener("click", closeInspect);
+  const head = el("div", "head");
+  head.append(el("strong", "title", `The stone of ${s.village}`), el("span", "sub", "raised by its people"), close);
+  const rows = el("dl", "rows");
+  rows.append(el("dt", "", "Says"), el("dd", "", stoneLine(s)));
   card.replaceChildren(head, rows);
   card.hidden = false;
   reportInspect();
@@ -438,6 +456,55 @@ window.setInterval(() => {
   }
 }, 250);
 
+// The island needs you (troubles.ts): a trouble starts only while the player
+// is playing (a touch in the last minute, no tour, no challenge, the island's
+// switch on), and the page is told what is seen of it, so the Craft tab can
+// say it while the island waits there.
+let troublesOn = true;
+let troubleSaid = "";
+window.setInterval(() => {
+  if (!engine || scenario) return;
+  const world = engine.world;
+  const now = performance.now();
+  const end = world.troubleEnd;
+  if (end) {
+    world.troubleEnd = null;
+    troubleSaid = "";
+    send({ type: "trouble", running: false, text: end.line[0].toUpperCase() + end.line.slice(1), key: end.by?.key, outcome: end.outcome });
+    saveSoon();
+    return;
+  }
+  const t = world.trouble;
+  if (t) {
+    const text = troubleLine(t);
+    if (text !== troubleSaid) {
+      troubleSaid = text;
+      send({ type: "trouble", running: true, text });
+    }
+    // The line stays on the island while it lasts, for those not watching: a tap goes there.
+    if (!watching && !touring && card.hidden && (caption !== text || storyEl.hidden)) {
+      const f = fireOf(world, t);
+      clearTimeout(lineTimer);
+      lineGoes = { x: f.x, y: f.y, who: 0 };
+      say(text, true);
+    }
+    return;
+  }
+  if (!troublesOn || touring || away || document.hidden || now < holdUntil || now - lastTouch > 60_000 || world.time < world.troubleNext) return;
+  if (!startWildfire(world)) world.troubleNext = world.time + 120;
+  else saveSoon();
+}, 1000);
+
+// For the checks that play a trouble in a browser (scripts/trouble-frames.mjs): starts one now, or says how it stands.
+(window as unknown as { __mmTrouble?: (peek?: boolean) => string }).__mmTrouble = (peek = false) => {
+  if (!engine || scenario) return "no island";
+  const world = engine.world;
+  if (!peek && !world.trouble) startWildfire(world);
+  return world.trouble
+    ? `${world.trouble.name} stage ${world.trouble.stage}`
+    : `none; ${world.stones.length} stones; ${world.story[world.story.length - 1]?.text ?? ""}`;
+};
+
 // Library spells creatures and artifacts cast (3.7): asked of the page by
 // name, kept for every world this frame runs.
 const library: CastRequest[] = [];
@@ -608,6 +675,7 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       break;
     case "init": {
       muted = msg.muted;
+      troublesOn = msg.troubles !== false;
       sandbox = { save: msg.save, size: msg.size, land: readChoice(msg.land), rules: msg.rules };
       recent = readRecent(msg.recent);
       pool = readPool(msg.wonders);
@@ -658,6 +726,9 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       break;
     case "sandbox":
       if (scenario) openSandbox();
+      break;
+    case "troubles":
+      troublesOn = msg.on;
       break;
     case "away":
       away = msg.away;

@@ -292,21 +292,27 @@ export function stepTrouble(world: World, dt: number): TroubleEnd | null {
   if (cast > 15 && t.stage < 3 && t.lost < t.cap && world.time - t.t0 < FEED_FOR) {
     const d = Math.hypot(t.hx - t.x, t.hy - t.y) || 1;
     const reach = Math.min(t.front, d);
-    const ex = t.x + ((t.hx - t.x) / d) * reach;
-    const ey = t.y + ((t.hy - t.y) / d) * reach;
+    let ex = t.x + ((t.hx - t.x) / d) * reach;
+    let ey = t.y + ((t.hy - t.y) / d) * reach;
     let alight = 0;
     near(world, ex, ey, 3, (i) => {
       if (world.fire[i] > 0.05) alight++;
     });
     if (alight < 2) {
       let lit = 0;
-      near(world, ex, ey, 2.5, (i) => {
-        if (lit >= 3 || world.depth[i] > 0.1 || world.cover[i] === C.WONDER) return;
-        if (world.cover[i] === C.TREE || world.cover[i] === C.HOUSE || world.materials.get("ground", world.ground[i]).flammable > 0) {
-          world.fire[i] = 1;
-          lit++;
-        }
-      });
+      // Over a stream or bare rock the wind carries sparks on: the next ground that burns, up to eight cells ahead.
+      for (let ahead = 0; ahead <= 8 && !lit && reach + ahead <= d; ahead += 2) {
+        ex = t.x + ((t.hx - t.x) / d) * (reach + ahead);
+        ey = t.y + ((t.hy - t.y) / d) * (reach + ahead);
+        near(world, ex, ey, 2.5, (i) => {
+          if (lit >= 3 || world.depth[i] > 0.1 || world.cover[i] === C.WONDER) return;
+          if (world.cover[i] === C.TREE || world.cover[i] === C.HOUSE || world.materials.get("ground", world.ground[i]).flammable > 0) {
+            world.fire[i] = 1;
+            lit++;
+          }
+        });
+        if (lit && ahead) t.front = reach + ahead;
+      }
       if (lit) {
         t.embers++;
         t.calm = 0;
@@ -447,3 +453,9 @@ export function readTroubles(v: unknown): { n: number; next: number; now: Troubl
   }
   return { n: Math.max(0, Math.floor(d.n)), next: d.next, now, stones };
 }
+
+/** What is seen of a trouble right now, in one line: never what to do about it. */
+export function troubleLine(t: Trouble): string {
+  return t.stage === 3 ? `${cap(t.name)} is burning` : t.stage === 2 ? `The fire is coming toward ${t.name}` : `Fire in the woods by ${t.name}`;
+}
+const cap = (s: string): string => (s ? s[0].toUpperCase() + s.slice(1) : s);

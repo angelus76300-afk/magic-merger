@@ -5,6 +5,7 @@ import type { Happening } from "./kin";
 import { wordOf } from "./names";
 import { Rng } from "./noise";
 import { kindName } from "./sites";
+import { fireOf, troubleLine } from "./troubles";
 import { unpackLook } from "./villagers";
 import { floatAt } from "./wonders";
 import type { World } from "./world";
@@ -286,6 +287,24 @@ export class Director {
       if (kind !== "drama" && kind !== "news" && alike !== undefined && now - alike < SORT_AGAIN) s -= 22;
       out.push({ kind, key, sort, who, other, x, y, r, caption, score: s + this.random() * 6, since: now, least: now + hold[0], until: now + hold[1] });
     };
+
+    // 0. A trouble by a village (troubles.ts) comes before everything, and the
+    // camera comes back to it every twenty five seconds while it lasts.
+    const trouble = world.trouble;
+    if (trouble) {
+      const f = fireOf(world, trouble);
+      add(
+        "drama",
+        `t${trouble.stage}:${Math.floor(now / 25)}`,
+        "trouble",
+        95,
+        trouble.stage === 3 ? trouble.vx : f.x,
+        trouble.stage === 3 ? trouble.vy : f.y,
+        9,
+        troubleLine(trouble),
+        [8, 16],
+      );
+    }
 
     // 1. What is going on.
     const workers = new Map<number, Creature>();

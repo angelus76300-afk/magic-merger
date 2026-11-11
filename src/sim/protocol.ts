@@ -11,7 +11,17 @@ import type { LandChoice } from "./land-options";
 export type ToWorld =
   // recent (4.4.5 part B): the wonder sets of the player's last ten islands.
   // wonders (4.4.5 part C): the live pool of wonders written as programs.
-  | { type: "init"; save: SavedWorld | null; size: WorldSize; land: LandChoice; rules: CastRequest[]; muted: boolean; recent?: string[]; wonders?: unknown[] }
+  | {
+      type: "init";
+      save: SavedWorld | null;
+      size: WorldSize;
+      land: LandChoice;
+      rules: CastRequest[];
+      muted: boolean;
+      recent?: string[];
+      wonders?: unknown[];
+      troubles?: boolean;
+    }
   | { type: "select"; spell: CastRequest | null }
   | { type: "spell-updated"; spell: CastRequest }
   | { type: "villager" }
@@ -28,6 +38,8 @@ export type ToWorld =
   | { type: "hud"; on: boolean }
   // Something of the page covers the island (a dialog) or the island is not the tab shown: it does not start watching by itself.
   | { type: "away"; away: boolean }
+  // The island needs you (troubles.ts): whether troubles start on this island (the player's switch).
+  | { type: "troubles"; on: boolean }
   // Spells from the shared library the world asked for by name (3.7).
   | { type: "library"; spells: CastRequest[] }
   // What the island's chronicle is written from (3.7).
@@ -74,6 +86,13 @@ export function readFromWorld(data: unknown): FromWorld | null {
       const digest = readDigest(m.digest);
       return digest ? { type: "chronicle", digest } : null;
     }
+    case "trouble":
+      return typeof m.running === "boolean" &&
+        typeof m.text === "string" &&
+        (m.key === undefined || str(m.key, 120)) &&
+        (m.outcome === undefined || str(m.outcome, 12))
+        ? { type: "trouble", running: m.running, text: m.text.slice(0, 160), key: m.key as string | undefined, outcome: m.outcome as string | undefined }
+        : null;
     case "island":
       return str(m.name, 40) && typeof m.signature === "string" && m.signature.length <= 300
         ? { type: "island", name: m.name as string, signature: m.signature }
@@ -118,6 +137,9 @@ export type FromWorld =
   // Names of library spells creatures or artifacts want to cast (3.7).
   | { type: "need"; names: string[] }
   | { type: "chronicle"; digest: ChronicleDigest }
+  // A trouble runs on the island, in one line of what is seen; or it is over:
+  // how it ended, and the key of the item that answered it when one did.
+  | { type: "trouble"; running: boolean; text: string; key?: string; outcome?: string }
   // A new island was made (4.4.5 part B): its name and its wonders' set, for
   // the page to keep with the last ten.
   | { type: "island"; name: string; signature: string };

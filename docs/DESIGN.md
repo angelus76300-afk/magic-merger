@@ -1072,3 +1072,29 @@ Nothing here gives the player an idea or a recipe: the island shows what it does
 ### The tour of a new island plays when the island appears
 
 For a day (10 to 11 November) the tour of a new island's wonders waited for the island's first cast, so that a newcomer's first tap was not spent on it. The owner did not like an island that arrives without its presentation. The tour plays at once again; what protected the first cast stays: a tap during the tour ends it and casts nothing, and the camera holds a cast for three seconds.
+
+## The island needs you (11 November 2026)
+
+Measured before: merging never needed the island and the island never needed a merge. Of 483 live items, 338 were never cast. The owner's calls: "troubles: on", "size: village", "tiers: keep".
+
+### A trouble
+
+Something that happens to one of the player's villages and that the right item answers (`troubles.ts`). One at a time, at most one every ten minutes of island time, the first after three. The World frame starts one only while the player is playing: a touch in the last minute, no tour, no challenge, nothing of the page over the island, the island's switch on. The island stops while the player is on the Craft tab, so a trouble waits for them there; the board shows one line of it.
+
+It is shown, never explained. The story tells what is seen ("fire in the woods north-west of Kapan", "the fire is coming toward Kapan", "Kapan is burning"), the director's camera goes to it first and comes back to it every twenty five seconds, and the line stays on the island with Go for those not watching. No objective, no hint, no recipe: the owner declined them.
+
+### The wildfire
+
+The first trouble, because the engine had all of it: wind, what burns, villagers who rebuild, houses to count. It starts in woods 20 to 34 cells from a village with at least seven tenths of the way to the houses on ground that burns; an island of sand has none. Its size follows the village (a hamlet a brush fire, a town a real one). Left to the engine a fire was over, or in the houses, within half a minute, so its front advances at 0.26 cells a second toward the nearest house: what runs ahead of the front dies down, and at the front the wind keeps it alight, over a stream if need be. While the player's own magic is at work (thirty seconds after a cast at it) the trouble leaves the fire alone. Measured on eight islands: 55 to 100 seconds from the first line to the first house.
+
+It never ends on a clock. It ends when nothing has burned for three seconds. It takes at most a third of a village, and one house in an island's first three troubles: past that, the fire round the houses dies down by itself.
+
+### How it ended
+
+By what is left of the village: saved (nothing lost, and an item cast at it within forty seconds of the end), scarred (a house or people lost), lost (the cap reached, from the fourth trouble on), held (nothing lost, but the village sat under a shield more than half the time: a dome is not an answer), spent (it burned out with nobody's help). Fit beats power: a spell that ends the fire and the village with it leaves a village lost.
+
+A village saved by an item raises a stone to it by its plaza, one per village; a tap reads it. The stone does nothing: no bonus, no currency (village mana was declined). The player's own card of that item gains the line, kept on their device and never shown to others, since it would be a recipe.
+
+### Kept and counted
+
+The save gains one field, `troubles` (how many, when the next may start, the one running, the stones), absent on a save from before and read back field by field. Stored spells are not touched. The number the update is held to: the share of troubles answered by an item first made after the trouble began (three counts on the device, sent with the perf sample when the HUD is on). Before: nothing, by construction. Target 30%, a guess; under 10% means it is a show and not a join.

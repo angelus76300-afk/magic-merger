@@ -16,10 +16,13 @@ An experiment the owner asked for: one session leads and builds, instead of a pl
 
 ### Where each piece is
 
-| Work                                                   | State                                                                                                    |
-| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| The island tells its stories (#121)                    | Built, 21 checks, frames at both Fold sizes; in review. `docs/DESIGN.md`, "The island tells its stories" |
-| The tour of a new island plays when the island appears | In #121, at the owner's word of 11 November (it waited for the first cast for a day, #110)               |
+| Work                                                   | State                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The island tells its stories (#121)                    | Built, 21 checks, frames at both Fold sizes; in review. `docs/DESIGN.md`, "The island tells its stories"                                                                                                                                                                                                                         |
+| The tour of a new island plays when the island appears | In #121, at the owner's word of 11 November (it waited for the first cast for a day, #110)                                                                                                                                                                                                                                       |
+| The island needs you: the wildfire (#123)              | Built on the stories branch: engine, save field, camera, lines, Craft line, switch, stone, card line; 14 checks. The owner: "troubles: on", "size: village", "tiers: keep". Design page https://claude.ai/artifact/Lxi1Le5vyN38PVdzXxrmCL. Next troubles in order: drought, high water; a raid needs boats and raiders that live |
+| Production deploys                                     | Failed from 06:08 to 17:54 UTC on 11 November: the environment `production` held a wrong `MM_TOKEN`, then a Cloudflare token without D1. The owner fixed both; the Deploy of 17:54 passed. Issues #118 and #120 can be closed                                                                                                    |
+| Smoke fix (#122)                                       | Merged by the lead session on the owner's "smoke fix: yes" and "smoke fix: merge": the browser install falls back when Ubuntu's package servers are out of reach                                                                                                                                                                 |
 
 ### Decisions taken, and why
 
