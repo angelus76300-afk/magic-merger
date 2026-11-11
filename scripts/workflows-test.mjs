@@ -271,7 +271,9 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       ["a closed pull request", with_({ state: "closed" })],
       ["a fork", with_({ head: { repo: { full_name: "stranger/r" } } })],
       ["a head that moved on GitHub", with_({ head: { sha: "b".repeat(40) } })],
-      ["a branch that moved since the dispatch", good, { GITHUB_SHA: "c".repeat(40) }],
+      // Preview runs on the branch; CI runs on main (2026-11-11) and checks out the head the API names.
+      ...(file === "preview.yml" ? [["a branch that moved since the dispatch", good, { GITHUB_SHA: "c".repeat(40) }]] : []),
+      ["a head that is not a commit sha", good, { SHA: "main" }],
       ["a pull request number that is not a number", good, { PR: "12; rm -rf /" }],
       ...(file === "preview.yml"
         ? [
@@ -317,6 +319,81 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       env: { PATH: process.env.PATH, EVENT: "workflow_dispatch", DISPATCHED: "", GITHUB_OUTPUT: join(tmp, "out"), GITHUB_STEP_SUMMARY: join(tmp, "summary") },
     });
     check("ci.yml scope, called by a dispatched Deploy: a full run", r.status === 0 && /^full=true$/m.test(readFileSync(join(tmp, "out"), "utf8")), r.stderr);
+  }
+  // 2026-11-11, the lighter pipeline: npm test on the merge result, and the run the Gate finds by name.
+  {
+    check(
+      "ci.yml: a dispatched run is named as the Gate looks for it (retestName)",
+      /^run-name: \$\{\{ inputs\.pr && format\('CI for #\{0\} at \{1\}', inputs\.pr, inputs\.sha\) \|\| github\.event\.pull_request\.title \}\}$/m.test(ci),
+    );
+    check("ci.yml: a dispatch checks out the head the guard checked", /ref: \$\{\{ inputs\.sha \|\| '' \}\}/.test(ci));
+    check("ci.yml: the checkout keeps no credentials for the pull request's code", /persist-credentials: false/.test(ci));
+    check(
+      "ci.yml: npm test runs on a pull request's full run",
+      /- name: test\n\s+if: steps\.scope\.outputs\.full == 'true' && \(github\.event_name == 'pull_request' \|\| inputs\.pr != ''\)\n\s+run: npm test\n/.test(
+        ci,
+      ),
+    );
+    // The merge step, run in bash on a throwaway repository: a dispatch merges main in, a pull request's
+    // merge commit names its main as the first parent, and both say which main they tested.
+    const lines = ci.split("\n");
+    const at = lines.findIndex((l) => /^\s+- name: merge with main\s*$/.test(l));
+    const runAt = lines.findIndex((l, i) => i > at && /^\s+run: \|\s*$/.test(l));
+    const body = block(lines, runAt).slice(1);
+    const min = Math.min(...body.filter((l) => l.trim()).map(indent));
+    const script = body.map((l) => l.slice(min)).join("\n");
+    const repo = join(tmp, "repo");
+    const g = (...a) =>
+      spawnSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "-c", "init.defaultBranch=main", ...a], { cwd: repo, encoding: "utf8" }).stdout.trim();
+    spawnSync("mkdir", ["-p", repo]);
+    g("init", "-q");
+    writeFileSync(join(repo, "a"), "1\n");
+    g("add", ".");
+    g("commit", "-qm", "base");
+    g("checkout", "-qb", "feat");
+    writeFileSync(join(repo, "b"), "1\n");
+    g("add", ".");
+    g("commit", "-qm", "feat");
+    g("checkout", "-q", "main");
+    writeFileSync(join(repo, "c"), "1\n");
+    g("add", ".");
+    g("commit", "-qm", "main moved");
+    g("update-ref", "refs/remotes/origin/main", "main");
+    const main = g("rev-parse", "main");
+    const step = (env) => {
+      writeFileSync(join(tmp, "summary"), "");
+      return spawnSync("bash", ["-e", "-c", script], {
+        cwd: repo,
+        encoding: "utf8",
+        env: { PATH: process.env.PATH, BASE: "main", GITHUB_STEP_SUMMARY: join(tmp, "summary"), ...env },
+      });
+    };
+    g("checkout", "-q", "feat");
+    const d = step({ DISPATCHED: "12" });
+    check(
+      "ci.yml merge step, dispatched: main is merged into the head and named",
+      d.status === 0 &&
+        g("rev-parse", "HEAD^2") === main &&
+        d.stdout.includes(`::notice title=Tested with main::${main}`) &&
+        d.stdout.includes(`Tested with main: ${main}`),
+      d.stdout + d.stderr,
+    );
+    check(
+      "ci.yml merge step, dispatched: the merged tree holds both sides",
+      spawnSync("test", ["-f", join(repo, "b")]).status === 0 && spawnSync("test", ["-f", join(repo, "c")]).status === 0,
+    );
+    g("checkout", "-q", "main");
+    g("merge", "-q", "--no-ff", "--no-edit", "feat~1");
+    const p = step({ DISPATCHED: "" });
+    check(
+      "ci.yml merge step, pull_request: the merge commit's first parent is the main tested",
+      p.status === 0 && p.stdout.includes(`Tested with main: ${main}`),
+      p.stdout + p.stderr,
+    );
+    // The merge commit's main (main moved) is not under the base the run read: the run fails.
+    g("update-ref", "refs/remotes/origin/main", g("rev-parse", "feat~1"));
+    const stale = step({ DISPATCHED: "" });
+    check("ci.yml merge step: a main that is not on the base fails the run", stale.status !== 0, stale.stdout);
   }
   rmSync(tmp, { recursive: true, force: true });
 
