@@ -415,6 +415,25 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       p.status === 0 && p.stdout.includes(`Tested with main: ${main}`),
       p.stdout + p.stderr,
     );
+    {
+      // A head that already contains main: GitHub's checkout is the head itself, one parent.
+      g("update-ref", "refs/remotes/origin/main", "main");
+      g("checkout", "-q", "-b", "caught-up", "main");
+      writeFileSync(join(repo, "d"), "1\n");
+      g("add", ".");
+      g("commit", "-qm", "on top of main");
+      writeFileSync(join(repo, "e"), "1\n");
+      g("add", ".");
+      g("commit", "-qm", "a second one, so the head's parent is not main");
+      const tip = g("rev-parse", "main");
+      const c = step({ DISPATCHED: "" });
+      check(
+        "ci.yml merge step, pull_request on a head that holds main: that main is named",
+        c.status === 0 && c.stdout.includes(`Tested with main: ${tip}`),
+        c.stdout + c.stderr,
+      );
+      g("checkout", "-q", "main");
+    }
     // The merge commit's main (main moved) is not under the base the run read: the run fails.
     g("update-ref", "refs/remotes/origin/main", g("rev-parse", "feat~1"));
     const stale = step({ DISPATCHED: "" });
