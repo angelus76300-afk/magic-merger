@@ -435,6 +435,14 @@ export function upToDateFrom(ancestor, moved) {
 
 const DOCS_ONLY = (path) => /^(docs\/|\.claude\/skills\/)|\.md$|^\.claude\/settings\.json$/.test(path);
 
+/**
+ * Whether a run is a run of that workflow. 2026-11-11: read from the workflow's file, not the run's
+ * name: since ci.yml has a run-name, the API gives that as the run's `name` ("CI for #123 at ...", or
+ * the pull request's title), so `name === "CI"` matched no run and the Gate held #123 and #125 on a CI
+ * that had passed. The name is only read where a run carries no path.
+ */
+export const runOf = (r, file, name) => (typeof r?.path === "string" ? r.path.split("@")[0] === `.github/workflows/${file}` : r?.name === name);
+
 /** Whether a workflow run ran at all: not one held for an approval that never came. */
 export const ran = (r) => r?.conclusion !== "action_required" && r?.status !== "action_required";
 
@@ -456,7 +464,7 @@ export async function ciFrom(sha, ghGet, sleep = (ms) => new Promise((r) => setT
   // A run waiting for an approval never ran (conclusion action_required): it proves nothing and must
   // not hide another run (seen live on #102, 10 November).
   const seen = new Set();
-  const all = [...runs, ...dispatched].filter((r) => r.name === "CI" && ran(r) && !seen.has(r.id) && seen.add(r.id));
+  const all = [...runs, ...dispatched].filter((r) => runOf(r, "ci.yml", "CI") && ran(r) && !seen.has(r.id) && seen.add(r.id));
   // The newest run decides: a test with a newer main that fails must hold the pull request.
   const ci = newest(all);
   if (!ci) return "missing";
@@ -535,7 +543,7 @@ const ciOn = (sha, out) => ciFrom(sha, gh, undefined, 3, ghText, out);
 /** The preview smoke test of a commit: the newest Preview run that ran and whose smoke job ran (a run for a label skips it). ghGet: (path) => json */
 export async function smokeFrom(sha, ghGet) {
   const runs = ((await ghGet(`actions/runs?head_sha=${sha}&per_page=50`))?.workflow_runs ?? [])
-    .filter((r) => r.name === "Preview" && ran(r))
+    .filter((r) => runOf(r, "preview.yml", "Preview") && ran(r))
     .sort((a, b) => b.run_number - a.run_number);
   for (const run of runs) {
     if (run.status !== "completed") return run.status;
