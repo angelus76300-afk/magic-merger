@@ -29,7 +29,8 @@
 # API, reads the base and the draft state there, and checks out that commit. Its
 # name carries the pull request and the head, which is how the Gate finds it.
 name: CI
-run-name: ${{ inputs.pr && format('CI for #{0} at {1}', inputs.pr, inputs.sha) || github.event.pull_request.title }}
+# Quoted: an unquoted " #" would start a YAML comment and cut the line (review of #117).
+run-name: "${{ inputs.pr && format('CI for #{0} at {1}', inputs.pr, inputs.sha) || github.event.pull_request.title }}"
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]

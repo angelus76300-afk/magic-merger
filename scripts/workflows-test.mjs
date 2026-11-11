@@ -324,8 +324,33 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   {
     check(
       "ci.yml: a dispatched run is named as the Gate looks for it (retestName)",
-      /^run-name: \$\{\{ inputs\.pr && format\('CI for #\{0\} at \{1\}', inputs\.pr, inputs\.sha\) \|\| github\.event\.pull_request\.title \}\}$/m.test(ci),
+      /^run-name: "\$\{\{ inputs\.pr && format\('CI for #\{0\} at \{1\}', inputs\.pr, inputs\.sha\) \|\| github\.event\.pull_request\.title \}\}"$/m.test(ci),
     );
+    // Every workflow as YAML, the way GitHub reads it: a stray " #" turns the rest of a line into a comment.
+    let yaml = null;
+    try {
+      yaml = (await import("js-yaml")).default;
+    } catch {
+      yaml = null;
+    }
+    check("js-yaml is there to read the workflows (eslint brings it)", yaml !== null);
+    if (yaml) {
+      for (const f of readdirSync(dir).filter((x) => /\.ya?ml$/.test(x))) {
+        let doc = null;
+        try {
+          doc = yaml.load(readFileSync(join(dir, f), "utf8"));
+        } catch (e) {
+          doc = String(e);
+        }
+        check(`${f} loads as YAML`, doc !== null && typeof doc === "object", String(doc).slice(0, 200));
+      }
+      const runName = yaml.load(ci)?.["run-name"];
+      check(
+        "ci.yml: run-name read as YAML keeps its whole expression",
+        runName === "${{ inputs.pr && format('CI for #{0} at {1}', inputs.pr, inputs.sha) || github.event.pull_request.title }}",
+        String(runName),
+      );
+    }
     check("ci.yml: a dispatch checks out the head the guard checked", /ref: \$\{\{ inputs\.sha \|\| '' \}\}/.test(ci));
     check("ci.yml: the checkout keeps no credentials for the pull request's code", /persist-credentials: false/.test(ci));
     check(
