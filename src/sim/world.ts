@@ -1,5 +1,5 @@
 import type { ArtHooks } from "./artifacts";
-import type { StoryLine } from "./kin";
+import type { Happening, StoryLine } from "./kin";
 import type { Creature } from "./creatures";
 import { C, F, G, MaterialTable, type Layer } from "./materials";
 import { Rng, fbm, valueNoise } from "./noise";
@@ -78,6 +78,8 @@ export class World {
   // The island's story (3.7, kin.ts): lines worth telling, and everyday work counted.
   story: StoryLine[] = [];
   storyCounts: Record<string, number> = {};
+  // Where the latest lines happened and to whom (kin.ts, Happening): not saved.
+  happenings: Happening[] = [];
   // Places spells keep safe for a while (wards.ts), and what each cell is
   // protected against, as bits.
   wards: Ward[] = [];
