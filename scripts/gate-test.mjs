@@ -9,6 +9,7 @@ import {
   carriedReview,
   bringUpToDate,
   retestName,
+  waitForRun,
   ciFrom,
   ran,
   smokeFrom,
@@ -856,6 +857,51 @@ check("no deploy from the workflow yet reads as none", lastDeployedFrom([{ annot
       threw = true;
     }
     check("a refused dispatch throws, so the next in line gets its turn", threw);
+  }
+}
+
+// 2026-11-11, --follow: the Gate waits for the CI run it started, then sweeps again.
+{
+  const NAME = retestName(12, "1".repeat(40));
+  const seq = (pages) => {
+    let i = 0;
+    const calls = [];
+    return {
+      calls,
+      call: async (path) => {
+        calls.push(path);
+        const page = pages[Math.min(i++, pages.length - 1)];
+        if (page instanceof Error) throw page;
+        return { workflow_runs: page };
+      },
+    };
+  };
+  const run = (status, conclusion = null, title = NAME, run_number = 5) => ({ display_title: title, status, conclusion, run_number });
+  const noSleep = async () => {};
+  {
+    const { call } = seq([[], [run("queued")], [run("in_progress")], [run("completed", "success")]]);
+    check("it waits until the run it started has finished, and says how", (await waitForRun({ name: NAME, call, sleep: noSleep })) === "success");
+  }
+  {
+    const { call } = seq([[run("completed", "failure")]]);
+    check("a failed run ends the wait with its conclusion", (await waitForRun({ name: NAME, call, sleep: noSleep })) === "failure");
+  }
+  {
+    const { call } = seq([[run("completed", "success", "CI for #13 at " + "1".repeat(40))]]);
+    check("another pull request's run is not this one", (await waitForRun({ name: NAME, call, sleep: noSleep, timeoutMs: 90000 })) === "not found");
+  }
+  {
+    const { call, calls } = seq([[run("in_progress")]]);
+    const end = await waitForRun({ name: NAME, call, sleep: noSleep, timeoutMs: 90000 });
+    check("the wait is bounded", end === "still running" && calls.length === 4, `${end}, ${calls.length} reads`);
+  }
+  {
+    const { call } = seq([new Error("502"), [run("completed", "success")]]);
+    check("a failed read is tried again, not taken as an end", (await waitForRun({ name: NAME, call, sleep: noSleep })) === "success");
+  }
+  {
+    const { call } = seq([[run("completed", "failure", NAME, 4), run("completed", "success", NAME, 5)]]);
+    check("the newest run of that name decides", (await waitForRun({ name: NAME, call, sleep: noSleep })) === "success");
   }
 }
 

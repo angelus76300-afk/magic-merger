@@ -321,6 +321,30 @@ export async function bringUpToDate({ number, sha, call, sleep, waitMs = 30000 }
 }
 
 /**
+ * 2026-11-11, the Gate follows its own retest: wait until the CI run named `name` (retestName) has
+ * finished, reading the dispatched runs of ci.yml every 30 s, at most timeoutMs. Returns its conclusion,
+ * or "still running" / "not found" when the wait ends without one; the sweep runs again either way.
+ *   call: (path) => json; sleep: (ms) => promise
+ */
+export async function waitForRun({ name, call, sleep, timeoutMs = 40 * 60000, everyMs = 30000 }) {
+  let seen = false;
+  for (let waited = 0; waited <= timeoutMs; waited += everyMs) {
+    if (waited) await sleep(everyMs);
+    let runs = [];
+    try {
+      runs = (await call(`actions/workflows/ci.yml/runs?event=workflow_dispatch&per_page=30`))?.workflow_runs ?? [];
+    } catch {
+      continue; // a failed read: try again at the next tick
+    }
+    const run = runs.filter((r) => r.display_title === name).sort((a, b) => b.run_number - a.run_number)[0];
+    if (!run) continue;
+    seen = true;
+    if (run.status === "completed") return run.conclusion ?? "completed";
+  }
+  return seen ? "still running" : "not found";
+}
+
+/**
  * The sweep's test, in turn: the first of `order` (at most three) that GitHub lets the Gate start.
  * A refusal gives the next one its turn now, so one refused pull request never holds the queue.
  * Returns the lines to print.
@@ -670,66 +694,88 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     }
   } else if (cmd === "sweep") {
     // After a merge, and after any Gate run: every open pull request again, oldest first. Merges at most
-    // one (each merge leaves the others behind main), then updates at most one branch (pickUpdate).
-    const open = (await gh(`pulls?state=open&per_page=100&sort=created&direction=asc`)) ?? [];
-    const lines = [`### Sweep of ${open.length} open pull requests`];
-    let merged = false;
-    const states = [];
-    for (const p of open) {
-      if (p.draft || headRepoOf(p) !== REPO.toLowerCase()) continue;
-      let pr, state;
-      try {
-        ({ pr, state } = await prState(p.number));
-      } catch (e) {
-        lines.push(`- #${p.number}: could not be read (${String(e?.message ?? e).slice(0, 120)})`);
-        continue;
-      }
-      if (!state.open) continue;
-      const d = decide(state);
-      if (d.ready && !merged && process.argv.includes("--merge")) {
+    // one per round (each merge leaves the others behind main), then starts CI again on at most one.
+    // 2026-11-11, --follow: a CI run the Gate starts itself never wakes it (a run started with its token
+    // starts no workflow_run), and GitHub ran the 15 minute schedule once in four hours that day. So the
+    // Gate waits here for the run it started and sweeps again, up to ROUNDS rounds in one job.
+    const follow = process.argv.includes("--follow");
+    const ROUNDS = 4;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const all = [];
+    let mergedAny = false;
+    let docsAll = true;
+    for (let round = 1; round <= (follow ? ROUNDS : 1); round++) {
+      const open = (await gh(`pulls?state=open&per_page=100&sort=created&direction=asc`)) ?? [];
+      const lines = [`### Sweep${follow ? ` ${round}` : ""} of ${open.length} open pull requests`];
+      let merged = false;
+      const states = [];
+      for (const p of open) {
+        if (p.draft || headRepoOf(p) !== REPO.toLowerCase()) continue;
+        let pr, state;
         try {
-          // sha: GitHub refuses if the head moved since it was judged.
-          await gh(`pulls/${p.number}/merge`, {
-            method: "PUT",
-            body: JSON.stringify({ merge_method: "squash", sha: pr.head.sha, commit_title: `${pr.title} (#${p.number})` }),
-          });
+          ({ pr, state } = await prState(p.number));
         } catch (e) {
-          lines.push(`- #${p.number}: ready, but GitHub refused the merge (${String(e?.message ?? e).slice(0, 160)})`);
+          lines.push(`- #${p.number}: could not be read (${String(e?.message ?? e).slice(0, 120)})`);
           continue;
         }
-        merged = true;
-        lines.push(`- merged #${p.number} (${d.cls})`);
-        if (process.env.GITHUB_OUTPUT) execFileSync("sh", ["-c", `echo merged=true >> "$GITHUB_OUTPUT"; echo docs=${state.docsOnly} >> "$GITHUB_OUTPUT"`]);
-        continue;
-      }
-      states.push({ number: p.number, state, sha: pr.head.sha });
-      lines.push(`- #${p.number} (${d.cls}): ${d.ready ? "ready" : d.reasons.join("; ")}`);
-    }
-    if (process.argv.includes("--update")) {
-      // A merge just now left every other branch behind main, and a merge made with the Gate's token
-      // starts no new Gate run: read them again before choosing, or the queue would stop here.
-      let queue = states;
-      if (merged) {
-        queue = [];
-        for (const p of states) {
+        if (!state.open) continue;
+        const d = decide(state);
+        if (d.ready && !merged && process.argv.includes("--merge")) {
           try {
-            const { pr, state } = await prState(p.number);
-            if (state.open) queue.push({ number: p.number, state, sha: pr.head.sha });
-          } catch {
-            // left for the next sweep
+            // sha: GitHub refuses if the head moved since it was judged.
+            await gh(`pulls/${p.number}/merge`, {
+              method: "PUT",
+              body: JSON.stringify({ merge_method: "squash", sha: pr.head.sha, commit_title: `${pr.title} (#${p.number})` }),
+            });
+          } catch (e) {
+            lines.push(`- #${p.number}: ready, but GitHub refused the merge (${String(e?.message ?? e).slice(0, 160)})`);
+            continue;
+          }
+          merged = true;
+          mergedAny = true;
+          docsAll = docsAll && state.docsOnly;
+          lines.push(`- merged #${p.number} (${d.cls})`);
+          continue;
+        }
+        states.push({ number: p.number, state, sha: pr.head.sha });
+        lines.push(`- #${p.number} (${d.cls}): ${d.ready ? "ready" : d.reasons.join("; ")}`);
+      }
+      let started = null;
+      if (process.argv.includes("--update")) {
+        // A merge just now left every other branch behind main, and a merge made with the Gate's token
+        // starts no new Gate run: read them again before choosing, or the queue would stop here.
+        let queue = states;
+        if (merged) {
+          queue = [];
+          for (const p of states) {
+            try {
+              const { pr, state } = await prState(p.number);
+              if (state.open) queue.push({ number: p.number, state, sha: pr.head.sha });
+            } catch {
+              // left for the next sweep
+            }
           }
         }
+        const { order, why } = pickUpdate(queue);
+        if (!order.length) lines.push(`No CI started: ${why}.`);
+        lines.push(
+          ...(await updateInTurn(order, queue, async (n, sha) => {
+            const said = await bringUpToDate({ number: n, sha, call: gh, sleep });
+            started = retestName(n, sha);
+            return said;
+          })),
+        );
+      } else {
+        const { update, why } = pickUpdate(states);
+        lines.push(update === null ? `No CI to start: ${why}.` : `Would start CI again on #${update} (with --update).`);
       }
-      const { order, why } = pickUpdate(queue);
-      if (!order.length) lines.push(`No CI started: ${why}.`);
-      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-      lines.push(...(await updateInTurn(order, queue, (n, sha) => bringUpToDate({ number: n, sha, call: gh, sleep }))));
+      all.push(lines.join("\n"));
+      if (!follow || !started || round === ROUNDS) break;
+      const end = await waitForRun({ name: started, call: gh, sleep });
+      all.push(`Waited for "${started}": ${end}. Sweeping again.`);
     }
-    if (!process.argv.includes("--update")) {
-      const { update, why } = pickUpdate(states);
-      lines.push(update === null ? `No CI to start: ${why}.` : `Would start CI again on #${update} (with --update).`);
-    }
-    summary(lines.join("\n"));
+    if (mergedAny && process.env.GITHUB_OUTPUT) execFileSync("sh", ["-c", `echo merged=true >> "$GITHUB_OUTPUT"; echo docs=${docsAll} >> "$GITHUB_OUTPUT"`]);
+    summary(all.join("\n\n"));
   } else if (cmd === "deploy") {
     const s = await deployState(arg, process.argv[4]);
     const d = deployable(s);
