@@ -59,6 +59,8 @@ interface Item {
   model: string | null;
   version: number | null;
   casts: number | null;
+  // What it promises (shared/promises.ts), known for programs read through /api/library.
+  intents?: string[];
 }
 
 const readJson = <T>(file: string): T => JSON.parse(readFileSync(`${CACHE}/${file}`, "utf8")) as T;
@@ -89,11 +91,11 @@ function library(): { items: Item[]; elements: number; formCounts: Record<string
   for (const r of readJson<{ id: number; name: string; kind: string; tier: string; code: string }[]>("programs-creatures.json")) add(r, "creatures");
   for (const r of readJson<{ pid: number; name: string; tier: string; code: string }[]>("challenge-candidates.json")) add(r, "challenge");
   // POST /api/library (read only, spells only), for the names the GETs did not give (the owner's "measure: all").
-  const intents = new Map<string, string[]>();
   if (existsSync(`${CACHE}/library.json`))
     for (const r of readJson<{ spells: { key: string; name: string; tier: string; code: string; intents: string[] }[] }>("library.json").spells) {
       add({ name: r.name, tier: r.tier, code: r.code }, "library");
-      intents.set(elementKey(r.name), r.intents);
+      const it = got.get(elementKey(r.name));
+      if (it) it.intents = r.intents;
     }
   // Model and version of the program that is live (or the one fetched).
   const info = new Map<string, { id: number; status: string; model: string; version: number }[]>();
@@ -440,7 +442,7 @@ function alone(): Ens[] {
   return ensemble;
 }
 
-function simulate(casts: Cast[], stream: number, ref: Ens[] | null, withTrace = false, lives = 0) {
+function simulate(casts: Cast[], stream: number, ref: Ens[] | null, withTrace = false, lives = 0, span = SECONDS) {
   const outer = Math.random;
   const isl = island(stream, lives);
   const { world, rt } = isl;
@@ -453,7 +455,7 @@ function simulate(casts: Cast[], stream: number, ref: Ens[] | null, withTrace = 
   trace = withTrace ? new Map() : null;
   Math.random = isl.random;
   try {
-    for (let s = 1; s <= SECONDS; s++) {
+    for (let s = 1; s <= span; s++) {
       for (let k = 0; k < PER_SECOND; k++) {
         const t = s - 1 + k * TICK;
         for (const d of due)
@@ -479,8 +481,10 @@ function simulate(casts: Cast[], stream: number, ref: Ens[] | null, withTrace = 
         if (rt.visuals.bodies.some((b) => b.alive && b.look !== "none")) bodySeconds += TICK;
         wardsMax = Math.max(wardsMax, world.wards.length);
       }
+      // A long run keeps its last moment only.
+      if (span !== SECONDS && s < span) continue;
       const now = snap(isl);
-      if (ref) {
+      if (ref && span === SECONDS) {
         const e = ref[s];
         let tempCells = 0;
         let fireCells = 0;
@@ -489,7 +493,7 @@ function simulate(casts: Cast[], stream: number, ref: Ens[] | null, withTrace = 
           if (now.fire[i] && !fireNatural(e, i, 1)) fireCells++;
         }
         timeline.push({ cells: cellsDiffer(e, now), creatures: creaturesDiffer(e, now), voxels: decorDiffer(e, now), fire: fireCells, temp: tempCells });
-        if (s === SECONDS) snaps.push(now);
+        if (s === span) snaps.push(now);
       } else snaps.push(now);
     }
   } finally {
@@ -510,6 +514,20 @@ function simulate(casts: Cast[], stream: number, ref: Ens[] | null, withTrace = 
   };
   trace = null;
   return out;
+}
+
+// Five minutes (the test run's five minute scene for objects): the island
+// left alone at its end, in every life, and one item's run against it.
+const LONG = 300;
+let longEnsemble: Ens | null = null;
+function longAlone(): Ens {
+  if (!longEnsemble) longEnsemble = Array.from({ length: LIVES }, (_, l) => simulate([], 0, null, false, l, LONG).run.final);
+  return longEnsemble;
+}
+function runLong(item: Item, at: { x: number; y: number }): Effect {
+  const e = longAlone();
+  const run = simulate([{ item, at: 0, ...at }], 0, null, false, 0, LONG).run;
+  return effectOf(run, e);
 }
 
 function runCasts(casts: Cast[], stream = 0, withTrace = false): Run {
@@ -980,6 +998,195 @@ function changedMask(s: Snap, e: Ens): Uint8Array {
   return m;
 }
 
+// --- Rewrite candidates (4.12, the owner's "spells: both") --------------------
+//
+// From what each item did on the practice island, by rule. A fault the
+// engine will fix for every stored item (fire carried by creatures named for
+// fire, light and shadow in the world, blasts moving fire, smoke and water,
+// growth on ash, spell creatures hunting each other, holy light hurting the
+// undead) goes to group e, never to a rewrite.
+
+const PROTECT_NAME =
+  /ward|shield|barrier|bastion|guard|protect|sanctuar|aegis|last stand|fortress|fort\b|wall|rampart|haven|refuge|sentinel|defen[cs]e|bulwark|holy ground|hallowed|consecrat/i;
+const FIRE_NAME = /fire|flame|blaze|inferno|pyro|ember|burn|phoenix|fenghuang|salamander|ifrit|magma|lava/i;
+const WATER_NAME = /rain|flood|deluge|tsunami|maelstrom|river|lake|ocean|\bsea\b|fountain|tide|monsoon|downpour|torrent|whirlpool|geyser|spring\b|waterfall/i;
+const STORM_NAME = /storm|thunder|lightning|tempest|thunderclap/i;
+const HEAL_NAME = /heal|cure|mend|elixir|restor|salvation|panacea|remedy|fountain of youth|breath of life/i;
+const COLD_NAME = /frost|\bice\b|snow|blizzard|freez|glacier|winter|cold|frozen|icicle|permafrost/i;
+const QUAKE_NAME = /quake|tremor|earthshak/i;
+const LIGHT_NAME = /light|shadow|dark|night|radian|aurora|glow|lumin|dawn|dusk|eclipse|wisp|lantern|shade|gloom/i;
+const BLAST_NAME = /blast|shockwave|gust|wind|breeze|sonic|boom|gale|tornado|hurricane|hypercane|cyclone/i;
+const HOLY_NAME = /holy|divine|sacred|radian|turn undead|blessed|consecrat|purif|saint|angel/i;
+const HUNTER_NAME = /hunter|hunt|predator|wolf|dragon|serpent|hawk|eagle|kraken|lion|tiger/i;
+
+// What would make a near duplicate its own, from a word of its name.
+const SIGNATURE: [RegExp, string][] = [
+  [/ship|ark|armada|dutchman|fleet|boat/i, "sail the water and carry or raid villagers along the shore"],
+  [/rocket|starship|spaceship|spaceflight/i, "lift off with a fire trail, scorch its pad and leave a crater where it lands"],
+  [/gold|treasure|leprechaun|hoard|gem|opal|ruby|stone\b/i, "draw villagers and thieves to it and change hands, not just sit there"],
+  [/familiar|homunculus|imp/i, "follow and fetch for the nearest villager, and carry things"],
+  [/spirit|soul|wisp|ghost|shade|wight|haunt/i, "lure creatures at night and leave a trace where it drifts (cold, mist, graves)"],
+  [/djinn|genie/i, "grant one wish at a time: a house, water or gold where villagers stand"],
+  [/phoenix|fenghuang/i, "burn where it lands and rise again from ash when it dies"],
+  [/unicorn/i, "heal the wounded it passes and leave flowers in its wake"],
+  [/archaeolog|dwarf|miner/i, "dig, uncover ore or bones and haul them to the village"],
+  [/meteor|star/i, "strike with an impact: a crater, scorched ground and ore"],
+  [/night|dark|shadow/i, "dim the land so creatures sleep or hunt, and let light drive it back"],
+  [/curse|death|reaper|plague/i, "mark creatures that then fall ill or flee, and let healing undo it"],
+  [/talos|golem|giant|titan/i, "walk and work: carry stone, build a wall, fight what threatens"],
+];
+const signature = (name: string) => SIGNATURE.find(([re]) => re.test(name))?.[1] ?? "one deed only its name implies, that the kept item does not do";
+
+interface Candidate {
+  key: string;
+  name: string;
+  kind: string;
+  tier: string;
+  model: string | null;
+  version: number | null;
+  casts: number | null;
+  groups: string[];
+  reasons: string[];
+  first?: boolean;
+}
+
+function suspectD(e: Effect): boolean {
+  const sys = systemsTouched(e);
+  const shape = shapeOf(e);
+  if (shape === "sets down an object") return sys.every((s) => s === "object");
+  if (shape === "drops creatures") return sum(e.born) <= 1 && sys.every((s) => s === "born");
+  return false;
+}
+
+function rewriteList(items: Item[], close: [string, string, number][]) {
+  const byName = new Map(items.map((i) => [i.name, i]));
+  const out = new Map<string, Candidate>();
+  const engine = new Map<string, Candidate>();
+  const entry = (map: Map<string, Candidate>, i: Item) => {
+    let c = map.get(i.key);
+    if (!c) {
+      c = { key: i.key, name: i.name, kind: i.form, tier: i.tier, model: i.model, version: i.version, casts: i.casts, groups: [], reasons: [] };
+      map.set(i.key, c);
+    }
+    return c;
+  };
+  const note = (i: Item, group: string, reason: string) => {
+    const c = entry(group === "e" ? engine : out, i);
+    if (!c.groups.includes(group)) c.groups.push(group);
+    c.reasons.push(reason);
+  };
+  for (const i of items) {
+    const s = store.singles[i.key];
+    if (!s) continue;
+    const e = s.effect;
+    const t = s.trace;
+    const has = (re: RegExp) => Object.keys(t).some((k) => re.test(k));
+    const n = i.name;
+    const shape = shapeOf(e);
+    const water = (e.fluid.water ?? 0) + (e.fluid.ice ?? 0);
+    // e: what the engine will add.
+    const fireCreature = FIRE_NAME.test(n) && sum(e.born) > 0 && e.fireMax < 5 && !has(/^(fire|ignite)/);
+    if (fireCreature) note(i, "e", `a creature named for fire that burns nothing (${e.fireMax} cells on fire): fire carried by creatures`);
+    const lightOnly = LIGHT_NAME.test(n) && ["only lights and particles", "nothing lasting"].includes(shape);
+    if (lightOnly) note(i, "e", `its light or shadow is only drawn (${shape}): light and shadow in the world`);
+    const blast = BLAST_NAME.test(n) && has(/^(shockwave|wind|c\.push)/) && e.fireMax < 5 && water <= 5;
+    if (blast) note(i, "e", "pushes creatures but moves no fire, smoke or water: blasts moving them");
+    const holy = HOLY_NAME.test(n) && e.killed + e.hurt === 0 && (e.healed > 0 || e.status > 0 || has(/^c\.(heal|status)/));
+    if (holy) note(i, "e", "holy light that heals or calms but harms no undead: holy light hurting the undead");
+    const hunter = HUNTER_NAME.test(n) && sum(e.born) > 0 && e.killed === 0;
+    if (hunter) note(i, "e", "a hunter that hunted nothing in 30 s: spell creatures hunting each other");
+    // a: a ward with no protection in its name or promise.
+    if (t.ward && !PROTECT_NAME.test(n) && !(i.intents ?? []).includes("protect"))
+      note(i, "a", `raises a ward (${t.ward} call${t.ward > 1 ? "s" : ""}) though its name${i.intents ? " and promise" : ""} say nothing of protection`);
+    // b: does not do what its name says.
+    if (WATER_NAME.test(n) && water <= 5 && !has(/^(flood|set:water|paint:water|spring)/))
+      note(i, "b", `named for water but placed none (${water} water cells after 30 s)`);
+    if (STORM_NAME.test(n) && !has(/^lightning/) && !BLAST_NAME.test(n)) note(i, "b", "named for a storm or thunder but struck no lightning");
+    if (STORM_NAME.test(n) && !has(/^lightning/) && BLAST_NAME.test(n))
+      note(i, "b", "named for a storm but struck no lightning (its wind is the engine's to fix)");
+    if (
+      FIRE_NAME.test(n) &&
+      !fireCreature &&
+      e.fireMax < 5 &&
+      e.tempMax < 20 &&
+      !has(/^(fire|ignite|explode|lightning)/) &&
+      !/ward|opal|ruby|gem|staff|sword/i.test(n)
+    )
+      note(i, "b", `named for fire but burned nothing (${e.fireMax} cells on fire, ${e.tempMax} hotter)`);
+    if (HEAL_NAME.test(n) && e.healed === 0 && !has(/^c\.(heal|revive)/))
+      note(i, "b", "named for healing but healed no one (a wounded villager stood one cell away)");
+    if (COLD_NAME.test(n) && e.tempMax < 10 && !Object.keys(e.mats).some((k) => /snow|ice|frost/.test(k)) && !e.fluid.ice && !has(/^temperature/))
+      note(i, "b", "named for cold but nothing got colder, froze or turned to snow");
+    if (QUAKE_NAME.test(n) && e.up + e.down === 0 && !has(/^quake/)) note(i, "b", "named for a quake but moved no land");
+    // d: an object or one creature and nothing else, in 30 s and in five minutes.
+    const long = store.long[i.key];
+    if (long && suspectD(e) && suspectD(long))
+      note(i, "d", `${shapeOf(e) === "drops creatures" ? "drops one creature" : "sets down an object"} and changes nothing else, in 30 s and in five minutes`);
+  }
+  // c: near duplicates; the most cast of each cluster is kept.
+  const parent = new Map<string, string>();
+  const find = (k: string): string => (parent.has(k) && parent.get(k) !== k ? find(parent.get(k)!) : k);
+  for (const [a, b] of close) parent.set(find(a), find(b));
+  const clusters = new Map<string, string[]>();
+  for (const [a, b] of close) for (const x of [a, b]) clusters.set(find(x), [...new Set([...(clusters.get(find(x)) ?? []), x])]);
+  const clusterList: { kept: string; others: string[]; shape: string }[] = [];
+  for (const names of clusters.values()) {
+    const sorted = names.map((x) => byName.get(x)!).sort((x, y) => (y.casts ?? -1) - (x.casts ?? -1) || x.key.localeCompare(y.key));
+    const kept = sorted[0];
+    clusterList.push({ kept: kept.name, others: sorted.slice(1).map((x) => x.name), shape: shapeOf(store.singles[kept.key].effect) });
+    for (const o of sorted.slice(1)) note(o, "c", `near duplicate of ${kept.name} (${shapeOf(store.singles[o.key].effect)}); its own: ${signature(o.name)}`);
+  }
+  const rank = (m: Map<string, Candidate>) =>
+    [...m.values()].sort(
+      (x, y) => (y.casts ?? -1) - (x.casts ?? -1) || "bacd".indexOf(x.groups[0]) - "bacd".indexOf(y.groups[0]) || x.key.localeCompare(y.key),
+    );
+  const list = rank(out);
+  list.forEach((c, k) => (c.first = k < 60));
+  return { list, engine: rank(engine), clusters: clusterList.sort((x, y) => y.others.length - x.others.length) };
+}
+
+const cell = (v: unknown) => String(v ?? "").replace(/\|/g, "/");
+function rewriteMarkdown(rw: ReturnType<typeof rewriteList>, measured: number): string {
+  const g = (k: string) => rw.list.filter((c) => c.groups.includes(k)).length;
+  const L: string[] = [];
+  L.push("# Rewrite candidates from the spell library (12 November 2026)", "");
+  L.push(
+    `Version 4.12, the owner's "spells: both". From the measure of ${measured} live programs (\`docs/measurements/spell-library-2026-11-12.md\`), by rule, with \`scripts/spell-measure.ts\`. The same list as JSON: \`docs/measurements/spell-rewrite-candidates-2026-11-12.json\`. Nothing here was rewritten.`,
+    "",
+  );
+  L.push("Groups:", "");
+  L.push(`- **a** (${g("a")}): raises a ward though its name, and its promise where known, say nothing of protection.`);
+  L.push(`- **b** (${g("b")}): does not do what its name says, as seen in its run.`);
+  L.push(`- **c** (${g("c")}): near duplicate of another item (cosine above 0.98 on what it does); the most cast of each cluster is kept and not listed.`);
+  L.push(`- **d** (${g("d")}): only sets down an object or drops one creature, and changes nothing else in 30 seconds and in five minutes.`);
+  L.push(`- **e** (${rw.engine.length}, separate list below, not to rewrite): a fault the engine will fix for every item.`, "");
+  L.push(
+    `${rw.list.length} candidates, most cast first; the first 60 are marked. "Casts" is the count in \`/api/admin/forms\`; a dash means the element has no row there.`,
+    "",
+  );
+  L.push(
+    "| # | First | Name | Key | Kind | Tier | Model | Version | Casts | Groups | Reason |",
+    "| ---: | --- | --- | --- | --- | --- | --- | ---: | ---: | --- | --- |",
+  );
+  rw.list.forEach((c, k) =>
+    L.push(
+      `| ${k + 1} | ${c.first ? "yes" : ""} | ${cell(c.name)} | ${cell(c.key)} | ${cell(c.kind)} | ${c.tier} | ${cell(c.model?.replace("claude-", "") ?? "-")} | ${c.version ?? "-"} | ${c.casts ?? "-"} | ${c.groups.join(", ")} | ${cell(c.reasons.join("; "))} |`,
+    ),
+  );
+  L.push("", "## Near-duplicate clusters", "", "| Kept (most cast) | Shape | Others, listed above in group c |", "| --- | --- | --- |");
+  for (const c of rw.clusters) L.push(`| ${cell(c.kept)} | ${c.shape} | ${cell(c.others.join(", "))} |`);
+  L.push(
+    "",
+    "## e: the engine will fix these",
+    "",
+    "Listed only so they are not rewritten for these faults. An item here may still be in a, b, c or d above for another one.",
+    "",
+  );
+  L.push("| Name | Kind | Tier | Casts | Fault, and the engine rule that fixes it |", "| --- | --- | --- | ---: | --- |");
+  for (const c of rw.engine) L.push(`| ${cell(c.name)} | ${cell(c.kind)} | ${c.tier} | ${c.casts ?? "-"} | ${cell(c.reasons.join("; "))} |`);
+  return L.join("\n") + "\n";
+}
+
 // --- Static reading of the code ---------------------------------------------
 
 const require = createRequire(import.meta.url);
@@ -1060,6 +1267,8 @@ interface Store {
   pairs: Record<string, { a: string; b: string; why: string; F: Features; fresh: Record<string, number>; overlap: number }>;
   // Per item in a pair: its counts cast at 0 s, on another stream, and cast at 3 s; what it makes.
   itemRuns: Record<string, { F0: Features; F1: Features; FB: Features; produced: string[] }>;
+  // Five minute runs of the items that only set down an object or drop one creature in 30 s.
+  long: Record<string, Effect>;
 }
 // --shard k/n runs every n-th item or pair from k in its own process, into
 // runs-k.json; a run without --shard folds those files into runs.json.
@@ -1067,7 +1276,7 @@ interface Store {
 const [SHARD, SHARDS] = arg("--shard", "0/1").split("/").map(Number);
 const PHASE = arg("--phase", "all");
 const storeFile = SHARDS > 1 ? `${OUT}/runs-${SHARD}.json` : `${OUT}/runs.json`;
-const store: Store = { singles: {}, spots: {}, spotShapes: {}, noise: {}, determinism: { items: [], mismatch: -1 }, pairs: {}, itemRuns: {} };
+const store: Store = { singles: {}, spots: {}, spotShapes: {}, noise: {}, determinism: { items: [], mismatch: -1 }, pairs: {}, itemRuns: {}, long: {} };
 for (const f of [
   `${OUT}/runs.json`,
   ...(existsSync(OUT)
@@ -1078,7 +1287,7 @@ for (const f of [
 ]) {
   if (!existsSync(f) || (SHARDS > 1 && f !== `${OUT}/runs.json` && f !== storeFile)) continue;
   const got = JSON.parse(readFileSync(f, "utf8")) as Store;
-  for (const k of ["singles", "spots", "spotShapes", "noise", "pairs", "itemRuns"] as const) Object.assign(store[k], got[k] ?? {});
+  for (const k of ["singles", "spots", "spotShapes", "noise", "pairs", "itemRuns", "long"] as const) Object.assign(store[k], got[k] ?? {});
   if (got.determinism.mismatch >= 0) store.determinism = got.determinism;
 }
 const save = () => writeFileSync(storeFile, JSON.stringify(store));
@@ -1160,6 +1369,19 @@ function main() {
   save();
 
   if (PHASE === "items" || (SHARDS > 1 && items.some((i) => !store.singles[i.key]))) return;
+
+  // Five minutes for those that only set down an object or drop one creature.
+  n = 0;
+  for (const [idx, it] of items.entries()) {
+    if (store.long[it.key] || !mine(idx) || !suspectD(store.singles[it.key].effect)) continue;
+    store.long[it.key] = runLong(it, place.village);
+    if (++n % 5 === 0) {
+      log(`long ${Object.keys(store.long).length}`);
+      save();
+    }
+  }
+  save();
+  if (PHASE === "long") return;
   // Noise: the same program with another random stream, and twice the same run.
   if (store.determinism.mismatch < 0 && SHARD === 0) {
     const some = items.filter((i) => store.singles[i.key].shape !== "nothing lasting").slice(0, 10);
@@ -1687,6 +1909,37 @@ function report(lib: ReturnType<typeof library>, items: Item[], byKey: Map<strin
   p(`  adapt in kind, e.g.: ${kindAdapt.slice(0, 10).join(", ")}`);
   p(`  only what they do to the creatures they find, e.g.: ${whoAdapt.slice(0, 10).join(", ")}`);
   p(`  act the same, e.g.: ${same.slice(0, 10).join(", ")}`);
+  // The GET sample against the programs read later through /api/library.
+  const subsets: [string, Item[]][] = [
+    ["GET sample", ok.filter((i) => i.source !== "library")],
+    ["read by /api/library", ok.filter((i) => i.source === "library")],
+    ["all", ok],
+  ];
+  const compare: Record<string, Record<string, number>> = {};
+  for (const [label, list] of subsets) {
+    if (!list.length) continue;
+    const sh = count(list, (i) => shapeNow(i.key));
+    const t5 = sh.slice(0, 5).reduce((t, [, v]) => t + v, 0);
+    const kinds = new Set(kindAdapt);
+    const sames = new Set(same);
+    const reads = new Set(st.filter((x) => Object.keys(x.s.reads).length).map((x) => x.i.key));
+    const wardsN = list.filter((i) => store.singles[i.key].trace.ward).length;
+    compare[label] = {
+      n: list.length,
+      top5: Math.round((t5 / list.length) * 1000) / 10,
+      reads: Math.round((list.filter((i) => reads.has(i.key)).length / list.length) * 1000) / 10,
+      adaptKind: Math.round((list.filter((i) => kinds.has(i.name)).length / list.length) * 1000) / 10,
+      same: Math.round((list.filter((i) => sames.has(i.name)).length / list.length) * 1000) / 10,
+      wards: Math.round((wardsN / list.length) * 1000) / 10,
+    };
+    p(
+      `  ${label}: n ${list.length}, five commonest shapes ${compare[label].top5}%, read the island ${compare[label].reads}%, change the island differently by spot ${compare[label].adaptKind}%, act the same ${compare[label].same}%, raise a ward ${compare[label].wards}%; top shapes ${sh
+        .slice(0, 3)
+        .map(([k, v]) => `${k} ${v}`)
+        .join(", ")}`,
+    );
+  }
+  out.compare = compare;
   out.smart = { n: ok.length, readsAny, branchesAny, readCalls, readsAtRun: readsAtRun.length, kindAdapt, whoAdapt, amountAdapt, same, shapeMoves };
 
   // Cost
@@ -1778,6 +2031,15 @@ function report(lib: ReturnType<typeof library>, items: Item[], byKey: Map<strin
   out.films = films.map((f) => ({ n: f.n, label: f.label, a: f.a.name, b: f.b.name, line: f.line }));
   p("\nFilms:");
   for (const f of films) p(`  ${f.n}. ${f.label}: ${f.a.name} / ${f.b.name}: ${f.line}`);
+  const rw = rewriteList(items, close);
+  writeFileSync(`${OUT}/rewrite-candidates.json`, JSON.stringify({ candidates: rw.list, engine: rw.engine, clusters: rw.clusters }, null, 1));
+  writeFileSync(`${OUT}/rewrite-candidates.md`, rewriteMarkdown(rw, items.length));
+  const groupCount = (g: string) => rw.list.filter((c) => c.groups.includes(g)).length;
+  p(
+    `\nRewrite candidates: ${rw.list.length} (a ${groupCount("a")}, b ${groupCount("b")}, c ${groupCount("c")}, d ${groupCount("d")}); engine will fix (e): ${rw.engine.length}; long runs: ${Object.keys(store.long).length}`,
+  );
+  for (const c of rw.list.slice(0, 12)) p(`  ${c.name} (${c.casts ?? "?"} casts, ${c.groups.join("")}): ${c.reasons.join("; ")}`);
+  out.rewrite = { n: rw.list.length, a: groupCount("a"), b: groupCount("b"), c: groupCount("c"), d: groupCount("d"), e: rw.engine.length };
   writeFileSync(`${OUT}/report.json`, JSON.stringify(out, null, 1));
   console.log(lines.join("\n"));
 }
