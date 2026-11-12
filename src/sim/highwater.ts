@@ -2,7 +2,7 @@ import { housesOf, tierOf } from "./buildings";
 import type { Settlement } from "./ecology";
 import { alarm } from "./flight";
 import { life, tell } from "./kin";
-import { C, F, G } from "./materials";
+import { C, F, G, isBuilding } from "./materials";
 import type { Trouble } from "./troubles";
 import { WARD } from "./wards";
 import { seeded } from "./noise";
@@ -187,6 +187,10 @@ interface Cache {
   // The land when it began (or at the load), for earth raised since; the lowest land by the water.
   h0: Float32Array;
   lip: number;
+  // The level water must reach to wet the village's lowest house; the village's houses when it began
+  // (or at the load): one built in the water's way meanwhile is not the village it came to.
+  houseNeed: number;
+  houses: Set<number>;
   // Seconds the water has stood against a shield over the houses.
   shielded: number;
   // The village's people at the last look, to tell who the water drowned.
@@ -440,6 +444,23 @@ function cacheOf(world: World, t: Trouble): Cache | null {
     shore,
     h0,
     lip: Number.isFinite(lip) ? lip : f.b,
+    houses: (() => {
+      const out = new Set<number>();
+      for (let k = 0; k < need.length; k++) {
+        const i = (Math.floor(k / bw) + y0) * world.w + (k % bw) + x0;
+        if (world.cover[i] === C.HOUSE) out.add(i);
+      }
+      return out;
+    })(),
+    houseNeed: (() => {
+      let m = Infinity;
+      for (let k = 0; k < need.length; k++) {
+        const x = (k % bw) + x0;
+        const y = Math.floor(k / bw) + y0;
+        if (world.cover[y * world.w + x] === C.HOUSE && ours(t, x, y)) m = Math.min(m, need[k]);
+      }
+      return m;
+    })(),
     shielded: 0,
     people: villagersOf(world, t),
     soaked: new Map(),
@@ -560,7 +581,7 @@ export function floodFront(world: World, t: Trouble): { cells: number; x: number
         cells++;
         // A house in the spate's water: where the land lets its level reach (water a spell pushed
         // onto a house is the spell's, not the flood's).
-        if (world.cover[i] === C.HOUSE && world.depth[i] > 0.1 && (!c || c.need[y * bw + x] < c.level + 0.3)) houses++;
+        if (world.cover[i] === C.HOUSE && world.depth[i] > 0.1 && ours(t, cx, cy) && (!c || (c.houses.has(i) && c.need[y * bw + x] < c.level + 0.3))) houses++;
       }
       const d = Math.hypot(cx - t.hx, cy - t.hy);
       if (d < best) {
@@ -571,6 +592,10 @@ export function floodFront(world: World, t: Trouble): { cells: number; x: number
     }
   return { cells, x: bx, y: by, dist: best, houses };
 }
+
+// A house of the village it came to (the houses its way was measured on): another village's house
+// the water wets on the way is not counted, nor lost, to this one.
+const ours = (t: Trouble, x: number, y: number) => Math.hypot(x - t.vx, y - t.vy) <= 18;
 
 /** Where to look at a high water: on the edge between the water and the house it makes for, more on the village's side. */
 export function floodFocus(world: World, t: Trouble): { x: number; y: number } {
@@ -616,6 +641,7 @@ export function snapFlood(world: World, t: Trouble, at: number): void {
 }
 
 const PLANTS: readonly number[] = [C.TREE, C.BUSH, C.REEDS, C.FERN];
+const built = (cover: number) => isBuilding(cover) || cover === C.SITE || cover === C.RUBBLE;
 
 // Whether the land on the water's way has changed since the cast in a way the water itself never
 // changes it: earth raised or dug, ice or another fluid, heat or cold, sand, plants. Water cast on it
@@ -634,7 +660,8 @@ function touched(world: World, t: Trouble, c: Cache, at: number): boolean {
     const fl = world.fluid[i];
     const was = snap.f[k];
     if (
-      (Math.abs(world.height[i] - snap.h[k]) > 0.4 && !c.heaped.has(i)) ||
+      // Earth moved where nobody's hands moved it: not the people's banks, not where they build.
+      (Math.abs(world.height[i] - snap.h[k]) > 0.4 && !c.heaped.has(i) && !built(world.cover[i]) && !built(snap.c[k])) ||
       (fl !== was && (fl > F.WATER || was > F.WATER)) ||
       Math.abs(world.temp[i] - snap.temp[k]) > 40 ||
       (world.ground[i] === G.SAND && snap.g[k] !== G.SAND)
@@ -740,6 +767,8 @@ function levelAt(f: Flood, c: Cache, age: number): number {
     const k = (age - FIRST) / (th - FIRST);
     level = first + (house - first) * k * k * (3 - 2 * k);
   } else level = house + (f.b + f.peak - house) * Math.min(1, (age - th) / OVER_FOR);
+  // Never at a house of the village well before its time, whichever way the land lets it in.
+  if (age < th - 15) level = Math.min(level, c.houseNeed - 0.15);
   return f.b + (level - f.b) * Math.min(1, 0.35 + f.s);
 }
 
@@ -926,7 +955,7 @@ export function stepFlood(world: World, t: Trouble, dt: number): boolean {
         continue;
       }
       if (world.cover[i] === C.HOUSE) {
-        if (s < RUIN_AFTER || c.need[k] >= c.level + 0.3) continue;
+        if (s < RUIN_AFTER || c.need[k] >= c.level + 0.3 || !ours(t, x + x0, y + y0) || !c.houses.has(i)) continue;
         const block = houseAt(world, i);
         if (t.lost + ruined + block.length > t.cap) continue;
         for (const j of block) world.setCover(j, C.RUBBLE);
