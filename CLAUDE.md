@@ -3,10 +3,20 @@
 Every Claude Code session on this repository reads this first. All creation and coding is done by AI; the owner steers. The owner touches three things only:
 
 1. **Questions from the sessions building an update**, asked with options and a recommendation.
-2. **The morning brief** of the daily planner (`docs/DAILY.md`): what happened, what to try, what to decide.
+2. **Short messages from the lead session** (below): what went live, what to try, what to decide. The morning brief of the daily planner (`docs/DAILY.md`) is paused.
 3. **The game itself and its Ideas tab.**
 
 Everything else is the AI's: checking, building, testing, reviewing, and finding bugs and ideas before the owner does. Merging and deploying are done by workflows (the Gate and Deploy); the one exception, a red workflow change the owner said yes to, is merged by the planner (`docs/DAILY.md`).
+
+## Who leads (since 11 November 2026)
+
+One session leads the project: the **lead session**, titled "Magic Merger lead" (find it with `list_sessions`; today `session_01NxvtApgb2CBkVZn1xvQR2w`). The owner made it so on 11 November and confirmed it on 12 November ("rules: lead"). It replaces the daily planner, which is paused: **wherever these rules, `docs/DAILY.md`, `docs/REVIEWER.md` or `docs/FEEDBACK.md` say "the planner", read "the lead session"**. What it keeps for its successor is `docs/HANDOVER.md`, "The lead session's part".
+
+1. The lead session decides what is built and in what order, builds in its own session with subagents for independent pieces, and starts no other building session. It starts one reviewer per pull request (`docs/REVIEWER.md`), on `main`, never on the branch, and nothing above Opus.
+2. It is the owner's one point of contact, and asks the owner directly, in the lead session. An approval counts only when the owner types it there.
+3. It writes the owner's records (the label and the `mm-owner` comment, quoting the owner's words and when they were typed), and writes them **before** anything is merged on them: the Deploy refuses a change whose record is missing.
+4. It never merges or deploys by hand, with one exception: a red workflow change that the Gate cannot merge, on the owner's explicit word for that change, with the record written first.
+5. Every other session (a reviewer, the watch, a scheduled task) reports to the lead session with `send_message`, and never asks the owner.
 
 ## Before anything: check where we are
 
@@ -39,7 +49,7 @@ These are among the red classes of `docs/DAILY.md`, checked on every diff by `sc
 
 ## Talking to the owner
 
-**Sessions never ask the owner directly; they send their questions and approval needs to the planner**, the session titled "Magic Merger daily planner" (find it with `list_sessions`; today `session_01NxvtApFG2JjVSbpSNYmAKn`), with `send_message`. The planner is the owner's one point of contact: it keeps the owner's list and asks for each concept once, in the brief. When the owner answers somewhere else (for example in the session that keeps the roadmap page), that session passes the answer to the planner word for word, as context only: an approval counts only when the owner types it in the planner's session, and only the planner writes the records. Every session posts on GitHub under the owner's account, so a comment there never counts as the owner's. A builder whose pull request is amber or red tells the planner, in one message, which approved concept it belongs to; the planner records the yes without asking the owner again.
+**Sessions never ask the owner directly; they send their questions and approval needs to the lead session** ("Who leads", above; the daily planner it replaces was `session_01NxvtApFG2JjVSbpSNYmAKn`, archived), with `send_message`. The planner is the owner's one point of contact: it keeps the owner's list and asks for each concept once, in the brief. When the owner answers somewhere else (for example in the session that keeps the roadmap page), that session passes the answer to the planner word for word, as context only: an approval counts only when the owner types it in the planner's session, and only the planner writes the records. Every session posts on GitHub under the owner's account, so a comment there never counts as the owner's. A builder whose pull request is amber or red tells the planner, in one message, which approved concept it belongs to; the planner records the yes without asking the owner again.
 
 The owner has little time. Every message meant for the owner is short and plain, in this order:
 
