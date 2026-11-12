@@ -259,7 +259,7 @@ function mapChecksSeeded(check: Check): void {
     const apart = maps.every((s, k) => !k || s.since - maps[k - 1].since >= MAP_AGAIN);
     check(
       "map: the director shows the whole island in its rotation, about 6 s, at most once every three minutes",
-      maps.length >= 1 && maps.every((s) => s.held >= 2 && s.held <= 7) && apart && r.summary.empty === 0,
+      maps.length >= 1 && maps.every((s) => s.held >= 4 && s.held <= 7) && apart && r.summary.empty === 0,
       JSON.stringify(maps.map((s) => [Math.round(s.since), Math.round(s.held * 10) / 10])),
     );
     const world = new World(64, 64, 5);
@@ -277,13 +277,13 @@ function mapChecksSeeded(check: Check): void {
     const d2 = new Director(() => 0.5);
     (d2 as unknown as { sinceWide: number }).sinceWide = 6;
     const hunt = d2.update(world).shot;
-    // The hunt starts during the map shot: it cuts in once the shot's two seconds are past.
+    // The hunt starts during the map shot: it cuts in once the shot's four seconds are past.
     world.creatures.length = 0;
     const d3 = new Director(() => 0.5);
     (d3 as unknown as { sinceWide: number }).sinceWide = 6;
     const first = d3.update(world).shot;
     world.creatures.push(wolf, deer);
-    world.time += 2.5;
+    world.time += 4.5;
     const cut = d3.update(world).shot;
     check(
       "map: the whole island when nothing scores higher; a hunt comes first, and cuts into it",

@@ -65,7 +65,7 @@ try {
     const w = await world()
       ?.evaluate(() => (window.__mmWatch ? window.__mmWatch() : null))
       .catch(() => null);
-    if (s % 30 === 0) console.log(s, w?.caption);
+    if (s % 30 === 0 || w?.sort === "map") console.log(s, w?.sort, w?.dist, w?.caption);
     if (w?.sort === "map") {
       took++;
       await page.screenshot({ path: join(OUT, `${W}-watch-map-${took}.png`) });

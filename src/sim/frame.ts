@@ -355,7 +355,7 @@ let lineAt = -1e9;
 let lineTimer = 0;
 let lineGoes: { x: number; y: number; who: number } | null = null;
 // What the watch showed, for the checks (scripts/watch-frames.mjs): seconds watched and seconds its subject was on screen.
-const watchStats = { watched: 0, shots: 0, caption: "", sort: "", px: 0, onScreen: false };
+const watchStats = { watched: 0, shots: 0, caption: "", sort: "", px: 0, dist: 0, onScreen: false };
 (window as unknown as { __mmWatch?: () => typeof watchStats }).__mmWatch = () => ({ ...watchStats, caption });
 
 function say(text: string, go: boolean): void {
@@ -470,7 +470,7 @@ function stepWatch(): void {
   }
   // Close enough that a villager reads, never so close that it fills a wide screen.
   // The whole island (director.ts, the map shot) is seen from higher, as the tour sees it.
-  o.watch(shot.x, shot.y, Math.max(22, o.distanceFor(shot.r)), shot.sort === "map" ? 0.72 : 0.98);
+  o.watch(shot.x, shot.y, Math.max(22, o.distanceFor(shot.r)), shot.sort === "map" ? 0.72 : 0.98, shot.sort === "map" ? 3.2 : 1.6);
   marked = shot.who ? (engine.world.creatures.find((k) => k.id === shot.who) ?? null) : null;
   say(line, false);
   measureWatch(shot);
@@ -487,6 +487,7 @@ function measureWatch(shot: Shot): void {
   watchStats.shots = director.cuts;
   watchStats.caption = shot.caption;
   watchStats.sort = shot.sort;
+  watchStats.dist = Math.round(o.dist);
   watchStats.watched += 0.25;
 }
 

@@ -20,7 +20,7 @@ export class OrbitCamera implements CameraControl {
   private returnAt = 0;
   // The island tells its stories (2026-11-11, director.ts): a subject the
   // camera keeps in frame, moving with it, until the player touches the view.
-  private watched: { x: number; y: number; dist: number; phi: number } | null = null;
+  private watched: { x: number; y: number; dist: number; phi: number; zoom: number } | null = null;
   // Become anything (2026-11-12, possess.ts): behind and above the creature
   // the player is. It turns behind it once, when it is taken (turn); after
   // that its turn is the player's (the playtest of 12 November: a camera that
@@ -105,13 +105,14 @@ export class OrbitCamera implements CameraControl {
   }
 
   // Keeps (x, y) in the middle from `dist` away, called again as the subject moves. `phi`: the
-  // tilt it eases to (the whole island is seen more from above, as the tour sees it).
-  watch(x: number, y: number, dist: number, phi = 0.98): void {
+  // tilt it eases to (the whole island is seen more from above, as the tour sees it). `zoom`: how
+  // fast the distance eases (the whole island is ten times farther than a villager: twice as fast).
+  watch(x: number, y: number, dist: number, phi = 0.98, zoom = 1.6): void {
     if (this.chased) return;
     this.goal = null;
     this.saved = null;
     this.returnAt = 0;
-    this.watched = { x, y, dist: Math.max(this.minDist * 1.5, Math.min(this.farthest(), dist)), phi };
+    this.watched = { x, y, dist: Math.max(this.minDist * 1.5, Math.min(this.farthest(), dist)), phi, zoom };
   }
 
   unwatch(): void {
@@ -263,7 +264,7 @@ export class OrbitCamera implements CameraControl {
       const k = Math.min(1, dt * 2.2);
       this.tx += (this.watched.x - this.tx) * k;
       this.ty += (this.watched.y - this.ty) * k;
-      this.dist = Math.exp(Math.log(this.dist) + (Math.log(this.watched.dist) - Math.log(this.dist)) * Math.min(1, dt * 1.6));
+      this.dist = Math.exp(Math.log(this.dist) + (Math.log(this.watched.dist) - Math.log(this.dist)) * Math.min(1, dt * this.watched.zoom));
       this.phi += (this.watched.phi - this.phi) * Math.min(1, dt * 1.2);
       if (!reducedMotion) this.theta += dt * 0.035;
     }
