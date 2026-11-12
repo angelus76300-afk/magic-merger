@@ -43,6 +43,38 @@ function partsOf(boxes: Box[]): Parts {
   return { trunk, leaves, under };
 }
 
+// The eye view, second pass: a tree far from the eye (past FAR_CELLS, inside the mist) as two
+// boxes: its trunk, and one box round its whole crown in the crown's own colour (weighed by each
+// leaf box's size). About 22 triangles where a jungle tree has 70, and the same shape at that range.
+export const FAR_CELLS = 30;
+export function farTreeModel(boxes: Box[]): Box[] {
+  const { trunk, leaves } = partsOf(boxes);
+  if (!leaves.length) return boxes;
+  const x0 = Math.min(...leaves.map((b) => b.x));
+  const y0 = Math.min(...leaves.map((b) => b.y));
+  const z0 = Math.min(...leaves.map((b) => b.z));
+  const x1 = Math.max(...leaves.map((b) => b.x + b.w));
+  const y1 = Math.max(...leaves.map((b) => b.y + b.h));
+  const z1 = Math.max(...leaves.map((b) => b.z + b.d));
+  let r = 0;
+  let g = 0;
+  let bl = 0;
+  let total = 0;
+  for (const b of leaves) {
+    const v = b.w * b.h * b.d;
+    r += ((b.color >> 16) & 255) * v;
+    g += ((b.color >> 8) & 255) * v;
+    bl += (b.color & 255) * v;
+    total += v;
+  }
+  const color = (Math.round(r / total) << 16) | (Math.round(g / total) << 8) | Math.round(bl / total);
+  // The crown a little inside its bounds, as the boxes leave its corners open.
+  const ix = (x1 - x0) * 0.08;
+  const iz = (z1 - z0) * 0.08;
+  const crown = B(x0 + ix, y0, z0 + iz, x1 - x0 - ix * 2, y1 - y0, z1 - z0 - iz * 2, color);
+  return trunk ? [B(trunk.x, trunk.y, trunk.z, trunk.w, Math.max(0.05, y0 - trunk.y + 0.05), trunk.d, trunk.color), crown] : [crown];
+}
+
 // A crown box drawn round: two crossed boxes, each narrower one way, so its corners are notched
 // and its underside steps up toward the rim, and a smaller cap on top, lit.
 function rounded(L: Box): Box[] {

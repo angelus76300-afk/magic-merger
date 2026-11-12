@@ -21,6 +21,7 @@ import { Director, lifeLine, nameOf, whoIs, type Shot } from "./director";
 import { act, checkHeld, deedsOf, doDeed, possess, possessed, powersOf, release, steerBy, stopNote, thoughtOf, type Deed } from "./possess";
 import { aimAt, aimedEye, castFromEyes, castRange, climbOf, eyesFirst, lookTheta, openLook, withinRange, type Body, type Eye } from "./eyes";
 import { AimHold } from "./aim";
+import { isTier } from "../../shared/tiers";
 import { castOnScreen, watchCast } from "./voxel/castview";
 import { LAB_SKY, LAB_WEATHER } from "./voxel/sky";
 import { LAND_REDRAW } from "./voxel/terrain";
@@ -1224,7 +1225,7 @@ window.addEventListener("blur", () => keysDown.clear());
 
 // A place for a frame of the checks: open ground near the nearest house, in
 // the thickest woods or on the shore, and the look toward it. Only the checks call it.
-type PlaceSort = "village" | "house" | "woods" | "shore" | "fire" | "tree" | "wall" | "street" | "cliff" | "sea";
+type PlaceSort = "village" | "house" | "woods" | "shore" | "fire" | "tree" | "wall" | "street" | "cliff" | "sea" | "hill" | "forest";
 function placeFor(sort: PlaceSort): { x: number; y: number; yaw: number } | null {
   if (!engine || !riding) return null;
   const w = engine.world;
@@ -1248,6 +1249,31 @@ function placeFor(sort: PlaceSort): { x: number; y: number; yaw: number } | null
       if (free(x, y) && w.fire[w.idx(x, y)] < 0.05) return { x, y, yaw: a + Math.PI };
     }
     return null;
+  }
+  if (sort === "forest") {
+    // The thickest woods of the island, the same spot whoever the player is: open ground with the
+    // most trees within four cells, the nearest the middle on a tie; looking toward the middle.
+    let most = -1;
+    for (let y = 6; y < w.h - 6; y++)
+      for (let x = 6; x < w.w - 6; x++) {
+        if (!free(x, y)) continue;
+        const n = near(x, y, 4, (i) => w.cover[i] === C.TREE);
+        if (n < most || (n === most && best && Math.hypot(x - w.w / 2, y - w.h / 2) >= Math.hypot(best.x - w.w / 2, best.y - w.h / 2))) continue;
+        most = n;
+        best = { x: x + 0.5, y: y + 0.5, yaw: Math.atan2(w.h / 2 - y, w.w / 2 - x) };
+      }
+    return best;
+  }
+  if (sort === "hill") {
+    // The highest open ground a quarter of the island or more from its middle, looking across it to the middle.
+    let top = -Infinity;
+    for (let y = 6; y < w.h - 6; y++)
+      for (let x = 6; x < w.w - 6; x++) {
+        if (!free(x, y) || Math.hypot(x - w.w / 2, y - w.h / 2) < w.w / 4 || w.height[w.idx(x, y)] <= top) continue;
+        top = w.height[w.idx(x, y)];
+        best = { x: x + 0.5, y: y + 0.5, yaw: Math.atan2(w.h / 2 - y, w.w / 2 - x) };
+      }
+    return best;
   }
   if (sort === "village") {
     // The biggest village, from open ground seven cells off its middle, looking at it.
@@ -1365,6 +1391,15 @@ function placeFor(sort: PlaceSort): { x: number; y: number; yaw: number } | null
       rain?: boolean;
       // Starts (true) or ends (false) timing the view's frames: the median and 90th centile of each part, in ms.
       prof?: boolean;
+      // For scripts/eyes-perf.mjs: the stick held (x right, y down, -1 to 1), and the game's own perf
+      // sample started afresh (true) or read (the result's `perf` always has it).
+      stick?: { x: number; y: number };
+      stats?: boolean;
+      // The triangles each kind of mesh puts on screen (what the eye view's budget is spent on).
+      tris?: boolean;
+      // The eye view's cuts on (true, as played) or off (false: drawn as before the second pass).
+      cuts?: boolean;
+      tier?: string;
     }) => unknown;
   }
 ).__mmEyes = (look) => {
@@ -1440,6 +1475,14 @@ function placeFor(sort: PlaceSort): { x: number; y: number; yaw: number } | null
     if (look.turn !== undefined) e.yaw += look.turn;
     if (look.pitch !== undefined) e.pitch = look.pitch;
   }
+  if (look?.stick && riding) {
+    stick.x = look.stick.x;
+    stick.y = look.stick.y;
+  }
+  if (look?.cuts !== undefined && engine) engine.view.eyeCuts = look.cuts;
+  // For the frames: the spell in hand as if it were of this tier, for its reach (eyes.ts castRange).
+  if (look?.tier && selected && isTier(look.tier)) selected = { ...selected, tier: look.tier };
+  if (look?.stats && engine) engine.stats.reset();
   let prof: Record<string, [number, number]> | null = null;
   if (look?.prof === true && engine) engine.view.profile = {};
   else if (look?.prof === false && engine?.view.profile) {
@@ -1471,6 +1514,8 @@ function placeFor(sort: PlaceSort): { x: number; y: number; yaw: number } | null
     trouble: engine?.world.trouble ? { stage: engine.world.trouble.stage, casts: engine.world.trouble.casts.length } : null,
     powers: riding && engine ? powersOf(engine.world, riding).map((p) => ({ do: p.spec.do, left: Math.round(p.left * 10) / 10 })) : [],
     draw: engine ? { calls: engine.view.renderer.info.render.calls, triangles: engine.view.renderer.info.render.triangles } : null,
+    perf: engine ? engine.stats.summary() : null,
+    tris: look?.tris && engine ? engine.view.triangleBreakdown() : null,
     prof,
     size: engine ? { w: engine.world.w, h: engine.world.h } : null,
     faced,

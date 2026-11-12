@@ -98,6 +98,30 @@ export class Terrain {
     }
   }
 
+  // The eye view, second pass: chunks wholly past `r` cells from (x, y) are not drawn (the mist
+  // has them, fog.ts EYE_DRAW); null draws every chunk, as from the sky.
+  private shownAround: string | null = null;
+  showWithin(at: { x: number; y: number; r: number } | null): void {
+    const key = at ? `${Math.round(at.x / 4)},${Math.round(at.y / 4)},${at.r}` : null;
+    if (key === this.shownAround && !this.builtSinceShown) return;
+    this.shownAround = key;
+    this.builtSinceShown = false;
+    for (let cy = 0; cy < this.rows; cy++)
+      for (let cx = 0; cx < this.cols; cx++) {
+        const c = this.chunks[cy * this.cols + cx];
+        let on = true;
+        if (at) {
+          // The chunk's nearest point to the eye.
+          const nx = Math.max(cx * CHUNK, Math.min((cx + 1) * CHUNK, at.x));
+          const ny = Math.max(cy * CHUNK, Math.min((cy + 1) * CHUNK, at.y));
+          on = Math.hypot(nx - at.x, ny - at.y) <= at.r;
+        }
+        if (c.land) c.land.visible = on;
+        if (c.fluid) c.fluid.visible = on;
+      }
+  }
+  private builtSinceShown = false;
+
   // Compares every column with what was last drawn and marks chunks to rebuild.
   scan(): void {
     const { world } = this;
@@ -217,6 +241,8 @@ export class Terrain {
     if (kind === "fluid") mesh.renderOrder = 2;
     chunk[kind] = mesh;
     this.add(mesh);
+    // A new chunk is shown; past the eye's mist it is hidden again at the next showWithin.
+    this.builtSinceShown = true;
   }
 
   private bounds(c: number) {

@@ -345,6 +345,8 @@ export class OrbitCamera implements CameraControl {
     const across = Math.tan((75 * Math.PI) / 360) / Math.max(0.1, this.camera.aspect);
     this.camera.fov = Math.max(55, Math.min(95, (Math.atan(across) * 360) / Math.PI));
     this.camera.near = 0.06;
+    // The sky's sun, stars and ring of clouds are far off: the far plane stays out there. What
+    // lies past the mist is left out by the view itself (view.ts, fog.ts EYE_DRAW).
     this.camera.far = Math.max(this.worldW, this.worldH) * 3 + 200;
     this.camera.updateProjectionMatrix();
   }

@@ -22,11 +22,17 @@ export function fogRange(side: number, dist: number, weather: number): { near: n
 
 // At the eye of a creature (eyes.ts) the far side of the island and the rim
 // of the world, where it ends in the void, are seen edge on: the mist takes
-// them from 30 cells out and they are gone at 110, a village across the
-// island a blue shape, as a far hill is.
-export function eyeFogRange(weather: number): { near: number; far: number } {
+// them from 28 cells out and they are gone at 80, a village across a valley a
+// blue shape, as a far hill is. The eye view, second pass (the owner: "the
+// performance of the fpv isn't great"): nothing is drawn past EYE_DRAW, where
+// the mist is whole, so the far island costs nothing (it was mist from 110
+// out and drawn in full to the rim). A grand spell's reach (46 cells, eyes.ts)
+// stays well inside the clear part.
+export const EYE_DRAW = 84;
+export function eyeFogRange(weather: number, cut = true): { near: number; far: number } {
   const k = Math.min(1, Math.max(0, weather));
-  return { near: 30 * (1 - k * 0.7), far: 110 * (1 - k * 0.6) };
+  // Uncut: the mist as it was before (30 to 110), for a before and after in the same scene.
+  return cut ? { near: 28 * (1 - k * 0.7), far: 80 * (1 - k * 0.6) } : { near: 30 * (1 - k * 0.7), far: 110 * (1 - k * 0.6) };
 }
 
 // How much mist covers a point at this depth from the camera (three.js's
