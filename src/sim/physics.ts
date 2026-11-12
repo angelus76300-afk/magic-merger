@@ -285,8 +285,9 @@ function stepFire(world: World, dt: number): void {
       burning = true;
       if (rng.next() < dt * 0.6) world.ground[i] = G.ASH;
     }
-    // 4.12: a strong wind blows a small fire out (it fans a big one: the spread below).
-    if (burning && world.reactions && f < 0.35 && wind.x * wind.x + wind.y * wind.y > 9 && rng.next() < dt * 1.5) {
+    // 4.12: a strong wind blows a small fire out, one with few flames around it (it fans a
+    // big one: the spread below, more easily downwind).
+    if (burning && world.reactions && wind.x * wind.x + wind.y * wind.y > 9 && rng.next() < dt * 2 && fewFlames(world, i)) {
       fire[i] = 0;
       addGas(world, i, S.SMOKE, 0.2);
       continue;
@@ -338,6 +339,19 @@ function stepFire(world: World, dt: number): void {
       if (rng.next() < f * flam * dt * 1.6 * downwind * diag) fire[j] = 0.3;
     }
   }
+}
+
+// A fire of a cell or two: at most two of its eight neighbors burn.
+function fewFlames(world: World, i: number): boolean {
+  const x = i % world.w;
+  const y = (i / world.w) | 0;
+  let n = 0;
+  for (const [dx, dy] of N8) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (nx >= 0 && ny >= 0 && nx < world.w && ny < world.h && world.fire[ny * world.w + nx] > 0 && ++n > 2) return false;
+  }
+  return true;
 }
 
 // A cover has burned through.

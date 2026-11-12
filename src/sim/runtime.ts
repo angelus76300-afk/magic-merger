@@ -13,7 +13,7 @@ import { CUSTOM_GOALS, LOADS, TRIGGERS, mindOf, remember, tell, type AbilitySpec
 import { BUILTIN, BUILTIN_BEFORE_4_4_5, C, F, G, LAYERS, isBuilding, type Layer } from "./materials";
 import { valueNoise } from "./noise";
 import { addGas } from "./cells";
-import { LIGHT_MIN_SECONDS, N, addLight, gust, holyName, natureOf } from "./reactions";
+import { LIGHT_MIN_SECONDS, N, addLight, fertile, fertilize, gust, holyName, natureOf } from "./reactions";
 import { explode, forDisc, quake } from "./physics";
 import type { ParticleOptions } from "./particles";
 import { BODY_LOOKS, Visuals, type Body, type BodyLook, type DrawFn } from "./visuals";
@@ -1984,8 +1984,11 @@ export class SpellApi {
       if (w.depth[i] > 0.1 || w.fire[i] > 0) return;
       const g = w.ground[i];
       if (g === G.DIRT || g === G.ASH || g === G.SAND || g === G.SNOW) w.ground[i] = G.GRASS;
+      // 4.12: ash is fertile (reactions.ts): growth there is thicker, and stays quick a while.
+      const ash = w.reactions && (g === G.ASH || fertile(w, i));
+      if (ash) fertilize(w, i);
       if (w.cover[i] === C.NONE || w.cover[i] === C.STUMP) {
-        const p = Math.random();
+        const p = Math.random() / (ash ? 1.8 : 1);
         if (p < d * 0.35 * (0.5 + k)) w.setCover(i, C.TREE);
         else if (p < d * 0.45) w.setCover(i, Math.random() < 0.5 ? C.BUSH : C.FLOWER);
       }
@@ -2368,7 +2371,7 @@ export class SpellApi {
     // 4.12: a darkness lies where it was cast, over the cast's reach (reactions.ts).
     const world = this.rt.world;
     if (world.reactions)
-      addLight(world, { x: this.x, y: this.y, r: Math.min(60, this.r), until: world.time + num(seconds, 0.1, 60, 3), power: num(amount, 0, 1, 0.6) / 0.6, holy: false, dark: true });
+      addLight(world, { x: this.x, y: this.y, r: Math.max(12, Math.min(60, this.r * 1.5)), until: world.time + num(seconds, 0.1, 60, 3), power: num(amount, 0, 1, 0.6) / 0.6, holy: false, dark: true });
     this.rt.visuals.darkness.push({ color: 0, alpha: num(amount, 0, 1, 0.6), t: 0, dur: num(seconds, 0.1, 60, 3) });
   }
   tint(color: string | number, alpha: number, seconds: number) {

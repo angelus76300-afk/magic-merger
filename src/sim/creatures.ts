@@ -575,6 +575,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   // A fish out of water chokes.
   if (k.aquatic && !wet(world, i, 0.25)) c.hp -= 15 * dt;
 
+  // 4.12: a creature of fire is at home in fire and lava (reactions.ts).
+  const fireBorn = world.reactions && !k.native && !!(natureOf(world, k) & N.FIRE);
   // Under a ward: no burning, no frost, no poison from outside.
   const ward = world.wardMask[i];
   if (ward & WARD.fire) c.burning = 0;
@@ -582,9 +584,9 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
 
   // The land hurts.
   if (onGround) {
-    if (world.fire[i] > 0.25 && !k.fireproof && !immune("fire")) c.burning = Math.max(c.burning, 3);
+    if (world.fire[i] > 0.25 && !k.fireproof && !immune("fire") && !fireBorn) c.burning = Math.max(c.burning, 3);
     const fluid = world.materials.get("fluid", world.fluid[i]);
-    if (!onDeck && world.depth[i] > 0.05 && fluid.hurts > 0 && !(k.fireproof && world.fluid[i] === F.LAVA) && !(immune("acid") && world.fluid[i] === F.ACID))
+    if (!onDeck && world.depth[i] > 0.05 && fluid.hurts > 0 && !((k.fireproof || fireBorn) && world.fluid[i] === F.LAVA) && !(immune("acid") && world.fluid[i] === F.ACID))
       c.hp -= fluid.hurts * dt;
     if (world.fluid[i] === F.WATER && world.depth[i] > 0.25) c.burning = 0;
     if (!onDeck && world.fluid[i] === F.WATER && world.depth[i] > 1.4 && !k.swims && !immune("water")) {
@@ -598,7 +600,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     if (gas.hurts > 0 && !(ward & WARD.harm)) c.hp -= gas.hurts * world.gasAmt[i] * dt;
   }
   if (c.burning > 0) {
-    if (k.fireproof) c.burning = 0;
+    if (k.fireproof || fireBorn) c.burning = 0;
     else {
       c.burning -= dt;
       c.hp -= 14 * dt;

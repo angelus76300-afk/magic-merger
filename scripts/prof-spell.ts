@@ -50,6 +50,19 @@ const scenes: Scene[] = process.argv.slice(2).length
         burnAt: 12,
       },
       { name: "crowd of 300", crowd: 300 },
+      {
+        // 4.12: items that answer each other: creatures of fire, holy and undead, lights and a darkness.
+        name: "answers",
+        code: `const spell = { creatures: [
+  { name: "phoenix", base: "beast", body: "bird", flying: true, fireproof: true, glow: true, hp: 120, weak: ["water", "cold"] },
+  { name: "bone walker", base: "beast", hp: 200, behavior: "wander", weak: ["light"] },
+  { name: "angel", base: "spirit", glow: true, flying: true, hp: 300, attack: 20, behavior: "guard" },
+  { name: "frost wolf", base: "beast", hp: 120, attack: 10 } ],
+  *cast(w) { for (let k = 0; k < 6; k++) { w.spawn("phoenix", w.x + k * 3, w.y); w.spawn("bone walker", w.x - k * 3, w.y + 4); w.spawn("frost wolf", w.x, w.y - k * 3); }
+    w.spawn("angel", w.x - 6, w.y + 6); w.spawn("angel", w.x + 6, w.y + 6);
+    for (;;) { w.light(w.x + w.rand(-30, 30), w.y + w.rand(-30, 30), 14, "#fff3b0", 4); w.darken(0.5, 3); w.shockwave(w.x + w.rand(-20, 20), w.y, 10); yield 2; } } };`,
+        tier: "legendary",
+      },
     ];
 
 // PROF_ONLY=forest keeps the scenes whose name contains the word.
@@ -69,6 +82,7 @@ for (const scene of scenes) {
   seed(11);
   resetCreatureIds();
   const world = generateWorld(SIZE, SIZE, 11);
+  world.reactions = process.env.PROF_REACTIONS === "1";
   populate(world);
   const rt = new Runtime(world, (_k, _n, m) => console.log("  error:", m));
   if (scene.code) rt.cast({ key: "p", name: scene.name, tier: isTier(scene.tier) ? scene.tier : "legendary", code: scene.code }, MID, MID);

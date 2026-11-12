@@ -153,7 +153,7 @@ export interface LightField {
   // What stands on each coarse cell, as a height: the land, houses, trees, voxels.
   top: Float32Array;
   topAt: number;
-  topVersion: number;
+  topSize: number;
   // The light spells and glowing things shed, holy light among it, and darkness.
   lit: Float32Array;
   holy: Float32Array;
@@ -180,7 +180,7 @@ function field(world: World): LightField {
       ch,
       top: new Float32Array(cw * ch),
       topAt: -1e9,
-      topVersion: -1,
+      topSize: -1,
       lit: new Float32Array(cw * ch),
       holy: new Float32Array(cw * ch),
       dark: new Float32Array(cw * ch),
@@ -192,28 +192,37 @@ function field(world: World): LightField {
   return f;
 }
 
-const COVER_TALL: Partial<Record<number, number>> = { [C.TREE]: 5, [C.HOUSE]: 3.5, [C.BOULDER]: 1.5, [C.WINDMILL]: 5 };
+// How tall each cover stands, by id, for what blocks light: trees and buildings.
+let tallOf: Float32Array | null = null;
+function coverHeights(): Float32Array {
+  if (tallOf) return tallOf;
+  tallOf = new Float32Array(256);
+  for (let c = 0; c < 256; c++) tallOf[c] = c === C.TREE || c === C.WINDMILL ? 5 : isBuilding(c) || c === C.SITE ? 3.5 : c === C.BOULDER ? 1.5 : 0;
+  return tallOf;
+}
 
 function rebuildTop(world: World, f: LightField): void {
   const { cw, top } = f;
+  const tall = coverHeights();
+  const { w, h, height, depth, cover } = world;
   top.fill(-1e9);
-  for (let i = 0; i < world.n; i++) {
-    const x = i % world.w;
-    const y = (i / world.w) | 0;
-    const c = world.cover[i];
-    const tall = COVER_TALL[c] ?? (isBuilding(c) ? 3.5 : 0);
-    const h = world.height[i] + world.depth[i] + tall;
-    const j = ((y / LIGHT_STEP) | 0) * cw + ((x / LIGHT_STEP) | 0);
-    if (h > top[j]) top[j] = h;
+  for (let y = 0; y < h; y++) {
+    const row = ((y / LIGHT_STEP) | 0) * cw;
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const v = height[i] + depth[i] + tall[cover[i]];
+      const j = row + ((x / LIGHT_STEP) | 0);
+      if (v > top[j]) top[j] = v;
+    }
   }
-  // Voxels spells raised (walls, towers): half a height unit each (voxelkey.ts).
+  // Voxels spells raised (walls, towers): two height units a level (voxel/terrain.ts, V).
   for (const [key] of world.decor) {
     const level = (key % 512) - 128;
     const x = Math.floor(key / 512) % 1024;
     const y = Math.floor(key / (512 * 1024));
     if (x >= world.w || y >= world.h) continue;
     const j = ((y / LIGHT_STEP) | 0) * cw + ((x / LIGHT_STEP) | 0);
-    const h = (level + 1) / 2;
+    const h = (level + 1) * 2;
     if (h > top[j]) top[j] = h;
   }
 }
@@ -228,7 +237,7 @@ export function stepLight(world: World): void {
   f.holy.fill(0);
   f.dark.fill(0);
   f.at = world.tick;
-  // Glowing creatures of light, holy or fire shed light around them; creatures of the dark, a little shadow.
+  // Glowing creatures of light, holy or fire shed light around them.
   const shed: LightSource[] = [];
   for (const c of world.creatures) {
     if (c.dead) continue;
@@ -237,25 +246,28 @@ export function stepLight(world: World): void {
     const n = natureOf(world, k);
     if (k.glow && n & (N.LIGHT | N.HOLY | N.FIRE) && !(n & N.DARK))
       shed.push({ x: c.x, y: c.y, r: 3 + k.radius * c.size * 2, until: now + 1, power: 0.8, holy: !!(n & N.HOLY), dark: false });
-    else if (n & N.DARK && !k.glow) shed.push({ x: c.x, y: c.y, r: 2 + k.radius * c.size, until: now + 1, power: 0.7, holy: false, dark: true });
   }
   // Fire and lava light the cells around them (coarse, unblocked: they are low and many).
   let fires = false;
-  for (let i = 0; i < world.n; i++) {
-    if (world.fire[i] < 0.4 && world.fluid[i] !== F.LAVA) continue;
-    const x = (i % world.w) / LIGHT_STEP;
-    const y = ((i / world.w) | 0) / LIGHT_STEP;
-    const j = (y | 0) * f.cw + (x | 0);
-    f.lit[j] = Math.max(f.lit[j], 0.7);
-    fires = true;
+  const { w, h, fire, fluid } = world;
+  for (let y = 0; y < h; y++) {
+    const row = ((y / LIGHT_STEP) | 0) * f.cw;
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (fire[i] < 0.4 && fluid[i] !== F.LAVA) continue;
+      const j = row + ((x / LIGHT_STEP) | 0);
+      if (f.lit[j] < 0.7) f.lit[j] = 0.7;
+      fires = true;
+    }
   }
   const all = shed.length ? [...world.lightSources, ...shed] : world.lightSources;
   f.any = fires || all.length > 0;
   if (!all.length) return;
-  if (world.time - f.topAt > 1 || world.decorVersion !== f.topVersion) {
+  // What stands on the land, every two seconds or when voxels came or went.
+  if (world.time - f.topAt > 2 || world.decor.size !== f.topSize) {
     rebuildTop(world, f);
     f.topAt = world.time;
-    f.topVersion = world.decorVersion;
+    f.topSize = world.decor.size;
   }
   for (const s of all) (s.dark ? shade : shine)(world, f, s);
 }
