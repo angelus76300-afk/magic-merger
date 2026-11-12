@@ -16,7 +16,7 @@ import type { SavedWorld } from "./save";
 import { Hud } from "./hud";
 import { SCENARIOS } from "./scenarios";
 import { firstLook, villageView, type Pose } from "./firstlook";
-import { fireOf, startWildfire, stoneAt, stoneLine, troubleLine, type Stone } from "./troubles";
+import { fireOf, frontOf, startTrouble, stoneAt, stoneLine, troubleLine, type Stone, type TroubleKind } from "./troubles";
 import { Director, lifeLine, nameOf, whoIs, type Shot } from "./director";
 import { act, checkHeld, deedsOf, doDeed, possess, possessed, powersOf, release, steerBy, stopNote, thoughtOf, type Deed } from "./possess";
 import { aimAt, castFromEyes, eyesFirst, lookTheta, openLook, withinRange } from "./eyes";
@@ -1404,7 +1404,7 @@ window.setInterval(() => {
       hush();
     }
     if (!watching && !touring && !riding && card.hidden && (caption !== text || storyEl.hidden)) {
-      const f = fireOf(world, t);
+      const f = frontOf(world, t);
       clearTimeout(lineTimer);
       lineGoes = { x: f.x, y: f.y, who: 0 };
       say(text, true);
@@ -1412,7 +1412,7 @@ window.setInterval(() => {
     return;
   }
   if (!troublesOn || touring || away || document.hidden || now < holdUntil || now - lastTouch > 60_000 || world.time < world.troubleNext) return;
-  if (!startWildfire(world)) world.troubleNext = world.time + 120;
+  if (!startTrouble(world)) world.troubleNext = world.time + 120;
   else saveSoon();
 }, 1000);
 
@@ -1425,13 +1425,24 @@ window.setInterval(() => {
   return out;
 };
 
-// For the checks that play a trouble in a browser (scripts/trouble-frames.mjs): starts one now, or says how it stands.
-(window as unknown as { __mmTrouble?: (peek?: boolean) => string }).__mmTrouble = (peek = false) => {
+// For the checks that play a trouble in a browser (scripts/trouble-frames.mjs): starts one now (of a kind, or
+// the island's turn), or says how it stands.
+// `answer`: a program cast as the player's own at the trouble's front, source or village, for the
+// frames of an answer (scripts/highwater-frames.mjs); the island's own rules judge it as any cast.
+(
+  window as unknown as { __mmTrouble?: (peek?: boolean, kind?: TroubleKind, answer?: { code: string; at: "front" | "source" | "village" }) => string }
+).__mmTrouble = (peek = false, kind, answer) => {
   if (!engine || scenario) return "no island";
   const world = engine.world;
-  if (!peek && !world.trouble) startWildfire(world);
+  if (!peek && !world.trouble) startTrouble(world, Math.random, kind);
+  const t = world.trouble;
+  if (answer && t && typeof answer.code === "string") {
+    const f = frontOf(world, t);
+    const [x, y] = answer.at === "source" ? [t.x, t.y] : answer.at === "village" ? [t.vx, t.vy] : [f.x, f.y];
+    engine.cast({ key: "check answer", name: "Check Answer", tier: "major", code: answer.code.slice(0, 4000) }, x, y);
+  }
   return world.trouble
-    ? `${world.trouble.name} stage ${world.trouble.stage}`
+    ? `${world.trouble.kind} ${world.trouble.name} stage ${world.trouble.stage}`
     : `none; ${world.stones.length} stones; ${world.story[world.story.length - 1]?.text ?? ""}`;
 };
 

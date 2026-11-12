@@ -5,7 +5,7 @@ import type { Happening } from "./kin";
 import { wordOf } from "./names";
 import { Rng } from "./noise";
 import { kindName } from "./sites";
-import { fireOf, troubleLine } from "./troubles";
+import { frontOf, troubleLine } from "./troubles";
 import { unpackLook } from "./villagers";
 import { floatAt } from "./wonders";
 import type { World } from "./world";
@@ -192,15 +192,17 @@ export class Director {
     // and back every ten seconds once the houses burn.
     const trouble = world.trouble;
     if (trouble && !(cur && cur.sort === "pin")) {
-      const f = fireOf(world, trouble);
-      const onVillage = trouble.stage === 3 && Math.floor(now / 10) % 2 === 0;
+      const f = frontOf(world, trouble);
+      const onVillage = trouble.kind !== "flood" && trouble.stage === 3 && Math.floor(now / 10) % 2 === 0;
       const key = `t${onVillage ? "v" : "f"}`;
       const cut = !cur || cur.sort !== "trouble" || cur.key !== key;
       const shot: Shot = cut
         ? { kind: "drama", key, sort: "trouble", who: 0, other: 0, x: 0, y: 0, r: 9, caption: "", score: 95, since: now, least: now, until: Infinity }
         : cur!;
-      shot.x = onVillage ? trouble.vx : f.x;
-      shot.y = onVillage ? trouble.vy : f.y;
+      // A high water is read where it meets the houses: halfway from its edge to the house it makes for.
+      const flood = trouble.kind === "flood";
+      shot.x = flood ? (f.x + trouble.hx) / 2 : onVillage ? trouble.vx : f.x;
+      shot.y = flood ? (f.y + trouble.hy) / 2 : onVillage ? trouble.vy : f.y;
       shot.r = 9 + trouble.width;
       shot.caption = troubleLine(trouble);
       if (cut) this.take(shot, now);
