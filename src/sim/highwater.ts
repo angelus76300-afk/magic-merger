@@ -57,27 +57,41 @@ import type { World } from "./world";
 // Who answered it (the same honesty as the fire's, troubles.ts). The land
 // says how far the water would be by now at the level the spate has reached
 // (`need`, the lowest way from the source, on the land as it was when it
-// began). An item cast at it is the answer only when (1) it touched the
-// water's way: four cells or more of the low ground or the source changed in
-// a way the water itself never changes them (earth raised or dug, ice or
-// another fluid, heat or cold, sand, a grove of twelve plants; never a
-// shield), and (2) after that, within a minute of the cast while the spate
-// pushed, the water came no nearer the house it makes for and either stayed
-// BEHIND (2) cells short of where the land would let it be, or went back (two
-// cells from the nearest it came, a quarter less of it out of its bed), for
-// `hold` seconds running (4 for a hamlet, 6 a village, 8 a town) while its
-// level climbed 0.04 a second held (unless it was at its height already): held
-// against a push, not pushed back a cell for a moment by earth raised under
-// its edge; never while a house stands in its water. Each time it comes nearer the count starts again:
-// a wall it reaches later is held from there. Cases checked
+// began). An item cast at it is the answer only when (1) its own program
+// changed the water's way: four cells or more of the low ground or the
+// source changed, by the steps of that cast's program (the runtime tells the
+// high water each step, before and after, `stepWatch`), in a way the water
+// itself never changes them (earth raised or dug, ice or another fluid, heat
+// or cold, sand, or a grove: twelve plants more than the cells it poured
+// water on; never a shield), and (2) after that, within a minute of the cast
+// while the spate pushed, the water came no nearer the house it makes for
+// and either stayed BEHIND (2) cells short of where the land would let it
+// be, or went back (two cells from the nearest it came, a quarter less of it
+// out of its bed), for `hold` seconds running (4 for a hamlet, 6 a village,
+// 8 a town) while its level climbed 0.04 a second held (unless it was at its
+// height already): held against a push, not pushed back a cell for a moment
+// by earth raised under its edge; never while a house stands in its water.
+// Each time it comes nearer the count starts again: a wall it reaches later
+// is held from there. Of two casts that changed its way, the first whose
+// hold is complete is thanked; held from the same moment, the later one (the
+// water was held only once it came). What changes between a program's steps
+// (the water, plants coming up by themselves, a creature a spell made, the
+// people's banks, another cast's program) is no cast's work, so no cast
+// takes another's, before it or after it. Cases checked
 // (scripts/troubles-test.ts): raised earth round the village, five plain
 // Earth casts across its way (a hamlet), cold at the source, the source
 // dammed, a channel, heat, a hill (each saved), Water cast on it (sooner at the
 // houses, never thanked), one plain Earth on a village (not enough), a shield
 // over the village or over one house (held), an item cast every ten seconds
-// that changes nothing (never thanked), a useful item then a useless one (the
-// useful one thanked), a bank raised by nobody's cast (spent), a house
-// crushed by the player's own spell (not the water's).
+// that changes nothing (never thanked), a useful item then a useless one and
+// a useless one then a useful one (the useful one thanked), a useless program
+// at work on the same cells as Frost, before or after it (Frost), a hill then
+// a dam (the dam), Earth, a flash, a dam (the dam), Frost twice (Frost),
+// Water, rain or a creature that leaves water at the village (never thanked,
+// no change of its way, the flood no better), a grove (a change of its way),
+// a flash with plants coming up by themselves (no change), a bank raised by
+// nobody's cast (spent), a house crushed by the player's own spell (not the
+// water's).
 
 /** What a high water keeps in the save; the rest is worked out again from the land. */
 export interface Flood {
@@ -176,8 +190,10 @@ interface Cache {
   wet: Map<number, number>;
   heaped: Map<number, number>;
   lastBank: number;
-  // The land as it was when each cast was noted, by the cast's time: to see whether it touched the water's way.
-  snaps: Map<number, { h: Float32Array; f: Uint8Array; c: Uint8Array; g: Uint8Array; temp: Float32Array; ward: Uint8Array }>;
+  // What each cast still in reach of the answer was given of the water's way (see "Who answered it").
+  snaps: Map<Cast, Snap>;
+  // The same by the id of their program in the runtime.
+  programs: Map<number, Snap>;
   // The level the spate has reached, the land's front for it and the water's own, at the last look.
   level: number;
   pd: number;
@@ -437,6 +453,7 @@ function cacheOf(world: World, t: Trouble): Cache | null {
     wet: new Map(),
     heaped: new Map(),
     snaps: new Map(),
+    programs: new Map(),
     lastBank: world.time,
     level: f.b,
     pd: f.d0,
@@ -621,56 +638,127 @@ function wayCells(world: World, t: Trouble, c: Cache, fn: (k: number, i: number)
     }
 }
 
-/** A cast was noted at the high water: what its way looked like then, to see later whether the cast changed it. */
-export function snapFlood(world: World, t: Trouble, at: number): void {
+type Cast = Trouble["casts"][number];
+// What a cast's own program did to the water's way, cell by cell (see "Who answered it").
+interface Snap {
+  // The cover and the shields when it was cast.
+  c: Uint8Array;
+  ward: Uint8Array;
+  // What its own steps changed: the height and the heat they added up to; whether they made ice or
+  // another fluid (1), sand (2) or a plant (4); where they poured water.
+  dh: Float32Array;
+  dt: Float32Array;
+  made: Uint8Array;
+  wet: Uint8Array;
+  at: number;
+}
+
+/** What the runtime tells a high water: each step of a cast's program, before and after (runtime.ts). */
+export interface StepWatch {
+  before(id: number): void;
+  after(id: number): void;
+}
+
+/**
+ * A cast was noted at the high water. `program` is the runtime running it and its id there: the
+ * runtime then tells the high water each step the program takes, so what it changes is its own. A
+ * cast noted without one (in the checks) changes nothing of its own.
+ */
+export function snapFlood(world: World, t: Trouble, cast: Cast, program?: { rt: { stepWatch: StepWatch | null }; id: number }): void {
   const c = cacheOf(world, t);
   if (!c) return;
   const n = c.need.length;
-  const snap = { h: new Float32Array(n), f: new Uint8Array(n), c: new Uint8Array(n), g: new Uint8Array(n), temp: new Float32Array(n), ward: new Uint8Array(n) };
+  const snap: Snap = {
+    c: new Uint8Array(n),
+    ward: new Uint8Array(n),
+    dh: new Float32Array(n),
+    dt: new Float32Array(n),
+    made: new Uint8Array(n),
+    wet: new Uint8Array(n),
+    at: world.time,
+  };
   wayCells(world, t, c, (k, i) => {
-    snap.h[k] = world.height[i];
-    snap.f[k] = world.fluid[i];
     snap.c[k] = world.cover[i];
-    snap.g[k] = world.ground[i];
-    snap.temp[k] = world.temp[i];
     snap.ward[k] = world.wardMask[i] & WARD.fluids;
   });
-  c.snaps.set(at, snap);
+  c.snaps.set(cast, snap);
+  if (program) {
+    c.programs.set(program.id, snap);
+    program.rt.stepWatch = stepWatch(world, t, c);
+  }
   // Only the casts that may still be the answer keep theirs.
-  for (const when of c.snaps.keys()) if (at - when > ANSWER_WITHIN) c.snaps.delete(when);
+  for (const [old, s] of c.snaps)
+    if (world.time - s.at > ANSWER_WITHIN) {
+      c.snaps.delete(old);
+      for (const [id, p] of c.programs) if (p === s) c.programs.delete(id);
+    }
 }
 
 const PLANTS: readonly number[] = [C.TREE, C.BUSH, C.REEDS, C.FERN];
 const built = (cover: number) => isBuilding(cover) || cover === C.SITE || cover === C.RUBBLE;
 
-// Whether the land on the water's way has changed since the cast in a way the water itself never
-// changes it: earth raised or dug, ice or another fluid, heat or cold, sand, plants. Water cast on it
-// changes none of these: it is never the answer. Nor is a shield: a dome is not an answer, the
-// village sat it out ("held").
-function touched(world: World, t: Trouble, c: Cache, at: number): boolean {
-  const snap = c.snaps.get(at);
+// Around each step of a program cast at this high water: the way before the step, and after it what
+// the step changed, added to that cast's own work. What changes between steps (the water, plants
+// coming up by themselves, a creature, the people's banks, another program) is not its work. So no
+// cast is given what another made, before it or after it, even two at work on the same cells at once.
+function stepWatch(world: World, t: Trouble, c: Cache): StepWatch {
+  const n = c.need.length;
+  const p = { h: new Float32Array(n), f: new Uint8Array(n), c: new Uint8Array(n), g: new Uint8Array(n), temp: new Float32Array(n), d: new Float32Array(n) };
+  return {
+    before(id) {
+      if (world.trouble !== t || !c.programs.has(id)) return;
+      wayCells(world, t, c, (k, i) => {
+        p.h[k] = world.height[i];
+        p.f[k] = world.fluid[i];
+        p.c[k] = world.cover[i];
+        p.g[k] = world.ground[i];
+        p.temp[k] = world.temp[i];
+        p.d[k] = world.depth[i];
+      });
+    },
+    after(id) {
+      const s = c.programs.get(id);
+      if (world.trouble !== t || !s) return;
+      wayCells(world, t, c, (k, i) => {
+        s.dh[k] += world.height[i] - p.h[k];
+        s.dt[k] += world.temp[i] - p.temp[k];
+        const fl = world.fluid[i];
+        if (fl !== p.f[k] && (fl > F.WATER || p.f[k] > F.WATER)) s.made[k] |= 1;
+        if (world.ground[i] === G.SAND && p.g[k] !== G.SAND) s.made[k] |= 2;
+        if (PLANTS.includes(world.cover[i]) && !PLANTS.includes(p.c[k])) s.made[k] |= 4;
+        if (fl === F.WATER && world.depth[i] > p.d[k] + 0.01) s.wet[k] = 1;
+      });
+    },
+  };
+}
+
+// Whether the cast's own program changed the water's way (stepWatch, above) in a way the water itself
+// never changes it: earth raised or dug, ice or another fluid, heat or cold, sand, a grove. Water
+// cast on it changes none of these, and the plants a cast grows are weighed against the cells it
+// poured water on: Water is never the answer. Nor is a shield: a dome is not an answer, the village
+// sat it out ("held").
+function touched(world: World, t: Trouble, c: Cache, cast: Cast): boolean {
+  const snap = c.snaps.get(cast);
   if (!snap) return false;
   let n = 0;
   // Plants come up by themselves here and there: a grove is many at once.
   let grown = 0;
+  let poured = 0;
   let shield = 0;
   wayCells(world, t, c, (k, i) => {
     if ((world.wardMask[i] & WARD.fluids) !== 0 && !snap.ward[k]) shield++;
-    if (n >= 4 || grown >= 12) return;
-    const fl = world.fluid[i];
-    const was = snap.f[k];
+    poured += snap.wet[k];
     if (
       // Earth moved where nobody's hands moved it: not the people's banks, not where they build.
-      (Math.abs(world.height[i] - snap.h[k]) > 0.4 && !c.heaped.has(i) && !built(world.cover[i]) && !built(snap.c[k])) ||
-      (fl !== was && (fl > F.WATER || was > F.WATER)) ||
-      Math.abs(world.temp[i] - snap.temp[k]) > 40 ||
-      (world.ground[i] === G.SAND && snap.g[k] !== G.SAND)
+      (Math.abs(snap.dh[k]) > 0.4 && !c.heaped.has(i) && !built(world.cover[i]) && !built(snap.c[k])) ||
+      Math.abs(snap.dt[k]) > 40 ||
+      (snap.made[k] & 3) !== 0
     )
       n++;
-    else if (PLANTS.includes(world.cover[i]) && !PLANTS.includes(snap.c[k])) grown++;
+    else if (snap.made[k] & 4 && PLANTS.includes(world.cover[i])) grown++;
   });
   // A shield raised on its way is a dome, wherever it stands: not an answer.
-  return shield < 4 && (n >= 4 || grown >= 12);
+  return shield < 4 && (n >= 4 || grown - poured >= 12);
 }
 
 /** The water's distance to the house it makes for, for a cast noted now (troubles.ts, noteCast). */
@@ -1138,13 +1226,15 @@ export function stepFlood(world: World, t: Trouble, dt: number): boolean {
   }
 
   // 6. The answer: after a cast, the water stayed well short of where the land would let it be, and
-  // came no nearer, for HELD_FOR seconds while the spate pushed (see the top of this file).
+  // came no nearer, for HELD_FOR seconds while the spate pushed (see the top of this file). Newest
+  // first: two casts that both changed its way and are held from the same moment were held only once
+  // the later one came, so the later one is thanked; one held for longer is thanked first.
   if (f.s > 0 && !t.answer)
-    for (const k of t.casts) {
+    for (const k of [...t.casts].reverse()) {
       if (world.time - k.t > ANSWER_WITHIN) continue;
       // `n`: how near the water has come since the cast. Each time it comes nearer the count starts
       // again: an item that stops it further on, where its wall or pit is, is held from there.
-      if (!k.hit && touched(world, t, c, k.t)) k.hit = true;
+      if (!k.hit && touched(world, t, c, k)) k.hit = true;
       if (ad < k.n - 0.3) {
         k.n = ad;
         k.low = 0;

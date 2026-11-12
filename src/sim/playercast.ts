@@ -11,6 +11,6 @@ export function playerCast(world: World, runtime: Runtime, req: CastRequest, x: 
   const ok = runtime.cast(req, x, y);
   if (!ok) return false;
   tell(world, `a mage ${req.kind === "artifact" ? "placed" : "cast"} ${req.name}`, { x, y, weight: 0 });
-  noteCast(world, req.key, req.name, "", x, y);
+  noteCast(world, req.key, req.name, "", x, y, { rt: runtime, id: runtime.lastCast });
   return true;
 }

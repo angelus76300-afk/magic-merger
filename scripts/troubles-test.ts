@@ -51,10 +51,12 @@ function island(seed: number) {
 }
 
 // Runs a wildfire to its end. `answerAt`: seconds in, every fire is put out and an item is cast at it.
+// `each`: called every second before that, with the seconds in.
 function burn(
   seed: number,
   answerAt: number | null,
   before?: (world: World) => void,
+  each?: (world: World, t: Trouble, seconds: number) => void,
 ): { end: TroubleEnd | null; world: World; seconds: number; stage: number; lines: string[] } {
   const { world, rt } = island(seed);
   before?.(world);
@@ -64,6 +66,7 @@ function burn(
   while (t && world.trouble && seconds < 400) {
     for (let k = 0; k < 30; k++) stepHeadless(world, rt);
     seconds++;
+    each?.(world, t, seconds);
     if (answerAt !== null && seconds === answerAt) {
       // The item is cast, and then does its work: every fire out, and what was hot enough to catch again cooled.
       noteCast(world, "rain", "Rain", "", t.x, t.y);
@@ -110,6 +113,20 @@ export function troubleChecks(check: Check): void {
     check(
       "troubles: the stone and the count of troubles come back with the save",
       back?.stones.length === 1 && back.stones[0].item === "Rain" && back.troubles === 1 && back.trouble === null,
+    );
+  }
+  // 2a. An item cast before the one that puts the fire out is not thanked for it (the review of high
+  // water found the flood thanking the first of two casts). Each cast's hold is counted from when the
+  // fire is out, so one cast before it starts no sooner, and of two held from the same moment the later
+  // one is named.
+  {
+    const r = burn(2026, 30, undefined, (world, t, s) => {
+      if (s === 26) noteCast(world, "flash", "Flash", "", t.x, t.y);
+    });
+    check(
+      "troubles: an item cast before the one that put the fire out is not thanked",
+      r.end?.outcome === "saved" && r.end.by?.key === "rain",
+      `${r.end?.outcome} by ${r.end?.by?.key}: ${r.end?.line}`,
     );
   }
   // 2b. A cast that does not reduce the fire earns nothing: Fire thrown at the fire is no answer (the playtest saw it thanked).
@@ -260,6 +277,12 @@ const DOME = P("w.ward(w.x, w.y, 16, { against: ['fluids'], seconds: 600 });");
 // A plain Earth as a spell writer might write it: a mound of rock (hand written; the live one is in the database).
 const EARTH = P("w.terraform(w.x, w.y, w.r * 0.35, 4); w.paint(w.x, w.y, w.r * 0.3, 'rock', 0.8);");
 const DOME_SMALL = P("w.ward(w.x, w.y, w.r, { seconds: 600 });");
+// For who is thanked: a flash that goes on for twenty seconds, rain, plants, a creature that leaves water.
+const FLASHES = P("for (let k = 0; k < 40; k++) { w.flash('#fff', 0.1); yield 0.5; }");
+const RAIN = P("for (let k = 0; k < 20; k++) { w.paint(w.x, w.y, w.r, 'water', 0.3, 0.3); yield 0.5; }");
+const GROVE = P("w.grow(w.x, w.y, w.r * 0.6, 1);");
+const NAIAD =
+  "const spell = { creatures: [{ name: 'naiad', leaves: 'water', swims: true }], *cast(w) { for (let k = 0; k < 4; k++) w.spawn('naiad', w.x + k, w.y); } };";
 
 type Spot = "front" | "mid" | "source" | "village" | "house" | "line";
 interface Cast {
@@ -556,6 +579,53 @@ function highWater(check: Check): void {
       "high water: an item cast every ten seconds that changes nothing is never thanked",
       u.end?.by === null && u.end?.outcome !== "saved" && u.t!.casts.length > 0,
       said(u),
+    );
+  }
+  // 9b. Who is thanked (the review of round two): each cast is given only what its own program changed
+  // (highwater.ts, "Who answered it"), so none takes another's work, before it or after it, and the
+  // plants a cast waters do not make it a grove. Seed 5, the review's island; all saved by one cast
+  // alone are checked in 6.
+  {
+    const at = (key: string, code: string, spot: Spot, when: number): Cast => ({ key, code, at: spot, when });
+    const told = (r: Flow) => `${said(r)}; changed its way: ${r.t!.casts.map((c) => `${c.key} ${c.hit ? "yes" : "no"}`).join(", ")}`;
+    const by = (r: Flow, key: string) => r.end?.outcome === "saved" && r.end.by?.key === key;
+    const none = (r: Flow) => r.end?.by === null && r.end?.outcome !== "saved" && r.t!.casts.every((c) => !c.hit);
+    const a = flow(M, [at("flash", NOTHING, "front", 50), at("frost", FROST, "source", 60)]);
+    check("high water: an item that did nothing, cast before the one that held it, is not thanked", by(a, "frost"), told(a));
+    const b = flow(M, [at("frost", FROST, "source", 50), at("flash", NOTHING, "front", 60)]);
+    check("high water: nor one cast after it", by(b, "frost"), told(b));
+    // Both at work on the same cells at once, in either order.
+    const c1 = flow(M, [at("frost", FROST, "source", 50), at("flashes", FLASHES, "source", 55)]);
+    const c2 = flow(M, [at("flashes", FLASHES, "source", 50), at("frost", FROST, "source", 55)]);
+    check(
+      "high water: nor one at work on the same cells as the one that held it, before it or after it",
+      by(c1, "frost") && by(c2, "frost"),
+      `${told(c1)} / ${told(c2)}`,
+    );
+    // Two that change its way: a hill that does not hold it here, then a dam that does. Held only once
+    // the dam came, so the dam (the later of two held from the same moment).
+    const d = flow(M, [at("hill", HILL, "mid", 50), at("dam", DAM, "source", 60)]);
+    check("high water: of two items that changed its way, the one after which it was held is thanked", by(d, "dam") && d.t!.casts.every((c) => c.hit), told(d));
+    const e = flow(M, [at("earth", EARTH, "mid", 50), at("flash", NOTHING, "front", 55), at("dam", DAM, "source", 60)]);
+    check("high water: an item that did nothing between two that did is not thanked", by(e, "dam") && !e.t!.casts[1].hit, told(e));
+    const f2 = flow(M, [at("frost", FROST, "source", 50), at("frost", FROST, "source", 60)]);
+    check("high water: the same item cast twice is thanked by its name", by(f2, "frost"), told(f2));
+    // What pours water: never thanked, never a change of its way, the flood no better for it.
+    const water = flow(M, [at("water", WATER, "village", 50)]);
+    const rain = flow(M, [at("rain", RAIN, "village", 50)]);
+    const naiad = flow(M, [at("naiad", NAIAD, "village", 50)]);
+    check(
+      "high water: water, rain or a creature that leaves water, cast at the village, is never thanked, and the flood is no better for it",
+      [water, rain, naiad].every((r) => none(r) && r.end!.housesLost >= alone.end!.housesLost),
+      [water, rain, naiad].map(told).join(" / "),
+    );
+    // A grove planted on its way is a change of it; nothing cast, with plants coming up by themselves, is not.
+    const g = flow(M, [at("grove", GROVE, "mid", 50)]);
+    const n = flow(M, [at("flash", NOTHING, "front", 50)]);
+    check(
+      "high water: a grove planted on its way changes it; plants that come up by themselves after a flash do not",
+      g.t!.casts[0].hit === true && none(n),
+      `${told(g)} / ${told(n)}`,
     );
   }
   // 10. Spent: held back by the land itself, nobody's cast, until the spate runs its course.

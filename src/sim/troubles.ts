@@ -4,7 +4,7 @@ import { pile, tell } from "./kin";
 import { C } from "./materials";
 import { WARD } from "./wards";
 import { fallingAt } from "./weather";
-import { floodDistance, floodFocus, floodFront, floodLine, snapFlood, startHighWater, stepFlood, type Flood } from "./highwater";
+import { floodDistance, floodFocus, floodFront, floodLine, snapFlood, startHighWater, stepFlood, type Flood, type StepWatch } from "./highwater";
 import type { World } from "./world";
 
 // The island needs you (2026-11-11). Merging never needed the island and the
@@ -307,16 +307,28 @@ function burningNow(world: World, t: Trouble): Set<number> {
   return alight;
 }
 
-/** The player cast this near the trouble: it may be the answer. */
-export function noteCast(world: World, key: string, name: string, emoji: string, x: number, y: number): void {
+/**
+ * The player cast this near the trouble: it may be the answer. `program`: the runtime running its
+ * program and the program's id, so a high water knows what the program itself changes.
+ */
+export function noteCast(
+  world: World,
+  key: string,
+  name: string,
+  emoji: string,
+  x: number,
+  y: number,
+  program?: { rt: { stepWatch: StepWatch | null }; id: number },
+): void {
   const t = world.trouble;
   if (!t) return;
   const f = frontOf(world, t);
   if (Math.hypot(x - t.vx, y - t.vy) > REACH && Math.hypot(x - f.x, y - f.y) > REACH / 2 && Math.hypot(x - t.x, y - t.y) > REACH / 2) return;
   // For a high water `n` is how far the water was from the house it makes for.
-  t.casts.push({ key, name, emoji, t: world.time, n: t.kind === "flood" ? floodDistance(world, t) : f.cells, low: 0 });
+  const cast = { key, name, emoji, t: world.time, n: t.kind === "flood" ? floodDistance(world, t) : f.cells, low: 0 };
+  t.casts.push(cast);
   if (t.casts.length > 12) t.casts.shift();
-  if (t.kind === "flood") snapFlood(world, t, world.time);
+  if (t.kind === "flood") snapFlood(world, t, cast, program);
 }
 
 // The house cells burning at the last look, by trouble (not saved: a reload starts the watch again).
