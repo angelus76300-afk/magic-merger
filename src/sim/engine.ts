@@ -26,6 +26,8 @@ export interface EngineHooks {
   onError: ErrorReporter;
   // A tap on the island that did not turn, pan or zoom the view.
   onTap: (x: number, y: number) => void;
+  // A tap where the ray meets nothing (the sky): the eye view casts at its mark all the same.
+  onTapNothing?: () => void;
 }
 
 export interface EngineOptions {
@@ -350,6 +352,7 @@ export class Engine {
       const rect = c.getBoundingClientRect();
       const at = this.view.pick(e.clientX - rect.left, e.clientY - rect.top);
       if (at) this.hooks.onTap(at.x, at.y);
+      else this.hooks.onTapNothing?.();
     };
     c.addEventListener("pointerup", end, opts);
     c.addEventListener("pointercancel", end, opts);

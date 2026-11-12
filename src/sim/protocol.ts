@@ -56,8 +56,19 @@ export interface HotSlot {
   ready: boolean;
 }
 
-// The most slots the bar holds (six fit a folded Z Fold, 344 px).
-export const HOT_SLOTS = 6;
+// The most slots the bar holds: everything the player owns, as the page's own
+// list (it scrolls), within a bound on what the frame is sent.
+export const HOT_SLOTS = 2000;
+
+// The bar's keys in the order fixed when the creature was taken (`fixed`);
+// keys that came since go at the end, in the order they come now.
+export function keepOrder(now: string[], fixed: string[]): string[] {
+  const rank = new Map(fixed.map((k, n) => [k, n]));
+  return now
+    .map((k, n) => ({ k, n: rank.get(k) ?? fixed.length + n }))
+    .sort((a, b) => a.n - b.n)
+    .map((x) => x.k);
+}
 
 // The iframe runs code nobody reviewed, so whatever it sends is checked for
 // shape and size before the page acts on it. Returns null for anything else.

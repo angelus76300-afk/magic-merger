@@ -36,8 +36,14 @@ function trunk(out: Box[], rng: Rng, height: number, width: number, color: numbe
   return { x: x + Math.cos(a) * lean * 0.5, z: z + Math.sin(a) * lean * 0.5, top: from + height };
 }
 
-// A crown of leaves: a few boxes around a point, wide at the bottom.
+// A crown of leaves: a few boxes around a point, wide at the bottom, and under
+// it a narrower, darker layer: from a creature's eyes (2026-11-12) a crown was
+// one flat slab; this gives it a shaded, layered underside, as foliage has.
 function crown(out: Box[], rng: Rng, cx: number, cz: number, y: number, width: number, height: number, leaves: number[], parts = 2): void {
+  const under = width * 0.72;
+  const shade = vary(rng, pick(rng, leaves), 0.05);
+  const dark = ((((shade >> 16) & 255) * 0.62) << 16) | ((((shade >> 8) & 255) * 0.62) << 8) | ((shade & 255) * 0.62);
+  out.push(B(cx - under / 2, y - 0.16, cz - under / 2, under, 0.18, under, Math.round(dark)));
   for (let k = 0; k < parts; k++) {
     const f = k / parts;
     const wk = width * (1 - f * 0.45) * (0.9 + rng.next() * 0.2);

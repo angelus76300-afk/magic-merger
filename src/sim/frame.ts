@@ -7,6 +7,7 @@ import { kindOf, makeCreature, maxHp, whyStopped, type Creature } from "./creatu
 import { artifactAt, creatureAt, inspect, inspectArtifact } from "./inspect";
 import type { Artifact } from "./artifacts";
 import { HOT_SLOTS, type FromWorld, type HotSlot, type ToWorld } from "./protocol";
+import { solidCovers } from "./paths";
 import type { CastRequest, Runtime } from "./runtime";
 import type { SavedWorld } from "./save";
 import { Hud } from "./hud";
@@ -15,7 +16,7 @@ import { firstLook, villageView, type Pose } from "./firstlook";
 import { fireOf, startWildfire, stoneAt, stoneLine, troubleLine, type Stone } from "./troubles";
 import { Director, lifeLine, nameOf, whoIs, type Shot } from "./director";
 import { act, checkHeld, deedsOf, doDeed, possess, possessed, powersOf, release, steerBy, stopNote, thoughtOf, type Deed } from "./possess";
-import { aimAt, castFromEyes, eyesFirst, lookTheta, withinRange } from "./eyes";
+import { aimAt, castFromEyes, eyesFirst, lookTheta, openLook, withinRange } from "./eyes";
 import { castOnScreen, watchCast } from "./voxel/castview";
 import { LAND_REDRAW } from "./voxel/terrain";
 import { readDef, setFinders, signatureOf, wonderInfo, type WonderDef } from "./wonders";
@@ -87,6 +88,27 @@ function send(msg: FromWorld): void {
   window.parent.postMessage(msg, "*");
 }
 
+// A button that answers the finger as it comes down (pointerdown), so it works
+// while another finger holds the stick: a click needs the whole page to be
+// free of other touches, and with a thumb on the stick Cast, the acts, the eye,
+// a slot and Let go did nothing (the playtest of 12 November). A click with
+// no pointer before it (a key, a screen reader) still presses it.
+function press(b: HTMLElement, fn: () => void): void {
+  let pressed = 0;
+  b.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    pressed = performance.now();
+    fn();
+  });
+  b.addEventListener("click", (e) => {
+    e.preventDefault();
+    if (performance.now() - pressed < 1000) return;
+    fn();
+  });
+}
+
 // Keys pressed on the island stay in this frame: Escape is passed up so the
 // vote after a cast closes as it does elsewhere on the page.
 window.addEventListener("keydown", (e) => {
@@ -95,6 +117,14 @@ window.addEventListener("keydown", (e) => {
 
 const hooks = {
   onError: (key: string, name: string, message: string) => send({ type: "error", key, name, message }),
+  // In the eye view a tap anywhere casts at the mark, the sky too (the playtest: taps on the upper half did nothing).
+  onTapNothing: () => {
+    if (swallowTap) {
+      swallowTap = false;
+      return;
+    }
+    if (riding && eyes) castFromEye();
+  },
   onTap: (x: number, y: number) => {
     if (!engine) return;
     // A tap that ended the tour of the island only ends it (2026-11-11): it
@@ -548,6 +578,13 @@ function endBecome(why: "let go" | "fell" | "gone"): void {
   if (!c) return;
   // Out of its eyes first: the page and the island's own buttons come back as they were.
   setEyes(false);
+  // The spell in hand goes back in the book: the next tap on a creature inspects it (the playtest).
+  if (selected) {
+    selected = null;
+    send({ type: "pick", key: null });
+  }
+  allEl.hidden = true;
+  burnEl.hidden = true;
   eyeEl.hidden = true;
   eyesBack = false;
   actsEl.hidden = true;
@@ -582,10 +619,24 @@ function tellRider(): void {
   const note = powerNote && performance.now() < powerNote.until ? powerNote.text : "";
   const thought = note || thoughtOf(engine.world, riding);
   const line = `You are ${rideName}`;
-  const key = `${line}|${thought}`;
+  // The island's trouble above the thought: it is the reason to cast (a wildfire reached its third stage while the line said "Hungry").
+  const trouble = engine.world.trouble ? troubleLine(engine.world.trouble) : "";
+  const hp = Math.max(0, Math.min(1, riding.hp / maxHp(riding)));
+  const key = `${line}|${trouble}|${thought}|${Math.round(hp * 20)}`;
   if (caption === key && !storyEl.hidden && !storyEl.classList.contains("out")) return;
   caption = key;
-  storyEl.replaceChildren(el("span", "line", line), el("span", "thought", thought));
+  // Its health, a small bar by its name: burning used to be only a word, and death came with no warning.
+  const bar = el("span", "hp");
+  bar.setAttribute("role", "meter");
+  bar.setAttribute("aria-label", "Health");
+  bar.setAttribute("aria-valuenow", String(Math.round(hp * 100)));
+  const fill = el("i", "");
+  fill.style.width = `${Math.round(hp * 100)}%`;
+  fill.style.background = hp > 0.6 ? "#7ed492" : hp > 0.3 ? "#f2c94c" : "#ef6b5b";
+  bar.append(fill);
+  const head = el("span", "line", line);
+  head.append(bar);
+  storyEl.replaceChildren(head, ...(trouble ? [el("span", "trouble", trouble[0].toUpperCase() + trouble.slice(1))] : []), el("span", "thought", thought));
   storyEl.hidden = false;
   storyEl.classList.remove("out");
   reportInspect();
@@ -602,7 +653,7 @@ function drawPowers(): void {
         b.type = "button";
         b.setAttribute("aria-label", p.spec.do === "cast" && p.spec.spell ? `Cast ${p.spec.spell}` : p.spec.do[0].toUpperCase() + p.spec.do.slice(1));
         b.append(el("span", "", POWER_WORDS[p.spec.do] ?? "Do"));
-        b.addEventListener("click", () => usePower(n));
+        press(b, () => usePower(n));
         return b;
       }),
     );
@@ -671,7 +722,7 @@ const stickUp = (e: PointerEvent) => {
 stickEl.addEventListener("pointerup", stickUp);
 stickEl.addEventListener("pointercancel", stickUp);
 stickEl.addEventListener("lostpointercapture", stickUp);
-letGoEl.addEventListener("click", () => endBecome("let go"));
+press(letGoEl, () => endBecome("let go"));
 
 // Every frame while possessed: the stick to the creature, the camera to it.
 function ride(): void {
@@ -692,16 +743,17 @@ function ride(): void {
   const c = riding;
   o.chase(c.x, c.y, c.z, c.hd, kindOf(c).radius * c.size);
   if (eyes) drawMark();
-  // Stopped against the sea, a cliff or the rim: why, once, not more than every four seconds.
+  // Stopped against the sea, a cliff or the rim: why, held while it stays
+  // stopped and two seconds after (it flickered with the thought at first).
   const stopped = stopNote(world, whyStopped);
   const now = performance.now();
-  if (stopped && now - stopSaidAt > 4000) {
-    stopSaidAt = now;
-    powerNote = { text: stopped, until: now + 2200 };
+  if (stopped && (!powerNote || powerNote.text === stopped || now > powerNote.until)) {
+    powerNote = { text: stopped, until: now + 2000 };
     tellRider();
   }
+  // A warm edge round the view while it burns.
+  burnEl.hidden = !(c.burning > 0 && !c.dead);
 }
-let stopSaidAt = -1e9;
 requestAnimationFrame(ride);
 
 // Through its eyes (2026-11-12, eyes.ts): the camera at the creature's head,
@@ -734,7 +786,16 @@ function setEyes(on: boolean): void {
     const o = engine.view.orbit;
     if (on && riding) {
       engine.view.eyeId = riding.id;
-      o.eyeOn(riding.hd, riding.x, riding.y, engine.view.groundAt(riding.x, riding.y) + 1.5);
+      // Facing a wall, a cliff or a bush, it looks the open way first (eyes.ts openLook).
+      const w = engine.world;
+      const h = engine.view.groundAt(riding.x, riding.y) + Math.max(0.6, kindOf(riding).radius * riding.size * 2.4);
+      const solid = (x: number, y: number) => {
+        const cx = Math.floor(x);
+        const cy = Math.floor(y);
+        return cx >= 0 && cy >= 0 && cx < w.w && cy < w.h && solidCovers(w)[w.cover[cy * w.w + cx]] === 1;
+      };
+      const yaw = openLook(riding.x, riding.y, h, riding.hd, engine.view.groundAt, solid);
+      o.eyeOn(yaw, riding.x, riding.y, h);
     } else {
       o.eyeOff();
       engine.view.eyeId = -1;
@@ -757,23 +818,28 @@ function setEyes(on: boolean): void {
   lastTouch = performance.now();
 }
 
-eyeEl.addEventListener("click", () => setEyes(!eyes));
+press(eyeEl, () => setEyes(!eyes));
 
-const DEED_WORDS: Record<Deed, string> = { strike: "Strike", eat: "Eat" };
+// The way it faces for its acts: the look in the eye view, its heading behind it.
+function facing(): number {
+  const e = engine?.view.orbit.eye;
+  return e ? e.yaw : (riding?.hd ?? 0);
+}
 
+// Its acts, redrawn as what is in front changes (a farmer's "Harvest" becomes "Sow").
 function drawDeeds(): void {
   if (!riding || !engine) return deedsEl.querySelectorAll(".deed").forEach((b) => b.remove());
-  const list = deedsOf(riding);
-  const have = [...deedsEl.querySelectorAll<HTMLButtonElement>(".deed")].map((b) => b.dataset.deed);
-  if (have.join() === list.join()) return;
+  const list = deedsOf(engine.world, riding, facing());
+  const have = [...deedsEl.querySelectorAll<HTMLButtonElement>(".deed")].map((b) => `${b.dataset.deed}:${b.textContent}`);
+  if (have.join() === list.map((d) => `${d.id}:${d.verb}`).join()) return;
   deedsEl.querySelectorAll(".deed").forEach((b) => b.remove());
   for (const d of list) {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "deed";
-    b.dataset.deed = d;
-    b.textContent = DEED_WORDS[d];
-    b.addEventListener("click", () => useDeed(d));
+    b.dataset.deed = d.id;
+    b.textContent = d.verb;
+    press(b, () => useDeed(d.id));
     deedsEl.append(b);
   }
 }
@@ -781,36 +847,63 @@ function drawDeeds(): void {
 function useDeed(d: Deed): void {
   if (!riding || !engine) return;
   lastTouch = performance.now();
-  const o = engine.view.orbit;
-  const r = doDeed(engine.world, d, o.eye ? o.eye.yaw : riding.hd);
-  if (r === "nothing") powerNote = { text: d === "strike" ? "Strike: nothing in reach" : "Eat: nothing to eat here", until: performance.now() + 1800 };
-  else if (r && r !== "busy") {
-    powerNote = { text: d === "strike" ? `Struck the ${r.done}` : `Ate ${r.done}`, until: performance.now() + 1800 };
-    eyeStats.done.push(`${d}:${r.done}`);
-    saveSoon();
+  const r = doDeed(engine.world, d, facing());
+  if (r && r !== "busy") {
+    const text = "done" in r ? r.done : r.missing;
+    powerNote = { text, until: performance.now() + 2000 };
+    if ("done" in r) {
+      eyeStats.done.push(`${d}:${r.done}`);
+      saveSoon();
+    }
   }
+  drawDeeds();
   tellRider();
+}
+
+// A slot: its emoji, its name in the label, pressed while in hand, dimmed while being made.
+function slotButton(h: HotSlot, label: string, held: string | null, then?: () => void): HTMLButtonElement {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.dataset.key = h.key;
+  b.title = h.name;
+  b.setAttribute("aria-label", `${h.name}${h.ready ? "" : ", being made"}${label}`);
+  b.setAttribute("aria-pressed", String(h.key === held || h.key === picking));
+  b.classList.toggle("waiting", !h.ready);
+  press(b, () => {
+    pick(h.key);
+    then?.();
+  });
+  return b;
 }
 
 function drawHot(): void {
   if (!eyes) return;
   const held = selected?.key ?? null;
   if (picking && held === picking) picking = null;
+  // Every spell and item the player owns, last used first as the page had them
+  // when this creature was taken: the order stays while possessed, so the slot
+  // under the thumb does not change after a cast (the playtest of 12 November).
+  // It scrolls sideways; the button at its end opens the whole list with a search.
+  const scroll = hotbarEl.scrollLeft;
   if (!hot.length) hotbarEl.replaceChildren(el("span", "empty", "No spells yet: make some in Craft"));
-  else
+  else {
+    const all = document.createElement("button");
+    all.type = "button";
+    all.className = "all";
+    all.textContent = "All";
+    all.setAttribute("aria-label", `All your spells and items (${hot.length})`);
+    press(all, () => openAll());
     hotbarEl.replaceChildren(
       ...hot.map((h, n) => {
-        const b = document.createElement("button");
-        b.type = "button";
+        const b = slotButton(h, n < 6 ? ` (${n + 1})` : "", held);
         b.textContent = h.emoji || "✦";
-        b.title = h.name;
-        b.setAttribute("aria-label", `${h.name}${h.ready ? "" : ", being made"} (${n + 1})`);
-        b.setAttribute("aria-pressed", String(h.key === held || h.key === picking));
-        b.classList.toggle("waiting", !h.ready);
-        b.addEventListener("click", () => pick(h.key));
         return b;
       }),
+      all,
     );
+    hotbarEl.scrollLeft = scroll;
+  }
+  if (!allEl.hidden) drawAll();
   const slot = hot.find((h) => h.key === (held ?? picking));
   const name = slot?.name ?? selected?.name ?? "";
   heldEl.hidden = !name;
@@ -820,6 +913,33 @@ function drawHot(): void {
   markEl.classList.toggle("held", !!held);
   if (!held) landingEl.hidden = true;
 }
+
+// The whole list over the view, with a search: the eye view stays behind it.
+const allEl = document.getElementById("allspells") as HTMLElement;
+const allList = allEl.querySelector(".list") as HTMLElement;
+const allFind = allEl.querySelector("input") as HTMLInputElement;
+const burnEl = document.getElementById("burn") as HTMLElement;
+function openAll(): void {
+  allEl.hidden = false;
+  allFind.value = "";
+  drawAll();
+}
+function drawAll(): void {
+  const held = selected?.key ?? null;
+  const q = allFind.value.trim().toLowerCase();
+  const shown = hot.filter((h) => !q || h.name.toLowerCase().includes(q));
+  allList.replaceChildren(
+    ...(shown.length
+      ? shown.map((h) => {
+          const b = slotButton(h, "", held, () => (allEl.hidden = true));
+          b.append(el("span", "emoji", h.emoji || "✦"), el("span", "name", h.name));
+          return b;
+        })
+      : [el("p", "none", "Nothing by that name")]),
+  );
+}
+allFind.addEventListener("input", drawAll);
+press(allEl.querySelector(".close") as HTMLElement, () => (allEl.hidden = true));
 
 function pick(key: string): void {
   lastTouch = performance.now();
@@ -847,10 +967,14 @@ function castFromEye(): void {
   const e = engine.view.orbit.eye;
   if (!e) return;
   lastTouch = performance.now();
-  const r = castFromEyes(e, engine.view.groundAt, engine.world.w, engine.world.h, castAt);
+  const r = castFromEyes(e, engine.view.groundAt, engine.world.w, engine.world.h, castAt, (x, y) => !!engine && !!castOnScreen(engine, x, y, []));
   if (r.ok) eyeStats.casts++;
+  if (r.why && riding) {
+    powerNote = { text: r.why, until: performance.now() + 2000 };
+    tellRider();
+  }
 }
-castEl.addEventListener("click", castFromEye);
+press(castEl, castFromEye);
 
 // The keys on a desktop: WASD or the arrows walk, 1 to 6 take a slot, Space casts.
 const keysDown = new Set<string>();
@@ -1016,7 +1140,7 @@ function placeFor(sort: "village" | "house" | "woods" | "shore" | "fire"): { x: 
     aim,
     held: selected?.key ?? null,
     hot: hot.map((h) => h.key),
-    deeds: riding ? deedsOf(riding) : [],
+    deeds: riding && engine ? deedsOf(engine.world, riding, facing()).map((d) => d.verb) : [],
     ...eyeStats,
     fov: o?.camera.fov ?? 0,
     allCasts: casts,
@@ -1071,6 +1195,7 @@ window.setInterval(() => {
     toldUntil = engine.world.time;
     tellRider();
     drawPowers();
+    drawDeeds();
     return;
   }
   if (watching) {

@@ -23,10 +23,11 @@ import {
   STRIKE_SECONDS,
   thoughtOf,
 } from "../src/sim/possess";
-import { CAST_RANGE, aimAt, castFromEyes, lookTheta, withinRange } from "../src/sim/eyes";
+import { CAST_RANGE, NOTHING_TO_CAST_ON, aimAt, castFromEyes, clearEye, lookTheta, openLook, withinRange } from "../src/sim/eyes";
+import { unpackLook } from "../src/sim/villagers";
 import { jobOf } from "../src/sim/goals";
 import { playerCast } from "../src/sim/playercast";
-import { readFromWorld } from "../src/sim/protocol";
+import { keepOrder, readFromWorld } from "../src/sim/protocol";
 import { surfaceY } from "../src/sim/voxel/terrain";
 import { Runtime } from "../src/sim/runtime";
 import { saveWorld } from "../src/sim/save";
@@ -531,59 +532,137 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
     );
   }
 
-  // 13. Its own acts: only those its kind does by itself, each doing what it says.
+  // 13. Its own acts: only those its kind does by itself, each doing what it says. A villager's is its
+  // trade on what is in front (the owner, 12 November: "Why Eat as an option?"); Strike for those who
+  // fight; Eat only for an animal at its food.
   {
     const at = { x: c.x, y: c.y };
     // The villager of the walk is done: out of the way of the strike below.
     c.hp = 0;
     c.dead = true;
+    const face = Math.atan2(d!.y, d!.x);
+    const ids = (o: Creature) => deedsOf(world, o, face).map((x) => x.verb);
     const deer = makeCreature("deer", at.x, at.y);
     const wolf = makeCreature("wolf", at.x + 3, at.y);
     const bear = makeCreature("bear", at.x + 30, at.y);
     const fish = world.creatures.find((o) => !o.dead && o.kind === "fish");
     world.creatures.push(deer, wolf);
-    const villagers = world.creatures.filter((o) => !o.dead && o.kind === "villager");
-    const guard = villagers.find((o) => jobOf(o) === "guard");
-    const farmer = villagers.find((o) => jobOf(o) !== "guard");
-    const lists = `deer ${deedsOf(deer).join("+") || "none"}, wolf ${deedsOf(wolf).join("+")}, bear ${deedsOf(bear).join("+")}, fish ${fish ? deedsOf(fish).join("+") || "none" : "?"}, guard ${guard ? deedsOf(guard).join("+") : "?"}, other villager ${farmer ? deedsOf(farmer).join("+") : "?"}`;
+    const villagers = world.creatures.filter((o) => !o.dead && o.kind === "villager" && unpackLook(o.look).age === "adult");
+    const byJob = (job: string) => villagers.find((o) => jobOf(o) === job);
+    const guard = byJob("guard");
+    const cutter = byJob("woodcutter");
+    const farmer = byJob("farmer");
+    const ahead = world.idx(at.x + Math.cos(face), at.y + Math.sin(face));
+    const was = world.cover[ahead];
+    // Open grass ahead: no tree for a woodcutter, grass for a grazer.
+    world.setCover(ahead, C.NONE);
+    const put = (o: Creature) => {
+      o.x = at.x;
+      o.y = at.y;
+    };
+    const lists: string[] = [];
+    const listOf = (name: string, o: Creature | undefined) => {
+      if (!o) return null;
+      const keep = { x: o.x, y: o.y };
+      put(o);
+      const l = ids(o);
+      o.x = keep.x;
+      o.y = keep.y;
+      lists.push(`${name} ${l.join("+") || "none"}`);
+      return l.join();
+    };
+    const deerL = listOf("deer", deer);
+    const wolfL = listOf("wolf", wolf);
+    const bearL = listOf("bear", bear);
+    const fishL = listOf("fish", fish);
+    const guardL = listOf("guard", guard);
+    const cutterL = listOf("woodcutter", cutter);
+    const farmerL = listOf("farmer", farmer);
     check(
-      "eyes: each kind gets only the acts it does by itself",
-      deedsOf(deer).join() === "eat" &&
-        deedsOf(wolf).join() === "strike,eat" &&
-        deedsOf(bear).join() === "strike,eat" &&
-        (!fish || deedsOf(fish).length === 0) &&
-        (!guard || deedsOf(guard).join() === "strike,eat") &&
-        (!farmer || deedsOf(farmer).join() === "eat"),
-      lists,
+      "eyes: each kind gets only the acts it does by itself: Strike for fighters, a trade for villagers, no Eat for them",
+      wolfL === "Strike" &&
+        // On grass a grazer is at its food (it makes do with grass, goals.ts MAKE_DO); a wolf never is.
+        bearL === "Strike,Eat" &&
+        deerL === "Eat" &&
+        (!fish || fishL === "") &&
+        (!guard || guardL === "Strike") &&
+        (!cutter || cutterL === "Fell") &&
+        (!farmer || farmerL === "Till" || farmerL === "Sow"),
+      lists.join(", "),
     );
 
-    // Eat: a hungry deer facing flowers eats them, as it grazes by itself; at once again, it is still eating.
-    // On the villager's open grass, facing along it.
-    deer.x = c.x;
-    deer.y = c.y;
+    // Eat: a hungry deer facing flowers gets Eat and eats them, as it grazes by itself; at once again, it is still eating.
+    put(deer);
     possess(world, deer);
     const dm = mindOf(deer);
     dm.hunger = 0.8;
-    const face = Math.atan2(d!.y, d!.x);
-    const ahead = world.idx(deer.x + Math.cos(face), deer.y + Math.sin(face));
-    const was = world.cover[ahead];
     world.setCover(ahead, C.FLOWER);
+    const offered = ids(deer).join();
     const ate = doDeed(world, "eat", face);
     const after = dm.hunger;
     const again = doDeed(world, "eat", face);
     const struck = doDeed(world, "strike", face);
     check(
-      "eyes: Eat eats the plant in front, as the deer's own grazing does",
-      typeof ate === "object" &&
-        ate?.done === "flowers" &&
+      "eyes: Eat shows for a deer at its food and eats the plant in front, as its own grazing does",
+      offered === "Eat" &&
+        typeof ate === "object" &&
+        !!ate &&
+        "done" in ate &&
+        ate.done === "Ate flowers" &&
         Math.abs(after - 0.25) < 1e-9 &&
         world.cover[ahead] === C.NONE &&
         again === "busy" &&
         struck === null,
-      `${JSON.stringify(ate)}, hunger 0.80 to ${after.toFixed(2)}, the flowers ${world.cover[ahead] === C.NONE ? "gone" : "still there"}; again: ${again}; strike for a deer: ${struck}`,
+      `offered ${offered}; ${JSON.stringify(ate)}, hunger 0.80 to ${after.toFixed(2)}, the flowers ${world.cover[ahead] === C.NONE ? "gone" : "still there"}; again: ${again}; strike for a deer: ${struck}`,
     );
-    world.setCover(ahead, was);
     release(world);
+
+    // A woodcutter's trade: Fell on the tree in front makes it a stump, as its own felling does; on open grass it says what is missing.
+    if (cutter) {
+      const keep = { x: cutter.x, y: cutter.y };
+      put(cutter);
+      possess(world, cutter);
+      world.setCover(ahead, C.NONE);
+      const none = doDeed(world, "trade", face);
+      world.setCover(ahead, C.TREE);
+      const verb = ids(cutter).join();
+      const felled = doDeed(world, "trade", face);
+      const stump = world.cover[ahead] === C.STUMP;
+      check(
+        "eyes: a woodcutter's Fell fells the tree in front, and says so when there is none",
+        !!none &&
+          typeof none === "object" &&
+          "missing" in none &&
+          none.missing === "No tree in front" &&
+          verb.includes("Fell") &&
+          !!felled &&
+          typeof felled === "object" &&
+          "done" in felled &&
+          stump,
+        `open grass: ${JSON.stringify(none)}; a tree: ${verb}, ${JSON.stringify(felled)}, ${stump ? "a stump now" : `cover ${world.cover[ahead]}`}`,
+      );
+      release(world);
+      cutter.x = keep.x;
+      cutter.y = keep.y;
+    }
+    // A farmer's: Harvest on the crop in front takes it in, as its own harvest does.
+    if (farmer) {
+      const keep = { x: farmer.x, y: farmer.y };
+      put(farmer);
+      possess(world, farmer);
+      world.setCover(ahead, C.CROP);
+      const verb = ids(farmer).join();
+      const r = doDeed(world, "trade", face);
+      check(
+        "eyes: a farmer's Harvest takes in the crop in front",
+        verb.includes("Harvest") && !!r && typeof r === "object" && "done" in r && world.cover[ahead] !== C.CROP && mindOf(farmer).carry === "food",
+        `${verb}: ${JSON.stringify(r)}, cover ${world.cover[ahead]}, carrying ${mindOf(farmer).carry}`,
+      );
+      release(world);
+      farmer.x = keep.x;
+      farmer.y = keep.y;
+    }
+    world.setCover(ahead, was);
 
     // Strike: a wolf facing a deer in reach takes half a second of its own blows off it; facing away, nothing.
     possess(world, wolf);
@@ -597,12 +676,61 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
     const want = (kindOf(wolf).ai?.attack || 20) * STRIKE_SECONDS;
     check(
       "eyes: Strike lands the wolf's own blow on what is in front, and nothing when it faces away",
-      away === "nothing" && typeof hitIt === "object" && hitIt?.done === "deer" && Math.abs(blow - want) < 1e-6,
-      `facing away: ${away}; facing it: ${JSON.stringify(hitIt)}, ${blow.toFixed(1)} hp of ${want.toFixed(1)} expected`,
+      JSON.stringify(away) === '{"missing":"Strike: nothing in reach"}' &&
+        JSON.stringify(hitIt) === '{"done":"Struck the deer"}' &&
+        Math.abs(blow - want) < 1e-6,
+      `facing away: ${JSON.stringify(away)}; facing it: ${JSON.stringify(hitIt)}, ${blow.toFixed(1)} hp of ${want.toFixed(1)} expected`,
     );
     release(world);
     deer.hp = 0;
     wolf.hp = 0;
+  }
+
+  // 18. The hot bar keeps the order it had when the creature was taken; new items go at its end.
+  {
+    const fixed = ["fire", "water", "earth", "air"];
+    const now = ["water", "lava", "fire", "air", "earth"];
+    const kept = keepOrder(now, fixed);
+    check("eyes: the bar does not reorder while possessed; what is new goes at its end", kept.join() === "fire,water,earth,air,lava", kept.join());
+  }
+
+  // 19. No ring, no cast: aimed where the landing point is out of view, the cast does not go and the line says why.
+  {
+    let cast = 0;
+    const r = castFromEyes(
+      { x: 50, y: 50, h: 1.6, yaw: 0, pitch: 0.4 },
+      () => 0,
+      100,
+      100,
+      () => (cast++, true),
+      () => false,
+    );
+    check(
+      "eyes: with no ring in view nothing is cast, and the line says why",
+      !r.ok && cast === 0 && r.why === NOTHING_TO_CAST_ON,
+      `${JSON.stringify(r)}, ${cast} casts`,
+    );
+  }
+
+  // 20. The eye looks the open way when it faces a wall, keeps its look when it is open, and is kept clear of a wall beside it.
+  {
+    const flat = () => 0;
+    const wallEast = (x: number) => x >= 52;
+    const turned = openLook(50.5, 50.5, 1.6, 0, flat, wallEast);
+    const kept = openLook(50.5, 50.5, 1.6, Math.PI, flat, wallEast);
+    const cleared = clearEye(51.9, 50.5, 1.6, flat, (cx) => cx === 52);
+    const cliff = clearEye(
+      50.5,
+      50.95,
+      1.6,
+      (x, y) => (y >= 51 ? 4 : 0),
+      () => false,
+    );
+    check(
+      "eyes: facing a wall the eye turns to the open way, keeps an open look, and stays clear of walls and cliffs",
+      Math.cos(turned) < 0.5 && Math.abs(kept - Math.PI) < 1e-9 && cleared.x <= 52 - 0.45 + 1e-9 && cliff.y <= 51 - 0.45 + 1e-9,
+      `turned to ${turned.toFixed(2)} rad; kept ${kept.toFixed(2)}; beside a wall x ${cleared.x.toFixed(2)}; under a cliff y ${cliff.y.toFixed(2)}`,
+    );
   }
 
   // 16. From behind, the camera's turn is the player's: it turns behind the creature once when it is

@@ -1,5 +1,5 @@
 import { abilitiesOf, enemyOf, fireAbility } from "./abilities";
-import { eatNow, eats, strikeNow, strikes } from "./goals";
+import { doChore, eats, mealFor, strikeNow, strikes, tradeFor } from "./goals";
 import { life, mindOf, type AbilitySpec, type Mind } from "./kin";
 import { names } from "./social";
 import type { Creature } from "./creatures";
@@ -156,38 +156,55 @@ export function act(world: World, n: number): "done" | "nothing" | "cooling" | n
 }
 
 // Its own acts on demand (Through its eyes, 2026-11-12): only what the engine
-// already does for this kind by itself (goals.ts strikes, eats). A strike is
-// half a second of its own blows, at most twice a second; a meal takes as
-// long as the engine's own (goals.ts DURATION: eat 2 s, graze 2.5, feast 3).
-export type Deed = "strike" | "eat";
+// already does for this kind by itself (goals.ts): Strike for those who fight,
+// a villager's trade on what is in front (Fell, Fish, Harvest, Build...), and
+// Eat for an animal at its food. A strike is half a second of its own blows,
+// at most twice a second; a trade or a meal takes as long as the engine's own
+// task (goals.ts DURATION).
+export type Deed = "strike" | "trade" | "eat";
 export const STRIKE_SECONDS = 0.5;
-const MEAL_SECONDS: Record<string, number> = { "the village's food": 2, grass: 2.5 };
 
-export function deedsOf(c: Creature): Deed[] {
+export interface DeedButton {
+  id: Deed;
+  verb: string;
+}
+
+// The buttons it has now, facing `facing` (the look in the eye view, its
+// heading else). The trade's verb follows what is in front ("Harvest" a crop,
+// "Sow" a bare field); Eat shows only while food is in front.
+export function deedsOf(world: World, c: Creature, facing = c.hd): DeedButton[] {
   const k = life.kindOf(c);
-  const out: Deed[] = [];
-  if (strikes(c, k)) out.push("strike");
-  if (eats(c, k)) out.push("eat");
+  const out: DeedButton[] = [];
+  if (strikes(c, k)) out.push({ id: "strike", verb: "Strike" });
+  const t = tradeFor(world, c, facing);
+  if (t) out.push({ id: "trade", verb: t.verb });
+  if (mealFor(world, c, facing)) out.push({ id: "eat", verb: "Eat" });
   return out;
 }
 
-// Does it now, facing `facing` (the look in the eye view, its heading else):
-// what it hit or ate, "nothing" when nothing is in reach, "busy" while the
-// last blow or meal lasts, null when it is not one of its acts.
-export function doDeed(world: World, what: Deed, facing: number): { done: string } | "nothing" | "busy" | null {
+// Does it now: what it did ("Felled a tree", "Struck the wolf"), what is
+// missing ("No tree in front"), "busy" while the last one lasts, null when it
+// is not one of its acts.
+export function doDeed(world: World, what: Deed, facing: number): { done: string } | { missing: string } | "busy" | null {
   const p = possessed(world);
-  if (!p || p.c.dead || !deedsOf(p.c).includes(what)) return null;
-  if (world.time < p.busy) return "busy";
+  if (!p || p.c.dead) return null;
+  const c = p.c;
+  const k = life.kindOf(c);
   if (what === "strike") {
-    const t = strikeNow(world, p.c, facing, STRIKE_SECONDS);
-    if (!t) return "nothing";
+    if (!strikes(c, k)) return null;
+    if (world.time < p.busy) return "busy";
+    const t = strikeNow(world, c, facing, STRIKE_SECONDS);
+    if (!t) return { missing: "Strike: nothing in reach" };
     p.busy = world.time + STRIKE_SECONDS;
-    return { done: t.kind.split("#")[0] };
+    return { done: `Struck the ${t.kind.split("#")[0]}` };
   }
-  const ate = eatNow(world, p.c, facing);
-  if (!ate) return "nothing";
-  p.busy = world.time + (MEAL_SECONDS[ate] ?? (ate.startsWith("the ") ? 3 : 2.5));
-  return { done: ate };
+  const found =
+    what === "trade" ? tradeFor(world, c, facing) : eats(c, k) ? (mealFor(world, c, facing) ?? { verb: "Eat", missing: "Nothing to eat here" }) : null;
+  if (!found) return null;
+  if (world.time < p.busy) return "busy";
+  if ("missing" in found) return { missing: found.missing };
+  p.busy = world.time + found.seconds;
+  return { done: doChore(world, c, found) };
 }
 
 // Let go: the creature's own mind takes over where it left off.

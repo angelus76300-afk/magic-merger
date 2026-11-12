@@ -535,6 +535,145 @@
       #hotbar button.waiting {
         opacity: 0.45;
       }
+      /* The button at the bar's end stays in reach while the bar scrolls. */
+      #hotbar button.all {
+        position: sticky;
+        right: 0;
+        width: 52px;
+        border-color: #ffc23d;
+        background: #1b2440;
+        color: #ffc23d;
+        font:
+          800 13px/1 system-ui,
+          sans-serif;
+        box-shadow: -6px 0 8px rgba(13, 18, 36, 0.9);
+      }
+      /* The whole list over the view, with a search; the eyes stay behind it. */
+      #allspells {
+        position: absolute;
+        left: 8px;
+        right: 8px;
+        top: 64px;
+        bottom: calc(70px + env(safe-area-inset-bottom));
+        max-width: 560px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 10px;
+        box-sizing: border-box;
+        border: 2px solid #05080f;
+        border-radius: 12px;
+        background: rgba(13, 18, 36, 0.94);
+        color: #f6efdc;
+      }
+      #allspells[hidden],
+      #burn[hidden] {
+        display: none;
+      }
+      #allspells .top {
+        display: flex;
+        gap: 8px;
+      }
+      #allspells input {
+        flex: 1;
+        min-width: 0;
+        height: 44px;
+        padding: 0 12px;
+        box-sizing: border-box;
+        border: 1px solid #3a4466;
+        border-radius: 8px;
+        background: #0b1020;
+        color: #f6efdc;
+        font:
+          15px system-ui,
+          sans-serif;
+      }
+      #allspells .close {
+        width: 44px;
+        height: 44px;
+        border: 0;
+        border-radius: 8px;
+        background: #1b2440;
+        color: #f6efdc;
+        font-size: 22px;
+        cursor: pointer;
+      }
+      #allspells .list {
+        flex: 1;
+        overflow-y: auto;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        align-content: start;
+        gap: 6px;
+      }
+      #allspells .list button {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 44px;
+        padding: 4px 8px;
+        border: 2px solid #3a4466;
+        border-radius: 8px;
+        background: #1b2440;
+        color: #f6efdc;
+        font:
+          600 13px/1.2 system-ui,
+          sans-serif;
+        text-align: left;
+        cursor: pointer;
+      }
+      #allspells .list button[aria-pressed="true"] {
+        border-color: #ffc23d;
+        background: #3a3012;
+      }
+      #allspells .list button.waiting {
+        opacity: 0.5;
+      }
+      #allspells .emoji {
+        font-size: 20px;
+      }
+      #allspells .none {
+        color: #a9b2cf;
+      }
+      /* Burning: a warm edge round the view. */
+      #burn {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        box-shadow: inset 0 0 70px 18px rgba(255, 110, 20, 0.55);
+        animation: burn-flicker 0.35s ease-in-out infinite alternate;
+      }
+      @keyframes burn-flicker {
+        to {
+          box-shadow: inset 0 0 90px 26px rgba(255, 70, 10, 0.65);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #burn {
+          animation: none;
+        }
+      }
+      /* The creature's health by its name, and the island's trouble above its thought. */
+      #story .hp {
+        display: inline-block;
+        width: 46px;
+        height: 6px;
+        margin-left: 8px;
+        vertical-align: middle;
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.15);
+        overflow: hidden;
+      }
+      #story .hp i {
+        display: block;
+        height: 100%;
+      }
+      #story .trouble {
+        color: #ffb36b;
+        font-size: 13px;
+        font-weight: 700;
+      }
       #hotbar .empty {
         padding: 0 10px;
         color: #a9b2cf;
@@ -681,7 +820,15 @@
       <button id="castbtn" type="button" hidden>Cast</button>
     </div>
     <div id="held" hidden aria-live="polite"></div>
-    <div id="hotbar" hidden role="toolbar" aria-label="Your last spells"></div>
+    <div id="hotbar" hidden role="toolbar" aria-label="Your spells and items, last used first"></div>
+    <div id="burn" hidden aria-hidden="true"></div>
+    <div id="allspells" hidden role="dialog" aria-label="All your spells and items">
+      <div class="top">
+        <input type="search" placeholder="Find a spell" aria-label="Find a spell" autocomplete="off" />
+        <button class="close" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="list"></div>
+    </div>
     <script type="module" src="/src/sim/frame.ts"></script>
   </body>
 </html>

@@ -13,7 +13,7 @@ import { Checker } from "./checker";
 import { reportable } from "./checkresult";
 import { chipElement } from "./craft";
 import { FilterBar, applyFilters, lastUsed, markUsed } from "./filters";
-import { HOT_SLOTS, MAX_SAVE_CHARS, readFromWorld, type HotSlot } from "./sim/protocol";
+import { HOT_SLOTS, MAX_SAVE_CHARS, keepOrder, readFromWorld, type HotSlot } from "./sim/protocol";
 import { programToFetch } from "../shared/sync";
 import type { ToWorld } from "./sim/protocol";
 import { SCENARIO_LIST } from "./sim/scenario-list";
@@ -141,6 +141,10 @@ export class WorldHost {
   private eyes = false;
   // The player is a creature on the island: a spell is cast from it, within its reach.
   private riding = false;
+  // The hot bar's order, fixed when the player becomes a creature: last used
+  // first then, and the same until Let go, so a cast never moves the slot
+  // under the thumb (the playtest of 12 November). New items go at its end.
+  private hotOrder: string[] | null = null;
   private hotSent = "";
 
   constructor(
@@ -699,6 +703,9 @@ export class WorldHost {
         break;
       case "riding":
         this.riding = msg.on;
+        this.hotOrder = null;
+        this.hotSent = "";
+        if (this.eyes) this.sendHotbar();
         this.updateStatus();
         break;
       case "pick":
@@ -1437,14 +1444,16 @@ export class WorldHost {
     }
   }
 
-  // The last used spells and items, then the newest: what the hot bar holds.
+  // Every spell and item, last used first then the newest, in the order of the moment the player became a creature.
   private sendHotbar(): void {
-    const slots: HotSlot[] = applyFilters(this.store.discoveries(), { kind: "all", tier: "any", sort: "used", query: "" }, lastUsed, (d) =>
-      elementKey(d.element.name),
-    )
+    const keyOf = (d: { element: { name: string } }) => elementKey(d.element.name);
+    const now = applyFilters(this.store.discoveries(), { kind: "all", tier: "any", sort: "used", query: "" }, lastUsed, keyOf);
+    this.hotOrder ??= now.map(keyOf);
+    const byKey = new Map(now.map((d) => [keyOf(d), d]));
+    const slots: HotSlot[] = keepOrder([...byKey.keys()], this.hotOrder)
       .slice(0, HOT_SLOTS)
-      .map((d) => {
-        const key = elementKey(d.element.name);
+      .map((key) => {
+        const d = byKey.get(key)!;
         return { key, name: d.element.name, emoji: d.element.emoji, ready: !!this.request(key) };
       });
     const text = JSON.stringify(slots);

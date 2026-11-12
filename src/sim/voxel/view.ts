@@ -59,6 +59,8 @@ import { PropModels } from "./props";
 import { valueNoise } from "../noise";
 import { Sky } from "./sky";
 import { eyeFogRange, fogRange } from "./fog";
+import { clearEye } from "../eyes";
+import { solidCovers } from "../paths";
 
 // What a spell's darkness pulls the sky toward.
 const NIGHT_SKY = 0x04020f;
@@ -846,9 +848,24 @@ export class VoxelView {
     const x = g ? g.px + (c.x - g.px) * a : c.x;
     const y = g ? g.py + (c.y - g.py) * a : c.y;
     const ground = g && Number.isFinite(g.gy) ? g.gy : walkGround(world, x, y);
-    // Eyes sit a little under the top of the head (a hat or antlers above them).
-    this.orbit.eyeAt(x, y, ground + c.z + Math.max(0.35, rig.height * size * 0.88));
+    // Eyes sit a little under the top of the head (a hat or antlers above them),
+    // kept clear of walls, trunks and steps of ground (eyes.ts clearEye): pressed
+    // to a cliff or a house the view was one flat colour (the playtest of 12 November).
+    const e = clearEye(x, y, ground + c.z + Math.max(0.35, rig.height * size * 0.88), this.groundAt, this.solidCell);
+    this.orbit.eyeAt(e.x, e.y, e.h);
+    this.eyeCell.x = e.x;
+    this.eyeCell.y = e.y;
   }
+
+  // Where the eye is, in cells, for hiding what stands right against it.
+  private eyeCell = { x: NaN, y: NaN };
+
+  // A wall or a trunk in the cell (cx, cy): what a walker cannot enter (paths.ts solidCovers).
+  solidCell = (cx: number, cy: number): boolean => {
+    const { world } = this;
+    if (cx < 0 || cy < 0 || cx >= world.w || cy >= world.h) return false;
+    return solidCovers(world)[world.cover[cy * world.w + cx]] === 1;
+  };
 
   private placeCreatures(time: number): void {
     const { world } = this;
@@ -956,7 +973,8 @@ export class VoxelView {
       this.sphere.center.set(p.x, p.y + rig.height * size * 0.5, p.z);
       this.sphere.radius = Math.max(rig.height, 1.4) * size;
       // The one the player sees from is not drawn: its own head would fill the view.
-      if (c.id === this.eyeId && this.orbit.eye) continue;
+      // Nor anyone closer than a cell to the eye: a face or a back filled the screen.
+      if (this.orbit.eye && (c.id === this.eyeId || Math.hypot(rx - this.eyeCell.x, ry - this.eyeCell.y) < 1.1)) continue;
       const seen = this.frustum.intersectsSphere(this.sphere);
 
       // The mark over its head, then the figure, when the camera sees it.
