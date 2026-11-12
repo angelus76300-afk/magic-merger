@@ -678,7 +678,23 @@ function usePower(n: number): void {
   if (r === "nothing" && spec)
     powerNote = { text: POWER_NOTHING[spec.do] ?? `${POWER_WORDS[spec.do] ?? "That"}: nothing in reach`, until: performance.now() + 2200 };
   else if (r === "done" && spec) powerNote = POWER_DONE[spec.do] ? { text: POWER_DONE[spec.do], until: performance.now() + 2200 } : null;
-  else if (r === "cooling" && spec) {
+  // The dome is clear from the front: a ring of its colour shows it went up. Drawn here, not in the
+  // engine, so the island's own shields and its random draws stay as they were.
+  if (r === "done" && spec?.do === "shield") {
+    for (let k = 0; k < 12; k++) {
+      const a = (k / 12) * Math.PI * 2;
+      engine.world.particles.add({
+        x: riding.x + Math.cos(a) * 3,
+        y: riding.y + Math.sin(a) * 3,
+        z: 0.5,
+        vz: 2,
+        life: 0.9,
+        color: 0x9fd8ff,
+        size: 1.4,
+        glow: true,
+      });
+    }
+  } else if (r === "cooling" && spec) {
     const left = powersOf(engine.world, riding)[n]?.left ?? 0;
     powerNote = { text: `${POWER_WORDS[spec.do] ?? "That"}: ready in ${Math.ceil(left)} s`, until: performance.now() + 1800 };
   }
