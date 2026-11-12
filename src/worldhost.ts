@@ -139,6 +139,8 @@ export class WorldHost {
   // page's header, spell drawer and tools are hidden (body.eyes); the hot bar
   // last sent, so it goes again only when it changes.
   private eyes = false;
+  // The player is a creature on the island: a spell is cast from it, within its reach.
+  private riding = false;
   private hotSent = "";
 
   constructor(
@@ -351,6 +353,7 @@ export class WorldHost {
 
   private replaceFrame(): void {
     this.setEyes(false);
+    this.riding = false;
     this.frame?.remove();
     this.frame = null;
     this.ready = false;
@@ -612,7 +615,8 @@ export class WorldHost {
         this.castInAttempt.push(msg.key);
         markUsed(msg.key);
         if (this.eyes) this.sendHotbar();
-        if (!this.challenge) {
+        // In the eye view the island has its own buttons: no hint over them.
+        if (!this.challenge && !this.eyes) {
           this.guide.again(this.el.stage);
           this.guide.cast(this.el.stage);
         }
@@ -692,6 +696,10 @@ export class WorldHost {
       }
       case "eyes":
         this.setEyes(msg.on && this.shown);
+        break;
+      case "riding":
+        this.riding = msg.on;
+        this.updateStatus();
         break;
       case "pick":
         // From the hot bar: the same as a chip of the drawer, without its words (the drawer is hidden).
@@ -1408,6 +1416,8 @@ export class WorldHost {
       if (this.testing.has(key)) text = `Testing ${name} on a practice island…`;
       else if (this.writing.has(key)) text = `The grimoire is writing ${name}… it will be ready in a moment.`;
       else if (this.preparing.has(key)) text = `Preparing ${name}… the first cast of a spell takes a moment.`;
+      else if (this.request(key) && this.riding)
+        text = `Tap the island to ${this.store.get(key)?.element.kind === "artifact" ? "place" : "cast"} ${name} from where you stand, up to 14 steps away.`;
       else if (this.request(key))
         text = `Tap the island to ${this.store.get(key)?.element.kind === "artifact" ? "place" : "cast"} ${name}. Tap it again to put it away and look at creatures.`;
       else text = `${name} is not ready yet.`;

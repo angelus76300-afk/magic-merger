@@ -3,7 +3,7 @@ import { Engine, type WorldSize } from "./engine";
 import { DEFAULT_LAND, readChoice, resolveLand, type LandChoice } from "./land";
 import { WORLD_SIZES } from "./sizes";
 import { C } from "./materials";
-import { kindOf, makeCreature, maxHp, type Creature } from "./creatures";
+import { kindOf, makeCreature, maxHp, whyStopped, type Creature } from "./creatures";
 import { artifactAt, creatureAt, inspect, inspectArtifact } from "./inspect";
 import type { Artifact } from "./artifacts";
 import { HOT_SLOTS, type FromWorld, type HotSlot, type ToWorld } from "./protocol";
@@ -14,8 +14,8 @@ import { SCENARIOS } from "./scenarios";
 import { firstLook, villageView, type Pose } from "./firstlook";
 import { fireOf, startWildfire, stoneAt, stoneLine, troubleLine, type Stone } from "./troubles";
 import { Director, lifeLine, nameOf, whoIs, type Shot } from "./director";
-import { act, checkHeld, deedsOf, doDeed, possess, possessed, powersOf, release, steerBy, thoughtOf, type Deed } from "./possess";
-import { aimAt, castFromEyes, eyesFirst, lookTheta } from "./eyes";
+import { act, checkHeld, deedsOf, doDeed, possess, possessed, powersOf, release, steerBy, stopNote, thoughtOf, type Deed } from "./possess";
+import { aimAt, castFromEyes, eyesFirst, lookTheta, withinRange } from "./eyes";
 import { castOnScreen, watchCast } from "./voxel/castview";
 import { LAND_REDRAW } from "./voxel/terrain";
 import { readDef, setFinders, signatureOf, wonderInfo, type WonderDef } from "./wonders";
@@ -105,10 +105,14 @@ const hooks = {
     }
     if (engine.view.orbit.watching) return;
     // While the player is a creature (Become, 2026-11-12) a tap on the island
-    // casts only in the eye view, where the mark in the middle points (Through
-    // its eyes): from behind, the player lets go first to cast.
+    // casts from it: in the eye view where the mark in the middle points, from
+    // behind where the finger is, within 14 cells of it either way (eyes.ts).
     if (riding) {
       if (eyes) castFromEye();
+      else if (selected) {
+        const at = withinRange(riding.x, riding.y, x, y);
+        castAt(at.x, at.y);
+      }
       return;
     }
     if (!selected) {
@@ -470,11 +474,8 @@ let rideStart = 0;
 let rideName = "";
 let fellTimer = 0;
 let powerNote: { text: string; until: number } | null = null;
-// The thumb on the stick: where it is (-1 to 1, y down) and the camera's turn
-// when it came down. The stick points along the ground as the player saw it
-// then: measured against the camera as it swings, a push down would turn the
-// creature round, the camera with it, and the creature round again.
-const stick = { x: 0, y: 0, id: -1, theta: 0 };
+// The thumb on the stick: where it is (-1 to 1, y down), against the view as it is now.
+const stick = { x: 0, y: 0, id: -1 };
 
 const POWER_WORDS: Record<string, string> = {
   "breathe fire": "Fire",
@@ -490,6 +491,18 @@ const POWER_WORDS: Record<string, string> = {
   flood: "Flood",
   steal: "Steal",
   cast: "Cast",
+};
+
+// Why an ability did nothing (abilities.ts fireAbility), and what one that worked did, when it is not plain to see.
+const POWER_NOTHING: Record<string, string> = {
+  heal: "No one here is hurt",
+  shield: "A shield already stands here",
+  dig: "Nothing to dig here: water or a plant",
+};
+const POWER_DONE: Record<string, string> = {
+  heal: "Healed the hurt around you",
+  shield: "A shield for 6 seconds",
+  dig: "Dug a burrow",
 };
 
 function riderName(c: Creature): string {
@@ -511,6 +524,7 @@ function startBecome(c: Creature): void {
   lineGoes = null;
   powerNote = null;
   document.body.classList.add("possessed");
+  send({ type: "riding", on: true });
   stickEl.hidden = false;
   letGoEl.hidden = false;
   watchEl.hidden = true;
@@ -520,6 +534,10 @@ function startBecome(c: Creature): void {
   engine.view.orbit.chase(c.x, c.y, c.z, c.hd, kindOf(c).radius * c.size);
   eyeEl.hidden = false;
   eyesBack = false;
+  // Its own acts and powers at the right thumb, in both views (a wolf had no button at all).
+  actsEl.hidden = false;
+  deedsEl.prepend(powersEl);
+  drawDeeds();
   // Walkers start in their eyes; flyers and swimmers behind (eyes.ts).
   if (eyesFirst(kindOf(c))) setEyes(true);
   lastTouch = performance.now();
@@ -532,6 +550,8 @@ function endBecome(why: "let go" | "fell" | "gone"): void {
   setEyes(false);
   eyeEl.hidden = true;
   eyesBack = false;
+  actsEl.hidden = true;
+  document.body.insertBefore(powersEl, letGoEl);
   riding = null;
   if (engine) {
     release(engine.world, why);
@@ -543,6 +563,7 @@ function endBecome(why: "let go" | "fell" | "gone"): void {
   stick.id = -1;
   knobEl.style.transform = "";
   document.body.classList.remove("possessed");
+  send({ type: "riding", on: false });
   stickEl.hidden = true;
   letGoEl.hidden = true;
   powersEl.hidden = true;
@@ -599,8 +620,11 @@ function usePower(n: number): void {
   lastTouch = performance.now();
   const spec = powersOf(engine.world, riding)[n]?.spec;
   const r = act(engine.world, n);
-  if (r === "nothing" && spec) powerNote = { text: `${POWER_WORDS[spec.do] ?? "That"}: nothing in reach`, until: performance.now() + 1800 };
-  else if (r === "done") powerNote = null;
+  // What happened, in words (the playtest of 12 November: Heal said "nothing in reach" beside two
+  // villagers at full health, and a Shield going up showed nothing).
+  if (r === "nothing" && spec)
+    powerNote = { text: POWER_NOTHING[spec.do] ?? `${POWER_WORDS[spec.do] ?? "That"}: nothing in reach`, until: performance.now() + 2200 };
+  else if (r === "done" && spec) powerNote = POWER_DONE[spec.do] ? { text: POWER_DONE[spec.do], until: performance.now() + 2200 } : null;
   if (r === "done" || r === "nothing") saveSoon();
   drawPowers();
   tellRider();
@@ -629,7 +653,6 @@ stickEl.addEventListener("pointerdown", (e) => {
   e.stopPropagation();
   stickEl.setPointerCapture(e.pointerId);
   stick.id = e.pointerId;
-  stick.theta = engine.view.orbit.theta;
   moveStick(e);
 });
 stickEl.addEventListener("pointermove", (e) => {
@@ -658,13 +681,23 @@ function ride(): void {
   const keyed = stick.id < 0 ? keyStick() : null;
   const sx = keyed ? keyed.x : stick.x;
   const sy = keyed ? keyed.y : stick.y;
-  // In the eye view the stick goes along the look as it turns (another finger
-  // turns it while the thumb walks); from behind, along the view the thumb came down on.
-  steerBy(world, sx, sy, o.eye ? lookTheta(o.eye.yaw) : stick.id >= 0 ? stick.theta : o.theta);
+  // The stick goes along the view as it is now, in both views: the camera
+  // turns only when the player turns it (orbit.ts chase), so a push held one
+  // way keeps the creature going that way on screen (the playtest of 12 November).
+  steerBy(world, sx, sy, o.eye ? lookTheta(o.eye.yaw) : o.theta);
   const c = riding;
   o.chase(c.x, c.y, c.z, c.hd, kindOf(c).radius * c.size);
   if (eyes) drawMark();
+  // Stopped against the sea, a cliff or the rim: why, once, not more than every four seconds.
+  const stopped = stopNote(world, whyStopped);
+  const now = performance.now();
+  if (stopped && now - stopSaidAt > 4000) {
+    stopSaidAt = now;
+    powerNote = { text: stopped, until: now + 2200 };
+    tellRider();
+  }
 }
+let stopSaidAt = -1e9;
 requestAnimationFrame(ride);
 
 // Through its eyes (2026-11-12, eyes.ts): the camera at the creature's head,
@@ -710,12 +743,9 @@ function setEyes(on: boolean): void {
   eyeEl.lastElementChild!.textContent = on ? "Behind" : "Eyes";
   markEl.hidden = !on;
   landingEl.hidden = true;
-  actsEl.hidden = !on;
   hotbarEl.hidden = !on;
   heldEl.hidden = true;
-  // Its own powers join its acts at the right thumb, and go back beside the stick after.
-  if (on) deedsEl.prepend(powersEl);
-  else document.body.insertBefore(powersEl, letGoEl);
+  castEl.hidden = true;
   picking = null;
   drawDeeds();
   drawHot();
@@ -728,7 +758,7 @@ eyeEl.addEventListener("click", () => setEyes(!eyes));
 const DEED_WORDS: Record<Deed, string> = { strike: "Strike", eat: "Eat" };
 
 function drawDeeds(): void {
-  if (!riding || !engine || !eyes) return deedsEl.querySelectorAll(".deed").forEach((b) => b.remove());
+  if (!riding || !engine) return deedsEl.querySelectorAll(".deed").forEach((b) => b.remove());
   const list = deedsOf(riding);
   const have = [...deedsEl.querySelectorAll<HTMLButtonElement>(".deed")].map((b) => b.dataset.deed);
   if (have.join() === list.join()) return;
@@ -861,7 +891,7 @@ window.addEventListener("blur", () => keysDown.clear());
 
 // A place for a frame of the checks: open ground near the nearest house, in
 // the thickest woods or on the shore, and the look toward it. Only the checks call it.
-function placeFor(sort: "house" | "woods" | "shore"): { x: number; y: number; yaw: number } | null {
+function placeFor(sort: "village" | "house" | "woods" | "shore" | "fire"): { x: number; y: number; yaw: number } | null {
   if (!engine || !riding) return null;
   const w = engine.world;
   const free = (x: number, y: number) => w.inside(x, y) && w.cover[w.idx(x, y)] === C.NONE && w.depth[w.idx(x, y)] < 0.15;
@@ -872,6 +902,31 @@ function placeFor(sort: "house" | "woods" | "shore"): { x: number; y: number; ya
   };
   let best: { x: number; y: number; yaw: number } | null = null;
   let bestD = Infinity;
+  if (sort === "fire") {
+    // Eight cells from the heart of the island's wildfire, on open ground, looking at it.
+    const t = w.trouble;
+    if (!t) return null;
+    const f = fireOf(w, t);
+    for (let k = 0; k < 32; k++) {
+      const a = (k / 32) * Math.PI * 2;
+      const x = Math.round(f.x + Math.cos(a) * 8);
+      const y = Math.round(f.y + Math.sin(a) * 8);
+      if (free(x, y) && w.fire[w.idx(x, y)] < 0.05) return { x, y, yaw: a + Math.PI };
+    }
+    return null;
+  }
+  if (sort === "village") {
+    // The biggest village, from open ground seven cells off its middle, looking at it.
+    const v = [...w.settlements].sort((a, b) => near(b.x, b.y, 8, (i) => w.cover[i] === C.HOUSE) - near(a.x, a.y, 8, (i) => w.cover[i] === C.HOUSE))[0];
+    if (!v) return null;
+    for (let k = 0; k < 32; k++) {
+      const a = (k / 32) * Math.PI * 2;
+      const x = Math.floor(v.x + Math.cos(a) * 7);
+      const y = Math.floor(v.y + Math.sin(a) * 7);
+      if (free(x, y) && free(x + Math.round(-Math.cos(a)), y + Math.round(-Math.sin(a)))) return { x: x + 0.5, y: y + 0.5, yaw: a + Math.PI };
+    }
+    return null;
+  }
   for (let y = 4; y < w.h - 4; y++)
     for (let x = 4; x < w.w - 4; x++) {
       const d = Math.hypot(x - riding.x, y - riding.y);
@@ -910,11 +965,32 @@ function placeFor(sort: "house" | "woods" | "shore"): { x: number; y: number; ya
 
 // For the checks (scripts/eyes-frames.mjs): the eye view as it stands, and a
 // way to turn the look without a finger. Nothing of this is sent anywhere.
-(window as unknown as { __mmEyes?: (look?: { yaw?: number; pitch?: number; turn?: number; place?: "house" | "woods" | "shore" }) => unknown }).__mmEyes = (
-  look,
-) => {
+(
+  window as unknown as {
+    __mmEyes?: (look?: {
+      yaw?: number;
+      pitch?: number;
+      turn?: number;
+      place?: "village" | "house" | "woods" | "shore" | "fire";
+      become?: string;
+      burn?: boolean;
+    }) => unknown;
+  }
+).__mmEyes = (look) => {
   const o = engine?.view.orbit;
   const e = o?.eye;
+  // Becomes the living creature of that kind nearest the middle of the view (when none is on screen to tap).
+  if (look?.become && engine && !riding) {
+    const o0 = engine.view.orbit;
+    const kind = look.become;
+    const who = engine.world.creatures
+      .filter((k) => !k.dead && k.kind.split("#")[0] === kind)
+      .sort((a, b) => Math.hypot(a.x - o0.tx, a.y - o0.ty) - Math.hypot(b.x - o0.tx, b.y - o0.ty))[0];
+    if (!who) return null;
+    startBecome(who);
+  }
+  // Sets the creature the player is alight, as a fire it walked into would.
+  if (look?.burn && riding) riding.burning = 30;
   if (look?.place && riding) {
     const at = placeFor(look.place);
     if (!at) return null;
@@ -938,6 +1014,10 @@ function placeFor(sort: "house" | "woods" | "shore"): { x: number; y: number; ya
     deeds: riding ? deedsOf(riding) : [],
     ...eyeStats,
     fov: o?.camera.fov ?? 0,
+    caption,
+    rider: riding ? { kind: riding.kind, hp: Math.round(riding.hp), burning: riding.burning > 0, x: riding.x, y: riding.y } : null,
+    trouble: engine?.world.trouble ? { stage: engine.world.trouble.stage, casts: engine.world.trouble.casts.length } : null,
+    powers: riding && engine ? powersOf(engine.world, riding).map((p) => ({ do: p.spec.do, left: Math.round(p.left * 10) / 10 })) : [],
   };
 };
 

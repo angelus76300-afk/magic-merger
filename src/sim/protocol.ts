@@ -1,7 +1,7 @@
 import { readDigest, type ChronicleDigest } from "../../shared/chronicle";
 import type { CastRequest } from "./runtime";
 import type { SavedWorld } from "./save";
-import type { WorldSize } from "./engine";
+import type { WorldSize } from "./sizes";
 import type { LandChoice } from "./land-options";
 
 // Messages between the game page and the sandboxed World iframe. The iframe
@@ -114,7 +114,8 @@ export function readFromWorld(data: unknown): FromWorld | null {
     case "need":
       return Array.isArray(m.names) && m.names.length <= 20 && m.names.every((n) => str(n, 120)) ? { type: "need", names: m.names as string[] } : null;
     case "eyes":
-      return typeof m.on === "boolean" ? { type: "eyes", on: m.on } : null;
+    case "riding":
+      return typeof m.on === "boolean" ? { type: m.type, on: m.on } : null;
     case "pick":
       return m.key === null || str(m.key, 120) ? { type: "pick", key: m.key as string | null } : null;
     case "objective":
@@ -165,5 +166,7 @@ export type FromWorld =
   // creature's eyes and the page hides its own header, spell drawer and
   // tools (on), or shows them again exactly as they were (off).
   | { type: "eyes"; on: boolean }
+  // The player is a creature (Become) or no longer: the page's hint says how a spell is cast then.
+  | { type: "riding"; on: boolean }
   // A slot of the hot bar tapped: the spell to hold, or null to put it away.
   | { type: "pick"; key: string | null };

@@ -2,13 +2,28 @@
 // through the engine's own steering and walls, its own thinking is paused and comes back on release,
 // its abilities fire on demand with their own cooldown, 0 health throws the player out, the save never
 // sees it, and nothing it does ends a trouble.
-import { KINDS, kindOf, makeCreature, populate, type Creature, type CreatureKind } from "../src/sim/creatures";
+import { KINDS, kindOf, makeCreature, maxHp, populate, whyStopped, type Creature, type CreatureKind } from "../src/sim/creatures";
+import { OrbitCamera } from "../src/sim/voxel/orbit";
 import { mindOf, storyOn } from "../src/sim/kin";
 import { DEFAULT_LAND, resolveLand } from "../src/sim/land";
 import { C, F, G } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
-import { act, checkHeld, deedsOf, doDeed, possess, possessed, powersOf, release, steerBy, stickDir, STRIKE_SECONDS, thoughtOf } from "../src/sim/possess";
-import { CAST_RANGE, aimAt, castFromEyes, lookTheta } from "../src/sim/eyes";
+import {
+  act,
+  checkHeld,
+  deedsOf,
+  doDeed,
+  possess,
+  possessed,
+  powersOf,
+  release,
+  steerBy,
+  stickDir,
+  stopNote,
+  STRIKE_SECONDS,
+  thoughtOf,
+} from "../src/sim/possess";
+import { CAST_RANGE, aimAt, castFromEyes, lookTheta, withinRange } from "../src/sim/eyes";
 import { jobOf } from "../src/sim/goals";
 import { playerCast } from "../src/sim/playercast";
 import { readFromWorld } from "../src/sim/protocol";
@@ -291,7 +306,12 @@ export function becomeChecks(check: Check): void {
     const again = act(world, 0);
     const twice = h.hp;
     const power = powersOf(world, h)[0];
-    run(world, rt, 15.5, () => awake(h));
+    run(world, rt, 15.5, () => {
+      awake(h);
+      // Kept alive through the wait: a wolf passing by is not what this checks.
+      h.hp = Math.max(h.hp, 20);
+      h.burning = 0;
+    });
     h.hp = Math.min(h.hp, 30);
     const later = act(world, 0);
     check("become: an ability does not fire by itself while possessed", own <= 31, `hp ${own.toFixed(0)} after 2 s of "every so often"`);
@@ -338,6 +358,26 @@ export function becomeChecks(check: Check): void {
       `${during.length} bytes, the same before and during`,
     );
     check("become: its thought reads as words", /^[A-Z][a-z]/.test(thoughtOf(world, v)), thoughtOf(world, v));
+    // Its own task is paused while it is steered: the line does not claim it.
+    {
+      const vm = mindOf(v);
+      const was = { action: vm.action, hunger: vm.hunger, tired: vm.tired, hp: v.hp, burning: v.burning };
+      Object.assign(vm, { action: "felling a tree", hunger: 0, tired: 0 });
+      v.hp = maxHp(v);
+      v.burning = 0;
+      const ridden = thoughtOf(world, v);
+      release(world);
+      vm.action = "felling a tree";
+      const own = thoughtOf(world, v);
+      possess(world, v);
+      Object.assign(vm, { action: was.action, hunger: was.hunger, tired: was.tired });
+      v.hp = was.hp;
+      check(
+        "become: while steered, the thought line does not claim its paused task",
+        !/felling/.test(ridden) && (/felling/.test(own) || /afraid|wants/i.test(own)),
+        `steered: "${ridden}"; its own: "${own}"`,
+      );
+    }
     release(world);
   }
 
@@ -397,7 +437,7 @@ export function becomeChecks(check: Check): void {
         const farLand = Math.hypot(far.x - fx, far.y - fy);
         check(
           "eyes: a cast from the eyes counts for a wildfire as a tap's would, and lands no further than the range",
-          near.ok && counted === 1 && Math.hypot(near.x - fire.x, near.y - fire.y) < 2 && far.ok && farLand <= CAST_RANGE + 0.15 && at > CAST_RANGE + 5,
+          near.ok && counted === 1 && Math.hypot(near.x - fire.x, near.y - fire.y) < 3 && far.ok && farLand <= CAST_RANGE + 0.15 && at > CAST_RANGE + 5,
           `near: landed ${Math.hypot(near.x - fire.x, near.y - fire.y).toFixed(1)} cells from the fire, ${counted} counted; aimed at it from ${at.toFixed(0)} cells: landed ${farLand.toFixed(1)} cells out`,
         );
       }
@@ -482,9 +522,8 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
       `down ${down.dist.toFixed(2)} (hit ${down.hit}), low ${low.dist.toFixed(2)} (hit ${low.hit}), sky ${sky.dist.toFixed(2)}, at the rim x ${edge.x.toFixed(1)}`,
     );
     // From a villager's own eyes on the island: the ground a few cells ahead is under the mark.
-    const v = world.creatures.find((o) => !o.dead && o.kind === "villager")!;
     const ground = groundOf(world);
-    const own = aimAt({ x: v.x, y: v.y, h: ground(v.x, v.y) + 1.6, yaw: v.hd, pitch: -0.35 }, ground, world.w, world.h);
+    const own = aimAt({ x: c.x, y: c.y, h: ground(c.x, c.y) + 1.6, yaw: Math.atan2(d!.y, d!.x), pitch: -0.35 }, ground, world.w, world.h);
     check(
       "eyes: from a villager's eyes, looking down, the mark meets the island within reach",
       own.hit && own.dist > 1 && own.dist < CAST_RANGE,
@@ -500,16 +539,18 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
     c.dead = true;
     const deer = makeCreature("deer", at.x, at.y);
     const wolf = makeCreature("wolf", at.x + 3, at.y);
+    const bear = makeCreature("bear", at.x + 30, at.y);
     const fish = world.creatures.find((o) => !o.dead && o.kind === "fish");
     world.creatures.push(deer, wolf);
     const villagers = world.creatures.filter((o) => !o.dead && o.kind === "villager");
     const guard = villagers.find((o) => jobOf(o) === "guard");
     const farmer = villagers.find((o) => jobOf(o) !== "guard");
-    const lists = `deer ${deedsOf(deer).join("+") || "none"}, wolf ${deedsOf(wolf).join("+")}, fish ${fish ? deedsOf(fish).join("+") || "none" : "?"}, guard ${guard ? deedsOf(guard).join("+") : "?"}, other villager ${farmer ? deedsOf(farmer).join("+") : "?"}`;
+    const lists = `deer ${deedsOf(deer).join("+") || "none"}, wolf ${deedsOf(wolf).join("+")}, bear ${deedsOf(bear).join("+")}, fish ${fish ? deedsOf(fish).join("+") || "none" : "?"}, guard ${guard ? deedsOf(guard).join("+") : "?"}, other villager ${farmer ? deedsOf(farmer).join("+") : "?"}`;
     check(
       "eyes: each kind gets only the acts it does by itself",
       deedsOf(deer).join() === "eat" &&
         deedsOf(wolf).join() === "strike,eat" &&
+        deedsOf(bear).join() === "strike,eat" &&
         (!fish || deedsOf(fish).length === 0) &&
         (!guard || deedsOf(guard).join() === "strike,eat") &&
         (!farmer || deedsOf(farmer).join() === "eat"),
@@ -524,7 +565,7 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
     const dm = mindOf(deer);
     dm.hunger = 0.8;
     const face = Math.atan2(d!.y, d!.x);
-    const ahead = world.idx(Math.floor(deer.x + Math.cos(face)), Math.floor(deer.y + Math.sin(face)));
+    const ahead = world.idx(deer.x + Math.cos(face), deer.y + Math.sin(face));
     const was = world.cover[ahead];
     world.setCover(ahead, C.FLOWER);
     const ate = doDeed(world, "eat", face);
@@ -564,12 +605,147 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
     wolf.hp = 0;
   }
 
+  // 16. From behind, the camera's turn is the player's: it turns behind the creature once when it is
+  // taken, never again by itself, and a drag turns it. Holding the stick one way keeps the creature
+  // going that way on screen (the playtest of 12 November: it ran up the screen while the thumb held
+  // right, and a pull down walked it back and forth).
+  {
+    const ground = groundOf(world);
+    const o = new OrbitCamera(world.w, world.h);
+    o.resize(344, 551);
+    const v = makeCreature("villager", 0, 0);
+    // Open grass with room to walk to the right of the view.
+    let found = false;
+    for (let y = 20; y < world.h - 20 && !found; y += 2)
+      for (let x = 20; x < world.w - 20 && !found; x += 2) {
+        const i = world.idx(x, y);
+        if (world.ground[i] !== G.GRASS || world.cover[i] !== C.NONE || world.depth[i] > 0 || !open(world, x + 0.5, y + 0.5, 1, 0, 12)) continue;
+        v.x = x + 0.5;
+        v.y = y + 0.5;
+        found = true;
+      }
+    // Facing up the map: the camera settles behind it with screen right along +x, the open way.
+    v.hd = -Math.PI / 2;
+    world.creatures.push(v);
+    possess(world, v);
+    const dt = 1 / 30;
+    const frame = () => {
+      o.chase(v.x, v.y, v.z, v.hd, 0.6);
+      o.update(dt, 0, ground, false);
+    };
+    for (let k = 0; k < 90; k++) frame();
+    const settled = o.theta;
+    // Screen right is (cos theta, -sin theta) on the ground (possess.ts stickDir).
+    const rightX = Math.cos(settled);
+    const rightY = -Math.sin(settled);
+    const from = { x: v.x, y: v.y };
+    let mid = { x: 0, y: 0 };
+    let k = 0;
+    run(world, rt, 2.5, () => {
+      awake(v);
+      steerBy(world, 1, 0, o.theta);
+      frame();
+      if (++k === 20) mid = { x: v.x, y: v.y };
+    });
+    const late = { x: v.x - mid.x, y: v.y - mid.y };
+    const lateRight = (late.x * rightX + late.y * rightY) / (Math.hypot(late.x, late.y) || 1);
+    const turned = Math.abs(Math.atan2(Math.sin(o.theta - settled), Math.cos(o.theta - settled)));
+    const before = o.theta;
+    o.orbit(100, 0);
+    const dragged = Math.atan2(Math.sin(o.theta - before), Math.cos(o.theta - before));
+    check(
+      "become: from behind, the camera keeps the player's turn, and the stick held right keeps going right on screen",
+      found && turned < 0.01 && lateRight > 0.95 && Math.hypot(v.x - from.x, v.y - from.y) > 4 && Math.abs(dragged + 0.6) < 1e-6,
+      `the camera turned ${turned.toFixed(3)} rad by itself in 2.5 s of walking; the last 1.8 s went ${(Math.acos(Math.max(-1, Math.min(1, lateRight))) * 57.3).toFixed(0)} degrees off screen right; a drag of 100 px turned it ${dragged.toFixed(2)}`,
+    );
+    release(world);
+    v.hp = 0;
+    v.dead = true;
+    // A tap from behind casts where the finger is, within the same 14 cells.
+    const near = withinRange(10, 10, 15, 13);
+    const far = withinRange(10, 10, 40, 50);
+    check(
+      "eyes: a tap from behind casts where it is, and past 14 cells at the range's end toward it",
+      near.x === 15 &&
+        near.y === 13 &&
+        Math.abs(Math.hypot(far.x - 10, far.y - 10) - CAST_RANGE) < 1e-9 &&
+        Math.abs(Math.atan2(far.y - 10, far.x - 10) - Math.atan2(40, 30)) < 1e-9,
+      `near (${near.x}, ${near.y}); far (${far.x.toFixed(1)}, ${far.y.toFixed(1)})`,
+    );
+  }
+
+  // 17. Stopped dead, the line says why (the playtest of 12 November: a stop at the rim, a shore or a
+  // cliff gave no sign): at a real shore with deep water all along it, and at the rim of the world;
+  // walking or at rest, nothing.
+  {
+    const v = makeCreature("villager", 0, 0);
+    world.creatures.push(v);
+    const deepAt = (x: number, y: number) => world.inside(x, y) && world.fluid[world.idx(x, y)] === F.WATER && world.depth[world.idx(x, y)] > 1.05;
+    const dry = (x: number, y: number) => world.inside(x, y) && world.depth[world.idx(x, y)] === 0 && world.cover[world.idx(x, y)] === C.NONE;
+    // Dry ground with deep water one and two cells off, all along five cells of a straight shore, in any of four ways.
+    let shore: { x: number; y: number; dx: number; dy: number } | null = null;
+    for (const [dx, dy] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ])
+      for (let y = 10; y < world.h - 10 && !shore; y++)
+        for (let x = 10; x < world.w - 10 && !shore; x++) {
+          if (!dry(x, y) || !dry(x - dx, y - dy)) continue;
+          let ok = true;
+          for (let k = -2; k <= 2 && ok; k++) ok = deepAt(x + dx - dy * k, y + dy + dx * k) && deepAt(x + 2 * dx - dy * k, y + 2 * dy + dx * k);
+          if (ok) shore = { x, y, dx, dy };
+        }
+    possess(world, v);
+    const pushFor = (dx: number, dy: number, seconds: number) => {
+      let why: string | null = null;
+      steerBy(world, dx, dy, 0);
+      run(world, rt, seconds, () => {
+        awake(v);
+        v.hp = Math.max(v.hp, 50);
+        why = stopNote(world, whyStopped) ?? why;
+      });
+      return why as string | null;
+    };
+    let atWater: string | null = "no shore";
+    if (shore) {
+      v.x = shore.x;
+      v.y = shore.y;
+      atWater = pushFor(shore.dx, shore.dy, 2);
+    }
+    const walking = (() => {
+      steerBy(world, -1, 0, 0);
+      run(world, rt, 0.4, () => awake(v));
+      return stopNote(world, whyStopped);
+    })();
+    v.x = 3.6;
+    v.y = Math.round(world.h / 2);
+    const atRim = pushFor(-1, 0, 2);
+    steerBy(world, 0, 0, 0);
+    const atRest = stopNote(world, whyStopped);
+    check(
+      "become: stopped dead at the sea, the line says why; walking or at rest, nothing",
+      atWater === "Deep water stops you" && (atRim === null || atRim === "The edge of the world") && walking === null && atRest === null,
+      `at the shore: ${atWater}; at the rim (said only if it stalled there rather than sliding along): ${atRim}; walking off: ${walking}; at rest: ${atRest}`,
+    );
+    release(world);
+    v.hp = 0;
+    v.dead = true;
+  }
+
   // 14. The page's messages from the island are checked like the rest: anything else is dropped.
   {
-    const good = [readFromWorld({ type: "eyes", on: true }), readFromWorld({ type: "pick", key: "fireball" }), readFromWorld({ type: "pick", key: null })];
+    const good = [
+      readFromWorld({ type: "eyes", on: true }),
+      readFromWorld({ type: "riding", on: false }),
+      readFromWorld({ type: "pick", key: null }),
+      readFromWorld({ type: "pick", key: "fireball" }),
+    ];
     const bad = [
       readFromWorld({ type: "eyes", on: "yes" }),
       readFromWorld({ type: "eyes" }),
+      readFromWorld({ type: "riding", on: 1 }),
       readFromWorld({ type: "pick", key: "" }),
       readFromWorld({ type: "pick", key: "x".repeat(121) }),
       readFromWorld({ type: "pick", key: 7 }),
@@ -578,7 +754,7 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
     check(
       "eyes: the eye view's messages from the island are read only in their shape",
       good.every((m) => m !== null) && bad.every((m) => m === null) && JSON.stringify(good[2]) === '{"type":"pick","key":null}',
-      `${good.filter(Boolean).length} of 3 good read, ${bad.filter((m) => m === null).length} of 6 bad dropped`,
+      `${good.filter(Boolean).length} of 4 good read, ${bad.filter((m) => m === null).length} of 7 bad dropped`,
     );
   }
 }

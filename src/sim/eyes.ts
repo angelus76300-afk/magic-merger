@@ -88,3 +88,13 @@ export function castFromEyes(
 export function eyesFirst(k: CreatureKind): boolean {
   return !k.flying && !k.aquatic;
 }
+
+// A tap on the island from behind the creature (the playtest of 12 November:
+// the page said "Tap the island to cast" and the tap did nothing): the cast
+// lands where the finger is, within the same range of the creature; further
+// off, at the range's end on the way there.
+export function withinRange(fromX: number, fromY: number, x: number, y: number, range = CAST_RANGE): { x: number; y: number } {
+  const d = Math.hypot(x - fromX, y - fromY);
+  if (d <= range) return { x, y };
+  return { x: fromX + ((x - fromX) / d) * range, y: fromY + ((y - fromY) / d) * range };
+}

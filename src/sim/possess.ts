@@ -35,12 +35,34 @@ export interface Possession {
   own: Pick<Mind, "task" | "tx" | "ty" | "cell" | "target" | "pace" | "work" | "action">;
   // World time before which its own acts (Strike, Eat) wait: a blow, a meal.
   busy: number;
+  // Where it stood when the push last moved it, and when (stopNote).
+  stall: { x: number; y: number; t: number } | null;
 }
 
 export type Ended = "let go" | "fell" | "gone";
 
 let current: Possession | null = null;
 let ended: { c: Creature; why: Ended } | null = null;
+
+// Why the push goes nowhere, once it has gone nowhere for half a second of
+// world time ("Deep water stops you", "Too steep", "The edge of the world"):
+// a stop with no sign read as a broken stick (the playtest of 12 November).
+// Null while it moves, or the stick rests. The frame says it at most every few seconds.
+export function stopNote(world: World, whyStopped: (world: World, c: Creature, dx: number, dy: number) => string | null): string | null {
+  const p = possessed(world);
+  if (!p) return null;
+  const c = p.c;
+  if (p.push < DEAD_ZONE || c.dead) {
+    p.stall = null;
+    return null;
+  }
+  if (!p.stall || Math.hypot(c.x - p.stall.x, c.y - p.stall.y) > 0.25) {
+    p.stall = { x: c.x, y: c.y, t: world.time };
+    return null;
+  }
+  if (world.time - p.stall.t < 0.5) return null;
+  return whyStopped(world, c, p.wx, p.wy);
+}
 
 // Below this push the stick is at rest: a thumb resting on it does not walk.
 export const DEAD_ZONE = 0.12;
@@ -50,7 +72,17 @@ export function possess(world: World, c: Creature): Possession | null {
   if (current) release(current.world);
   ended = null;
   const { task, tx, ty, cell, target, pace, work, action } = mindOf(c);
-  current = { world, c, wx: Math.cos(c.hd), wy: Math.sin(c.hd), push: 0, since: world.time, own: { task, tx, ty, cell, target, pace, work, action }, busy: 0 };
+  current = {
+    world,
+    c,
+    wx: Math.cos(c.hd),
+    wy: Math.sin(c.hd),
+    push: 0,
+    since: world.time,
+    own: { task, tx, ty, cell, target, pace, work, action },
+    busy: 0,
+    stall: null,
+  };
   return current;
 }
 
@@ -213,7 +245,10 @@ export function thoughtOf(world: World, c: Creature): string {
   if (c.hp < life.maxHp(c) * 0.4) parts.push("hurt");
   if (m.hunger > 0.6) parts.push("hungry");
   if (m.tired > 0.7) parts.push("tired");
-  if (!parts.length) parts.push(/^[a-z]+ing\b/.test(m.action) && m.action !== "looking around" ? `thinks of ${m.action}` : "calm");
+  // Its own task is paused while the player steers it: "thinks of felling a
+  // tree" was not true then (the playtest of 12 November).
+  const own = !ridden(c) && /^[a-z]+ing\b/.test(m.action) && m.action !== "looking around";
+  if (!parts.length) parts.push(own ? `thinks of ${m.action}` : "calm");
   const s = parts.slice(0, 3).join(", ");
   return s[0].toUpperCase() + s.slice(1);
 }

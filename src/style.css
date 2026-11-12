@@ -2230,6 +2230,13 @@ body.eyes .world-tools,
 body.eyes .world-bottom {
   display: none;
 }
+/* The tab bar (or the rail of a phone on its side) is in the hidden header:
+   the room the page keeps for it goes to the island too. */
+body.eyes,
+body.eyes:has(.tabs:not([hidden])) {
+  padding-bottom: 0;
+  padding-left: 0;
+}
 body.eyes .toasts {
   top: max(116px, env(safe-area-inset-top));
 }

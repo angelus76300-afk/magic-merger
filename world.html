@@ -414,15 +414,20 @@
         pointer-events: none;
         filter: drop-shadow(0 0 1px #05080f);
       }
+      /* From behind: clear of the page's tool rail at the right edge, as the powers were. */
       #acts {
         position: absolute;
-        right: 12px;
-        bottom: calc(76px + env(safe-area-inset-bottom));
+        right: 62px;
+        bottom: 16px;
         width: 124px;
         display: flex;
         flex-direction: column;
         align-items: flex-end;
         gap: 10px;
+      }
+      body.eyes #acts {
+        right: 12px;
+        bottom: calc(76px + env(safe-area-inset-bottom));
       }
       #deeds {
         display: flex;
@@ -437,6 +442,9 @@
       }
       #acts #powers[hidden] {
         display: none;
+      }
+      #acts #powers button {
+        color: #1a1405;
       }
       #deeds button {
         position: relative;

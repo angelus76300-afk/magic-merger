@@ -708,6 +708,7 @@ export class VoxelView {
     // bring the fog in.
     const o = this.orbit;
     const target = this.toScene(o.tx, o.ty, this.groundAt(o.tx, o.ty));
+    this.sky.dropsFrom = o.eye ? 2.5 : 0;
     this.sky.update(time, day.night, o.camera, target, o.dist, this.pixelRatio);
     this.waveTime.value = time;
     const grey = this.sky.overcast;

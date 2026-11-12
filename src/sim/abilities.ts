@@ -477,6 +477,8 @@ function perform(world: World, c: Creature, k: CreatureKind, m: Mind, what: Abil
         owner: "creature",
         hit: 0,
       });
+      // The dome is clear from the front: a burst of its colour shows it went up.
+      puff(world, c.x, c.y, 0x9fd8ff, 8);
       deed(c, "raised a shield");
       return true;
     }

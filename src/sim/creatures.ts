@@ -479,6 +479,30 @@ function blocked(world: World, x: number, y: number, c: Creature, k: CreatureKin
   return world.walkLevel(i) - here > 1.6;
 }
 
+// Become anything: why a creature the player pushes along (dx, dy) does not
+// go on, in the words of the line under its name, in the order blocked() asks
+// (and the rim the ridden step keeps to, below). Null when nothing ahead stops it.
+export function whyStopped(world: World, c: Creature, dx: number, dy: number): string | null {
+  const k = kindOf(c);
+  const d = Math.hypot(dx, dy) || 1;
+  // A few steps ahead: its feelers (steer.ts) stop it a little before the wall itself.
+  for (const step of [0.6, 1, 1.5, 2]) {
+    const x = c.x + (dx / d) * step;
+    const y = c.y + (dy / d) * step;
+    if (!world.inside(x, y) || x < 3 || y < 3 || x > world.w - 4 || y > world.h - 4) return "The edge of the world";
+    if (!blocked(world, x, y, c, k)) continue;
+    if (k.flying || c.levitate > 0 || c.z > 1.5) return null;
+    const i = world.idx(x, y);
+    if (k.aquatic) return "Land stops you";
+    if (solidCovers(world)[world.cover[i]]) return world.cover[i] === C.HOUSE ? "A wall is in the way" : "Something is in the way";
+    const f = world.fluid[i];
+    if (f === F.LAVA) return "Lava stops you";
+    if (f !== F.NONE && f !== F.ICE && world.depth[i] > 1) return f === F.WATER ? "Deep water stops you" : "Too deep to wade";
+    return "Too steep";
+  }
+  return null;
+}
+
 const TIMED = ["frozen", "fear", "sleep", "calm", "levitate", "stun"] as const;
 
 export function updateCreature(world: World, c: Creature, dt: number): void {
@@ -791,7 +815,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       const stuck = ((c.data.stuck as number | undefined) ?? 0) + dt;
       c.data.stuck = stuck;
       if (stuck > 1) c.goal = 0;
-      if (stuck > 3 && !k.aquatic) {
+      // Not one the player steers: pushed into a wall for a while, it was hopped out, once to the rim of the world.
+      if (stuck > 3 && !k.aquatic && !rider) {
         c.data.stuck = 0;
         unstick(world, c, k);
       }

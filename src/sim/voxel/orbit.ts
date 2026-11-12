@@ -22,9 +22,12 @@ export class OrbitCamera implements CameraControl {
   // camera keeps in frame, moving with it, until the player touches the view.
   private watched: { x: number; y: number; dist: number } | null = null;
   // Become anything (2026-11-12, possess.ts): behind and above the creature
-  // the player is, turned the way it faces. Touches never end it: a drag
-  // turns the view a little round the creature (nudge) and eases back.
-  private chased: { x: number; y: number; z: number; hd: number; dist: number; nudge: number; tilt: number; still: number } | null = null;
+  // the player is. It turns behind it once, when it is taken (turn); after
+  // that its turn is the player's (the playtest of 12 November: a camera that
+  // swung behind the creature after every step turned the stick under the
+  // thumb, and a pull down walked it back and forth). A drag turns it round
+  // the creature, as in the eye view.
+  private chased: { x: number; y: number; z: number; hd: number; dist: number; turn: number | null; tilt: number } | null = null;
   // Through its eyes (2026-11-12, eyes.ts): at the head of the creature the
   // player is, looking where they look. A drag turns the look; the chase
   // above keeps following meanwhile, so the behind view comes back in place.
@@ -122,7 +125,7 @@ export class OrbitCamera implements CameraControl {
       this.watched = null;
       // Close enough that the creature is the subject on a folded phone (344 px wide).
       const dist = Math.max(9, Math.min(24, 7.5 + size * 6.5));
-      this.chased = { x, y, z, hd: heading, dist, nudge: 0, tilt: 0, still: 9 };
+      this.chased = { x, y, z, hd: heading, dist, turn: Math.atan2(-Math.cos(heading), -Math.sin(heading)), tilt: 0 };
       return;
     }
     this.chased.x = x;
@@ -156,6 +159,7 @@ export class OrbitCamera implements CameraControl {
   eyeOff(): void {
     if (!this.eyed) return;
     this.theta = lookTheta(this.eyed.yaw);
+    if (this.chased) this.chased.turn = null;
     this.eyed = null;
   }
 
@@ -195,10 +199,10 @@ export class OrbitCamera implements CameraControl {
       return;
     }
     if (this.chased) {
-      // A look round the creature, never away from it.
-      this.chased.nudge = Math.max(-0.9, Math.min(0.9, this.chased.nudge - dx * 0.006));
+      // Round the creature, never away from it; the turn stays where the finger leaves it.
+      this.chased.turn = null;
+      this.theta -= dx * 0.006;
       this.chased.tilt = Math.max(-0.35, Math.min(0.3, this.chased.tilt - dy * 0.004));
-      this.chased.still = 0;
       return;
     }
     this.release();
@@ -258,21 +262,17 @@ export class OrbitCamera implements CameraControl {
     const ch = this.chased;
     if (ch) {
       // Follows the creature closely (its steps come thirty times a second;
-      // the ease keeps the frame from trembling) and turns to be behind it.
-      // With reduced motion the turn is a slow ease, never a swing.
+      // the ease keeps the frame from trembling). With reduced motion the
+      // first turn behind it is a slow ease, never a swing.
       const k = Math.min(1, dt * 6);
       this.tx += (ch.x - this.tx) * k;
       this.ty += (ch.y - this.ty) * k;
-      ch.still += dt;
-      if (ch.still > 1.2) {
-        const back = Math.min(1, dt * 1.5);
-        ch.nudge -= ch.nudge * back;
-        ch.tilt -= ch.tilt * back;
+      // Behind it once, when it is taken; never again by itself.
+      if (ch.turn !== null) {
+        const turn = Math.atan2(Math.sin(ch.turn - this.theta), Math.cos(ch.turn - this.theta));
+        this.theta += turn * Math.min(1, dt * (reducedMotion ? 0.8 : 2.6));
+        if (Math.abs(turn) < 0.01) ch.turn = null;
       }
-      // The camera's offset along the ground is (sin theta, cos theta): behind is minus the heading.
-      const behind = Math.atan2(-Math.cos(ch.hd), -Math.sin(ch.hd)) + ch.nudge;
-      const turn = Math.atan2(Math.sin(behind - this.theta), Math.cos(behind - this.theta));
-      this.theta += turn * Math.min(1, dt * (reducedMotion ? 0.8 : 2.6));
       this.phi += (0.9 + ch.tilt - this.phi) * Math.min(1, dt * (reducedMotion ? 1 : 3));
       this.dist = Math.exp(Math.log(this.dist) + (Math.log(ch.dist) - Math.log(this.dist)) * Math.min(1, dt * (reducedMotion ? 1.2 : 2.5)));
     }
