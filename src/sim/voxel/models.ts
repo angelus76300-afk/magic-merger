@@ -93,10 +93,11 @@ export function pushBox(pos: number[], col: number[], b: Box, bottom = false): v
     );
 }
 
-export function geometryOf(boxes: Box[]): BufferGeometry {
+// `bottoms`: every box with its bottom face, for what is seen from under it (clouds).
+export function geometryOf(boxes: Box[], bottoms = false): BufferGeometry {
   const pos: number[] = [];
   const col: number[] = [];
-  for (const b of boxes) pushBox(pos, col, b, b.y > 0.02);
+  for (const b of boxes) pushBox(pos, col, b, bottoms || b.y > 0.02);
   const g = new BufferGeometry();
   g.setAttribute("position", new BufferAttribute(new Float32Array(pos), 3));
   g.setAttribute("color", new BufferAttribute(new Float32Array(col), 3));

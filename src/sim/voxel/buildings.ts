@@ -163,7 +163,48 @@ export function houseShape(seed: number, style: string, grown: boolean, patched:
         B(x0 + rng.next() * (w - pw), lift + h + 0.12 + k * 0.05, z0 + rng.next() * (d - pw), pw, 0.08, pw, vary(rng, k % 2 ? 0xe0c070 : 0xd07050, 0.1)),
       );
     }
+  dressWalls(out, windows, new Rng(seed ^ 0x51ee7), style, st.trim, x0, z0, w, d, h, lift);
   return { boxes: out, windows, chimneys };
+}
+
+// What a house shows from the street (2026-11-12, seen from a creature's eyes its walls were flat
+// cards): a plinth of stone along the foot, posts at the corners in the trim's wood (on stone
+// houses, quoins of a lighter stone), and a sill under each window and a lintel over it. Its own
+// random stream, so every house keeps the size, roof and door it had.
+function dressWalls(
+  out: Box[],
+  windows: Shape["windows"],
+  rng: Rng,
+  style: string,
+  trim: number,
+  x0: number,
+  z0: number,
+  w: number,
+  d: number,
+  h: number,
+  lift: number,
+): void {
+  if (!lift) out.push(B(x0 - 0.025, 0, z0 - 0.025, w + 0.05, 0.09, d + 0.05, vary(rng, style === "adobe" ? 0xa88a60 : 0x7e7a74, 0.05)));
+  for (const [cx, cz] of [
+    [x0, z0],
+    [x0 + w, z0],
+    [x0, z0 + d],
+    [x0 + w, z0 + d],
+  ]) {
+    if (style === "stone")
+      for (let y = lift + 0.09, k = 0; y < lift + h - 0.12; y += 0.16, k++)
+        out.push(B(cx - (k % 2 ? 0.05 : 0.07), y, cz - (k % 2 ? 0.07 : 0.05), k % 2 ? 0.1 : 0.14, 0.14, k % 2 ? 0.14 : 0.1, vary(rng, 0xb4b0aa, 0.05)));
+    else if (style !== "adobe") out.push(B(cx - 0.035, lift + (lift ? 0 : 0.09), cz - 0.035, 0.07, h - (lift ? 0.012 : 0.1), 0.07, trim));
+  }
+  for (const win of windows) {
+    if (win.axis === 0) {
+      out.push(B(win.x - 0.125, win.y - 0.115, win.z - 0.03, 0.25, 0.035, 0.06, trim));
+      out.push(B(win.x - 0.11, win.y + 0.08, win.z - 0.03, 0.22, 0.03, 0.04, trim));
+    } else {
+      out.push(B(win.x - 0.03, win.y - 0.115, win.z - 0.125, 0.06, 0.035, 0.25, trim));
+      out.push(B(win.x - 0.03, win.y + 0.08, win.z - 0.11, 0.04, 0.03, 0.22, trim));
+    }
+  }
 }
 
 // Buildings with a job, each its own look, door to +z.
