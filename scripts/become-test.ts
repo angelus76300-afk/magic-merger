@@ -47,6 +47,7 @@ import { playerCast } from "../src/sim/playercast";
 import { clickActs, pressDown } from "../src/sim/press";
 import { keepOrder, readFromWorld } from "../src/sim/protocol";
 import { surfaceY } from "../src/sim/voxel/terrain";
+import { COVER_STEP, COVER_TURN, EYE_DRAW, eyeFogRange, eyeKeepsChunk, eyeKeepsCover } from "../src/sim/voxel/fog";
 import { Runtime } from "../src/sim/runtime";
 import { saveWorld } from "../src/sim/save";
 import { stepHeadless } from "../src/sim/tick";
@@ -680,6 +681,41 @@ function castChecks(check: Check): void {
       sum.view === "eyes" && sum.viewFrames === "sky:5,behind:5,eyes:20" && msg?.type === "perf" && msg.sample.view === "eyes",
       `${sum.view}, ${sum.viewFrames}`,
     );
+  }
+  // 30. What the eye view draws (fog.ts, view.ts, terrain.ts): the mist is whole by 80 cells, and
+  // nothing past it is drawn, nor anything behind the look beyond 10 cells. Before the second pass the
+  // mist ran to 110 and every tree and every chunk of the island was drawn, behind the eye too.
+  {
+    const mist = eyeFogRange(0);
+    // The look along +x.
+    const keep = (dx: number, dy: number) => eyeKeepsCover(dx, dy, 1, 0);
+    const ahead = [5, 20, 40, 70, EYE_DRAW].every((d) => keep(d, 0)) && keep(30, 25);
+    const past = !keep(EYE_DRAW + COVER_STEP + 1, 0) && !keep(120, 0);
+    const behind = !keep(-20, 0) && !keep(-60, 5) && !keep(-11, 0);
+    const near = keep(-9, 0) && keep(0, -9) && keep(-6, 6);
+    // Land: a 32 cell chunk whose nearest point is 90 cells away is not drawn; the one under the eye is.
+    const land = eyeKeepsChunk(0, 0, 32, 10, 10) && eyeKeepsChunk(64, 0, 32, 10, 10) && !eyeKeepsChunk(100, 0, 32, 10, 10);
+    check(
+      "eyes: the mist is whole at 80 cells; covers past it, or behind the look beyond 10 cells, and land past it are not drawn",
+      mist.far === 80 && mist.near < mist.far && EYE_DRAW >= mist.far && EYE_DRAW < 90 && ahead && past && behind && near && land,
+      JSON.stringify({ mist, ahead, past, behind, near, land }),
+    );
+    // Between two placings the eye may walk COVER_STEP and turn COVER_TURN: whatever it then sees,
+    // within the mist and 38 degrees either side of the look, was placed.
+    let missed = 0;
+    for (let k = 0; k < 2000; k++) {
+      const a = (k * 0.618) % (Math.PI * 2);
+      const r = 1 + ((k * 37) % 80);
+      const sx = Math.cos(k) * COVER_STEP * ((k % 7) / 7);
+      const sy = Math.sin(k) * COVER_STEP * ((k % 5) / 5);
+      const yaw = (((k % 11) / 10) * 2 - 1) * COVER_TURN;
+      // The cover as the eye sees it after moving (sx, sy) and turning yaw: within its view?
+      const vx = Math.cos(yaw + a) * r;
+      const vy = Math.sin(yaw + a) * r;
+      if (Math.abs(a) > 0.66 && Math.abs(a - Math.PI * 2) > 0.66) continue;
+      if (!keep(vx + sx, vy + sy)) missed++;
+    }
+    check("eyes: a cover in view after a step and a turn between placings was placed", missed === 0, `${missed} missed`);
   }
 }
 

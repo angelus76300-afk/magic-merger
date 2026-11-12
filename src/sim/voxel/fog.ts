@@ -35,6 +35,32 @@ export function eyeFogRange(weather: number, cut = true): { near: number; far: n
   return cut ? { near: 28 * (1 - k * 0.7), far: 80 * (1 - k * 0.6) } : { near: 30 * (1 - k * 0.7), far: 110 * (1 - k * 0.6) };
 }
 
+// The covers around the eye are placed again each time it has gone COVER_STEP
+// cells or turned COVER_TURN radians (view.ts placeCovers). Between two
+// placings, every cover it may then see must already be there: those within
+// the mist and a step beyond it, ahead of the look within COVER_WEDGE either
+// side (the view is about 38 degrees either side, plus the turn allowed), and
+// all of those within NEAR_ALL cells, for a quick turn.
+export const COVER_STEP = 8;
+export const COVER_TURN = 0.7;
+export const COVER_WEDGE = 1.85;
+export const NEAR_ALL = 10;
+
+// Whether a cover at (dx, dy) cells from the eye is drawn, the look along (lx, ly) (a unit vector).
+export function eyeKeepsCover(dx: number, dy: number, lx: number, ly: number): boolean {
+  const d2 = dx * dx + dy * dy;
+  if (d2 > (EYE_DRAW + COVER_STEP) ** 2) return false;
+  return d2 <= NEAR_ALL * NEAR_ALL || dx * lx + dy * ly >= Math.cos(COVER_WEDGE) * Math.sqrt(d2);
+}
+
+// Whether a square of land (x0, y0, side cells) is drawn from an eye at (x, y): its nearest point
+// within EYE_DRAW (terrain.ts showWithin).
+export function eyeKeepsChunk(x0: number, y0: number, side: number, x: number, y: number, r = EYE_DRAW): boolean {
+  const nx = Math.max(x0, Math.min(x0 + side, x));
+  const ny = Math.max(y0, Math.min(y0 + side, y));
+  return Math.hypot(nx - x, ny - y) <= r;
+}
+
 // How much mist covers a point at this depth from the camera (three.js's
 // linear fog): 0 clear, 1 only mist.
 export function fogAt(depth: number, range: { near: number; far: number }): number {

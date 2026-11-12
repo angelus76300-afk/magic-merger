@@ -67,6 +67,74 @@ try {
 
   await eyes({ become: "villager" });
   await page.waitForTimeout(1500);
+  // Open ground ahead for the run: a street of the village.
+  await eyes({ place: "street", pitch: -0.1 });
+
+  // 0. How fast the eye answers a real thumb on the stick: from the stick's pointerdown (its own
+  // event time) to the first frame the eye has moved, and to the frame it reaches 90 percent of the
+  // pace it keeps; then the pace, in cells per second. The page only watches; the touch is real.
+  {
+    await world().evaluate(() => {
+      const w = window;
+      w.__trace = [];
+      w.__down = 0;
+      document.getElementById("stick").addEventListener("pointerdown", (e) => (w.__down = e.timeStamp), { once: true });
+      const t0 = performance.now();
+      const step = (t) => {
+        const r = w.__mmEyes?.();
+        if (r?.eye) w.__trace.push([t, r.eye.x, r.eye.y]);
+        if (t - t0 < 3500) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    });
+    await page.waitForTimeout(300);
+    const stick = await center("#stick");
+    // Straight up, past the rim: a run ahead.
+    await touch("touchStart", [{ ...stick, id: 5 }]);
+    await touch("touchMove", [{ ...stick, y: stick.y - 70, id: 5 }]);
+    await page.waitForTimeout(1500);
+    await touch("touchEnd", [{ ...stick, y: stick.y - 70, id: 5 }]);
+    await page.waitForTimeout(1800);
+    const { trace, down } = await world().evaluate(() => ({ trace: window.__trace, down: window.__down }));
+    const at = trace.findIndex((p) => p[0] >= down);
+    const [, x0, y0] = trace[Math.max(0, at - 1)];
+    const moved = trace.find((p) => p[0] >= down && Math.hypot(p[1] - x0, p[2] - y0) > 0.02);
+    // The pace kept: over the last 0.5 s of the push.
+    const late = trace.filter((p) => p[0] > down + 900 && p[0] < down + 1400);
+    const pace = late.length > 1 ? Math.hypot(late.at(-1)[1] - late[0][1], late.at(-1)[2] - late[0][2]) / ((late.at(-1)[0] - late[0][0]) / 1000) : 0;
+    let full = null;
+    for (let i = 1; i < trace.length; i++) {
+      const [t, x, y] = trace[i];
+      if (t < down) continue;
+      const [tp, xp, yp] = trace[Math.max(0, i - 3)];
+      if (t > tp && Math.hypot(x - xp, y - yp) / ((t - tp) / 1000) >= pace * 0.9) {
+        full = t;
+        break;
+      }
+    }
+    const first = moved ? moved[0] - down : Infinity;
+    const toFull = full ? full - down : Infinity;
+    const frames = trace.filter((p) => p[0] > down && p[0] < down + 1400);
+    const frameMs = frames.length > 1 ? (frames.at(-1)[0] - frames[0][0]) / (frames.length - 1) : 0;
+    // In frames drawn after the touch: software WebGL draws a frame in 100 to 250 ms here, so the
+    // answer is counted in frames (a phone draws one in 16 to 33 ms).
+    const firstFrames = moved ? trace.filter((p) => p[0] > down && p[0] <= moved[0]).length : Infinity;
+    const fullFrames = full ? trace.filter((p) => p[0] > down && p[0] <= full).length : Infinity;
+    const answer = {
+      firstMoveMs: Math.round(first),
+      to90Ms: Math.round(toFull),
+      firstFrames,
+      fullFrames,
+      pace: +pace.toFixed(1),
+      frameMs: +frameMs.toFixed(1),
+    };
+    expect(
+      "a real thumb on the stick: the eye moves on the first or second frame drawn after it, and runs at about 4 times a villager's walk (2.9)",
+      firstFrames <= 2 && pace > 9,
+      JSON.stringify(answer),
+    );
+    await page.waitForTimeout(500);
+  }
   await eyes({ place: "hill", pitch: -0.2 });
   // A spell in hand (Water: Fire at its own feet would end the proof), with a real tap on its slot.
   await world().locator(`#hotbar button[data-key="water"]`).tap({ timeout: 4000, force: true });
@@ -109,7 +177,12 @@ try {
     expect(
       "walking on the stick, a held aim on Cast moves the ring and its release casts once",
       c1 - c0 === 1 && walked > 3 && held?.aimHold?.armed && Math.hypot(held.aim.x - ring0.x, held.aim.y - ring0.y) > 1,
-      JSON.stringify({ casts: c1 - c0, walked: walked.toFixed(1), ringMoved: held && ring0 ? Math.hypot(held.aim.x - ring0.x, held.aim.y - ring0.y).toFixed(1) : "?", hold: held?.aimHold }),
+      JSON.stringify({
+        casts: c1 - c0,
+        walked: walked.toFixed(1),
+        ringMoved: held && ring0 ? Math.hypot(held.aim.x - ring0.x, held.aim.y - ring0.y).toFixed(1) : "?",
+        hold: held?.aimHold,
+      }),
     );
   }
 

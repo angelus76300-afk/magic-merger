@@ -153,8 +153,7 @@ const hooks = {
       if (eyes) {
         aimStats.taps++;
         castFromEye();
-      }
-      else if (selected) {
+      } else if (selected) {
         const at = withinRange(riding.x, riding.y, x, y, castRange(selected.tier));
         castAt(at.x, at.y);
       }

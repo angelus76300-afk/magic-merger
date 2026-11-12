@@ -59,7 +59,7 @@ import { WonderModels } from "./wonders";
 import { PropModels } from "./props";
 import { valueNoise } from "../noise";
 import { LAB_SKY, Sky } from "./sky";
-import { EYE_DRAW, eyeFogRange, fogRange } from "./fog";
+import { COVER_STEP, COVER_TURN, EYE_DRAW, eyeFogRange, eyeKeepsCover, fogRange } from "./fog";
 import { clearEye } from "../eyes";
 import { ridden } from "../possess";
 import { solidCovers } from "../paths";
@@ -373,7 +373,9 @@ export class VoxelView {
     // when it leaves the eye view (every cover is drawn again, from the sky).
     const around = this.coversAround;
     const moved = cut
-      ? !around || Math.hypot(cut.x - around.x, cut.y - around.y) > COVER_STEP || Math.abs(Math.atan2(Math.sin(cut.yaw - around.yaw), Math.cos(cut.yaw - around.yaw))) > COVER_TURN
+      ? !around ||
+        Math.hypot(cut.x - around.x, cut.y - around.y) > COVER_STEP ||
+        Math.abs(Math.atan2(Math.sin(cut.yaw - around.yaw), Math.cos(cut.yaw - around.yaw))) > COVER_TURN
       : around !== null;
     if (
       moved ||
@@ -441,7 +443,8 @@ export class VoxelView {
       const g = mesh.geometry;
       const n = g.index ? g.index.count / 3 : (g.attributes.position?.count ?? 0) / 3;
       const inst = (mesh as InstancedMesh).isInstancedMesh ? (mesh as InstancedMesh).count : 1;
-      const key = names.get(mesh) ?? (mesh.name || ((mesh as InstancedMesh).isInstancedMesh ? "other instanced" : n > 2000 ? "big mesh (land, water)" : "small mesh"));
+      const key =
+        names.get(mesh) ?? (mesh.name || ((mesh as InstancedMesh).isInstancedMesh ? "other instanced" : n > 2000 ? "big mesh (land, water)" : "small mesh"));
       out[key] = (out[key] ?? 0) + Math.round(n * inst);
     });
     return out;
@@ -621,18 +624,10 @@ export class VoxelView {
     // Those within NEAR_ALL cells are always drawn, for a quick turn.
     const eye = this.eyeCuts ? this.orbit.eye : null;
     this.coversAround = eye ? { x: eye.x, y: eye.y, yaw: eye.yaw } : null;
-    const reach = (EYE_DRAW + COVER_STEP) ** 2;
     const lx = eye ? Math.cos(eye.yaw) : 0;
     const ly = eye ? Math.sin(eye.yaw) : 0;
-    const wedge = Math.cos(COVER_WEDGE);
     const add = (key: string, i: number) => {
-      if (eye) {
-        const dx = (i % world.w) + 0.5 - eye.x;
-        const dy = Math.floor(i / world.w) + 0.5 - eye.y;
-        const d2 = dx * dx + dy * dy;
-        if (d2 > reach) return;
-        if (d2 > NEAR_ALL * NEAR_ALL && dx * lx + dy * ly < wedge * Math.sqrt(d2)) return;
-      }
+      if (eye && !eyeKeepsCover((i % world.w) + 0.5 - eye.x, Math.floor(i / world.w) + 0.5 - eye.y, lx, ly)) return;
       let list = lists.get(key);
       if (!list) lists.set(key, (list = []));
       list.push(i);
@@ -1843,13 +1838,9 @@ function isTree(key: string): boolean {
   return key.startsWith("tree") || key === "pine" || key === "palm" || key === "snowpine" || key === "jungle" || key === "willow" || key === "juniper";
 }
 
-// The eye view, second pass: the covers around the eye are placed again each time it has gone
-// this many cells (a few milliseconds, about once a second at a run), and at most this many trees
-// near it get their near model (near.ts).
-const COVER_STEP = 8;
-const COVER_TURN = 0.7;
-const COVER_WEDGE = 1.85;
-const NEAR_ALL = 10;
+// The eye view, second pass: at most this many trees near the eye get their near model (near.ts).
+// The covers around it are placed again each time it has gone COVER_STEP cells (fog.ts), a few
+// milliseconds, about once a second at a run.
 const NEAR_BUDGET = 36;
 
 // How deep a fish swims under the surface: its own half of the water down to

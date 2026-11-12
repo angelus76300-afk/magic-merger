@@ -6,6 +6,7 @@ import { mixColor, scaleColor } from "../colors";
 import { GRAPHICS } from "./graphics";
 import { LOOKS, biomeAt } from "../land";
 import { DAMP, R as RARE } from "../ecology";
+import { eyeKeepsChunk } from "./fog";
 
 // The island as voxel columns. Each cell is one column whose top sits at its
 // height (half a unit per height unit, rounded to whole voxels). Walls are
@@ -109,13 +110,7 @@ export class Terrain {
     for (let cy = 0; cy < this.rows; cy++)
       for (let cx = 0; cx < this.cols; cx++) {
         const c = this.chunks[cy * this.cols + cx];
-        let on = true;
-        if (at) {
-          // The chunk's nearest point to the eye.
-          const nx = Math.max(cx * CHUNK, Math.min((cx + 1) * CHUNK, at.x));
-          const ny = Math.max(cy * CHUNK, Math.min((cy + 1) * CHUNK, at.y));
-          on = Math.hypot(nx - at.x, ny - at.y) <= at.r;
-        }
+        const on = !at || eyeKeepsChunk(cx * CHUNK, cy * CHUNK, CHUNK, at.x, at.y, at.r);
         if (c.land) c.land.visible = on;
         if (c.fluid) c.fluid.visible = on;
       }
