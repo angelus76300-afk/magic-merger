@@ -88,6 +88,13 @@ function library(): { items: Item[]; elements: number; formCounts: Record<string
   for (const r of readJson<{ id: number; name: string; kind: string; tier: string; code: string }[]>("programs.json")) add(r, "unjudged");
   for (const r of readJson<{ id: number; name: string; kind: string; tier: string; code: string }[]>("programs-creatures.json")) add(r, "creatures");
   for (const r of readJson<{ pid: number; name: string; tier: string; code: string }[]>("challenge-candidates.json")) add(r, "challenge");
+  // POST /api/library (read only, spells only), for the names the GETs did not give (the owner's "measure: all").
+  const intents = new Map<string, string[]>();
+  if (existsSync(`${CACHE}/library.json`))
+    for (const r of readJson<{ spells: { key: string; name: string; tier: string; code: string; intents: string[] }[] }>("library.json").spells) {
+      add({ name: r.name, tier: r.tier, code: r.code }, "library");
+      intents.set(elementKey(r.name), r.intents);
+    }
   // Model and version of the program that is live (or the one fetched).
   const info = new Map<string, { id: number; status: string; model: string; version: number }[]>();
   if (existsSync(`${CACHE}/info`))
