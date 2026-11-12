@@ -376,7 +376,7 @@ const FAMILIES: [string, number, Cast][] = [
   ["cold at its source", M, { key: "frost", code: FROST, at: "source" }],
   ["its source dammed", M, { key: "dam", code: DAM, at: "source" }],
   ["a channel dug round the village", 10, { key: "moat", code: MOAT, at: "village" }],
-  ["heat that boils it off", 9, { key: "heat", code: HEAT, at: "front" }],
+  ["heat that boils it off", 27, { key: "heat", code: HEAT, at: "front" }],
 ];
 const LINE_EARTH = (k: number): Cast => ({ key: `earth${k}`, code: EARTH, at: "line", tier: "minor", when: 20, k, of: 5 });
 

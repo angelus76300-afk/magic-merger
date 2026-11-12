@@ -68,7 +68,7 @@ import type { World } from "./world";
 // `hold` seconds running (4 for a hamlet, 6 a village, 8 a town) while its
 // level climbed 0.04 a second held (unless it was at its height already): held
 // against a push, not pushed back a cell for a moment by earth raised under
-// its edge. Each time it comes nearer the count starts again:
+// its edge; never while a house stands in its water. Each time it comes nearer the count starts again:
 // a wall it reaches later is held from there. Cases checked
 // (scripts/troubles-test.ts): raised earth round the village, five plain
 // Earth casts across its way (a hamlet), cold at the source, the source
@@ -1126,7 +1126,8 @@ export function stepFlood(world: World, t: Trouble, dt: number): boolean {
       // drains; earth raised under its edge only pushes the edge back).
       k.top = Math.max(k.top ?? 0, fr.cells);
       const back = ad >= k.n + 2 && fr.cells <= k.top * 0.75;
-      const held = k.hit && (ad - pd >= (f.behind ?? BEHIND) || back);
+      // Never while a house stands in its water: water in the village is not held out of it.
+      const held = k.hit && fr.houses === 0 && (ad - pd >= (f.behind ?? BEHIND) || back);
       // Held against a push: while it holds, the spate's level climbs (0.04 for each second held, so more for
       // a bigger village), unless it is already at its height. A mound on the doorstep that pushes the
       // edge back a cell for a few seconds is not held against anything.
