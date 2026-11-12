@@ -1048,6 +1048,7 @@ interface Candidate {
   groups: string[];
   reasons: string[];
   first?: boolean;
+  cost?: number;
 }
 
 function suspectD(e: Effect): boolean {
@@ -1145,6 +1146,24 @@ function rewriteList(items: Item[], close: [string, string, number][]) {
   return { list, engine: rank(engine), clusters: clusterList.sort((x, y) => y.others.length - x.others.length) };
 }
 
+// What the Worker holds for one item of the refresh (worker/index.ts REFRESH_ESTIMATE, batch price):
+// legendary and cosmic by the big model, the rest by the small one (SPELL_SMALL_UP_TO "grand").
+const REWRITE_COST = { big: 0.06, small: 0.006 };
+const REFRESH_LEFT_USD = 4.46; // what November's refresh budget had left on 12 November (docs/HANDOVER.md)
+const costOf = (tier: string) => (tier === "legendary" || tier === "cosmic" ? REWRITE_COST.big : REWRITE_COST.small);
+function costs(list: Candidate[]) {
+  for (const c of list) c.cost = costOf(c.tier);
+  const total = list.reduce((a, c) => a + (c.cost ?? 0), 0);
+  let spent = 0;
+  let fit = 0;
+  for (const c of list) {
+    if (spent + (c.cost ?? 0) > REFRESH_LEFT_USD + 1e-9) break;
+    spent += c.cost ?? 0;
+    fit++;
+  }
+  return { total: Math.round(total * 1000) / 1000, fit, fitCost: Math.round(spent * 1000) / 1000, big: list.filter((c) => c.cost === REWRITE_COST.big).length };
+}
+
 const cell = (v: unknown) => String(v ?? "").replace(/\|/g, "/");
 function rewriteMarkdown(rw: ReturnType<typeof rewriteList>, measured: number): string {
   const g = (k: string) => rw.list.filter((c) => c.groups.includes(k)).length;
@@ -1164,13 +1183,18 @@ function rewriteMarkdown(rw: ReturnType<typeof rewriteList>, measured: number): 
     `${rw.list.length} candidates, most cast first; the first 60 are marked. "Casts" is the count in \`/api/admin/forms\`; a dash means the element has no row there.`,
     "",
   );
+  const cs = costs(rw.list);
   L.push(
-    "| # | First | Name | Key | Kind | Tier | Model | Version | Casts | Groups | Reason |",
-    "| ---: | --- | --- | --- | --- | --- | --- | ---: | ---: | --- | --- |",
+    `**Rough cost of rewriting them all: $${cs.total.toFixed(2)}** (${cs.big} legendary or cosmic at $${REWRITE_COST.big} and ${rw.list.length - cs.big} others at $${REWRITE_COST.small}, the Worker's refresh estimates at batch price). November's refresh budget has $${REFRESH_LEFT_USD} left, shared with the daily rebuild: in the order below the first ${cs.fit} fit ($${cs.fitCost.toFixed(3)}).`,
+    "",
+  );
+  L.push(
+    "| # | First | Name | Key | Kind | Tier | Model | Version | Casts | Cost | Groups | Why it is wrong |",
+    "| ---: | --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- | --- |",
   );
   rw.list.forEach((c, k) =>
     L.push(
-      `| ${k + 1} | ${c.first ? "yes" : ""} | ${cell(c.name)} | ${cell(c.key)} | ${cell(c.kind)} | ${c.tier} | ${cell(c.model?.replace("claude-", "") ?? "-")} | ${c.version ?? "-"} | ${c.casts ?? "-"} | ${c.groups.join(", ")} | ${cell(c.reasons.join("; "))} |`,
+      `| ${k + 1} | ${c.first ? "yes" : ""} | ${cell(c.name)} | ${cell(c.key)} | ${cell(c.kind)} | ${c.tier} | ${cell(c.model?.replace("claude-", "") ?? "-")} | ${c.version ?? "-"} | ${c.casts ?? "-"} | $${(c.cost ?? 0).toFixed(3)} | ${c.groups.join(", ")} | ${cell(c.reasons.join("; "))} |`,
     ),
   );
   L.push("", "## Near-duplicate clusters", "", "| Kept (most cast) | Shape | Others, listed above in group c |", "| --- | --- | --- |");
@@ -2032,7 +2056,24 @@ function report(lib: ReturnType<typeof library>, items: Item[], byKey: Map<strin
   p("\nFilms:");
   for (const f of films) p(`  ${f.n}. ${f.label}: ${f.a.name} / ${f.b.name}: ${f.line}`);
   const rw = rewriteList(items, close);
-  writeFileSync(`${OUT}/rewrite-candidates.json`, JSON.stringify({ candidates: rw.list, engine: rw.engine, clusters: rw.clusters }, null, 1));
+  const cs = costs(rw.list);
+  writeFileSync(
+    `${OUT}/rewrite-candidates.json`,
+    JSON.stringify(
+      {
+        measured: items.length,
+        count: rw.list.length,
+        totalCostUsd: cs.total,
+        budgetLeftUsd: REFRESH_LEFT_USD,
+        fitInBudget: cs.fit,
+        candidates: rw.list,
+        engine: rw.engine,
+        clusters: rw.clusters,
+      },
+      null,
+      1,
+    ),
+  );
   writeFileSync(`${OUT}/rewrite-candidates.md`, rewriteMarkdown(rw, items.length));
   const groupCount = (g: string) => rw.list.filter((c) => c.groups.includes(g)).length;
   p(
