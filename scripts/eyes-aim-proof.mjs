@@ -2,7 +2,8 @@
 // touch events, as a phone sends them; scripts/eyes-tap-proof.mjs is the model). One finger walks on
 // the stick while the other holds Cast, drags the ring and lifts: one cast, while walking. A quick tap
 // on Cast: one cast. A finger held still on the island, dragged and lifted: one cast. Lifted over
-// Cancel: none. Exits 1 when any of these fails.
+// Cancel: none. First, a thumb on the stick: the eye answers on the next frame, at a run. Exits 1
+// when any of these fails.
 //   npm run build && node scripts/eyes-aim-proof.mjs <out dir> [344x882] [seed]
 import { createRequire } from "node:module";
 import { join } from "node:path";
@@ -67,23 +68,24 @@ try {
 
   await eyes({ become: "villager" });
   await page.waitForTimeout(1500);
-  // Open ground ahead for the run: a street of the village.
-  await eyes({ place: "street", pitch: -0.1 });
+  await eyes({ place: "hill", pitch: -0.1 });
 
-  // 0. How fast the eye answers a real thumb on the stick: from the stick's pointerdown (its own
-  // event time) to the first frame the eye has moved, and to the frame it reaches 90 percent of the
-  // pace it keeps; then the pace, in cells per second. The page only watches; the touch is real.
+  // 0. How fast the eye answers a real thumb on the stick. The page only watches (the touch is
+  // real): when the stick's first move reaches the page's code, and each frame where the eye is.
+  // Software WebGL draws a frame in 100 to 250 ms here and the browser holds input back behind it,
+  // so the answer is counted in frames drawn after the page has the move (a phone draws one every
+  // 16 to 33 ms), and the pace in the island's own time (a frame moves it 0.1 s at most, engine.ts).
   {
     await world().evaluate(() => {
       const w = window;
       w.__trace = [];
-      w.__down = 0;
-      document.getElementById("stick").addEventListener("pointerdown", (e) => (w.__down = e.timeStamp), { once: true });
+      w.__moves = [];
+      document.getElementById("stick").addEventListener("pointermove", () => w.__moves.push(performance.now()));
       const t0 = performance.now();
-      const step = (t) => {
+      const step = () => {
         const r = w.__mmEyes?.();
-        if (r?.eye) w.__trace.push([t, r.eye.x, r.eye.y]);
-        if (t - t0 < 3500) requestAnimationFrame(step);
+        if (r?.eye) w.__trace.push([performance.now(), r.eye.x, r.eye.y]);
+        if (performance.now() - t0 < 4000) requestAnimationFrame(step);
       };
       requestAnimationFrame(step);
     });
@@ -92,45 +94,24 @@ try {
     // Straight up, past the rim: a run ahead.
     await touch("touchStart", [{ ...stick, id: 5 }]);
     await touch("touchMove", [{ ...stick, y: stick.y - 70, id: 5 }]);
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(2000);
     await touch("touchEnd", [{ ...stick, y: stick.y - 70, id: 5 }]);
-    await page.waitForTimeout(1800);
-    const { trace, down } = await world().evaluate(() => ({ trace: window.__trace, down: window.__down }));
-    const at = trace.findIndex((p) => p[0] >= down);
-    const [, x0, y0] = trace[Math.max(0, at - 1)];
-    const moved = trace.find((p) => p[0] >= down && Math.hypot(p[1] - x0, p[2] - y0) > 0.02);
-    // The pace kept: over the last 0.5 s of the push.
-    const late = trace.filter((p) => p[0] > down + 900 && p[0] < down + 1400);
-    const pace = late.length > 1 ? Math.hypot(late.at(-1)[1] - late[0][1], late.at(-1)[2] - late[0][2]) / ((late.at(-1)[0] - late[0][0]) / 1000) : 0;
-    let full = null;
-    for (let i = 1; i < trace.length; i++) {
-      const [t, x, y] = trace[i];
-      if (t < down) continue;
-      const [tp, xp, yp] = trace[Math.max(0, i - 3)];
-      if (t > tp && Math.hypot(x - xp, y - yp) / ((t - tp) / 1000) >= pace * 0.9) {
-        full = t;
-        break;
-      }
-    }
-    const first = moved ? moved[0] - down : Infinity;
-    const toFull = full ? full - down : Infinity;
-    const frames = trace.filter((p) => p[0] > down && p[0] < down + 1400);
-    const frameMs = frames.length > 1 ? (frames.at(-1)[0] - frames[0][0]) / (frames.length - 1) : 0;
-    // In frames drawn after the touch: software WebGL draws a frame in 100 to 250 ms here, so the
-    // answer is counted in frames (a phone draws one in 16 to 33 ms).
-    const firstFrames = moved ? trace.filter((p) => p[0] > down && p[0] <= moved[0]).length : Infinity;
-    const fullFrames = full ? trace.filter((p) => p[0] > down && p[0] <= full).length : Infinity;
-    const answer = {
-      firstMoveMs: Math.round(first),
-      to90Ms: Math.round(toFull),
-      firstFrames,
-      fullFrames,
-      pace: +pace.toFixed(1),
-      frameMs: +frameMs.toFixed(1),
-    };
+    await page.waitForTimeout(1500);
+    const { trace, moves } = await world().evaluate(() => ({ trace: window.__trace, moves: window.__moves }));
+    const got = moves[0] ?? Infinity;
+    const before = trace.filter((p) => p[0] <= got).at(-1) ?? trace[0];
+    const after = trace.filter((p) => p[0] > got);
+    const firstFrames = after.findIndex((p) => Math.hypot(p[1] - before[1], p[2] - before[2]) > 0.02) + 1 || Infinity;
+    // The pace kept, from the fourth frame on, over the island's time.
+    const run = after.slice(3, 9);
+    let sim = 0;
+    for (let i = 1; i < run.length; i++) sim += Math.min(100, run[i][0] - run[i - 1][0]) / 1000;
+    const pace = run.length > 1 && sim ? Math.hypot(run.at(-1)[1] - run[0][1], run.at(-1)[2] - run[0][2]) / sim : 0;
+    const frameMs = run.length > 1 ? (run.at(-1)[0] - run[0][0]) / (run.length - 1) : 0;
+    const answer = { firstFrames, pace: +pace.toFixed(1), frameMs: Math.round(frameMs) };
     expect(
-      "a real thumb on the stick: the eye moves on the first or second frame drawn after it, and runs at about 4 times a villager's walk (2.9)",
-      firstFrames <= 2 && pace > 9,
+      "a real thumb on the stick: the eye moves on the first frame drawn after the page has the move, at about 4 times a villager's walk (2.9)",
+      firstFrames === 1 && pace > 9.5,
       JSON.stringify(answer),
     );
     await page.waitForTimeout(500);
