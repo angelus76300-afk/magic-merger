@@ -2114,3 +2114,97 @@ function prayed(world: World, c: Creature, m: Mind): void {
   }
   deed(c, "left an offering");
 }
+
+// ---- Become anything: its own acts on demand (possess.ts) -------------------
+// Through its eyes (2026-11-12): the player presses what the creature already
+// does by itself. Each one runs the engine's own code above (hit, finish), so
+// it does exactly what the creature would do, no more.
+
+// It strikes when it does by itself: a hunter of prey (eat), a fighter by its
+// behavior (creatures.ts behave), a villager who is a guard (urgent).
+export function strikes(c: Creature, k: CreatureKind): boolean {
+  if (c.kind === "villager") return jobOf(c) === "guard";
+  const ai = k.ai;
+  if (ai && ai.attack > 0 && (ai.mode === "hunt" || ai.mode === "guard")) return true;
+  return hasNeeds(c, k) && !!(PREY[c.kind] ?? (k.needs ? preyOf(k) : null))?.length;
+}
+
+// It eats when it is hungry by itself: anyone with needs.
+export function eats(c: Creature, k: CreatureKind): boolean {
+  return hasNeeds(c, k);
+}
+
+// What is in front of it along `facing`, within its own reach (act's reach for
+// a strike): the nearest one, at most 70 degrees off the way it looks.
+export function inFront(world: World, c: Creature, facing: number, test: (o: Creature) => boolean): Creature | null {
+  const k = life.kindOf(c);
+  let best: Creature | null = null;
+  let bestD = Infinity;
+  for (const o of world.crowd.near(world, c.x, c.y, 6)) {
+    if (o === c || !test(o)) continue;
+    const dx = o.x - c.x;
+    const dy = o.y - c.y;
+    const d = Math.hypot(dx, dy);
+    const reach = k.radius * c.size + life.kindOf(o).radius * o.size + 0.7;
+    if (d > reach || d >= bestD) continue;
+    const off = d < 0.05 ? 0 : Math.abs(Math.atan2(Math.sin(Math.atan2(dy, dx) - facing), Math.cos(Math.atan2(dy, dx) - facing)));
+    if (off > (70 * Math.PI) / 180) continue;
+    best = o;
+    bestD = d;
+  }
+  return best;
+}
+
+// One strike: `seconds` of its own blows (hit) at the living one in front.
+export function strikeNow(world: World, c: Creature, facing: number, seconds: number): Creature | null {
+  const k = life.kindOf(c);
+  if (!strikes(c, k)) return null;
+  const t = inFront(world, c, facing, (o) => !o.dead && o.hp > 0);
+  if (!t) return null;
+  const m = mindOf(c);
+  c.hd = Math.atan2(t.y - c.y, t.x - c.x);
+  hit(world, c, k, m, t, seconds);
+  return t;
+}
+
+// One meal, as finish() eats it, from what is in front or underfoot: the
+// village's food at home for a villager, a kill for a hunter, a plant (or
+// the grass it makes do with) for a grazer. Returns what it ate, or null.
+export function eatNow(world: World, c: Creature, facing: number): string | null {
+  const k = life.kindOf(c);
+  if (!eats(c, k)) return null;
+  const m = mindOf(c);
+  if (c.kind === "villager") {
+    const v = villageOf(world, c.homeX, c.homeY);
+    if (!v || v.food < 1 || Math.hypot(c.homeX - c.x, c.homeY - c.y) > (REACH.eat ?? 1.6) + 0.9) return null;
+    setTask(m, "eat", c.homeX, c.homeY);
+    finish(world, c, k, m);
+    return "the village's food";
+  }
+  const prey = PREY[c.kind] ?? (k.needs ? preyOf(k) : null);
+  if (prey && prey.length) {
+    const kill = inFront(world, c, facing, (o) => o.dead && !o.data.eaten && names(prey, o.kind));
+    if (kill) {
+      setTask(m, "feast", kill.x, kill.y, 1, -1, kill);
+      finish(world, c, k, m);
+      return `the ${base(kill.kind)}`;
+    }
+  }
+  const plants = PLANTS[c.kind] ?? (prey ? null : [C.BUSH, C.FLOWER, C.CROP]);
+  if (!plants) return null;
+  const here = world.idx(Math.max(0, Math.min(world.w - 1, c.x)), Math.max(0, Math.min(world.h - 1, c.y)));
+  const ahead = world.idx(Math.max(0, Math.min(world.w - 1, c.x + Math.cos(facing))), Math.max(0, Math.min(world.h - 1, c.y + Math.sin(facing))));
+  for (const i of [ahead, here]) {
+    if (!plants.includes(world.cover[i]) || world.depth[i] >= 0.3) continue;
+    const cover = world.cover[i];
+    cellTask(world, m, "graze", i);
+    finish(world, c, k, m);
+    return cover === C.CROP ? "crops" : cover === C.FLOWER ? "flowers" : cover === C.BERRIES ? "berries" : "a plant";
+  }
+  if ((MAKE_DO[c.kind] ?? [G.GRASS]).includes(world.ground[here]) && world.cover[here] === C.NONE) {
+    cellTask(world, m, "graze", here);
+    finish(world, c, k, m);
+    return "grass";
+  }
+  return null;
+}

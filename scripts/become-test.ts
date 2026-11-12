@@ -5,9 +5,14 @@
 import { KINDS, kindOf, makeCreature, populate, type Creature, type CreatureKind } from "../src/sim/creatures";
 import { mindOf, storyOn } from "../src/sim/kin";
 import { DEFAULT_LAND, resolveLand } from "../src/sim/land";
-import { C, F } from "../src/sim/materials";
+import { C, F, G } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
-import { act, checkHeld, possess, possessed, powersOf, release, steerBy, stickDir, thoughtOf } from "../src/sim/possess";
+import { act, checkHeld, deedsOf, doDeed, possess, possessed, powersOf, release, steerBy, stickDir, STRIKE_SECONDS, thoughtOf } from "../src/sim/possess";
+import { CAST_RANGE, aimAt, castFromEyes, lookTheta } from "../src/sim/eyes";
+import { jobOf } from "../src/sim/goals";
+import { playerCast } from "../src/sim/playercast";
+import { readFromWorld } from "../src/sim/protocol";
+import { surfaceY } from "../src/sim/voxel/terrain";
 import { Runtime } from "../src/sim/runtime";
 import { saveWorld } from "../src/sim/save";
 import { stepHeadless } from "../src/sim/tick";
@@ -362,7 +367,218 @@ export function becomeChecks(check: Check): void {
         !!t.world.trouble && ended === 0 && fire.casts.length === casts,
         `stage ${fire.stage}, ${fire.casts.length - casts} casts counted, ended ${ended} times`,
       );
+      // 15. A cast from the eyes is a cast: near the fire it counts for the trouble, as a tap's would;
+      // aimed past the range, it lands at the range's end, out of the fire's reach, and does not.
+      {
+        const ground = groundOf(t.world);
+        const req = { key: "eyes test rain", name: "Eyes Test Rain", tier: "minor" as const, code: "const spell = { *cast(w) { yield 0.1; } };" };
+        const cast = (x: number, y: number) => playerCast(t.world, t.rt, req, x, y);
+        // Eight cells from the fire's heart, looking down at it.
+        const a = Math.atan2(fire.y - v.y, fire.x - v.x);
+        const ex = fire.x - Math.cos(a) * 8;
+        const ey = fire.y - Math.sin(a) * 8;
+        const h = ground(ex, ey) + 1.6;
+        const pitch = -Math.atan2(h - ground(fire.x, fire.y), 8);
+        const before = fire.casts.length;
+        const near = castFromEyes({ x: ex, y: ey, h, yaw: a, pitch }, ground, t.world.w, t.world.h, cast);
+        const counted = fire.casts.length - before;
+        // Thirty cells away, aimed at the fire's heart: the cast stops at the range, 14 cells out at most.
+        const fx = Math.max(4, Math.min(t.world.w - 5, fire.x - Math.cos(a) * 30));
+        const fy = Math.max(4, Math.min(t.world.h - 5, fire.y - Math.sin(a) * 30));
+        const fh = ground(fx, fy) + 1.6;
+        const at = Math.hypot(fire.x - fx, fire.y - fy);
+        const far = castFromEyes(
+          { x: fx, y: fy, h: fh, yaw: Math.atan2(fire.y - fy, fire.x - fx), pitch: -Math.atan2(fh - ground(fire.x, fire.y), at) },
+          ground,
+          t.world.w,
+          t.world.h,
+          cast,
+        );
+        const farLand = Math.hypot(far.x - fx, far.y - fy);
+        check(
+          "eyes: a cast from the eyes counts for a wildfire as a tap's would, and lands no further than the range",
+          near.ok && counted === 1 && Math.hypot(near.x - fire.x, near.y - fire.y) < 2 && far.ok && farLand <= CAST_RANGE + 0.15 && at > CAST_RANGE + 5,
+          `near: landed ${Math.hypot(near.x - fire.x, near.y - fire.y).toFixed(1)} cells from the fire, ${counted} counted; aimed at it from ${at.toFixed(0)} cells: landed ${farLand.toFixed(1)} cells out`,
+        );
+      }
     }
   }
+  eyesChecks(check, world, rt);
   storyOn(null);
+}
+
+// The ground the camera sees (view.ts groundAt): the surface, land or fluid, in scene units.
+function groundOf(world: World): (x: number, y: number) => number {
+  return (x, y) => surfaceY(world, Math.max(0, Math.min(world.h - 1, Math.floor(y))) * world.w + Math.max(0, Math.min(world.w - 1, Math.floor(x))));
+}
+
+// Through its eyes (2026-11-12, src/sim/eyes.ts): the stick walks along the look, the mark's cast
+// is held to its range, the creature's own acts do what their words say, and the page's messages are checked.
+function eyesChecks(check: Check, world: World, rt: Runtime): void {
+  // A villager of its own on open grass, with open ground ahead along d.
+  let c: Creature | null = null;
+  let d: { x: number; y: number } | undefined;
+  for (let y = 20; y < world.h - 20 && !c; y += 3)
+    for (let x = 20; x < world.w - 20 && !c; x += 3) {
+      const i = world.idx(x, y);
+      if (world.ground[i] !== G.GRASS || world.cover[i] !== C.NONE || world.depth[i] > 0) continue;
+      d = DIRS.find((v) => open(world, x + 0.5, y + 0.5, v.x, v.y, 10));
+      if (!d) continue;
+      c = makeCreature("villager", x + 0.5, y + 0.5);
+      world.creatures.push(c);
+    }
+  check("eyes: island 21 has a villager on open ground to play", !!c);
+  if (!c) return;
+  // 11. The stick against the look: up walks where it looks, right walks to the right of it.
+  {
+    {
+      const v = c;
+      possess(world, v);
+      const along = Math.atan2(d!.y, d!.x);
+      const walk = (sx: number, sy: number, yaw: number) => {
+        const from = { x: v.x, y: v.y };
+        steerBy(world, sx, sy, lookTheta(yaw));
+        run(world, rt, 1.2, () => awake(v));
+        steerBy(world, 0, 0, lookTheta(yaw));
+        run(world, rt, 0.6, () => awake(v));
+        return { x: v.x - from.x, y: v.y - from.y };
+      };
+      // Looking along the open way, stick up; then looking a quarter turn to its left, stick right.
+      const up = walk(0, -1, along);
+      const e = d!;
+      const upAlong = up.x * e.x + up.y * e.y;
+      const right = walk(1, 0, along - Math.PI / 2);
+      const rightAlong = right.x * e.x + right.y * e.y;
+      check(
+        "eyes: the stick walks along the look, up ahead and right to its right",
+        upAlong > 2 && Math.abs(-up.x * e.y + up.y * e.x) < upAlong * 0.35 && rightAlong > 2 && Math.abs(-right.x * e.y + right.y * e.x) < rightAlong * 0.35,
+        `up: ${upAlong.toFixed(1)} cells ahead; right: ${rightAlong.toFixed(1)} cells to the right`,
+      );
+      release(world);
+    }
+  }
+
+  // 12. The mark's cast is held to its range: on flat ground at 1.6 high, looking down 0.5 lands
+  // 2.9 cells out; nearly flat (16 cells) or at the sky, at the range's end, 14 cells straight ahead.
+  {
+    const flat = () => 0;
+    const eye = { x: 50, y: 50, h: 1.6, yaw: 0.3, pitch: -0.5 };
+    const down = aimAt(eye, flat, 100, 100);
+    const low = aimAt({ ...eye, pitch: -0.1 }, flat, 100, 100);
+    const sky = aimAt({ ...eye, pitch: 0.4 }, flat, 100, 100);
+    const edge = aimAt({ ...eye, x: 95, yaw: 0, pitch: 0.2 }, flat, 100, 100);
+    const ok =
+      down.hit &&
+      Math.abs(down.dist - 1.6 / Math.tan(0.5)) < 0.15 &&
+      !low.hit &&
+      Math.abs(low.dist - CAST_RANGE) < 1e-6 &&
+      Math.abs(Math.atan2(low.y - 50, low.x - 50) - 0.3) < 1e-6 &&
+      !sky.hit &&
+      Math.abs(sky.dist - CAST_RANGE) < 1e-6 &&
+      edge.x <= 98.5;
+    check(
+      "eyes: a cast lands where the mark meets the ground, and no further than the range",
+      ok,
+      `down ${down.dist.toFixed(2)} (hit ${down.hit}), low ${low.dist.toFixed(2)} (hit ${low.hit}), sky ${sky.dist.toFixed(2)}, at the rim x ${edge.x.toFixed(1)}`,
+    );
+    // From a villager's own eyes on the island: the ground a few cells ahead is under the mark.
+    const v = world.creatures.find((o) => !o.dead && o.kind === "villager")!;
+    const ground = groundOf(world);
+    const own = aimAt({ x: v.x, y: v.y, h: ground(v.x, v.y) + 1.6, yaw: v.hd, pitch: -0.35 }, ground, world.w, world.h);
+    check(
+      "eyes: from a villager's eyes, looking down, the mark meets the island within reach",
+      own.hit && own.dist > 1 && own.dist < CAST_RANGE,
+      `${own.dist.toFixed(1)} cells`,
+    );
+  }
+
+  // 13. Its own acts: only those its kind does by itself, each doing what it says.
+  {
+    const at = { x: c.x, y: c.y };
+    // The villager of the walk is done: out of the way of the strike below.
+    c.hp = 0;
+    c.dead = true;
+    const deer = makeCreature("deer", at.x, at.y);
+    const wolf = makeCreature("wolf", at.x + 3, at.y);
+    const fish = world.creatures.find((o) => !o.dead && o.kind === "fish");
+    world.creatures.push(deer, wolf);
+    const villagers = world.creatures.filter((o) => !o.dead && o.kind === "villager");
+    const guard = villagers.find((o) => jobOf(o) === "guard");
+    const farmer = villagers.find((o) => jobOf(o) !== "guard");
+    const lists = `deer ${deedsOf(deer).join("+") || "none"}, wolf ${deedsOf(wolf).join("+")}, fish ${fish ? deedsOf(fish).join("+") || "none" : "?"}, guard ${guard ? deedsOf(guard).join("+") : "?"}, other villager ${farmer ? deedsOf(farmer).join("+") : "?"}`;
+    check(
+      "eyes: each kind gets only the acts it does by itself",
+      deedsOf(deer).join() === "eat" &&
+        deedsOf(wolf).join() === "strike,eat" &&
+        (!fish || deedsOf(fish).length === 0) &&
+        (!guard || deedsOf(guard).join() === "strike,eat") &&
+        (!farmer || deedsOf(farmer).join() === "eat"),
+      lists,
+    );
+
+    // Eat: a hungry deer facing flowers eats them, as it grazes by itself; at once again, it is still eating.
+    // On the villager's open grass, facing along it.
+    deer.x = c.x;
+    deer.y = c.y;
+    possess(world, deer);
+    const dm = mindOf(deer);
+    dm.hunger = 0.8;
+    const face = Math.atan2(d!.y, d!.x);
+    const ahead = world.idx(Math.floor(deer.x + Math.cos(face)), Math.floor(deer.y + Math.sin(face)));
+    const was = world.cover[ahead];
+    world.setCover(ahead, C.FLOWER);
+    const ate = doDeed(world, "eat", face);
+    const after = dm.hunger;
+    const again = doDeed(world, "eat", face);
+    const struck = doDeed(world, "strike", face);
+    check(
+      "eyes: Eat eats the plant in front, as the deer's own grazing does",
+      typeof ate === "object" &&
+        ate?.done === "flowers" &&
+        Math.abs(after - 0.25) < 1e-9 &&
+        world.cover[ahead] === C.NONE &&
+        again === "busy" &&
+        struck === null,
+      `${JSON.stringify(ate)}, hunger 0.80 to ${after.toFixed(2)}, the flowers ${world.cover[ahead] === C.NONE ? "gone" : "still there"}; again: ${again}; strike for a deer: ${struck}`,
+    );
+    world.setCover(ahead, was);
+    release(world);
+
+    // Strike: a wolf facing a deer in reach takes half a second of its own blows off it; facing away, nothing.
+    possess(world, wolf);
+    wolf.x = deer.x - 1;
+    wolf.y = deer.y;
+    deer.hp = 100;
+    const away = doDeed(world, "strike", Math.PI);
+    const hp0 = deer.hp;
+    const hitIt = doDeed(world, "strike", 0);
+    const blow = hp0 - deer.hp;
+    const want = (kindOf(wolf).ai?.attack || 20) * STRIKE_SECONDS;
+    check(
+      "eyes: Strike lands the wolf's own blow on what is in front, and nothing when it faces away",
+      away === "nothing" && typeof hitIt === "object" && hitIt?.done === "deer" && Math.abs(blow - want) < 1e-6,
+      `facing away: ${away}; facing it: ${JSON.stringify(hitIt)}, ${blow.toFixed(1)} hp of ${want.toFixed(1)} expected`,
+    );
+    release(world);
+    deer.hp = 0;
+    wolf.hp = 0;
+  }
+
+  // 14. The page's messages from the island are checked like the rest: anything else is dropped.
+  {
+    const good = [readFromWorld({ type: "eyes", on: true }), readFromWorld({ type: "pick", key: "fireball" }), readFromWorld({ type: "pick", key: null })];
+    const bad = [
+      readFromWorld({ type: "eyes", on: "yes" }),
+      readFromWorld({ type: "eyes" }),
+      readFromWorld({ type: "pick", key: "" }),
+      readFromWorld({ type: "pick", key: "x".repeat(121) }),
+      readFromWorld({ type: "pick", key: 7 }),
+      readFromWorld({ type: "pick" }),
+    ];
+    check(
+      "eyes: the eye view's messages from the island are read only in their shape",
+      good.every((m) => m !== null) && bad.every((m) => m === null) && JSON.stringify(good[2]) === '{"type":"pick","key":null}',
+      `${good.filter(Boolean).length} of 3 good read, ${bad.filter((m) => m === null).length} of 6 bad dropped`,
+    );
+  }
 }

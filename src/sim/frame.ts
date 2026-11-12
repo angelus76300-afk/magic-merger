@@ -2,10 +2,11 @@ import { chronicleDigest } from "./chronicle";
 import { Engine, type WorldSize } from "./engine";
 import { DEFAULT_LAND, readChoice, resolveLand, type LandChoice } from "./land";
 import { WORLD_SIZES } from "./sizes";
+import { C } from "./materials";
 import { kindOf, makeCreature, maxHp, type Creature } from "./creatures";
 import { artifactAt, creatureAt, inspect, inspectArtifact } from "./inspect";
 import type { Artifact } from "./artifacts";
-import type { FromWorld, ToWorld } from "./protocol";
+import { HOT_SLOTS, type FromWorld, type HotSlot, type ToWorld } from "./protocol";
 import type { CastRequest, Runtime } from "./runtime";
 import type { SavedWorld } from "./save";
 import { Hud } from "./hud";
@@ -13,7 +14,8 @@ import { SCENARIOS } from "./scenarios";
 import { firstLook, villageView, type Pose } from "./firstlook";
 import { fireOf, startWildfire, stoneAt, stoneLine, troubleLine, type Stone } from "./troubles";
 import { Director, lifeLine, nameOf, whoIs, type Shot } from "./director";
-import { act, checkHeld, possess, possessed, powersOf, release, steerBy, thoughtOf } from "./possess";
+import { act, checkHeld, deedsOf, doDeed, possess, possessed, powersOf, release, steerBy, thoughtOf, type Deed } from "./possess";
+import { aimAt, castFromEyes, eyesFirst, lookTheta } from "./eyes";
 import { castOnScreen, watchCast } from "./voxel/castview";
 import { LAND_REDRAW } from "./voxel/terrain";
 import { readDef, setFinders, signatureOf, wonderInfo, type WonderDef } from "./wonders";
@@ -103,9 +105,12 @@ const hooks = {
     }
     if (engine.view.orbit.watching) return;
     // While the player is a creature (Become, 2026-11-12) a tap on the island
-    // does nothing: casting while possessed is out of this first version. The
-    // page's spell selection still works; the player lets go first to cast.
-    if (riding) return;
+    // casts only in the eye view, where the mark in the middle points (Through
+    // its eyes): from behind, the player lets go first to cast.
+    if (riding) {
+      if (eyes) castFromEye();
+      return;
+    }
     if (!selected) {
       // A stone a village raised to the item that saved it (troubles.ts).
       const stone = stoneAt(engine.world, x, y);
@@ -123,23 +128,29 @@ const hooks = {
       }
       return;
     }
-    if (engine.cast(selected, x, y)) {
-      send({ type: "cast", key: selected.key });
-      saveSoon();
-      // The camera holds the cast for three seconds: nothing of the frame
-      // moves it before then (the tour of the island waits, below).
-      holdUntil = performance.now() + HOLD_MS;
-      director.castAt(x, y, engine.world.time);
-      lastCastAt = performance.now();
-      // Where the cast is on screen for the next three seconds (castview.ts).
-      const n = casts++;
-      watchCast(
-        () => (engine ? castOnScreen(engine, x, y, [card, lookCard]) : null),
-        (at) => send({ type: "cast-view", n, x: at?.x ?? null, y: at?.y ?? null }),
-      );
-    }
+    castAt(x, y);
   },
 };
+
+// The player's cast at a cell of the island: from a tap, or from the eyes of
+// the creature the player is (eyes.ts). The same cast either way.
+function castAt(x: number, y: number): boolean {
+  if (!engine || !selected || !engine.cast(selected, x, y)) return false;
+  send({ type: "cast", key: selected.key });
+  saveSoon();
+  // The camera holds the cast for three seconds: nothing of the frame
+  // moves it before then (the tour of the island waits, below).
+  holdUntil = performance.now() + HOLD_MS;
+  director.castAt(x, y, engine.world.time);
+  lastCastAt = performance.now();
+  // Where the cast is on screen for the next three seconds (castview.ts).
+  const n = casts++;
+  watchCast(
+    () => (engine ? castOnScreen(engine, x, y, [card, lookCard]) : null),
+    (at) => send({ type: "cast-view", n, x: at?.x ?? null, y: at?.y ?? null }),
+  );
+  return true;
+}
 
 // The inspect card: built from text nodes only (kind names come from spells),
 // refreshed twice a second while it is open.
@@ -375,7 +386,7 @@ const pointerEl = document.getElementById("pointer") as HTMLElement;
 function point(): void {
   requestAnimationFrame(point);
   // The creature the player is has it too: under a roof or a tree it is still found at a glance (frames of 12 November).
-  const c = watching && engine && marked && !marked.dead ? marked : riding && engine && !riding.dead ? riding : null;
+  const c = watching && engine && marked && !marked.dead ? marked : riding && engine && !riding.dead && !eyes ? riding : null;
   const at = c && engine ? castOnScreen(engine, c.x, c.y, []) : null;
   pointerEl.hidden = !at;
   if (!at || !c || !engine) return;
@@ -507,12 +518,20 @@ function startBecome(c: Creature): void {
   drawPowers();
   tellRider();
   engine.view.orbit.chase(c.x, c.y, c.z, c.hd, kindOf(c).radius * c.size);
+  eyeEl.hidden = false;
+  eyesBack = false;
+  // Walkers start in their eyes; flyers and swimmers behind (eyes.ts).
+  if (eyesFirst(kindOf(c))) setEyes(true);
   lastTouch = performance.now();
 }
 
 function endBecome(why: "let go" | "fell" | "gone"): void {
   const c = riding;
   if (!c) return;
+  // Out of its eyes first: the page and the island's own buttons come back as they were.
+  setEyes(false);
+  eyeEl.hidden = true;
+  eyesBack = false;
   riding = null;
   if (engine) {
     release(engine.world, why);
@@ -634,11 +653,293 @@ function ride(): void {
   const world = engine.world;
   const why = checkHeld(world);
   if (why || !possessed(world)) return endBecome(why ?? "gone");
-  steerBy(world, stick.x, stick.y, stick.id >= 0 ? stick.theta : engine.view.orbit.theta);
+  const o = engine.view.orbit;
+  // The keys walk it when no thumb is on the stick (WASD or the arrows, on a desktop).
+  const keyed = stick.id < 0 ? keyStick() : null;
+  const sx = keyed ? keyed.x : stick.x;
+  const sy = keyed ? keyed.y : stick.y;
+  // In the eye view the stick goes along the look as it turns (another finger
+  // turns it while the thumb walks); from behind, along the view the thumb came down on.
+  steerBy(world, sx, sy, o.eye ? lookTheta(o.eye.yaw) : stick.id >= 0 ? stick.theta : o.theta);
   const c = riding;
-  engine.view.orbit.chase(c.x, c.y, c.z, c.hd, kindOf(c).radius * c.size);
+  o.chase(c.x, c.y, c.z, c.hd, kindOf(c).radius * c.size);
+  if (eyes) drawMark();
 }
 requestAnimationFrame(ride);
+
+// Through its eyes (2026-11-12, eyes.ts): the camera at the creature's head,
+// a drag anywhere turns the look, the stick walks along it. The page hides its
+// own header, drawer and tools (the "eyes" message) and the island shows what
+// a first person game on a phone does: a mark in the middle, the creature's
+// own acts and the cast at the right thumb, a hot bar of the last spells.
+// Nothing of it is saved: it is the view and the buttons, possession stays as it was.
+const eyeEl = document.getElementById("eye") as HTMLButtonElement;
+const markEl = document.getElementById("mark") as HTMLElement;
+const landingEl = document.getElementById("landing") as HTMLElement;
+const actsEl = document.getElementById("acts") as HTMLElement;
+const deedsEl = document.getElementById("deeds") as HTMLElement;
+const castEl = document.getElementById("castbtn") as HTMLButtonElement;
+const heldEl = document.getElementById("held") as HTMLElement;
+const hotbarEl = document.getElementById("hotbar") as HTMLElement;
+let eyes = false;
+// The eye view was on when the World was hidden: it comes back with it.
+let eyesBack = false;
+let hot: HotSlot[] = [];
+// A slot tapped whose spell is still being written: said until it is in hand.
+let picking: string | null = null;
+const eyeStats = { on: 0, off: 0, casts: 0, done: [] as string[] };
+
+function setEyes(on: boolean): void {
+  if (on && (!engine || !riding || riding.dead)) return;
+  if (on === eyes) return;
+  eyes = on;
+  if (engine) {
+    const o = engine.view.orbit;
+    if (on && riding) {
+      engine.view.eyeId = riding.id;
+      o.eyeOn(riding.hd, riding.x, riding.y, engine.view.groundAt(riding.x, riding.y) + 1.5);
+    } else {
+      o.eyeOff();
+      engine.view.eyeId = -1;
+    }
+  }
+  if (on) eyeStats.on++;
+  else eyeStats.off++;
+  document.body.classList.toggle("eyes", on);
+  eyeEl.setAttribute("aria-pressed", String(on));
+  eyeEl.lastElementChild!.textContent = on ? "Behind" : "Eyes";
+  markEl.hidden = !on;
+  landingEl.hidden = true;
+  actsEl.hidden = !on;
+  hotbarEl.hidden = !on;
+  heldEl.hidden = true;
+  // Its own powers join its acts at the right thumb, and go back beside the stick after.
+  if (on) deedsEl.prepend(powersEl);
+  else document.body.insertBefore(powersEl, letGoEl);
+  picking = null;
+  drawDeeds();
+  drawHot();
+  send({ type: "eyes", on });
+  lastTouch = performance.now();
+}
+
+eyeEl.addEventListener("click", () => setEyes(!eyes));
+
+const DEED_WORDS: Record<Deed, string> = { strike: "Strike", eat: "Eat" };
+
+function drawDeeds(): void {
+  if (!riding || !engine || !eyes) return deedsEl.querySelectorAll(".deed").forEach((b) => b.remove());
+  const list = deedsOf(riding);
+  const have = [...deedsEl.querySelectorAll<HTMLButtonElement>(".deed")].map((b) => b.dataset.deed);
+  if (have.join() === list.join()) return;
+  deedsEl.querySelectorAll(".deed").forEach((b) => b.remove());
+  for (const d of list) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "deed";
+    b.dataset.deed = d;
+    b.textContent = DEED_WORDS[d];
+    b.addEventListener("click", () => useDeed(d));
+    deedsEl.append(b);
+  }
+}
+
+function useDeed(d: Deed): void {
+  if (!riding || !engine) return;
+  lastTouch = performance.now();
+  const o = engine.view.orbit;
+  const r = doDeed(engine.world, d, o.eye ? o.eye.yaw : riding.hd);
+  if (r === "nothing") powerNote = { text: d === "strike" ? "Strike: nothing in reach" : "Eat: nothing to eat here", until: performance.now() + 1800 };
+  else if (r && r !== "busy") {
+    powerNote = { text: d === "strike" ? `Struck the ${r.done}` : `Ate ${r.done}`, until: performance.now() + 1800 };
+    eyeStats.done.push(`${d}:${r.done}`);
+    saveSoon();
+  }
+  tellRider();
+}
+
+function drawHot(): void {
+  if (!eyes) return;
+  const held = selected?.key ?? null;
+  if (picking && held === picking) picking = null;
+  if (!hot.length) hotbarEl.replaceChildren(el("span", "empty", "No spells yet: make some in Craft"));
+  else
+    hotbarEl.replaceChildren(
+      ...hot.map((h, n) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = h.emoji || "✦";
+        b.title = h.name;
+        b.setAttribute("aria-label", `${h.name}${h.ready ? "" : ", being made"} (${n + 1})`);
+        b.setAttribute("aria-pressed", String(h.key === held || h.key === picking));
+        b.classList.toggle("waiting", !h.ready);
+        b.addEventListener("click", () => pick(h.key));
+        return b;
+      }),
+    );
+  const slot = hot.find((h) => h.key === (held ?? picking));
+  const name = slot?.name ?? selected?.name ?? "";
+  heldEl.hidden = !name;
+  heldEl.textContent = !name ? "" : held ? name : `${name} is being made`;
+  castEl.hidden = !held;
+  castEl.textContent = selected?.kind === "artifact" ? "Place" : "Cast";
+  markEl.classList.toggle("held", !!held);
+  if (!held) landingEl.hidden = true;
+}
+
+function pick(key: string): void {
+  lastTouch = performance.now();
+  // The one in hand, tapped again, is put away.
+  const away = key === (selected?.key ?? picking);
+  picking = away ? null : key;
+  send({ type: "pick", key: away ? null : key });
+  drawHot();
+}
+
+// Where the spell in hand would land: a ring on the ground, the mark dashed when it is past the range.
+function drawMark(): void {
+  if (!engine || !selected) return;
+  const e = engine.view.orbit.eye;
+  if (!e) return;
+  const at = aimAt(e, engine.view.groundAt, engine.world.w, engine.world.h);
+  markEl.classList.toggle("far", !at.hit);
+  const p = castOnScreen(engine, at.x, at.y, []);
+  landingEl.hidden = !p;
+  if (p) landingEl.style.transform = `translate(${Math.round(p.x)}px, ${Math.round(p.y)}px)`;
+}
+
+function castFromEye(): void {
+  if (!engine || !eyes || !selected) return;
+  const e = engine.view.orbit.eye;
+  if (!e) return;
+  lastTouch = performance.now();
+  const r = castFromEyes(e, engine.view.groundAt, engine.world.w, engine.world.h, castAt);
+  if (r.ok) eyeStats.casts++;
+}
+castEl.addEventListener("click", castFromEye);
+
+// The keys on a desktop: WASD or the arrows walk, 1 to 6 take a slot, Space casts.
+const keysDown = new Set<string>();
+const WALK_KEYS: Record<string, [number, number]> = {
+  KeyW: [0, -1],
+  ArrowUp: [0, -1],
+  KeyS: [0, 1],
+  ArrowDown: [0, 1],
+  KeyA: [-1, 0],
+  ArrowLeft: [-1, 0],
+  KeyD: [1, 0],
+  ArrowRight: [1, 0],
+};
+function keyStick(): { x: number; y: number } | null {
+  let x = 0;
+  let y = 0;
+  for (const k of keysDown) {
+    const v = WALK_KEYS[k];
+    if (v) {
+      x += v[0];
+      y += v[1];
+    }
+  }
+  const d = Math.hypot(x, y);
+  return d ? { x: x / d, y: y / d } : null;
+}
+window.addEventListener("keydown", (e) => {
+  if (!riding) return;
+  if (WALK_KEYS[e.code]) {
+    keysDown.add(e.code);
+    e.preventDefault();
+  } else if (eyes && e.code === "Space") {
+    castFromEye();
+    e.preventDefault();
+  } else if (eyes && /^Digit[1-6]$/.test(e.code)) {
+    const slot = hot[Number(e.code.slice(5)) - 1];
+    if (slot) pick(slot.key);
+  }
+});
+window.addEventListener("keyup", (e) => keysDown.delete(e.code));
+window.addEventListener("blur", () => keysDown.clear());
+
+// A place for a frame of the checks: open ground near the nearest house, in
+// the thickest woods or on the shore, and the look toward it. Only the checks call it.
+function placeFor(sort: "house" | "woods" | "shore"): { x: number; y: number; yaw: number } | null {
+  if (!engine || !riding) return null;
+  const w = engine.world;
+  const free = (x: number, y: number) => w.inside(x, y) && w.cover[w.idx(x, y)] === C.NONE && w.depth[w.idx(x, y)] < 0.15;
+  const near = (x: number, y: number, r: number, test: (i: number) => boolean) => {
+    let n = 0;
+    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (w.inside(x + dx, y + dy) && test(w.idx(x + dx, y + dy))) n++;
+    return n;
+  };
+  let best: { x: number; y: number; yaw: number } | null = null;
+  let bestD = Infinity;
+  for (let y = 4; y < w.h - 4; y++)
+    for (let x = 4; x < w.w - 4; x++) {
+      const d = Math.hypot(x - riding.x, y - riding.y);
+      if (d >= bestD || !free(x, y)) continue;
+      if (sort === "house") {
+        // Three cells from a house wall, with the house straight ahead along +x, -x, +y or -y.
+        for (const [dx, dy] of [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ]) {
+          if (w.cover[w.idx(x + dx * 3, y + dy * 3)] !== C.HOUSE || !free(x + dx, y + dy) || !free(x + dx * 2, y + dy * 2)) continue;
+          best = { x: x + 0.5, y: y + 0.5, yaw: Math.atan2(dy, dx) };
+          bestD = d;
+        }
+      } else if (sort === "woods") {
+        if (near(x, y, 4, (i) => w.cover[i] === C.TREE) < 22) continue;
+        best = { x: x + 0.5, y: y + 0.5, yaw: riding.hd };
+        bestD = d;
+      } else {
+        for (const [dx, dy] of [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ]) {
+          if (!(w.depth[w.idx(x + dx * 4, y + dy * 4)] > 0.8) || near(x, y, 1, (i) => w.depth[i] > 0.15) > 2) continue;
+          best = { x: x + 0.5, y: y + 0.5, yaw: Math.atan2(dy, dx) };
+          bestD = d;
+        }
+      }
+    }
+  return best;
+}
+
+// For the checks (scripts/eyes-frames.mjs): the eye view as it stands, and a
+// way to turn the look without a finger. Nothing of this is sent anywhere.
+(window as unknown as { __mmEyes?: (look?: { yaw?: number; pitch?: number; turn?: number; place?: "house" | "woods" | "shore" }) => unknown }).__mmEyes = (
+  look,
+) => {
+  const o = engine?.view.orbit;
+  const e = o?.eye;
+  if (look?.place && riding) {
+    const at = placeFor(look.place);
+    if (!at) return null;
+    riding.x = at.x;
+    riding.y = at.y;
+    riding.hd = at.yaw;
+    if (e) e.yaw = at.yaw;
+  }
+  if (e && look) {
+    if (look.yaw !== undefined) e.yaw = look.yaw;
+    if (look.turn !== undefined) e.yaw += look.turn;
+    if (look.pitch !== undefined) e.pitch = look.pitch;
+  }
+  const aim = e && engine ? aimAt(e, engine.view.groundAt, engine.world.w, engine.world.h) : null;
+  return {
+    eyes,
+    eye: e ? { ...e } : null,
+    aim,
+    held: selected?.key ?? null,
+    hot: hot.map((h) => h.key),
+    deeds: riding ? deedsOf(riding) : [],
+    ...eyeStats,
+    fov: o?.camera.fov ?? 0,
+  };
+};
 
 // For the checks (scripts/become-frames.mjs): how many times Become was pressed, the seconds of each
 // time, their median, and where the creature is. `find`: the screen point of a living creature of
@@ -968,9 +1269,17 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       saveTimer = window.setInterval(save, 10_000);
       break;
     }
+    case "hotbar":
+      hot = (Array.isArray(msg.slots) ? msg.slots : [])
+        .filter((h) => h && typeof h.key === "string" && typeof h.name === "string")
+        .slice(0, HOT_SLOTS)
+        .map((h) => ({ key: h.key.slice(0, 120), name: h.name.slice(0, 60), emoji: String(h.emoji ?? "").slice(0, 8), ready: !!h.ready }));
+      drawHot();
+      break;
     case "select":
       selected = msg.spell;
-      if (selected) closeInspect();
+      drawHot();
+      if (selected && !riding) closeInspect();
       if (selected && engine) {
         try {
           engine.runtime.compile(selected);
@@ -1030,8 +1339,16 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       if (msg.visible) {
         engine.resize();
         engine.start();
+        if (eyesBack && riding) setEyes(true);
+        eyesBack = false;
       } else {
         stopWatch(false);
+        // The page comes back whole; the eyes come back with the island.
+        if (eyes) {
+          setEyes(false);
+          eyesBack = true;
+        }
+        keysDown.clear();
         engine.stop();
         save();
       }

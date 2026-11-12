@@ -202,8 +202,10 @@
       /* Become anything (2026-11-12, possess.ts): the creature's name and its
          thought in the story line, a fixed stick at the bottom left in the
          Watch button's place, its own abilities at the bottom right, and Let go. */
-      body.possessed #story {
+      body.possessed:not(.eyes) #story {
         max-width: calc(100% - 92px);
+      }
+      body.possessed #story {
         cursor: default;
         flex-direction: column;
         align-items: flex-start;
@@ -306,6 +308,232 @@
       #stick[hidden],
       #powers[hidden] {
         display: none;
+      }
+      /* Through its eyes (2026-11-12, eyes.ts): the eye button under Let go;
+         in the eye view the page hides its header, drawer and tools, and the
+         island lays itself out as a first person game on a phone: Let go and
+         the eye at the top right, the stick at the left thumb, the acts and
+         the cast at the right thumb, a slim hot bar along the bottom, and a
+         mark in the middle where a spell lands. */
+      #eye {
+        position: absolute;
+        right: 10px;
+        top: 118px;
+        width: 72px;
+        height: 44px;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        padding: 0;
+        border: 2px solid #05080f;
+        border-radius: 10px;
+        background: #1b2440;
+        color: #f6efdc;
+        font:
+          700 12px/1 system-ui,
+          sans-serif;
+        box-shadow: 0 3px 0 #05080f;
+        cursor: pointer;
+      }
+      #eye svg {
+        width: 18px;
+        height: 18px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2;
+      }
+      #eye[aria-pressed="true"] {
+        background: #ffc23d;
+        color: #1a1405;
+      }
+      #eye[hidden],
+      #mark[hidden],
+      #landing[hidden],
+      #acts[hidden],
+      #castbtn[hidden],
+      #held[hidden],
+      #hotbar[hidden] {
+        display: none;
+      }
+      body.eyes #letgo {
+        top: 10px;
+        width: 72px;
+        padding: 0;
+      }
+      body.eyes #eye {
+        top: 62px;
+      }
+      body.eyes #story {
+        max-width: calc(100% - 104px);
+        min-height: 40px;
+        padding: 6px 12px 6px 10px;
+        background: rgba(13, 18, 36, 0.62);
+        box-shadow: none;
+      }
+      body.eyes #world {
+        cursor: crosshair;
+      }
+      body.eyes #stick {
+        bottom: calc(76px + env(safe-area-inset-bottom));
+        background: radial-gradient(circle, rgba(27, 36, 64, 0.35) 0 55%, rgba(27, 36, 64, 0.6) 56%);
+      }
+      #mark {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 22px;
+        height: 22px;
+        margin: -11px 0 0 -11px;
+        pointer-events: none;
+        background:
+          linear-gradient(#fff, #fff) center / 2px 8px no-repeat,
+          linear-gradient(#fff, #fff) center / 8px 2px no-repeat;
+        filter: drop-shadow(0 0 1px #05080f) drop-shadow(0 0 1px #05080f);
+        opacity: 0.85;
+      }
+      #mark.held {
+        border: 2px solid #ffc23d;
+        border-radius: 50%;
+        box-sizing: border-box;
+        opacity: 1;
+      }
+      #mark.far {
+        border-style: dashed;
+      }
+      #landing {
+        position: absolute;
+        left: -9px;
+        top: -5px;
+        width: 18px;
+        height: 10px;
+        box-sizing: border-box;
+        border: 2px solid #ffc23d;
+        border-radius: 50%;
+        pointer-events: none;
+        filter: drop-shadow(0 0 1px #05080f);
+      }
+      #acts {
+        position: absolute;
+        right: 12px;
+        bottom: calc(76px + env(safe-area-inset-bottom));
+        width: 124px;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 10px;
+      }
+      #deeds {
+        display: flex;
+        flex-wrap: wrap-reverse;
+        justify-content: flex-end;
+        gap: 10px;
+      }
+      /* The creature's own powers join its acts at the right thumb. */
+      #acts #powers {
+        position: static;
+        display: contents;
+      }
+      #acts #powers[hidden] {
+        display: none;
+      }
+      #deeds button {
+        position: relative;
+        width: 56px;
+        height: 56px;
+        padding: 0;
+        border: 2px solid #05080f;
+        border-radius: 50%;
+        background: #1b2440;
+        color: #f6efdc;
+        font:
+          800 11px/1.1 system-ui,
+          sans-serif;
+        box-shadow: 0 3px 0 #05080f;
+        cursor: pointer;
+      }
+      #deeds button.busy {
+        opacity: 0.55;
+      }
+      #castbtn {
+        width: 72px;
+        height: 72px;
+        padding: 0;
+        border: 2px solid #05080f;
+        border-radius: 50%;
+        background: radial-gradient(circle at 50% 40%, #ffe29a, #ffc23d 60%, #d99a12);
+        color: #1a1405;
+        font:
+          800 14px/1 system-ui,
+          sans-serif;
+        box-shadow: 0 4px 0 #05080f;
+        cursor: pointer;
+      }
+      #held {
+        position: absolute;
+        left: 50%;
+        bottom: calc(66px + env(safe-area-inset-bottom));
+        transform: translateX(-50%);
+        max-width: calc(100% - 270px);
+        min-width: 60px;
+        padding: 3px 8px;
+        border-radius: 6px;
+        background: rgba(13, 18, 36, 0.7);
+        color: #ffd77a;
+        font:
+          700 12px/1.25 system-ui,
+          sans-serif;
+        text-align: center;
+        pointer-events: none;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #hotbar {
+        position: absolute;
+        left: 50%;
+        bottom: calc(8px + env(safe-area-inset-bottom));
+        transform: translateX(-50%);
+        max-width: calc(100% - 16px);
+        display: flex;
+        gap: 4px;
+        padding: 4px;
+        border: 2px solid #05080f;
+        border-radius: 10px;
+        background: rgba(13, 18, 36, 0.72);
+        overflow-x: auto;
+        scrollbar-width: none;
+        box-sizing: border-box;
+      }
+      #hotbar button {
+        flex: none;
+        width: 46px;
+        height: 46px;
+        padding: 0;
+        border: 2px solid #3a4466;
+        border-radius: 8px;
+        background: #1b2440;
+        font:
+          22px/1 system-ui,
+          sans-serif;
+        cursor: pointer;
+      }
+      #hotbar button[aria-pressed="true"] {
+        border-color: #ffc23d;
+        background: #3a3012;
+        box-shadow: inset 0 0 0 1px #ffc23d;
+      }
+      #hotbar button.waiting {
+        opacity: 0.45;
+      }
+      #hotbar .empty {
+        padding: 0 10px;
+        color: #a9b2cf;
+        font:
+          600 12px/46px system-ui,
+          sans-serif;
+        white-space: nowrap;
       }
       #inspect .close {
         border: 0;
@@ -431,6 +659,21 @@
     <div id="stick" hidden role="application" aria-label="Walk: push the stick the way to go"><i></i></div>
     <div id="powers" hidden></div>
     <button id="letgo" type="button" hidden>Let go</button>
+    <button id="eye" type="button" hidden aria-pressed="false" title="See through its eyes, or from behind it">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" />
+        <circle cx="12" cy="12" r="2.8" />
+      </svg>
+      <span>Eyes</span>
+    </button>
+    <div id="mark" hidden aria-hidden="true"></div>
+    <div id="landing" hidden aria-hidden="true"></div>
+    <div id="acts" hidden>
+      <div id="deeds"></div>
+      <button id="castbtn" type="button" hidden>Cast</button>
+    </div>
+    <div id="held" hidden aria-live="polite"></div>
+    <div id="hotbar" hidden role="toolbar" aria-label="Your last spells"></div>
     <script type="module" src="/src/sim/frame.ts"></script>
   </body>
 </html>

@@ -43,7 +43,21 @@ export type ToWorld =
   // Spells from the shared library the world asked for by name (3.7).
   | { type: "library"; spells: CastRequest[] }
   // What the island's chronicle is written from (3.7).
-  | { type: "chronicle" };
+  | { type: "chronicle" }
+  // Through its eyes (2026-11-12): the slim bar of spells while the player
+  // sees from a creature, the last used first.
+  | { type: "hotbar"; slots: HotSlot[] };
+
+// A spell or an item on the hot bar: ready once its program is written.
+export interface HotSlot {
+  key: string;
+  name: string;
+  emoji: string;
+  ready: boolean;
+}
+
+// The most slots the bar holds (six fit a folded Z Fold, 344 px).
+export const HOT_SLOTS = 6;
 
 // The iframe runs code nobody reviewed, so whatever it sends is checked for
 // shape and size before the page acts on it. Returns null for anything else.
@@ -99,6 +113,10 @@ export function readFromWorld(data: unknown): FromWorld | null {
         : null;
     case "need":
       return Array.isArray(m.names) && m.names.length <= 20 && m.names.every((n) => str(n, 120)) ? { type: "need", names: m.names as string[] } : null;
+    case "eyes":
+      return typeof m.on === "boolean" ? { type: "eyes", on: m.on } : null;
+    case "pick":
+      return m.key === null || str(m.key, 120) ? { type: "pick", key: m.key as string | null } : null;
     case "objective":
       return str(m.id, 40) && typeof m.text === "string" && (m.status === "playing" || m.status === "won" || m.status === "lost")
         ? { type: "objective", id: m.id as string, text: m.text.slice(0, 200), status: m.status }
@@ -142,4 +160,10 @@ export type FromWorld =
   | { type: "trouble"; running: boolean; text: string; key?: string; outcome?: string }
   // A new island was made (4.4.5 part B): its name and its wonders' set, for
   // the page to keep with the last ten.
-  | { type: "island"; name: string; signature: string };
+  | { type: "island"; name: string; signature: string }
+  // Through its eyes (2026-11-12): the island shows the world from a
+  // creature's eyes and the page hides its own header, spell drawer and
+  // tools (on), or shows them again exactly as they were (off).
+  | { type: "eyes"; on: boolean }
+  // A slot of the hot bar tapped: the spell to hold, or null to put it away.
+  | { type: "pick"; key: string | null };

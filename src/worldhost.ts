@@ -13,7 +13,7 @@ import { Checker } from "./checker";
 import { reportable } from "./checkresult";
 import { chipElement } from "./craft";
 import { FilterBar, applyFilters, lastUsed, markUsed } from "./filters";
-import { MAX_SAVE_CHARS, readFromWorld } from "./sim/protocol";
+import { HOT_SLOTS, MAX_SAVE_CHARS, readFromWorld, type HotSlot } from "./sim/protocol";
 import { programToFetch } from "../shared/sync";
 import type { ToWorld } from "./sim/protocol";
 import { SCENARIO_LIST } from "./sim/scenario-list";
@@ -135,6 +135,11 @@ export class WorldHost {
   // rollback, a tab left open since before an update): it is not loaded,
   // and this page writes nothing over it (save-guard.ts).
   private newerIsland: string | null = null;
+  // Through its eyes (2026-11-12): the island shows a creature's view and the
+  // page's header, spell drawer and tools are hidden (body.eyes); the hot bar
+  // last sent, so it goes again only when it changes.
+  private eyes = false;
+  private hotSent = "";
 
   constructor(
     private store: Store,
@@ -345,6 +350,7 @@ export class WorldHost {
   }
 
   private replaceFrame(): void {
+    this.setEyes(false);
     this.frame?.remove();
     this.frame = null;
     this.ready = false;
@@ -385,6 +391,8 @@ export class WorldHost {
 
   hide(): void {
     this.shown = false;
+    // The page comes back whole when the World tab is left (the island leaves its eyes too).
+    this.setEyes(false);
     setToastFloor("inspect", 0);
     this.guide.hideHint();
     this.send({ type: "visible", visible: false });
@@ -603,6 +611,7 @@ export class WorldHost {
         timeline.step(msg.key, this.store.get(msg.key)!.element.name, "cast");
         this.castInAttempt.push(msg.key);
         markUsed(msg.key);
+        if (this.eyes) this.sendHotbar();
         if (!this.challenge) {
           this.guide.again(this.el.stage);
           this.guide.cast(this.el.stage);
@@ -681,6 +690,17 @@ export class WorldHost {
         this.troubleBegan = 0;
         break;
       }
+      case "eyes":
+        this.setEyes(msg.on && this.shown);
+        break;
+      case "pick":
+        // From the hot bar: the same as a chip of the drawer, without its words (the drawer is hidden).
+        if (msg.key === null) {
+          this.selected = null;
+          this.send({ type: "select", spell: null });
+          this.renderSpells();
+        } else if (this.store.get(msg.key) && msg.key !== this.selected) this.selectSpell(msg.key);
+        break;
       case "objective":
         // Only the challenge this page started can report on itself.
         if (msg.id === this.challenge) this.showObjective(msg.id, msg.text, msg.status);
@@ -1380,6 +1400,7 @@ export class WorldHost {
 
   private updateStatus(): void {
     this.refreshChips();
+    if (this.eyes) this.sendHotbar();
     const key = this.selected;
     const name = key ? this.store.get(key)?.element.name : null;
     let text = "Pick a spell, then tap the island to cast it, or tap a creature to see what it wants. Drag to turn, pinch to zoom, two fingers to pan.";
@@ -1393,6 +1414,33 @@ export class WorldHost {
     }
     this.el.status.textContent = text;
     this.showCreation(key);
+  }
+
+  private setEyes(on: boolean): void {
+    if (on === this.eyes) return;
+    this.eyes = on;
+    document.body.classList.toggle("eyes", on);
+    this.hotSent = "";
+    if (on) {
+      this.guide.hideHint();
+      this.sendHotbar();
+    }
+  }
+
+  // The last used spells and items, then the newest: what the hot bar holds.
+  private sendHotbar(): void {
+    const slots: HotSlot[] = applyFilters(this.store.discoveries(), { kind: "all", tier: "any", sort: "used", query: "" }, lastUsed, (d) =>
+      elementKey(d.element.name),
+    )
+      .slice(0, HOT_SLOTS)
+      .map((d) => {
+        const key = elementKey(d.element.name);
+        return { key, name: d.element.name, emoji: d.element.emoji, ready: !!this.request(key) };
+      });
+    const text = JSON.stringify(slots);
+    if (text === this.hotSent) return;
+    this.hotSent = text;
+    this.send({ type: "hotbar", slots });
   }
 
   // The creation bar under the status line, while the spell in hand is not

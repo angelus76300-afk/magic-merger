@@ -58,7 +58,7 @@ import { WonderModels } from "./wonders";
 import { PropModels } from "./props";
 import { valueNoise } from "../noise";
 import { Sky } from "./sky";
-import { fogRange } from "./fog";
+import { eyeFogRange, fogRange } from "./fog";
 
 // What a spell's darkness pulls the sky toward.
 const NIGHT_SKY = 0x04020f;
@@ -340,6 +340,7 @@ export class VoxelView {
     const started = performance.now();
     this.lapAt = started;
     const { world } = this;
+    if (this.orbit.eye) this.placeEye();
     this.orbit.update(dt, time, this.groundAt, reducedMotion);
     // The land changes only in a tick or a cast: a frame between two ticks
     // does not compare every column again (3.5 ms a frame on a large island).
@@ -736,7 +737,7 @@ export class VoxelView {
     }
     // The mist moves back with the camera, so the island keeps its colours
     // when zoomed out (fog.ts).
-    const range = fogRange(Math.max(this.world.w, this.world.h), o.dist, fogStep);
+    const range = o.eye ? eyeFogRange(fogStep) : fogRange(Math.max(this.world.w, this.world.h), o.dist, fogStep);
     const fog = this.scene.fog as Fog;
     fog.near = range.near;
     fog.far = range.far;
@@ -824,6 +825,28 @@ export class VoxelView {
       byVariant.set(variant, rig);
     }
     return rig;
+  }
+
+  // Through its eyes (2026-11-12, eyes.ts): the creature the player sees
+  // from, which is not drawn while the camera is at its head.
+  eyeId = -1;
+
+  // The eye at its head, where the creature is drawn this frame (between two
+  // ticks, on the ground as its feet are eased up and down steps).
+  private placeEye(): void {
+    const { world } = this;
+    const c = world.creatures.find((o) => o.id === this.eyeId);
+    if (!c) return;
+    const k = kindOf(c);
+    const rig = this.rigFor(c, k);
+    const size = drawScale(k.body, k.radius, rig, c.size);
+    const g = this.gaits.get(c.id);
+    const a = this.between;
+    const x = g ? g.px + (c.x - g.px) * a : c.x;
+    const y = g ? g.py + (c.y - g.py) * a : c.y;
+    const ground = g && Number.isFinite(g.gy) ? g.gy : walkGround(world, x, y);
+    // Eyes sit a little under the top of the head (a hat or antlers above them).
+    this.orbit.eyeAt(x, y, ground + c.z + Math.max(0.35, rig.height * size * 0.88));
   }
 
   private placeCreatures(time: number): void {
@@ -931,6 +954,8 @@ export class VoxelView {
       const p = this.toScene(rx, ry, y);
       this.sphere.center.set(p.x, p.y + rig.height * size * 0.5, p.z);
       this.sphere.radius = Math.max(rig.height, 1.4) * size;
+      // The one the player sees from is not drawn: its own head would fill the view.
+      if (c.id === this.eyeId && this.orbit.eye) continue;
       const seen = this.frustum.intersectsSphere(this.sphere);
 
       // The mark over its head, then the figure, when the camera sees it.

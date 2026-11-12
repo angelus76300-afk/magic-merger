@@ -20,6 +20,15 @@ export function fogRange(side: number, dist: number, weather: number): { near: n
   return { near: side * 1.6 * (1 - k * 0.85) + lead, far: side * 5 * (1 - k * 0.8) + lead };
 }
 
+// At the eye of a creature (eyes.ts) the far side of the island and the rim
+// of the world, where it ends in the void, are seen edge on: the mist takes
+// them from 30 cells out and they are gone at 110, a village across the
+// island a blue shape, as a far hill is.
+export function eyeFogRange(weather: number): { near: number; far: number } {
+  const k = Math.min(1, Math.max(0, weather));
+  return { near: 30 * (1 - k * 0.7), far: 110 * (1 - k * 0.6) };
+}
+
 // How much mist covers a point at this depth from the camera (three.js's
 // linear fog): 0 clear, 1 only mist.
 export function fogAt(depth: number, range: { near: number; far: number }): number {

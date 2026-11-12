@@ -1,5 +1,6 @@
 import { PerspectiveCamera, Vector3 } from "three";
 import type { CameraControl } from "../runtime";
+import { PITCH_START, clampPitch, lookDir, lookTheta, type Eye } from "../eyes";
 
 // An orbiting camera around a point on the island. The player turns it with
 // one finger, zooms with a pinch or the wheel, and pans with two fingers.
@@ -24,6 +25,10 @@ export class OrbitCamera implements CameraControl {
   // the player is, turned the way it faces. Touches never end it: a drag
   // turns the view a little round the creature (nudge) and eases back.
   private chased: { x: number; y: number; z: number; hd: number; dist: number; nudge: number; tilt: number; still: number } | null = null;
+  // Through its eyes (2026-11-12, eyes.ts): at the head of the creature the
+  // player is, looking where they look. A drag turns the look; the chase
+  // above keeps following meanwhile, so the behind view comes back in place.
+  private eyed: Eye | null = null;
   private shake = 0;
   private shakeTime = 0;
   readonly minDist = 8;
@@ -135,6 +140,29 @@ export class OrbitCamera implements CameraControl {
     return this.chased !== null;
   }
 
+  // Into the eyes, looking along `yaw` (its heading). The view.ts sets where the eye is every frame.
+  eyeOn(yaw: number, x: number, y: number, h: number): void {
+    this.eyed = { x, y, h, yaw, pitch: PITCH_START };
+  }
+
+  eyeAt(x: number, y: number, h: number): void {
+    if (!this.eyed) return;
+    this.eyed.x = x;
+    this.eyed.y = y;
+    this.eyed.h = h;
+  }
+
+  // Back behind it, turned the way the eyes looked.
+  eyeOff(): void {
+    if (!this.eyed) return;
+    this.theta = lookTheta(this.eyed.yaw);
+    this.eyed = null;
+  }
+
+  get eye(): Eye | null {
+    return this.eyed;
+  }
+
   // A slow turn while a shot holds, so the place is seen from more than one side.
   spin(radians: number): void {
     this.theta += radians;
@@ -143,7 +171,7 @@ export class OrbitCamera implements CameraControl {
   // True while the camera moves on its own: flying to a spell, coming back,
   // shaking. The engine keeps drawing frames for it.
   animating(): boolean {
-    return this.goal !== null || this.watched !== null || this.chased !== null || (this.shakeTime > 0 && this.shake > 0.001);
+    return this.goal !== null || this.watched !== null || this.chased !== null || this.eyed !== null || (this.shakeTime > 0 && this.shake > 0.001);
   }
 
   addShake(amount: number, seconds: number): void {
@@ -160,6 +188,12 @@ export class OrbitCamera implements CameraControl {
   }
 
   orbit(dx: number, dy: number): void {
+    if (this.eyed) {
+      // A drag turns the look the way the finger goes: right turns right, up looks up.
+      this.eyed.yaw += dx * 0.0065;
+      this.eyed.pitch = clampPitch(this.eyed.pitch - dy * 0.0055);
+      return;
+    }
     if (this.chased) {
       // A look round the creature, never away from it.
       this.chased.nudge = Math.max(-0.9, Math.min(0.9, this.chased.nudge - dx * 0.006));
@@ -173,6 +207,7 @@ export class OrbitCamera implements CameraControl {
   }
 
   zoom(factor: number): void {
+    if (this.eyed) return;
     if (this.chased) {
       this.chased.dist = Math.max(6, Math.min(30, this.chased.dist / factor));
       return;
@@ -199,6 +234,7 @@ export class OrbitCamera implements CameraControl {
   }
 
   update(dt: number, now: number, groundAt: (x: number, y: number) => number, reducedMotion: boolean): void {
+    if (this.eyed) return this.updateEye(dt, groundAt, reducedMotion);
     if (this.saved && this.returnAt && now > this.returnAt) this.restore(1.5);
     if (this.goal) {
       const k = Math.min(1, dt * this.goal.speed * 2.5);
@@ -263,9 +299,44 @@ export class OrbitCamera implements CameraControl {
       this.shake *= 1 - Math.min(1, dt * 2.5);
     }
     this.camera.lookAt(target);
+    this.camera.fov = 40;
     // Near and far planes follow the zoom so depth precision stays good.
     this.camera.near = Math.max(0.3, this.dist * 0.02);
     this.camera.far = this.dist * 4 + 1500;
+    this.camera.updateProjectionMatrix();
+  }
+
+  // The eye: no ease on the position (the view sets it from the creature as
+  // drawn, between ticks), a wider lens, a near plane a hand from the face.
+  private updateEye(dt: number, groundAt: (x: number, y: number) => number, reducedMotion: boolean): void {
+    const e = this.eyed!;
+    // The rest of the camera keeps up for the sound (engine.ts listenerAt) and a smooth way back.
+    this.tx = e.x;
+    this.ty = e.y;
+    this.th = e.h;
+    this.dist = 14;
+    this.theta = lookTheta(e.yaw);
+    if (this.chased) {
+      this.chased.x = e.x;
+      this.chased.y = e.y;
+    }
+    const pos = new Vector3(e.x - this.worldW / 2, Math.max(e.h, groundAt(e.x, e.y) + 0.3), e.y - this.worldH / 2);
+    this.camera.position.copy(pos);
+    if (this.shakeTime > 0 && !reducedMotion) {
+      this.shakeTime -= dt;
+      const s = this.shake * 0.25;
+      this.camera.position.x += (Math.random() - 0.5) * s;
+      this.camera.position.y += (Math.random() - 0.5) * s;
+      this.shake *= 1 - Math.min(1, dt * 2.5);
+    }
+    const d = lookDir(e.yaw, e.pitch);
+    this.camera.lookAt(pos.x + d.x, pos.y + d.h, pos.z + d.y);
+    // About 75 degrees across, as a first person game, within 55 to 95 up and
+    // down: a folded phone (344 by 882) would otherwise see a slit of the world.
+    const across = Math.tan((75 * Math.PI) / 360) / Math.max(0.1, this.camera.aspect);
+    this.camera.fov = Math.max(55, Math.min(95, (Math.atan(across) * 360) / Math.PI));
+    this.camera.near = 0.06;
+    this.camera.far = Math.max(this.worldW, this.worldH) * 3 + 200;
     this.camera.updateProjectionMatrix();
   }
 }

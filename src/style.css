@@ -2219,3 +2219,17 @@ input {
   height: 22px;
   margin: 2px 0 0;
 }
+
+/* Through its eyes (2026-11-12): while the island shows a creature's view,
+   the page gets out of the way, as a first person game on a phone does. The
+   island keeps its own Let go, eye, stick, actions and hot bar. Taken off
+   again on Let go, on leaving the World tab and when the frame is replaced. */
+body.eyes .topbar,
+body.eyes .spellbar,
+body.eyes .world-tools,
+body.eyes .world-bottom {
+  display: none;
+}
+body.eyes .toasts {
+  top: max(116px, env(safe-area-inset-top));
+}
