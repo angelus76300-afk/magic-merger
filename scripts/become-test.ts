@@ -7,6 +7,7 @@ import { OrbitCamera } from "../src/sim/voxel/orbit";
 import { mindOf, storyOn } from "../src/sim/kin";
 import { DEFAULT_LAND, resolveLand } from "../src/sim/land";
 import { C, F, G } from "../src/sim/materials";
+import { solidCovers } from "../src/sim/paths";
 import { seeded } from "../src/sim/noise";
 import {
   act,
@@ -23,13 +24,31 @@ import {
   STRIKE_SECONDS,
   thoughtOf,
 } from "../src/sim/possess";
-import { CAST_RANGE, NOTHING_TO_CAST_ON, aimAt, castFromEyes, clearEye, lookTheta, openLook, withinRange } from "../src/sim/eyes";
+import { driveSpeeds, flightBand } from "../src/sim/drive";
+import {
+  CAST_RANGE,
+  CAST_REACH,
+  NOTHING_TO_CAST_ON,
+  aimAt,
+  aimedEye,
+  castFromEyes,
+  castRange,
+  clearEye,
+  lookTheta,
+  openLook,
+  withinRange,
+} from "../src/sim/eyes";
+import { AimHold, HOLD_MS } from "../src/sim/aim";
+import { FrameStats } from "../src/sim/hud";
+import type { Tier } from "../shared/tiers";
 import { unpackLook } from "../src/sim/villagers";
 import { jobOf } from "../src/sim/goals";
 import { playerCast } from "../src/sim/playercast";
 import { clickActs, pressDown } from "../src/sim/press";
+import { armGhostGuard, isGhostClick, pageDown } from "../src/ghost";
 import { keepOrder, readFromWorld } from "../src/sim/protocol";
 import { surfaceY } from "../src/sim/voxel/terrain";
+import { COVER_STEP, COVER_TURN, EYE_DRAW, eyeFogRange, eyeKeepsChunk, eyeKeepsCover } from "../src/sim/voxel/fog";
 import { Runtime } from "../src/sim/runtime";
 import { saveWorld } from "../src/sim/save";
 import { stepHeadless } from "../src/sim/tick";
@@ -281,7 +300,9 @@ function becomeChecksSeeded(check: Check): void {
           const d = Math.hypot(x - fish.x, y - fish.y);
           if (world.fluid[i] === F.NONE && d < land.d) land = { x, y, d };
         }
-      push(world, (land.x - fish.x) / land.d, (land.y - fish.y) / land.d);
+      // A swimmer is steered by throttle and bank (drive.ts): it faces the land, the stick pushed ahead.
+      fish.hd = Math.atan2(land.y - fish.y, land.x - fish.x);
+      push(world, 0, -1);
       let dry = 0;
       let edge = 0;
       const hp = fish.hp;
@@ -319,21 +340,57 @@ function becomeChecksSeeded(check: Check): void {
     const b = bird;
     possess(world, b);
     const alt = kindOf(b).altitude;
+    const band = flightBand(kindOf(b));
+    // Throttle and bank (drive.ts): ahead toward the island's middle, the look level.
+    b.hd = Math.atan2(world.h / 2 - b.y, world.w / 2 - b.x);
+    const z0 = b.z;
     let low = Infinity;
     let high = -Infinity;
     const start = { x: b.x, y: b.y };
-    push(world, 1, 0);
-    run(world, rt, 3, () => awake(b));
-    push(world, 0, 1);
-    run(world, rt, 12, () => {
+    push(world, 0, -1);
+    run(world, rt, 2, () => {
       awake(b);
       low = Math.min(low, b.z);
       high = Math.max(high, b.z);
     });
+    const flown = Math.hypot(b.x - start.x, b.y - start.y);
     check(
-      "become: a possessed bird keeps its altitude and goes where it is steered",
-      low > alt - 2.2 && high < alt + 2.2 && Math.hypot(b.x - start.x, b.y - start.y) > 10,
-      `altitude ${alt}: flew between ${low.toFixed(1)} and ${high.toFixed(1)}, ${Math.hypot(b.x - start.x, b.y - start.y).toFixed(0)} cells`,
+      "become: a possessed bird flies ahead at its played speed and holds its height with the look level",
+      low > z0 - 0.3 && high < z0 + 0.3 && flown > 18,
+      `altitude ${alt}, taken at ${z0.toFixed(1)}: flew between ${low.toFixed(1)} and ${high.toFixed(1)}, ${flown.toFixed(0)} cells in 2 s`,
+    );
+    // A banked turn: the stick right turns it right as it flies, a little more than a radian in a second at 0.6.
+    const hd0 = b.hd;
+    const at0 = { x: b.x, y: b.y };
+    push(world, 0.6, -1);
+    run(world, rt, 1, () => awake(b));
+    const turned = Math.atan2(Math.sin(b.hd - hd0), Math.cos(b.hd - hd0));
+    // Then the look up for two seconds, and down for four: it climbs, then dives, within its band.
+    steerBy(world, 0, -1, 0, 1);
+    run(world, rt, 2, () => awake(b));
+    const climbed = b.z;
+    let lowest = Infinity;
+    let highest = -Infinity;
+    steerBy(world, 0, -1, 0, 1);
+    run(world, rt, 6, () => {
+      awake(b);
+      highest = Math.max(highest, b.z);
+    });
+    steerBy(world, 0, -1, 0, -1);
+    run(world, rt, 8, () => {
+      awake(b);
+      lowest = Math.min(lowest, b.z);
+    });
+    check(
+      "become: a possessed bird banks with the stick, climbs and dives with the look, within its altitude band",
+      turned > 1.1 &&
+        turned < 1.8 &&
+        Math.hypot(b.x - at0.x, b.y - at0.y) > 3 &&
+        climbed > z0 + 3 &&
+        highest <= band.high + 0.6 &&
+        lowest >= band.low - 0.6 &&
+        lowest < z0 - 1.5,
+      `turned ${turned.toFixed(2)} rad in 1 s; climbed from ${z0.toFixed(1)} to ${climbed.toFixed(1)} in 2 s, at most ${highest.toFixed(1)} (band ${band.low} to ${band.high}); dived to ${lowest.toFixed(1)}`,
     );
     release(world);
   }
@@ -491,7 +548,391 @@ function becomeChecksSeeded(check: Check): void {
     }
   }
   eyesChecks(check, world, rt);
+  driveChecks(check, world, rt);
+  castChecks(check);
   storyOn(null);
+}
+
+// The eye view, second pass: a cast reaches as far as its tier, lands where the look meets the land
+// or a creature, never beyond its reach; a held aim moves the ring and its release casts once; and the
+// perf sample says which view its frames were drawn in.
+function castChecks(check: Check): void {
+  const flat = () => 0;
+  const at = (dist: number, tier: Tier, pitch = -Math.atan2(1.6, dist)) => {
+    let cast = 0;
+    const r = castFromEyes(
+      { x: 20, y: 50, h: 1.6, yaw: 0, pitch },
+      flat,
+      200,
+      100,
+      () => (cast++, true),
+      () => true,
+      castRange(tier),
+    );
+    return { d: Math.hypot(r.x - 20, r.y - 50), casts: cast, ok: r.ok };
+  };
+  // 25. At 10, 25 and the tier's limit, looking at the ground there: it lands there (before, past 14 cells it landed at 14).
+  {
+    const ten = at(10, "minor");
+    const quarter = at(25, "major");
+    const limit = at(CAST_REACH.grand - 0.5, "grand");
+    check(
+      "cast: from the eyes it lands where the look meets the land, at 10, 25 and the tier's limit",
+      Math.abs(ten.d - 10) < 0.3 &&
+        Math.abs(quarter.d - 25) < 0.5 &&
+        Math.abs(limit.d - (CAST_REACH.grand - 0.5)) < 0.6 &&
+        ten.casts + quarter.casts + limit.casts === 3,
+      `${ten.d.toFixed(1)}, ${quarter.d.toFixed(1)}, ${limit.d.toFixed(1)} cells (grand reach ${CAST_REACH.grand}); reach by tier ${Object.entries(CAST_REACH)
+        .map(([t, r]) => `${t} ${r}`)
+        .join(", ")}`,
+    );
+  }
+  // 26. Nothing beyond the reach: the land met past it, or the sky, lands at the reach's end along the look.
+  {
+    const past = at(70, "grand");
+    const small = at(25, "cantrip");
+    const sky = at(0, "major", 0.3);
+    const ok = Math.abs(past.d - CAST_REACH.grand) < 1e-6 && Math.abs(small.d - CAST_REACH.cantrip) < 1e-6 && Math.abs(sky.d - CAST_REACH.major) < 1e-6;
+    check(
+      "cast: nothing is cast beyond the tier's reach; at the sky it lands at the reach along the look",
+      ok,
+      `ground at 70 with a grand spell: ${past.d.toFixed(1)}; at 25 with a cantrip: ${small.d.toFixed(1)}; the sky with a major: ${sky.d.toFixed(1)}`,
+    );
+    const behind = withinRange(10, 10, 80, 10, castRange("grand"));
+    check("cast: from behind, a tap lands within the same reach", Math.abs(behind.x - 10 - CAST_REACH.grand) < 1e-9, `${behind.x - 10} cells`);
+  }
+  // 27. A creature on the look before the land: the cast lands where it stands.
+  {
+    const deer = { x: 32, y: 50.2, z: 0, r: 0.5, h: 1.4 };
+    const r = aimAt({ x: 20, y: 50, h: 1.6, yaw: 0, pitch: -Math.atan2(1.6, 30) }, flat, 200, 100, castRange("major"), [
+      deer,
+      { x: 26, y: 54, z: 0, r: 0.5, h: 1.4 },
+    ]);
+    check("cast: the look meets a creature before the land: it lands on the creature", r.body === 0 && r.x === 32 && r.y === 50.2, JSON.stringify(r));
+  }
+  // 28. Hold and release on the Cast button (aim.ts): the ring shows at once, a drag moves the aim
+  // finely, the release casts once and the click the touch sends after it does nothing (press.ts).
+  {
+    const eye = { x: 20, y: 50, h: 1.6, yaw: 0, pitch: -Math.atan2(1.6, 20) };
+    const range = castRange("major");
+    const ring = (h: AimHold) => aimAt(h.armed ? aimedEye(eye, h.dyaw, h.dpitch) : eye, flat, 200, 100, range);
+    const hold = new AimHold();
+    let casts = 0;
+    const release = (id: number, cancel = false, t = 0) => {
+      const end = hold.up(id, cancel);
+      if (end === "cast") casts++;
+      // The click the touch sends after: only a click with no press before it acts.
+      if (clickActs(t + 120)) casts++;
+      return end;
+    };
+    pressDown(10_000);
+    hold.down(1, 300, 700, 10_000, true);
+    const before = ring(hold);
+    hold.move(1, 340, 640);
+    const after = ring(hold);
+    const end = release(1, false, 10_000);
+    const turned = Math.atan2(after.y - 50, after.x - 20);
+    // A tap: down and up at once, at the mark.
+    pressDown(20_000);
+    hold.down(2, 300, 700, 20_000, true);
+    const tapAt = ring(hold);
+    const tap = release(2, false, 20_000);
+    // Cancelled: over the Cancel chip, or the browser took the touch.
+    pressDown(30_000);
+    hold.down(3, 300, 700, 30_000, true);
+    hold.move(3, 300, 300);
+    const cancel = release(3, true, 30_000);
+    check(
+      "cast: a held aim moves the ring finely and its release casts once; a tap casts once at the mark; a cancel casts nothing",
+      end === "cast" &&
+        tap === "cast" &&
+        cancel === "cancel" &&
+        casts === 2 &&
+        turned > 0.05 &&
+        turned < 0.15 &&
+        after.dist > before.dist + 3 &&
+        Math.abs(tapAt.dist - 20) < 0.3,
+      `held: ring from ${before.dist.toFixed(1)} cells ahead to ${after.dist.toFixed(1)} cells, ${turned.toFixed(2)} rad to the right, for 40 px right and 60 up; tap at ${tapAt.dist.toFixed(1)}; ${casts} casts for a hold, a tap and a cancel`,
+    );
+    // On the island: a finger held still begins the aim; one that moves first is a turn of the look.
+    const island = new AimHold();
+    island.down(4, 200, 400, 40_000, false);
+    island.move(4, 203, 402);
+    const early = island.tick(40_000 + 100);
+    const armed = island.tick(40_000 + HOLD_MS + 10);
+    const aimed = island.move(4, 230, 380);
+    const islandEnd = island.up(4, false);
+    island.down(5, 200, 400, 50_000, false);
+    const turnedLook = island.move(5, 240, 400);
+    const lookEnd = island.up(5, false);
+    check(
+      "cast: on the island a finger held still aims and casts on release; one that moves first turns the look and casts nothing itself",
+      !early && armed && aimed && islandEnd === "cast" && !turnedLook && lookEnd === null,
+      `held: armed ${armed} after ${HOLD_MS} ms, aimed ${aimed}, ${islandEnd}; moved first: aimed ${turnedLook}, ${lookEnd}`,
+    );
+  }
+  // 29. The perf sample says which view its frames were drawn in, and reaches the page in its shape.
+  {
+    const s = new FrameStats();
+    for (let k = 0; k < 30; k++) s.push({ frame: 16, sim: 2, render: 5, view: k < 20 ? "eyes" : k < 25 ? "behind" : undefined });
+    const sum = s.summary();
+    const msg = readFromWorld({ type: "perf", sample: { ...sum, challenge: 0 } });
+    check(
+      "perf: the sample names the view most of its frames were drawn in, and counts each",
+      sum.view === "eyes" && sum.viewFrames === "sky:5,behind:5,eyes:20" && msg?.type === "perf" && msg.sample.view === "eyes",
+      `${sum.view}, ${sum.viewFrames}`,
+    );
+  }
+  // 31. Let go pressed in the eye view: the header comes back under the finger, and the click its touch
+  // sends after must not press Sign in (ghost.ts; the playtest of 12 November opened the account dialog).
+  {
+    armGhostGuard(10_000);
+    const ghost = isGhostClick(10_120);
+    const second = isGhostClick(10_200);
+    armGhostGuard(20_000);
+    pageDown(20_300);
+    const pressed = isGhostClick(20_350);
+    armGhostGuard(30_000);
+    const late = isGhostClick(36_000);
+    check(
+      "eyes: the click after Let go is swallowed once; a new press on the page, or one long after, acts",
+      ghost && !second && !pressed && !late,
+      JSON.stringify({ ghost, second, pressed, late }),
+    );
+  }
+  // 30. What the eye view draws (fog.ts, view.ts, terrain.ts): the mist is whole by 80 cells, and
+  // nothing past it is drawn, nor anything behind the look beyond 10 cells. Before the second pass the
+  // mist ran to 110 and every tree and every chunk of the island was drawn, behind the eye too.
+  {
+    const mist = eyeFogRange(0);
+    // The look along +x.
+    const keep = (dx: number, dy: number) => eyeKeepsCover(dx, dy, 1, 0);
+    const ahead = [5, 20, 40, 70, EYE_DRAW].every((d) => keep(d, 0)) && keep(30, 25);
+    const past = !keep(EYE_DRAW + COVER_STEP + 1, 0) && !keep(120, 0);
+    const behind = !keep(-20, 0) && !keep(-60, 5) && !keep(-11, 0);
+    const near = keep(-9, 0) && keep(0, -9) && keep(-6, 6);
+    // Land: a 32 cell chunk whose nearest point is 90 cells away is not drawn; the one under the eye is.
+    const land = eyeKeepsChunk(0, 0, 32, 10, 10) && eyeKeepsChunk(64, 0, 32, 10, 10) && !eyeKeepsChunk(100, 0, 32, 10, 10);
+    check(
+      "eyes: the mist is whole at 80 cells; covers past it, or behind the look beyond 10 cells, and land past it are not drawn",
+      mist.far === 80 && mist.near < mist.far && EYE_DRAW >= mist.far && EYE_DRAW < 90 && ahead && past && behind && near && land,
+      JSON.stringify({ mist, ahead, past, behind, near, land }),
+    );
+    // Between two placings the eye may walk COVER_STEP and turn COVER_TURN: whatever it then sees,
+    // within the mist and 38 degrees either side of the look, was placed.
+    let missed = 0;
+    for (let k = 0; k < 2000; k++) {
+      const a = (k * 0.618) % (Math.PI * 2);
+      const r = 1 + ((k * 37) % 80);
+      const sx = Math.cos(k) * COVER_STEP * ((k % 7) / 7);
+      const sy = Math.sin(k) * COVER_STEP * ((k % 5) / 5);
+      const yaw = (((k % 11) / 10) * 2 - 1) * COVER_TURN;
+      // The cover as the eye sees it after moving (sx, sy) and turning yaw: within its view?
+      const vx = Math.cos(yaw + a) * r;
+      const vy = Math.sin(yaw + a) * r;
+      if (Math.abs(a) > 0.66 && Math.abs(a - Math.PI * 2) > 0.66) continue;
+      if (!keep(vx + sx, vy + sy)) missed++;
+    }
+    check("eyes: a cover in view after a step and a turn between placings was placed", missed === 0, `${missed} missed`);
+  }
+}
+
+// The kinds' own pace, measured on islands 21, 7 and 33 over 80 seconds: the median speed of each
+// while it moves by its own mind, in cells per second (drive.ts SPEEDS). Before this pass a ridden
+// creature walked at most at its kind's speed (k.speed, the stick fully pushed), reached through the
+// engine's acceleration.
+const OWN_WALK: Record<string, number> = { villager: 2.9, deer: 3.4, wolf: 5.4, bear: 2.7, bird: 4.2, fish: 1.1 };
+
+// A test ground on island 21: flat open grass 40 by 16 cells, with four lanes running along +x. Lane
+// A is flat; lane B steps up one cell at x0 + 10; lane C rises three cells there (a cliff); lane D has
+// a house wall there. Returns where each lane starts.
+function arena(world: World): { x0: number; a: number; b: number; cl: number; wall: number } | null {
+  for (let y0 = 12; y0 < world.h - 30; y0 += 3)
+    for (let x0 = 12; x0 < world.w - 52; x0 += 3) {
+      let ok = true;
+      for (let y = y0; y < y0 + 16 && ok; y++)
+        for (let x = x0; x < x0 + 40 && ok; x++) ok = world.depth[world.idx(x, y)] === 0 && world.fluid[world.idx(x, y)] === F.NONE;
+      if (!ok) continue;
+      const level = Math.round(world.height[world.idx(x0, y0)]);
+      for (let y = y0; y < y0 + 16; y++)
+        for (let x = x0; x < x0 + 40; x++) {
+          const i = world.idx(x, y);
+          world.setCover(i, C.NONE);
+          world.ground[i] = G.GRASS;
+          const lane = y - y0;
+          const past = x >= x0 + 10;
+          world.height[i] = level + (past && lane >= 5 && lane <= 7 ? 1 : past && lane >= 9 && lane <= 11 ? 3 : 0);
+          if (x === x0 + 10 && lane >= 13 && lane <= 15) world.setCover(i, C.HOUSE);
+        }
+      // Nobody else in it: a villager walking across a lane is not what these check.
+      for (const o of world.creatures) if (o.x > x0 - 1 && o.x < x0 + 41 && o.y > y0 - 1 && o.y < y0 + 17) o.x = o.y = 6;
+      return { x0, a: y0 + 2, b: y0 + 6, cl: y0 + 10, wall: y0 + 14 };
+    }
+  return null;
+}
+
+// The eye view, second pass (drive.ts): the creature answers the stick within a tenth of a second,
+// strafes, moves at a played pace per kind, and the island's walls still hold at that pace.
+function driveChecks(check: Check, world: World, rt: Runtime): void {
+  const at = arena(world);
+  check("drive: island 21 has room for a test ground", !!at);
+  if (!at) return;
+  const put = (kind: string, x: number, y: number) => {
+    const c = makeCreature(kind, x + 0.5, y + 0.5);
+    c.hd = 0;
+    world.creatures.push(c);
+    possess(world, c);
+    return c;
+  };
+  const gone = (c: Creature) => {
+    release(world);
+    c.hp = 0;
+    c.dead = true;
+  };
+  const tick = 1 / 30;
+
+  // 21. How fast it answers: from rest, the stick at its rim, the time to 90 percent of its run; let
+  // go, the time to a stop. Through the engine's steering a villager took about 0.35 s to its full pace.
+  {
+    const v = put("villager", at.x0 + 1, at.a);
+    v.size = 1;
+    awake(v);
+    const run0 = driveSpeeds(kindOf(v)).run;
+    push(world, 1, 0);
+    let up = Infinity;
+    for (let k = 1; k <= 30 && up === Infinity; k++) {
+      run(world, rt, tick, () => awake(v));
+      if (v.sp >= run0 * 0.9) up = k * tick;
+    }
+    run(world, rt, 0.3, () => awake(v));
+    const top = v.sp;
+    push(world, 0, 0);
+    const from = { x: v.x, y: v.y };
+    let down = Infinity;
+    for (let k = 1; k <= 30 && down === Infinity; k++) {
+      run(world, rt, tick, () => awake(v));
+      if (v.sp < 0.05) down = k * tick;
+    }
+    const coast = Math.hypot(v.x - from.x, v.y - from.y);
+    check(
+      "drive: a villager reaches its pace within 150 ms of the stick and stops within 200 ms of its release",
+      up <= 0.15 + 1e-9 && down <= 0.2 + 1e-9 && Math.abs(top - run0) < 0.3,
+      `90 percent of ${run0} cells/s in ${(up * 1000).toFixed(0)} ms (top ${top.toFixed(2)}); stopped in ${(down * 1000).toFixed(0)} ms, ${coast.toFixed(2)} cells after the release`,
+    );
+    gone(v);
+  }
+
+  // 22. Strafing: in its eyes, looking along +x, the stick to the right walks it to the right of the
+  // look at once (+y), its body turned to face where it goes; the look is the player's and does not move.
+  {
+    const v = put("villager", at.x0 + 3, at.a);
+    awake(v);
+    const yaw = 0;
+    const from = { x: v.x, y: v.y };
+    steerBy(world, 0.7, 0, lookTheta(yaw));
+    run(world, rt, 0.3, () => awake(v));
+    const dx = v.x - from.x;
+    const dy = v.y - from.y;
+    const off = Math.abs(Math.atan2(dx, dy));
+    check(
+      "drive: the stick to the side strafes, at once, and the body faces where it goes",
+      dy > 1 && off < 0.17 && Math.abs(Math.atan2(Math.sin(v.hd - Math.PI / 2), Math.cos(v.hd - Math.PI / 2))) < 0.3,
+      `${dy.toFixed(2)} cells to the right of the look and ${dx.toFixed(2)} along it in 0.3 s; body at ${v.hd.toFixed(2)} rad`,
+    );
+    push(world, 0, 0);
+    gone(v);
+  }
+
+  // 23. The pace of each kind, before and after, on the flat lane: the stick three quarters out
+  // (its walk) and at its rim (its run), measured over the last half second of one and a half.
+  {
+    const rows: string[] = [];
+    let ok = true;
+    const pace = (kind: string, push1: number) => {
+      const v = put(kind, at.x0 + 1, at.a);
+      awake(v);
+      // A grown one: the pace goes with the square root of its size, as its own steps do.
+      v.size = 1;
+      push(world, push1, 0);
+      run(world, rt, 0.7, () => awake(v));
+      const x = v.x;
+      run(world, rt, 0.5, () => awake(v));
+      const sp = (v.x - x) / 0.5;
+      push(world, 0, 0);
+      gone(v);
+      return sp;
+    };
+    const got: Record<string, { walk: number; run: number }> = {};
+    for (const kind of ["villager", "deer", "wolf", "bear"]) {
+      const k = KINDS.get(kind) as CreatureKind;
+      const s = driveSpeeds(k);
+      const walk = pace(kind, 0.75);
+      const runS = pace(kind, 1);
+      got[kind] = { walk, run: runS };
+      ok &&= Math.abs(walk - s.walk) < 0.4 && Math.abs(runS - s.run) < 0.5;
+      rows.push(`${kind} own ${OWN_WALK[kind]}, ridden before ${k.speed}, now ${walk.toFixed(1)} walking, ${runS.toFixed(1)} running`);
+    }
+    const v = got.villager;
+    check(
+      "drive: each kind walks and runs at its played pace: a villager about 2.5 and 4 times its own walk, a wolf and a deer faster, a bear slower",
+      ok &&
+        v.walk / OWN_WALK.villager > 2.2 &&
+        v.walk / OWN_WALK.villager < 2.8 &&
+        v.run / OWN_WALK.villager > 3.6 &&
+        v.run / OWN_WALK.villager < 4.4 &&
+        got.wolf.run > v.run &&
+        got.deer.run > v.run &&
+        got.bear.run < v.run,
+      rows.join("; "),
+    );
+  }
+
+  // 24. The island's walls at a run: a one cell ledge is stepped without stopping; a cliff of three and
+  // a house wall stop it, and the line says why.
+  {
+    const v = put("villager", at.x0 + 2, at.b);
+    awake(v);
+    push(world, 1, 0);
+    let slowest = Infinity;
+    let px = v.x;
+    let crossed = -1;
+    run(world, rt, 1.6, () => {
+      awake(v);
+      if (v.x > at.x0 + 7 && v.x < at.x0 + 13) slowest = Math.min(slowest, (v.x - px) * 30);
+      if (crossed < 0 && v.x > at.x0 + 10.5) crossed = world.time;
+      px = v.x;
+    });
+    const up = world.walkLevel(world.idx(v.x, v.y)) - world.walkLevel(world.idx(at.x0 + 2, at.b));
+    check(
+      "drive: a one cell ledge is stepped up at a run without stopping",
+      crossed > 0 && up === 1 && slowest > driveSpeeds(kindOf(v)).run * 0.7,
+      `up ${up} cell, at least ${slowest.toFixed(1)} cells/s across it, ended at x0 + ${(v.x - at.x0).toFixed(1)}`,
+    );
+    push(world, 0, 0);
+    gone(v);
+    for (const [lane, word, says] of [
+      [at.cl, "a cliff of three cells", "Too steep"],
+      [at.wall, "a house wall", "A wall is in the way"],
+    ] as const) {
+      const w = put("villager", at.x0 + 2, lane);
+      awake(w);
+      push(world, 1, 0);
+      let furthest = 0;
+      let note: string | null = null;
+      run(world, rt, 2, () => {
+        awake(w);
+        furthest = Math.max(furthest, w.x);
+        note = stopNote(world, whyStopped) ?? note;
+      });
+      check(
+        `drive: ${word} stops a running villager, and the line says why`,
+        furthest < at.x0 + 9.5 && note === says,
+        `furthest x0 + ${(furthest - at.x0).toFixed(2)} (the wall begins at x0 + 9.5); the line: ${note}`,
+      );
+      push(world, 0, 0);
+      gone(w);
+    }
+  }
 }
 
 // The ground the camera sees (view.ts groundAt): the surface, land or fluid, in scene units.
@@ -527,8 +968,9 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
       const along = Math.atan2(d!.y, d!.x);
       const walk = (sx: number, sy: number, yaw: number) => {
         const from = { x: v.x, y: v.y };
-        steerBy(world, sx, sy, lookTheta(yaw));
-        run(world, rt, 1.2, () => awake(v));
+        // Half pushed, for 0.6 s: about three cells at the played walk (drive.ts), within the ten open.
+        steerBy(world, sx * 0.5, sy * 0.5, lookTheta(yaw));
+        run(world, rt, 0.6, () => awake(v));
         steerBy(world, 0, 0, lookTheta(yaw));
         run(world, rt, 0.6, () => awake(v));
         return { x: v.x - from.x, y: v.y - from.y };
@@ -764,6 +1206,12 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
     tap(5000);
     check("eyes: one tap on a slot picks once, though the bar is redrawn under the finger", picks === 1, `${picks}`);
     check("eyes: a click with no press before it still acts", clickActs(5000 + 5000));
+    // A slow frame holds the click back: it comes 900 ms after its press, and is still the press's own
+    // (the playtest of 12 November at 832 and 1440 wide: a tap on Cast cast twice).
+    pressDown(40_000);
+    const late = clickActs(40_900);
+    const next = clickActs(41_500);
+    check("eyes: a click held back 900 ms behind its press does nothing; the next click with no press acts", !late && next, `${late}, ${next}`);
   }
 
   // 19. No ring, no cast: aimed where the landing point is out of view, the cast does not go and the line says why.
@@ -914,19 +1362,26 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
       v.y = shore.y;
       atWater = pushFor(shore.dx, shore.dy, 2);
     }
+    // Walking off: back the way it came, onto the dry ground behind it.
     const walking = (() => {
-      steerBy(world, -1, 0, 0);
+      steerBy(world, -(shore?.dx ?? 1), -(shore?.dy ?? 0), 0);
       run(world, rt, 0.4, () => awake(v));
       return stopNote(world, whyStopped);
     })();
     v.x = 3.6;
     v.y = Math.round(world.h / 2);
     const atRim = pushFor(-1, 0, 2);
+    // Stopped at the rim with a solid cover in the cell before it (driven, it slides only along a wall
+    // it meets aslant, and no longer dodges round one as the engine's steering did), the line says so.
+    const coverAhead = solidCovers(world)[world.cover[world.idx(v.x - 0.6, v.y)]] === 1;
     steerBy(world, 0, 0, 0);
     const atRest = stopNote(world, whyStopped);
     check(
       "become: stopped dead at the sea, the line says why; walking or at rest, nothing",
-      atWater === "Deep water stops you" && (atRim === null || atRim === "The edge of the world") && walking === null && atRest === null,
+      atWater === "Deep water stops you" &&
+        (atRim === null || atRim === "The edge of the world" || (atRim === "Something is in the way" && coverAhead)) &&
+        walking === null &&
+        atRest === null,
       `at the shore: ${atWater}; at the rim (said only if it stalled there rather than sliding along): ${atRim}; walking off: ${walking}; at rest: ${atRest}`,
     );
     release(world);

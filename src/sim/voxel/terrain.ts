@@ -6,6 +6,7 @@ import { mixColor, scaleColor } from "../colors";
 import { GRAPHICS } from "./graphics";
 import { LOOKS, biomeAt } from "../land";
 import { DAMP, R as RARE } from "../ecology";
+import { eyeKeepsChunk } from "./fog";
 
 // The island as voxel columns. Each cell is one column whose top sits at its
 // height (half a unit per height unit, rounded to whole voxels). Walls are
@@ -97,6 +98,24 @@ export class Terrain {
       this.water = LOOKS[world.land.biome].water;
     }
   }
+
+  // The eye view, second pass: chunks wholly past `r` cells from (x, y) are not drawn (the mist
+  // has them, fog.ts EYE_DRAW); null draws every chunk, as from the sky.
+  private shownAround: string | null = null;
+  showWithin(at: { x: number; y: number; r: number } | null): void {
+    const key = at ? `${Math.round(at.x / 4)},${Math.round(at.y / 4)},${at.r}` : null;
+    if (key === this.shownAround && !this.builtSinceShown) return;
+    this.shownAround = key;
+    this.builtSinceShown = false;
+    for (let cy = 0; cy < this.rows; cy++)
+      for (let cx = 0; cx < this.cols; cx++) {
+        const c = this.chunks[cy * this.cols + cx];
+        const on = !at || eyeKeepsChunk(cx * CHUNK, cy * CHUNK, CHUNK, at.x, at.y, at.r);
+        if (c.land) c.land.visible = on;
+        if (c.fluid) c.fluid.visible = on;
+      }
+  }
+  private builtSinceShown = false;
 
   // Compares every column with what was last drawn and marks chunks to rebuild.
   scan(): void {
@@ -217,6 +236,8 @@ export class Terrain {
     if (kind === "fluid") mesh.renderOrder = 2;
     chunk[kind] = mesh;
     this.add(mesh);
+    // A new chunk is shown; past the eye's mist it is hidden again at the next showWithin.
+    this.builtSinceShown = true;
   }
 
   private bounds(c: number) {

@@ -5,11 +5,18 @@
 
 const RING = 600;
 
+// Where the camera was for a frame (the eye view, second pass): above the
+// island, behind the creature the player is, or in its eyes. The owner's phone
+// says which one was slow.
+export const VIEWS = ["sky", "behind", "eyes"] as const;
+export type ViewName = (typeof VIEWS)[number];
+
 export interface FrameSample {
   // Wall time since the previous frame, simulation ticks and the draw call, ms.
   frame: number;
   sim: number;
   render: number;
+  view?: ViewName;
 }
 
 export interface SceneCounts {
@@ -38,6 +45,9 @@ export interface PerfSummary {
   simP95: number;
   renderP50: number;
   renderP95: number;
+  // The view most of the frames were drawn in, and how many frames each had.
+  view: ViewName;
+  viewFrames: string;
   idle: number;
   calls: number;
   triangles: number;
@@ -57,6 +67,7 @@ export class FrameStats {
   private frame = new Float32Array(RING);
   private sim = new Float32Array(RING);
   private render = new Float32Array(RING);
+  private views = new Uint8Array(RING);
   private count = 0;
   private next = 0;
   // Frames skipped because nothing moved (see Engine.frame).
@@ -80,6 +91,7 @@ export class FrameStats {
     this.frame[this.next] = s.frame;
     this.sim[this.next] = s.sim;
     this.render[this.next] = s.render;
+    this.views[this.next] = Math.max(0, VIEWS.indexOf(s.view ?? "sky"));
     this.next = (this.next + 1) % RING;
     this.count = Math.min(RING, this.count + 1);
   }
@@ -98,7 +110,12 @@ export class FrameStats {
       return round(sorted[Math.min(n - 1, Math.floor(q * n))]);
     };
     let total = 0;
-    for (let i = 0; i < n; i++) total += this.frame[i];
+    const per = [0, 0, 0];
+    for (let i = 0; i < n; i++) {
+      total += this.frame[i];
+      per[this.views[i]]++;
+    }
+    const most = per.indexOf(Math.max(...per));
     return {
       frames: n,
       fps: total > 0 ? round((n * 1000) / total) : 0,
@@ -108,6 +125,8 @@ export class FrameStats {
       simP95: pick(this.sim, 0.95),
       renderP50: pick(this.render, 0.5),
       renderP95: pick(this.render, 0.95),
+      view: VIEWS[most],
+      viewFrames: VIEWS.map((v, i) => `${v}:${per[i]}`).join(","),
       idle: this.idle,
       ...this.counts,
     };

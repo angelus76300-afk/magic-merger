@@ -19,7 +19,9 @@ import { firstLook, villageView, type Pose } from "./firstlook";
 import { fireOf, focusOf, frontOf, startTrouble, stoneAt, stoneLine, troubleLine, type Stone, type TroubleKind } from "./troubles";
 import { Director, lifeLine, nameOf, whoIs, type Shot } from "./director";
 import { act, checkHeld, deedsOf, doDeed, possess, possessed, powersOf, release, steerBy, stopNote, thoughtOf, type Deed } from "./possess";
-import { aimAt, castFromEyes, eyesFirst, lookTheta, openLook, withinRange } from "./eyes";
+import { aimAt, aimedEye, castFromEyes, castRange, climbOf, eyesFirst, lookTheta, openLook, withinRange, type Body, type Eye } from "./eyes";
+import { AimHold } from "./aim";
+import { isTier } from "../../shared/tiers";
 import { castOnScreen, watchCast } from "./voxel/castview";
 import { LAB_SKY, LAB_WEATHER } from "./voxel/sky";
 import { LAND_REDRAW } from "./voxel/terrain";
@@ -127,7 +129,12 @@ const hooks = {
       swallowTap = false;
       return;
     }
-    if (riding && eyes) castFromEye();
+    // The finger that held an aim on the island lifted just now: it cast already (aim.ts).
+    if (performance.now() - aimEndedAt < 150) return;
+    if (riding && eyes) {
+      aimStats.taps++;
+      castFromEye();
+    }
   },
   onTap: (x: number, y: number) => {
     if (!engine) return;
@@ -140,11 +147,14 @@ const hooks = {
     if (engine.view.orbit.watching) return;
     // While the player is a creature (Become, 2026-11-12) a tap on the island
     // casts from it: in the eye view where the mark in the middle points, from
-    // behind where the finger is, within 14 cells of it either way (eyes.ts).
+    // behind where the finger is, within the item's reach either way (eyes.ts castRange).
     if (riding) {
-      if (eyes) castFromEye();
-      else if (selected) {
-        const at = withinRange(riding.x, riding.y, x, y);
+      if (performance.now() - aimEndedAt < 150) return;
+      if (eyes) {
+        aimStats.taps++;
+        castFromEye();
+      } else if (selected) {
+        const at = withinRange(riding.x, riding.y, x, y, castRange(selected.tier));
         castAt(at.x, at.y);
       }
       return;
@@ -542,6 +552,7 @@ function startBecome(c: Creature): void {
   stopWatch(false);
   if (!possess(engine.world, c)) return;
   riding = c;
+  lastHd = NaN;
   becomeStats.presses++;
   rideStart = performance.now();
   rideName = riderName(c);
@@ -736,6 +747,9 @@ stickEl.addEventListener("pointercancel", stickUp);
 stickEl.addEventListener("lostpointercapture", stickUp);
 press(letGoEl, () => endBecome("let go"));
 
+// The heading of a banking creature at the last frame, for the look to turn with it.
+let lastHd = NaN;
+
 // Every frame while possessed: the stick to the creature, the camera to it.
 function ride(): void {
   requestAnimationFrame(ride);
@@ -751,9 +765,17 @@ function ride(): void {
   // The stick goes along the view as it is now, in both views: the camera
   // turns only when the player turns it (orbit.ts chase), so a push held one
   // way keeps the creature going that way on screen (the playtest of 12 November).
-  steerBy(world, sx, sy, o.eye ? lookTheta(o.eye.yaw) : o.theta);
+  // A flier or a swimmer climbs and dives with the look (the eye's pitch, or the tilt of the view
+  // from behind, dragged up to look up) and turns by bank: the look and the camera turn with it.
   const c = riding;
-  o.chase(c.x, c.y, c.z, c.hd, kindOf(c).radius * c.size);
+  const k = kindOf(c);
+  const banks = k.flying || k.aquatic;
+  const climb = !banks ? 0 : o.eye ? climbOf(o.eye.pitch) : Math.max(-1, Math.min(1, Math.abs(o.tilt) < 0.05 ? 0 : o.tilt / 0.25));
+  steerBy(world, sx, sy, o.eye ? lookTheta(o.eye.yaw) : o.theta, climb);
+  if (banks && o.eye && Number.isFinite(lastHd)) o.eye.yaw += Math.atan2(Math.sin(c.hd - lastHd), Math.cos(c.hd - lastHd));
+  lastHd = c.hd;
+  o.chase(c.x, c.y, c.z, c.hd, k.radius * c.size, banks);
+  aimTick();
   if (eyes) drawMark();
   // Stopped against the sea, a cliff or the rim: why, held while it stays
   // stopped and two seconds after (it flickered with the thought at first).
@@ -820,6 +842,9 @@ function setEyes(on: boolean): void {
   eyeEl.lastElementChild!.textContent = on ? "Behind" : "Eyes";
   markEl.hidden = !on;
   landingEl.hidden = true;
+  beamEl.hidden = true;
+  aim.reset();
+  aimShown(false);
   hotbarEl.hidden = !on;
   heldEl.hidden = true;
   castEl.hidden = true;
@@ -923,7 +948,12 @@ function drawHot(): void {
   castEl.hidden = !held;
   castEl.textContent = selected?.kind === "artifact" ? "Place" : "Cast";
   markEl.classList.toggle("held", !!held);
-  if (!held) landingEl.hidden = true;
+  if (!held) {
+    landingEl.hidden = true;
+    beamEl.hidden = true;
+    if (aim.active) aim.reset();
+    aimShown(false);
+  }
 }
 
 // The whole list over the view, with a search: the eye view stays behind it.
@@ -962,16 +992,57 @@ function pick(key: string): void {
   drawHot();
 }
 
-// Where the spell in hand would land: a ring on the ground, the mark dashed when it is past the range.
+// The creatures the look may meet on its way, within the reach (eyes.ts aimAt): not the one the
+// player is. Their height is about their drawn size; a fallen one lies on the ground.
+function bodiesNear(e: Eye, range: number): Body[] {
+  if (!engine) return [];
+  const out: Body[] = [];
+  for (const o of engine.world.creatures) {
+    if (o === riding || Math.abs(o.x - e.x) > range + 1 || Math.abs(o.y - e.y) > range + 1) continue;
+    const k = kindOf(o);
+    const r = Math.max(0.35, k.radius * o.size * 0.8);
+    out.push({ x: o.x, y: o.y, z: engine.view.groundAt(o.x, o.y) + o.z, r, h: o.dead ? 0.4 : Math.max(0.6, r * 2.6) });
+  }
+  return out;
+}
+
+// Where the spell in hand lands now: the look, turned by a held aim (aim.ts), out to the item's reach.
+function aimNow(): { x: number; y: number; hit: boolean; dist: number; eye: Eye; range: number } | null {
+  const e = engine?.view.orbit.eye;
+  if (!engine || !e) return null;
+  const range = castRange(selected?.tier);
+  const eye = aim.armed ? aimedEye(e, aim.dyaw, aim.dpitch) : e;
+  return { ...aimAt(eye, engine.view.groundAt, engine.world.w, engine.world.h, range, bodiesNear(eye, range)), eye, range };
+}
+
+// Where the spell in hand would land: a ring on the ground, the mark dashed when it is past the
+// range. The ring grows a little and glows with distance, so it reads at 46 cells on a folded phone,
+// and a thin arc runs to it from the hand (the bottom right, where the Cast button is).
 function drawMark(): void {
-  if (!engine || !selected) return;
-  const e = engine.view.orbit.eye;
-  if (!e) return;
-  const at = aimAt(e, engine.view.groundAt, engine.world.w, engine.world.h);
+  if (!engine || !selected) {
+    beamEl.hidden = true;
+    return;
+  }
+  const at = aimNow();
+  if (!at) return;
   markEl.classList.toggle("far", !at.hit);
   const p = castOnScreen(engine, at.x, at.y, []);
   landingEl.hidden = !p;
-  if (p) landingEl.style.transform = `translate(${Math.round(p.x)}px, ${Math.round(p.y)}px)`;
+  beamEl.hidden = !p;
+  if (!p) return;
+  const far = Math.max(0, Math.min(1, (at.dist - 8) / 40));
+  landingEl.style.transform = `translate(${Math.round(p.x)}px, ${Math.round(p.y)}px) scale(${(1 + far * 0.9).toFixed(2)})`;
+  landingEl.classList.toggle("far", far > 0.3);
+  landingEl.classList.toggle("aiming", aim.armed);
+  const rect = canvas.getBoundingClientRect();
+  // From the hand: low on the screen, toward the right thumb.
+  const hx = rect.width * 0.62;
+  const hy = rect.height - 8;
+  // An arc that rises a little with distance, like a throw.
+  const mx = (hx + p.x) / 2;
+  const my = Math.min(hy, p.y) - 18 - far * 40;
+  beamPath.setAttribute("d", `M${hx.toFixed(0)} ${hy.toFixed(0)} Q${mx.toFixed(0)} ${my.toFixed(0)} ${p.x.toFixed(0)} ${p.y.toFixed(0)}`);
+  beamSvg.setAttribute("viewBox", `0 0 ${Math.round(rect.width)} ${Math.round(rect.height)}`);
 }
 
 function castFromEye(): void {
@@ -979,14 +1050,137 @@ function castFromEye(): void {
   const e = engine.view.orbit.eye;
   if (!e) return;
   lastTouch = performance.now();
-  const r = castFromEyes(e, engine.view.groundAt, engine.world.w, engine.world.h, castAt, (x, y) => !!engine && !!castOnScreen(engine, x, y, []));
+  const at = aimNow();
+  if (!at) return;
+  const r = castFromEyes(
+    at.eye,
+    engine.view.groundAt,
+    engine.world.w,
+    engine.world.h,
+    castAt,
+    (x, y) => !!engine && !!castOnScreen(engine, x, y, []),
+    at.range,
+    bodiesNear(at.eye, at.range),
+  );
   if (r.ok) eyeStats.casts++;
   if (r.why && riding) {
     powerNote = { text: r.why, until: performance.now() + 2000 };
     tellRider();
   }
 }
-press(castEl, castFromEye);
+
+// Hold and release (aim.ts): a finger down on Cast shows the ring at once and a drag moves it
+// finely; lifting casts once, over the Cancel chip nothing. A finger held still on the island for a
+// quarter second does the same. Every press, release and cancel is counted for the checks.
+const aim = new AimHold();
+const aimCancelEl = document.getElementById("aimcancel") as HTMLElement;
+const beamEl = document.getElementById("beam") as HTMLElement;
+const beamSvg = beamEl.querySelector("svg") as SVGSVGElement;
+const beamPath = beamEl.querySelector("path") as SVGPathElement;
+const aimStats = { holds: 0, casts: 0, cancels: 0, moved: 0, clicks: 0, taps: 0 };
+let aimEndedAt = -Infinity;
+
+function aimShown(on: boolean): void {
+  aimCancelEl.hidden = !on;
+  markEl.classList.toggle("aiming", on);
+  if (!on) landingEl.classList.remove("aiming");
+}
+
+// Over the Cancel chip (a little larger than it, for a thumb).
+function overCancel(x: number, y: number): boolean {
+  if (aimCancelEl.hidden) return false;
+  const r = aimCancelEl.getBoundingClientRect();
+  return x >= r.left - 12 && x <= r.right + 12 && y >= r.top - 12 && y <= r.bottom + 12;
+}
+
+function aimEnd(id: number, x: number, y: number, cancelled: boolean): void {
+  const end = aim.up(id, cancelled || overCancel(x, y));
+  if (!end) return;
+  aimEndedAt = performance.now();
+  aimShown(false);
+  if (end === "cast") {
+    aimStats.casts++;
+    castFromEye();
+  } else aimStats.cancels++;
+  aim.reset();
+  drawMark();
+}
+
+// The held island finger, once still for a quarter second (called every frame by ride()).
+function aimTick(): void {
+  if (!aim.tick(performance.now())) return;
+  if (!eyes || !selected) return aim.reset();
+  aimStats.holds++;
+  aimShown(true);
+}
+
+castEl.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0 || !eyes || !selected) return;
+  e.preventDefault();
+  e.stopPropagation();
+  pressDown(performance.now());
+  lastTouch = performance.now();
+  castEl.setPointerCapture(e.pointerId);
+  aim.down(e.pointerId, e.clientX, e.clientY, performance.now(), true);
+  aimStats.holds++;
+  aimShown(true);
+  drawMark();
+});
+castEl.addEventListener("pointermove", (e) => {
+  if (aim.move(e.pointerId, e.clientX, e.clientY)) {
+    aimStats.moved++;
+    aimCancelEl.classList.toggle("over", overCancel(e.clientX, e.clientY));
+    drawMark();
+  }
+});
+castEl.addEventListener("pointerup", (e) => aimEnd(e.pointerId, e.clientX, e.clientY, false));
+castEl.addEventListener("pointercancel", (e) => aimEnd(e.pointerId, e.clientX, e.clientY, true));
+castEl.addEventListener("lostpointercapture", (e) => aimEnd(e.pointerId, e.clientX, e.clientY, true));
+// A click with no press before it (a key, a screen reader) casts at the mark; the one a touch sends after its press does nothing.
+castEl.addEventListener("click", (e) => {
+  e.preventDefault();
+  if (clickActs(performance.now())) {
+    aimStats.clicks++;
+    castFromEye();
+  }
+});
+
+// The island: a finger held still begins an aim; moved first, it turns the look (the engine's own).
+// Listened to before the engine's own listeners (capture), so an aim's drag does not turn the look.
+const islandFingers = new Set<number>();
+canvas.addEventListener(
+  "pointerdown",
+  (e) => {
+    islandFingers.add(e.pointerId);
+    if (islandFingers.size > 1) {
+      if (aim.active) aimEnd(-2, 0, 0, true);
+      aim.reset();
+      aimShown(false);
+      return;
+    }
+    if (riding && eyes && selected && e.button === 0) aim.down(e.pointerId, e.clientX, e.clientY, performance.now(), false);
+  },
+  { capture: true },
+);
+canvas.addEventListener(
+  "pointermove",
+  (e) => {
+    if (!aim.active) return;
+    if (aim.move(e.pointerId, e.clientX, e.clientY)) {
+      aimStats.moved++;
+      aimCancelEl.classList.toggle("over", overCancel(e.clientX, e.clientY));
+      drawMark();
+      e.stopImmediatePropagation();
+    }
+  },
+  { capture: true },
+);
+const islandUp = (e: PointerEvent) => {
+  islandFingers.delete(e.pointerId);
+  if (aim.active) aimEnd(e.pointerId, e.clientX, e.clientY, e.type === "pointercancel");
+};
+canvas.addEventListener("pointerup", islandUp, { capture: true });
+canvas.addEventListener("pointercancel", islandUp, { capture: true });
 
 // The keys on a desktop: WASD or the arrows walk, 1 to 6 take a slot, Space casts.
 const keysDown = new Set<string>();
@@ -1031,7 +1225,7 @@ window.addEventListener("blur", () => keysDown.clear());
 
 // A place for a frame of the checks: open ground near the nearest house, in
 // the thickest woods or on the shore, and the look toward it. Only the checks call it.
-type PlaceSort = "village" | "house" | "woods" | "shore" | "fire" | "tree" | "wall" | "street" | "cliff" | "sea";
+type PlaceSort = "village" | "house" | "woods" | "shore" | "fire" | "tree" | "wall" | "street" | "cliff" | "sea" | "hill" | "forest";
 function placeFor(sort: PlaceSort): { x: number; y: number; yaw: number } | null {
   if (!engine || !riding) return null;
   const w = engine.world;
@@ -1055,6 +1249,31 @@ function placeFor(sort: PlaceSort): { x: number; y: number; yaw: number } | null
       if (free(x, y) && w.fire[w.idx(x, y)] < 0.05) return { x, y, yaw: a + Math.PI };
     }
     return null;
+  }
+  if (sort === "forest") {
+    // The thickest woods of the island, the same spot whoever the player is: open ground with the
+    // most trees within four cells, the nearest the middle on a tie; looking toward the middle.
+    let most = -1;
+    for (let y = 6; y < w.h - 6; y++)
+      for (let x = 6; x < w.w - 6; x++) {
+        if (!free(x, y)) continue;
+        const n = near(x, y, 4, (i) => w.cover[i] === C.TREE);
+        if (n < most || (n === most && best && Math.hypot(x - w.w / 2, y - w.h / 2) >= Math.hypot(best.x - w.w / 2, best.y - w.h / 2))) continue;
+        most = n;
+        best = { x: x + 0.5, y: y + 0.5, yaw: Math.atan2(w.h / 2 - y, w.w / 2 - x) };
+      }
+    return best;
+  }
+  if (sort === "hill") {
+    // The highest open ground a quarter of the island or more from its middle, looking across it to the middle.
+    let top = -Infinity;
+    for (let y = 6; y < w.h - 6; y++)
+      for (let x = 6; x < w.w - 6; x++) {
+        if (!free(x, y) || Math.hypot(x - w.w / 2, y - w.h / 2) < w.w / 4 || w.height[w.idx(x, y)] <= top) continue;
+        top = w.height[w.idx(x, y)];
+        best = { x: x + 0.5, y: y + 0.5, yaw: Math.atan2(w.h / 2 - y, w.w / 2 - x) };
+      }
+    return best;
   }
   if (sort === "village") {
     // The biggest village, from open ground seven cells off its middle, looking at it.
@@ -1172,6 +1391,15 @@ function placeFor(sort: PlaceSort): { x: number; y: number; yaw: number } | null
       rain?: boolean;
       // Starts (true) or ends (false) timing the view's frames: the median and 90th centile of each part, in ms.
       prof?: boolean;
+      // For scripts/eyes-perf.mjs: the stick held (x right, y down, -1 to 1), and the game's own perf
+      // sample started afresh (true) or read (the result's `perf` always has it).
+      stick?: { x: number; y: number };
+      stats?: boolean;
+      // The triangles each kind of mesh puts on screen (what the eye view's budget is spent on).
+      tris?: boolean;
+      // The eye view's cuts on (true, as played) or off (false: drawn as before the second pass).
+      cuts?: boolean;
+      tier?: string;
     }) => unknown;
   }
 ).__mmEyes = (look) => {
@@ -1247,6 +1475,14 @@ function placeFor(sort: PlaceSort): { x: number; y: number; yaw: number } | null
     if (look.turn !== undefined) e.yaw += look.turn;
     if (look.pitch !== undefined) e.pitch = look.pitch;
   }
+  if (look?.stick && riding) {
+    stick.x = look.stick.x;
+    stick.y = look.stick.y;
+  }
+  if (look?.cuts !== undefined && engine) engine.view.eyeCuts = look.cuts;
+  // For the frames: the spell in hand as if it were of this tier, for its reach (eyes.ts castRange).
+  if (look?.tier && selected && isTier(look.tier)) selected = { ...selected, tier: look.tier };
+  if (look?.stats && engine) engine.stats.reset();
   let prof: Record<string, [number, number]> | null = null;
   if (look?.prof === true && engine) engine.view.profile = {};
   else if (look?.prof === false && engine?.view.profile) {
@@ -1260,11 +1496,15 @@ function placeFor(sort: PlaceSort): { x: number; y: number; yaw: number } | null
     }
     engine.view.profile = null;
   }
-  const aim = e && engine ? aimAt(e, engine.view.groundAt, engine.world.w, engine.world.h) : null;
+  const landing = aimNow();
   return {
     eyes,
     eye: e ? { ...e } : null,
-    aim,
+    // The island's own clock, seconds: a pace measured on slow frames is measured in it.
+    time: engine?.world.time ?? 0,
+    aim: landing ? { x: landing.x, y: landing.y, hit: landing.hit, dist: landing.dist, range: landing.range } : null,
+    aimHold: { active: aim.active, armed: aim.armed, dyaw: aim.dyaw, dpitch: aim.dpitch, ...aimStats },
+    ring: landingEl.hidden ? null : landingEl.getBoundingClientRect().toJSON(),
     held: selected?.key ?? null,
     hot: hot.map((h) => h.key),
     deeds: riding && engine ? deedsOf(engine.world, riding, facing()).map((d) => d.verb) : [],
@@ -1276,6 +1516,8 @@ function placeFor(sort: PlaceSort): { x: number; y: number; yaw: number } | null
     trouble: engine?.world.trouble ? { stage: engine.world.trouble.stage, casts: engine.world.trouble.casts.length } : null,
     powers: riding && engine ? powersOf(engine.world, riding).map((p) => ({ do: p.spec.do, left: Math.round(p.left * 10) / 10 })) : [],
     draw: engine ? { calls: engine.view.renderer.info.render.calls, triangles: engine.view.renderer.info.render.triangles } : null,
+    perf: engine ? engine.stats.summary() : null,
+    tris: look?.tris && engine ? engine.view.triangleBreakdown() : null,
     prof,
     size: engine ? { w: engine.world.w, h: engine.world.h } : null,
     faced,

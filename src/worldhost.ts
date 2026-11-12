@@ -29,6 +29,8 @@ import { isFrozen } from "./device-save";
 import { BIG_SIZES, readHeadroom, sizesOffered, writeHeadroom } from "./headroom";
 import { DEFAULT_LAND, MIXED_FROM, readChoice as readLandChoice, type LandChoice } from "./sim/land-options";
 import { newerSave } from "./sim/save-guard";
+import { castRange } from "./sim/eyes";
+import { armGhostGuard, installGhostGuard } from "./ghost";
 
 export { WORLD_AT_KEY, WORLD_KEY } from "./island-store";
 const MUTE_KEY = "magic-merger.muted";
@@ -154,6 +156,7 @@ export class WorldHost {
 
   init(): void {
     window.addEventListener("message", (e) => this.onMessage(e));
+    installGhostGuard(document);
     // A trouble running when the page was last closed: the board says it at once (the World frame
     // corrects it when it loads, and clears it if the island has none).
     const was = rememberedLine();
@@ -1446,7 +1449,7 @@ export class WorldHost {
       else if (this.writing.has(key)) text = `The grimoire is writing ${name}… it will be ready in a moment.`;
       else if (this.preparing.has(key)) text = `Preparing ${name}… the first cast of a spell takes a moment.`;
       else if (this.request(key) && this.riding)
-        text = `Tap the island to ${this.store.get(key)?.element.kind === "artifact" ? "place" : "cast"} ${name} from where you stand, up to 14 steps away.`;
+        text = `Tap the island to ${this.store.get(key)?.element.kind === "artifact" ? "place" : "cast"} ${name} from where you stand, up to ${castRange(this.store.get(key)?.element.tier)} steps away.`;
       else if (this.request(key))
         text = `Tap the island to ${this.store.get(key)?.element.kind === "artifact" ? "place" : "cast"} ${name}. Tap it again to put it away and look at creatures.`;
       else text = `${name} is not ready yet.`;
@@ -1459,6 +1462,10 @@ export class WorldHost {
     if (on === this.eyes) return;
     this.eyes = on;
     document.body.classList.toggle("eyes", on);
+    // Leaving the eye view (Let go, Behind) brings the header back under the finger that pressed
+    // the button in the island's frame: the click its touch sends after lands on the header's
+    // Sign in (the playtest of 12 November opened the account dialog). Swallowed (ghost.ts).
+    if (!on) armGhostGuard(performance.now());
     this.hotSent = "";
     if (on) {
       this.guide.hideHint();

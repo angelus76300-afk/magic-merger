@@ -27,7 +27,9 @@ export class OrbitCamera implements CameraControl {
   // swung behind the creature after every step turned the stick under the
   // thumb, and a pull down walked it back and forth). A drag turns it round
   // the creature, as in the eye view.
-  private chased: { x: number; y: number; z: number; hd: number; dist: number; turn: number | null; tilt: number } | null = null;
+  // A flier or a swimmer is steered by bank (drive.ts): its camera follows
+  // behind it (follow), as a flight game's does, since the stick turns it.
+  private chased: { x: number; y: number; z: number; hd: number; dist: number; turn: number | null; tilt: number; follow: boolean } | null = null;
   // Through its eyes (2026-11-12, eyes.ts): at the head of the creature the
   // player is, looking where they look. A drag turns the look; the chase
   // above keeps following meanwhile, so the behind view comes back in place.
@@ -117,7 +119,7 @@ export class OrbitCamera implements CameraControl {
   // Behind the creature at (x, y), z above the ground, facing `heading`
   // (radians, 0 along +x as creatures.ts hd). Called again as it moves. `size`:
   // its radius in cells, so a dragon is not filmed from as close as a rabbit.
-  chase(x: number, y: number, z: number, heading: number, size = 0.6): void {
+  chase(x: number, y: number, z: number, heading: number, size = 0.6, follow = false): void {
     if (!this.chased) {
       this.goal = null;
       this.saved = null;
@@ -125,13 +127,15 @@ export class OrbitCamera implements CameraControl {
       this.watched = null;
       // Close enough that the creature is the subject on a folded phone (344 px wide).
       const dist = Math.max(9, Math.min(24, 7.5 + size * 6.5));
-      this.chased = { x, y, z, hd: heading, dist, turn: Math.atan2(-Math.cos(heading), -Math.sin(heading)), tilt: 0 };
+      this.chased = { x, y, z, hd: heading, dist, turn: Math.atan2(-Math.cos(heading), -Math.sin(heading)), tilt: 0, follow };
       return;
     }
     this.chased.x = x;
     this.chased.y = y;
     this.chased.z = z;
     this.chased.hd = heading;
+    this.chased.follow = follow;
+    if (follow) this.chased.turn = Math.atan2(-Math.cos(heading), -Math.sin(heading));
   }
 
   // Let go: the camera stays where it is, it does not fly back.
@@ -153,6 +157,11 @@ export class OrbitCamera implements CameraControl {
     this.eyed.x = x;
     this.eyed.y = y;
     this.eyed.h = h;
+  }
+
+  // The tilt of the view from behind, -0.35 (from above) to 0.3 (from low): a flier's climb.
+  get tilt(): number {
+    return this.chased?.tilt ?? 0;
   }
 
   // Back behind it, turned the way the eyes looked.
@@ -271,7 +280,7 @@ export class OrbitCamera implements CameraControl {
       if (ch.turn !== null) {
         const turn = Math.atan2(Math.sin(ch.turn - this.theta), Math.cos(ch.turn - this.theta));
         this.theta += turn * Math.min(1, dt * (reducedMotion ? 0.8 : 2.6));
-        if (Math.abs(turn) < 0.01) ch.turn = null;
+        if (Math.abs(turn) < 0.01 && !ch.follow) ch.turn = null;
       }
       this.phi += (0.9 + ch.tilt - this.phi) * Math.min(1, dt * (reducedMotion ? 1 : 3));
       this.dist = Math.exp(Math.log(this.dist) + (Math.log(ch.dist) - Math.log(this.dist)) * Math.min(1, dt * (reducedMotion ? 1.2 : 2.5)));
@@ -336,6 +345,8 @@ export class OrbitCamera implements CameraControl {
     const across = Math.tan((75 * Math.PI) / 360) / Math.max(0.1, this.camera.aspect);
     this.camera.fov = Math.max(55, Math.min(95, (Math.atan(across) * 360) / Math.PI));
     this.camera.near = 0.06;
+    // The sky's sun, stars and ring of clouds are far off: the far plane stays out there. What
+    // lies past the mist is left out by the view itself (view.ts, fog.ts EYE_DRAW).
     this.camera.far = Math.max(this.worldW, this.worldH) * 3 + 200;
     this.camera.updateProjectionMatrix();
   }

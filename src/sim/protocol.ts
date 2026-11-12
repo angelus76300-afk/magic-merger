@@ -98,7 +98,7 @@ export function readFromWorld(data: unknown): FromWorld | null {
         : null;
     case "perf":
       return m.sample && typeof m.sample === "object" && JSON.stringify(m.sample).length < 2000
-        ? { type: "perf", sample: m.sample as Record<string, number> }
+        ? { type: "perf", sample: m.sample as Record<string, number | string> }
         : null;
     case "headroom": {
       const h = m.sample as Record<string, unknown> | null;
@@ -160,7 +160,7 @@ export type FromWorld =
   | { type: "escape" }
   | { type: "error"; key: string; name: string; message: string }
   | { type: "objective"; id: string; text: string; status: "playing" | "won" | "lost" }
-  | { type: "perf"; sample: Record<string, number> }
+  | { type: "perf"; sample: Record<string, number | string> }
   // 4.4: the frame numbers of the island being played, every 30 seconds,
   // whether the HUD is shown or not: what bigger islands are offered from.
   | { type: "headroom"; sample: { w: number; simP95: number; frameP95: number; frames: number } }
