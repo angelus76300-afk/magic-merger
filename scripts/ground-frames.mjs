@@ -58,10 +58,15 @@ try {
     log("perf", name, JSON.stringify({ total: r.prof?.total, draw: r.prof?.draw, calls: r.draw?.calls, triangles: r.draw?.triangles }));
   };
   await eyes({ clock: CLOCK });
-  await page.waitForTimeout(2500);
+  // The new island's tour moves the camera: skipped, so the sky view is the same every run.
+  await world()
+    .locator("text=Skip")
+    .click({ timeout: 2000 })
+    .catch(() => undefined);
+  await page.waitForTimeout(3500);
   // The sky view over the village, as the island opens.
   if (!ONLY || ONLY.has("sky")) await shot("sky");
-  if (!ONLY) await timed("sky");
+  if (!ONLY || ONLY.has("sky")) await timed("sky");
 
   await eyes({ become: "villager" });
   await page.waitForTimeout(1500);
