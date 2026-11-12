@@ -6,7 +6,7 @@
 // gains, biquad filters (the formulas of the Web Audio spec), buffer sources
 // and the automation the voices use, rendered sample by sample.
 
-import { MusicPlayer, VOICE_NAMES, bedMaker, makeVoice, voiceFor, whiteNoise, type Synth } from "../src/sim/sound";
+import { MusicPlayer, SpellSound, VOICE_NAMES, bedMaker, makeVoice, voiceFor, whiteNoise, type Synth } from "../src/sim/sound";
 import { Composer, MoodTracker, PHRASE_BARS, TENSION_IN, TENSION_OUT, hz, inKey, scoreOf } from "../src/sim/music";
 import { CRAFT_VOICES, CraftSound, nameMotif, tierNotes, tierRoot, type CraftVoice } from "../src/craftsound";
 import { SOUND_DEFAULTS, readSentSettings, readSoundSettings, writeSoundSetting } from "../src/sim/soundsettings";
@@ -25,6 +25,7 @@ import {
   silentBeds,
   type BedLevels,
 } from "../src/sim/ambience";
+import { Engine } from "../src/sim/engine";
 import { C, F } from "../src/sim/materials";
 import { daylight } from "../src/sim/daylight";
 import {
@@ -835,6 +836,145 @@ check(!castOwns(120, true), "two minutes on, a sound with no place is never put 
   );
 }
 
+// #91: the Sound button. A small browser stands in for the World's frame:
+// window and document listeners, and an audio context that records its
+// state and the level of its output.
+{
+  type Fn = (...a: unknown[]) => void;
+  const listeners = new Map<string, Set<Fn>>();
+  const on = (type: string, fn: Fn) => (listeners.get(type) ?? listeners.set(type, new Set()).get(type)!).add(fn);
+  const off = (type: string, fn: Fn) => listeners.get(type)?.delete(fn);
+  const fire = (type: string) => [...(listeners.get(type) ?? [])].forEach((fn) => fn({}));
+  const count = () => [...listeners.values()].reduce((n, s) => n + s.size, 0);
+  const contexts: FakeContext[] = [];
+  let made = 0;
+  class P {
+    value = 0;
+    setTargetAtTime(v: number) {
+      this.value = v;
+      return this;
+    }
+    setValueAtTime(v: number) {
+      this.value = v;
+      return this;
+    }
+    linearRampToValueAtTime(v: number) {
+      this.value = v;
+      return this;
+    }
+    exponentialRampToValueAtTime(v: number) {
+      this.value = v;
+      return this;
+    }
+    cancelScheduledValues() {
+      return this;
+    }
+  }
+  const node = (): Record<string, unknown> => {
+    const n: Record<string, unknown> = {
+      gain: new P(),
+      frequency: new P(),
+      detune: new P(),
+      Q: new P(),
+      pan: new P(),
+      playbackRate: new P(),
+      connect: (to: unknown) => {
+        made++;
+        return to;
+      },
+      disconnect: () => {},
+      start: () => {},
+      stop: () => {},
+      setPeriodicWave: () => {},
+    };
+    return n;
+  };
+  class FakeContext {
+    state: "running" | "suspended" | "closed" = "running";
+    currentTime = 1;
+    sampleRate = 8000;
+    destination = node();
+    constructor() {
+      contexts.push(this);
+    }
+    createGain = node;
+    createOscillator = node;
+    createBiquadFilter = node;
+    createBufferSource = node;
+    createStereoPanner = node;
+    createBuffer = (_c: number, length: number) => ({ getChannelData: () => new Float32Array(length) });
+    resume = async () => {
+      if (this.state !== "closed") this.state = "running";
+    };
+    suspend = async () => {
+      if (this.state !== "closed") this.state = "suspended";
+    };
+    close = async () => {
+      this.state = "closed";
+    };
+  }
+  const timers: (() => void)[] = [];
+  const g = globalThis as unknown as Record<string, unknown>;
+  const saved = { window: g.window, document: g.document, localStorage: g.localStorage };
+  g.window = {
+    addEventListener: on,
+    removeEventListener: off,
+    postMessage: () => {},
+    setTimeout: (fn: () => void) => timers.push(fn),
+    setInterval: () => 0,
+    clearInterval: () => {},
+    AudioContext: FakeContext,
+  };
+  (g.window as Record<string, unknown>).parent = g.window;
+  g.document = { hidden: false, addEventListener: on, removeEventListener: off };
+  g.localStorage = { getItem: () => null, setItem: () => {} };
+  // Read through a function: TypeScript would narrow a state set just above.
+  const state = () => contexts[0].state as string;
+  const flush = () => timers.splice(0).forEach((fn) => fn());
+
+  // Sound off from the start, then a tap on the island, then Sound on from
+  // the button outside the frame: the context was made at the tap, so iOS
+  // lets it play, and sounds are heard.
+  const s = new SpellSound();
+  s.muted = true;
+  fire("pointerdown");
+  check(contexts.length === 1, "a tap makes the audio context even with the sound off, so it can play later on iOS");
+  made = 0;
+  s.play("chime", 0.5);
+  check(made === 0, "with the sound off, a spell plays nothing");
+  contexts[0].state = "suspended";
+  s.muted = false;
+  check(state() === "running", "Sound on wakes a sleeping context");
+  s.play("chime", 0.5);
+  check(made > 0, "after Sound on, a spell is heard");
+
+  // Sound off with music and beds playing: silent at once, the context sleeps.
+  s.applySettings({ ...SOUND_DEFAULTS, music: true });
+  s.ambient({ ...silentBeds(), surf: 1, seed: 7, night: 0, tension: 0 });
+  check(s.counts().beds > 0, "the beds play before Sound off");
+  s.muted = true;
+  flush();
+  check(s.counts().beds === 0 && s.counts().voices === 0, "Sound off stops the beds and what still rang at once");
+  check(state() === "suspended", "Sound off lets the context sleep");
+  contexts[0].state = "suspended";
+  fire("pointerdown");
+  check(state() === "suspended", "a tap with the sound off does not wake the context");
+  s.muted = false;
+  check(state() === "running", "Sound on after Sound off plays again");
+
+  // A new island replaces the World: the old one's sound ends for good, so
+  // nothing plays on out of reach of the button.
+  const before = count();
+  s.dispose();
+  flush();
+  check(state() === "closed", "a replaced World closes its audio context");
+  check(count() < before && count() === 0, "a replaced World stops listening for taps and settings");
+
+  g.window = saved.window;
+  g.document = saved.document;
+  g.localStorage = saved.localStorage;
+}
+
 // 10. A spell's sound comes from its center and is as big as its tier (4.8, part 5b).
 {
   const world = generateWorld(96, 96, 77);
@@ -972,6 +1112,16 @@ check(!castOwns(120, true), "two minutes on, a sound with no place is never put 
   ];
   const distinct = new Set(many.map((n) => nameMotif(n).join())).size;
   check(distinct >= 15, `40 common names have ${distinct} motifs between them (at least 15)`);
+}
+
+// The World's engine shuts its sound down when it is replaced (#91, the review of 12 November: the
+// checks above call SpellSound.dispose() themselves, and the one line in Engine.dispose() that calls
+// it could be removed with every check still green).
+{
+  const done: string[] = [];
+  const fake = { stop: () => done.push("stop"), view: { dispose: () => done.push("view") }, sound: { dispose: () => done.push("sound") } };
+  Engine.prototype.dispose.call(fake as unknown as Engine);
+  check(done.includes("sound"), `an engine that is disposed shuts its sound down (did: ${done.join(", ")})`);
 }
 
 console.log(`sound: ${passes} checks passed${failures ? `, ${failures} failed` : ""}`);

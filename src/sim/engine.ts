@@ -378,5 +378,6 @@ export class Engine {
   dispose(): void {
     this.stop();
     this.view.dispose();
+    this.sound.dispose();
   }
 }

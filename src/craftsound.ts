@@ -186,7 +186,9 @@ export class CraftSound {
   }
 
   private context(): AudioContext | null {
-    if (!this.unlocked || readMuted()) return null;
+    if (!this.unlocked) return null;
+    // Made at the first tap even with the sound off: a context made later,
+    // outside a tap, stays silent on iOS when the sound comes back on (#91).
     if (!this.ctx) {
       const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!Ctx) return null;
@@ -194,6 +196,7 @@ export class CraftSound {
       this.out = this.ctx.createGain();
       this.out.connect(this.ctx.destination);
     }
+    if (readMuted()) return null;
     if (this.ctx.state === "suspended" && !document.hidden) void this.ctx.resume();
     // Read each time: the menu or the World's button may have changed them.
     const settings = readSoundSettings();
