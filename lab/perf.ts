@@ -8,7 +8,8 @@ import { Hud, type PerfSummary } from "../src/sim/hud";
 import { readChoice, readLand, resolveLand } from "../src/sim/land";
 import { WORLD_SIZES } from "../src/sim/sizes";
 import { GRAPHICS, type GraphicsFlag } from "../src/sim/voxel/graphics";
-import { LAB_WEATHER } from "../src/sim/voxel/sky";
+import { LAB_SKY, LAB_WEATHER } from "../src/sim/voxel/sky";
+import type { SavedWorld } from "../src/sim/save";
 import { firstLook } from "../src/sim/firstlook";
 import { readDef, type WonderDef } from "../src/sim/wonders";
 
@@ -41,7 +42,12 @@ const pool = q.has("pool")
       .map(([, v]) => readDef(v))
       .filter((d): d is WonderDef => d !== null)
   : [];
-const engine = Engine.create(canvas, overlay, size, { onError: () => {}, onTap: () => {} }, seed, {}, land, [], pool);
+// The island as a map (4.9 part 3): a saved island handed in before the page
+// loads (scripts/map-frames.mjs), held still: the same island, the same
+// minutes, before and after a change to the view.
+const handed = (window as unknown as { __mmSave?: SavedWorld }).__mmSave;
+const restored = handed ? Engine.restore(canvas, overlay, handed, { onError: () => {}, onTap: () => {} }, () => {}) : null;
+const engine = restored ?? Engine.create(canvas, overlay, size, { onError: () => {}, onTap: () => {} }, seed, {}, land, [], pool);
 if (q.has("time")) engine.world.time = Number(q.get("time"));
 engine.view.orbit.dist = Math.max(engine.world.w, engine.world.h) * Number(q.get("dist") ?? 0.42);
 if (q.has("phi")) engine.view.orbit.phi = Number(q.get("phi"));
@@ -66,8 +72,9 @@ if (q.has("look")) {
 }
 const hud = new Hud(engine.stats);
 hud.show(true);
-engine.start();
-(window as unknown as { __engine: Engine }).__engine = engine;
+if (!restored) engine.start();
+(window as unknown as { __engine: Engine; __labSky: typeof LAB_SKY }).__engine = engine;
+(window as unknown as { __labSky: typeof LAB_SKY }).__labSky = LAB_SKY;
 
 declare global {
   interface Window {

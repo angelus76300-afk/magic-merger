@@ -62,6 +62,7 @@ import { LAB_SKY, Sky } from "./sky";
 import { eyeFogRange, fogRange } from "./fog";
 import { clearEye } from "../eyes";
 import { solidCovers } from "../paths";
+import { FAR, LETTERING, cartCenter, coverOf, emptyMap, fade, nameLabels, nameOrder, onTrip, placeNames, refreshMap, type Label, type Rect } from "../map";
 
 // What a spell's darkness pulls the sky toward.
 const NIGHT_SKY = 0x04020f;
@@ -204,6 +205,22 @@ export class VoxelView {
   // Sun, moon, stars and weather (4.4).
   private sky!: Sky;
   private waveTime = { value: 0 };
+  // The island as a map (4.9 part 3, map.ts): what the simulation holds, read every 3 s; how much
+  // of the island the camera holds (1 whole); the far roads, one mesh drawn only from far; dust
+  // and smoke over villages, one mesh; which windows are lit, by each village's people.
+  private map = emptyMap();
+  private cover = 0;
+  private farRoads: InstancedMesh;
+  private farWide = { value: 0 };
+  private roadsMapped = -1;
+  private plumes: InstancedMesh;
+  private litMask = new Uint8Array(0);
+  private litFor: unknown = null;
+  private litMapped = -1;
+  private nameWidths = new Map<string, number>();
+  // Set by the frame (frame.ts): no names while the tour's card is up, and none over what it shows
+  // above the island (the story line, a creature's card, the Watch button), as top left rectangles.
+  mapHide: { all: boolean; blocked: Rect[] } = { all: false, blocked: [] };
 
   constructor(
     readonly canvas: HTMLCanvasElement,
@@ -285,7 +302,21 @@ export class VoxelView {
     );
     this.boltHalo.renderOrder = 3;
     this.sky = new Sky(this.scene, world, this.glowTexture);
-    this.lit = [land, fluid, basic, this.puffs.material as MeshBasicMaterial, this.clouds.material as MeshBasicMaterial, figureMats.lit];
+    this.farRoads = farRoadMesh(this.farWide);
+    this.scene.add(this.farRoads);
+    this.plumes = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.68, depthWrite: false }), 1200);
+    this.plumes.renderOrder = 3;
+    this.plumes.visible = false;
+    this.lit = [
+      land,
+      fluid,
+      basic,
+      this.puffs.material as MeshBasicMaterial,
+      this.clouds.material as MeshBasicMaterial,
+      figureMats.lit,
+      this.farRoads.material as MeshBasicMaterial,
+      this.plumes.material as MeshBasicMaterial,
+    ];
     for (const m of this.lit) this.darkness.apply(m);
   }
 
@@ -354,6 +385,9 @@ export class VoxelView {
     const { world } = this;
     if (this.orbit.eye) this.placeEye();
     this.orbit.update(dt, time, this.groundAt, reducedMotion);
+    // Nothing of the map in the eye view.
+    this.cover = this.orbit.eye ? 0 : coverOf(this.orbit.visibleRadius(), world);
+    refreshMap(world, this.map);
     // The land changes only in a tick or a cast: a frame between two ticks
     // does not compare every column again (3.5 ms a frame on a large island).
     if (this.landChanged || time !== this.scannedAt) {
@@ -382,6 +416,7 @@ export class VoxelView {
     this.lap("creatures");
     this.placeFireAndGas(time);
     this.placeParticles();
+    this.placeMap(LAB_SKY.time ?? time);
     this.placeBodies(visuals, time);
     this.placeBolts(visuals);
     this.placeRingsAndLights(visuals);
@@ -839,10 +874,14 @@ export class VoxelView {
     fog.far = range.far;
     let n = 0;
     const lights = this.world.settlements.length ? this.buildings.lights : null;
+    // As many windows lit as the village has people (map.ts): a village that lost its people goes dark.
+    const lit = this.markLit(lights?.windows ?? []);
     if (day.night > 0.15 && lights) {
       const glow = 0.4 + 0.6 * day.night;
-      for (const w of lights.windows) {
+      for (let k = 0; k < lights.windows.length; k++) {
+        const w = lights.windows[k];
         if (n >= 4096) break;
+        if (!lit[k]) continue;
         const flicker = 0.85 + 0.15 * Math.sin(time * 3 + w.x * 7 + w.z);
         if (w.axis === 0) this.m.makeScale(0.17, 0.15, 0.04);
         else this.m.makeScale(0.04, 0.15, 0.17);
@@ -854,8 +893,11 @@ export class VoxelView {
     }
     if (day.night > 0.15) {
       const glow = 0.4 + 0.6 * day.night;
-      for (const i of this.houseCells) {
+      const off = lights?.windows.length ?? 0;
+      for (let k = 0; k < this.houseCells.length; k++) {
+        const i = this.houseCells[k];
         if (n >= 4096) break;
+        if (!lit[off + k]) continue;
         // One lit window on the south wall of each house cell, flickering a little.
         const x = i % this.world.w;
         const y = Math.floor(i / this.world.w);
@@ -906,6 +948,187 @@ export class VoxelView {
         gravity: -0.3,
       });
     }
+  }
+
+  // Which windows are lit: in each village, the share its people fill (two to a house, map.ts),
+  // chosen by a hash of the window so the same ones stay lit. Windows far from any village stay lit.
+  // Again only when the map is read again (every 3 s) or the buildings are placed again.
+  private markLit(windows: { x: number; z: number }[]): Uint8Array {
+    const { world } = this;
+    const total = windows.length + this.houseCells.length;
+    if (this.litFor === windows && this.litMapped === this.map.version && this.litMask.length === total) return this.litMask;
+    this.litFor = windows;
+    this.litMapped = this.map.version;
+    if (this.litMask.length !== total) this.litMask = new Uint8Array(total);
+    const villages = this.map.villages;
+    const share = (x: number, y: number): number => {
+      let best = 1;
+      let bestD = 22;
+      for (const v of villages) {
+        const d = Math.hypot(v.x - x, v.y - y);
+        if (d < bestD) {
+          bestD = d;
+          best = v.lit;
+        }
+      }
+      return best;
+    };
+    for (let k = 0; k < windows.length; k++) {
+      const x = windows[k].x + world.w / 2;
+      const y = windows[k].z + world.h / 2;
+      this.litMask[k] = (cellHash(Math.floor(y) * world.w + Math.floor(x) + k * 7919) % 1000) / 1000 < share(x, y) ? 1 : 0;
+    }
+    for (let k = 0; k < this.houseCells.length; k++) {
+      const i = this.houseCells[k];
+      this.litMask[windows.length + k] = (cellHash(i) % 1000) / 1000 < share(i % world.w, Math.floor(i / world.w)) ? 1 : 0;
+    }
+    return this.litMask;
+  }
+
+  // The island as a map, drawn from far (map.ts): the roads wide and pale, a glow over each lit
+  // window at night, dust over what is being built and smoke over what burnt by day. None of it
+  // near (the island as it was), none in the eye view.
+  private placeMap(time: number): void {
+    const { world, map } = this;
+    const night = daylight(time).night;
+    // Roads: the same cells as the real ones, placed again only when the map is read again.
+    const wide = fade(this.cover, FAR.roads);
+    this.farRoads.visible = wide > 0.01 && map.roads.length > 0;
+    if (this.farRoads.visible && this.roadsMapped !== map.version) {
+      this.roadsMapped = map.version;
+      const mesh = this.ensureCapacity(map.roads.length);
+      for (let k = 0; k < map.roads.length; k++) {
+        const i = map.roads[k];
+        const deck = world.cover[i] === C.BRIDGE ? world.walkLevel(i) * V : columnTop(world, i);
+        const p = this.toScene((i % world.w) + 0.5, Math.floor(i / world.w) + 0.5, deck);
+        this.m.makeTranslation(p.x, p.y, p.z);
+        mesh.setMatrixAt(k, this.m);
+      }
+      mesh.count = map.roads.length;
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+    // A road two and a half cells wide from the whole island, raised clear of the ground's steps.
+    this.farWide.value = wide * 2.6;
+    // Glows: over the lit windows, larger the farther the camera, as many as the village's people light.
+    const glow = fade(this.cover, FAR.glows) * Math.max(0, (night - 0.15) / 0.85);
+    const lights = world.settlements.length ? this.buildings.lights : null;
+    if (glow > 0.01 && lights) {
+      const geo = this.glowPoints.geometry;
+      const pos = geo.getAttribute("position") as BufferAttribute;
+      const col = geo.getAttribute("color") as BufferAttribute;
+      const size = geo.getAttribute("size") as BufferAttribute;
+      let n = geo.drawRange.count;
+      const lit = this.markLit(lights.windows);
+      const s = 2.5 + 7 * glow;
+      for (let k = 0; k < lights.windows.length && n < pos.count; k++) {
+        // One in two lit windows: a house is a glow, not a dozen.
+        if (!lit[k] || k % 2) continue;
+        const w = lights.windows[k];
+        pos.setXYZ(n, w.x, w.y + 0.6, w.z);
+        col.setXYZW(n, 1, 0.7, 0.32, 0.55 * glow);
+        size.setX(n, s);
+        n++;
+      }
+      geo.setDrawRange(0, n);
+      pos.needsUpdate = true;
+      col.needsUpdate = true;
+      size.needsUpdate = true;
+    }
+    // Plumes: three puffs rising over each, by day, larger from far.
+    const far = fade(this.cover, FAR.plumes) * Math.max(0, 1 - night * 1.4);
+    let n = 0;
+    if (far > 0.01) {
+      const s = 0.8 + 4 * far;
+      for (const pl of map.plumes) {
+        if (n + 3 > this.plumes.instanceMatrix.count) break;
+        const i = Math.max(0, Math.min(world.n - 1, Math.floor(pl.y) * world.w + Math.floor(pl.x)));
+        const base = columnTop(world, i) + 1.2;
+        const h = cellHash(i);
+        for (let j = 0; j < 3; j++) {
+          const t = (time * (pl.kind === "smoke" ? 0.22 : 0.3) + j / 3 + (h % 100) / 100) % 1;
+          const r = s * (0.55 + t * 0.9);
+          const p = this.toScene(pl.x + world.wind.x * t * 3, pl.y + world.wind.y * t * 3, base + (0.3 + t * 3.2) * s);
+          this.m.makeScale(r, r * 0.8, r);
+          this.m.setPosition(p.x, p.y, p.z);
+          this.plumes.setMatrixAt(n, this.m);
+          this.plumes.setColorAt(n, this.col.setHex(pl.kind === "smoke" ? 0x3d3734 : 0xf6eedb));
+          n++;
+        }
+      }
+    }
+    this.plumes.count = n;
+    this.plumes.visible = n > 0;
+    this.plumes.instanceMatrix.needsUpdate = true;
+    if (this.plumes.instanceColor) this.plumes.instanceColor.needsUpdate = true;
+  }
+
+  private ensureCapacity(need: number): InstancedMesh {
+    if (this.farRoads.instanceMatrix.count >= need) return this.farRoads;
+    const bigger = new InstancedMesh(this.farRoads.geometry, this.farRoads.material, Math.ceil(need * 1.5));
+    bigger.frustumCulled = false;
+    this.scene.remove(this.farRoads);
+    this.farRoads.dispose();
+    this.scene.add(bigger);
+    this.farRoads = bigger;
+    return bigger;
+  }
+
+  // The names over the villages (map.ts), lettered as on a map, on the overlay: from far only,
+  // never over each other or the story line, none while the tour's card is up or in the eye view.
+  private drawNames(ctx: CanvasRenderingContext2D): void {
+    const alpha = this.mapHide.all ? 0 : fade(this.cover, FAR.names);
+    if (alpha <= 0.01) return;
+    const villages = this.map.villages;
+    const cam = this.orbit.camera;
+    const { world } = this;
+    // A little larger on a wide screen, where the island is larger too.
+    const big = this.cssW >= 1000 ? 1.3 : this.cssW >= 600 ? 1.12 : 1;
+    const fonts = villages.map((v) => {
+      const L = LETTERING[v.tier];
+      return `${L.italic ? "italic " : ""}${L.weight} ${Math.round(L.px * big * 2) / 2}px Palatino, "Palatino Linotype", "Book Antiqua", Georgia, serif`;
+    });
+    const labels: Label[] = nameLabels(
+      villages,
+      (v) => {
+        const i = Math.max(0, Math.min(world.n - 1, Math.round(v.y) * world.w + Math.round(v.x)));
+        const p = this.toScene(v.x + 0.5, v.y + 0.5, columnTop(world, i) + 2).project(cam);
+        return { x: ((p.x + 1) / 2) * this.cssW, y: ((1 - p.y) / 2) * this.cssH, behind: p.z > 1 };
+      },
+      (v) => {
+        const L = LETTERING[v.tier];
+        const font = fonts[villages.indexOf(v)];
+        const text = L.caps ? v.name.toUpperCase() : v.name;
+        const key = `${font}|${text}`;
+        let w = this.nameWidths.get(key);
+        if (w === undefined) {
+          ctx.font = font;
+          ctx.letterSpacing = `${L.spacing}px`;
+          w = ctx.measureText(text).width;
+          this.nameWidths.set(key, w);
+        }
+        return w;
+      },
+      big,
+    );
+    const shown = placeNames(labels, nameOrder(villages), { w: this.cssW, h: this.cssH }, this.mapHide.blocked);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    ctx.lineJoin = "round";
+    villages.forEach((v, k) => {
+      if (!shown[k]) return;
+      const L = LETTERING[v.tier];
+      const text = L.caps ? v.name.toUpperCase() : v.name;
+      ctx.font = fonts[k];
+      ctx.letterSpacing = `${L.spacing}px`;
+      ctx.lineWidth = 3.5;
+      ctx.strokeStyle = "rgba(24, 17, 30, 0.82)";
+      ctx.strokeText(text, labels[k].x, labels[k].y);
+      ctx.fillStyle = "#fff2cf";
+      ctx.fillText(text, labels[k].x, labels[k].y);
+    });
+    ctx.restore();
   }
 
   private rigFor(c: Creature, k: CreatureKind): Rig {
@@ -1082,6 +1305,11 @@ export class VoxelView {
         this.markMesh.setColorAt(marks, this.col.setHex(color));
         marks++;
       }
+      // A villager on a market trip pulls a cart (map.ts onTrip): larger from far, so the roads move.
+      if (marks + 5 <= 900 && onTrip(c)) {
+        const s = 1 + 2.6 * fade(this.cover, FAR.carts);
+        marks = this.placeCart(marks, rx, ry, ground, c.hd, s, c.mind?.carry === "food" ? 0xe8c25a : 0xb4483a);
+      }
       if (!seen) continue;
       const still = c.dead || c.frozen > 0 || c.stun > 0;
       const asleep = c.sleep > 0 || c.data.mood === "asleep";
@@ -1138,6 +1366,31 @@ export class VoxelView {
     if (this.markMesh.instanceColor) this.markMesh.instanceColor.needsUpdate = true;
     // Forget creatures that are gone, now and then.
     if (frame % 120 === 0) for (const [id, g] of this.gaits) if (g.seen !== frame) this.gaits.delete(id);
+  }
+
+  // A small voxel cart behind (x, y) facing `heading` (radians along +x), `s` times its size: a bed,
+  // its load, a shaft, two wheels. Into the marks' mesh, so it costs no draw call of its own.
+  private placeCart(marks: number, x: number, y: number, ground: number, heading: number, s: number, load: number): number {
+    const fx = Math.cos(heading);
+    const fy = Math.sin(heading);
+    const { x: cx, y: cy } = cartCenter(x, y, heading, s);
+    const turn = Math.atan2(-fy, fx);
+    const box = (along: number, side: number, up: number, l: number, w: number, h: number, color: number) => {
+      const p = this.toScene(cx + fx * along * s - fy * side * s, cy + fy * along * s + fx * side * s, ground + up * s);
+      CART.makeRotationY(turn);
+      SCALE.makeScale(l * s, h * s, w * s);
+      CART.multiply(SCALE);
+      CART.setPosition(p.x, p.y, p.z);
+      this.markMesh.setMatrixAt(marks, CART);
+      this.markMesh.setColorAt(marks, this.col.setHex(color));
+      marks++;
+    };
+    box(0, 0, 0.42, 0.95, 0.62, 0.2, 0x7a4f2a);
+    box(0, 0, 0.62, 0.72, 0.5, 0.24, load);
+    box(0.62, 0, 0.42, 0.55, 0.08, 0.06, 0x5c3a1e);
+    box(0, 0.36, 0.22, 0.38, 0.08, 0.38, 0x2e2420);
+    box(0, -0.36, 0.22, 0.38, 0.08, 0.38, 0x2e2420);
+    return marks;
   }
 
   // Creature parts drawn in the last frame, for the HUD.
@@ -1393,6 +1646,7 @@ export class VoxelView {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.drawNames(ctx);
     for (const t of visuals.tints) {
       ctx.globalAlpha = t.alpha * envelope(t.t, t.dur);
       ctx.fillStyle = hexColor(t.color);
@@ -1689,6 +1943,29 @@ function pointCloud(capacity: number, glow: boolean, texture: CanvasTexture): Po
   return points;
 }
 
+// The roads drawn from far (map.ts): a flat pale tile on every road cell, widened in the shader by
+// `wide` (0 near, where the mesh is not drawn at all), lifted a little clear of the ground's steps.
+function farRoadMesh(wide: { value: number }): InstancedMesh {
+  // The colour is in the vertices: the material's own colour is the daylight's tint (applyDaylight).
+  const material = new MeshBasicMaterial({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.wide = wide;
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nuniform float wide;")
+      .replace("#include <begin_vertex>", "vec3 transformed = vec3(position.x * wide, position.y + 0.18 * wide, position.z * wide);");
+  };
+  const geometry = new BoxGeometry(1, 0.1, 1);
+  const sand = new Color(0xe2c98c);
+  const colors = new Float32Array(geometry.getAttribute("position").count * 3);
+  for (let k = 0; k < colors.length; k += 3) [colors[k], colors[k + 1], colors[k + 2]] = [sand.r, sand.g, sand.b];
+  geometry.setAttribute("color", new BufferAttribute(colors, 3));
+  const mesh = new InstancedMesh(geometry, material, 1024);
+  mesh.count = 0;
+  mesh.frustumCulled = false;
+  mesh.visible = false;
+  return mesh;
+}
+
 // Instance colors must exist before the first render, or the shader is built without them.
 function withColors(mesh: InstancedMesh): void {
   const white = new Color(0xffffff);
@@ -1711,6 +1988,7 @@ function cellHash(i: number): number {
 }
 
 const LEAN = new Matrix4();
+const CART = new Matrix4();
 const TURN = new Matrix4();
 const SCALE = new Matrix4();
 const AXIS = new Vector3();

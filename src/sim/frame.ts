@@ -355,7 +355,7 @@ let lineAt = -1e9;
 let lineTimer = 0;
 let lineGoes: { x: number; y: number; who: number } | null = null;
 // What the watch showed, for the checks (scripts/watch-frames.mjs): seconds watched and seconds its subject was on screen.
-const watchStats = { watched: 0, shots: 0, caption: "", px: 0, onScreen: false };
+const watchStats = { watched: 0, shots: 0, caption: "", sort: "", px: 0, onScreen: false };
 (window as unknown as { __mmWatch?: () => typeof watchStats }).__mmWatch = () => ({ ...watchStats, caption });
 
 function say(text: string, go: boolean): void {
@@ -423,6 +423,18 @@ let marked: Creature | null = null;
 const pointerEl = document.getElementById("pointer") as HTMLElement;
 function point(): void {
   requestAnimationFrame(point);
+  // The island as a map (map.ts): no village names while the tour's card is up, none under
+  // the story line, a creature's card or the Watch button.
+  if (engine) {
+    const hide = engine.view.mapHide;
+    hide.all = !lookCard.hidden;
+    hide.blocked.length = 0;
+    for (const e of [storyEl, card, watchEl]) {
+      if (e.hidden) continue;
+      const r = e.getBoundingClientRect();
+      if (r.width) hide.blocked.push({ x: r.left - 4, y: r.top - 4, w: r.width + 8, h: r.height + 8 });
+    }
+  }
   // The creature the player is has it too: under a roof or a tree it is still found at a glance (frames of 12 November).
   const c = watching && engine && marked && !marked.dead ? marked : riding && engine && !riding.dead && !eyes ? riding : null;
   const at = c && engine ? castOnScreen(engine, c.x, c.y, []) : null;
@@ -457,7 +469,8 @@ function stepWatch(): void {
     line = lifeLine(engine.world, c);
   }
   // Close enough that a villager reads, never so close that it fills a wide screen.
-  o.watch(shot.x, shot.y, Math.max(22, o.distanceFor(shot.r)));
+  // The whole island (director.ts, the map shot) is seen from higher, as the tour sees it.
+  o.watch(shot.x, shot.y, Math.max(22, o.distanceFor(shot.r)), shot.sort === "map" ? 0.72 : 0.98);
   marked = shot.who ? (engine.world.creatures.find((k) => k.id === shot.who) ?? null) : null;
   say(line, false);
   measureWatch(shot);
@@ -473,6 +486,7 @@ function measureWatch(shot: Shot): void {
   watchStats.onScreen = !!at;
   watchStats.shots = director.cuts;
   watchStats.caption = shot.caption;
+  watchStats.sort = shot.sort;
   watchStats.watched += 0.25;
 }
 
