@@ -180,7 +180,6 @@ function castAt(x: number, y: number): boolean {
   // moves it before then (the tour of the island waits, below).
   holdUntil = performance.now() + HOLD_MS;
   director.castAt(x, y, engine.world.time);
-  lastCastAt = performance.now();
   // Where the cast is on screen for the next three seconds (castview.ts).
   const n = casts++;
   watchCast(
@@ -326,28 +325,24 @@ function drawInspect(): void {
   reportInspect();
 }
 
-// The island tells its stories (2026-11-11, director.ts). Left alone for a
-// while, or on the Watch button, the camera goes to what is happening and
+// The island tells its stories (2026-11-11, director.ts). On the Watch
+// button, and only there (the owner, 12 November: "I don't like that it starts
+// watching something automatically, don't auto toggle it"; it used to start
+// by itself after 15 idle seconds), the camera goes to what is happening and
 // follows it, close enough to read, with one line saying what it is. A tap on
 // the island gives the camera back where it was and casts nothing; a drag or
 // a pinch keeps it where the story is. When nobody watches, a line of weight
 // 3 (a life begins or ends, a wonder wakes) shows for a few seconds, at most
 // one every thirty: a tap on it goes there.
-const IDLE_MS = 15_000;
-const IDLE_SPELL_MS = 40_000;
-// For thirty seconds after a cast, what it did to people comes first.
-const IDLE_CAST_MS = 12_000;
 const LINE_MS = 5000;
 const LINE_EVERY_MS = 30_000;
 const storyEl = document.getElementById("story") as HTMLButtonElement;
 const watchEl = document.getElementById("watch") as HTMLButtonElement;
-const reduced = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 let director = new Director();
 let watching = false;
 let pinned = false;
 let tapEndsWatch = false;
 let watchBack: Pose | null = null;
-let lastCastAt = -1e9;
 let caption = "";
 // Happenings told up to this world time; Infinity until the island has run a moment.
 let toldUntil = Infinity;
@@ -436,7 +431,6 @@ function point(): void {
 requestAnimationFrame(point);
 
 let watchUntilFree = 0;
-let autoStartedAt = -1e9;
 // The page shows something over the island (a dialog, another tab): nobody is watching.
 let away = false;
 function stepWatch(): void {
@@ -483,8 +477,6 @@ canvas.addEventListener("pointerup", () => {
 });
 watchEl.addEventListener("click", () => {
   lastTouch = performance.now();
-  // It started by itself as the thumb came down: the press meant "watch", not "stop".
-  if (watching && performance.now() - autoStartedAt < 1500) return;
   if (watching) stopWatch(true);
   else startWatch();
 });
@@ -1357,16 +1349,6 @@ window.setInterval(() => {
       lineGoes = null;
       hush();
     }, LINE_MS);
-  }
-  // Left alone: the camera goes to the stories by itself. Never during a
-  // challenge, the tour or a card, or
-  // with reduced motion (the button still starts it).
-  if (scenario || touring || away || !card.hidden || now < holdUntil || document.hidden || reduced()) return;
-  const idle = now - lastTouch;
-  const need = now - lastCastAt < 30_000 ? IDLE_CAST_MS : selected ? IDLE_SPELL_MS : IDLE_MS;
-  if (idle >= need) {
-    autoStartedAt = now;
-    startWatch();
   }
 }, 250);
 
