@@ -13,7 +13,7 @@ import { Checker } from "./checker";
 import { reportable } from "./checkresult";
 import { chipElement } from "./craft";
 import { FilterBar, applyFilters, lastUsed, markUsed } from "./filters";
-import { MAX_SAVE_CHARS, readFromWorld } from "./sim/protocol";
+import { HOT_SLOTS, MAX_SAVE_CHARS, keepOrder, readFromWorld, type HotSlot } from "./sim/protocol";
 import { programToFetch } from "../shared/sync";
 import type { ToWorld } from "./sim/protocol";
 import { SCENARIO_LIST } from "./sim/scenario-list";
@@ -135,6 +135,17 @@ export class WorldHost {
   // rollback, a tab left open since before an update): it is not loaded,
   // and this page writes nothing over it (save-guard.ts).
   private newerIsland: string | null = null;
+  // Through its eyes (2026-11-12): the island shows a creature's view and the
+  // page's header, spell drawer and tools are hidden (body.eyes); the hot bar
+  // last sent, so it goes again only when it changes.
+  private eyes = false;
+  // The player is a creature on the island: a spell is cast from it, within its reach.
+  private riding = false;
+  // The hot bar's order, fixed when the player becomes a creature: last used
+  // first then, and the same until Let go, so a cast never moves the slot
+  // under the thumb (the playtest of 12 November). New items go at its end.
+  private hotOrder: string[] | null = null;
+  private hotSent = "";
 
   constructor(
     private store: Store,
@@ -345,6 +356,8 @@ export class WorldHost {
   }
 
   private replaceFrame(): void {
+    this.setEyes(false);
+    this.riding = false;
     this.frame?.remove();
     this.frame = null;
     this.ready = false;
@@ -385,6 +398,8 @@ export class WorldHost {
 
   hide(): void {
     this.shown = false;
+    // The page comes back whole when the World tab is left (the island leaves its eyes too).
+    this.setEyes(false);
     setToastFloor("inspect", 0);
     this.guide.hideHint();
     this.send({ type: "visible", visible: false });
@@ -603,7 +618,9 @@ export class WorldHost {
         timeline.step(msg.key, this.store.get(msg.key)!.element.name, "cast");
         this.castInAttempt.push(msg.key);
         markUsed(msg.key);
-        if (!this.challenge) {
+        if (this.eyes) this.sendHotbar();
+        // In the eye view the island has its own buttons: no hint over them.
+        if (!this.challenge && !this.eyes) {
           this.guide.again(this.el.stage);
           this.guide.cast(this.el.stage);
         }
@@ -681,6 +698,24 @@ export class WorldHost {
         this.troubleBegan = 0;
         break;
       }
+      case "eyes":
+        this.setEyes(msg.on && this.shown);
+        break;
+      case "riding":
+        this.riding = msg.on;
+        this.hotOrder = null;
+        this.hotSent = "";
+        if (this.eyes) this.sendHotbar();
+        this.updateStatus();
+        break;
+      case "pick":
+        // From the hot bar: the same as a chip of the drawer, without its words (the drawer is hidden).
+        if (msg.key === null) {
+          this.selected = null;
+          this.send({ type: "select", spell: null });
+          this.renderSpells();
+        } else if (this.store.get(msg.key) && msg.key !== this.selected) this.selectSpell(msg.key);
+        break;
       case "objective":
         // Only the challenge this page started can report on itself.
         if (msg.id === this.challenge) this.showObjective(msg.id, msg.text, msg.status);
@@ -1380,6 +1415,7 @@ export class WorldHost {
 
   private updateStatus(): void {
     this.refreshChips();
+    if (this.eyes) this.sendHotbar();
     const key = this.selected;
     const name = key ? this.store.get(key)?.element.name : null;
     let text = "Pick a spell, then tap the island to cast it, or tap a creature to see what it wants. Drag to turn, pinch to zoom, two fingers to pan.";
@@ -1387,12 +1423,43 @@ export class WorldHost {
       if (this.testing.has(key)) text = `Testing ${name} on a practice island…`;
       else if (this.writing.has(key)) text = `The grimoire is writing ${name}… it will be ready in a moment.`;
       else if (this.preparing.has(key)) text = `Preparing ${name}… the first cast of a spell takes a moment.`;
+      else if (this.request(key) && this.riding)
+        text = `Tap the island to ${this.store.get(key)?.element.kind === "artifact" ? "place" : "cast"} ${name} from where you stand, up to 14 steps away.`;
       else if (this.request(key))
         text = `Tap the island to ${this.store.get(key)?.element.kind === "artifact" ? "place" : "cast"} ${name}. Tap it again to put it away and look at creatures.`;
       else text = `${name} is not ready yet.`;
     }
     this.el.status.textContent = text;
     this.showCreation(key);
+  }
+
+  private setEyes(on: boolean): void {
+    if (on === this.eyes) return;
+    this.eyes = on;
+    document.body.classList.toggle("eyes", on);
+    this.hotSent = "";
+    if (on) {
+      this.guide.hideHint();
+      this.sendHotbar();
+    }
+  }
+
+  // Every spell and item, last used first then the newest, in the order of the moment the player became a creature.
+  private sendHotbar(): void {
+    const keyOf = (d: { element: { name: string } }) => elementKey(d.element.name);
+    const now = applyFilters(this.store.discoveries(), { kind: "all", tier: "any", sort: "used", query: "" }, lastUsed, keyOf);
+    this.hotOrder ??= now.map(keyOf);
+    const byKey = new Map(now.map((d) => [keyOf(d), d]));
+    const slots: HotSlot[] = keepOrder([...byKey.keys()], this.hotOrder)
+      .slice(0, HOT_SLOTS)
+      .map((key) => {
+        const d = byKey.get(key)!;
+        return { key, name: d.element.name, emoji: d.element.emoji, ready: !!this.request(key) };
+      });
+    const text = JSON.stringify(slots);
+    if (text === this.hotSent) return;
+    this.hotSent = text;
+    this.send({ type: "hotbar", slots });
   }
 
   // The creation bar under the status line, while the spell in hand is not

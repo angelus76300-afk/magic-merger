@@ -150,6 +150,8 @@ export class Sky {
         snow: { value: 0 },
         tint: { value: new Color(0xffffff) },
         pixels: { value: 1 },
+        nearest: { value: 0 },
+        grain: { value: 1 },
       },
       vertexShader: DROP_SHADER,
       fragmentShader: `uniform float snow; uniform vec3 tint; varying float vShow;
@@ -173,6 +175,9 @@ export class Sky {
     this.group.add(this.sun, this.moon, this.stars);
     scene.add(this.group, this.drops);
   }
+
+  // Drops nearer the camera than this are not drawn (the eye view, eyes.ts).
+  dropsFrom = 0;
 
   // Places the sky around the camera; the rain and snow stay over the
   // island and are drawn around the camera's target.
@@ -244,6 +249,9 @@ export class Sky {
       u.snow.value = this.weather.kind === "snow" ? 1 : 0;
       (u.tint.value as Color).setHex(this.weather.kind === "snow" ? 0xffffff : 0xb8c8dc).multiplyScalar(1 - night * 0.6);
       u.pixels.value = pixels;
+      u.nearest.value = this.dropsFrom;
+      // Seen from a creature's eyes the drops are close: drawn at a quarter of their size from afar.
+      u.grain.value = this.dropsFrom > 0 ? 0.25 : 1;
     }
   }
 

@@ -15,6 +15,7 @@ import { sitesChecks } from "./sites-test";
 import { directorChecks } from "./director-test";
 import { troubleChecks } from "./troubles-test";
 import { weatherChecks } from "./weather-test";
+import { becomeChecks } from "./become-test";
 import { dailyChecks } from "./daily-test";
 import { monsterChecks } from "./monsters-test";
 import { goalOfCreature } from "../src/sim/goals";
@@ -2504,6 +2505,7 @@ sitesChecks(check);
 directorChecks(check);
 troubleChecks(check);
 weatherChecks(check);
+becomeChecks(check);
 dailyChecks(check);
 monsterChecks(check);
 

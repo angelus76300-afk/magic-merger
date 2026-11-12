@@ -2114,3 +2114,187 @@ function prayed(world: World, c: Creature, m: Mind): void {
   }
   deed(c, "left an offering");
 }
+
+// ---- Become anything: its own acts on demand (possess.ts) -------------------
+// Through its eyes (2026-11-12): the player presses what the creature already
+// does by itself. Each one runs the engine's own code above (hit, finish), so
+// it does exactly what the creature would do, no more.
+
+// It strikes when it does by itself: a hunter of prey (eat), a fighter by its
+// behavior (creatures.ts behave), a villager who is a guard (urgent).
+export function strikes(c: Creature, k: CreatureKind): boolean {
+  if (c.kind === "villager") return jobOf(c) === "guard";
+  const ai = k.ai;
+  if (ai && ai.attack > 0 && (ai.mode === "hunt" || ai.mode === "guard")) return true;
+  return hasNeeds(c, k) && !!(PREY[c.kind] ?? (k.needs ? preyOf(k) : null))?.length;
+}
+
+// What is in front of it along `facing`, within its own reach (act's reach for
+// a strike): the nearest one, at most 70 degrees off the way it looks.
+export function inFront(world: World, c: Creature, facing: number, test: (o: Creature) => boolean): Creature | null {
+  const k = life.kindOf(c);
+  let best: Creature | null = null;
+  let bestD = Infinity;
+  for (const o of world.crowd.near(world, c.x, c.y, 6)) {
+    if (o === c || !test(o)) continue;
+    const dx = o.x - c.x;
+    const dy = o.y - c.y;
+    const d = Math.hypot(dx, dy);
+    const reach = k.radius * c.size + life.kindOf(o).radius * o.size + 0.7;
+    if (d > reach || d >= bestD) continue;
+    const off = d < 0.05 ? 0 : Math.abs(Math.atan2(Math.sin(Math.atan2(dy, dx) - facing), Math.cos(Math.atan2(dy, dx) - facing)));
+    if (off > (70 * Math.PI) / 180) continue;
+    best = o;
+    bestD = d;
+  }
+  return best;
+}
+
+// One strike: `seconds` of its own blows (hit) at the living one in front.
+export function strikeNow(world: World, c: Creature, facing: number, seconds: number): Creature | null {
+  const k = life.kindOf(c);
+  if (!strikes(c, k)) return null;
+  const t = inFront(world, c, facing, (o) => !o.dead && o.hp > 0);
+  if (!t) return null;
+  const m = mindOf(c);
+  c.hd = Math.atan2(t.y - c.y, t.x - c.x);
+  hit(world, c, k, m, t, seconds);
+  return t;
+}
+
+// It eats by itself when it is an animal with needs. A villager eats at home
+// from the village's store, which is no act to play (the owner, 12 November:
+// "nobody becomes a woodcutter to eat"): its button is its trade.
+export function eats(c: Creature, k: CreatureKind): boolean {
+  return c.kind !== "villager" && hasNeeds(c, k);
+}
+
+// A thing to do, found in front: the engine's own task on the engine's own
+// cell or creature, run through finish() as the creature would at the end of
+// its work. `said`: what the line says after; `seconds`: the task's own length.
+export interface Chore {
+  task: Task;
+  verb: string;
+  cell: number;
+  target: Creature | null;
+  said: string;
+  seconds: number;
+}
+
+// The cells in front along `facing`: one and two steps ahead, then underfoot.
+function frontCells(world: World, c: Creature, facing: number, steps = [1, 2, 0]): number[] {
+  const out: number[] = [];
+  for (const s of steps) {
+    const i = world.idx(Math.max(0, Math.min(world.w - 1, c.x + Math.cos(facing) * s)), Math.max(0, Math.min(world.h - 1, c.y + Math.sin(facing) * s)));
+    if (!out.includes(i)) out.push(i);
+  }
+  return out;
+}
+
+const chore = (task: Task, verb: string, cell: number, said: string, target: Creature | null = null): Chore => ({
+  task,
+  verb,
+  cell,
+  target,
+  said,
+  seconds: DURATION[task] ?? 2,
+});
+
+// A meal in front, as eat() finds one: a kill for a hunter, its plants (or the
+// grass it makes do with) for a grazer. Null when there is none: Eat shows
+// only for an animal at its food.
+export function mealFor(world: World, c: Creature, facing: number): Chore | null {
+  const k = life.kindOf(c);
+  if (!eats(c, k)) return null;
+  const prey = PREY[c.kind] ?? (k.needs ? preyOf(k) : null);
+  if (prey && prey.length) {
+    const kill = inFront(world, c, facing, (o) => o.dead && !o.data.eaten && names(prey, o.kind));
+    if (kill) return chore("feast", "Eat", -1, `Ate the ${base(kill.kind)}`, kill);
+  }
+  const plants = PLANTS[c.kind] ?? (prey ? null : [C.BUSH, C.FLOWER, C.CROP]);
+  if (!plants) return null;
+  const cells = frontCells(world, c, facing, [1, 0]);
+  for (const i of cells) {
+    if (!plants.includes(world.cover[i]) || world.depth[i] >= 0.3) continue;
+    const cover = world.cover[i];
+    return chore("graze", "Eat", i, `Ate ${cover === C.CROP ? "crops" : cover === C.FLOWER ? "flowers" : cover === C.BERRIES ? "berries" : "a plant"}`);
+  }
+  const here = cells[cells.length - 1];
+  if ((MAKE_DO[c.kind] ?? [G.GRASS]).includes(world.ground[here]) && world.cover[here] === C.NONE) return chore("graze", "Eat", here, "Ate the grass");
+  return null;
+}
+
+// A villager's trade, on what is in front, through the engine's own task for
+// its job (job2 above): the woodcutter fells, the fisher fishes, the farmer
+// harvests, sows or tills, the builder repairs or builds, the smith forges at
+// its smithy, the priest buries the dead, a villager with no trade, a child or
+// an elder picks berries. The guard's trade is Strike; the merchant's is a
+// walk to another village, nothing in front: neither gets a button here.
+// Returns the chore, what is missing for it, or null for no trade.
+export function tradeFor(world: World, c: Creature, facing: number): Chore | { verb: string; missing: string } | null {
+  if (c.kind !== "villager") return null;
+  const job = jobOf(c);
+  const look = unpackLook(c.look);
+  const trade: Job = look.age === "child" || (look.age === "elder" && job !== "priest") ? "none" : job;
+  const cells = frontCells(world, c, facing);
+  const first = (test: (i: number) => boolean) => cells.find(test) ?? -1;
+  const v = villageOf(world, c.homeX, c.homeY);
+  switch (trade) {
+    case "woodcutter": {
+      const i = first((j) => world.cover[j] === C.TREE || world.cover[j] === C.BUSH);
+      return i >= 0 ? chore("fell", "Fell", i, world.cover[i] === C.TREE ? "Felled a tree" : "Cut down a bush") : { verb: "Fell", missing: "No tree in front" };
+    }
+    case "fisher": {
+      const i = frontCells(world, c, facing, [1, 2, 3]).find((j) => world.fluid[j] === F.WATER && world.depth[j] > 0.6) ?? -1;
+      return i >= 0 ? chore("fish", "Fish", i, "Cast a line") : { verb: "Fish", missing: "No deep water in front" };
+    }
+    case "farmer": {
+      const ripe = first((j) => world.cover[j] === C.CROP && world.fire[j] < 0.1);
+      if (ripe >= 0) return chore("harvest", "Harvest", ripe, "Harvested the crops");
+      const bare = first((j) => world.ground[j] === G.FIELD && world.cover[j] === C.NONE && world.depth[j] < 0.1);
+      if (bare >= 0) return chore("plant", "Sow", bare, "Sowed the field");
+      const open = first(
+        (j) => j !== cells[cells.length - 1] && (world.ground[j] === G.GRASS || world.ground[j] === G.DIRT || world.ground[j] === G.ASH) && dryFree(world, j),
+      );
+      return open >= 0 ? chore("plant", "Till", open, "Tilled a new field") : { verb: "Sow", missing: "No field or open ground in front" };
+    }
+    case "smith":
+    case "builder": {
+      if (trade === "smith") {
+        const forge = first((j) => world.cover[j] === C.SMITHY);
+        if (forge >= 0) return chore("forge", "Forge", forge, "Forged tools");
+      }
+      const ruin = first((j) => world.cover[j] === C.RUBBLE);
+      if (ruin >= 0) return chore("repair", "Repair", ruin, "Rebuilt a house");
+      if (!v || v.wood < 5) return { verb: "Build", missing: "The village has no wood to build with" };
+      const i = cells[1];
+      const room = [i, i + 1, i + world.w, i + world.w + 1].every((j) => j >= 0 && j < world.n && dryFree(world, j));
+      return room ? chore("build", "Build", i, "Built a house") : { verb: "Build", missing: "No ruin or open ground in front" };
+    }
+    case "priest": {
+      const dead = inFront(world, c, facing, (o) => o.dead && o.kind === "villager" && !o.data.buried);
+      return dead ? chore("bury", "Bury", -1, "Buried the dead", dead) : { verb: "Bury", missing: "No one to bury here" };
+    }
+    case "none": {
+      const i = first((j) => world.cover[j] === C.BUSH || world.cover[j] === C.FLOWER || world.cover[j] === C.CROP);
+      return i >= 0
+        ? chore("forage", "Pick", i, world.cover[i] === C.FLOWER ? "Picked flowers" : "Picked berries")
+        : { verb: "Pick", missing: "Nothing to pick in front" };
+    }
+  }
+  return null;
+}
+
+// Does it now: the task set as its own thinking would set it, then finished.
+// What it changed is the engine's (a felled tree is a stump, a catch is
+// carried); the goal it had before possession comes back on release.
+export function doChore(world: World, c: Creature, ch: Chore): string {
+  const m = mindOf(c);
+  const k = life.kindOf(c);
+  if (ch.target) setTask(m, ch.task, ch.target.x, ch.target.y, 1, -1, ch.target);
+  else cellTask(world, m, ch.task, ch.cell);
+  const carried = m.carry;
+  finish(world, c, k, m);
+  if (ch.task === "fish") return m.carry === "fish" && carried !== "fish" ? "Caught a fish" : "Nothing bit";
+  return ch.said;
+}

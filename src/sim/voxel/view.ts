@@ -58,7 +58,9 @@ import { WonderModels } from "./wonders";
 import { PropModels } from "./props";
 import { valueNoise } from "../noise";
 import { Sky } from "./sky";
-import { fogRange } from "./fog";
+import { eyeFogRange, fogRange } from "./fog";
+import { clearEye } from "../eyes";
+import { solidCovers } from "../paths";
 
 // What a spell's darkness pulls the sky toward.
 const NIGHT_SKY = 0x04020f;
@@ -340,6 +342,7 @@ export class VoxelView {
     const started = performance.now();
     this.lapAt = started;
     const { world } = this;
+    if (this.orbit.eye) this.placeEye();
     this.orbit.update(dt, time, this.groundAt, reducedMotion);
     // The land changes only in a tick or a cast: a frame between two ticks
     // does not compare every column again (3.5 ms a frame on a large island).
@@ -707,6 +710,7 @@ export class VoxelView {
     // bring the fog in.
     const o = this.orbit;
     const target = this.toScene(o.tx, o.ty, this.groundAt(o.tx, o.ty));
+    this.sky.dropsFrom = o.eye ? 2.5 : 0;
     this.sky.update(time, day.night, o.camera, target, o.dist, this.pixelRatio);
     this.waveTime.value = time;
     const grey = this.sky.overcast;
@@ -736,7 +740,7 @@ export class VoxelView {
     }
     // The mist moves back with the camera, so the island keeps its colours
     // when zoomed out (fog.ts).
-    const range = fogRange(Math.max(this.world.w, this.world.h), o.dist, fogStep);
+    const range = o.eye ? eyeFogRange(fogStep) : fogRange(Math.max(this.world.w, this.world.h), o.dist, fogStep);
     const fog = this.scene.fog as Fog;
     fog.near = range.near;
     fog.far = range.far;
@@ -825,6 +829,43 @@ export class VoxelView {
     }
     return rig;
   }
+
+  // Through its eyes (2026-11-12, eyes.ts): the creature the player sees
+  // from, which is not drawn while the camera is at its head.
+  eyeId = -1;
+
+  // The eye at its head, where the creature is drawn this frame (between two
+  // ticks, on the ground as its feet are eased up and down steps).
+  private placeEye(): void {
+    const { world } = this;
+    const c = world.creatures.find((o) => o.id === this.eyeId);
+    if (!c) return;
+    const k = kindOf(c);
+    const rig = this.rigFor(c, k);
+    const size = drawScale(k.body, k.radius, rig, c.size);
+    const g = this.gaits.get(c.id);
+    const a = this.between;
+    const x = g ? g.px + (c.x - g.px) * a : c.x;
+    const y = g ? g.py + (c.y - g.py) * a : c.y;
+    const ground = g && Number.isFinite(g.gy) ? g.gy : walkGround(world, x, y);
+    // Eyes sit a little under the top of the head (a hat or antlers above them),
+    // kept clear of walls, trunks and steps of ground (eyes.ts clearEye): pressed
+    // to a cliff or a house the view was one flat colour (the playtest of 12 November).
+    const e = clearEye(x, y, ground + c.z + Math.max(0.35, rig.height * size * 0.88), this.groundAt, this.solidCell);
+    this.orbit.eyeAt(e.x, e.y, e.h);
+    this.eyeCell.x = e.x;
+    this.eyeCell.y = e.y;
+  }
+
+  // Where the eye is, in cells, for hiding what stands right against it.
+  private eyeCell = { x: NaN, y: NaN };
+
+  // A wall or a trunk in the cell (cx, cy): what a walker cannot enter (paths.ts solidCovers).
+  solidCell = (cx: number, cy: number): boolean => {
+    const { world } = this;
+    if (cx < 0 || cy < 0 || cx >= world.w || cy >= world.h) return false;
+    return solidCovers(world)[world.cover[cy * world.w + cx]] === 1;
+  };
 
   private placeCreatures(time: number): void {
     const { world } = this;
@@ -931,6 +972,9 @@ export class VoxelView {
       const p = this.toScene(rx, ry, y);
       this.sphere.center.set(p.x, p.y + rig.height * size * 0.5, p.z);
       this.sphere.radius = Math.max(rig.height, 1.4) * size;
+      // The one the player sees from is not drawn: its own head would fill the view.
+      // Nor anyone closer than a cell to the eye: a face or a back filled the screen.
+      if (this.orbit.eye && (c.id === this.eyeId || Math.hypot(rx - this.eyeCell.x, ry - this.eyeCell.y) < 1.1)) continue;
       const seen = this.frustum.intersectsSphere(this.sphere);
 
       // The mark over its head, then the figure, when the camera sees it.

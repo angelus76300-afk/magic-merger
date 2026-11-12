@@ -41,7 +41,7 @@ export function dropShare(amount: number, dist: number): number {
 
 // The same placement for the vertex shader. `position` is the seed, `rank`
 // a random number per drop deciding when it shows.
-export const DROP_SHADER = `uniform float time; uniform vec3 center; uniform float share; uniform float snow; uniform float pixels;
+export const DROP_SHADER = `uniform float time; uniform vec3 center; uniform float share; uniform float snow; uniform float pixels; uniform float nearest; uniform float grain;
   attribute float rank;
   varying float vShow;
   float wrapped(float v, float size, float below) { return v - size * floor(v / size + below); }
@@ -58,6 +58,8 @@ export const DROP_SHADER = `uniform float time; uniform vec3 center; uniform flo
       wrapped(y - center.y, ${DROP_HEIGHT.toFixed(1)}, ${DROP_BELOW.toFixed(2)}),
       wrapped(z - center.z, ${DROP_TILE.toFixed(1)}, 0.5));
     vec4 mv = modelViewMatrix * vec4(w, 1.0);
-    gl_PointSize = mix(16.0, 6.0, snow) * pixels * 40.0 / max(4.0, -mv.z);
+    // Not in the eye of the one seen from (eyes.ts): a drop a hand away fills the screen.
+    if (-mv.z < nearest) { vShow = 0.0; gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; return; }
+    gl_PointSize = mix(16.0, 6.0, snow) * pixels * grain * 40.0 / max(4.0, -mv.z);
     gl_Position = projectionMatrix * mv;
   }`;

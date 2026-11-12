@@ -17,6 +17,7 @@ import { abilitiesFromName, useAbilities } from "./abilities";
 import { stepArtifacts } from "./artifacts";
 import { meter } from "./motion";
 import { steer } from "./steer";
+import { riderAim, ridden, throwOut } from "./possess";
 import { alarm, calmDown, fleeing } from "./flight";
 import { pathsOf, solidCovers } from "./paths";
 import { LOADS, deed, harmed, life, newMind, noteDeath, reborn, storyOn, tell, villageOf, type AbilitySpec, type Goal, type Mind } from "./kin";
@@ -274,8 +275,11 @@ let nextId = 1;
 
 // Tests only: creature ids feed some choices, so a replay that must give the
 // same answer whatever ran before it starts from the same id.
-export function resetCreatureIds(): void {
-  nextId = 1;
+// It returns where the count was, to be put back after (`to`).
+export function resetCreatureIds(to = 1): number {
+  const was = nextId;
+  nextId = to;
+  return was;
 }
 
 export function kindOf(c: Creature): CreatureKind {
@@ -478,13 +482,40 @@ function blocked(world: World, x: number, y: number, c: Creature, k: CreatureKin
   return world.walkLevel(i) - here > 1.6;
 }
 
+// Become anything: why a creature the player pushes along (dx, dy) does not
+// go on, in the words of the line under its name, in the order blocked() asks
+// (and the rim the ridden step keeps to, below). Null when nothing ahead stops it.
+export function whyStopped(world: World, c: Creature, dx: number, dy: number): string | null {
+  const k = kindOf(c);
+  const d = Math.hypot(dx, dy) || 1;
+  // A few steps ahead: its feelers (steer.ts) stop it a little before the wall itself.
+  for (const step of [0.6, 1, 1.5, 2]) {
+    const x = c.x + (dx / d) * step;
+    const y = c.y + (dy / d) * step;
+    if (!world.inside(x, y) || x < 3 || y < 3 || x > world.w - 4 || y > world.h - 4) return "The edge of the world";
+    if (!blocked(world, x, y, c, k)) continue;
+    if (k.flying || c.levitate > 0 || c.z > 1.5) return null;
+    const i = world.idx(x, y);
+    if (k.aquatic) return "Land stops you";
+    if (solidCovers(world)[world.cover[i]]) return world.cover[i] === C.HOUSE ? "A wall is in the way" : "Something is in the way";
+    const f = world.fluid[i];
+    if (f === F.LAVA) return "Lava stops you";
+    if (f !== F.NONE && f !== F.ICE && world.depth[i] > 1) return f === F.WATER ? "Deep water stops you" : "Too deep to wade";
+    return "Too steep";
+  }
+  return null;
+}
+
 const TIMED = ["frozen", "fear", "sleep", "calm", "levitate", "stun"] as const;
 
 export function updateCreature(world: World, c: Creature, dt: number): void {
   const k = kindOf(c);
   freeWorld = world;
   storyOn(world);
+  // The player is this creature (possess.ts): its own decisions are skipped below.
+  const rider = ridden(c);
   if (c.dead) {
+    if (rider) throwOut(c);
     if (c.deadFor === 0) {
       noteDeath(world, c);
       if (k.ai?.onDeath) deathOf(world, c, k.ai.onDeath);
@@ -576,6 +607,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   if (c.hp <= 0) {
     c.dead = true;
     c.burning = 0;
+    // At 0 health the player is thrown out at once; the body is the simulation's.
+    if (rider) throwOut(c);
     return;
   }
 
@@ -593,7 +626,16 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   let socialMood: Mood = null;
   // Which decision drove this tick's step, for the motion meter (4.3).
   let drive = busy ? "asleep" : "idle";
-  if (!busy) {
+  if (rider && !busy) {
+    // Become anything (2026-11-12): the stick says where it goes, in place of
+    // everything it would decide (fear, needs, goals, behavior, wandering).
+    // Its mind is left as it was, so releasing it gives its own goal back.
+    const aim = riderAim(rider);
+    wantX = aim.x;
+    wantY = aim.y;
+    pace = aim.pace;
+    drive = "possessed";
+  } else if (!busy) {
     // Danger is probed every third tick and remembered in between (3.6: goals
     // keep creatures on the move, and this was the dearest part of a tick).
     let dangerDir = c.data.danger as { x: number; y: number } | null | undefined;
@@ -732,7 +774,9 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   // them. A flight or a chase runs through its point; anything else slows
   // down to arrive.
   const chase = mood === "fear" || mood === "angry" || mood === "hunt" || drive === "fear" || drive === "burning" || drive === "danger" || drive === "flee";
-  const arrive = !chase || drive === "shelter";
+  // Ridden, it goes straight where the stick points: no flow field that would
+  // take it another way round, only its own feelers and walls (steer.ts).
+  const arrive = !rider && (!chase || drive === "shelter");
   const len = Math.hypot(wantX, wantY);
   let wanted = 0;
   {
@@ -752,7 +796,21 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     const gx = trip ? (m.target ? m.target.x : m.tx) : c.x + wantX;
     const gy = trip ? (m.target ? m.target.y : m.ty) : c.y + wantY;
     const hunting = mood === "hunt" || mood === "angry";
+    const ox = c.x;
+    const oy = c.y;
     const stepped = steer(world, c, k, c.x + wantX, c.y + wantY, busy ? 0 : speed, arrive, hunting, dt, blocked, gx, gy);
+    // Ridden, the same walls hold where it stands, not only ahead: steer.ts lets a creature move
+    // freely in the cell it is in, and a player pushing into the sea for a minute walked along a
+    // shore line until its centre rounded into the deep cell, then on into it (a fish onto the
+    // beach). Its own mind never pushes a wall that long.
+    // And the island's rim: wading on the shallow shelf, a player reached the edge of the world,
+    // where the island ends in the void (the frames of 12 November). Its own mind never goes there.
+    const rim = (x: number, y: number) => x < 3 || y < 3 || x > world.w - 4 || y > world.h - 4;
+    if (rider && (blocked(world, c.x, c.y, c, k, ox, oy) || (rim(c.x, c.y) && !rim(ox, oy))) && !blocked(world, ox, oy, c, k, ox, oy)) {
+      c.x = ox;
+      c.y = oy;
+      c.sp *= 0.3;
+    }
     wanted = stepped.wanted;
     if (stepped.jammed && speed > 0) {
       // Boxed in (born between trees and houses): after a while, out to the
@@ -760,7 +818,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       const stuck = ((c.data.stuck as number | undefined) ?? 0) + dt;
       c.data.stuck = stuck;
       if (stuck > 1) c.goal = 0;
-      if (stuck > 3 && !k.aquatic) {
+      // Not one the player steers: pushed into a wall for a while, it was hopped out, once to the rim of the world.
+      if (stuck > 3 && !k.aquatic && !rider) {
         c.data.stuck = 0;
         unstick(world, c, k);
       }
@@ -789,7 +848,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   c.x = Math.max(0.5, Math.min(world.w - 1.5, c.x));
   c.y = Math.max(0.5, Math.min(world.h - 1.5, c.y));
   if (ai && !busy) sideEffects(world, c, ai, i, onGround, dt);
-  if (!busy && (k.abilities?.length || c.kind === "villager")) useAbilities(world, c, k);
+  // Ridden, its abilities fire only when the player presses them (possess.ts act).
+  if (!busy && !rider && (k.abilities?.length || c.kind === "villager")) useAbilities(world, c, k);
   if (c.fear > 0 || c.burning > 0) mood = "fear";
   c.data.mood = busy ? (c.sleep > 0 ? "asleep" : null) : mood;
   const idle = idleOf(c, busy);

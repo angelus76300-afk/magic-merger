@@ -21,13 +21,23 @@ export async function startLocalGame() {
       let text;
       if (system.startsWith("You write the grimoire")) text = "A soft white cloud drifts over the island.";
       else if (system.includes("Say what this item promises")) text = JSON.stringify({ intents: ["other"] });
-      else if (system.startsWith("You write the spells"))
+      else if (system.startsWith("You write the spells")) {
+        // The four first elements land as themselves (fire burns, water floods, earth lays rock, air
+        // blows), so a browser check can die by its own Fire; anything else is a patch of sand.
+        const asked = JSON.stringify(JSON.parse(raw || "{}").messages ?? "");
+        const own = {
+          Fire: "w.ignite(w.x, w.y, 2.5);",
+          Water: "w.flood(w.x, w.y, 2, 'water', 1);",
+          Earth: "w.paint(w.x, w.y, 2, 'rock', 1);",
+          Air: "w.wind(1, 0); w.flash('#dff', 0.2);",
+        };
+        const name = Object.keys(own).find((k) => new RegExp(`\\b${k}\\b`).test(asked));
         text = JSON.stringify({
           summary: "A flash.",
-          code: "const spell = { *cast(w) { w.flash('#fff', 0.2); w.paint(w.x, w.y, 2, 'sand', 1); } };",
+          code: `const spell = { *cast(w) { ${name ? own[name] : "w.flash('#fff', 0.2); w.paint(w.x, w.y, 2, 'sand', 1);"} } };`,
           missing: "",
         });
-      else text = JSON.stringify({ name: `Thing ${n}`, emoji: "✨", kind: "spell", tier: "minor" });
+      } else text = JSON.stringify({ name: `Thing ${n}`, emoji: "✨", kind: "spell", tier: "minor" });
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
         JSON.stringify({

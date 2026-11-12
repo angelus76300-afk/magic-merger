@@ -1,7 +1,7 @@
 import { readDigest, type ChronicleDigest } from "../../shared/chronicle";
 import type { CastRequest } from "./runtime";
 import type { SavedWorld } from "./save";
-import type { WorldSize } from "./engine";
+import type { WorldSize } from "./sizes";
 import type { LandChoice } from "./land-options";
 
 // Messages between the game page and the sandboxed World iframe. The iframe
@@ -43,7 +43,32 @@ export type ToWorld =
   // Spells from the shared library the world asked for by name (3.7).
   | { type: "library"; spells: CastRequest[] }
   // What the island's chronicle is written from (3.7).
-  | { type: "chronicle" };
+  | { type: "chronicle" }
+  // Through its eyes (2026-11-12): the slim bar of spells while the player
+  // sees from a creature, the last used first.
+  | { type: "hotbar"; slots: HotSlot[] };
+
+// A spell or an item on the hot bar: ready once its program is written.
+export interface HotSlot {
+  key: string;
+  name: string;
+  emoji: string;
+  ready: boolean;
+}
+
+// The most slots the bar holds: everything the player owns, as the page's own
+// list (it scrolls), within a bound on what the frame is sent.
+export const HOT_SLOTS = 2000;
+
+// The bar's keys in the order fixed when the creature was taken (`fixed`);
+// keys that came since go at the end, in the order they come now.
+export function keepOrder(now: string[], fixed: string[]): string[] {
+  const rank = new Map(fixed.map((k, n) => [k, n]));
+  return now
+    .map((k, n) => ({ k, n: rank.get(k) ?? fixed.length + n }))
+    .sort((a, b) => a.n - b.n)
+    .map((x) => x.k);
+}
 
 // The iframe runs code nobody reviewed, so whatever it sends is checked for
 // shape and size before the page acts on it. Returns null for anything else.
@@ -99,6 +124,11 @@ export function readFromWorld(data: unknown): FromWorld | null {
         : null;
     case "need":
       return Array.isArray(m.names) && m.names.length <= 20 && m.names.every((n) => str(n, 120)) ? { type: "need", names: m.names as string[] } : null;
+    case "eyes":
+    case "riding":
+      return typeof m.on === "boolean" ? { type: m.type, on: m.on } : null;
+    case "pick":
+      return m.key === null || str(m.key, 120) ? { type: "pick", key: m.key as string | null } : null;
     case "objective":
       return str(m.id, 40) && typeof m.text === "string" && (m.status === "playing" || m.status === "won" || m.status === "lost")
         ? { type: "objective", id: m.id as string, text: m.text.slice(0, 200), status: m.status }
@@ -142,4 +172,12 @@ export type FromWorld =
   | { type: "trouble"; running: boolean; text: string; key?: string; outcome?: string }
   // A new island was made (4.4.5 part B): its name and its wonders' set, for
   // the page to keep with the last ten.
-  | { type: "island"; name: string; signature: string };
+  | { type: "island"; name: string; signature: string }
+  // Through its eyes (2026-11-12): the island shows the world from a
+  // creature's eyes and the page hides its own header, spell drawer and
+  // tools (on), or shows them again exactly as they were (off).
+  | { type: "eyes"; on: boolean }
+  // The player is a creature (Become) or no longer: the page's hint says how a spell is cast then.
+  | { type: "riding"; on: boolean }
+  // A slot of the hot bar tapped: the spell to hold, or null to put it away.
+  | { type: "pick"; key: string | null };

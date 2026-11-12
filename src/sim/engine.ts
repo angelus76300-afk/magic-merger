@@ -1,5 +1,4 @@
-import { noteCast } from "./troubles";
-import { tell } from "./kin";
+import { playerCast } from "./playercast";
 import { kindOf, populate } from "./creatures";
 import { FrameStats } from "./hud";
 import { Runtime, type CastRequest, type ErrorReporter } from "./runtime";
@@ -27,6 +26,8 @@ export interface EngineHooks {
   onError: ErrorReporter;
   // A tap on the island that did not turn, pan or zoom the view.
   onTap: (x: number, y: number) => void;
+  // A tap where the ray meets nothing (the sky): the eye view casts at its mark all the same.
+  onTapNothing?: () => void;
 }
 
 export interface EngineOptions {
@@ -122,17 +123,14 @@ export class Engine {
   }
 
   cast(req: CastRequest, x: number, y: number): boolean {
-    const ok = this.runtime.cast(req, x, y);
+    // The spell, the island's story and a trouble's answer (playercast.ts).
+    const ok = playerCast(this.world, this.runtime, req, x, y);
     // A spell's sounds come from its own center (4.8, runtime.ts w.sound); the
     // player's cast gives them priority just after it (eventAt). A sound with
     // no place belongs to the player's last cast while it runs (castOwns).
     if (ok) this.lastCast = { x, y, at: performance.now() };
     // What the cast changed before the next tick is drawn too (view.ts, scan).
     this.view.landChanged = true;
-    // The player's magic is part of the island's story (3.7).
-    if (ok) tell(this.world, `a mage ${req.kind === "artifact" ? "placed" : "cast"} ${req.name}`, { x, y, weight: 0 });
-    // Cast at a trouble, it may be its answer (troubles.ts).
-    if (ok) noteCast(this.world, req.key, req.name, "", x, y);
     return ok;
   }
 
@@ -354,6 +352,7 @@ export class Engine {
       const rect = c.getBoundingClientRect();
       const at = this.view.pick(e.clientX - rect.left, e.clientY - rect.top);
       if (at) this.hooks.onTap(at.x, at.y);
+      else this.hooks.onTapNothing?.();
     };
     c.addEventListener("pointerup", end, opts);
     c.addEventListener("pointercancel", end, opts);

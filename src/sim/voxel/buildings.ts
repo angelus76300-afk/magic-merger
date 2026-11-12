@@ -532,7 +532,8 @@ export class Buildings {
         const r = Math.min(255, Math.round(((c >> 16) & 255) * k));
         const g = Math.min(255, Math.round(((c >> 8) & 255) * k));
         const bl = Math.min(255, Math.round((c & 255) * k));
-        pushBox(pos, col, { ...t, x: t.x + ox, y: t.y + base, z: t.z + oz, color: (r << 16) | (g << 8) | bl });
+        // Eaves and roofs off the ground get an underside, seen from a creature's eyes.
+        pushBox(pos, col, { ...t, x: t.x + ox, y: t.y + base, z: t.z + oz, color: (r << 16) | (g << 8) | bl }, box.y > 0.05);
       };
       // Footing down to the lowest cell, so nothing floats on a slope.
       if (base - low > 0.05) add(B(0.05, low - base, 0.05, 1.9, base - low + 0.02, 1.9, 0x7a7068), 1);
@@ -603,7 +604,7 @@ export class Buildings {
       const oz = y - world.h / 2;
       const add = (box: Box) => {
         const r = turn(box, qq);
-        pushBox(pos, col, { ...r, x: r.x + ox, y: r.y + base, z: r.z + oz });
+        pushBox(pos, col, { ...r, x: r.x + ox, y: r.y + base, z: r.z + oz }, box.y > 0.05);
       };
       if (base - low > 0.05) add(B(0.05, low - base, 0.05, 1.9, base - low + 0.02, 1.9, 0x7a7068));
       for (const box of siteShape(final, stageOf(t), logsLeft(t), STYLE[style]?.trim)) add(box);
