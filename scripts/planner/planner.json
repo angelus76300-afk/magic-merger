@@ -5,15 +5,19 @@
     "weekly": "warning",
     "weeklyResets": "Tuesday 17 November, 5 PM Toronto"
   },
-  "working": ["Measuring the wildfire, then the next trouble"],
-  "next": [
-    "Measure the wildfire: the share of troubles answered by an item made since they began",
-    "The next troubles: a drought on a village's fields, then high water",
-    "The eye view's rest: light through the crowns, the sea at the world's edge, animals up close, tools in hand",
-    "Spend only on what players use: big items at first cast, the weekly design call",
-    "A proposal for what tiers should mean, from the wildfire's numbers"
+  "working": [
+    "High water, the second trouble: second round of fixes after its playtest",
+    "The island as a map: names, roads that read, lights, carts",
+    "Spells smart, varied, answering each other: measuring the live library"
   ],
-  "parked": ["Feedback draft: the Sound button turns the sound off and back on (unowned)"],
+  "next": [
+    "Ship high water, then the island as a map",
+    "The spells' three numbers and twenty filmed pairs, then a proposal",
+    "Wonders review (approved, $3 to $6)",
+    "A drought, reworked",
+    "A cheaper way of working for next week"
+  ],
+  "parked": [],
   "roadmap": [
     {
       "v": "1",
@@ -26,7 +30,7 @@
     {
       "v": "2",
       "name": "One game instead of two (the island needs you)",
-      "state": "Wildfire live",
+      "state": "Wildfire live; high water in its second round",
       "done": 1,
       "total": 3,
       "eta": "this week"
@@ -50,10 +54,10 @@
     {
       "v": "5",
       "name": "Towns you can read from the sky",
-      "state": "Later",
+      "state": "Being built as \"The island as a map\"",
       "done": 0,
       "total": 1,
-      "eta": ""
+      "eta": "this week"
     },
     {
       "v": "6",
@@ -73,12 +77,12 @@
     {
       "name": "Pull requests merged that needed a later fix",
       "done": 1,
-      "total": 10
+      "total": 14
     },
     {
       "name": "Reviewer sessions started",
-      "done": 6,
-      "total": 6
+      "done": 10,
+      "total": 10
     }
   ]
 }
