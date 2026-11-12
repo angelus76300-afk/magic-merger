@@ -991,20 +991,24 @@ export class VoxelView {
   private placeMap(time: number): void {
     const { world, map } = this;
     const night = daylight(time).night;
-    // Roads: the same cells as the real ones, placed again only when the map is read again.
+    // Roads: the laid cells of the real ones, placed again only when the map is read again. A
+    // finished road is a wide band; a road still being laid is a thin line, a third as wide.
     const wide = fade(this.cover, FAR.roads);
-    this.farRoads.visible = wide > 0.01 && map.roads.length > 0;
+    const cells = map.roads.length + map.tracks.length;
+    this.farRoads.visible = wide > 0.01 && cells > 0;
     if (this.farRoads.visible && this.roadsMapped !== map.version) {
       this.roadsMapped = map.version;
-      const mesh = this.ensureCapacity(map.roads.length);
-      for (let k = 0; k < map.roads.length; k++) {
-        const i = map.roads[k];
+      const mesh = this.ensureCapacity(cells);
+      for (let k = 0; k < cells; k++) {
+        const track = k >= map.roads.length;
+        const i = track ? map.tracks[k - map.roads.length] : map.roads[k];
         const deck = world.cover[i] === C.BRIDGE ? world.walkLevel(i) * V : columnTop(world, i);
         const p = this.toScene((i % world.w) + 0.5, Math.floor(i / world.w) + 0.5, deck);
-        this.m.makeTranslation(p.x, p.y, p.z);
+        this.m.makeScale(track ? TRACK_WIDTH : 1, 1, track ? TRACK_WIDTH : 1);
+        this.m.setPosition(p.x, p.y, p.z);
         mesh.setMatrixAt(k, this.m);
       }
-      mesh.count = map.roads.length;
+      mesh.count = cells;
       mesh.instanceMatrix.needsUpdate = true;
     }
     // A road two and a half cells wide from the whole island, raised clear of the ground's steps.
@@ -1942,6 +1946,9 @@ function pointCloud(capacity: number, glow: boolean, texture: CanvasTexture): Po
   points.renderOrder = 3;
   return points;
 }
+
+// A road still being laid, from far: a line this share of a finished road's band.
+export const TRACK_WIDTH = 0.33;
 
 // The roads drawn from far (map.ts): a flat pale tile on every road cell, widened in the shader by
 // `wide` (0 near, where the mesh is not drawn at all), lifted a little clear of the ground's steps.

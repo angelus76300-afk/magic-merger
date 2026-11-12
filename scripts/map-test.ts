@@ -159,7 +159,9 @@ function mapChecksSeeded(check: Check): void {
       JSON.stringify([...during]),
     );
   }
-  // 3. The far roads are the real road cells: a road laid cell by cell is on the map as it is laid, and only then.
+  // 3. The far roads are the real road cells, laid: a road half laid is a thin track, never the
+  // wide band of a finished road (the reading test of 12 November read a road 49% laid as a join);
+  // a lane worn by a village and on no road is not drawn from far.
   {
     const world = new World(64, 64, 5);
     world.height.fill(10);
@@ -167,17 +169,29 @@ function mapChecksSeeded(check: Check): void {
     const road: Road = { ax: 10, ay: 32, bx: 39, by: 32, a: "A", b: "B", cells, decks: cells.map(() => -999), made: 0 };
     world.roads.push(road);
     world.roadsVersion++;
-    const before = roadCells(world).length;
+    const before = roadCells(world);
     const v: Village = { x: 10, y: 32, food: 9, wood: 9, gold: 0, people: 8, houses: 4 };
-    for (let k = 0; k < 12; k++) pave(world, { road, k, cell: cells[k], stand: cells[Math.max(0, k - 1)], bridge: false } as PaveJob, v);
-    // And a worn lane by a village (roads.ts wearMinute): the same ground.
+    const lay = (from: number, to: number) => {
+      for (let k = from; k < to; k++) pave(world, { road, k, cell: cells[k], stand: cells[Math.max(0, k - 1)], bridge: false } as PaveJob, v);
+    };
+    // Half laid, from each end, as builders lay it.
+    lay(0, 8);
+    for (let k = 22; k < 30; k++) world.ground[cells[k]] = G.ROAD;
     world.ground[20 * 64 + 20] = G.ROAD;
-    const after = roadCells(world);
-    const want = [...cells.slice(0, 12), 20 * 64 + 20].sort((x, y) => x - y);
+    const half = roadCells(world);
+    const laidCells = [...cells.slice(0, 8), ...cells.slice(22)];
+    lay(8, 22);
+    const done = roadCells(world);
+    const same = (a: number[], b: number[]) => a.length === b.length && a.every((i, k) => i === b[k]);
     check(
-      "map: the far roads are drawn from the same cells as the roads, laid or worn, and none before",
-      before === 0 && after.length === want.length && after.every((i, k) => i === want[k]) && ROAD.roadSpeed > 1,
-      `${before} before, ${after.length} after`,
+      "map: a half laid road is a thin track from far, never a full join; finished, it is the wide band; a worn lane is not drawn",
+      before.roads.length + before.tracks.length === 0 &&
+        half.roads.length === 0 &&
+        same(half.tracks, laidCells) &&
+        same(done.roads, cells) &&
+        done.tracks.length === 0 &&
+        ROAD.roadSpeed > 1,
+      `before ${before.roads.length}+${before.tracks.length}, half ${half.roads.length} wide ${half.tracks.length} thin, done ${done.roads.length} wide ${done.tracks.length} thin`,
     );
   }
   // 4. The glow at night follows people: as many windows lit as two to a house, never more than all.

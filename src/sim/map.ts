@@ -2,6 +2,7 @@ import { housesOf, tierOf, type Tier } from "./buildings";
 import type { Creature } from "./creatures";
 import { VILLAGE_REACH, type Village } from "./kin";
 import { C, G } from "./materials";
+import { laid } from "./roads";
 import type { World } from "./world";
 
 // The island as a map (roadmap 4.9 part 3, 2026-11-12). Seen whole, the
@@ -59,8 +60,12 @@ export interface Plume {
 
 export interface IslandMap {
   villages: MapVillage[];
-  // Road cells, laid or worn (G.ROAD), and bridge decks: what the far roads are drawn from.
+  // The laid cells of finished roads (every cell laid), bridge decks included: drawn wide from far.
   roads: number[];
+  // The laid cells of a road not yet finished: drawn thin from far, so a half laid road does not
+  // read as two villages joined (the reading test of 12 November). Lanes worn by a village and on
+  // no road are not drawn from far at all: the ground shows them.
+  tracks: number[];
   plumes: Plume[];
   // World time it was made at, and a count that changes with it.
   at: number;
@@ -71,7 +76,7 @@ export interface IslandMap {
 export const MAP_EVERY = 3;
 
 export function emptyMap(): IslandMap {
-  return { villages: [], roads: [], plumes: [], at: -Infinity, version: 0 };
+  return { villages: [], roads: [], tracks: [], plumes: [], at: -Infinity, version: 0 };
 }
 
 /** Made again when MAP_EVERY seconds have passed since the last; true when it was. */
@@ -80,7 +85,9 @@ export function refreshMap(world: World, map: IslandMap): boolean {
   map.at = world.time;
   map.version++;
   map.villages = villagesOf(world);
-  map.roads = roadCells(world);
+  const r = roadCells(world);
+  map.roads = r.roads;
+  map.tracks = r.tracks;
   map.plumes = plumesOf(world);
   return true;
 }
@@ -121,10 +128,21 @@ export function villagesOf(world: World): MapVillage[] {
   return out;
 }
 
-export function roadCells(world: World): number[] {
-  const out: number[] = [];
-  for (let i = 0; i < world.n; i++) if (world.ground[i] === G.ROAD || (world.cover[i] === C.BRIDGE && world.decks.has(i))) out.push(i);
-  return out;
+export function roadCells(world: World): { roads: number[]; tracks: number[] } {
+  const done = new Set<number>();
+  const part = new Set<number>();
+  for (const r of world.roads) {
+    const on = r.cells.map((_, k) => laid(world, r, k));
+    const finished = on.every(Boolean);
+    for (let k = 0; k < r.cells.length; k++) {
+      const i = r.cells[k];
+      // Laid, and road or deck underfoot (a house or a wonder on its way is not drawn over).
+      if (!on[k] || !(world.ground[i] === G.ROAD || (world.cover[i] === C.BRIDGE && world.decks.has(i)))) continue;
+      (finished ? done : part).add(i);
+    }
+  }
+  const byCell = (a: number, b: number) => a - b;
+  return { roads: [...done].sort(byCell), tracks: [...part].filter((i) => !done.has(i)).sort(byCell) };
 }
 
 // One plume a site, one a burnt block (its 2 by 2 rubble counted once), within a village's reach.
