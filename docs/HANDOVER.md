@@ -49,6 +49,10 @@ An experiment the owner asked for: one session leads and builds, instead of a pl
 - Local `main` in the lead session's checkout is an old, diverged branch: work from `origin/main` (`git checkout --detach origin/main` or a new branch from it).
 - `test:worker` has one check that can read a row before the Worker's queue wrote it ("votes: the rewrite is recorded, and paid by the voter"): it failed once in CI on a merge commit and passed on a re-run. Make it wait for the row when next in the Worker.
 
+### The rules name the lead session (12 November)
+
+The owner's "rules: lead" (12 November, about 11:20 UTC): `CLAUDE.md` has a section "Who leads" that makes the lead session the planner's replacement everywhere the rules say "the planner". The three questions of 11 November are settled: "rules: lead", "fresh: no" (this session carries on; a successor is started only when the owner says), and the watch stays on Haiku in its own standing session.
+
 ### What the night of 12 November taught
 
 - Start a reviewer on `main`, never on the branch (`source_revision` unset): a session started on another branch makes the repository's guard ask the owner, because it would run with that branch's `.claude/settings.json`. The reviewer fetches the branch itself.
