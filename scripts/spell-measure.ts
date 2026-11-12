@@ -649,7 +649,7 @@ const SHAPES = [
   "sets down an object",
   "dome or ward",
   "only lights and particles",
-  "nothing visible",
+  "nothing lasting",
 ] as const;
 type Shape = (typeof SHAPES)[number];
 
@@ -681,10 +681,13 @@ function paintOf(e: Effect): { life: number; other: number; top: number } {
   return { life, other, top };
 }
 
+// Under 80 cells, what the lives moved is drift, not the item's doing.
+const lifeScore = (n: number) => (n >= 80 ? n / 5 : 0);
+
 function systemScores(e: Effect): Record<string, number> {
   const p = paintOf(e);
   return {
-    paint: p.other + p.life / 5,
+    paint: p.other + lifeScore(p.life),
     land: e.up + e.down,
     fire: e.fireMax,
     fluid: sum(e.fluid),
@@ -701,12 +704,12 @@ function systemScores(e: Effect): Record<string, number> {
 function shapeOf(e: Effect): Shape {
   const s = systemScores(e);
   const total = Object.values(s).reduce((a, b) => a + b, 0);
-  if (total < 3) return e.bodySeconds >= 0.5 ? "only lights and particles" : "nothing visible";
+  if (total < 3) return e.bodySeconds >= 0.5 ? "only lights and particles" : "nothing lasting";
   const top = Object.entries(s).sort((a, b) => b[1] - a[1])[0][0];
   switch (top) {
     case "paint": {
       const p = paintOf(e);
-      return p.top / (p.other + p.life / 5) >= 0.7 ? "paints one material" : "paints a mix";
+      return p.top / (p.other + lifeScore(p.life)) >= 0.7 ? "paints one material" : "paints a mix";
     }
     case "land":
       return "reshapes land";
@@ -745,7 +748,7 @@ function vectorOf(e: Effect): Map<string, number> {
   const add = (k: string, n: number) => n > 0 && v.set(k, (v.get(k) ?? 0) + n);
   for (const [k, n] of Object.entries(e.mats)) {
     const [layer, name] = k.split(":");
-    if (LIFE.has(k)) add("life", n / 5);
+    if (LIFE.has(k)) continue;
     else add(BUILTIN_MATERIALS.has(name) ? k : `${layer}:own`, n);
   }
   for (const [k, n] of Object.entries(e.fluid)) add(`fluid:${BUILTIN_MATERIALS.has(k) ? k : "own"}`, n);
@@ -764,6 +767,7 @@ function vectorOf(e: Effect): Map<string, number> {
   add("props", e.props * 40);
   add("landmarks", e.landmarks * 40);
   add("wards", e.wards * 150);
+  add("life", lifeScore(paintOf(e).life));
   for (const [k, n] of v) v.set(k, Math.log1p(n));
   return v;
 }
@@ -785,7 +789,6 @@ function cosine(a: Map<string, number>, b: Map<string, number>): number {
 
 const SYSTEMS = ["materials", "fire", "fluids", "temperature", "gas", "land", "creatures", "structures", "wards"] as const;
 type System = (typeof SYSTEMS)[number];
-const FLOOR: Record<System, number> = { materials: 5, fire: 5, fluids: 5, temperature: 8, gas: 8, land: 5, creatures: 2, structures: 20, wards: 1 };
 
 // Per system, how far `got` is from the composition of A's and B's own runs:
 // each cell takes B's state where B changed it, else A's, else the island's.
@@ -858,6 +861,116 @@ function mismatch(got: Snap, a: Snap, b: Snap, e: Ens, wards: { got: number; a: 
   if (m.structures) note("voxels", m.structures);
   m.wards = Math.abs(wards.got - (wards.a + wards.b));
   return { m, delta };
+}
+
+// --- Interaction, by what the island holds ----------------------------------
+//
+// Placing is random (a meteor lands somewhere in its reach), so two runs of
+// the same item rarely match cell by cell. What they hold does: how many
+// cells of ash, of water, on fire, colder, how many creatures of each kind.
+// Each run is a vector of such counts against the island left alone (the mean
+// of its lives); a pair interacts in a feature when B after A holds more or
+// less than A alone plus B alone, beyond the noise of each item (the same item
+// on another random stream) and beyond what B covering A's cells explains.
+// A product neither A nor B makes alone (basalt from lava and water) is the
+// clearest answer of all and is counted on its own.
+
+type Features = Record<string, number>;
+const FEATURE_SYSTEM = (f: string): System =>
+  f.startsWith("mat:") || f === "life"
+    ? "materials"
+    : f.startsWith("fluid:") || f === "volume"
+      ? "fluids"
+      : f.startsWith("gas:")
+        ? "gas"
+        : f === "fire" || f === "fireMax"
+          ? "fire"
+          : f === "hot" || f === "cold"
+            ? "temperature"
+            : f === "up" || f === "down"
+              ? "land"
+              : f === "voxels" || f === "unvoxels"
+                ? "structures"
+                : f === "wards"
+                  ? "wards"
+                  : "creatures";
+const FEATURE_FLOOR = (f: string) =>
+  ({ materials: 8, fluids: 8, gas: 10, fire: 8, temperature: 10, land: 8, structures: 20, wards: 1, creatures: 2 })[FEATURE_SYSTEM(f)] +
+  (f === "life" ? 40 : f === "hp" ? 8 : 0);
+const STATUS_NAMES = ["burning", "frozen", "afraid", "asleep", "calm", "floating", "stunned"];
+
+function counts(s: Snap, baseId: number): Features {
+  const F: Features = {};
+  const add = (k: string, n = 1) => (F[k] = (F[k] ?? 0) + n);
+  for (let i = 0; i < s.fire.length; i++) {
+    const g = `ground:${NAMES[s.ground[i]]}`;
+    const c = `cover:${NAMES[s.cover[i]]}`;
+    add(LIFE.has(g) ? "life" : `mat:${g}`);
+    add(LIFE.has(c) ? "life" : `mat:${c}`);
+    if (s.depth[i] > 0.05) add(`fluid:${NAMES[s.fluid[i]]}`);
+    add("volume", s.depth[i]);
+    if (NAMES[s.gas[i]] !== "none") add(`gas:${NAMES[s.gas[i]]}`);
+    if (s.fire[i]) add("fire");
+    add("height", s.height[i]);
+  }
+  for (const [, st] of s.old) {
+    if (st === "dead") {
+      add("dead");
+      continue;
+    }
+    const [, bits, hp] = st.split(":");
+    add("hp", Number(hp));
+    for (let b = 0; b < bits.length; b++) if (bits[b] === "1") add(STATUS_NAMES[b]);
+  }
+  for (const [k, n] of s.born) add(`born:${k}`, n);
+  add("voxelsAll", s.decor.size);
+  void baseId;
+  return F;
+}
+
+let meanAlone: Features | null = null;
+function features(run: Run, e: Ens): { F: Features; produced: string[] } {
+  if (!meanAlone) {
+    meanAlone = {};
+    for (const s of e) for (const [k, v] of Object.entries(counts(s, 0))) meanAlone[k] = (meanAlone[k] ?? 0) + v / e.length;
+  }
+  const f = run.final;
+  const raw = counts(f, 0);
+  const F: Features = {};
+  for (const k of new Set([...Object.keys(raw), ...Object.keys(meanAlone)])) {
+    if (k === "height" || k === "voxelsAll") continue;
+    const d = (raw[k] ?? 0) - (meanAlone[k] ?? 0);
+    if (Math.abs(d) >= 0.5) F[k] = Math.round(d * 10) / 10;
+  }
+  const produced = new Set<string>();
+  let hot = 0;
+  let cold = 0;
+  let up = 0;
+  let down = 0;
+  for (let i = 0; i < f.fire.length; i++) {
+    for (const l of LAYERS) if (!natural(e, l, i, f[l][i])) produced.add(`${l}:${NAMES[f[l][i]]}`);
+    if (!inRange(e, "temp", i, f.temp[i], 5)) {
+      if (f.temp[i] > e[0].temp[i]) hot++;
+      else cold++;
+    }
+    if (!inRange(e, "height", i, f.height[i], 0.4)) {
+      if (f.height[i] > e[0].height[i]) up++;
+      else down++;
+    }
+  }
+  let voxels = 0;
+  let unvoxels = 0;
+  for (const k of f.decor) if (!decorNatural(e, k, true)) voxels++;
+  for (const k of e[0].decor) if (!f.decor.has(k) && !decorNatural(e, k, false)) unvoxels++;
+  Object.assign(F, { hot, cold, up, down, voxels, unvoxels, wards: run.wardsMax, fireMax: Math.max(0, ...run.timeline.map((t) => t.fire)) });
+  return { F, produced: [...produced] };
+}
+
+// Cells a run changed against every life of the island.
+function changedMask(s: Snap, e: Ens): Uint8Array {
+  const m = new Uint8Array(s.fire.length);
+  for (let i = 0; i < m.length; i++) m[i] = cellChanged(e, s, i) ? 1 : 0;
+  return m;
 }
 
 // --- Static reading of the code ---------------------------------------------
@@ -937,7 +1050,9 @@ interface Store {
   spotShapes: Record<string, Record<string, Shape>>;
   noise: Record<string, Record<System, number>>;
   determinism: { items: string[]; mismatch: number };
-  pairs: Record<string, { a: string; b: string; why: string; m: Record<System, number>; delta: Record<string, number>; aloneB: string }>;
+  pairs: Record<string, { a: string; b: string; why: string; F: Features; fresh: Record<string, number>; overlap: number }>;
+  // Per item in a pair: its counts cast at 0 s, on another stream, and cast at 3 s; what it makes.
+  itemRuns: Record<string, { F0: Features; F1: Features; FB: Features; produced: string[] }>;
 }
 // --shard k/n runs every n-th item or pair from k in its own process, into
 // runs-k.json; a run without --shard folds those files into runs.json.
@@ -945,7 +1060,7 @@ interface Store {
 const [SHARD, SHARDS] = arg("--shard", "0/1").split("/").map(Number);
 const PHASE = arg("--phase", "all");
 const storeFile = SHARDS > 1 ? `${OUT}/runs-${SHARD}.json` : `${OUT}/runs.json`;
-const store: Store = { singles: {}, spots: {}, spotShapes: {}, noise: {}, determinism: { items: [], mismatch: -1 }, pairs: {} };
+const store: Store = { singles: {}, spots: {}, spotShapes: {}, noise: {}, determinism: { items: [], mismatch: -1 }, pairs: {}, itemRuns: {} };
 for (const f of [
   `${OUT}/runs.json`,
   ...(existsSync(OUT)
@@ -956,20 +1071,20 @@ for (const f of [
 ]) {
   if (!existsSync(f) || (SHARDS > 1 && f !== `${OUT}/runs.json` && f !== storeFile)) continue;
   const got = JSON.parse(readFileSync(f, "utf8")) as Store;
-  for (const k of ["singles", "spots", "spotShapes", "noise", "pairs"] as const) Object.assign(store[k], got[k]);
+  for (const k of ["singles", "spots", "spotShapes", "noise", "pairs", "itemRuns"] as const) Object.assign(store[k], got[k] ?? {});
   if (got.determinism.mismatch >= 0) store.determinism = got.determinism;
 }
 const save = () => writeFileSync(storeFile, JSON.stringify(store));
 const mine = (n: number) => n % SHARDS === SHARD;
 
 // Final snapshots are not stored; the ones a pair needs are recomputed and kept in memory.
-const finals = new Map<string, { snap: Snap; wards: number }>();
+const finals = new Map<string, { snap: Snap; wards: number; run: Run }>();
 function finalOf(item: Item, at: number, place: { x: number; y: number }, stream = 0) {
   const k = `${item.key}@${at}@${place.x},${place.y}#${stream}`;
   let f = finals.get(k);
   if (!f) {
     const r = runCasts([{ item, at, ...place }], stream);
-    f = { snap: r.final, wards: r.final.wards };
+    f = { snap: r.final, wards: r.final.wards, run: r };
     finals.set(k, f);
     if (finals.size > 400) finals.delete(finals.keys().next().value!);
   }
@@ -1040,7 +1155,7 @@ function main() {
   if (PHASE === "items" || (SHARDS > 1 && items.some((i) => !store.singles[i.key]))) return;
   // Noise: the same program with another random stream, and twice the same run.
   if (store.determinism.mismatch < 0 && SHARD === 0) {
-    const some = items.filter((i) => store.singles[i.key].shape !== "nothing visible").slice(0, 10);
+    const some = items.filter((i) => store.singles[i.key].shape !== "nothing lasting").slice(0, 10);
     let total = 0;
     for (const it of some) {
       const a = runCasts([{ item: it, at: 0, ...place.village }]).final;
@@ -1061,11 +1176,14 @@ function main() {
     const id = `${p.a.key}>${p.b.key}`;
     if (store.pairs[id] || !mine(idx)) continue;
     for (const it of [p.a, p.b])
-      if (!store.noise[it.key]) {
-        const base = finalOf(it, 0, place.village, 0);
-        const alt = finalOf(it, 0, place.village, 1);
-        // Against itself on another stream: what chance alone moves.
-        store.noise[it.key] = mismatch(alt.snap, base.snap, c0, ctrl, { got: alt.wards, a: base.wards, b: 0 }).m;
+      if (!store.itemRuns[it.key]) {
+        const r0 = finalOf(it, 0, place.village, 0);
+        const r1 = finalOf(it, 0, place.village, 1);
+        const rb = finalOf(it, B_AT, place.village, 0);
+        const f0 = features(r0.run, ctrl);
+        const f1 = features(r1.run, ctrl);
+        const fb = features(rb.run, ctrl);
+        store.itemRuns[it.key] = { F0: f0.F, F1: f1.F, FB: fb.F, produced: [...new Set([...f0.produced, ...f1.produced, ...fb.produced])] };
       }
     const A = finalOf(p.a, 0, place.village);
     const B = finalOf(p.b, B_AT, place.village);
@@ -1073,14 +1191,19 @@ function main() {
       { item: p.a, at: 0, ...place.village },
       { item: p.b, at: B_AT, ...place.village },
     ]);
-    const { m, delta } = mismatch(both.final, A.snap, B.snap, ctrl, { got: both.final.wards, a: A.wards - c0.wards, b: B.wards - c0.wards });
-    m.wards = Math.abs(both.final.wards - (A.wards + B.wards - c0.wards));
-    const top = Object.fromEntries(
-      Object.entries(delta)
-        .sort((x, y) => y[1] - x[1])
-        .slice(0, 8),
-    );
-    store.pairs[id] = { a: p.a.key, b: p.b.key, why: p.why, m, delta: top, aloneB: store.singles[p.b.key].shape };
+    const known = new Set([...store.itemRuns[p.a.key].produced, ...store.itemRuns[p.b.key].produced]);
+    const fresh: Record<string, number> = {};
+    const g = both.final;
+    for (let i = 0; i < g.fire.length; i++)
+      for (const l of LAYERS) {
+        const name = `${l}:${NAMES[g[l][i]]}`;
+        if (!known.has(name) && !LIFE.has(name) && !natural(ctrl, l, i, g[l][i])) fresh[name] = (fresh[name] ?? 0) + 1;
+      }
+    const ma = changedMask(A.snap, ctrl);
+    const mb = changedMask(B.snap, ctrl);
+    let overlap = 0;
+    for (let i = 0; i < ma.length; i++) if (ma[i] && mb[i]) overlap++;
+    store.pairs[id] = { a: p.a.key, b: p.b.key, why: p.why, F: features(both, ctrl).F, fresh, overlap };
     if (++n % 10 === 0) {
       log(`pairs ${Object.keys(store.pairs).length}`);
       save();
@@ -1142,7 +1265,7 @@ const EXPECTED: { label: string; a: RegExp; b: RegExp }[] = [
 function choosePairs(items: Item[], place: ReturnType<typeof spots>): Pair[] {
   void place;
   const rnd = seeded(4120);
-  const visible = items.filter((i) => !["nothing visible"].includes(store.singles[i.key].shape));
+  const visible = items.filter((i) => !["nothing visible", "nothing lasting"].includes(store.singles[i.key].shape));
   const pool = visible.length > 20 ? visible : items;
   const groups = (f: (i: Item) => string) => {
     const g = new Map<string, Item[]>();
@@ -1187,11 +1310,31 @@ function choosePairs(items: Item[], place: ReturnType<typeof spots>): Pair[] {
 
 // --- The report ------------------------------------------------------------------
 
-function interacts(id: string) {
+// Features in which B after A holds more or less than A alone plus B alone,
+// beyond twice the two items' noise, a floor, and (for cells) the cells both
+// changed alone, where B covering A explains any count. Then products neither
+// makes alone, 5 cells at least.
+function interaction(id: string): { features: { f: string; d: number }[]; fresh: Record<string, number>; systems: System[] } {
   const p = store.pairs[id];
-  const na = store.noise[p.a];
-  const nb = store.noise[p.b];
-  return SYSTEMS.filter((s) => p.m[s] > 2 * ((na?.[s] ?? 0) + (nb?.[s] ?? 0)) + FLOOR[s]);
+  const A = store.itemRuns[p.a];
+  const B = store.itemRuns[p.b];
+  const out: { f: string; d: number }[] = [];
+  const keys = new Set([...Object.keys(p.F), ...Object.keys(A.F0), ...Object.keys(B.FB), ...Object.keys(A.F1), ...Object.keys(B.F1)]);
+  for (const f of keys) {
+    const v = (x: Features) => x[f] ?? 0;
+    const d = v(p.F) - v(A.F0) - v(B.FB);
+    const noise = Math.abs(v(A.F1) - v(A.F0)) + Math.abs(v(B.F1) - v(B.F0));
+    const sys = FEATURE_SYSTEM(f);
+    const cover = sys === "materials" || sys === "fluids" || sys === "land" || sys === "temperature" ? p.overlap : 0;
+    if (Math.abs(d) > 2 * noise + FEATURE_FLOOR(f) + cover) out.push({ f, d: Math.round(d) });
+  }
+  const fresh = Object.fromEntries(Object.entries(p.fresh).filter(([k, n]) => n >= 5 && !k.endsWith(":none")));
+  const systems = new Set<System>(out.map((x) => FEATURE_SYSTEM(x.f)));
+  for (const k of Object.keys(fresh)) systems.add(k.startsWith("fluid:") ? "fluids" : k.startsWith("gas:") ? "gas" : "materials");
+  return { features: out.sort((x, y) => Math.abs(y.d) - Math.abs(x.d)), fresh, systems: SYSTEMS.filter((sy) => systems.has(sy)) };
+}
+function interacts(id: string): System[] {
+  return interaction(id).systems;
 }
 
 const shapeNow = (key: string) => shapeOf(store.singles[key].effect);
@@ -1259,6 +1402,16 @@ function report(lib: ReturnType<typeof library>, items: Item[], byKey: Map<strin
   const own = ok.filter((i) => Object.keys(store.singles[i.key].effect.mats).some((k) => !BUILTIN_MATERIALS.has(k.split(":")[1]))).length;
   p(`  place a material of their own: ${own} (${pct(own, ok.length)})`);
 
+  const warders = ok.filter((i) => store.singles[i.key].trace.ward);
+  const guards = warders.filter((i) => /ward|shield|barrier|bastion|guard|protect|sanctuar|holy|aegis|last stand|consecrat|hallowed|bless/i.test(i.name));
+  p(
+    `  raise a ward (w.ward at run time): ${warders.length} (${pct(warders.length, ok.length)}), of which ${guards.length} have a name about protection; the others: ${warders
+      .filter((i) => !guards.includes(i))
+      .slice(0, 16)
+      .map((i) => i.name)
+      .join(", ")}`,
+  );
+  out.wards = { warders: warders.map((i) => i.name), guards: guards.map((i) => i.name) };
   // Duplicates
   const vecs = ok.map((i) => ({ i, v: vectorOf(store.singles[i.key].effect) })).filter((x) => x.v.size);
   const parent = new Map<string, string>();
@@ -1294,7 +1447,7 @@ function report(lib: ReturnType<typeof library>, items: Item[], byKey: Map<strin
     own,
     dupPairs,
     clusters: big.slice(0, 10),
-    nothingVisible: ok.filter((i) => ["nothing visible", "only lights and particles"].includes(shapeNow(i.key))).map((i) => i.name),
+    nothingVisible: ok.filter((i) => ["nothing lasting", "only lights and particles"].includes(shapeNow(i.key))).map((i) => i.name),
   };
 
   // INTERACT
@@ -1307,35 +1460,60 @@ function report(lib: ReturnType<typeof library>, items: Item[], byKey: Map<strin
     `\n2. INTERACT: ${sample.length} sampled pairs, ${inter(sample).length} interact (${pct(inter(sample).length, sample.length)}); expected by name: ${inter(expected).length} of ${expected.length}.`,
   );
   p(`  determinism: the same run twice on ${store.determinism.items.length} items differs by ${store.determinism.mismatch} cells or creatures in all.`);
-  const noiseRows = Object.values(store.noise);
+  const noiseRows = Object.values(store.itemRuns).map((r) => {
+    const t: Record<string, number> = Object.fromEntries(SYSTEMS.map((sy) => [sy, 0]));
+    for (const k of new Set([...Object.keys(r.F0), ...Object.keys(r.F1)])) t[FEATURE_SYSTEM(k)] += Math.abs((r.F1[k] ?? 0) - (r.F0[k] ?? 0));
+    return t;
+  });
   const q = (list: number[], f: number) => [...list].sort((x, y) => x - y)[Math.min(list.length - 1, Math.floor(f * list.length))] ?? 0;
   const noise = Object.fromEntries(
     SYSTEMS.map((sy) => [
       sy,
       {
-        median: q(
-          noiseRows.map((r) => r[sy]),
-          0.5,
+        median: Math.round(
+          q(
+            noiseRows.map((r) => r[sy]),
+            0.5,
+          ),
         ),
-        p95: q(
-          noiseRows.map((r) => r[sy]),
-          0.95,
+        p95: Math.round(
+          q(
+            noiseRows.map((r) => r[sy]),
+            0.95,
+          ),
         ),
       },
     ]),
   );
   p(
-    `  noise (the same item on another random stream, ${noiseRows.length} items), median / 95th percentile: ${SYSTEMS.map((sy) => `${sy} ${noise[sy].median}/${noise[sy].p95}`).join(", ")}`,
+    `  noise (the same item on another random stream, ${noiseRows.length} items; summed count differences), median / 95th percentile: ${SYSTEMS.map((sy) => `${sy} ${noise[sy].median}/${noise[sy].p95}`).join(", ")}`,
   );
   p(
-    `  a pair interacts in a system when its difference from A and B composed exceeds twice A's and B's own noise there plus a floor (${SYSTEMS.map((sy) => `${sy} ${FLOOR[sy]}`).join(", ")}).`,
+    "  a pair interacts in a count (cells of a material, of a fluid, on fire, hotter, colder, raised, lowered, creatures by kind and state, voxels, wards) when B after A differs from A alone plus B alone by more than twice the two items' noise in that count, a floor, and the cells both change alone; or when it makes 5 cells or more of something neither makes alone.",
   );
+  const overlaps = sample.map((id) => store.pairs[id].overlap);
+  p(`  cells both items change alone, median ${q(overlaps, 0.5)}, 95th percentile ${q(overlaps, 0.95)}`);
   const bySys = new Map<string, number>();
   for (const id of inter(sample)) for (const s of interacts(id)) bySys.set(s, (bySys.get(s) ?? 0) + 1);
   p(
     `  by system (a pair may count in several): ${[...bySys]
       .sort((a, b) => b[1] - a[1])
       .map(([k, v]) => `${k} ${v} (${pct(v, sample.length)})`)
+      .join(", ")}`,
+  );
+  const withFresh = sample.filter((id) => Object.keys(interaction(id).fresh).length);
+  const creatureOnly = inter(sample).filter((id) => interacts(id).every((sy) => sy === "creatures"));
+  const smallCreatureOnly = creatureOnly.filter((id) => interaction(id).features.every((x) => Math.abs(x.d) < 5));
+  p(
+    `  of these: ${withFresh.length} make something neither makes alone (${pct(withFresh.length, sample.length)}); ${creatureOnly.length} differ only in creatures (${pct(creatureOnly.length, sample.length)}), ${smallCreatureOnly.length} of them by fewer than 5 creatures each. Without those ${smallCreatureOnly.length}: ${inter(sample).length - smallCreatureOnly.length} (${pct(inter(sample).length - smallCreatureOnly.length, sample.length)}).`,
+  );
+  const freshNames = new Map<string, number>();
+  for (const id of [...sample, ...expected]) for (const k of Object.keys(interaction(id).fresh)) freshNames.set(k, (freshNames.get(k) ?? 0) + 1);
+  p(
+    `  what pairs make that neither makes alone (pairs): ${[...freshNames]
+      .sort((x, y) => y[1] - x[1])
+      .slice(0, 12)
+      .map(([k, v]) => `${k} ${v}`)
       .join(", ")}`,
   );
   const interBy = (f: (i: Item) => string) => {
@@ -1377,21 +1555,36 @@ function report(lib: ReturnType<typeof library>, items: Item[], byKey: Map<strin
       .map(([k, v]) => `${k} ${v.interact}/${v.n}`)
       .join(", ")}`,
   );
+  const label = (f: string) =>
+    f
+      .replace(/^mat:(ground|cover):/, "")
+      .replace(/^(fluid|gas|born):/, "")
+      .replace(/^own:/, "");
   const describe = (id: string) => {
-    const x = store.pairs[id];
-    const sys = interacts(id);
-    const d = Object.entries(x.delta)
-      .filter(([k]) => !/^[-+]none$/.test(k))
-      .slice(0, 4)
-      .map(([k, v]) => `${k} ${v}`)
+    const x = interaction(id);
+    const parts = [
+      ...Object.entries(x.fresh).map(([k, n]) => `new ${label(k.replace(/^(ground|cover|fluid|gas):/, ""))} ${n} cells`),
+      ...x.features.slice(0, 4).map((y) => `${label(y.f)} ${y.d > 0 ? "+" : ""}${y.d}`),
+    ];
+    if (x.systems.length) return `interacts through ${x.systems.join(", ")}: ${parts.join(", ")}`;
+    const pr = store.pairs[id];
+    const top = Object.entries(store.itemRuns[pr.b].FB)
+      .filter(([k]) => !["life", "hp", "volume"].includes(k))
+      .sort((u, v) => Math.abs(v[1]) - Math.abs(u[1]))
+      .slice(0, 3)
+      .map(([k, v]) => `${label(k)} ${v > 0 ? "+" : ""}${Math.round(v)}`)
       .join(", ");
-    return sys.length ? `interacts through ${sys.join(", ")}: ${d}` : `no interaction beyond noise${d ? ` (largest differences: ${d})` : ""}`;
+    return `no interaction beyond noise (B alone: ${top || "nothing measured"}; cells both change: ${pr.overlap})`;
   };
   p("  expected pairs:");
   for (const id of expected)
     p(`    [${store.pairs[id].why}] ${byKey.get(store.pairs[id].a)!.name} then ${byKey.get(store.pairs[id].b)!.name}: ${describe(id)}`);
   out.interact = {
     noise,
+    withFresh: withFresh.length,
+    creatureOnly: creatureOnly.length,
+    smallCreatureOnly: smallCreatureOnly.length,
+    freshNames: Object.fromEntries(freshNames),
     sample: sample.length,
     sampleInteract: inter(sample).length,
     expected: expected.length,
@@ -1406,14 +1599,12 @@ function report(lib: ReturnType<typeof library>, items: Item[], byKey: Map<strin
       b: byKey.get(store.pairs[id].b)!.name,
       systems: interacts(id),
       line: describe(id),
-      m: store.pairs[id].m,
     })),
     sampleList: sample.map((id) => ({
       a: byKey.get(store.pairs[id].a)!.name,
       b: byKey.get(store.pairs[id].b)!.name,
       systems: interacts(id),
-      m: store.pairs[id].m,
-      delta: store.pairs[id].delta,
+      line: describe(id),
     })),
   };
 
@@ -1424,20 +1615,49 @@ function report(lib: ReturnType<typeof library>, items: Item[], byKey: Map<strin
   const readCalls: Record<string, number> = {};
   for (const x of st) for (const k of Object.keys(x.s.reads)) readCalls[k] = (readCalls[k] ?? 0) + 1;
   const actions = (t: Record<string, number>) => Object.keys(t).filter((k) => !READS.has(k.replace(/^c\./, "")) && !HELPERS.has(k.split(":")[0]));
+  // What changes the island, apart from sounds, lights and drawings.
+  const VISUAL = new Set([
+    "sound",
+    "particle",
+    "burst",
+    "flash",
+    "light",
+    "body",
+    "beam",
+    "shockwave",
+    "shake",
+    "camera",
+    "cameraBack",
+    "darken",
+    "tint",
+    "circle",
+    "ring",
+    "draw",
+    "line",
+    "explode-visual",
+  ]);
+  const deeds = (t: Record<string, number>) => actions(t).filter((k) => !VISUAL.has(k.split(":")[0]) && !k.startsWith("c."));
+  const onCreatures = (t: Record<string, number>) =>
+    Object.keys(t).filter((k) => k.startsWith("c.") && !READS.has(k.slice(2)) && !["c.x", "c.y", "c.kind"].includes(k));
+  const sameSet = (sets: Set<string>[]) => sets.every((s) => s.size === sets[0].size && [...s].every((k) => sets[0].has(k)));
   const kindAdapt: string[] = [];
+  const whoAdapt: string[] = [];
   const amountAdapt: string[] = [];
   const same: string[] = [];
   const readsAtRun: string[] = [];
   for (const i of ok) {
     const t = store.spots[i.key];
+    const where = ["village", "water", "rock"].map((w) => t[w] ?? {});
     if (Object.keys(t.village).some((k) => READS.has(k))) readsAtRun.push(i.name);
-    const sets = ["village", "water", "rock"].map((w) => new Set(actions(t[w] ?? {})));
-    const sameSet = sets.every((s) => s.size === sets[0].size && [...s].every((k) => sets[0].has(k)));
-    if (!sameSet) {
+    if (!sameSet(where.map((x) => new Set(deeds(x))))) {
       kindAdapt.push(i.name);
       continue;
     }
-    const counts = ["village", "water", "rock"].map((w) => actions(t[w] ?? {}).reduce((s, k) => s + t[w][k], 0));
+    if (!sameSet(where.map((x) => new Set(onCreatures(x))))) {
+      whoAdapt.push(i.name);
+      continue;
+    }
+    const counts = where.map((x) => [...deeds(x), ...onCreatures(x)].reduce((s, k) => s + x[k], 0));
     const lo = Math.min(...counts);
     const hi = Math.max(...counts);
     if (hi > lo * 1.2 + 2) amountAdapt.push(i.name);
@@ -1454,12 +1674,13 @@ function report(lib: ReturnType<typeof library>, items: Item[], byKey: Map<strin
   );
   p(`  at run time at the village: ${readsAtRun.length} asked the island something (${pct(readsAtRun.length, ok.length)}).`);
   p(
-    `  on water, village and rock: ${kindAdapt.length} do different kinds of things (${pct(kindAdapt.length, ok.length)}), ${amountAdapt.length} the same things in other amounts (${pct(amountAdapt.length, ok.length)}), ${same.length} act the same (${pct(same.length, ok.length)}).`,
+    `  on water, village and rock: ${kindAdapt.length} change the island in different ways (${pct(kindAdapt.length, ok.length)}), ${whoAdapt.length} differ only in what they do to the creatures they find (${pct(whoAdapt.length, ok.length)}), ${amountAdapt.length} the same things in other amounts (${pct(amountAdapt.length, ok.length)}), ${same.length} act the same (${pct(same.length, ok.length)}).`,
   );
   p(`  shape changes with the spot (engine and program together): ${shapeMoves} (${pct(shapeMoves, ok.length)})`);
   p(`  adapt in kind, e.g.: ${kindAdapt.slice(0, 10).join(", ")}`);
+  p(`  only what they do to the creatures they find, e.g.: ${whoAdapt.slice(0, 10).join(", ")}`);
   p(`  act the same, e.g.: ${same.slice(0, 10).join(", ")}`);
-  out.smart = { n: ok.length, readsAny, branchesAny, readCalls, readsAtRun: readsAtRun.length, kindAdapt, amountAdapt, same, shapeMoves };
+  out.smart = { n: ok.length, readsAny, branchesAny, readCalls, readsAtRun: readsAtRun.length, kindAdapt, whoAdapt, amountAdapt, same, shapeMoves };
 
   // Cost
   const lm = liveModels();
@@ -1502,11 +1723,10 @@ function report(lib: ReturnType<typeof library>, items: Item[], byKey: Map<strin
     static: statics(i.code),
   }));
   // Films: 6 pairs that interact the most, 8 expected pairs that do not, 6 near duplicates.
-  const beyond = (id: string) =>
-    interacts(id).reduce(
-      (t, sy) => t + store.pairs[id].m[sy] / (FLOOR[sy] + 2 * ((store.noise[store.pairs[id].a]?.[sy] ?? 0) + (store.noise[store.pairs[id].b]?.[sy] ?? 0))),
-      0,
-    );
+  const beyond = (id: string) => {
+    const x = interaction(id);
+    return x.systems.length * 10 + Object.values(x.fresh).reduce((t, n) => t + Math.log1p(n), 0) + x.features.length;
+  };
   const used = new Set<string>();
   const fresh = (a: string, b: string) => !used.has(a) && !used.has(b);
   const films: { n: number; mode: "pair" | "dup"; label: string; line: string; a: Item; b: Item }[] = [];
