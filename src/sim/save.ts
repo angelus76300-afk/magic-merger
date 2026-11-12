@@ -1,7 +1,7 @@
 import { loadedState } from "./artifacts";
 import { readRoad, restoreDecks, type Road } from "./roads";
 import { cellsOf, readSite, type Site } from "./sites";
-import { MAX_STONES, readTroubles, type Stone, type Trouble } from "./troubles";
+import { MAX_STONES, readTroubles, type Stone, type Trouble, type TroubleKind } from "./troubles";
 import { dressVillages, restoreCreature, saveMind, KINDS, type Creature, type SavedMind } from "./creatures";
 import { MARKS, MAX_MARKS, MAX_STORY, type Mark, type StoryLine, type Village } from "./kin";
 import { BUILTIN, C, BUILTIN_BEFORE_4_4_5, FIRST_JOB, LAST_JOB, LAYERS, type Layer } from "./materials";
@@ -61,7 +61,7 @@ export interface SavedWorld {
   // Houses and buildings going up, and the work done on each (4.9 part 2).
   sites?: { i: number; kind: number; work: number; logs: number }[];
   // The island needs you (troubles.ts): absent on a save from before, and on an island that never had one.
-  troubles?: { n: number; next: number; now: Trouble | null; stones: Stone[] };
+  troubles?: { n: number; next: number; now: Trouble | null; stones: Stone[]; last?: TroubleKind };
 }
 
 export function saveWorld(world: World, owners: Map<string, string>): SavedWorld {
@@ -126,7 +126,15 @@ export function saveWorld(world: World, owners: Map<string, string>): SavedWorld
     ...(world.patched.size ? { patched: [...world.patched].slice(0, 4000) } : {}),
     ...(world.roads.length ? { roads: world.roads.slice(0, MAX_ROADS) } : {}),
     ...(world.troubles || world.stones.length
-      ? { troubles: { n: world.troubles, next: Math.round(world.troubleNext), now: world.trouble, stones: world.stones.slice(0, MAX_STONES) } }
+      ? {
+          troubles: {
+            n: world.troubles,
+            next: Math.round(world.troubleNext),
+            now: world.trouble,
+            stones: world.stones.slice(0, MAX_STONES),
+            ...(world.troubleLast ? { last: world.troubleLast } : {}),
+          },
+        }
       : {}),
     ...(world.sites.length
       ? { sites: world.sites.slice(0, MAX_SITES).map((t) => ({ i: t.i, kind: t.kind, work: Math.round(t.work * 10) / 10, logs: t.logs })) }
@@ -316,6 +324,7 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
     world.troubleNext = tr.next;
     world.trouble = tr.now;
     world.stones = tr.stones;
+    world.troubleLast = tr.last;
   }
   // 4.9 part 2: sites going up; a site cell with no site, or a site whose
   // cells are no longer a site, is cleared.

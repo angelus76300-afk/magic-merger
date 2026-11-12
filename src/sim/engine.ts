@@ -217,7 +217,8 @@ export class Engine {
     this.view.between = 1;
     this.pacer.push(since, now);
     const t2 = performance.now();
-    this.stats.push({ frame: since, sim: this.simMs, render: t2 - t1 });
+    const orbit = this.view.orbit;
+    this.stats.push({ frame: since, sim: this.simMs, render: t2 - t1, view: orbit.eye ? "eyes" : orbit.chasing ? "behind" : "sky" });
     this.simMs = 0;
     this.stats.counts = {
       ...this.view.counts(),

@@ -52,15 +52,16 @@ import { Domes } from "./domes";
 import { keyLevel, keyX, keyY } from "../voxelkey";
 import { LOOKS, biomeAt } from "../land";
 import { DAMP, HEART, HOUSE_STYLES, R as RARE, STYLE_BITS, TREE_STYLES, type TreeStyle } from "../ecology";
-import { NEAR_CELLS, nearTreeModel } from "./near";
+import { FAR_CELLS, NEAR_CELLS, farTreeModel, nearTreeModel } from "./near";
 import { GLOWING, VARIANTS, floraModels } from "./flora";
 import { Buildings } from "./buildings";
 import { WonderModels } from "./wonders";
 import { PropModels } from "./props";
 import { valueNoise } from "../noise";
 import { LAB_SKY, Sky } from "./sky";
-import { eyeFogRange, fogRange } from "./fog";
+import { COVER_STEP, COVER_TURN, EYE_DRAW, eyeFogRange, eyeKeepsCover, fogRange } from "./fog";
 import { clearEye } from "../eyes";
+import { ridden } from "../possess";
 import { solidCovers } from "../paths";
 
 // What a spell's darkness pulls the sky toward.
@@ -363,8 +364,23 @@ export class VoxelView {
     }
     this.terrain.rebuild(this.firstBuild);
     this.firstBuild = false;
+    // In the eye view the land past the mist is not drawn (fog.ts EYE_DRAW).
+    const eye = this.orbit.eye;
+    const cut = eye && this.eyeCuts ? eye : null;
+    this.terrain.showWithin(cut ? { x: cut.x, y: cut.y, r: EYE_DRAW } : null);
     this.lap("terrain");
-    if ((this.terrain.coversChanged || this.roadsDrawn !== world.roadsVersion || this.sitesDrawn !== world.sitesVersion) && time - this.lastCovers > 0.25) {
+    // The covers again when the eye has gone far enough that the drawn ring around it must move, or
+    // when it leaves the eye view (every cover is drawn again, from the sky).
+    const around = this.coversAround;
+    const moved = cut
+      ? !around ||
+        Math.hypot(cut.x - around.x, cut.y - around.y) > COVER_STEP ||
+        Math.abs(Math.atan2(Math.sin(cut.yaw - around.yaw), Math.cos(cut.yaw - around.yaw))) > COVER_TURN
+      : around !== null;
+    if (
+      moved ||
+      ((this.terrain.coversChanged || this.roadsDrawn !== world.roadsVersion || this.sitesDrawn !== world.sitesVersion) && time - this.lastCovers > 0.25)
+    ) {
       this.terrain.coversChanged = false;
       this.lastCovers = time;
       this.placeCovers();
@@ -406,6 +422,32 @@ export class VoxelView {
     const now = performance.now();
     (this.profile[part] ??= []).push(now - this.lapAt);
     this.lapAt = now;
+  }
+
+  // For the checks (scripts/eyes-perf.mjs): the triangles of what is drawn, by kind of mesh, as
+  // three.js would draw them now (instances counted, meshes outside the view's frustum left out).
+  triangleBreakdown(): Record<string, number> {
+    const cam = this.orbit.camera;
+    cam.updateMatrixWorld();
+    const m = new Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+    const fr = new Frustum().setFromProjectionMatrix(m);
+    const out: Record<string, number> = {};
+    const names = new Map<object, string>();
+    for (const [k, v] of this.covers) names.set(v, `cover:${k}`);
+    for (const [k, v] of this.nearMeshes) names.set(v, `near:${k}`);
+    names.set(this.decorMesh, "decor");
+    this.scene.traverseVisible((o) => {
+      const mesh = o as Mesh;
+      if (!(mesh as { isMesh?: boolean }).isMesh || !mesh.geometry) return;
+      if (mesh.frustumCulled && !fr.intersectsObject(mesh)) return;
+      const g = mesh.geometry;
+      const n = g.index ? g.index.count / 3 : (g.attributes.position?.count ?? 0) / 3;
+      const inst = (mesh as InstancedMesh).isInstancedMesh ? (mesh as InstancedMesh).count : 1;
+      const key =
+        names.get(mesh) ?? (mesh.name || ((mesh as InstancedMesh).isInstancedMesh ? "other instanced" : n > 2000 ? "big mesh (land, water)" : "small mesh"));
+      out[key] = (out[key] ?? 0) + Math.round(n * inst);
+    });
+    return out;
   }
 
   // What the last frame drew, for the HUD.
@@ -490,7 +532,11 @@ export class VoxelView {
   private coverMesh(key: string, need: number): InstancedMesh {
     const mesh = this.covers.get(key);
     if (mesh && need <= mesh.instanceMatrix.count) return mesh;
-    const boxes = MODELS[key] ?? FLORA_MODELS[key] ?? MODELS.block;
+    // A far tree of the eye view (placeCovers): its two box model.
+    const far = key.startsWith("far:");
+    const own = far ? key.slice(4) : key;
+    const boxes0 = MODELS[own] ?? FLORA_MODELS[own] ?? MODELS.block;
+    const boxes = far ? farTreeModel(boxes0) : boxes0;
     const geometry = mesh ? mesh.geometry : geometryOf(boxes);
     const bigger = new InstancedMesh(geometry, GLOWING.has(key) ? this.glowMaterial : this.coverMaterial, Math.max(64, Math.ceil(need * 1.5)));
     withColors(bigger);
@@ -559,11 +605,29 @@ export class VoxelView {
     return best >= 0 ? HOUSE_STYLES[list[best].style] : null;
   }
 
+  // The eye view's cuts (the second pass): the mist at 28 to 80 cells, nothing drawn past it or
+  // behind the look, the near trees within a budget. Off only for a before and after in the same
+  // scene (scripts/eyes-perf.mjs, frame.ts __mmEyes cuts).
+  eyeCuts = true;
+
+  // Where the eye was when the covers were last placed (null: placed whole, from the sky).
+  private coversAround: { x: number; y: number; yaw: number } | null = null;
+
   private placeCovers(): void {
     const { world } = this;
     const lists = new Map<string, number[]>();
     for (const key of this.covers.keys()) lists.set(key, []);
+    // In the eye view, only the covers within the mist and a step beyond it (the eye may walk
+    // COVER_STEP cells before they are placed again), and only those ahead of the look, within
+    // COVER_WEDGE of it either side (it may turn COVER_TURN before they are placed again; the view
+    // is about 38 degrees either side): the trees of the far island and behind the eye cost nothing.
+    // Those within NEAR_ALL cells are always drawn, for a quick turn.
+    const eye = this.eyeCuts ? this.orbit.eye : null;
+    this.coversAround = eye ? { x: eye.x, y: eye.y, yaw: eye.yaw } : null;
+    const lx = eye ? Math.cos(eye.yaw) : 0;
+    const ly = eye ? Math.sin(eye.yaw) : 0;
     const add = (key: string, i: number) => {
+      if (eye && !eyeKeepsCover((i % world.w) + 0.5 - eye.x, Math.floor(i / world.w) + 0.5 - eye.y, lx, ly)) return;
       let list = lists.get(key);
       if (!list) lists.set(key, (list = []));
       list.push(i);
@@ -587,7 +651,17 @@ export class VoxelView {
         } else if (world.ground[i] === 0 && world.depth[i] === 0 && cellHash(i) % 100 < 2) add("tuft", i);
         continue;
       }
-      add(this.coverKey(i, c, trees, builtinCovers), i);
+      const key = this.coverKey(i, c, trees, builtinCovers);
+      // A tree far from the eye: its far model (near.ts farTreeModel).
+      if (eye && isTree(key)) {
+        const dx = (i % world.w) + 0.5 - eye.x;
+        const dy = Math.floor(i / world.w) + 0.5 - eye.y;
+        if (dx * dx + dy * dy > FAR_CELLS * FAR_CELLS) {
+          add(`far:${key}`, i);
+          continue;
+        }
+      }
+      add(key, i);
     }
     // 4.9: pegs every few cells along a road marked out and not laid yet.
     for (const r of world.roads)
@@ -609,8 +683,7 @@ export class VoxelView {
       // A tree of the flora kit has boxes drawn over it near the eye (near.ts).
       const slot = key.startsWith("tree:") ? this.treeKeys.push(key) - 1 : -1;
       if (slot >= 0) for (let k = 0; k < cells.length; k++) this.treeSlots.set(cells[k], slot * 0x100000 + k);
-      const tree =
-        key.startsWith("tree") || key === "pine" || key === "palm" || key === "snowpine" || key === "jungle" || key === "willow" || key === "juniper";
+      const tree = isTree(key.startsWith("far:") ? key.slice(4) : key);
       const house = key === "house" || key.startsWith("house-");
       const tinted = key === "block" || key === "slab" || key === "tuft" || key === "bloom";
       for (let k = 0; k < cells.length; k++) {
@@ -690,16 +763,23 @@ export class VoxelView {
       const ex = Math.floor(eye.x);
       const ey = Math.floor(eye.y);
       const R = NEAR_CELLS;
+      // The nearest NEAR_BUDGET trees only (the eye view, second pass): in thick woods 80 trees
+      // within 12 cells drew 35 000 triangles of near models, most of them hidden behind the first row.
+      const found: [number, number][] = [];
       for (let y = Math.max(0, ey - R); y <= Math.min(world.h - 1, ey + R); y++)
         for (let x = Math.max(0, ex - R); x <= Math.min(world.w - 1, ex + R); x++) {
-          if ((x - ex) * (x - ex) + (y - ey) * (y - ey) > R * R) continue;
+          const d2 = (x - ex) * (x - ex) + (y - ey) * (y - ey);
+          if (d2 > R * R) continue;
           const slot = this.treeSlots.get(y * world.w + x);
-          if (slot === undefined) continue;
-          const key = this.treeKeys[Math.floor(slot / 0x100000)];
-          let list = lists.get(key);
-          if (!list) lists.set(key, (list = []));
-          list.push(slot % 0x100000);
+          if (slot !== undefined) found.push([d2, slot]);
         }
+      if (found.length > NEAR_BUDGET && this.eyeCuts) found.sort((a, b) => a[0] - b[0]).length = NEAR_BUDGET;
+      for (const [, slot] of found) {
+        const key = this.treeKeys[Math.floor(slot / 0x100000)];
+        let list = lists.get(key);
+        if (!list) lists.set(key, (list = []));
+        list.push(slot % 0x100000);
+      }
     }
     for (const [key, slots] of lists) {
       let mesh = this.nearMeshes.get(key);
@@ -833,7 +913,7 @@ export class VoxelView {
     }
     // The mist moves back with the camera, so the island keeps its colours
     // when zoomed out (fog.ts).
-    const range = o.eye ? eyeFogRange(fogStep) : fogRange(Math.max(this.world.w, this.world.h), o.dist, fogStep);
+    const range = o.eye ? eyeFogRange(fogStep, this.eyeCuts) : fogRange(Math.max(this.world.w, this.world.h), o.dist, fogStep);
     const fog = this.scene.fog as Fog;
     fog.near = range.near;
     fog.far = range.far;
@@ -944,7 +1024,15 @@ export class VoxelView {
     // Eyes sit a little under the top of the head (a hat or antlers above them),
     // kept clear of walls, trunks and steps of ground (eyes.ts clearEye): pressed
     // to a cliff or a house the view was one flat colour (the playtest of 12 November).
-    const e = clearEye(x, y, ground + c.z + Math.max(0.35, rig.height * size * 0.88), this.groundAt, this.solidCell);
+    // A fish sees from where it swims, under the surface (the eye view, second pass).
+    const wet = k.aquatic && world.depth[world.idx(Math.max(0, Math.min(world.w - 1, x)), Math.max(0, Math.min(world.h - 1, y)))] > 0.3;
+    const head = wet
+      ? this.groundAt(x, y) -
+        fishDepth(c, world.depth[world.idx(Math.max(0, Math.min(world.w - 1, x)), Math.max(0, Math.min(world.h - 1, y)))]) -
+        size * 0.15 +
+        rig.height * size * 0.6
+      : ground + c.z + Math.max(0.35, rig.height * size * 0.88);
+    const e = clearEye(x, y, head, this.groundAt, this.solidCell);
     this.orbit.eyeAt(e.x, e.y, e.h);
     this.eyeCell.x = e.x;
     this.eyeCell.y = e.y;
@@ -1061,13 +1149,15 @@ export class VoxelView {
       // levels (walk.ts).
       const underwater = k.aquatic && !c.dead && world.depth[i] > 0.3 && (world.fluid[i] === FLUID.WATER || world.fluid[i] === FLUID.ICE);
       const ground = underwater ? this.groundAt(rx, ry) : easeGround(g, walkGround(world, rx, ry), time - (1 - a) * TICK);
-      const y = underwater ? ground - Math.min(0.7, world.depth[i] * 0.5) - size * 0.15 : ground + c.z;
+      const y = underwater ? ground - fishDepth(c, world.depth[i]) - size * 0.15 : ground + c.z;
       const p = this.toScene(rx, ry, y);
       this.sphere.center.set(p.x, p.y + rig.height * size * 0.5, p.z);
       this.sphere.radius = Math.max(rig.height, 1.4) * size;
       // The one the player sees from is not drawn: its own head would fill the view.
       // Nor anyone closer than a cell to the eye: a face or a back filled the screen.
       if (this.orbit.eye && (c.id === this.eyeId || Math.hypot(rx - this.eyeCell.x, ry - this.eyeCell.y) < 1.1)) continue;
+      // Nor past the mist (fog.ts EYE_DRAW): they would be drawn in its colour.
+      if (this.orbit.eye && this.eyeCuts && Math.hypot(rx - this.eyeCell.x, ry - this.eyeCell.y) > EYE_DRAW) continue;
       const seen = this.frustum.intersectsSphere(this.sphere);
 
       // The mark over its head, then the figure, when the camera sees it.
@@ -1741,4 +1831,23 @@ function driftColor(x: number, y: number, seed: number): number {
 function scaleHex(c: number, k: number): number {
   const ch = (s: number) => Math.min(255, Math.round(((c >> s) & 255) * k));
   return (ch(16) << 16) | (ch(8) << 8) | ch(0);
+}
+
+// A cover drawn as a tree: leaned, sized and tinted each its own (placeCovers).
+function isTree(key: string): boolean {
+  return key.startsWith("tree") || key === "pine" || key === "palm" || key === "snowpine" || key === "jungle" || key === "willow" || key === "juniper";
+}
+
+// The eye view, second pass: at most this many trees near the eye get their near model (near.ts).
+// The covers around it are placed again each time it has gone COVER_STEP cells (fog.ts), a few
+// milliseconds, about once a second at a run.
+const NEAR_BUDGET = 36;
+
+// How deep a fish swims under the surface: its own half of the water down to
+// 0.7; the one the player is, where its look dived it (drive.ts dive, 0 just
+// under the surface, 1 near the bed).
+function fishDepth(c: Creature, depth: number): number {
+  const r = ridden(c);
+  if (!r) return Math.min(0.7, depth * 0.5);
+  return 0.2 + r.dive * Math.max(0, depth * 0.85 - 0.2);
 }

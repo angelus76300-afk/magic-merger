@@ -1,4 +1,4 @@
-import { addDeed, countTrouble, setTroublesOn, troubleCounts, troublesOn } from "./troubles";
+import { addDeed, countTrouble, rememberLine, rememberedLine, setTroublesOn, troubleCounts, troublesOn } from "./troubles";
 import type { ChronicleDigest } from "../shared/chronicle";
 import { elementKey } from "../shared/elements";
 import { castRequest } from "./cast-request";
@@ -29,6 +29,8 @@ import { isFrozen } from "./device-save";
 import { BIG_SIZES, readHeadroom, sizesOffered, writeHeadroom } from "./headroom";
 import { DEFAULT_LAND, MIXED_FROM, readChoice as readLandChoice, type LandChoice } from "./sim/land-options";
 import { newerSave } from "./sim/save-guard";
+import { castRange } from "./sim/eyes";
+import { armGhostGuard, installGhostGuard } from "./ghost";
 
 export { WORLD_AT_KEY, WORLD_KEY } from "./island-store";
 const MUTE_KEY = "magic-merger.muted";
@@ -154,6 +156,17 @@ export class WorldHost {
 
   init(): void {
     window.addEventListener("message", (e) => this.onMessage(e));
+    installGhostGuard(document);
+    // A trouble running when the page was last closed: the board says it at once (the World frame
+    // corrects it when it loads, and clears it if the island has none).
+    const was = rememberedLine();
+    const board = document.getElementById("board-trouble");
+    if (was && board) {
+      board.textContent = was.text;
+      board.hidden = false;
+      this.troubleBegan = was.began;
+    }
+    this.guide.quiet = () => this.troubleBegan > 0;
     // Another tab shows the World now: this one stops saving its island.
     this.island?.addEventListener("message", (e: MessageEvent<unknown>) => {
       if (!e.data || (e.data as { claim?: unknown }).claim === undefined) return;
@@ -688,9 +701,19 @@ export class WorldHost {
             line.textContent = msg.text;
             line.hidden = false;
           }
+          // Kept on this device, so the board says it after a reload before the World is opened.
+          rememberLine(msg.text, this.troubleBegan);
+          // The first drag tip never covers a trouble's line.
+          this.guide.hideHint();
           break;
         }
         if (line) line.hidden = true;
+        rememberLine(null, 0);
+        // A new island or a reload: nothing ended, the line is only cleared.
+        if (!msg.text) {
+          this.troubleBegan = 0;
+          break;
+        }
         toast(msg.text);
         const saved = msg.outcome === "saved" && !!msg.key && !!this.store.get(msg.key);
         if (saved) addDeed(msg.key!, msg.text);
@@ -842,6 +865,8 @@ export class WorldHost {
     this.saving = this.saving.then(() => this.writeIslandNow(data));
   }
   private async writeIslandNow(data: SavedWorld): Promise<void> {
+    // An island saved with no trouble running has no line to remember.
+    if (!data.troubles?.now) rememberLine(null, 0);
     if (!this.owner || isFrozen() || this.newerIsland) return;
     if (!this.island && readAt() !== this.islandAt) return;
     let value: string;
@@ -989,7 +1014,7 @@ export class WorldHost {
       this.send({ type: "troubles", on: box.checked });
     });
     const words = document.createElement("span");
-    words.textContent = "Troubles come to my villages (a fire in the woods, for a start). Off: no trouble comes by itself.";
+    words.textContent = "Troubles come to my villages (a fire in the woods, the water rising). Off: no trouble comes by itself.";
     troubles.append(box, words);
     d.replaceChildren(title, grid, hint, fresh, troubles, warn, actions);
     d.showModal();
@@ -1424,7 +1449,7 @@ export class WorldHost {
       else if (this.writing.has(key)) text = `The grimoire is writing ${name}… it will be ready in a moment.`;
       else if (this.preparing.has(key)) text = `Preparing ${name}… the first cast of a spell takes a moment.`;
       else if (this.request(key) && this.riding)
-        text = `Tap the island to ${this.store.get(key)?.element.kind === "artifact" ? "place" : "cast"} ${name} from where you stand, up to 14 steps away.`;
+        text = `Tap the island to ${this.store.get(key)?.element.kind === "artifact" ? "place" : "cast"} ${name} from where you stand, up to ${castRange(this.store.get(key)?.element.tier)} steps away.`;
       else if (this.request(key))
         text = `Tap the island to ${this.store.get(key)?.element.kind === "artifact" ? "place" : "cast"} ${name}. Tap it again to put it away and look at creatures.`;
       else text = `${name} is not ready yet.`;
@@ -1437,6 +1462,10 @@ export class WorldHost {
     if (on === this.eyes) return;
     this.eyes = on;
     document.body.classList.toggle("eyes", on);
+    // Leaving the eye view (Let go, Behind) brings the header back under the finger that pressed
+    // the button in the island's frame: the click its touch sends after lands on the header's
+    // Sign in (the playtest of 12 November opened the account dialog). Swallowed (ghost.ts).
+    if (!on) armGhostGuard(performance.now());
     this.hotSent = "";
     if (on) {
       this.guide.hideHint();
