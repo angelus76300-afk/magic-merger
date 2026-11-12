@@ -25,6 +25,7 @@ import {
   silentBeds,
   type BedLevels,
 } from "../src/sim/ambience";
+import { Engine } from "../src/sim/engine";
 import { C, F } from "../src/sim/materials";
 import { daylight } from "../src/sim/daylight";
 import {
@@ -1111,6 +1112,16 @@ check(!castOwns(120, true), "two minutes on, a sound with no place is never put 
   ];
   const distinct = new Set(many.map((n) => nameMotif(n).join())).size;
   check(distinct >= 15, `40 common names have ${distinct} motifs between them (at least 15)`);
+}
+
+// The World's engine shuts its sound down when it is replaced (#91, the review of 12 November: the
+// checks above call SpellSound.dispose() themselves, and the one line in Engine.dispose() that calls
+// it could be removed with every check still green).
+{
+  const done: string[] = [];
+  const fake = { stop: () => done.push("stop"), view: { dispose: () => done.push("view") }, sound: { dispose: () => done.push("sound") } };
+  Engine.prototype.dispose.call(fake as unknown as Engine);
+  check(done.includes("sound"), `an engine that is disposed shuts its sound down (did: ${done.join(", ")})`);
 }
 
 console.log(`sound: ${passes} checks passed${failures ? `, ${failures} failed` : ""}`);
