@@ -1110,3 +1110,17 @@ A village saved by an item raises a stone to it by its plaza, one per village; a
 ### Kept and counted
 
 The save gains one field, `troubles` (how many, when the next may start, the one running, the stones), absent on a save from before and read back field by field. Stored spells are not touched. The number the update is held to: the share of troubles answered by an item first made after the trouble began (three counts on the device, sent with the perf sample when the HUD is on). Before: nothing, by construction. Target 30%, a guess; under 10% means it is a show and not a join.
+
+## Weather that crosses the island (11 November 2026)
+
+The owner, 11 November: "it seems to be raining for too long in the entire biome, and when we move over another one it can change... we should instead see some sort of cloud shape or just moving zone that moves across the map and that is not based on what the camera is looking at", and "rain should also put out fires".
+
+Rain and snow are fronts (`weather.ts`): a round mass of cloud that enters the island upwind, crosses it with the wind in 170 seconds and leaves. A new one may be born every 100 seconds, with the odds of the land at the middle of its way (rain over forest, snow over tundra, almost never over desert), a little raised, since a front wets a fifth of the island where the old weather rained on a whole land. A front is a function of the island's seed and the time, as the weather of 4.4 was: nothing is saved. Measured over an hour on a rainy island: part of the island is dry in 93% of the moments a front is over it, 15% of the island is wet on average, and no spot is rained on for more than 55 seconds at a time (it was two minutes over a whole land). Fog stays a region's own and does not travel.
+
+Seen from afar a front is sixty grey puffs over the place where it rains. The grey sky, the mist and the falling drops are for a camera under it: full up close, gone from where the whole island is seen.
+
+Rain is real on the player's island (`world.weather`, set by the World frame for the sandbox): it puts out what burns under it faster than a fire grows, and cools what was hot. A front over a wildfire is the island's own answer: under hard rain the wind lights nothing, and the trouble ends as "the rain put out the fire by Kapan". A challenge, a spell's test run and every script have no weather, so they play the same under any sky, as before.
+
+### A big spell lands in one go
+
+The owner, the same day: when a big spell like Apocalypse is used, "the rendering is bad, like by sections, and doesn't update all at once". The land is drawn in chunks, and changed chunks were redrawn for three milliseconds a frame, so a whole island took seconds, piece by piece. When ten chunks or more changed at once, they are now all redrawn in that frame: one long frame under the spell's flash. Not twice within a second, and with eight milliseconds a frame while a backlog lasts, so a fire that spreads everywhere never stalls every frame.

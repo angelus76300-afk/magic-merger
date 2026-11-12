@@ -9,6 +9,7 @@ import { C } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
 import { Runtime } from "../src/sim/runtime";
 import { loadWorld, saveWorld } from "../src/sim/save";
+import { WARD } from "../src/sim/wards";
 import { stepHeadless } from "../src/sim/tick";
 import { fireOf, noteCast, readTroubles, startWildfire, stoneAt, stoneLine, troubleLine, type TroubleEnd } from "../src/sim/troubles";
 import { raiseWonders } from "../src/sim/wonderbuild";
@@ -110,6 +111,32 @@ export function troubleChecks(check: Check): void {
       "troubles: such casts were noted, and the fire went on to the houses",
       t.casts.length > 0 && t.stage === 3,
       `${t.casts.length} casts, stage ${t.stage}`,
+    );
+    storyOn(null);
+  }
+  // 2c. A village that sat under a shield while the woods burned was held, not saved: no stone (asked in the review).
+  {
+    const { world, rt } = island(2026);
+    const t = startWildfire(world, seeded(2026))!;
+    const center = Math.round(t.vy) * world.w + Math.round(t.vx);
+    let seconds = 0;
+    while (world.trouble && seconds < 400) {
+      for (let k = 0; k < 30; k++) {
+        world.wardMask[center] |= WARD.fire;
+        stepHeadless(world, rt);
+      }
+      seconds++;
+      if (seconds === 30) {
+        noteCast(world, "rain", "Rain", "", t.x, t.y);
+        world.fire.fill(0);
+        for (let i = 0; i < world.n; i++) world.temp[i] = Math.min(world.temp[i], 20);
+      }
+    }
+    const end = world.troubleEnd;
+    check(
+      "troubles: under a shield the village is held, not saved, and raises no stone",
+      end?.outcome === "held" && end.by === null && world.stones.length === 0 && end.line.includes("behind its shield"),
+      `${end?.outcome}: ${end?.line}`,
     );
     storyOn(null);
   }

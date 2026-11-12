@@ -23,6 +23,8 @@ An experiment the owner asked for: one session leads and builds, instead of a pl
 | The island needs you: the wildfire (#123)              | Built on the stories branch: engine, save field, camera, lines, Craft line, switch, stone, card line; 14 checks. The owner: "troubles: on", "size: village", "tiers: keep". Design page https://claude.ai/artifact/Lxi1Le5vyN38PVdzXxrmCL. Next troubles in order: drought, high water; a raid needs boats and raiders that live |
 | Production deploys                                     | Failed from 06:08 to 17:54 UTC on 11 November: the environment `production` held a wrong `MM_TOKEN`, then a Cloudflare token without D1. The owner fixed both; the Deploy of 17:54 passed. Issues #118 and #120 can be closed                                                                                                    |
 | Smoke fix (#122)                                       | Merged by the lead session on the owner's "smoke fix: yes" and "smoke fix: merge": the browser install falls back when Ubuntu's package servers are out of reach                                                                                                                                                                 |
+| Lighter pipeline (#117)                                | Merged by the lead session on the owner's "lighter pipeline: go": tests in CI on the merge result, a review valid across a merge of main, the Gate follows the checks it starts. Not yet seen live: the Gate's re-test of a reviewed pull request against a newer main                                                           |
+| Weather that crosses the island (#124)                 | Draft behind #123: rain and snow as fronts, rain puts out fire, a big spell redraws the land in one frame; 9 checks. Owed before ready: measure the long frame of a real grand spell on the preview                                                                                                                              |
 
 ### Decisions taken, and why
 
@@ -40,14 +42,49 @@ An experiment the owner asked for: one session leads and builds, instead of a pl
 - After a workflow change lands on main, the Gate cannot bring a branch up to date: merge main into the branch by hand and ask the same reviewer session for its verdict on the merge commit.
 - The owner's yes is recorded by the lead session as the planner did (label and an `mm-owner` comment quoting the owner), saying it was typed in the lead session. A red workflow change is merged by the lead session only on the owner's explicit "merge" for it.
 - The dashboard: write `scripts/planner/planner.json`, run `node scripts/planner/to-dashboard.mjs <dir>`, upload `glance.json` as an asset of the dashboard, point the eleven datasets at it in one batch, delete the old asset.
+- The Gate tells a workflow run by its file, not its name (fix of 11 November, merged by hand on the owner's "gate fix: merge"): `ci.yml` has a `run-name`, and GitHub gives that as the run's `name`. The lighter pipeline shipped with a filter `name === "CI"` that matched no run, and held the wildfire and the budget fix for two hours on a CI that had passed. The test fed the Gate runs named "CI"; it now feeds it what GitHub really lists.
+- The watch is a standing session, "Magic Merger watch" (Haiku, `session_01NxvtAmhn8EGzccCG6kMaC9`, the repository attached), woken every two hours by the scheduled task `trig_01MwWarNDq192dYbh5wFWacD`. It reports to the lead session only when something is wrong. A scheduled task that starts a fresh session each time has no GitHub access at all (tried, 403 on every read): do not go back to that.
 - `test:worker` has one check that can read a row before the Worker's queue wrote it ("votes: the rewrite is recorded, and paid by the voter"): it failed once in CI on a merge commit and passed on a re-run. Make it wait for the row when next in the Worker.
+
+### Next to build: "Become anything", first version (designed and challenged, 11 November)
+
+What the player gets: tap a creature, press Become on its card, and play as it. Decided after the game designer's challenge, so that it is built once:
+
+1. **Become, chase camera, fixed stick, Let go, the line "You are Mira the fisher".** The camera needs its own mode, `orbit.chase(x, y, z, heading)`: `watch` takes no heading or height and lets go at a touch. The stick is fixed at the bottom left, in the Watch button's place while possessed, and captures its own pointer; a floating stick would eat the tap that casts.
+2. **Walkers and swimmers steer through the engine's own steering** (`steer.ts`, `motion.ts`); the possessed creature's thinking is paused, everything else unchanged. **Flyers hold their altitude and the stick only banks**: altitude is a constant per kind, there is no climb or glide.
+3. **The creature's own abilities as buttons, two at most at 344 px**, calling the ability with its trigger skipped and the same `m.ready` cooldown and the creature cast cap as they are. No hold to repeat.
+4. **Cut from the first version**: the context action ("Do"), climb and glide, a death camera, road laying, casting spells while possessed (the tools are hidden; Let go first).
+5. **Guards**: at 0 health the player is thrown out and the creature lives or dies by the simulation's own rules. Fighting a trouble by hand slows it and never ends it: the right item must still matter.
+6. **Its thought line stays on screen** while you are it ("hungry", "afraid of the wolf"): a point without a goal system (`lifeLine` exists).
+7. **The number**: median seconds possessed per Become. Under 20 it is a toy tried once; over 60, add the Do button next (one unlabelled button that sets the creature's own task on what is in front, `setTask`, with an icon of the target and no words). The simulation's p95 stays unchanged.
+   No paid call, no save change, stored spells untouched: green.
+
+### The owner's words of 11 November, and what follows from them
+
+- "troubles: on", "size: village", "tiers: keep (but we could imagine reworking the classification system)": the wildfire. A proposal for what tiers should mean is owed after its numbers.
+- "smoke fix: yes", "smoke fix: merge", "lighter pipeline: go", "branches: yes" (one branch per update).
+- "Reuse sessions that would be useful and archive the rest": the planner ("Magic Merger Main"), the Director and Roadmap Planning are archived, with every finished builder and reviewer. Only the lead session remains. The planner's hourly guard, its morning brief and its one-shot database check are paused (not deleted).
+- "make sure we keep what you would consider good behaviors (... making sure everything is working properly every 15 min or updating the dashboard, even doing some of the work at night)": the scheduled task "Magic Merger watch" (every two hours, a fresh small session, read only: live health, last deploy, main deployed, rollback or pause issues, stuck pull requests; silent when fine, a push to the owner and a message to the lead when not). It names the lead's session id: change it when a fresh lead takes over. The dashboard is refreshed by the lead at each merge and each "live".
+- "you are the boss and know what is best": the lead decides the order and the method, and says why.
+- "don't worry about usage, I'll reset fable usage as soon as you reach it this week (won't be applicable for the next weeks so we'll have to find a smart way to reduce usage. maybe switch you to opus and call fable in certain specific cases": from next week, an Opus lead, Fable for choosing what to build, the design before an update and the look at frames after. Measure one update each way before believing a claim about effort settings.
+- Asked of the owner and not answered yet: "rules: lead" (CLAUDE.md still names the planner), "watch: haiku" (the watch's model), "fresh: yes" (the lead starts its own successor when its history is heavy).
+- On the owner's list (#51) only, from before: "autonomy: yes" and "guard: drop".
+- The owner plays on a Z Fold and reports by playing: the island's presentation at arrival, rain over a whole land, big spells drawn by sections. Each became work the same day.
+
+### Found by the audit of the archived sessions (11 November)
+
+- Database reads: 2.79M of the 5M free daily limit at 20:18 UTC on 11 November (2.47M live). Past the limit the database refuses requests until midnight UTC. The cause the planner named is the budget check reading the month's ledger on every paid call: it is in the approved "spend" work, which is now third in the order, after the wildfire and the weather. A check fires into the lead session at 01:30 UTC on 12 November.
+- The weekly limit: 31% used at 12:37 UTC on 11 November, on pace to run out on Friday.
+- Only the owner can do: delete the two old repository-level secrets (after the preview has its own token, docs/SETUP.md steps 12 to 14); a ruleset on main.
+- Unowned: the draft "Feedback: the Sound button" (#94, amber, waits for the owner), issues #90, #69, #91 (feedback), #46 and #28 (API proposals). The owner's list (#51) is stale and is the lead's to bring up to date.
+- "Discoveries worth reading" (the owner's idea, 8 November) is listed on #51 as being built and has no open pull request: check whether it merged.
 
 ### The experiment's tally
 
 | Measure                               | Lead session                                                                                                          | Old setup, 5 to 10 November                          |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
 | Updates live, by name                 | 1: The island tells its stories (live 18:27 UTC, 11 November). Built and in playtest: The island needs you (wildfire) | 35 pull requests merged, almost all small            |
-| Pull requests that needed a later fix | 0 of 0                                                                                                                | 6 of 35                                              |
+| Pull requests that needed a later fix | 1 of 4: the lighter pipeline broke the Gate's reading of CI (fixed the same day)                                      | 6 of 35                                              |
 | Sessions started                      | 0 so far (1 reviewer to come)                                                                                         | about 95 review rounds, 40 re-reading merges of main |
 | Subagents                             | 2 (game designer, playtester)                                                                                         |                                                      |
 | The owner's time asked for            | 0 questions                                                                                                           |                                                      |

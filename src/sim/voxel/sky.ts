@@ -15,6 +15,7 @@ import {
 } from "three";
 import { DAY_LENGTH, MOON_DAYS, dayOf } from "../daylight";
 import { LOOKS, biomeAt, type Weather } from "../land";
+import { fallingAt } from "../weather";
 import { seeded } from "../noise";
 import type { World } from "../world";
 import { DROP_SHADER, dropShare } from "./drops";
@@ -45,18 +46,15 @@ export const LAB_WEATHER: { now: WeatherNow | null } = { now: null };
 export function weatherAt(world: World, time: number, cell = -1): WeatherNow {
   if (LAB_WEATHER.now) return LAB_WEATHER.now;
   if (!world.land) return { kind: "clear", amount: 0 };
+  // Rain and snow are fronts that cross the island (weather.ts): what falls here is what is
+  // overhead, wherever the camera looks from. Fog alone stays a region's own.
+  const at = cell >= 0 && cell < world.n ? cell : Math.floor(world.h / 2) * world.w + Math.floor(world.w / 2);
+  const falling = fallingAt(world, at % world.w, Math.floor(at / world.w), time);
+  if (falling.amount > 0) return falling;
   const odds = LOOKS[cell >= 0 && cell < world.n ? biomeAt(world, cell) : world.land.biome].weather;
   const spell = Math.floor(time / SPELL);
-  const roll = seeded((world.seed * 7919 + spell * 104729) >>> 0)();
-  let kind: Weather = "clear";
-  let acc = 0;
-  for (const k of ["rain", "snow", "fog"] as const) {
-    acc += odds[k] ?? 0;
-    if (roll < acc) {
-      kind = k;
-      break;
-    }
-  }
+  const roll = seeded((world.seed * 7919 + spell * 104729 + 17) >>> 0)();
+  const kind: Weather = roll < (odds.fog ?? 0) ? "fog" : "clear";
   if (kind === "clear") return { kind, amount: 0 };
   const f = (time % SPELL) / SPELL;
   const ease = (t: number) => t * t * (3 - 2 * t);
@@ -186,7 +184,12 @@ export class Sky {
     const cx = Math.round(target.x + w.w / 2);
     const cy = Math.round(target.z + w.h / 2);
     const cell = cx >= 0 && cy >= 0 && cx < w.w && cy < w.h ? cy * w.w + cx : -1;
-    const goal = GRAPHICS.weather ? weatherAt(w, time, cell) : { kind: "clear" as const, amount: 0 };
+    const under = GRAPHICS.weather ? weatherAt(w, time, cell) : { kind: "clear" as const, amount: 0 };
+    // From afar a front is its cloud over part of the island (view.ts); the grey sky, the mist and
+    // the drops are for those under it. Full up close, gone from where the whole island is seen.
+    const side = Math.max(w.w, w.h);
+    const close = under.kind === "fog" ? 1 : Math.max(0, Math.min(1, (side * 0.95 - dist) / (side * 0.45)));
+    const goal = { kind: under.kind, amount: under.amount * close };
     const dt = Math.min(0.25, Math.max(0, time - this.lastTime));
     this.lastTime = time;
     const now = this.weather;

@@ -137,6 +137,9 @@ export class World {
   // Houses and buildings going up (4.9 part 2, sites.ts), saved; and a
   // counter the view redraws them on.
   sites: Site[] = [];
+  // Rain and snow do things on this island (weather.ts): on for the player's island, off for
+  // challenges, test runs and scripts, which play the same under any sky. Not saved.
+  weather = false;
   // The island needs you (troubles.ts): the trouble running now, how many
   // this island has had, when the next may start, and the stones villages
   // raised to the items that saved them. Saved.

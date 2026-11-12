@@ -14,6 +14,7 @@ import { firstLook, villageView, type Pose } from "./firstlook";
 import { fireOf, startWildfire, stoneAt, stoneLine, troubleLine, type Stone } from "./troubles";
 import { Director, lifeLine, nameOf, type Shot } from "./director";
 import { castOnScreen, watchCast } from "./voxel/castview";
+import { LAND_REDRAW } from "./voxel/terrain";
 import { readDef, setFinders, signatureOf, wonderInfo, type WonderDef } from "./wonders";
 
 // The pool of wonders written as programs (4.4.5 part C), checked: the page
@@ -503,6 +504,15 @@ window.setInterval(() => {
   else saveSoon();
 }, 1000);
 
+// For the measure of a big spell: turns the one frame redraw of the land on or off and gives the
+// longest run of frames in which the land had chunks left to redraw since the last call.
+(window as unknown as { __mmLand?: (burst?: boolean) => { max: number; last: number } }).__mmLand = (burst) => {
+  if (burst !== undefined) LAND_REDRAW.burst = burst;
+  const out = { max: LAND_REDRAW.maxLag, last: LAND_REDRAW.lastLag };
+  LAND_REDRAW.maxLag = 0;
+  return out;
+};
+
 // For the checks that play a trouble in a browser (scripts/trouble-frames.mjs): starts one now, or says how it stands.
 (window as unknown as { __mmTrouble?: (peek?: boolean) => string }).__mmTrouble = (peek = false) => {
   if (!engine || scenario) return "no island";
@@ -537,6 +547,8 @@ function mount(next: Engine): void {
   engine?.dispose();
   unbind?.();
   engine = next;
+  // Weather is real on the player's island, never in a challenge.
+  engine.world.weather = !scenario;
   engine.runtime.setLibrary(library);
   engine.sound.muted = muted;
   unbind = engine.bindInput();
