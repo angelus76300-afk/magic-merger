@@ -823,7 +823,7 @@ export function stepFlood(world: World, t: Trouble, dt: number): boolean {
         c.heaped.set(i, done + 0.1);
         if (!f.banked) {
           f.banked = true;
-          tell(world, `the people of ${t.name} heap earth against the water`, { x: bx, y: by, weight: 2 });
+          tell(world, `the people of ${t.name} fight the water`, { x: bx, y: by, weight: 2 });
         }
       }
     }
