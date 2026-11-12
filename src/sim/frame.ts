@@ -21,6 +21,7 @@ import { Director, lifeLine, nameOf, whoIs, type Shot } from "./director";
 import { act, checkHeld, deedsOf, doDeed, possess, possessed, powersOf, release, steerBy, stopNote, thoughtOf, type Deed } from "./possess";
 import { aimAt, castFromEyes, eyesFirst, lookTheta, openLook, withinRange } from "./eyes";
 import { castOnScreen, watchCast } from "./voxel/castview";
+import { LAB_SKY, LAB_WEATHER } from "./voxel/sky";
 import { LAND_REDRAW } from "./voxel/terrain";
 import { readDef, setFinders, signatureOf, wonderInfo, type WonderDef } from "./wonders";
 
@@ -1038,7 +1039,8 @@ window.addEventListener("blur", () => keysDown.clear());
 
 // A place for a frame of the checks: open ground near the nearest house, in
 // the thickest woods or on the shore, and the look toward it. Only the checks call it.
-function placeFor(sort: "village" | "house" | "woods" | "shore" | "fire"): { x: number; y: number; yaw: number } | null {
+type PlaceSort = "village" | "house" | "woods" | "shore" | "fire" | "tree" | "wall" | "street" | "cliff" | "sea";
+function placeFor(sort: PlaceSort): { x: number; y: number; yaw: number } | null {
   if (!engine || !riding) return null;
   const w = engine.world;
   const free = (x: number, y: number) => w.inside(x, y) && w.cover[w.idx(x, y)] === C.NONE && w.depth[w.idx(x, y)] < 0.15;
@@ -1090,6 +1092,55 @@ function placeFor(sort: "village" | "house" | "woods" | "shore" | "fire"): { x: 
           best = { x: x + 0.5, y: y + 0.5, yaw: Math.atan2(dy, dx) };
           bestD = d;
         }
+      } else if (sort === "tree" || sort === "wall" || sort === "cliff") {
+        // Right beside a trunk in woods, a house's wall, or the foot of a step of ground two cells or more high; facing it.
+        for (const [dx, dy] of [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ]) {
+          const j = w.idx(x + dx, y + dy);
+          const ok =
+            sort === "tree"
+              ? w.cover[j] === C.TREE && Math.abs(w.height[j] - w.height[w.idx(x, y)]) <= 1 && near(x, y, 3, (i) => w.cover[i] === C.TREE) >= 10
+              : sort === "wall"
+                ? w.cover[j] === C.HOUSE
+                : w.height[j] - w.height[w.idx(x, y)] >= 4 && w.cover[j] === C.NONE;
+          if (!ok) continue;
+          best = { x: x + 0.5, y: y + 0.5, yaw: Math.atan2(dy, dx) };
+          bestD = d;
+        }
+      } else if (sort === "street") {
+        // Between two houses three cells apart or less, looking along the way between them.
+        for (const [dx, dy] of [
+          [1, 0],
+          [0, 1],
+        ]) {
+          let a = 0;
+          let b = 0;
+          for (let k = 1; k <= 3; k++) {
+            if (!a && w.inside(x - dy * k, y - dx * k) && w.cover[w.idx(x - dy * k, y - dx * k)] === C.HOUSE) a = k;
+            if (!b && w.inside(x + dy * k, y + dx * k) && w.cover[w.idx(x + dy * k, y + dx * k)] === C.HOUSE) b = k;
+          }
+          if (!a || !b || !free(x + dx, y + dy) || !free(x + dx * 2, y + dy * 2)) continue;
+          best = { x: x + 0.5, y: y + 0.5, yaw: Math.atan2(dy, dx) };
+          bestD = d;
+        }
+      } else if (sort === "sea") {
+        // On the beach, the open sea all the way to the world's rim straight ahead.
+        for (const [dx, dy] of [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ]) {
+          let k = 2;
+          while (w.inside(x + dx * k, y + dy * k) && w.depth[w.idx(x + dx * k, y + dy * k)] > 0.5) k++;
+          if (w.inside(x + dx * k, y + dy * k) || k < 6 || w.depth[w.idx(x + dx, y + dy)] > 0.5) continue;
+          best = { x: x + 0.5, y: y + 0.5, yaw: Math.atan2(dy, dx) };
+          bestD = d;
+        }
       } else if (sort === "woods") {
         if (near(x, y, 4, (i) => w.cover[i] === C.TREE) < 22) continue;
         best = { x: x + 0.5, y: y + 0.5, yaw: riding.hd };
@@ -1118,9 +1169,17 @@ function placeFor(sort: "village" | "house" | "woods" | "shore" | "fire"): { x: 
       yaw?: number;
       pitch?: number;
       turn?: number;
-      place?: "village" | "house" | "woods" | "shore" | "fire";
+      place?: PlaceSort;
       become?: string;
       burn?: boolean;
+      // For the frames of scripts/ground-frames.mjs: the creature put on a cell, another villager
+      // put face to face with it, a time of day and a storm cloud held over it, for the drawing only.
+      at?: { x: number; y: number };
+      face?: number;
+      clock?: number | null;
+      rain?: boolean;
+      // Starts (true) or ends (false) timing the view's frames: the median and 90th centile of each part, in ms.
+      prof?: boolean;
     }) => unknown;
   }
 ).__mmEyes = (look) => {
@@ -1155,10 +1214,59 @@ function placeFor(sort: "village" | "house" | "woods" | "shore" | "fire"): { x: 
     riding.hd = at.yaw;
     if (e) e.yaw = at.yaw;
   }
+  if (look?.at && riding) {
+    riding.x = look.at.x;
+    riding.y = look.at.y;
+  }
+  if (look?.clock !== undefined) {
+    LAB_SKY.time = look.clock;
+    LAB_WEATHER.now = look.clock === null ? null : { kind: "clear", amount: 0 };
+  }
+  if (look?.rain !== undefined) {
+    LAB_WEATHER.now = look.rain ? { kind: "rain", amount: 1 } : LAB_SKY.time === null ? null : { kind: "clear", amount: 0 };
+    LAB_SKY.front = look.rain && riding ? { x: riding.x, y: riding.y, r: 36 } : null;
+  }
+  let faced: { x: number; y: number; id: number } | null = null;
+  if (look?.face !== undefined && riding && engine && e) {
+    const me = riding;
+    const other = engine.world.creatures
+      .filter((k) => !k.dead && k !== me && k.kind === "villager" && unpackLook(k.look).age === "adult")
+      .sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y))[0];
+    if (other) {
+      // On ground as high as the eye's, the first of a few distances from `face` on.
+      const w = engine.world;
+      const level = (x: number, y: number) => w.height[w.idx(Math.floor(x), Math.floor(y))];
+      let d = look.face;
+      for (const k of [0, 0.5, 1, 1.5, -0.3])
+        if (level(e.x + Math.cos(e.yaw) * (look.face + k), e.y + Math.sin(e.yaw) * (look.face + k)) === level(e.x, e.y)) {
+          d = look.face + k;
+          break;
+        }
+      other.x = e.x + Math.cos(e.yaw) * d;
+      other.y = e.y + Math.sin(e.yaw) * d;
+      other.hd = e.yaw + Math.PI;
+      // Held still for the frame, as a stunned creature stands.
+      other.stun = 3;
+      faced = { x: other.x, y: other.y, id: other.id };
+    }
+  }
   if (e && look) {
     if (look.yaw !== undefined) e.yaw = look.yaw;
     if (look.turn !== undefined) e.yaw += look.turn;
     if (look.pitch !== undefined) e.pitch = look.pitch;
+  }
+  let prof: Record<string, [number, number]> | null = null;
+  if (look?.prof === true && engine) engine.view.profile = {};
+  else if (look?.prof === false && engine?.view.profile) {
+    const parts = engine.view.profile;
+    const frames = Math.min(...Object.values(parts).map((v) => v.length));
+    const total = Array.from({ length: frames }, (_, k) => Object.values(parts).reduce((a, v) => a + v[k], 0));
+    prof = {};
+    for (const [part, v] of [...Object.entries(parts), ["total", total] as const]) {
+      const s = [...v].sort((a, b) => a - b);
+      prof[part] = [Math.round(s[Math.floor(s.length / 2)] * 100) / 100, Math.round(s[Math.floor(s.length * 0.9)] * 100) / 100];
+    }
+    engine.view.profile = null;
   }
   const aim = e && engine ? aimAt(e, engine.view.groundAt, engine.world.w, engine.world.h) : null;
   return {
@@ -1175,6 +1283,10 @@ function placeFor(sort: "village" | "house" | "woods" | "shore" | "fire"): { x: 
     rider: riding ? { kind: riding.kind, hp: Math.round(riding.hp), burning: riding.burning > 0, x: riding.x, y: riding.y } : null,
     trouble: engine?.world.trouble ? { stage: engine.world.trouble.stage, casts: engine.world.trouble.casts.length } : null,
     powers: riding && engine ? powersOf(engine.world, riding).map((p) => ({ do: p.spec.do, left: Math.round(p.left * 10) / 10 })) : [],
+    draw: engine ? { calls: engine.view.renderer.info.render.calls, triangles: engine.view.renderer.info.render.triangles } : null,
+    prof,
+    size: engine ? { w: engine.world.w, h: engine.world.h } : null,
+    faced,
   };
 };
 

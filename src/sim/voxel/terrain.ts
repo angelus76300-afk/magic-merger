@@ -287,7 +287,12 @@ export class Terrain {
           const built = this.builtColor(i);
           if (built !== null) {
             // A built column (a trunk, a tower, a crystal spire) is its material all the way down.
-            out.face(d, X, Z, low, top, built, light, 1, 0, foot);
+            // In courses as natural stone is (below), so a basalt cliff is not one flat face.
+            for (let hi = top, k = 0; hi > low; k++) {
+              const lo = k >= 3 ? low : Math.max(low, hi - 2);
+              out.face(d, X, Z, lo, hi, rough(built, i, d, k, 0.07), light, 1, 0, lo === low ? foot : 1);
+              hi = lo;
+            }
             continue;
           }
           // Layers from the top: the surface color for one voxel, then soil, then stone.
@@ -299,9 +304,16 @@ export class Terrain {
             soil = mixColor(soil, MOSS, 0.4);
           }
           const strata = this.strataAt(i);
-          band(out, d, X, Z, Math.max(low, top - 1), top, top, edge, light, low, foot);
-          if (top - 1 > low) band(out, d, X, Z, Math.max(low, top - 3), top - 1, top, soil, light, low, foot);
-          if (top - 3 > low) band(out, d, X, Z, Math.max(low, BOTTOM + 2), top - 3, top, strata.stone, light, low, foot);
+          band(out, d, X, Z, Math.max(low, top - 1), top, top, rough(edge, i, d, 9, 0.09), light, low, foot);
+          if (top - 1 > low) band(out, d, X, Z, Math.max(low, top - 3), top - 1, top, rough(soil, i, d, 7, 0.1), light, low, foot);
+          // Seen from its foot (2026-11-12) a cliff was one flat grey: its stone is laid in
+          // courses two voxels high, each column and course a shade of its own, the last course
+          // down to the deep rock in one piece (at most three more faces a wall).
+          for (let hi = top - 3, k = 0; hi > Math.max(low, BOTTOM + 2); k++) {
+            const lo = k >= 2 ? Math.max(low, BOTTOM + 2) : Math.max(low, BOTTOM + 2, hi - 2);
+            band(out, d, X, Z, lo, hi, top, rough(strata.stone, i, d, k, 0.12), light, low, foot);
+            hi = lo;
+          }
           if (BOTTOM + 2 > low) band(out, d, X, Z, low, Math.min(top - 3, BOTTOM + 2), top, strata.deep, light, low, foot);
         }
       }
@@ -686,6 +698,17 @@ class Writer {
 
 const LAND = new Writer();
 const FLUID = new Writer();
+
+// A wall's color a shade lighter or darker, warmer or cooler, the same for the same cell, side
+// and course: up to `amount` either way.
+function rough(color: number, i: number, dir: number, course: number, amount: number): number {
+  let h = Math.imul(i ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul(dir * 31 + course * 131 + 7, 0xc2b2ae35);
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d) >>> 0;
+  const k = 1 + (((h & 255) / 255) * 2 - 1) * amount;
+  const warm = ((((h >>> 8) & 255) / 255) * 2 - 1) * amount * 0.35;
+  const ch = (s: number, f: number) => Math.max(0, Math.min(255, Math.round(((color >> s) & 255) * f)));
+  return (ch(16, k * (1 + warm)) << 16) | (ch(8, k) << 8) | ch(0, k * (1 - warm));
+}
 
 // One layer of a wall, a bit darker the deeper it is below the top.
 // The band that reaches the wall's foot (`low`) takes its crease.

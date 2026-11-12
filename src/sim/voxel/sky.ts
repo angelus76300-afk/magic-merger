@@ -41,6 +41,10 @@ export interface WeatherNow {
 // and the Spell Lab (no land) have none.
 // The Perf Lab can hold one weather, to measure and look at it.
 export const LAB_WEATHER: { now: WeatherNow | null } = { now: null };
+// For frames of the checks (scripts/ground-frames.mjs): a time of day held for
+// the light and the clouds, and a storm cloud held over a spot. The drawing
+// only: the simulation keeps its own clock and its own fronts.
+export const LAB_SKY: { time: number | null; front: { x: number; y: number; r: number } | null } = { time: null, front: null };
 
 // On a mixed island (4.4.1), the weather of the region at `cell`.
 export function weatherAt(world: World, time: number, cell = -1): WeatherNow {

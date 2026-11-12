@@ -1151,3 +1151,17 @@ The most voted player idea: "make the characters first person playable character
 - **A grand spell** in the eye view does not take the camera: it lands where it lands and is seen from the eyes.
 
 The number it is held to: the median seconds possessed per Become (`window.__mmBecome`, kept in the frame and sent nowhere). Under 20 it is a toy tried once; over 60, the Do button comes next. Checked by `scripts/become-test.ts` (in `npm test`) and played in a browser by `scripts/become-frames.mjs`.
+
+## The island seen from the ground (12 November 2026)
+
+The owner, on the first frames of the eye view: "Trees and other elements look weird from under." The island was modelled for the sky. This pass makes it hold up at eye height without changing the sky view or the simulation (models and drawing only).
+
+- **Trees near the eye** (`voxel/near.ts`): in the eye view, every tree within 12 cells is drawn with a near model in place of its own, with the same place, lean, size and tint (its own instance is folded to nothing meanwhile, `view.ts` placeNearTrees, again only when the eye enters another cell). A crown box becomes two crossed boxes and a cap, so its corners are notched and its underside steps up: it reads round. Leaf clusters break its edges, lighter and yellower at the top where the sun comes through, darker low; clumps hang under the lowest layer; a branch or two runs out from the trunk into the leaves; roots flare at the foot. Pines get drooping tips at their tiers, palms bent frond tips, coconuts and rings, birches dark marks, mushrooms gills and a ring, bamboo joints and leaves. About 15 to 34 boxes a tree against 3 to 7. From the sky nothing changes and nothing costs more.
+- **People up close** (`rigs.ts`, lod 2, `figures.ts`): within 5 cells in the eye view a villager has a nose, a mouth, brows, the whites of its eyes, ears, a fringe and a belt. From the sky the face is two dots, as before.
+- **Cliffs** (`terrain.ts` rough): a wall's stone is laid in courses two voxels high, each column and course its own shade (up to 12 percent), the top voxel and the soil too, and built columns (basalt) the same. At most three more faces a wall.
+- **Houses** (`buildings.ts` dressWalls): a plinth of stone, posts at the corners in the trim's wood (quoins on stone houses), a sill and a lintel at each window, from the house's own second random stream so no house changes size, roof or door.
+- **Clouds from under**: clouds have bottom faces, lit at 0.8, and take no mist in the eye view; a storm has a belly of wide low blocks there. From under a storm the player sees a ceiling of cloud, where there were thin grey bars or nothing.
+
+Measured in headless Chrome (software WebGL, so the CPU side only), seed 21, deviceScaleFactor 2, median ms of the view's render per frame, before and after: sky view at 344 by 882, 4.9 and 4.0; 700 by 830, 7.7 and 6.9; 1440 by 900, 7.8 and 8.5 (noise: repeated runs moved 1 ms). Eye view in woods at 344 by 882, 3.7 to 4.9 before and 4.4 to 5.5 after, with 20 percent more triangles (143 000 to 172 000). Frames and numbers: `scripts/ground-frames.mjs`, which places a villager on fixed spots through `window.__mmEyes` (`at`, `place` tree, wall, street, cliff, sea, `face`, `clock`, `rain`, `prof`: the drawing only).
+
+Not done: the sea still ends at the world's square rim (from the shore spots tried, the mist hides it), bushes and crops are single boxes, other animals have no close-up parts.
