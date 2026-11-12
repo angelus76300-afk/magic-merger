@@ -49,7 +49,17 @@ An experiment the owner asked for: one session leads and builds, instead of a pl
 - Local `main` in the lead session's checkout is an old, diverged branch: work from `origin/main` (`git checkout --detach origin/main` or a new branch from it).
 - `test:worker` has one check that can read a row before the Worker's queue wrote it ("votes: the rewrite is recorded, and paid by the voter"): it failed once in CI on a merge commit and passed on a re-run. Make it wait for the row when next in the Worker.
 
-### Next to build: "Become anything", first version (designed and challenged, 11 November)
+### What the night of 12 November taught
+
+- Start a reviewer on `main`, never on the branch (`source_revision` unset): a session started on another branch makes the repository's guard ask the owner, because it would run with that branch's `.claude/settings.json`. The reviewer fetches the branch itself.
+- A subagent that has finished can be resumed with its context by a message to its id; three rounds on the eye view went to the same helper that way. Past about 600k tokens of history, start a fresh one with a full brief instead.
+- Two playtests and the builder's frames missed that a tap on a slot of the eye view's bar picked the spell and dropped it at once: all of them picked the spell through a test hook. The reviewer found it with a real tap. A proof of anything a finger does uses a real tap (`scripts/eyes-tap-proof.mjs` is the model).
+- Checks that pass alone and fail in the suite: look for state left by earlier groups (the creature id counter gives a creature its heading) and an island made before the seed is set.
+- The owner's standing word (11 November): "you are the boss and know what is best". Used once: with the owner away, "Become anything, through its eyes" was marked ready on the lead session's own call (a matter of taste, green, reviewed), and the owner was told with a way to take it back.
+- Asked of the owner, open: how walking and casting with two thumbs feels on the folded Fold; whether the island is any less smooth since the ground art (cliffs have more faces in the sky view; frame times were only measured in a headless browser); a cast of Apocalypse to see whether the land redraws in one go.
+- Next, in order: measure the wildfire (the share of troubles answered by an item made since they began; the counts ride the perf sample); the next troubles (a drought, high water); what the eye view still lacks (light through the crowns, the sea at the world's edge, bushes and crops, animals up close, tools in hand, a fisher who finds water, a merchant with something to do); "spend only on what players use"; a proposal for tiers.
+
+### "Become anything", first version: the design as challenged (11 November; built and live since, with the eye view)
 
 What the player gets: tap a creature, press Become on its card, and play as it. Decided after the game designer's challenge, so that it is built once:
 
@@ -84,14 +94,14 @@ What the player gets: tap a creature, press Become on its card, and play as it. 
 
 ### The experiment's tally
 
-| Measure                               | Lead session                                                                                                                                                        | Old setup, 5 to 10 November                          |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| Updates live, by name                 | 3: The island tells its stories (11 November, 18:27 UTC), The island needs you (wildfire, 12 November, 00:10), Weather that crosses the island (12 November, 01:15) | 35 pull requests merged, almost all small            |
-| Pull requests that needed a later fix | 1 of 4: the lighter pipeline broke the Gate's reading of CI (fixed the same day)                                                                                    | 6 of 35                                              |
-| Sessions started                      | 0 so far (1 reviewer to come)                                                                                                                                       | about 95 review rounds, 40 re-reading merges of main |
-| Subagents                             | 2 (game designer, playtester)                                                                                                                                       |                                                      |
-| The owner's time asked for            | 0 questions                                                                                                                                                         |                                                      |
-| Usage                                 | The weekly limit read "warning" at 17:49 UTC on 11 November. Two reviewer sessions cost $0.38 and $1.47                                                             | paused 78 of 130 hours by limits                     |
+| Measure                               | Lead session                                                                                                                                                                                                                                                                 | Old setup, 5 to 10 November                          |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Updates live, by name                 | 5, by the end of each Deploy run in UTC: The island tells its stories (11 November, 18:25), The island needs you (wildfire, 12 November, 00:18), Weather that crosses the island (01:14), Become anything, through its eyes (08:12), The island seen from the ground (08:34) | 35 pull requests merged, almost all small            |
+| Pull requests that needed a later fix | 1 of 10 merged (#117, the lighter pipeline, broke the Gate's reading of CI; fixed the same day by #126)                                                                                                                                                                      | 6 of 35                                              |
+| Sessions started                      | 7: six reviewers on Sonnet (#123, #125, #124, #130, #131 in two rounds, #132) and the standing watch on Haiku. Reviewer costs read so far: $0.38, $1.47, $0.46, $0.73, $0.53, $1.42, $0.81                                                                                   | about 95 review rounds, 40 re-reading merges of main |
+| Subagents                             | 9 runs: game designer once, playtester four times, Opus helpers for the budget totals, Become anything, the eye view (four rounds, one agent resumed) and the ground art                                                                                                     |                                                      |
+| The owner's time asked for            | 5 questions (secrets and smoke fix, lighter pipeline, gate fix, eyes together or after, trees later or first), one of them answered by the lead session in the owner's absence (trees: later)                                                                                |                                                      |
+| Usage                                 | The weekly limit read "warning" at 17:49 UTC on 11 November. Two reviewer sessions cost $0.38 and $1.47                                                                                                                                                                      | paused 78 of 130 hours by limits                     |
 
 ## The director's part (written 11 November 2026, 03:55 UTC)
 
