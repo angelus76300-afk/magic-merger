@@ -45,6 +45,7 @@ import { unpackLook } from "../src/sim/villagers";
 import { jobOf } from "../src/sim/goals";
 import { playerCast } from "../src/sim/playercast";
 import { clickActs, pressDown } from "../src/sim/press";
+import { armGhostGuard, isGhostClick, pageDown } from "../src/ghost";
 import { keepOrder, readFromWorld } from "../src/sim/protocol";
 import { surfaceY } from "../src/sim/voxel/terrain";
 import { COVER_STEP, COVER_TURN, EYE_DRAW, eyeFogRange, eyeKeepsChunk, eyeKeepsCover } from "../src/sim/voxel/fog";
@@ -680,6 +681,23 @@ function castChecks(check: Check): void {
       "perf: the sample names the view most of its frames were drawn in, and counts each",
       sum.view === "eyes" && sum.viewFrames === "sky:5,behind:5,eyes:20" && msg?.type === "perf" && msg.sample.view === "eyes",
       `${sum.view}, ${sum.viewFrames}`,
+    );
+  }
+  // 31. Let go pressed in the eye view: the header comes back under the finger, and the click its touch
+  // sends after must not press Sign in (ghost.ts; the playtest of 12 November opened the account dialog).
+  {
+    armGhostGuard(10_000);
+    const ghost = isGhostClick(10_120);
+    const second = isGhostClick(10_200);
+    armGhostGuard(20_000);
+    pageDown(20_300);
+    const pressed = isGhostClick(20_350);
+    armGhostGuard(30_000);
+    const late = isGhostClick(32_000);
+    check(
+      "eyes: the click after Let go is swallowed once; a new press on the page, or one long after, acts",
+      ghost && !second && !pressed && !late,
+      JSON.stringify({ ghost, second, pressed, late }),
     );
   }
   // 30. What the eye view draws (fog.ts, view.ts, terrain.ts): the mist is whole by 80 cells, and

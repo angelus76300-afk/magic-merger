@@ -222,6 +222,19 @@ try {
       JSON.stringify({ casts: (await casts()) - c0, dyaw: held?.aimHold?.dyaw, look: (yaw1 - yaw0).toFixed(3) }),
     );
   }
+  // 5. A real tap on Let go: the header comes back under the finger, and the click of that touch
+  // opens nothing on the page (the playtest of 12 November: it opened the account dialog).
+  {
+    await page.waitForTimeout(800);
+    const go = await center("#letgo");
+    await touch("touchStart", [{ ...go, id: 51 }]);
+    await page.waitForTimeout(80);
+    await touch("touchEnd", [{ ...go, id: 51 }]);
+    await page.waitForTimeout(1200);
+    await shot("after-let-go");
+    const open = await page.locator("dialog[open]").count();
+    expect("a tap on Let go lets go and opens no dialog of the page", !(await eyes())?.rider && open === 0, `${open} dialogs open`);
+  }
   expect("no page errors", errors.length === 0, JSON.stringify(errors.slice(0, 3)));
 } finally {
   await browser.close();
