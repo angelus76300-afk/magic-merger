@@ -62,6 +62,9 @@ export class FirstCastGuide {
   private hint: HTMLElement | null = null;
   private timers: number[] = [];
   private place: (() => void) | null = null;
+  // True while something more important holds the top of the island (a trouble's line): the hint
+  // waits for a later cast.
+  quiet: () => boolean = () => false;
 
   afterFirstCast(say: () => void): void {
     if (this.landed) say();
@@ -78,7 +81,7 @@ export class FirstCastGuide {
   }
 
   private showHint(stage: HTMLElement): void {
-    if (this.hint || readSeen() || !stage.isConnected || !stage.getClientRects().length) return;
+    if (this.hint || readSeen() || this.quiet() || !stage.isConnected || !stage.getClientRects().length) return;
     const touch = window.matchMedia?.("(pointer: coarse)").matches ?? false;
     const box = document.createElement("div");
     box.className = "move-hint";
