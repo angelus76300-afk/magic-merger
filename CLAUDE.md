@@ -10,7 +10,7 @@ Everything else is the AI's: checking, building, testing, reviewing, and finding
 
 ## Who leads (since 11 November 2026)
 
-One session leads the project: the **lead session**, titled "Magic Merger lead" (find it with `list_sessions`; today `session_01NxvtApgb2CBkVZn1xvQR2w`). The owner made it so on 11 November and confirmed it on 12 November ("rules: lead"). It replaces the daily planner, which is paused: **wherever these rules, `docs/DAILY.md`, `docs/REVIEWER.md` or `docs/FEEDBACK.md` say "the planner", read "the lead session"**. What it keeps for its successor is `docs/HANDOVER.md`, "The lead session's part".
+One session leads the project: the **lead session**, titled "Magic Merger lead session" (find it with `list_sessions`; today `session_01NxvtApgb2CBkVZn1xvQR2w`). The owner made it so on 11 November and confirmed it on 12 November ("rules: lead"). It replaces the daily planner, which is paused: **wherever these rules, `docs/DAILY.md`, `docs/REVIEWER.md` or `docs/FEEDBACK.md` say "the planner", read "the lead session"**. What it keeps for its successor is `docs/HANDOVER.md`, "The lead session's part".
 
 1. The lead session decides what is built and in what order, builds in its own session with subagents for independent pieces, and starts no other building session. It starts one reviewer per pull request (`docs/REVIEWER.md`), on `main`, never on the branch, and nothing above Opus.
 2. It is the owner's one point of contact, and asks the owner directly, in the lead session. An approval counts only when the owner types it there.
