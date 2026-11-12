@@ -402,17 +402,81 @@
       #mark.far {
         border-style: dashed;
       }
+      /* Where the spell in hand lands (the eye view, second pass): wider than before (it was 18 by 10
+         px and was lost past 20 cells), a dark rim so it reads on sand and snow, larger and glowing far
+         off, and a short stem above it so it stands out of grass and crops. */
       #landing {
         position: absolute;
-        left: -9px;
-        top: -5px;
-        width: 18px;
-        height: 10px;
+        left: -15px;
+        top: -8px;
+        width: 30px;
+        height: 16px;
         box-sizing: border-box;
-        border: 2px solid #ffc23d;
+        border: 3px solid #ffc23d;
         border-radius: 50%;
         pointer-events: none;
+        filter: drop-shadow(0 0 1px #05080f) drop-shadow(0 0 1px #05080f);
+        transform-origin: 50% 50%;
+      }
+      #landing::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        bottom: 50%;
+        width: 2px;
+        height: 14px;
+        margin-left: -1px;
+        background: #ffc23d;
+      }
+      #landing.far {
+        box-shadow: 0 0 8px 2px rgba(255, 194, 61, 0.75);
+      }
+      #landing.aiming {
+        border-color: #fff3c4;
+      }
+      #beam {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+      #beam svg {
+        width: 100%;
+        height: 100%;
+      }
+      #beam path {
+        fill: none;
+        stroke: #ffc23d;
+        stroke-width: 2;
+        stroke-dasharray: 6 5;
+        opacity: 0.7;
         filter: drop-shadow(0 0 1px #05080f);
+      }
+      #beam[hidden],
+      #aimcancel[hidden] {
+        display: none;
+      }
+      #mark.aiming {
+        opacity: 0.45;
+      }
+      /* While an aim is held: lift the finger here to cast nothing. */
+      #aimcancel {
+        position: absolute;
+        left: 50%;
+        top: calc(64px + env(safe-area-inset-top));
+        transform: translateX(-50%);
+        padding: 8px 16px;
+        border: 2px solid #05080f;
+        border-radius: 18px;
+        background: rgba(13, 18, 36, 0.78);
+        color: #f6efdc;
+        font:
+          800 13px/1 system-ui,
+          sans-serif;
+        pointer-events: none;
+      }
+      #aimcancel.over {
+        background: #ef6b5b;
+        color: #1a1405;
       }
       /* From behind: clear of the page's tool rail at the right edge, as the powers were. */
       #acts {
@@ -815,6 +879,10 @@
     </button>
     <div id="mark" hidden aria-hidden="true"></div>
     <div id="landing" hidden aria-hidden="true"></div>
+    <div id="beam" hidden aria-hidden="true">
+      <svg preserveAspectRatio="none"><path d="" /></svg>
+    </div>
+    <div id="aimcancel" hidden aria-hidden="true">Cancel</div>
     <div id="acts" hidden>
       <div id="deeds"></div>
       <button id="castbtn" type="button" hidden>Cast</button>

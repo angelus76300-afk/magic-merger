@@ -61,6 +61,7 @@ import { valueNoise } from "../noise";
 import { LAB_SKY, Sky } from "./sky";
 import { eyeFogRange, fogRange } from "./fog";
 import { clearEye } from "../eyes";
+import { ridden } from "../possess";
 import { solidCovers } from "../paths";
 
 // What a spell's darkness pulls the sky toward.
@@ -944,7 +945,15 @@ export class VoxelView {
     // Eyes sit a little under the top of the head (a hat or antlers above them),
     // kept clear of walls, trunks and steps of ground (eyes.ts clearEye): pressed
     // to a cliff or a house the view was one flat colour (the playtest of 12 November).
-    const e = clearEye(x, y, ground + c.z + Math.max(0.35, rig.height * size * 0.88), this.groundAt, this.solidCell);
+    // A fish sees from where it swims, under the surface (the eye view, second pass).
+    const wet = k.aquatic && world.depth[world.idx(Math.max(0, Math.min(world.w - 1, x)), Math.max(0, Math.min(world.h - 1, y)))] > 0.3;
+    const head = wet
+      ? this.groundAt(x, y) -
+        fishDepth(c, world.depth[world.idx(Math.max(0, Math.min(world.w - 1, x)), Math.max(0, Math.min(world.h - 1, y)))]) -
+        size * 0.15 +
+        rig.height * size * 0.6
+      : ground + c.z + Math.max(0.35, rig.height * size * 0.88);
+    const e = clearEye(x, y, head, this.groundAt, this.solidCell);
     this.orbit.eyeAt(e.x, e.y, e.h);
     this.eyeCell.x = e.x;
     this.eyeCell.y = e.y;
@@ -1061,7 +1070,7 @@ export class VoxelView {
       // levels (walk.ts).
       const underwater = k.aquatic && !c.dead && world.depth[i] > 0.3 && (world.fluid[i] === FLUID.WATER || world.fluid[i] === FLUID.ICE);
       const ground = underwater ? this.groundAt(rx, ry) : easeGround(g, walkGround(world, rx, ry), time - (1 - a) * TICK);
-      const y = underwater ? ground - Math.min(0.7, world.depth[i] * 0.5) - size * 0.15 : ground + c.z;
+      const y = underwater ? ground - fishDepth(c, world.depth[i]) - size * 0.15 : ground + c.z;
       const p = this.toScene(rx, ry, y);
       this.sphere.center.set(p.x, p.y + rig.height * size * 0.5, p.z);
       this.sphere.radius = Math.max(rig.height, 1.4) * size;
@@ -1741,4 +1750,13 @@ function driftColor(x: number, y: number, seed: number): number {
 function scaleHex(c: number, k: number): number {
   const ch = (s: number) => Math.min(255, Math.round(((c >> s) & 255) * k));
   return (ch(16) << 16) | (ch(8) << 8) | ch(0);
+}
+
+// How deep a fish swims under the surface: its own half of the water down to
+// 0.7; the one the player is, where its look dived it (drive.ts dive, 0 just
+// under the surface, 1 near the bed).
+function fishDepth(c: Creature, depth: number): number {
+  const r = ridden(c);
+  if (!r) return Math.min(0.7, depth * 0.5);
+  return 0.2 + r.dive * Math.max(0, depth * 0.85 - 0.2);
 }

@@ -3,6 +3,7 @@ import { doChore, eats, mealFor, strikeNow, strikes, tradeFor } from "./goals";
 import { life, mindOf, type AbilitySpec, type Mind } from "./kin";
 import { names } from "./social";
 import type { Creature } from "./creatures";
+import type { Driven } from "./drive";
 import type { World } from "./world";
 
 // Become anything (2026-11-12, the most voted player idea): the player takes
@@ -10,9 +11,10 @@ import type { World } from "./world";
 //
 // What possession is: the creature's own thinking is paused (its decisions in
 // creatures.ts updateCreature and goals.ts pursue are skipped while it is
-// ridden), and a stick says where it walks instead. The step itself is the
-// engine's own (steer.ts, with the creature's own blocked()): nothing walks
-// through a wall, into deep water or off the island that could not before.
+// ridden), and a stick says where it walks instead. The step is drive.ts (the
+// eye view, second pass: the velocity follows the stick within a tenth of a
+// second) with the creature's own blocked(): nothing walks through a wall,
+// into deep water or off the island that could not before.
 // Everything else is unchanged: others see it, fear it and hunt it as any
 // creature. Its abilities fire on demand, with their trigger skipped and the
 // same cooldown (m.ready) and cast cap as the engine's (abilities.ts).
@@ -20,13 +22,10 @@ import type { World } from "./world";
 // Possession is of the moment: it lives in this module only, never on the
 // creature or the world, so a save never sees it (save.ts is unchanged).
 
-export interface Possession {
+// The stick, the velocity it gives and the climb of the look (drive.ts Driven).
+export interface Possession extends Driven {
   world: World;
   c: Creature;
-  // Where the stick points on the ground (a unit vector) and how far it is pushed (0 to 1).
-  wx: number;
-  wy: number;
-  push: number;
   // World time it began.
   since: number;
   // Its own goal when it was taken: the island may send it somewhere meanwhile
@@ -78,6 +77,13 @@ export function possess(world: World, c: Creature): Possession | null {
     wx: Math.cos(c.hd),
     wy: Math.sin(c.hd),
     push: 0,
+    sx: 0,
+    sy: 0,
+    vx: 0,
+    vy: 0,
+    climb: 0,
+    alt: c.z,
+    dive: 0.3,
     since: world.time,
     own: { task, tx, ty, cell, target, pace, work, action },
     busy: 0,
@@ -109,11 +115,15 @@ export function stickDir(sx: number, sy: number, theta: number): { x: number; y:
   return { x: x / n, y: y / n, push };
 }
 
-export function steerBy(world: World, sx: number, sy: number, theta: number): void {
+// `climb`: the look's pitch as -1 (down) to 1 (up), which a flier and a swimmer follow (drive.ts).
+export function steerBy(world: World, sx: number, sy: number, theta: number, climb = 0): void {
   const p = possessed(world);
   if (!p) return;
   const d = stickDir(sx, sy, theta);
   p.push = d.push;
+  p.sx = sx;
+  p.sy = sy;
+  p.climb = Math.max(-1, Math.min(1, climb));
   if (d.push > 0) {
     p.wx = d.x;
     p.wy = d.y;
