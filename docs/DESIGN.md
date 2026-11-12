@@ -1067,7 +1067,7 @@ Villagers have a name (`nameOf`), made from what a save keeps of them, their loo
 
 ### Watching
 
-In the World frame (`frame.ts`): the Watch button, or the island left alone for 15 seconds (40 with a spell in hand, 12 in the half minute after a cast), starts it. Never during a challenge, the tour of a new island, an open card, or with reduced motion (the button still works). The camera eases to the shot and follows (`OrbitCamera.watch`), no closer than a villager needs to be read. A tap on the island ends it, casts nothing and brings the view back where it was; a drag or a pinch ends it and keeps the view where the story is. A spell's own camera shot comes before the watch.
+In the World frame (`frame.ts`): the Watch button starts it, and nothing else does. Until 12 November it also started by itself when the island was left alone for 15 seconds (40 with a spell in hand, 12 after a cast); the owner: "I don't like that it starts watching something automatically, don't auto toggle it". The button works at any time outside a challenge and the tour of a new island. The camera eases to the shot and follows (`OrbitCamera.watch`), no closer than a villager needs to be read. A tap on the island ends it, casts nothing and brings the view back where it was; a drag or a pinch ends it and keeps the view where the story is. A spell's own camera shot comes before the watch.
 
 When nobody watches, a happening of weight 3 shows as one line on the island for five seconds, at most one every thirty; a tap on it goes there. A tapped creature's card has Follow, the same camera held on that one.
 
