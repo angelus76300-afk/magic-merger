@@ -2,7 +2,7 @@
 // through the engine's own steering and walls, its own thinking is paused and comes back on release,
 // its abilities fire on demand with their own cooldown, 0 health throws the player out, the save never
 // sees it, and nothing it does ends a trouble.
-import { KINDS, kindOf, makeCreature, maxHp, populate, whyStopped, type Creature, type CreatureKind } from "../src/sim/creatures";
+import { KINDS, kindOf, makeCreature, maxHp, populate, resetCreatureIds, whyStopped, type Creature, type CreatureKind } from "../src/sim/creatures";
 import { OrbitCamera } from "../src/sim/voxel/orbit";
 import { mindOf, storyOn } from "../src/sim/kin";
 import { DEFAULT_LAND, resolveLand } from "../src/sim/land";
@@ -89,13 +89,18 @@ function awake(c: Creature): void {
 // villager these checks play stood somewhere else every run, and about one run in eight it stood where
 // a check could not hold (a way that a field or a house filled while it rested, the world's rim). The
 // checks run on one seeded stream, the same every run; the page's own random comes back after.
+// Creature ids feed choices too (a new creature's heading, creatures.ts makeCreature): inside the whole
+// suite the count stood at whatever the groups before had made, and island 21 grew otherwise. The
+// count starts at 1 here and goes back to where it was after, so nothing made before or after collides.
 export function becomeChecks(check: Check): void {
   const own = Math.random;
+  const ids = resetCreatureIds(1);
   Math.random = seeded(2112);
   try {
     becomeChecksSeeded(check);
   } finally {
     Math.random = own;
+    resetCreatureIds(ids);
   }
 }
 
@@ -123,6 +128,25 @@ function becomeChecksSeeded(check: Check): void {
     who = c;
     dir = d;
     break;
+  }
+  // None of the island's own on open ground with a goal: one of its people is set on open grass and
+  // let think for three seconds, until it has a goal of its own.
+  if (!who) {
+    outer: for (let y = 10; y < world.h - 10; y += 2)
+      for (let x = 10; x < world.w - 10; x += 2) {
+        const i = world.idx(x, y);
+        if (world.ground[i] !== G.GRASS || world.cover[i] !== C.NONE || world.depth[i] > 0) continue;
+        const d = DIRS.find((v) => open(world, x, y, v.x, v.y, 7));
+        if (!d) continue;
+        const v = makeCreature("villager", x, y);
+        world.creatures.push(v);
+        run(world, rt, 3);
+        if (mindOf(v).task !== "none") {
+          who = v;
+          dir = DIRS.find((u) => open(world, v.x, v.y, u.x, u.y, 7)) ?? d;
+          break outer;
+        }
+      }
   }
   check("become: island 21 has a villager on open ground to play", !!who);
   if (!who) return;
