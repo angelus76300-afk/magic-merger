@@ -128,7 +128,7 @@ export class Hud {
     this.el.style.cssText =
       "position:absolute;left:6px;bottom:6px;z-index:5;pointer-events:none;font:11px/1.35 ui-monospace,Menlo,monospace;color:#e8fff0;background:rgba(0,0,0,.55);padding:4px 6px;border-radius:6px;white-space:pre";
     this.el.hidden = true;
-    document.body.append(this.el);
+    document.body.appendChild(this.el);
   }
 
   show(on: boolean): void {
