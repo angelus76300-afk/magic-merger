@@ -115,20 +115,6 @@ export function troubleChecks(check: Check): void {
       back?.stones.length === 1 && back.stones[0].item === "Rain" && back.troubles === 1 && back.trouble === null,
     );
   }
-  // 2a. An item cast before the one that puts the fire out is not thanked for it (the review of high
-  // water found the flood thanking the first of two casts). Each cast's hold is counted from when the
-  // fire is out, so one cast before it starts no sooner, and of two held from the same moment the later
-  // one is named.
-  {
-    const r = burn(2026, 30, undefined, (world, t, s) => {
-      if (s === 26) noteCast(world, "flash", "Flash", "", t.x, t.y);
-    });
-    check(
-      "troubles: an item cast before the one that put the fire out is not thanked",
-      r.end?.outcome === "saved" && r.end.by?.key === "rain",
-      `${r.end?.outcome} by ${r.end?.by?.key}: ${r.end?.line}`,
-    );
-  }
   // 2b. A cast that does not reduce the fire earns nothing: Fire thrown at the fire is no answer (the playtest saw it thanked).
   {
     const { world, rt } = island(2026);
@@ -239,6 +225,20 @@ export function troubleChecks(check: Check): void {
     storyOn(null);
   }
   highWaterChecks(check);
+  // 16. An item cast before the one that puts the fire out is not thanked for it (the review of high
+  // water found the flood thanking the first of two casts). Each cast's hold is counted from when the
+  // fire is out, so one cast before it starts no sooner, and of two held from the same moment the later
+  // one is named. Last, so the islands the checks above make are made as before.
+  {
+    const r = burn(2026, 30, undefined, (world, t, s) => {
+      if (s === 26) noteCast(world, "flash", "Flash", "", t.x, t.y);
+    });
+    check(
+      "troubles: an item cast before the one that put the fire out is not thanked",
+      r.end?.outcome === "saved" && r.end.by?.key === "rain",
+      `${r.end?.outcome} by ${r.end?.by?.key}: ${r.end?.line}`,
+    );
+  }
 }
 
 // High water (2026-11-12, src/sim/highwater.ts): the second trouble. Its own islands, made with
