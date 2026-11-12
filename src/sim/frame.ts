@@ -1,3 +1,4 @@
+import { clickActs, pressDown } from "./press";
 import { chronicleDigest } from "./chronicle";
 import { Engine, type WorldSize } from "./engine";
 import { DEFAULT_LAND, readChoice, resolveLand, type LandChoice } from "./land";
@@ -95,18 +96,18 @@ function send(msg: FromWorld): void {
 // free of other touches, and with a thumb on the stick Cast, the acts, the eye,
 // a slot and Let go did nothing (the playtest of 12 November). A click with
 // no pointer before it (a key, a screen reader) still presses it.
+// The click that follows a press is ignored whichever button it lands on (press.ts).
 function press(b: HTMLElement, fn: () => void): void {
-  let pressed = 0;
   b.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
-    pressed = performance.now();
+    pressDown(performance.now());
     fn();
   });
   b.addEventListener("click", (e) => {
     e.preventDefault();
-    if (performance.now() - pressed < 1000) return;
+    if (!clickActs(performance.now())) return;
     fn();
   });
 }

@@ -27,6 +27,7 @@ import { CAST_RANGE, NOTHING_TO_CAST_ON, aimAt, castFromEyes, clearEye, lookThet
 import { unpackLook } from "../src/sim/villagers";
 import { jobOf } from "../src/sim/goals";
 import { playerCast } from "../src/sim/playercast";
+import { clickActs, pressDown } from "../src/sim/press";
 import { keepOrder, readFromWorld } from "../src/sim/protocol";
 import { surfaceY } from "../src/sim/voxel/terrain";
 import { Runtime } from "../src/sim/runtime";
@@ -747,6 +748,22 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
     const now = ["water", "lava", "fire", "air", "earth"];
     const kept = keepOrder(now, fixed);
     check("eyes: the bar does not reorder while possessed; what is new goes at its end", kept.join() === "fire,water,earth,air,lava", kept.join());
+  }
+
+  // 18b. One tap, one action: the click that follows a press is ignored even when it lands on another
+  // button than the one pressed (picking a spell redraws the bar under the finger), and a click with
+  // no press before it (a key, a screen reader) still acts.
+  {
+    let picks = 0;
+    const tap = (t: number): void => {
+      pressDown(t);
+      picks++;
+      // the bar is redrawn here: the click arrives on a new button, which never saw the press
+      if (clickActs(t + 90)) picks++;
+    };
+    tap(5000);
+    check("eyes: one tap on a slot picks once, though the bar is redrawn under the finger", picks === 1, `${picks}`);
+    check("eyes: a click with no press before it still acts", clickActs(5000 + 5000));
   }
 
   // 19. No ring, no cast: aimed where the landing point is out of view, the cast does not go and the line says why.
