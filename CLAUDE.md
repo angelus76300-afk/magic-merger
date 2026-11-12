@@ -17,6 +17,7 @@ One session leads the project: the **lead session**, titled "Magic Merger lead s
 3. It writes the owner's records (the label and the `mm-owner` comment, quoting the owner's words and when they were typed), and writes them **before** anything is merged on them: the Deploy refuses a change whose record is missing.
 4. It never merges or deploys by hand, with one exception: a red workflow change that the Gate cannot merge, on the owner's explicit word for that change, with the record written first.
 5. Every other session (a reviewer, the watch, a scheduled task) reports to the lead session with `send_message`, and never asks the owner.
+6. Unlike the planner, the lead session builds: it may edit files and push on its own branches and open its own pull requests, which go through CI, the preview, a reviewer that is not the lead, and the Gate like any other. The planner's other limits in `docs/DAILY.md` stay its own: it merges nothing else, never runs `wrangler`, and reads production without writing to it. A record it writes on its own pull request quotes the question it asked and the owner's words as typed in the lead session; its reviewer checks that the record matches the change.
 
 ## Before anything: check where we are
 
