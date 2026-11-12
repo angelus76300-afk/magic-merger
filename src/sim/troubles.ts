@@ -4,6 +4,7 @@ import { pile, tell } from "./kin";
 import { C } from "./materials";
 import { WARD } from "./wards";
 import { fallingAt } from "./weather";
+import { floodDistance, floodFocus, floodFront, floodLine, snapFlood, startHighWater, stepFlood, type Flood, type StepWatch } from "./highwater";
 import type { World } from "./world";
 
 // The island needs you (2026-11-11). Merging never needed the island and the
@@ -25,7 +26,9 @@ import type { World } from "./world";
 // The World frame decides when one may start (frame.ts): only while the
 // player is playing.
 
-export type TroubleKind = "wildfire";
+// The second, high water (highwater.ts, 2026-11-12): a river, a lake or the sea
+// swells by a village. The two take turns on an island where both can come.
+export type TroubleKind = "wildfire" | "flood";
 export type Outcome = "saved" | "scarred" | "lost" | "held" | "spent";
 
 export interface Trouble {
@@ -61,7 +64,7 @@ export interface Trouble {
   // out while the wind kept trying to light the front. Three such seconds
   // make it the answer: the wind drops (`answer`), and the fire dies. A Fire thrown at the fire
   // holds nothing down, and the playtest saw it given a stone under an earlier rule.
-  casts: { key: string; name: string; emoji: string; t: number; n: number; low: number }[];
+  casts: { key: string; name: string; emoji: string; t: number; n: number; low: number; hit?: boolean; top?: number; lvl?: number }[];
   answer?: { key: string; name: string; emoji: string; t: number };
   // How wide its front is, in cells either side of its way to the house.
   width: number;
@@ -75,6 +78,8 @@ export interface Trouble {
   stallUntil?: number;
   // Rain fell hard on it at some point.
   rained?: boolean;
+  // A high water's own (highwater.ts).
+  flood?: Flood;
 }
 
 // What a village keeps of the item that saved it: one stone, one line.
@@ -87,6 +92,8 @@ export interface Stone {
   emoji: string;
   kind: TroubleKind;
   day: number;
+  // For a high water: the water it was.
+  from?: Flood["body"];
 }
 
 export interface TroubleEnd {
@@ -156,6 +163,31 @@ export function fireOf(world: World, t: Trouble): { cells: number; x: number; y:
     }
   });
   return { cells, x: bx, y: by, dist: best };
+}
+
+/** Where a trouble is at its worst now: a fire's front, or the water nearest the house it makes for. */
+export function frontOf(world: World, t: Trouble): { cells: number; x: number; y: number; dist: number } {
+  return t.kind === "flood" ? floodFront(world, t) : fireOf(world, t);
+}
+
+/** The spot to look at for a trouble: a fire's front; a high water's edge, on the village's side. */
+export function focusOf(world: World, t: Trouble): { x: number; y: number } {
+  return t.kind === "flood" ? floodFocus(world, t) : fireOf(world, t);
+}
+
+/**
+ * Starts the island's next trouble: a wildfire and a high water take turns where both can come,
+ * a wildfire first. When the turn's kind cannot come anywhere on the island, the other is tried.
+ */
+export function startTrouble(world: World, random: () => number = Math.random, only?: TroubleKind): Trouble | null {
+  if (world.trouble) return null;
+  const first: TroubleKind = only ?? (world.troubleLast === "wildfire" ? "flood" : "wildfire");
+  const order: TroubleKind[] = only ? [only] : [first, first === "wildfire" ? "flood" : "wildfire"];
+  for (const k of order) {
+    const t = k === "flood" ? startHighWater(world, random) : startWildfire(world, random);
+    if (t) return t;
+  }
+  return null;
 }
 
 // Where a wildfire would start for this village: woods 14 to 28 cells away,
@@ -260,6 +292,7 @@ export function startWildfire(world: World, random: () => number = Math.random):
     };
     world.trouble = t;
     world.troubles++;
+    world.troubleLast = "wildfire";
     tell(world, `fire in the woods ${direction(at.x - s.x, at.y - s.y)} of ${name}`, { x: at.x, y: at.y, weight: 3 });
     return t;
   }
@@ -274,23 +307,49 @@ function burningNow(world: World, t: Trouble): Set<number> {
   return alight;
 }
 
-/** The player cast this near the trouble: it may be the answer. */
-export function noteCast(world: World, key: string, name: string, emoji: string, x: number, y: number): void {
+/**
+ * The player cast this near the trouble: it may be the answer. `program`: the runtime running its
+ * program and the program's id, so a high water knows what the program itself changes.
+ */
+export function noteCast(
+  world: World,
+  key: string,
+  name: string,
+  emoji: string,
+  x: number,
+  y: number,
+  program?: { rt: { stepWatch: StepWatch | null }; id: number },
+): void {
   const t = world.trouble;
   if (!t) return;
-  const f = fireOf(world, t);
-  if (Math.hypot(x - t.vx, y - t.vy) > REACH && Math.hypot(x - f.x, y - f.y) > REACH / 2) return;
-  t.casts.push({ key, name, emoji, t: world.time, n: f.cells, low: 0 });
+  const f = frontOf(world, t);
+  if (Math.hypot(x - t.vx, y - t.vy) > REACH && Math.hypot(x - f.x, y - f.y) > REACH / 2 && Math.hypot(x - t.x, y - t.y) > REACH / 2) return;
+  // For a high water `n` is how far the water was from the house it makes for.
+  const cast = { key, name, emoji, t: world.time, n: t.kind === "flood" ? floodDistance(world, t) : f.cells, low: 0 };
+  t.casts.push(cast);
   if (t.casts.length > 12) t.casts.shift();
+  if (t.kind === "flood") snapFlood(world, t, cast, program);
 }
+
+// The house cells burning at the last look, by trouble (not saved: a reload starts the watch again).
+const hotHouses = new WeakMap<Trouble, Set<number>>();
 
 /** Twice a second from the tick. Returns the end when the trouble is over. */
 export function stepTrouble(world: World, dt: number): TroubleEnd | null {
   const t = world.trouble;
   if (!t) return null;
+  if (t.kind === "flood") return stepFlood(world, t, dt) ? endTrouble(world, t) : null;
   const f = fireOf(world, t);
   const houses = houseCells(world, t.vx, t.vy);
-  t.lost += Math.max(0, t.seen - houses);
+  // Only what the fire took: a house cell burning at the last look that is a house no more. A house
+  // crushed by the player's own spell is not the fire's (the playtest of high water found the flood
+  // counting one; the fire did the same).
+  for (const i of hotHouses.get(t) ?? []) if (world.cover[i] !== C.HOUSE) t.lost++;
+  const hot = new Set<number>();
+  near(world, t.vx, t.vy, 22, (i) => {
+    if (world.cover[i] === C.HOUSE && world.fire[i] > 0.05) hot.add(i);
+  });
+  hotHouses.set(t, hot);
   t.seen = houses;
   t.checks++;
   if (world.wardMask[Math.round(t.vy) * world.w + Math.round(t.vx)] & WARD.fire) t.warded++;
@@ -405,7 +464,7 @@ export function stepTrouble(world: World, dt: number): TroubleEnd | null {
   return endTrouble(world, t);
 }
 
-function endTrouble(world: World, t: Trouble): TroubleEnd {
+export function endTrouble(world: World, t: Trouble): TroubleEnd {
   world.trouble = null;
   world.troubleNext = world.time + TROUBLE_EVERY;
   const housesLost = Math.ceil(t.lost / 4);
@@ -414,17 +473,34 @@ function endTrouble(world: World, t: Trouble): TroubleEnd {
   // left every house standing has the benefit of the doubt.
   const late = t.casts[t.casts.length - 1];
   const last = t.answer ?? (t.stage === 3 && !t.capped && t.lost === 0 && late && world.time - late.t <= 20 ? late : undefined);
-  const answered = !!last && world.time - last.t <= ANSWER_WITHIN;
-  const held = t.warded > t.checks / 2;
+  const flood = t.kind === "flood";
+  // A high water's answer is decided as it is held back (highwater.ts), however long the water takes to go down after.
+  const answered = flood ? !!t.answer : !!last && world.time - last.t <= ANSWER_WITHIN;
+  const held = t.warded > t.checks / 2 || t.flood?.shield === true;
   let outcome: Outcome;
   if (t.lost >= t.cap && t.cap > 4) outcome = "lost";
-  else if (t.lost > 0 || people < t.people0 * 0.85) outcome = "scarred";
+  // A high water counts the people it drowned; a fire, the people gone.
+  else if (t.lost > 0 || (flood ? (t.flood!.drowned ?? 0) > 0 : people < t.people0 * 0.85)) outcome = "scarred";
   else if (held) outcome = "held";
   else outcome = answered ? "saved" : "spent";
-  const by = answered && (outcome === "saved" || outcome === "scarred") ? { key: last.key, name: last.name, emoji: last.emoji } : null;
+  const pick = flood ? t.answer : last;
+  const by = answered && pick && (outcome === "saved" || outcome === "scarred") ? { key: pick.key, name: pick.name, emoji: pick.emoji } : null;
   const loss = housesLost === 1 ? "one house" : `${housesLost} houses`;
-  const line =
-    outcome === "saved"
+  const what = housesLost ? loss : "some of its people";
+  const body = t.flood?.body ?? "river";
+  const line = flood
+    ? outcome === "saved"
+      ? `${by!.name} turned back the ${body}: ${t.name} is dry`
+      : outcome === "held"
+        ? `the ${body} went down round ${t.name}, held behind its shield`
+        : outcome === "spent"
+          ? `the ${body} went down by ${t.name} by itself`
+          : outcome === "lost"
+            ? `the ${body} took ${loss} of ${t.name}`
+            : by
+              ? `${by.name} turned back the ${body}, but ${t.name} lost ${what}`
+              : `the ${body} went down: ${t.name} lost ${what}`
+    : outcome === "saved"
       ? `${by!.name} put out the fire: ${t.name} is unharmed`
       : outcome === "held"
         ? `the fire burned out round ${t.name}, held behind its shield`
@@ -465,7 +541,17 @@ function raiseStone(world: World, t: Trouble, by: { key: string; name: string; e
     pile(world, x, y, 9, 0x9a9aa6);
     pile(world, x, y, 18, 0xffc23d);
   }
-  const stone: Stone = { x, y, village: t.name, key: by.key, item: by.name, emoji: by.emoji, kind: t.kind, day: Math.floor(world.time / DAY) + 1 };
+  const stone: Stone = {
+    x,
+    y,
+    village: t.name,
+    key: by.key,
+    item: by.name,
+    emoji: by.emoji,
+    kind: t.kind,
+    day: Math.floor(world.time / DAY) + 1,
+    ...(t.flood ? { from: t.flood.body } : {}),
+  };
   world.stones = [...world.stones.filter((s) => s.village !== t.name), stone];
   tell(world, `${t.name} raised a stone to ${by.name}`, { x, y, weight: 2 });
 }
@@ -477,7 +563,7 @@ export function stoneAt(world: World, x: number, y: number): Stone | null {
 
 /** What a stone says. */
 export function stoneLine(s: Stone): string {
-  return `${s.item} saved ${s.village} from fire, day ${s.day}`;
+  return `${s.item} saved ${s.village} from ${s.kind === "flood" ? `the ${s.from ?? "river"}` : "fire"}, day ${s.day}`;
 }
 
 export const MAX_STONES = 24;
@@ -485,21 +571,73 @@ const num = (v: unknown): v is number => typeof v === "number" && Number.isFinit
 const text = (v: unknown, max: number): v is string => typeof v === "string" && v.length <= max;
 
 /** What a save holds of troubles, checked field by field: a save is data from outside. */
-export function readTroubles(v: unknown): { n: number; next: number; now: Trouble | null; stones: Stone[] } | null {
+const bodies = ["river", "lake", "sea"] as const;
+const isBody = (v: unknown): v is Flood["body"] => (bodies as readonly unknown[]).includes(v);
+
+// A high water's own part of the save, field by field; null drops the trouble.
+function readFlood(v: unknown): Flood | null {
+  if (!v || typeof v !== "object") return null;
+  const f = v as Record<string, unknown>;
+  const box = f.box;
+  if (!Array.isArray(box) || box.length !== 4 || !box.every((n) => num(n) && Number.isInteger(n) && n >= 0 && n <= 4096)) return null;
+  if (![f.b, f.peak, f.q, f.d0, f.s].every(num) || !isBody(f.body) || !text(f.bed, 8192)) return null;
+  return {
+    b: f.b as number,
+    peak: Math.max(0, Math.min(8, f.peak as number)),
+    q: Math.max(0, Math.min(40, f.q as number)),
+    d0: f.d0 as number,
+    s: Math.max(0, Math.min(1, f.s as number)),
+    back: num(f.back) ? f.back : 0,
+    body: f.body,
+    box: [box[0], box[1], box[2], box[3]],
+    bed: f.bed,
+    ...(f.rained === true ? { rained: true } : {}),
+    ...(f.banked === true ? { banked: true } : {}),
+    ...(num(f.behind) ? { behind: Math.max(1, Math.min(12, f.behind)) } : {}),
+    ...(num(f.hold) ? { hold: Math.max(2, Math.min(20, f.hold)) } : {}),
+    ...(num(f.th) ? { th: Math.max(50, Math.min(300, f.th)) } : {}),
+    ...(num(f.over) ? { over: Math.max(0, Math.min(4, f.over)) } : {}),
+    ...(num(f.drowned) ? { drowned: Math.max(0, Math.floor(f.drowned)) } : {}),
+    ...(f.shield === true ? { shield: true } : {}),
+  };
+}
+
+export function readTroubles(v: unknown): { n: number; next: number; now: Trouble | null; stones: Stone[]; last: TroubleKind | null } | null {
   if (!v || typeof v !== "object") return null;
   const d = v as Record<string, unknown>;
   if (!num(d.n) || !num(d.next)) return null;
   const stones: Stone[] = [];
   for (const raw of Array.isArray(d.stones) ? d.stones.slice(0, MAX_STONES) : []) {
     const s = raw as Record<string, unknown>;
-    if (s && num(s.x) && num(s.y) && num(s.day) && text(s.village, 60) && text(s.key, 120) && text(s.item, 120) && text(s.emoji, 16) && s.kind === "wildfire")
-      stones.push({ x: s.x, y: s.y, village: s.village, key: s.key, item: s.item, emoji: s.emoji, kind: "wildfire", day: s.day });
+    if (
+      s &&
+      num(s.x) &&
+      num(s.y) &&
+      num(s.day) &&
+      text(s.village, 60) &&
+      text(s.key, 120) &&
+      text(s.item, 120) &&
+      text(s.emoji, 16) &&
+      (s.kind === "wildfire" || s.kind === "flood")
+    )
+      stones.push({
+        x: s.x,
+        y: s.y,
+        village: s.village,
+        key: s.key,
+        item: s.item,
+        emoji: s.emoji,
+        kind: s.kind,
+        day: s.day,
+        ...(s.kind === "flood" && isBody(s.from) ? { from: s.from } : {}),
+      });
   }
   let now: Trouble | null = null;
   const t = d.now as Record<string, unknown> | null;
+  const flood = t && t.kind === "flood" ? readFlood(t.flood) : null;
   if (
     t &&
-    t.kind === "wildfire" &&
+    (t.kind === "wildfire" || (t.kind === "flood" && flood)) &&
     text(t.name, 60) &&
     [t.vx, t.vy, t.x, t.y, t.t0, t.houses0, t.people0, t.lost, t.seen, t.cap].every(num) &&
     (t.stage === 1 || t.stage === 2 || t.stage === 3)
@@ -515,7 +653,7 @@ export function readTroubles(v: unknown): { n: number; next: number; now: Troubl
         num((c as Record<string, unknown>).low),
     );
     now = {
-      kind: "wildfire",
+      kind: flood ? "flood" : "wildfire",
       vx: t.vx as number,
       vy: t.vy as number,
       name: t.name,
@@ -538,13 +676,20 @@ export function readTroubles(v: unknown): { n: number; next: number; now: Troubl
       checks: num(t.checks) ? t.checks : 0,
       warded: num(t.warded) ? t.warded : 0,
       casts,
+      ...(flood ? { flood } : {}),
     };
+    // A high water already answered stays answered while it goes down.
+    const a = t.answer as Record<string, unknown> | undefined;
+    if (flood && a && text(a.key, 120) && text(a.name, 120) && text(a.emoji, 16) && num(a.t)) now.answer = { key: a.key, name: a.name, emoji: a.emoji, t: a.t };
   }
-  return { n: Math.max(0, Math.floor(d.n)), next: d.next, now, stones };
+  // The kind of the last trouble: every trouble before high water was a wildfire.
+  const last = d.last === "wildfire" || d.last === "flood" ? d.last : d.n > 0 ? "wildfire" : null;
+  return { n: Math.max(0, Math.floor(d.n)), next: d.next, now, stones, last };
 }
 
 /** What is seen of a trouble right now, in one line: never what to do about it. */
 export function troubleLine(t: Trouble): string {
+  if (t.kind === "flood") return floodLine(t);
   return t.stage === 3 ? `${cap(t.name)} is burning` : t.stage === 2 ? `The fire is coming toward ${t.name}` : `Fire in the woods by ${t.name}`;
 }
 const cap = (s: string): string => (s ? s[0].toUpperCase() + s.slice(1) : s);
