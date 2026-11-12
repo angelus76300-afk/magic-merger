@@ -5,7 +5,8 @@
 // sends when it lifts lands on the header's Sign in: the account dialog opened (the playtest of
 // 12 November). So, once the eye view ends, a click on the page is swallowed when no finger came
 // down on the page since: it began in the frame. A click from a new press acts as always.
-const GHOST_MS = 1500;
+// Long enough for a click held back behind slow frames (800 ms each, drawn in software).
+const GHOST_MS = 5000;
 let armedAt = -Infinity;
 let downAt = -Infinity;
 

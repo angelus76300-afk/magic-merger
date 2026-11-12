@@ -74,7 +74,7 @@ try {
   // real): when the stick's first move reaches the page's code, and each frame where the eye is.
   // Software WebGL draws a frame in 100 to 250 ms here and the browser holds input back behind it,
   // so the answer is counted in frames drawn after the page has the move (a phone draws one every
-  // 16 to 33 ms), and the pace in the island's own time (a frame moves it 0.1 s at most, engine.ts).
+  // 16 to 33 ms), and the pace in the island's own time (a slow frame moves it less than its length).
   {
     await world().evaluate(() => {
       const w = window;
@@ -84,7 +84,7 @@ try {
       const t0 = performance.now();
       const step = () => {
         const r = w.__mmEyes?.();
-        if (r?.eye) w.__trace.push([performance.now(), r.eye.x, r.eye.y]);
+        if (r?.eye && r.rider) w.__trace.push([performance.now(), r.eye.x, r.eye.y, r.rider.x, r.rider.y, r.time]);
         if (performance.now() - t0 < 4000) requestAnimationFrame(step);
       };
       requestAnimationFrame(step);
@@ -103,10 +103,10 @@ try {
     const after = trace.filter((p) => p[0] > got);
     const firstFrames = after.findIndex((p) => Math.hypot(p[1] - before[1], p[2] - before[2]) > 0.02) + 1 || Infinity;
     // The pace kept, from the fourth frame on, over the island's time.
+    // The creature where the island has it (not drawn between ticks), over the island's clock.
     const run = after.slice(3, 9);
-    let sim = 0;
-    for (let i = 1; i < run.length; i++) sim += Math.min(100, run[i][0] - run[i - 1][0]) / 1000;
-    const pace = run.length > 1 && sim ? Math.hypot(run.at(-1)[1] - run[0][1], run.at(-1)[2] - run[0][2]) / sim : 0;
+    const sim = run.length > 1 ? run.at(-1)[5] - run[0][5] : 0;
+    const pace = sim > 0 ? Math.hypot(run.at(-1)[3] - run[0][3], run.at(-1)[4] - run[0][4]) / sim : 0;
     const frameMs = run.length > 1 ? (run.at(-1)[0] - run[0][0]) / (run.length - 1) : 0;
     const answer = { firstFrames, pace: +pace.toFixed(1), frameMs: Math.round(frameMs) };
     expect(

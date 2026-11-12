@@ -693,7 +693,7 @@ function castChecks(check: Check): void {
     pageDown(20_300);
     const pressed = isGhostClick(20_350);
     armGhostGuard(30_000);
-    const late = isGhostClick(32_000);
+    const late = isGhostClick(36_000);
     check(
       "eyes: the click after Let go is swallowed once; a new press on the page, or one long after, acts",
       ghost && !second && !pressed && !late,
@@ -1206,6 +1206,12 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
     tap(5000);
     check("eyes: one tap on a slot picks once, though the bar is redrawn under the finger", picks === 1, `${picks}`);
     check("eyes: a click with no press before it still acts", clickActs(5000 + 5000));
+    // A slow frame holds the click back: it comes 900 ms after its press, and is still the press's own
+    // (the playtest of 12 November at 832 and 1440 wide: a tap on Cast cast twice).
+    pressDown(40_000);
+    const late = clickActs(40_900);
+    const next = clickActs(41_500);
+    check("eyes: a click held back 900 ms behind its press does nothing; the next click with no press acts", !late && next, `${late}, ${next}`);
   }
 
   // 19. No ring, no cast: aimed where the landing point is out of view, the cast does not go and the line says why.

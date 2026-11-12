@@ -1508,6 +1508,8 @@ function placeFor(sort: PlaceSort): { x: number; y: number; yaw: number } | null
   return {
     eyes,
     eye: e ? { ...e } : null,
+    // The island's own clock, seconds: a pace measured on slow frames is measured in it.
+    time: engine?.world.time ?? 0,
     aim: landing ? { x: landing.x, y: landing.y, hit: landing.hit, dist: landing.dist, range: landing.range } : null,
     aimHold: { active: aim.active, armed: aim.armed, dyaw: aim.dyaw, dpitch: aim.dpitch, ...aimStats },
     ring: landingEl.hidden ? null : landingEl.getBoundingClientRect().toJSON(),
