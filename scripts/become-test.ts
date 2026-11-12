@@ -59,16 +59,20 @@ const run = (world: World, rt: Runtime, seconds: number, each?: () => void) => {
 // Theta 0: screen right is +x on the ground and screen down is +y, so the stick is the direction itself.
 const push = (world: World, x: number, y: number) => steerBy(world, x, y, 0);
 
-// A straight way of `cells` open to a walker from (x, y) along (dx, dy).
+// A straight way of `cells` open to a walker from (x, y) along (dx, dy): wide enough for its body
+// (the line and a third of a cell to each side of it), and inside the ridden step's rim, three cells in from
+// the world's edge (creatures.ts). A line one cell thin, or one that ran to the rim, failed the walk
+// check about one run in twenty: the body brushed a cover beside the line, or the rim stopped it.
 function open(world: World, x: number, y: number, dx: number, dy: number, cells: number): boolean {
-  for (let s = 1; s <= cells; s += 0.5) {
-    const px = x + dx * s;
-    const py = y + dy * s;
-    if (!world.inside(px, py)) return false;
-    const i = world.idx(px, py);
-    if (world.depth[i] > 0.2 || world.cover[i] !== C.NONE) return false;
-    if (Math.abs(world.walkLevel(i) - world.walkLevel(world.idx(x, y))) > 1.2) return false;
-  }
+  for (let s = 1; s <= cells; s += 0.5)
+    for (const side of [-0.35, 0, 0.35]) {
+      const px = x + dx * s - dy * side;
+      const py = y + dy * s + dx * side;
+      if (px < 3.5 || py < 3.5 || px > world.w - 4.5 || py > world.h - 4.5) return false;
+      const i = world.idx(px, py);
+      if (world.depth[i] > 0.2 || world.cover[i] !== C.NONE) return false;
+      if (Math.abs(world.walkLevel(i) - world.walkLevel(world.idx(x, y))) > 1.2) return false;
+    }
   return true;
 }
 
@@ -81,7 +85,21 @@ function awake(c: Creature): void {
   c.fear = 0;
 }
 
+// The island's life draws Math.random (births, wandering, which villager sows where). Unseeded, the
+// villager these checks play stood somewhere else every run, and about one run in eight it stood where
+// a check could not hold (a way that a field or a house filled while it rested, the world's rim). The
+// checks run on one seeded stream, the same every run; the page's own random comes back after.
 export function becomeChecks(check: Check): void {
+  const own = Math.random;
+  Math.random = seeded(2112);
+  try {
+    becomeChecksSeeded(check);
+  } finally {
+    Math.random = own;
+  }
+}
+
+function becomeChecksSeeded(check: Check): void {
   // 0. The stick's direction against the camera's turn.
   {
     const up = stickDir(0, -1, 0);
@@ -128,7 +146,10 @@ export function becomeChecks(check: Check): void {
     `task ${m.task}`,
   );
 
-  // 2. The stick walks it the way it points, and it stops when the stick is let go.
+  // 2. The stick walks it the way it points, and it stops when the stick is let go. The way is chosen
+  // now, from the island as it is after the rest: in those seconds its village sows, plants and builds,
+  // and a way chosen before was sometimes no longer open.
+  dir = DIRS.find((v) => open(world, c.x, c.y, v.x, v.y, 8)) ?? dir;
   const start = { x: c.x, y: c.y };
   push(world, dir.x, dir.y);
   run(world, rt, 2, () => awake(c));
@@ -459,6 +480,7 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
   // A villager of its own on open grass, with open ground ahead along d.
   let c: Creature | null = null;
   let d: { x: number; y: number } | undefined;
+  let home = { x: 0, y: 0 };
   for (let y = 20; y < world.h - 20 && !c; y += 3)
     for (let x = 20; x < world.w - 20 && !c; x += 3) {
       const i = world.idx(x, y);
@@ -466,6 +488,8 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
       d = DIRS.find((v) => open(world, x + 0.5, y + 0.5, v.x, v.y, 10));
       if (!d) continue;
       c = makeCreature("villager", x + 0.5, y + 0.5);
+      // The cell it stands in, as world.idx rounds: its open grass.
+      home = { x, y };
       world.creatures.push(c);
     }
   check("eyes: island 21 has a villager on open ground to play", !!c);
@@ -536,7 +560,8 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
   // trade on what is in front (the owner, 12 November: "Why Eat as an option?"); Strike for those who
   // fight; Eat only for an animal at its food.
   {
-    const at = { x: c.x, y: c.y };
+    // Its spawning cell, open grass: where the walk above left it depends on the walk.
+    const at = { ...home };
     // The villager of the walk is done: out of the way of the strike below.
     c.hp = 0;
     c.dead = true;
@@ -554,8 +579,12 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
     const farmer = byJob("farmer");
     const ahead = world.idx(at.x + Math.cos(face), at.y + Math.sin(face));
     const was = world.cover[ahead];
+    // And the cell after it: a trade looks two cells ahead (goals.ts frontCells).
+    const beyond = world.idx(at.x + Math.cos(face) * 2, at.y + Math.sin(face) * 2);
+    const wasBeyond = world.cover[beyond];
     // Open grass ahead: no tree for a woodcutter, grass for a grazer.
     world.setCover(ahead, C.NONE);
+    world.setCover(beyond, C.NONE);
     const put = (o: Creature) => {
       o.x = at.x;
       o.y = at.y;
@@ -623,6 +652,7 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
       put(cutter);
       possess(world, cutter);
       world.setCover(ahead, C.NONE);
+      world.setCover(beyond, C.NONE);
       const none = doDeed(world, "trade", face);
       world.setCover(ahead, C.TREE);
       const verb = ids(cutter).join();
@@ -663,6 +693,7 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
       farmer.y = keep.y;
     }
     world.setCover(ahead, was);
+    world.setCover(beyond, wasBeyond);
 
     // Strike: a wolf facing a deer in reach takes half a second of its own blows off it; facing away, nothing.
     possess(world, wolf);
