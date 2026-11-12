@@ -103,6 +103,16 @@ export function firstLook(engine: Engine, card: HTMLElement, reducedMotion: bool
       // A player's discovery grown into the world (4.4.5 part C) says who found it.
       show(capital(info.name), info.by ? `${what} · found by ${info.by}` : what, info.does ? capital(info.does) + "." : "");
     }),
+    // The island as a map (4.9 part 3): last, the whole island again with no card, its villages'
+    // names over them (view.ts), before play starts in one of them.
+    ...(world.settlements.length
+      ? [
+          () => {
+            orbit.flyTo(world.w / 2, world.h / 2, orbit.distanceFor(Math.max(world.w, world.h) * 0.55), 0.72, 1.2);
+            card.hidden = true;
+          },
+        ]
+      : []),
   ];
   let k = 0;
   const next = () => {
