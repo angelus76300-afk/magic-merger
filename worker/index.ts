@@ -112,6 +112,7 @@ import {
   Ledger,
   LedgerError,
   allowance,
+  checkTotals,
   createInvite,
   hold,
   inviteByToken,
@@ -420,6 +421,9 @@ export function cronTasks(env: Env): Record<string, (() => Promise<unknown>) | n
     wonders: () => wonderDaily(env, env.WONDERS !== "0" ? "due" : "collect"),
     "daily challenge": env.DAILY_CHALLENGES === "0" ? null : () => setDailyChallenge(env, false),
     "rewrite by evidence": env.EVIDENCE_REWRITES === "0" ? null : () => rewriteByEvidence(env),
+    // 4.7: the budget's running totals against the ledger, once a day (one
+    // read of the month's spend); a drift is logged and the totals rebuilt.
+    "spend totals": async () => ((await scanDue(env.DB, "spend totals", 86400_000)) ? checkTotals(env.DB) : null),
   };
 }
 
