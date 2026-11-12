@@ -44,6 +44,9 @@ An experiment the owner asked for: one session leads and builds, instead of a pl
 - The dashboard: write `scripts/planner/planner.json`, run `node scripts/planner/to-dashboard.mjs <dir>`, upload `glance.json` as an asset of the dashboard, point the eleven datasets at it in one batch, delete the old asset.
 - The Gate tells a workflow run by its file, not its name (fix of 11 November, merged by hand on the owner's "gate fix: merge"): `ci.yml` has a `run-name`, and GitHub gives that as the run's `name`. The lighter pipeline shipped with a filter `name === "CI"` that matched no run, and held the wildfire and the budget fix for two hours on a CI that had passed. The test fed the Gate runs named "CI"; it now feeds it what GitHub really lists.
 - The watch is a standing session, "Magic Merger watch" (Haiku, `session_01NxvtAmhn8EGzccCG6kMaC9`, the repository attached), woken every two hours by the scheduled task `trig_01MwWarNDq192dYbh5wFWacD`. It reports to the lead session only when something is wrong. A scheduled task that starts a fresh session each time has no GitHub access at all (tried, 403 on every read): do not go back to that.
+- Record the owner's yes before a merge by hand, not after: the Deploy reads the label and the `mm-owner` record of every pull request since the last deploy, and refused three times on 11 November because the Gate fix was merged on the owner's word with no record. Writing the record afterwards and starting the Deploy by dispatch repaired it.
+- Database reads, measured by hour on the live database (11 November): a baseline of about 17,000 rows an hour until 20:00 UTC, about 1,700 from 21:00. The day's total (2.49M) still carries the midnight hour (868,000) and the paid calls before the running totals landed. The first full day to judge is 12 November: expect well under 100,000.
+- Local `main` in the lead session's checkout is an old, diverged branch: work from `origin/main` (`git checkout --detach origin/main` or a new branch from it).
 - `test:worker` has one check that can read a row before the Worker's queue wrote it ("votes: the rewrite is recorded, and paid by the voter"): it failed once in CI on a merge commit and passed on a re-run. Make it wait for the row when next in the Worker.
 
 ### Next to build: "Become anything", first version (designed and challenged, 11 November)
@@ -81,14 +84,14 @@ What the player gets: tap a creature, press Become on its card, and play as it. 
 
 ### The experiment's tally
 
-| Measure                               | Lead session                                                                                                          | Old setup, 5 to 10 November                          |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| Updates live, by name                 | 1: The island tells its stories (live 18:27 UTC, 11 November). Built and in playtest: The island needs you (wildfire) | 35 pull requests merged, almost all small            |
-| Pull requests that needed a later fix | 1 of 4: the lighter pipeline broke the Gate's reading of CI (fixed the same day)                                      | 6 of 35                                              |
-| Sessions started                      | 0 so far (1 reviewer to come)                                                                                         | about 95 review rounds, 40 re-reading merges of main |
-| Subagents                             | 2 (game designer, playtester)                                                                                         |                                                      |
-| The owner's time asked for            | 0 questions                                                                                                           |                                                      |
-| Usage                                 | The weekly limit read "warning" at 17:49 UTC on 11 November. Two reviewer sessions cost $0.38 and $1.47               | paused 78 of 130 hours by limits                     |
+| Measure                               | Lead session                                                                                                                                                        | Old setup, 5 to 10 November                          |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Updates live, by name                 | 3: The island tells its stories (11 November, 18:27 UTC), The island needs you (wildfire, 12 November, 00:10), Weather that crosses the island (12 November, 01:15) | 35 pull requests merged, almost all small            |
+| Pull requests that needed a later fix | 1 of 4: the lighter pipeline broke the Gate's reading of CI (fixed the same day)                                                                                    | 6 of 35                                              |
+| Sessions started                      | 0 so far (1 reviewer to come)                                                                                                                                       | about 95 review rounds, 40 re-reading merges of main |
+| Subagents                             | 2 (game designer, playtester)                                                                                                                                       |                                                      |
+| The owner's time asked for            | 0 questions                                                                                                                                                         |                                                      |
+| Usage                                 | The weekly limit read "warning" at 17:49 UTC on 11 November. Two reviewer sessions cost $0.38 and $1.47                                                             | paused 78 of 130 hours by limits                     |
 
 ## The director's part (written 11 November 2026, 03:55 UTC)
 
