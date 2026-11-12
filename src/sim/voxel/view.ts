@@ -1305,8 +1305,8 @@ export class VoxelView {
         this.markMesh.setColorAt(marks, this.col.setHex(color));
         marks++;
       }
-      // A villager on a market trip pulls a cart (map.ts onTrip): larger from far, so the roads move.
-      if (marks + 5 <= 900 && onTrip(c)) {
+      // A villager on a market trip pulls a cart (map.ts onTrip): larger from far, so the roads move. None in the eye view.
+      if (marks + 5 <= 900 && !this.orbit.eye && onTrip(c)) {
         const s = 1 + 2.6 * fade(this.cover, FAR.carts);
         marks = this.placeCart(marks, rx, ry, ground, c.hd, s, c.mind?.carry === "food" ? 0xe8c25a : 0xb4483a);
       }
