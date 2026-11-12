@@ -1,26 +1,84 @@
 {
   "mode": "One lead session builds (the experiment, since 11 November)",
-  "usage": { "fiveHour": "ok", "weekly": "warning", "weeklyResets": "Tuesday 17 November, 5 PM Toronto" },
-  "working": ["The island needs you: a wildfire only the right item answers (built, in playtest)"],
+  "usage": {
+    "fiveHour": "ok",
+    "weekly": "warning",
+    "weeklyResets": "Tuesday 17 November, 5 PM Toronto"
+  },
+  "working": ["Become anything, with a view through its eyes: first version built and playtested, eye view in prototype"],
   "next": [
-    "The island needs you: review, then live",
-    "Measure it: the share of troubles answered by an item made since they began",
+    "Become anything and Through its eyes: ship as one update",
+    "Measure the wildfire: the share of troubles answered by an item made since they began",
     "The next troubles: a drought on a village's fields, then high water",
-    "Become anything: tap a creature and play as it",
-    "A proposal for what tiers should mean, from the wildfire's numbers"
+    "A proposal for what tiers should mean, from the wildfire's numbers",
+    "Spend only on what players use: big items at first cast, the weekly design call"
   ],
-  "parked": ["Tests on every merge (lighter pipeline): on hold", "Phoenix is reborn once per death: reviewed, waits to merge"],
+  "parked": ["Feedback draft: the Sound button turns the sound off and back on (unowned)"],
   "roadmap": [
-    { "v": "1", "name": "The island tells its stories", "state": "Live", "done": 1, "total": 1, "eta": "11 November" },
-    { "v": "2", "name": "One game instead of two (the island needs you)", "state": "Wildfire built", "done": 1, "total": 3, "eta": "this week" },
-    { "v": "3", "name": "Become anything", "state": "Next", "done": 0, "total": 1, "eta": "" },
-    { "v": "4", "name": "Items worth showing a friend", "state": "Needs your yes with a cost", "done": 0, "total": 1, "eta": "" },
-    { "v": "5", "name": "Towns you can read from the sky", "state": "Later", "done": 0, "total": 1, "eta": "" },
-    { "v": "6", "name": "It runs beautifully on the Fold", "state": "Later", "done": 0, "total": 1, "eta": "" }
+    {
+      "v": "1",
+      "name": "The island tells its stories",
+      "state": "Live",
+      "done": 1,
+      "total": 1,
+      "eta": "11 November"
+    },
+    {
+      "v": "2",
+      "name": "One game instead of two (the island needs you)",
+      "state": "Wildfire live",
+      "done": 1,
+      "total": 3,
+      "eta": "this week"
+    },
+    {
+      "v": "3",
+      "name": "Become anything",
+      "state": "Being built, with eye view",
+      "done": 0,
+      "total": 1,
+      "eta": "this week"
+    },
+    {
+      "v": "4",
+      "name": "Items worth showing a friend",
+      "state": "Needs your yes with a cost",
+      "done": 0,
+      "total": 1,
+      "eta": ""
+    },
+    {
+      "v": "5",
+      "name": "Towns you can read from the sky",
+      "state": "Later",
+      "done": 0,
+      "total": 1,
+      "eta": ""
+    },
+    {
+      "v": "6",
+      "name": "It runs beautifully on the Fold",
+      "state": "In passing: weather fronts live",
+      "done": 0,
+      "total": 1,
+      "eta": ""
+    }
   ],
   "updates": [
-    { "name": "Updates live (lead session)", "done": 1, "total": 1 },
-    { "name": "Pull requests merged that needed a later fix", "done": 0, "total": 2 },
-    { "name": "Reviewer sessions started", "done": 2, "total": 2 }
+    {
+      "name": "Updates live (lead session)",
+      "done": 3,
+      "total": 3
+    },
+    {
+      "name": "Pull requests merged that needed a later fix",
+      "done": 1,
+      "total": 6
+    },
+    {
+      "name": "Reviewer sessions started",
+      "done": 3,
+      "total": 3
+    }
   ]
 }
