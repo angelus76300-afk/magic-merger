@@ -1,6 +1,7 @@
 // High water: a flood played in a browser at one size, with frames as it starts, spreads and reaches
 // the houses, the Craft tab's line, and the end after an answer (raised earth, or cold at its source).
-//   npx vite build && node scripts/highwater-frames.mjs <out dir> [344x882] [seed] [answer: none|earth|cold]
+//   npx vite build && node scripts/highwater-frames.mjs <out dir> [344x882] [seeds, the first that floods] [answer: none|earth|cold|heat|dome]
+//   STALE=1 also checks the Craft line after a reload mid flood and after a new island.
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { startLocalGame } from "./local-game.mjs";
@@ -9,14 +10,31 @@ const OUT = process.argv[2];
 const [W, H] = (process.argv[3] ?? "344x882").split("x").map(Number);
 const SEED = process.argv[4] ?? "21";
 const ANSWER = process.argv[5] ?? "none";
+// The answers, as the player's own casts through the frame's check hook. `at`: where; `when`: the stage it is cast at.
+const EARTH = "const spell = { *cast(w) { w.sound('rumble', 0.6); w.terraform(w.x, w.y, w.r * 0.35, 4); w.paint(w.x, w.y, w.r * 0.3, 'rock', 0.8); } };";
 const CODES = {
-  // A ring of raised earth round the village (lab/solutions/dike.js).
-  earth: {
-    at: "village",
-    code: "const spell = { *cast(w) { for (let h = 0; h < 5; h++) { w.ring(w.x, w.y, w.r * 0.9, w.r * 0.9 + 2.5, (x, y) => w.build(x, y, 1, 'basalt')); yield 0.2; } } };",
-  },
+  // Five plain Earth casts across the water's way, six cells apart, while it still swells in its bed.
+  earth: Array.from({ length: 5 }, (_, k) => ({ at: "line", k, of: 5, name: "Earth", tier: "minor", code: EARTH, when: "1" })),
   // Hard cold where the water swells (lab/solutions/frost.js).
-  cold: { at: "source", code: "const spell = { *cast(w) { for (let k = 0; k < 40; k++) { w.temperature(w.x, w.y, w.r, -120); yield 0.5; } } };" },
+  cold: [
+    {
+      at: "source",
+      name: "Frost",
+      code: "const spell = { *cast(w) { for (let k = 0; k < 40; k++) { w.temperature(w.x, w.y, w.r, -120); yield 0.5; } } };",
+      when: "2",
+    },
+  ],
+  // Heat on the water's edge.
+  heat: [
+    {
+      at: "front",
+      name: "Heat",
+      code: "const spell = { *cast(w) { for (let k = 0; k < 30; k++) { w.temperature(w.x, w.y, w.r * 0.8, 300); yield 0.5; } } };",
+      when: "2",
+    },
+  ],
+  // A dome on the house it makes for (the playtest's case).
+  dome: [{ at: "house", name: "Dome", tier: "minor", code: "const spell = { *cast(w) { w.ward(w.x, w.y, w.r, { seconds: 600 }); } };", when: "1" }],
 };
 const game = await startLocalGame();
 const browser = await chromium.launch({ args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--ignore-gpu-blocklist"] });
@@ -69,29 +87,69 @@ try {
   const shot = (name) => page.screenshot({ path: join(OUT, `${W}-${name}.jpg`), type: "jpeg", quality: 85 });
   let answered = false;
   let lastStage = "";
-  for (let s = 0; s <= 150; s += 2.5) {
+  const t0 = Date.now();
+  for (let n = 0; n < 200; n++) {
+    const s = Math.round((Date.now() - t0) / 1000);
     const now = await world().evaluate(() => window.__mmTrouble?.(true));
     const st = (/stage (\d)/.exec(now) ?? [])[1] ?? "end";
-    if (s === 0 || st !== lastStage || s % 10 === 0) await shot(`t${String(Math.round(s)).padStart(3, "0")}-s${st}`);
+    if (n === 0 || st !== lastStage || n % 4 === 0) await shot(`t${String(s).padStart(3, "0")}-s${st}`);
     lastStage = st;
-    if (s === 20) {
+    if (n === 2) {
+      // The line's Go: where the camera goes.
+      await world()
+        .locator("#story")
+        .click()
+        .catch(() => console.log("no story line to tap"));
+      await page.waitForTimeout(2500);
+      await shot("go");
+    }
+    if (n === 6) {
       await page.click('.tab[data-view="craft-view"]');
       await page.waitForTimeout(800);
       await shot("craft");
       await page.click('.tab[data-view="world-view"]');
     }
-    if (ANSWER !== "none" && !answered && st === "2") {
+    if (ANSWER !== "none" && !answered && st === CODES[ANSWER][0].when && (st !== "1" || n >= 4)) {
       answered = true;
-      const c = CODES[ANSWER];
-      await world().evaluate((a) => window.__mmTrouble?.(true, undefined, a), c);
+      for (const c of CODES[ANSWER]) await world().evaluate((a) => window.__mmTrouble?.(true, undefined, a), c);
+      await page.waitForTimeout(1500);
+      await shot(`cast-${ANSWER}`);
       console.log("answered at", s, "s with", ANSWER);
     }
     if (st === "end") {
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(1000);
       await shot(`end-${ANSWER}`);
       break;
     }
     await page.waitForTimeout(2500);
+  }
+  if (process.env.STALE) {
+    // A new island while a high water runs: the board's line must go. Then a reload mid flood: the board says it before the World opens.
+    await world().evaluate(() => window.__mmTrouble?.(false, "flood"));
+    await page.waitForTimeout(3000);
+    await page.click('.tab[data-view="craft-view"]');
+    await page.waitForTimeout(800);
+    await shot("stale-0-craft-running");
+    await page.click('.tab[data-view="world-view"]');
+    await page.waitForTimeout(500);
+    await page.reload();
+    await page.waitForSelector(".chip-inventory", { timeout: 30000 });
+    await page.waitForTimeout(1500);
+    await esc();
+    await page.click('.tab[data-view="craft-view"]').catch(() => undefined);
+    await page.waitForTimeout(800);
+    await shot("stale-1-reload-craft");
+    await page.click('.tab[data-view="world-view"]');
+    await page.waitForTimeout(4000);
+    await esc();
+    await page.click("#world-reset");
+    await page.waitForSelector("dialog.reset-island[open]");
+    await page.fill("dialog.reset-island input[type=text]", "77");
+    await page.click("dialog.reset-island .primary");
+    await page.waitForTimeout(4000);
+    await page.click('.tab[data-view="craft-view"]');
+    await page.waitForTimeout(800);
+    await shot("stale-2-new-island-craft");
   }
   console.log("state", await world().evaluate(() => window.__mmTrouble?.(true)), errors);
 } finally {

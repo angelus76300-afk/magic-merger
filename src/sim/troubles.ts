@@ -4,7 +4,7 @@ import { pile, tell } from "./kin";
 import { C } from "./materials";
 import { WARD } from "./wards";
 import { fallingAt } from "./weather";
-import { floodDistance, floodFront, floodLine, snapFlood, startHighWater, stepFlood, type Flood } from "./highwater";
+import { floodDistance, floodFocus, floodFront, floodLine, snapFlood, startHighWater, stepFlood, type Flood } from "./highwater";
 import type { World } from "./world";
 
 // The island needs you (2026-11-11). Merging never needed the island and the
@@ -64,7 +64,7 @@ export interface Trouble {
   // out while the wind kept trying to light the front. Three such seconds
   // make it the answer: the wind drops (`answer`), and the fire dies. A Fire thrown at the fire
   // holds nothing down, and the playtest saw it given a stone under an earlier rule.
-  casts: { key: string; name: string; emoji: string; t: number; n: number; low: number; hit?: boolean }[];
+  casts: { key: string; name: string; emoji: string; t: number; n: number; low: number; hit?: boolean; top?: number; lvl?: number }[];
   answer?: { key: string; name: string; emoji: string; t: number };
   // How wide its front is, in cells either side of its way to the house.
   width: number;
@@ -168,6 +168,11 @@ export function fireOf(world: World, t: Trouble): { cells: number; x: number; y:
 /** Where a trouble is at its worst now: a fire's front, or the water nearest the house it makes for. */
 export function frontOf(world: World, t: Trouble): { cells: number; x: number; y: number; dist: number } {
   return t.kind === "flood" ? floodFront(world, t) : fireOf(world, t);
+}
+
+/** The spot to look at for a trouble: a fire's front; a high water's edge, on the village's side. */
+export function focusOf(world: World, t: Trouble): { x: number; y: number } {
+  return t.kind === "flood" ? floodFocus(world, t) : fireOf(world, t);
 }
 
 /**
@@ -314,6 +319,9 @@ export function noteCast(world: World, key: string, name: string, emoji: string,
   if (t.kind === "flood") snapFlood(world, t, world.time);
 }
 
+// The house cells burning at the last look, by trouble (not saved: a reload starts the watch again).
+const hotHouses = new WeakMap<Trouble, Set<number>>();
+
 /** Twice a second from the tick. Returns the end when the trouble is over. */
 export function stepTrouble(world: World, dt: number): TroubleEnd | null {
   const t = world.trouble;
@@ -321,7 +329,15 @@ export function stepTrouble(world: World, dt: number): TroubleEnd | null {
   if (t.kind === "flood") return stepFlood(world, t, dt) ? endTrouble(world, t) : null;
   const f = fireOf(world, t);
   const houses = houseCells(world, t.vx, t.vy);
-  t.lost += Math.max(0, t.seen - houses);
+  // Only what the fire took: a house cell burning at the last look that is a house no more. A house
+  // crushed by the player's own spell is not the fire's (the playtest of high water found the flood
+  // counting one; the fire did the same).
+  for (const i of hotHouses.get(t) ?? []) if (world.cover[i] !== C.HOUSE) t.lost++;
+  const hot = new Set<number>();
+  near(world, t.vx, t.vy, 22, (i) => {
+    if (world.cover[i] === C.HOUSE && world.fire[i] > 0.05) hot.add(i);
+  });
+  hotHouses.set(t, hot);
   t.seen = houses;
   t.checks++;
   if (world.wardMask[Math.round(t.vy) * world.w + Math.round(t.vx)] & WARD.fire) t.warded++;
@@ -448,10 +464,11 @@ export function endTrouble(world: World, t: Trouble): TroubleEnd {
   const flood = t.kind === "flood";
   // A high water's answer is decided as it is held back (highwater.ts), however long the water takes to go down after.
   const answered = flood ? !!t.answer : !!last && world.time - last.t <= ANSWER_WITHIN;
-  const held = t.warded > t.checks / 2;
+  const held = t.warded > t.checks / 2 || t.flood?.shield === true;
   let outcome: Outcome;
   if (t.lost >= t.cap && t.cap > 4) outcome = "lost";
-  else if (t.lost > 0 || people < t.people0 * 0.85) outcome = "scarred";
+  // A high water counts the people it drowned; a fire, the people gone.
+  else if (t.lost > 0 || (flood ? (t.flood!.drowned ?? 0) > 0 : people < t.people0 * 0.85)) outcome = "scarred";
   else if (held) outcome = "held";
   else outcome = answered ? "saved" : "spent";
   const pick = flood ? t.answer : last;
@@ -565,6 +582,11 @@ function readFlood(v: unknown): Flood | null {
     ...(f.rained === true ? { rained: true } : {}),
     ...(f.banked === true ? { banked: true } : {}),
     ...(num(f.behind) ? { behind: Math.max(1, Math.min(12, f.behind)) } : {}),
+    ...(num(f.hold) ? { hold: Math.max(2, Math.min(20, f.hold)) } : {}),
+    ...(num(f.th) ? { th: Math.max(50, Math.min(300, f.th)) } : {}),
+    ...(num(f.over) ? { over: Math.max(0, Math.min(4, f.over)) } : {}),
+    ...(num(f.drowned) ? { drowned: Math.max(0, Math.floor(f.drowned)) } : {}),
+    ...(f.shield === true ? { shield: true } : {}),
   };
 }
 

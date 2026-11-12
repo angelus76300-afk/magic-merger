@@ -16,7 +16,7 @@ import type { SavedWorld } from "./save";
 import { Hud } from "./hud";
 import { SCENARIOS } from "./scenarios";
 import { firstLook, villageView, type Pose } from "./firstlook";
-import { fireOf, frontOf, startTrouble, stoneAt, stoneLine, troubleLine, type Stone, type TroubleKind } from "./troubles";
+import { fireOf, focusOf, frontOf, startTrouble, stoneAt, stoneLine, troubleLine, type Stone, type TroubleKind } from "./troubles";
 import { Director, lifeLine, nameOf, whoIs, type Shot } from "./director";
 import { act, checkHeld, deedsOf, doDeed, possess, possessed, powersOf, release, steerBy, stopNote, thoughtOf, type Deed } from "./possess";
 import { aimAt, castFromEyes, eyesFirst, lookTheta, openLook, withinRange } from "./eyes";
@@ -1384,9 +1384,19 @@ window.setInterval(() => {
   if (end) {
     world.troubleEnd = null;
     troubleSaid = "";
-    lineGoes = null;
-    if (!watching && !riding) hush();
-    send({ type: "trouble", running: false, text: end.line[0].toUpperCase() + end.line.slice(1), key: end.by?.key, outcome: end.outcome });
+    const said = end.line[0].toUpperCase() + end.line.slice(1);
+    // How it ended is said on the island too, every time (the playtest at 344 saw one end with no line).
+    if (!watching && !riding) {
+      lineGoes = { x: end.trouble.vx, y: end.trouble.vy, who: 0 };
+      lineAt = now;
+      say(said, true);
+      clearTimeout(lineTimer);
+      lineTimer = window.setTimeout(() => {
+        lineGoes = null;
+        hush();
+      }, LINE_MS * 2);
+    } else lineGoes = null;
+    send({ type: "trouble", running: false, text: said, key: end.by?.key, outcome: end.outcome });
     saveSoon();
     return;
   }
@@ -1404,7 +1414,7 @@ window.setInterval(() => {
       hush();
     }
     if (!watching && !touring && !riding && card.hidden && (caption !== text || storyEl.hidden)) {
-      const f = frontOf(world, t);
+      const f = focusOf(world, t);
       clearTimeout(lineTimer);
       lineGoes = { x: f.x, y: f.y, who: 0 };
       say(text, true);
@@ -1430,7 +1440,13 @@ window.setInterval(() => {
 // `answer`: a program cast as the player's own at the trouble's front, source or village, for the
 // frames of an answer (scripts/highwater-frames.mjs); the island's own rules judge it as any cast.
 (
-  window as unknown as { __mmTrouble?: (peek?: boolean, kind?: TroubleKind, answer?: { code: string; at: "front" | "source" | "village" }) => string }
+  window as unknown as {
+    __mmTrouble?: (
+      peek?: boolean,
+      kind?: TroubleKind,
+      answer?: { code: string; at: "front" | "source" | "village" | "line" | "house"; name?: string; tier?: "minor" | "major"; k?: number; of?: number },
+    ) => string;
+  }
 ).__mmTrouble = (peek = false, kind, answer) => {
   if (!engine || scenario) return "no island";
   const world = engine.world;
@@ -1438,8 +1454,23 @@ window.setInterval(() => {
   const t = world.trouble;
   if (answer && t && typeof answer.code === "string") {
     const f = frontOf(world, t);
-    const [x, y] = answer.at === "source" ? [t.x, t.y] : answer.at === "village" ? [t.vx, t.vy] : [f.x, f.y];
-    engine.cast({ key: "check answer", name: "Check Answer", tier: "major", code: answer.code.slice(0, 4000) }, x, y);
+    // "line": the k-th of `of` casts across the water's way, six cells apart, two fifths of the way to the house.
+    const d = Math.hypot(t.hx - f.x, t.hy - f.y) || 1;
+    const o = ((answer.k ?? 0) - ((answer.of ?? 1) - 1) / 2) * 6;
+    const lx = f.x + (t.hx - f.x) * 0.4 - ((t.hy - f.y) / d) * o;
+    const ly = f.y + (t.hy - f.y) * 0.4 + ((t.hx - f.x) / d) * o;
+    const [x, y] =
+      answer.at === "source"
+        ? [t.x, t.y]
+        : answer.at === "village"
+          ? [t.vx, t.vy]
+          : answer.at === "house"
+            ? [t.hx, t.hy]
+            : answer.at === "line"
+              ? [lx, ly]
+              : [f.x, f.y];
+    const name = typeof answer.name === "string" ? answer.name.slice(0, 40) : "Check Answer";
+    engine.cast({ key: `check ${name}`, name, tier: answer.tier === "minor" ? "minor" : "major", code: answer.code.slice(0, 4000) }, x, y);
   }
   return world.trouble
     ? `${world.trouble.kind} ${world.trouble.name} stage ${world.trouble.stage}`
@@ -1472,6 +1503,10 @@ function mount(next: Engine): void {
   engine?.dispose();
   unbind?.();
   engine = next;
+  // A new island, a challenge or a reload: the page's line of a trouble is cleared, and said again
+  // within a second if the island has one running (the playtest: a new island kept the old line).
+  troubleSaid = "";
+  send({ type: "trouble", running: false, text: "" });
   // Weather is real on the player's island, never in a challenge.
   engine.world.weather = !scenario;
   engine.runtime.setLibrary(library);

@@ -43,6 +43,24 @@ export function addDeed(key: string, line: string): void {
   write(DEEDS_KEY, all);
 }
 
+const LINE_KEY = "magic-merger.trouble-line";
+
+/** The line of the trouble running on the player's island, and when it began: null once it is over. */
+export function rememberLine(text: string | null, began: number): void {
+  try {
+    if (text) localStorage.setItem(LINE_KEY, JSON.stringify({ text: text.slice(0, 160), began }));
+    else localStorage.removeItem(LINE_KEY);
+  } catch {
+    // No storage: the board waits for the World.
+  }
+}
+export function rememberedLine(): { text: string; began: number } | null {
+  const v = read<{ text?: unknown; began?: unknown } | null>(LINE_KEY, null);
+  return v && typeof v.text === "string" && v.text
+    ? { text: v.text.slice(0, 160), began: typeof v.began === "number" && Number.isFinite(v.began) ? v.began : 0 }
+    : null;
+}
+
 export interface TroubleCounts {
   // Troubles that ended, those an item answered, and those answered by an item first made after the trouble began.
   troubles: number;

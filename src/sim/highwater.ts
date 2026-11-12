@@ -1,10 +1,11 @@
 import { housesOf, tierOf } from "./buildings";
 import type { Settlement } from "./ecology";
 import { alarm } from "./flight";
-import { tell } from "./kin";
+import { life, tell } from "./kin";
 import { C, F, G } from "./materials";
 import type { Trouble } from "./troubles";
 import { WARD } from "./wards";
+import { seeded } from "./noise";
 import { fallingAt } from "./weather";
 import type { Creature } from "./creatures";
 import type { World } from "./world";
@@ -15,29 +16,43 @@ import type { World } from "./world";
 //
 // Where: the village whose houses the water nearest them reaches by the
 // lowest way (`wayFor`: for each cell, the level water must climb to cover
-// it), within 4 to 28 cells and a rise of 7.5 (4 for the sea). A village
-// whose flood would pour over a lip into another valley is skipped: that is
-// a torrent, not rising water. An island with none has no high water.
+// it), from water at least 8 cells from the island's rim, within 4 to 28
+// cells and a rise of 7.5 (4 for the sea). A village whose flood would pour
+// over a lip into another valley, or whose low ground is too wide to cover in
+// time, is skipped. An island with none has no high water.
 //
-// How: from its source (the water at the start of that way) the spate swells
-// the bed toward a level that climbs for 50 seconds (full within 14 cells of
-// the source, nothing past 30 or by the edge of its box, where the bed is
-// kept at its own level so the sea round the island does not rise), and
+// How (round two, after the playtest of 12 November): for FIRST seconds the
+// water only swells in its bed, short of the lowest land beside it: time to
+// see it, find the place, go to the board and come back. Then its level
+// climbs to the first house by `th` (TO_HOUSE: 90 s for a town, 100 for a
+// village, 115 for a hamlet) and a little over it. The bed swells along its
+// shore only (full within 2 cells of land, nothing 8 cells out), near the
+// source (nothing past 30 cells) and never at the island's rim or the box's
+// edge, where the bed is kept at its own level: no plateau of sea, no wall of
+// water at the rim, and the sea round the island does not rise. The spate
 // fills the low ground next to the water toward the level, the lowest first,
-// within a flow (`q`, enough for the low ground in about 40 seconds). Ground
-// already under it is kept up a little (KEEP), less than heat boils off or
-// sand drinks. The engine's physics moves the water once it is placed.
-// Through that: raised earth is not crossed, ice does not carry it, a pit
-// fills before the water goes on, a channel carries it off, a shield stops
-// it, a source under ice or earth feeds nothing; heat boils standing flood
+// within a flow (`q`), and keeps up a little (KEEP) what it covers. The
+// engine's physics moves the water once placed. Through that: raised earth is
+// not crossed, ice does not carry it, a pit fills before the water goes on, a
+// channel carries it off, a shield stops it, a source under ice or earth feeds
+// nothing and what it no longer reaches drains back; heat boils standing flood
 // water off, sand and plants drink it; Water cast on it, and hard rain, make
-// it more. Nothing of this is told: the island shows it.
+// it more. Banks raised side by side with a gap of a cell or two have the gap
+// closed by the village's people. Grass under it turns to mud, foam is thrown
+// from its edge toward the houses. Nothing of this is told.
 //
-// Its cause is the spate (`s`, 1 to 0): it holds for 140 seconds, then runs
-// out by 270, about the span a wildfire burns. When the spate is over
-// (answered, capped or run out) the bed goes back to its level, what lies
-// outside it soaks away, and the trouble ends once the water has been back
-// by its bed for three seconds (a minute at most).
+// Only what the water takes is the water's: a house is lost to it only when it
+// stood in the spate's own water, where the land lets its level reach, for
+// RUIN_AFTER seconds; a house a spell crushes, or water a spell pushed onto
+// it, is not the flood's. A villager is lost to it only if the water killed
+// them. Walkers in water over 0.7 deep are hurt; animals run from it.
+//
+// Its cause is the spate (`s`, 1 to 0): it holds 60 seconds past the house,
+// then runs out over 130 more, about the span a wildfire burns. Answered,
+// capped, or held by a shield over the houses for SHIELD_FOR seconds with
+// water against it, it breaks: the bed goes back to its level, what lies
+// outside it soaks away, and it ends once the water has been back by its bed
+// for three seconds (a minute at most).
 //
 // Who answered it (the same honesty as the fire's, troubles.ts). The land
 // says how far the water would be by now at the level the spate has reached
@@ -45,20 +60,24 @@ import type { World } from "./world";
 // began). An item cast at it is the answer only when (1) it touched the
 // water's way: four cells or more of the low ground or the source changed in
 // a way the water itself never changes them (earth raised or dug, ice or
-// another fluid, heat or cold, sand, a grove), and (2) after that the water
-// stayed at least `behind` cells short of where the land would let it be
-// (2 for a hamlet, 4 a village, 6 a town) and came no nearer the house it
-// makes for, for HELD_FOR seconds running, within a minute of the cast,
-// while the spate pushed. Each time the water comes nearer, the count starts
-// again: a wall it reaches later is held from there. Then the spate breaks
-// and the water goes back. A shield is never a change of the way: a dome is
-// "held". Cases checked (scripts/troubles-test.ts): earth raised round the
-// village, cold at the source, the source dammed, a channel round the
-// village, heat at the front, sand on the low ground (each saved), Water
-// cast on it (sooner at the houses, never thanked), one plain Earth on a
-// village (not enough), a shield (held), an item cast every ten seconds that
-// changes nothing (never thanked), a useful item followed by a useless one
-// (the useful one thanked), a bank raised by nobody's cast (spent).
+// another fluid, heat or cold, sand, a grove of twelve plants; never a
+// shield), and (2) after that, within a minute of the cast while the spate
+// pushed, the water came no nearer the house it makes for and either stayed
+// BEHIND (2) cells short of where the land would let it be, or went back (two
+// cells from the nearest it came, a quarter less of it out of its bed), for
+// `hold` seconds running (4 for a hamlet, 6 a village, 8 a town) while its
+// level climbed 0.04 a second held (unless it was at its height already): held
+// against a push, not pushed back a cell for a moment by earth raised under
+// its edge. Each time it comes nearer the count starts again:
+// a wall it reaches later is held from there. Cases checked
+// (scripts/troubles-test.ts): raised earth round the village, five plain
+// Earth casts across its way (a hamlet), cold at the source, the source
+// dammed, a channel, heat, a hill (each saved), Water cast on it (sooner at the
+// houses, never thanked), one plain Earth on a village (not enough), a shield
+// over the village or over one house (held), an item cast every ten seconds
+// that changes nothing (never thanked), a useful item then a useless one (the
+// useful one thanked), a bank raised by nobody's cast (spent), a house
+// crushed by the player's own spell (not the water's).
 
 /** What a high water keeps in the save; the rest is worked out again from the land. */
 export interface Flood {
@@ -79,6 +98,16 @@ export interface Flood {
   bed: string;
   // How far short of where the land would let it be the water must be held, in cells: more for a bigger village.
   behind?: number;
+  // How long it must be held so, in seconds: longer for a bigger village.
+  hold?: number;
+  // Seconds from the first line to the water at the first house, if nothing stops it: more for a
+  // hamlet. How far over the first house the spate climbs.
+  th?: number;
+  over?: number;
+  // Villagers the water drowned.
+  drowned?: number;
+  // The water stood against a shield over the houses until the spate gave up: held.
+  shield?: boolean;
   // Hard rain fell on it; the people heaped earth at its edge.
   rained?: boolean;
   banked?: boolean;
@@ -88,34 +117,51 @@ export interface Flood {
 // FROM cells of the house it makes for, and its box reaches ZONE cells round the village.
 const ZONE = 34;
 const FROM = 28;
-// Seconds the level climbs, the spate holds and runs out in all.
-const RAMP = 50;
-const HOLD = 140;
-const RUN = 270;
+// The pace (the playtest of 12 November: "too fast to answer"). For FIRST seconds the water only
+// swells in its bed, short of the lowest ground beside it: time to see it, find the place, go to the
+// board and come back. Then it climbs to the first house by `th` seconds (TO_HOUSE, a hamlet's the
+// longest), and a little over it in OVER_FOR more. The spate holds HOLD_AFTER seconds past the
+// house, then runs out over RUN_OUT: about the span a wildfire burns.
+const FIRST = 45;
+export const TO_HOUSE = { town: 90, village: 100, hamlet: 115 } as const;
+const OVER_FOR = 20;
+const HOLD_AFTER = 60;
+const RUN_OUT = 130;
+// Water standing against a shield over the houses this long: the spate gives up, the village held.
+const SHIELD_FOR = 20;
 // Most water a cell is given in a look (five a second), and the source's own swell a second.
 const PER_STEP = 0.2;
 const SWELL = 3;
 // What the flood keeps up on ground it already covers, a second: less than heat boils off or sand drinks.
 const KEEP = 0.25;
+// The most water the spate spills a second.
+const MOST_FLOW = 40;
 // The swell is full within TAPER_FROM cells of the source and nothing past TAPER_TO, nor within
 // SINK cells of the box's edge; there the bed is kept at its own level, so what the swell sends
 // down the river or out to sea is taken back there instead of raising the sea round the island.
 const TAPER_FROM = 14;
 const TAPER_TO = 30;
 const SINK = 4;
+const SHORE = 8;
 // Seconds a house stands in water before it is ruined, a field before it is lost.
 const RUIN_AFTER = 6;
 const FIELD_AFTER = 4;
 const MUD_AFTER = 2;
 // How far behind where the land would let it be the water must stay, in cells, and for how long,
-// within ANSWER_WITHIN seconds of a cast, for that cast to be the answer. BEHIND is a hamlet's: a
-// village's and a town's water is wider, and a mound it goes round does not hold it.
+// within ANSWER_WITHIN seconds of a cast, for that cast to be the answer (HELD_FOR is a hamlet's: a
+// village's and a town's must hold longer, so a mound the water goes round does not count).
 export const BEHIND = 2;
 export const HELD_FOR = 4;
 const ANSWER_WITHIN = 60;
 // After the spate is over: at most this long for the water to go back.
 const BACK_FOR = 60;
 
+const GAP_DIRS = [
+  [1, 0],
+  [0, 1],
+  [1, 1],
+  [1, -1],
+] as const;
 const N4 = [1, -1, 0, 0];
 const M4 = [0, 0, 1, -1];
 
@@ -136,6 +182,21 @@ interface Cache {
   level: number;
   pd: number;
   ad: number;
+  // How far each cell of the bed is from the land (0 for land), up to 15: the swell is the shore's.
+  shore: Uint8Array;
+  // The land when it began (or at the load), for earth raised since; the lowest land by the water.
+  h0: Float32Array;
+  lip: number;
+  // Seconds the water has stood against a shield over the houses.
+  shielded: number;
+  // The village's people at the last look, to tell who the water drowned.
+  people: Creature[];
+  // Who the flood hurt, and when: a villager who dies of it drowned.
+  soaked: Map<Creature, number>;
+  lastGap: number;
+  // A stream of its own for the foam, so the island's draws are not touched.
+  foam: () => number;
+  world: { w: number; h: number };
 }
 // Kept beside the trouble, not on it: the save writes the trouble as it is.
 const caches = new WeakMap<Trouble, Cache>();
@@ -269,7 +330,9 @@ export function wayFor(world: World, s: Settlement): Way | null {
   const x0 = Math.max(0, Math.floor(s.x - ZONE));
   const y0 = Math.max(0, Math.floor(s.y - ZONE));
   const box: Flood["box"] = [x0, y0, Math.min(world.w, Math.ceil(s.x + ZONE)) - x0, Math.min(world.h, Math.ceil(s.y + ZONE)) - y0];
-  const { need, from } = levels(world, box, (i) => sourceWater(world, i));
+  // Its source away from the island's rim, where the swell slopes back to the sea's level.
+  const rimmed = (i: number) => Math.min(i % world.w, Math.floor(i / world.w), world.w - 1 - (i % world.w), world.h - 1 - Math.floor(i / world.w)) >= 8;
+  const { need, from } = levels(world, box, (i) => sourceWater(world, i) && rimmed(i));
   const houses: { k: number; l: number }[] = [];
   for (let y = 0; y < box[3]; y++)
     for (let x = 0; x < box[2]; x++) {
@@ -333,7 +396,57 @@ function cacheOf(world: World, t: Trouble): Cache | null {
     const i = (Math.floor(k / f.box[2]) + f.box[1]) * world.w + (k % f.box[2]) + f.box[0];
     bedTop[k] = world.height[i] < world.seaLevel ? world.seaLevel : world.height[i] + world.depth[i];
   }
-  c = { need, bed, bedTop, most: 0, wet: new Map(), heaped: new Map(), snaps: new Map(), lastBank: world.time, level: f.b, pd: f.d0, ad: f.d0 };
+  const [x0, y0, bw, bh] = f.box;
+  const h0 = new Float32Array(bw * bh);
+  const shore = new Uint8Array(bw * bh).fill(15);
+  const queue: number[] = [];
+  let lip = Infinity;
+  for (let k = 0; k < h0.length; k++) {
+    const i = (Math.floor(k / bw) + y0) * world.w + (k % bw) + x0;
+    h0[k] = world.height[i];
+    if (!bed[k]) {
+      shore[k] = 0;
+      queue.push(k);
+    }
+  }
+  for (let q = 0; q < queue.length; q++) {
+    const k = queue[q];
+    const x = k % bw;
+    const y = (k / bw) | 0;
+    for (let d = 0; d < 4; d++) {
+      const nx = x + N4[d];
+      const ny = y + M4[d];
+      if (nx < 0 || ny < 0 || nx >= bw || ny >= bh) continue;
+      const nk = ny * bw + nx;
+      if (shore[nk] <= shore[k] + 1) continue;
+      shore[nk] = shore[k] + 1;
+      queue.push(nk);
+      // Land by the water within reach of the source: the lowest of it is where the water first spills.
+      if (shore[k] === 0 && Number.isFinite(need[k]) && Math.hypot(x + x0 - t.x, y + y0 - t.y) < TAPER_FROM) lip = Math.min(lip, h0[k]);
+    }
+  }
+  c = {
+    need,
+    bed,
+    bedTop,
+    most: 0,
+    wet: new Map(),
+    heaped: new Map(),
+    snaps: new Map(),
+    lastBank: world.time,
+    level: f.b,
+    pd: f.d0,
+    ad: f.d0,
+    shore,
+    h0,
+    lip: Number.isFinite(lip) ? lip : f.b,
+    shielded: 0,
+    people: villagersOf(world, t),
+    soaked: new Map(),
+    lastGap: world.time,
+    foam: seeded(Math.floor(t.t0 * 1000) + 7),
+    world: { w: world.w, h: world.h },
+  };
   caches.set(t, c);
   return c;
 }
@@ -356,6 +469,8 @@ export function startHighWater(world: World, random: () => number = Math.random)
         if (dx * dx + dy * dy <= 324 && world.inside(x, y) && world.cover[y * world.w + x] === C.HOUSE) houses++;
       }
     const tier = tierOf(housesOf(world, s));
+    // Low ground too wide to cover by the time it should reach the houses: the water spreads there, not here.
+    if (way.plain / (TO_HOUSE[tier] - FIRST - 10) > MOST_FLOW) continue;
     const early = world.troubles < 3;
     const [bx, by, bw, bh] = way.box;
     const bed = new Uint8Array(bw * bh);
@@ -395,10 +510,17 @@ export function startHighWater(world: World, random: () => number = Math.random)
       flood: {
         b: way.b,
         peak: way.rise + over,
-        // Enough to cover the low ground in about forty seconds, if nothing takes it.
-        q: Math.min(40, Math.max(tier === "town" ? 14 : tier === "village" ? 10 : 6, way.plain / 40) * (1 + Math.min(4, world.troubles) * 0.1)),
+        over,
+        th: TO_HOUSE[tier],
+        // Enough to cover the low ground between the first spill and the first house, if nothing takes it.
+        q: Math.min(
+          MOST_FLOW,
+          Math.max(tier === "town" ? 14 : tier === "village" ? 10 : 6, way.plain / (TO_HOUSE[tier] - FIRST - 10)) * (1 + Math.min(4, world.troubles) * 0.1),
+        ),
         d0: nearest,
-        behind: (tier === "town" ? 6 : tier === "village" ? 4 : BEHIND) + Math.min(2, Math.floor(world.troubles / 2)),
+        behind: BEHIND,
+        // A bigger village's water must be held longer: a mound it goes round holds it a moment only.
+        hold: (tier === "town" ? 8 : tier === "village" ? 6 : HELD_FOR) + Math.min(2, Math.floor(world.troubles / 2)),
         s: 1,
         back: 0,
         body: way.body,
@@ -436,7 +558,9 @@ export function floodFront(world: World, t: Trouble): { cells: number; x: number
       if (!wetCell(world, i)) continue;
       if (!c || !c.bed[y * bw + x]) {
         cells++;
-        if (world.cover[i] === C.HOUSE && world.depth[i] > 0.1) houses++;
+        // A house in the spate's water: where the land lets its level reach (water a spell pushed
+        // onto a house is the spell's, not the flood's).
+        if (world.cover[i] === C.HOUSE && world.depth[i] > 0.1 && (!c || c.need[y * bw + x] < c.level + 0.3)) houses++;
       }
       const d = Math.hypot(cx - t.hx, cy - t.hy);
       if (d < best) {
@@ -446,6 +570,12 @@ export function floodFront(world: World, t: Trouble): { cells: number; x: number
       }
     }
   return { cells, x: bx, y: by, dist: best, houses };
+}
+
+/** Where to look at a high water: on the edge between the water and the house it makes for, more on the village's side. */
+export function floodFocus(world: World, t: Trouble): { x: number; y: number } {
+  const f = floodFront(world, t);
+  return { x: f.x + (t.hx - f.x) * 0.6, y: f.y + (t.hy - f.y) * 0.6 };
 }
 
 /** At the last look: the level the spate had reached, how far the land would let the water be from the house, and how far it was. */
@@ -574,18 +704,43 @@ function houseAt(world: World, i: number): number[] {
   return out;
 }
 
-// How much of the rise the bed takes at a cell of the box (x, y within it): 1 near the source, 0 far
-// from it and by the box's edge.
-function swellAt(world: World, f: Flood, t: Trouble, x: number, y: number): number {
+// How much of the rise the bed takes at a cell of the box (x, y within it): 1 by the shore near the
+// source, sloping to nothing out at sea (SHORE cells), far from the source and by the box's edge or
+// the island's rim. A river is all shore: it rises along its reach. The sea rises along its shore.
+// (The playtest saw the whole sea within the box raised as a plateau, with a wall at the rim.)
+function swellAt(f: Flood, t: Trouble, c: Cache, x: number, y: number): number {
   const bySource = (TAPER_TO - Math.hypot(x + f.box[0] - t.x, y + f.box[1] - t.y)) / (TAPER_TO - TAPER_FROM);
-  const byEdge = (edgeIn(world, f, x, y) - SINK) / 8;
-  return Math.max(0, Math.min(1, bySource, byEdge));
-}
-// How far a cell of the box is from its edge, where the edge is not the island's own: past the island's
-// edge water spills off it (physics.ts), past the box's it would run on round the island.
-function edgeIn(world: World, f: Flood, x: number, y: number): number {
+  // By the box's own edge it slopes over 8 cells to a sink; by the island's rim over 6, to the sea's
+  // level at the rim itself, where water spills off the island and would stand as a wall.
   const [x0, y0, bw, bh] = f.box;
-  return Math.min(x0 > 0 ? x : Infinity, y0 > 0 ? y : Infinity, x0 + bw < world.w ? bw - 1 - x : Infinity, y0 + bh < world.h ? bh - 1 - y : Infinity);
+  const W = c.world.w;
+  const H = c.world.h;
+  const inner = Math.min(x0 > 0 ? x : Infinity, y0 > 0 ? y : Infinity, x0 + bw < W ? bw - 1 - x : Infinity, y0 + bh < H ? bh - 1 - y : Infinity);
+  const rim = Math.min(x + x0, y + y0, W - 1 - x - x0, H - 1 - y - y0);
+  const byEdge = Math.min((inner - SINK) / 8, (rim - 1) / 6);
+  const byShore = (SHORE - c.shore[y * f.box[2] + x]) / (SHORE - 2);
+  return Math.max(0, Math.min(1, bySource, byEdge, byShore));
+}
+const onRim = (c: Cache, x: number, y: number) => x === 0 || y === 0 || x === c.world.w - 1 || y === c.world.h - 1;
+
+// How far a cell of the box is from its edge.
+function edgeIn(f: Flood, x: number, y: number): number {
+  return Math.min(x, y, f.box[2] - 1 - x, f.box[3] - 1 - y);
+}
+
+// Where the spate has brought the water `age` seconds in: short of the lowest land by it for FIRST
+// seconds, at the first house by `th`, a little over it OVER_FOR later; down as the spate runs out.
+function levelAt(f: Flood, c: Cache, age: number): number {
+  const th = f.th ?? TO_HOUSE.village;
+  const first = Math.max(f.b, Math.min(f.b + 0.35, c.lip - 0.05));
+  const house = f.b + Math.max(0, f.peak - (f.over ?? 0));
+  let level: number;
+  if (age < FIRST) level = f.b + (first - f.b) * (age / FIRST);
+  else if (age < th) {
+    const k = (age - FIRST) / (th - FIRST);
+    level = first + (house - first) * k * k * (3 - 2 * k);
+  } else level = house + (f.b + f.peak - house) * Math.min(1, (age - th) / OVER_FOR);
+  return f.b + (level - f.b) * Math.min(1, 0.35 + f.s);
 }
 
 /** Five times a second from stepTrouble: the spate, the water, the village. True when it is over. */
@@ -603,18 +758,22 @@ export function stepFlood(world: World, t: Trouble, dt: number): boolean {
       const y = Math.round(t.vy) + dy;
       if (dx * dx + dy * dy <= 324 && world.inside(x, y) && world.cover[y * w + x] === C.HOUSE) houses++;
     }
-  t.lost += Math.max(0, t.seen - houses);
+  // Only what the water takes is the water's: a house the player's own spell crushes is not lost to
+  // it (the playtest: an Earth cast on the village was told as the flood). `lost` grows below, as the
+  // water ruins houses.
   t.seen = houses;
   t.checks++;
-  if (world.wardMask[Math.round(t.vy) * w + Math.round(t.vx)] & WARD.fluids) t.warded++;
+  // Under a shield: the village's middle, or the house the water makes for.
+  if ((world.wardMask[Math.round(t.vy) * w + Math.round(t.vx)] | world.wardMask[t.hy * w + t.hx]) & WARD.fluids) t.warded++;
   if (t.lost >= t.cap) t.capped = true;
   const rain = world.weather ? fallingAt(world, t.x, t.y, world.time) : null;
   const raining = !!rain && rain.kind === "rain" && rain.amount > 0.5;
   if (raining) f.rained = true;
-  // The spate holds, then runs its course; hard rain keeps it up. Answered or capped, it breaks.
-  if (t.answer || t.capped) f.s = 0;
-  else if (age > HOLD && !raining) f.s = Math.max(0, f.s - dt / (RUN - HOLD));
-  const level = f.b + f.peak * Math.min(1, age / RAMP) ** 0.8 * Math.min(1, 0.35 + f.s);
+  // The spate holds, then runs its course; hard rain keeps it up. Answered, capped or shielded, it breaks.
+  const th = f.th ?? TO_HOUSE.village;
+  if (t.answer || t.capped || f.shield) f.s = 0;
+  else if (age > th + HOLD_AFTER && !raining) f.s = Math.max(0, f.s - dt / RUN_OUT);
+  const level = levelAt(f, c, age);
   if (f.s > 0) c.level = level;
 
   // 1. The water swells: from its source through its own bed, each cell of the bed it reaches is
@@ -654,7 +813,7 @@ export function stepFlood(world: World, t: Trouble, dt: number): boolean {
       const x = k % bw;
       const y = (k / bw) | 0;
       const i = (y + y0) * w + x + x0;
-      const want = Math.max(c.bedTop[k], f.b + rise * swellAt(world, f, t, x, y));
+      const want = Math.max(c.bedTop[k], f.b + rise * swellAt(f, t, c, x, y));
       const top = world.height[i] + world.depth[i];
       if (top < want) world.setFluid(i, F.WATER, world.depth[i] + Math.min(want - top, SWELL * dt));
       // As the spate falls the bed falls with it.
@@ -669,16 +828,18 @@ export function stepFlood(world: World, t: Trouble, dt: number): boolean {
       const i = (y + y0) * w + x + x0;
       if (world.fluid[i] !== F.WATER) continue;
       if (c.bed[k]) {
+        // The bed the swell does not reach is kept at its own level, so the swell slopes into it.
         const going = f.s <= 0;
-        if (!going && (swellAt(world, f, t, x, y) > 0 || (Math.hypot(x + x0 - t.x, y + y0 - t.y) > TAPER_TO + SINK && edgeIn(world, f, x, y) >= SINK)))
-          continue;
+        if (!going && swellAt(f, t, c, x, y) > 0) continue;
         const over = world.height[i] + world.depth[i] - c.bedTop[k];
         if (over > 0) world.depth[i] = Math.max(0.0005, world.depth[i] - (going ? Math.min(over, 1.5 * dt) : over));
-      } else if (edgeIn(world, f, x, y) === 0) world.setFluid(i, F.NONE, 0);
+        // At the box's inner edge what spilled that far is taken back; at the island's rim the water
+        // spills off by itself (physics.ts).
+      } else if (edgeIn(f, x, y) === 0 && !onRim(c, x + x0, y + y0)) world.setFluid(i, F.NONE, 0);
     }
   // 2. What spills over: from the swollen bed through the water outside it, the lowest cells next to
   // that water are filled toward the level, within the flow the spate has.
-  if (reach.length) {
+  if (reach.length && age >= FIRST) {
     const edge: number[] = [];
     for (let q = 0; q < reach.length; q++) {
       const k = reach[q];
@@ -743,7 +904,10 @@ export function stepFlood(world: World, t: Trouble, dt: number): boolean {
         (world.cover[i] === C.TREE || world.cover[i] === C.BUSH || world.cover[i] === C.REEDS || world.cover[i] === C.FERN || world.cover[i] === C.FLOWER)
       )
         world.depth[i] -= 0.12 * dt;
+      // Once the spate is over it soaks away; water the spate no longer reaches (cut off by ice, earth
+      // or a dam at its source) drains back slowly.
       if (f.s <= 0) world.depth[i] -= 0.5 * dt;
+      else if (!seen[k]) world.depth[i] -= 0.2 * dt;
       if (world.depth[i] <= 0.0005) {
         world.setFluid(i, F.NONE, 0);
         continue;
@@ -762,7 +926,7 @@ export function stepFlood(world: World, t: Trouble, dt: number): boolean {
         continue;
       }
       if (world.cover[i] === C.HOUSE) {
-        if (s < RUIN_AFTER) continue;
+        if (s < RUIN_AFTER || c.need[k] >= c.level + 0.3) continue;
         const block = houseAt(world, i);
         if (t.lost + ruined + block.length > t.cap) continue;
         for (const j of block) world.setCover(j, C.RUBBLE);
@@ -773,11 +937,18 @@ export function stepFlood(world: World, t: Trouble, dt: number): boolean {
       }
     }
 
+  t.lost += ruined;
+  if (t.lost >= t.cap) t.capped = true;
+
   // 4. The people run from it, and some heap earth at its edge, which the rising water tops.
-  // People caught in deep water drown (creatures.ts), never more than the cap allows.
+  // People caught in deep water drown (creatures.ts), never more than the cap allows; only those
+  // count against the village (not who died of age or wolves meanwhile).
   const people = villagersOf(world, t);
+  for (const v of c.people)
+    if ((v.dead || !people.includes(v)) && (v.drowning > 0 || world.time - (c.soaked.get(v) ?? -1e9) < 3)) f.drowned = (f.drowned ?? 0) + 1;
+  c.people = people;
   const most = t.cap <= 4 ? 1 : Math.max(1, Math.floor(t.people0 / 3));
-  const drowned = t.people0 - people.length >= most;
+  const drowned = (f.drowned ?? 0) >= most;
   if (wetN || drowned) {
     const ax = wetN ? mx / wetN : t.x;
     const ay = wetN ? my / wetN : t.y;
@@ -787,6 +958,25 @@ export function stepFlood(world: World, t: Trouble, dt: number): boolean {
       if (wetN && f.s > 0 && (wetCell(world, i, 0.1) || Math.hypot(v.x - ax, v.y - ay) < 6)) alarm(world, v, null, ax, ay, 8);
     }
   }
+  // Nobody that walks stands in the flood unharmed (the playtest saw one wading): land animals run
+  // from it, and whoever is caught where it is deep is hurt, as in deep water (the engine's own
+  // drowning starts deeper than a flood over the fields stands). The village's dead stay in the cap.
+  if (wetN)
+    for (const v of world.creatures) {
+      if (v.dead || Math.abs(v.x - t.vx) > ZONE || Math.abs(v.y - t.vy) > ZONE) continue;
+      const k = life.kindOf(v);
+      if (k.swims || k.flying || k.aquatic) continue;
+      const vx = Math.floor(Math.max(0, Math.min(w - 1, v.x)));
+      const vy = Math.floor(Math.max(0, Math.min(world.h - 1, v.y)));
+      if (!inBox(f, vx, vy) || c.bed[boxIdx(f, vx, vy)]) continue;
+      const i = vy * w + vx;
+      if (world.fluid[i] !== F.WATER || world.depth[i] < 0.3) continue;
+      if (v.kind !== "villager") alarm(world, v, null, vx - (t.hx - vx) * 0.1, vy - (t.hy - vy) * 0.1, 8);
+      if (world.depth[i] > 0.7 && !(v.kind === "villager" && drowned)) {
+        v.hp -= 4 * dt;
+        c.soaked.set(v, world.time);
+      }
+    }
 
   // 5. How far the water is from the house it makes for, and how far the land would let it be.
   const fr = floodFront(world, t);
@@ -829,6 +1019,95 @@ export function stepFlood(world: World, t: Trouble, dt: number): boolean {
     }
   }
 
+  // A shield over the houses with the water standing against it: the spate gives up within
+  // SHIELD_FOR seconds, and the village was held (the playtest: a dome on a house ran 338 seconds).
+  if (f.s > 0) {
+    const warded = ((world.wardMask[t.hy * w + t.hx] | world.wardMask[Math.round(t.vy) * w + Math.round(t.vx)]) & WARD.fluids) !== 0;
+    let against = 0;
+    if (warded)
+      for (let y = 1; y < bh - 1 && against < 3; y++)
+        for (let x = 1; x < bw - 1 && against < 3; x++) {
+          const i = (y + y0) * w + x + x0;
+          // Water, in its bed or out of it, beside shielded dry ground under the level: but for the
+          // shield it would be there.
+          if (!wetCell(world, i) || world.wardMask[i] & WARD.fluids) continue;
+          for (const j of [i + 1, i - 1, i + w, i - w])
+            if (world.wardMask[j] & WARD.fluids && world.height[j] < c.level - 0.05 && !wetCell(world, j)) {
+              against++;
+              break;
+            }
+        }
+    c.shielded = warded && against >= 3 ? c.shielded + dt : Math.max(0, c.shielded - dt);
+    if (c.shielded >= SHIELD_FOR) {
+      f.shield = true;
+      f.s = 0;
+    }
+  }
+
+  // Banks raised side by side with a gap between them: the people close the gap with earth, up to the
+  // banks' own height (the playtest: nine mounds along the shore, and the water came through the
+  // gaps). Only between earth raised since it began, never across the land's own lie.
+  if (f.s > 0 && age >= FIRST && world.time - c.lastGap >= 1 && people.length) {
+    c.lastGap = world.time;
+    let closed = 0;
+    const raised = (x: number, y: number) => {
+      if (x < 0 || y < 0 || x >= bw || y >= bh) return Infinity;
+      const i = (y + y0) * w + x + x0;
+      return world.height[i] >= c.level + 0.05 && world.height[i] - c.h0[y * bw + x] >= 0.8 ? world.height[i] : Infinity;
+    };
+    for (let y = 1; y < bh - 1 && closed < 8; y++)
+      for (let x = 1; x < bw - 1 && closed < 8; x++) {
+        const k = y * bw + x;
+        const i = (y + y0) * w + x + x0;
+        if (c.bed[k] || world.height[i] >= c.level || (wetCell(world, i) && world.depth[i] > 0.3) || blocked(world, i)) continue;
+        if (!wetCell(world, i) && !wetCell(world, i + 1) && !wetCell(world, i - 1) && !wetCell(world, i + w) && !wetCell(world, i - w)) continue;
+        let top = Infinity;
+        for (const [dx, dy] of GAP_DIRS)
+          for (let a = 1; a <= 2 && top === Infinity; a++)
+            for (let b = 1; b <= 2 && top === Infinity; b++) {
+              const hp = raised(x + a * dx, y + a * dy);
+              const hq = raised(x - b * dx, y - b * dy);
+              if (hp < Infinity && hq < Infinity) top = Math.min(hp, hq);
+            }
+        if (top === Infinity) continue;
+        const add = Math.min(1, top - world.height[i]);
+        world.height[i] += add;
+        c.heaped.set(i, (c.heaped.get(i) ?? 0) + add);
+        closed++;
+      }
+  }
+
+  // The edge where it advances: foam thrown toward the houses, so a glance shows which way it goes.
+  if (f.s > 0 && age >= FIRST) {
+    const edge: number[] = [];
+    for (let y = 1; y < bh - 1; y++)
+      for (let x = 1; x < bw - 1; x++) {
+        const i = (y + y0) * w + x + x0;
+        if (c.bed[y * bw + x] || world.fluid[i] !== F.WATER || world.depth[i] < 0.05) continue;
+        for (const j of [i + 1, i - 1, i + w, i - w])
+          if (world.fluid[j] === F.NONE && world.height[j] < c.level) {
+            edge.push(i);
+            break;
+          }
+      }
+    const d = Math.hypot(t.hx - fr.x, t.hy - fr.y) || 1;
+    for (let n = 0; n < Math.min(8, edge.length); n++) {
+      const i = edge[Math.floor(c.foam() * edge.length)];
+      world.particles.add({
+        x: (i % w) + c.foam(),
+        y: Math.floor(i / w) + c.foam(),
+        z: 0.4,
+        vx: ((t.hx - fr.x) / d) * 1.4,
+        vy: ((t.hy - fr.y) / d) * 1.4,
+        vz: 1.6,
+        gravity: 6,
+        life: 0.7,
+        color: 0xf2fbff,
+        size: 0.9,
+      });
+    }
+  }
+
   // 6. The answer: after a cast, the water stayed well short of where the land would let it be, and
   // came no nearer, for HELD_FOR seconds while the spate pushed (see the top of this file).
   if (f.s > 0 && !t.answer)
@@ -842,8 +1121,20 @@ export function stepFlood(world: World, t: Trouble, dt: number): boolean {
         k.low = 0;
         continue;
       }
-      k.low = k.hit && ad - pd >= (f.behind ?? BEHIND) ? k.low + dt : 0;
-      if (k.low >= HELD_FOR) {
+      // Held at least BEHIND cells short of where the land would let it be; or going back: two cells
+      // from the nearest it came and a quarter less of it out of its bed (cut from its source, it
+      // drains; earth raised under its edge only pushes the edge back).
+      k.top = Math.max(k.top ?? 0, fr.cells);
+      const back = ad >= k.n + 2 && fr.cells <= k.top * 0.75;
+      const held = k.hit && (ad - pd >= (f.behind ?? BEHIND) || back);
+      // Held against a push: while it holds, the spate's level climbs (0.04 for each second held, so more for
+      // a bigger village), unless it is already at its height. A mound on the doorstep that pushes the
+      // edge back a cell for a few seconds is not held against anything.
+      if (held && k.low === 0) k.lvl = c.level;
+      k.low = held ? k.low + dt : 0;
+      const hold = f.hold ?? HELD_FOR;
+      const pushed = back || age > (f.th ?? TO_HOUSE.village) + OVER_FOR || c.level - (k.lvl ?? c.level) >= hold * 0.04;
+      if (k.low >= hold && pushed) {
         t.answer = { key: k.key, name: k.name, emoji: k.emoji, t: k.t };
         f.s = 0;
         break;

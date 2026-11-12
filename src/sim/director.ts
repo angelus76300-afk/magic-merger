@@ -5,7 +5,7 @@ import type { Happening } from "./kin";
 import { wordOf } from "./names";
 import { Rng } from "./noise";
 import { kindName } from "./sites";
-import { frontOf, troubleLine } from "./troubles";
+import { focusOf, frontOf, troubleLine } from "./troubles";
 import { unpackLook } from "./villagers";
 import { floatAt } from "./wonders";
 import type { World } from "./world";
@@ -199,11 +199,13 @@ export class Director {
       const shot: Shot = cut
         ? { kind: "drama", key, sort: "trouble", who: 0, other: 0, x: 0, y: 0, r: 9, caption: "", score: 95, since: now, least: now, until: Infinity }
         : cur!;
-      // A high water is read where it meets the houses: halfway from its edge to the house it makes for.
+      // A high water is read where it meets the houses: on its edge, more on the village's side, close
+      // enough that the water is a third of the frame and not a blue slab (the playtest at 344).
       const flood = trouble.kind === "flood";
-      shot.x = flood ? (f.x + trouble.hx) / 2 : onVillage ? trouble.vx : f.x;
-      shot.y = flood ? (f.y + trouble.hy) / 2 : onVillage ? trouble.vy : f.y;
-      shot.r = 9 + trouble.width;
+      const at = flood ? focusOf(world, trouble) : f;
+      shot.x = flood ? at.x : onVillage ? trouble.vx : f.x;
+      shot.y = flood ? at.y : onVillage ? trouble.vy : f.y;
+      shot.r = flood ? 7 : 9 + trouble.width;
       shot.caption = troubleLine(trouble);
       if (cut) this.take(shot, now);
       return { shot, cut };
