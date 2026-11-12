@@ -8,6 +8,8 @@ import { artifactAt, creatureAt, inspect, inspectArtifact } from "./inspect";
 import type { Artifact } from "./artifacts";
 import { HOT_SLOTS, type FromWorld, type HotSlot, type ToWorld } from "./protocol";
 import { solidCovers } from "./paths";
+import { jobOf } from "./goals";
+import { unpackLook } from "./villagers";
 import type { CastRequest, Runtime } from "./runtime";
 import type { SavedWorld } from "./save";
 import { Hud } from "./hud";
@@ -1113,7 +1115,15 @@ function placeFor(sort: "village" | "house" | "woods" | "shore" | "fire"): { x: 
     const kind = look.become;
     const w0 = engine.world;
     const who = w0.creatures
-      .filter((k) => !k.dead && (kind === "power" ? powersOf(w0, k).length > 0 : k.kind.split("#")[0] === kind))
+      .filter(
+        (k) =>
+          !k.dead &&
+          (kind === "power"
+            ? powersOf(w0, k).length > 0
+            : kind.startsWith("job:")
+              ? k.kind === "villager" && jobOf(k) === kind.slice(4) && unpackLook(k.look).age === "adult"
+              : k.kind.split("#")[0] === kind),
+      )
       .sort((a, b) => Math.hypot(a.x - o0.tx, a.y - o0.ty) - Math.hypot(b.x - o0.tx, b.y - o0.ty))[0];
     if (!who) return null;
     startBecome(who);
