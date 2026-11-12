@@ -60,9 +60,9 @@ export interface Plume {
 
 export interface IslandMap {
   villages: MapVillage[];
-  // The laid cells of finished roads (every cell laid), bridge decks included: drawn wide from far.
+  // The laid cells of roads more than half laid, bridge decks included: drawn wide from far.
   roads: number[];
-  // The laid cells of a road not yet finished: drawn thin from far, so a half laid road does not
+  // The laid cells of a road half laid or less: drawn thin from far, so its two stubs do not
   // read as two villages joined (the reading test of 12 November). Lanes worn by a village and on
   // no road are not drawn from far at all: the ground shows them.
   tracks: number[];
@@ -133,7 +133,8 @@ export function roadCells(world: World): { roads: number[]; tracks: number[] } {
   const part = new Set<number>();
   for (const r of world.roads) {
     const on = r.cells.map((_, k) => laid(world, r, k));
-    const finished = on.every(Boolean);
+    // Past half laid, the way between the two villages is mostly there: drawn as the road it is.
+    const finished = on.filter(Boolean).length * 2 > on.length;
     for (let k = 0; k < r.cells.length; k++) {
       const i = r.cells[k];
       // Laid, and road or deck underfoot (a house or a wonder on its way is not drawn over).

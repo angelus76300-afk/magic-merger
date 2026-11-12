@@ -992,7 +992,7 @@ export class VoxelView {
     const { world, map } = this;
     const night = daylight(time).night;
     // Roads: the laid cells of the real ones, placed again only when the map is read again. A
-    // finished road is a wide band; a road still being laid is a thin line, a third as wide.
+    // road more than half laid is a wide band; one half laid or less is a thin line, a third as wide.
     const wide = fade(this.cover, FAR.roads);
     const cells = map.roads.length + map.tracks.length;
     this.farRoads.visible = wide > 0.01 && cells > 0;

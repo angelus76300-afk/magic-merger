@@ -160,7 +160,7 @@ function mapChecksSeeded(check: Check): void {
     );
   }
   // 3. The far roads are the real road cells, laid: a road half laid is a thin track, never the
-  // wide band of a finished road (the reading test of 12 November read a road 49% laid as a join);
+  // wide band of a road more than half laid (the reading test of 12 November read a road 49% laid as a join);
   // a lane worn by a village and on no road is not drawn from far.
   {
     const world = new World(64, 64, 5);
@@ -174,20 +174,25 @@ function mapChecksSeeded(check: Check): void {
     const lay = (from: number, to: number) => {
       for (let k = from; k < to; k++) pave(world, { road, k, cell: cells[k], stand: cells[Math.max(0, k - 1)], bridge: false } as PaveJob, v);
     };
-    // Half laid, from each end, as builders lay it.
+    // Laid from each end, as builders lay it, to exactly half (15 of 30): still a track.
     lay(0, 8);
-    for (let k = 22; k < 30; k++) world.ground[cells[k]] = G.ROAD;
+    for (let k = 23; k < 30; k++) world.ground[cells[k]] = G.ROAD;
     world.ground[20 * 64 + 20] = G.ROAD;
     const half = roadCells(world);
-    const laidCells = [...cells.slice(0, 8), ...cells.slice(22)];
-    lay(8, 22);
+    const laidCells = [...cells.slice(0, 8), ...cells.slice(23)];
+    // One cell more than half: the road.
+    lay(8, 9);
+    const past = roadCells(world);
+    lay(9, 23);
     const done = roadCells(world);
     const same = (a: number[], b: number[]) => a.length === b.length && a.every((i, k) => i === b[k]);
     check(
-      "map: a half laid road is a thin track from far, never a full join; finished, it is the wide band; a worn lane is not drawn",
+      "map: a road half laid or less is a thin track from far, never a full join; past half, the wide band; a worn lane is not drawn",
       before.roads.length + before.tracks.length === 0 &&
         half.roads.length === 0 &&
         same(half.tracks, laidCells) &&
+        past.roads.length === 16 &&
+        past.tracks.length === 0 &&
         same(done.roads, cells) &&
         done.tracks.length === 0 &&
         ROAD.roadSpeed > 1,
