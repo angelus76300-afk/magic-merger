@@ -541,6 +541,8 @@
           sans-serif;
         box-shadow: 0 4px 0 #05080f;
         cursor: pointer;
+        /* A held aim drags from here: the browser must not take the touch for a scroll. */
+        touch-action: none;
       }
       #held {
         position: absolute;

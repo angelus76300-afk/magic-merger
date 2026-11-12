@@ -741,6 +741,7 @@ function driveChecks(check: Check, world: World, rt: Runtime): void {
   // go, the time to a stop. Through the engine's steering a villager took about 0.35 s to its full pace.
   {
     const v = put("villager", at.x0 + 1, at.a);
+    v.size = 1;
     awake(v);
     const run0 = driveSpeeds(kindOf(v)).run;
     push(world, 1, 0);

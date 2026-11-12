@@ -84,6 +84,7 @@ export function possess(world: World, c: Creature): Possession | null {
     climb: 0,
     alt: c.z,
     dive: 0.3,
+    side: 0,
     since: world.time,
     own: { task, tx, ty, cell, target, pace, work, action },
     busy: 0,

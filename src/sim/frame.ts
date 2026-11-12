@@ -131,7 +131,10 @@ const hooks = {
     }
     // The finger that held an aim on the island lifted just now: it cast already (aim.ts).
     if (performance.now() - aimEndedAt < 150) return;
-    if (riding && eyes) castFromEye();
+    if (riding && eyes) {
+      aimStats.taps++;
+      castFromEye();
+    }
   },
   onTap: (x: number, y: number) => {
     if (!engine) return;
@@ -147,7 +150,10 @@ const hooks = {
     // behind where the finger is, within the item's reach either way (eyes.ts castRange).
     if (riding) {
       if (performance.now() - aimEndedAt < 150) return;
-      if (eyes) castFromEye();
+      if (eyes) {
+        aimStats.taps++;
+        castFromEye();
+      }
       else if (selected) {
         const at = withinRange(riding.x, riding.y, x, y, castRange(selected.tier));
         castAt(at.x, at.y);
@@ -1080,7 +1086,7 @@ const aimCancelEl = document.getElementById("aimcancel") as HTMLElement;
 const beamEl = document.getElementById("beam") as HTMLElement;
 const beamSvg = beamEl.querySelector("svg") as SVGSVGElement;
 const beamPath = beamEl.querySelector("path") as SVGPathElement;
-const aimStats = { holds: 0, casts: 0, cancels: 0, moved: 0 };
+const aimStats = { holds: 0, casts: 0, cancels: 0, moved: 0, clicks: 0, taps: 0 };
 let aimEndedAt = -Infinity;
 
 function aimShown(on: boolean): void {
@@ -1142,7 +1148,10 @@ castEl.addEventListener("lostpointercapture", (e) => aimEnd(e.pointerId, e.clien
 // A click with no press before it (a key, a screen reader) casts at the mark; the one a touch sends after its press does nothing.
 castEl.addEventListener("click", (e) => {
   e.preventDefault();
-  if (clickActs(performance.now())) castFromEye();
+  if (clickActs(performance.now())) {
+    aimStats.clicks++;
+    castFromEye();
+  }
 });
 
 // The island: a finger held still begins an aim; moved first, it turns the look (the engine's own).

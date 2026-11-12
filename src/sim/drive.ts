@@ -102,6 +102,8 @@ export interface Driven {
   // A flier's altitude and a swimmer's depth (0 at the surface, 1 at the bed) asked for.
   alt: number;
   dive: number;
+  // The side it last went round something on (1 or -1; 0 before the first).
+  side: number;
 }
 
 // The altitude band of a flier: from low over the trees to well above its own height.
@@ -153,7 +155,7 @@ export function drive(
     d.vy *= MAX_DRIVE / speed;
     speed = MAX_DRIVE;
   }
-  if (!tx && !ty && speed < 0.05) {
+  if (!tx && !ty && speed < 0.3) {
     d.vx = d.vy = 0;
     speed = 0;
   }
@@ -205,6 +207,23 @@ export function drive(
       d.vx = 0;
       continue;
     }
+    // Head on into a trunk or a corner: round it, a little to one side, as a body glances off
+    // (the frames of 12 November: a villager pushed into a bush in the woods stood still).
+    // The side it went last, then the other; the speed kept, its direction not.
+    let round = false;
+    const side = d.side || 1;
+    for (const turn of [0.45 * side, -0.45 * side, 0.9 * side, -0.9 * side]) {
+      const a = Math.atan2(sy, sx) + turn;
+      const rx = Math.cos(a) * len;
+      const ry = Math.sin(a) * len;
+      if (!free(c.x + rx, c.y + ry, Math.cos(a), Math.sin(a))) continue;
+      c.x += rx;
+      c.y += ry;
+      d.side = Math.sign(turn);
+      round = true;
+      break;
+    }
+    if (round) continue;
     d.vx = d.vy = 0;
     jammed = true;
     break;
