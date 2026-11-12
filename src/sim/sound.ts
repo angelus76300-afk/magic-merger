@@ -12,6 +12,8 @@ import { SoundBudget, ROUTINE_LEVEL, ROUTINE_PITCH, UNPLACED, place, routineHear
 const MUTE_KEY = "magic-merger.muted";
 // The level of everything together, with the sound on.
 const OUT_LEVEL = 0.5;
+// A cast's sound varies by up to this much in pitch (4.8, item 5).
+export const CAST_PITCH = 0.05;
 
 // While music plays, pitched spell voices (chime, ping) take the nearest
 // note of its key, so a cast sounds part of the music (game designer,
@@ -284,7 +286,8 @@ export class SpellSound {
     const pan = ctx.createStereoPanner();
     pan.pan.value = where.pan;
     bus.connect(dull).connect(pan).connect(this.fx!);
-    const pitch = at.routine ? 1 + (Math.random() * 2 - 1) * ROUTINE_PITCH : 1;
+    // Never twice the same (item 5): every cast a little higher or lower.
+    const pitch = 1 + (Math.random() * 2 - 1) * (at.routine ? ROUTINE_PITCH : CAST_PITCH);
     const seconds = VOICES[voice](this.noise)(counting(ctx, counter), bus, now, s, pitch);
     const slot = this.budget.start(voice, level, now, seconds, ask);
     // The beds and the music give way to what happens (items 3 and 6), for
@@ -802,13 +805,33 @@ function counting(ctx: Synth, counter: { nodes: number }): Synth {
 const NEAREST: Record<string, string> = {
   hum: "drone",
   buzz: "drone",
-  choir: "drone",
   ambient: "drone",
   bell: "chime",
   ring: "chime",
-  sparkle: "chime",
-  twinkle: "chime",
-  shimmer: "chime",
+  // 4.8 item 5: names that now play a richer voice. "bell" and "thunder"
+  // still play the chime and the rumble until part 5 gives them their own.
+  twinkle: "sparkle",
+  shimmer: "sparkle",
+  glitter: "sparkle",
+  glass: "crystal",
+  ice: "crystal",
+  harp: "pluck",
+  lute: "pluck",
+  string: "pluck",
+  heart: "heartbeat",
+  pulse: "heartbeat",
+  beat: "heartbeat",
+  water: "water",
+  drip: "water",
+  bubble: "water",
+  stream: "water",
+  wave: "splash",
+  chant: "choir",
+  voices: "choir",
+  song: "choir",
+  temple: "gong",
+  breeze: "wind",
+  howl: "howl",
   chirp: "ping",
   tick: "ping",
   bang: "boom",
@@ -819,12 +842,10 @@ const NEAREST: Record<string, string> = {
   quake: "rumble",
   roar: "rumble",
   growl: "rumble",
-  wind: "whoosh",
   swoosh: "whoosh",
-  gust: "whoosh",
+  gust: "wind",
   sizzle: "hiss",
   steam: "hiss",
-  splash: "hiss",
   fire: "crackle",
   burn: "crackle",
   spark: "zap",
@@ -871,6 +892,16 @@ const VOICES: Record<string, (noise: AudioBuffer) => Voice> = {
   grind: (n) => grind(n),
   whisper: (n) => whisper(n),
   creak: () => creak(),
+  // Richer spell voices (4.8, item 5).
+  gong: () => gong(),
+  choir: () => choir(),
+  wind: (n) => wind(n),
+  water: () => water(),
+  splash: (n) => splash(n),
+  crystal: () => crystal(),
+  heartbeat: () => heartbeat(),
+  sparkle: () => sparkle(),
+  pluck: () => pluck(),
 };
 
 // Every voice by name, for the offline checks of scripts/sound-test.ts.
@@ -1414,6 +1445,223 @@ function creak(): Voice {
     osc.stop(t + 0.85);
     lfo.stop(t + 0.85);
     return 0.85;
+  };
+}
+
+// A gong: inharmonic partials that bloom and ring long.
+function gong(): Voice {
+  return (ctx, out, t, size, pitch) => {
+    const f = (110 - 30 * size) * pitch;
+    for (const [ratio, level, decay] of [
+      [1, 0.14, 4],
+      [1.48, 0.07, 3],
+      [2.13, 0.06, 2.4],
+      [2.83, 0.035, 1.6],
+      [4.07, 0.02, 1],
+    ] as const) {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.frequency.value = tune(f * ratio);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(level, t + 0.02 + 0.08 * (ratio - 1));
+      g.gain.exponentialRampToValueAtTime(0.0001, t + decay * (0.8 + 0.4 * size));
+      osc.connect(g).connect(out);
+      osc.start(t);
+      osc.stop(t + 4.9);
+    }
+    return 4.9;
+  };
+}
+
+// A choir pad: a chord of soft saws, each voice a little out of tune, slow in and out.
+function choir(): Voice {
+  return (ctx, out, t, size, pitch) => {
+    const filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = 1400;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.08, t + 0.6);
+    gain.gain.setValueAtTime(0.08, t + 1.2 + size);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 2.6 + size);
+    filter.connect(gain).connect(out);
+    for (const f of [220, 277, 330]) {
+      for (const cents of [-8, 8]) {
+        const osc = ctx.createOscillator();
+        osc.type = "sawtooth";
+        osc.frequency.value = tune(f * pitch);
+        osc.detune.value = cents;
+        osc.connect(filter);
+        osc.start(t);
+        osc.stop(t + 3.7);
+      }
+    }
+    return 3.7;
+  };
+}
+
+// Wind: noise through a slowly wandering band, rising and falling.
+function wind(noise: AudioBuffer): Voice {
+  return (ctx, out, t, size, pitch) => {
+    const src = ctx.createBufferSource();
+    src.buffer = noise;
+    src.loop = true;
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.Q.value = 3;
+    filter.frequency.setValueAtTime(400 * pitch, t);
+    filter.frequency.linearRampToValueAtTime(1100 * pitch, t + 0.9);
+    filter.frequency.linearRampToValueAtTime(500 * pitch, t + 2);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.5 + 0.3 * size, t + 0.7);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 2.2);
+    src.connect(filter).connect(gain).connect(out);
+    src.start(t, Math.random());
+    src.stop(t + 2.3);
+    return 2.3;
+  };
+}
+
+// Water: quick bubbles, sines that rise as they pop.
+function water(): Voice {
+  return (ctx, out, t, size, pitch) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    const n = 6 + Math.round(6 * size);
+    let at = t;
+    for (let k = 0; k < n; k++) {
+      const f = (400 + Math.random() * 500) * pitch;
+      osc.frequency.setValueAtTime(f, at);
+      osc.frequency.exponentialRampToValueAtTime(f * 1.8, at + 0.05);
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.25, at + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.06);
+      at += 0.06 + Math.random() * 0.08;
+    }
+    osc.connect(gain).connect(out);
+    osc.start(t);
+    osc.stop(at + 0.05);
+    return at + 0.05 - t;
+  };
+}
+
+// A splash: a burst of bright noise that falls into a wash.
+function splash(noise: AudioBuffer): Voice {
+  return (ctx, out, t, size, pitch) => {
+    const src = ctx.createBufferSource();
+    src.buffer = noise;
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.Q.value = 0.8;
+    filter.frequency.setValueAtTime(3500 * pitch, t);
+    filter.frequency.exponentialRampToValueAtTime(700 * pitch, t + 0.6 + 0.4 * size);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.6, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.7 + 0.4 * size);
+    src.connect(filter).connect(gain).connect(out);
+    src.start(t, Math.random());
+    src.stop(t + 1.2);
+    return 1.2;
+  };
+}
+
+// Crystal: high glassy partials, a quick sparkle of three struck notes.
+function crystal(): Voice {
+  return (ctx, out, t, _size, pitch) => {
+    [0, 0.07, 0.15].forEach((d, k) => {
+      for (const [ratio, level] of [
+        [1, 0.07],
+        [2.71, 0.03],
+        [5.2, 0.015],
+      ] as const) {
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.frequency.value = tune([1568, 2093, 2637][k] * pitch) * ratio;
+        g.gain.setValueAtTime(0.0001, t + d);
+        g.gain.exponentialRampToValueAtTime(level, t + d + 0.003);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + d + 1.1);
+        osc.connect(g).connect(out);
+        osc.start(t + d);
+        osc.stop(t + d + 1.15);
+      }
+    });
+    return 1.35;
+  };
+}
+
+// A heartbeat: two low thumps, the second softer, twice.
+function heartbeat(): Voice {
+  return (ctx, out, t, size, pitch) => {
+    const osc = ctx.createOscillator();
+    osc.frequency.value = 55 * pitch;
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = 220;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    const beat = 0.8 - 0.25 * size;
+    for (let k = 0; k < 2; k++)
+      for (const [d, level] of [
+        [0, 0.9],
+        [0.22, 0.55],
+      ] as const) {
+        const at = t + k * beat + d;
+        gain.gain.setValueAtTime(0.0001, at);
+        gain.gain.exponentialRampToValueAtTime(level, at + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.18);
+      }
+    osc.connect(lp).connect(gain).connect(out);
+    osc.start(t);
+    osc.stop(t + beat + 0.45);
+    return beat + 0.45;
+  };
+}
+
+// A sparkle: a quick shower of high notes.
+function sparkle(): Voice {
+  return (ctx, out, t, size, pitch) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "triangle";
+    gain.gain.setValueAtTime(0.0001, t);
+    const n = 6 + Math.round(6 * size);
+    for (let k = 0; k < n; k++) {
+      const at = t + k * 0.045 + Math.random() * 0.02;
+      osc.frequency.setValueAtTime(tune((2000 + Math.random() * 2500) * pitch), at);
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.3, at + 0.004);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.04);
+    }
+    osc.connect(gain).connect(out);
+    osc.start(t);
+    osc.stop(t + n * 0.045 + 0.1);
+    return n * 0.045 + 0.1;
+  };
+}
+
+// A pluck: a string, bright then dull, two notes a fifth apart.
+function pluck(): Voice {
+  return (ctx, out, t, _size, pitch) => {
+    [0, 0.12].forEach((d, k) => {
+      const osc = ctx.createOscillator();
+      osc.type = "sawtooth";
+      osc.frequency.value = tune((k ? 660 : 440) * pitch);
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.setValueAtTime(4000, t + d);
+      lp.frequency.exponentialRampToValueAtTime(400, t + d + 0.4);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t + d);
+      g.gain.exponentialRampToValueAtTime(0.18, t + d + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.7);
+      osc.connect(lp).connect(g).connect(out);
+      osc.start(t + d);
+      osc.stop(t + d + 0.75);
+    });
+    return 0.9;
   };
 }
 

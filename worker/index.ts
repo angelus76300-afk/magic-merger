@@ -1,7 +1,7 @@
 import { PRIMITIVES, elementKey, pairKey } from "../shared/elements";
 import { FIRST_PROGRAM_VERSION, PROGRAM_VERSION, type SpellProgram } from "../shared/spellcode";
 import { TIERS, capByDepth, capTier, isTier, tierFromDepth, type Tier } from "../shared/tiers";
-import { REASON_PROMPT, isBig, isReason, votedDown, votedUp, votedWorse, votesNeeded, VOTE_WINDOW_MS } from "../shared/votes";
+import { REASON_PROMPT, isBig, isReason, voteReasons, votedDown, votedUp, votedWorse, votesNeeded, VOTE_WINDOW_MS } from "../shared/votes";
 import type {
   CastRecord,
   CastResponse,
@@ -80,7 +80,7 @@ import type { LibraryExample, Rewrite } from "./prompts";
 import { joinsBoth, looksLikeRefusal } from "./prompts";
 import { noDescription } from "../shared/refusal";
 import { readDigest } from "../shared/chronicle";
-import { cronJobs, runsOn, takeRun } from "./cron";
+import { cronJobs, runsOn, scanDue, takeRun } from "./cron";
 import { nextEvidence } from "./evidence";
 import { community, setProfile } from "./community";
 import { dayIn as dayInZone } from "../shared/daily";
@@ -112,6 +112,7 @@ import {
   Ledger,
   LedgerError,
   allowance,
+  checkTotals,
   createInvite,
   hold,
   inviteByToken,
@@ -404,20 +405,27 @@ export default {
   },
 
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(
-      cronJobs({
-        "poll batches": () => pollBatches(env),
-        sweep: () => sweep(env.DB),
-        "feedback sync": () => syncFeedback(env),
-        evolve: env.EVOLVE === "0" ? null : () => evolve(env, false),
-        "intents backfill": () => backfillIntents(env),
-        wonders: () => wonderDaily(env, env.WONDERS !== "0" ? "due" : "collect"),
-        "daily challenge": env.DAILY_CHALLENGES === "0" ? null : () => setDailyChallenge(env, false),
-        "rewrite by evidence": env.EVIDENCE_REWRITES === "0" ? null : () => rewriteByEvidence(env),
-      }),
-    );
+    ctx.waitUntil(cronJobs(cronTasks(env)));
   },
 } satisfies ExportedHandler<Env>;
+
+// What the ten minute cron runs, by name. Exported so scripts/cron-reads.mjs
+// can run each job alone and count the rows it reads.
+export function cronTasks(env: Env): Record<string, (() => Promise<unknown>) | null> {
+  return {
+    "poll batches": () => pollBatches(env),
+    sweep: () => sweep(env.DB),
+    "feedback sync": () => syncFeedback(env),
+    evolve: env.EVOLVE === "0" ? null : () => evolve(env, false),
+    "intents backfill": () => backfillIntents(env),
+    wonders: () => wonderDaily(env, env.WONDERS !== "0" ? "due" : "collect"),
+    "daily challenge": env.DAILY_CHALLENGES === "0" ? null : () => setDailyChallenge(env, false),
+    "rewrite by evidence": env.EVIDENCE_REWRITES === "0" ? null : () => rewriteByEvidence(env),
+    // 4.7: the budget's running totals against the ledger, once a day (one
+    // read of the month's spend); a drift is logged and the totals rebuilt.
+    "spend totals": async () => ((await scanDue(env.DB, "spend totals", 86400_000)) ? checkTotals(env.DB) : null),
+  };
+}
 
 const SPELL_MODELS = new Set(["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1"]);
 
@@ -1948,14 +1956,16 @@ async function handleVote(body: VoteRequest, env: Env, player: string | null, pa
   const row = await getProgram(env.DB, Number(body.id));
   if (!row || row.key !== key) throw new HttpError(404, "There is no such program");
   const up = body.up === true;
-  if (!up && !isReason(body.reason)) throw new HttpError(400, "A down vote needs a reason");
+  // One to three reasons, stored joined ("still,size"): no new column.
+  const reasons = up ? null : voteReasons(body);
+  if (!up && !reasons) throw new HttpError(400, "A down vote needs one to three of the reasons offered");
   const cast = await env.DB.prepare("SELECT at FROM casts WHERE player = ? AND pid = ?").bind(player, row.id).first<{ at: number }>();
   if (!cast || Date.now() - cast.at > VOTE_WINDOW_MS) throw new HttpError(403, "Only players who cast this version of the spell lately can vote on it");
   await env.DB.prepare(
     `INSERT INTO votes (player, pid, key, up, reason, at) VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT (player, pid) DO UPDATE SET up = excluded.up, reason = excluded.reason, at = excluded.at`,
   )
-    .bind(player, row.id, key, up ? 1 : 0, up ? null : body.reason, Date.now())
+    .bind(player, row.id, key, up ? 1 : 0, reasons ? reasons.join(",") : null, Date.now())
     .run();
   const t = await tally(env.DB, row.id);
   const needed = votesNeeded(await averageDaily(env.DB));
@@ -2491,6 +2501,7 @@ async function handleAdmin(request: Request, url: URL, env: Env, oracle: Oracle,
 // Collects the day's wonder when its batch has ended; when one is due (or
 // forced by the admin) and the month's wonder budget has room, asks for the
 // next one; and sorts the day's new artifacts for players' discoveries.
+const WONDER_SCAN_EVERY_MS = 6 * 3600_000;
 async function wonderDaily(env: Env, mode: "collect" | "due" | "force") {
   const db = env.DB;
   const now = Date.now();
@@ -2600,7 +2611,11 @@ async function wonderDaily(env: Env, mode: "collect" | "due" | "force") {
   // 3. Players' discoveries: a day's new artifacts sorted in one small call,
   // once a Toronto day (4.5.1, N1: on a day the wonder failed, every due run
   // would sort again what the last one left unanswered).
-  const list = await unsorted(db);
+  // From the cron, the scan for them (all the artifacts, each checked against
+  // the sorts) is made only while the day's sort is still to do, and once in
+  // WONDER_SCAN_EVERY_MS: it read the whole pool at each of the 144 runs a day.
+  const scan = mode !== "due" || ((await runsOn(db, "wonder-sort", dayInZone(now))) < 1 && (await scanDue(db, "wonder-scan", WONDER_SCAN_EVERY_MS, now)));
+  const list = scan ? await unsorted(db) : [];
   if (list.length && (mode !== "due" || (await takeRun(db, "wonder-sort", dayInZone(now), 1, now)))) {
     const room = cap - (await wonderSpent(db, monthStart(now)));
     if (oracle.mock || room >= WONDER_ESTIMATE.sort) {
@@ -3141,6 +3156,7 @@ async function backfillIntents(env: Env, limit = INTENTS_PER_RUN): Promise<{ don
 // (worker/evidence.ts says which), paid by the game as the designer is, and
 // through the path of a rewrite asked by votes: the daily rewrite budget, the
 // cooldown, a trial tested before anyone else gets it, the old one kept.
+const EVIDENCE_SCAN_EVERY_MS = 6 * 3600_000;
 async function rewriteByEvidence(env: Env, now = Date.now()): Promise<Record<string, unknown>> {
   if (!env.ANTHROPIC_API_KEY) return { skipped: "no API key" };
   // Nothing paid runs on its own on staging (wrangler.jsonc, env.staging): its
@@ -3149,6 +3165,8 @@ async function rewriteByEvidence(env: Env, now = Date.now()): Promise<Record<str
   if (env.STAGING === "1") return { skipped: "staging" };
   // A day already tried costs one row read, not the picker's scan, on the 143 runs after it.
   if ((await runsOn(env.DB, "evidence", dayInZone(now))) >= 1) return { skipped: "already tried today" };
+  // The picker scans the programs: once in EVIDENCE_SCAN_EVERY_MS, not at each run.
+  if (!(await scanDue(env.DB, "evidence-scan", EVIDENCE_SCAN_EVERY_MS, now))) return { skipped: "scanned lately" };
   const found = await nextEvidence(env.DB, undefined, now);
   if (!found) return { skipped: "no evidence" };
   const element = await getElement(env.DB, found.row.key);

@@ -30,6 +30,8 @@ export interface Pose {
   nod: number;
   // Draw small parts (eyes, ears, buckles): false from far away.
   detail: boolean;
+  // Draw the parts seen only up close (lod 2: a villager's nose, brows, ears): in the eye view, within a few cells.
+  close?: boolean;
   // Every part shines (spirits).
   glowAll: boolean;
   // Status color over everything: dead, frozen, burning; 0 for none.
@@ -436,13 +438,13 @@ export class Figures {
     const base = B.base;
     const meshes = this.meshes;
     const counts = this.n;
-    const detail = pose.detail;
+    const level = pose.close ? 2 : pose.detail ? 1 : 0;
     const glowAll = pose.glowAll;
     const mats = [meshes[0].instanceMatrix.array as Float32Array, meshes[1].instanceMatrix.array as Float32Array];
     const cols = [meshes[0].instanceColor!.array as Float32Array, meshes[1].instanceColor!.array as Float32Array];
     const caps = [meshes[0].instanceMatrix.count, meshes[1].instanceMatrix.count];
     for (let j = 0; j < B.n; j++) {
-      if (B.lod[j] && !detail) continue;
+      if (B.lod[j] > level) continue;
       const k = B.glow[j] || glowAll ? 1 : 0;
       if (counts[k] >= caps[k]) {
         this.want[k] = Math.max(this.want[k], counts[k] + 1);

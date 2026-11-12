@@ -60,6 +60,9 @@ export const BUILTIN: Record<Layer, Material[]> = {
     // saves from before keep theirs (save.ts reads the counts a save was
     // written with).
     make("path", "ground", [0xa08462, 0x987c5a, 0xa98c68]),
+    // 4.9: a dirt road, trodden hard and darker than a path, with ruts.
+    // After every older id, as the path.
+    make("dirt road", "ground", [0x7c6043, 0x735a3f, 0x86684a, 0x6e553b]),
   ],
   fluid: [
     make("none", "fluid", [0]),
@@ -117,6 +120,10 @@ export const BUILTIN: Record<Layer, Material[]> = {
     make("watchtower", "cover", [0x8a6a44, 0x7a5a3a], { flammable: 0.4, fuel: 10, solid: true }),
     make("lumber yard", "cover", [0x9a7a50, 0x8a6a44], { flammable: 0.55, fuel: 10, solid: true }),
     make("fisher hut", "cover", [0x8a7a5a, 0x7a6a4a], { flammable: 0.4, fuel: 8, solid: true }),
+    // 4.9 (roads.ts): planks over water on a road, walked whatever the depth.
+    make("bridge", "cover", [0x8a6a44, 0x7a5c3a], { flammable: 0.4, fuel: 6 }),
+    // 4.9 part 2 (sites.ts): a house or building going up, stakes to half walls.
+    make("building site", "cover", [0xa08058, 0x8a6a44], { flammable: 0.5, fuel: 6, solid: true }),
   ],
   gas: [
     make("none", "gas", [0]),
@@ -128,7 +135,7 @@ export const BUILTIN: Record<Layer, Material[]> = {
 
 // "none" sits at id 0 for fluid, cover and gas. Ground always has something,
 // so its id 0 is grass.
-export const G = { GRASS: 0, DIRT: 1, SAND: 2, ROCK: 3, SNOW: 4, ASH: 5, BASALT: 6, CRYSTAL: 7, FIELD: 8, PATH: 9 } as const;
+export const G = { GRASS: 0, DIRT: 1, SAND: 2, ROCK: 3, SNOW: 4, ASH: 5, BASALT: 6, CRYSTAL: 7, FIELD: 8, PATH: 9, ROAD: 10 } as const;
 export const F = { NONE: 0, WATER: 1, ICE: 2, LAVA: 3, OIL: 4, ACID: 5, MUD: 6 } as const;
 export const C = {
   NONE: 0,
@@ -170,6 +177,8 @@ export const C = {
   WATCHTOWER: 36,
   LUMBERYARD: 37,
   FISHERHUT: 38,
+  BRIDGE: 39,
+  SITE: 40,
 } as const;
 
 // Covers that are a building: a house or one with a job (4.4.5 part B).

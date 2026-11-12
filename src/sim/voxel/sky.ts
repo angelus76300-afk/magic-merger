@@ -15,8 +15,10 @@ import {
 } from "three";
 import { DAY_LENGTH, MOON_DAYS, dayOf } from "../daylight";
 import { LOOKS, biomeAt, type Weather } from "../land";
+import { fallingAt } from "../weather";
 import { seeded } from "../noise";
 import type { World } from "../world";
+import { DROP_SHADER, dropShare } from "./drops";
 import { GRAPHICS } from "./graphics";
 
 // The sky of 4.4: a sun and a moon that cross it with the day, stars at
@@ -39,23 +41,24 @@ export interface WeatherNow {
 // and the Spell Lab (no land) have none.
 // The Perf Lab can hold one weather, to measure and look at it.
 export const LAB_WEATHER: { now: WeatherNow | null } = { now: null };
+// For frames of the checks (scripts/ground-frames.mjs): a time of day held for
+// the light and the clouds, and a storm cloud held over a spot. The drawing
+// only: the simulation keeps its own clock and its own fronts.
+export const LAB_SKY: { time: number | null; front: { x: number; y: number; r: number } | null } = { time: null, front: null };
 
 // On a mixed island (4.4.1), the weather of the region at `cell`.
 export function weatherAt(world: World, time: number, cell = -1): WeatherNow {
   if (LAB_WEATHER.now) return LAB_WEATHER.now;
   if (!world.land) return { kind: "clear", amount: 0 };
+  // Rain and snow are fronts that cross the island (weather.ts): what falls here is what is
+  // overhead, wherever the camera looks from. Fog alone stays a region's own.
+  const at = cell >= 0 && cell < world.n ? cell : Math.floor(world.h / 2) * world.w + Math.floor(world.w / 2);
+  const falling = fallingAt(world, at % world.w, Math.floor(at / world.w), time);
+  if (falling.amount > 0) return falling;
   const odds = LOOKS[cell >= 0 && cell < world.n ? biomeAt(world, cell) : world.land.biome].weather;
   const spell = Math.floor(time / SPELL);
-  const roll = seeded((world.seed * 7919 + spell * 104729) >>> 0)();
-  let kind: Weather = "clear";
-  let acc = 0;
-  for (const k of ["rain", "snow", "fog"] as const) {
-    acc += odds[k] ?? 0;
-    if (roll < acc) {
-      kind = k;
-      break;
-    }
-  }
+  const roll = seeded((world.seed * 7919 + spell * 104729 + 17) >>> 0)();
+  const kind: Weather = roll < (odds.fog ?? 0) ? "fog" : "clear";
   if (kind === "clear") return { kind, amount: 0 };
   const f = (time % SPELL) / SPELL;
   const ease = (t: number) => t * t * (3 - 2 * t);
@@ -81,7 +84,9 @@ export function skyBodies(time: number): { sun: number; sunAz: number; moon: num
 const FAR = 1500;
 const DIR = new Vector3();
 const STARS = 700;
-const DROPS = 2400;
+// Enough for the tile of drops.ts to be as thick close up as the old box
+// was (2400 in a box of 30); far out a ninth of them show, as before.
+const DROPS = 21600;
 
 export class Sky {
   private group = new Group();
@@ -132,35 +137,27 @@ export class Sky {
     });
     this.stars = new Points(starGeometry, this.starMaterial);
     this.stars.frustumCulled = false;
-    // Rain and snow: points in a box around the camera's target, falling in
+    // Rain and snow: points fixed over the island (drops.ts), falling in
     // the vertex shader, so a frame costs nothing on the CPU.
     const drop = new Float32Array(DROPS * 3);
     for (let k = 0; k < DROPS * 3; k++) drop[k] = rand();
+    const rank = new Float32Array(DROPS);
+    for (let k = 0; k < DROPS; k++) rank[k] = rand();
     const dropGeometry = new BufferGeometry();
     dropGeometry.setAttribute("position", new BufferAttribute(drop, 3));
+    dropGeometry.setAttribute("rank", new BufferAttribute(rank, 1));
     this.dropMaterial = new ShaderMaterial({
       uniforms: {
         time: { value: 0 },
         center: { value: [0, 0, 0] },
-        box: { value: 60 },
-        amount: { value: 0 },
+        share: { value: 0 },
         snow: { value: 0 },
         tint: { value: new Color(0xffffff) },
         pixels: { value: 1 },
+        nearest: { value: 0 },
+        grain: { value: 1 },
       },
-      vertexShader: `uniform float time; uniform vec3 center; uniform float box; uniform float amount; uniform float snow; uniform float pixels;
-        varying float vShow;
-        void main() {
-          vec3 p = position;
-          vShow = step(p.x * 0.37 + p.z * 0.63, amount);
-          float fall = mix(0.9, 0.12, snow);
-          p.y = fract(p.y - time * fall);
-          p.x = fract(p.x + snow * 0.05 * sin(time * 0.7 + p.z * 40.0) + time * 0.02);
-          vec3 w = center + vec3((p.x - 0.5) * box, (p.y - 0.25) * box * 0.6, (p.z - 0.5) * box);
-          vec4 mv = modelViewMatrix * vec4(w, 1.0);
-          gl_PointSize = mix(16.0, 6.0, snow) * pixels * 40.0 / max(4.0, -mv.z);
-          gl_Position = projectionMatrix * mv;
-        }`,
+      vertexShader: DROP_SHADER,
       fragmentShader: `uniform float snow; uniform vec3 tint; varying float vShow;
         void main() {
           if (vShow < 0.5) discard;
@@ -183,7 +180,11 @@ export class Sky {
     scene.add(this.group, this.drops);
   }
 
-  // Places the sky around the camera and the weather around its target.
+  // Drops nearer the camera than this are not drawn (the eye view, eyes.ts).
+  dropsFrom = 0;
+
+  // Places the sky around the camera; the rain and snow stay over the
+  // island and are drawn around the camera's target.
   // `night` is daylight's (0 to 1); `target` in scene units.
   update(time: number, night: number, camera: PerspectiveCamera, target: { x: number; y: number; z: number }, dist: number, pixels: number): void {
     // The weather of the region the camera looks at; moving to another
@@ -192,7 +193,12 @@ export class Sky {
     const cx = Math.round(target.x + w.w / 2);
     const cy = Math.round(target.z + w.h / 2);
     const cell = cx >= 0 && cy >= 0 && cx < w.w && cy < w.h ? cy * w.w + cx : -1;
-    const goal = GRAPHICS.weather ? weatherAt(w, time, cell) : { kind: "clear" as const, amount: 0 };
+    const under = GRAPHICS.weather ? weatherAt(w, time, cell) : { kind: "clear" as const, amount: 0 };
+    // From afar a front is its cloud over part of the island (view.ts); the grey sky, the mist and
+    // the drops are for those under it. Full up close, gone from where the whole island is seen.
+    const side = Math.max(w.w, w.h);
+    const close = under.kind === "fog" ? 1 : Math.max(0, Math.min(1, (side * 0.95 - dist) / (side * 0.45)));
+    const goal = { kind: under.kind, amount: under.amount * close };
     const dt = Math.min(0.25, Math.max(0, time - this.lastTime));
     this.lastTime = time;
     const now = this.weather;
@@ -243,11 +249,13 @@ export class Sky {
       const u = this.dropMaterial.uniforms;
       u.time.value = time;
       u.center.value = [target.x, target.y, target.z];
-      u.box.value = Math.min(90, Math.max(30, dist * 0.9));
-      u.amount.value = cover;
+      u.share.value = dropShare(cover, dist);
       u.snow.value = this.weather.kind === "snow" ? 1 : 0;
       (u.tint.value as Color).setHex(this.weather.kind === "snow" ? 0xffffff : 0xb8c8dc).multiplyScalar(1 - night * 0.6);
       u.pixels.value = pixels;
+      u.nearest.value = this.dropsFrom;
+      // Seen from a creature's eyes the drops are close: drawn at a quarter of their size from afar.
+      u.grain.value = this.dropsFrom > 0 ? 0.25 : 1;
     }
   }
 

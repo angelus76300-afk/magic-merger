@@ -1991,9 +1991,6 @@ input {
   background: var(--surface);
   margin-bottom: 10px;
 }
-.daily-found {
-  opacity: 0.8;
-}
 .daily-mine {
   border-color: var(--accent);
 }
@@ -2029,11 +2026,6 @@ input {
 }
 .daily-description {
   margin: 0 0 8px;
-}
-.daily-finder {
-  margin: 0;
-  color: var(--accent);
-  font-size: 0.92em;
 }
 .community-list {
   display: grid;
@@ -2182,4 +2174,69 @@ input {
   min-width: 0;
   height: 44px;
   margin: 0;
+}
+
+/* The island needs you: what is seen of a trouble, on the board, while the island waits. */
+.board-trouble {
+  position: absolute;
+  inset: 12px auto auto 12px;
+  max-width: calc(100% - 120px);
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 4px solid var(--danger);
+  border-radius: 4px 10px 10px 4px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.card-deeds {
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  color: var(--accent);
+}
+
+.card-deeds li + li {
+  margin-top: 4px;
+}
+
+.reset-troubles {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 44px;
+  margin: 10px 0;
+  font-size: 14px;
+}
+
+.reset-troubles input {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin: 2px 0 0;
+}
+
+/* Through its eyes (2026-11-12): while the island shows a creature's view,
+   the page gets out of the way, as a first person game on a phone does. The
+   island keeps its own Let go, eye, stick, actions and hot bar. Taken off
+   again on Let go, on leaving the World tab and when the frame is replaced. */
+body.eyes .topbar,
+body.eyes .spellbar,
+body.eyes .world-tools,
+body.eyes .world-bottom {
+  display: none;
+}
+/* The tab bar (or the rail of a phone on its side) is in the hidden header:
+   the room the page keeps for it goes to the island too. */
+body.eyes,
+body.eyes:has(.tabs:not([hidden])) {
+  padding-bottom: 0;
+  padding-left: 0;
+}
+body.eyes .toasts {
+  top: max(116px, env(safe-area-inset-top));
 }

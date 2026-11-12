@@ -127,13 +127,13 @@ Things to know:
 
 ### Previews (4.5)
 
-Every pull request gets its own address to try on a phone before merging, `https://pr-<n>-magic-merger-staging.angelus76300.workers.dev` (the "View deployment" link on the pull request). It runs on a separate Worker, `magic-merger-staging` (`wrangler.jsonc`, `env.staging`), with its own D1 (`magic-merger-staging`) and queue, and $2 a month for everyone together. Nothing it does reaches production.
+Every pull request gets its own address to try on a phone before merging, `https://pr-<n>-magic-merger-staging.angelus76300.workers.dev` (the "View deployment" link on the pull request). It runs on a separate Worker, `magic-merger-staging` (`wrangler.jsonc`, `env.staging`), with its own D1 (`magic-merger-staging`) and queue, and $5 a month for everyone together. Nothing it does reaches production.
 
 1. **One repository secret**, `CLOUDFLARE_API_TOKEN` (Settings > Secrets and variables > Actions): a Cloudflare API token with Workers Scripts Edit, D1 Edit and Queues Edit on your account (the "Edit Cloudflare Workers" template plus D1 Edit). The account id is in `wrangler.jsonc`.
-2. **Optional**, `STAGING_ANTHROPIC_API_KEY`: a key for the previews. The live game's own key works: production's `BUDGET_USD` is $48 so that it and the previews' $2 stay within the Console's $50 together (a separate Console workspace with its own $2 limit works too). Without it the previews run in mock mode (fake merges, free), which is enough to try anything that is not a new merge or a new spell.
+2. **Optional**, `STAGING_ANTHROPIC_API_KEY`: a key for the previews. The live game's own key works: production's `BUDGET_USD` is $48 and the previews' is $5, so on one key the two can reach $53, over the Console's $50 (a separate Console workspace with its own $5 limit keeps them apart; so does lowering production's `BUDGET_USD`, which is the owner's call). Without it the previews run in mock mode (fake merges, free), which is enough to try anything that is not a new merge or a new spell.
 3. `MM_TOKEN` (the Judge's secret, your admin token) is copied to the staging Worker by the `Staging` workflow, so you get in with the same five taps on the title. Staging lets nobody in without it: the copy of the library is not public, even in mock mode.
 
-The `Staging` workflow runs every night at 07:41 UTC and on every merge: it copies the live database to staging with accounts, passkeys, sessions, sign in links, invites, emails, saved progress, reports and devices stripped (`scripts/staging-copy.mjs`; the owner's row stays, with no link or email), keeps staging's own spend of the month so the $2 holds, and deploys `main` there. The `Preview` workflow uploads each pull request as a version of that Worker with its own address. A pull request's migrations run on the staging D1 only; the next night's copy resets it. To refresh by hand: Actions > Staging > Run workflow, or `node scripts/staging-copy.mjs` (`--dry` writes the SQL without loading it).
+The `Staging` workflow runs every night at 07:41 UTC and on every merge: it copies the live database to staging with accounts, passkeys, sessions, sign in links, invites, emails, saved progress, reports and devices stripped (`scripts/staging-copy.mjs`; the owner's row stays, with no link or email), keeps staging's own spend of the month so the $5 holds, and deploys `main` there. The `Preview` workflow uploads each pull request as a version of that Worker with its own address. A pull request's migrations run on the staging D1 only; the next night's copy resets it. To refresh by hand: Actions > Staging > Run workflow, or `node scripts/staging-copy.mjs` (`--dry` writes the SQL without loading it).
 
 ### Frame HUD
 
@@ -152,7 +152,7 @@ Set in `wrangler.jsonc`:
 | `SPELL_MODEL`        | `claude-opus-5-5`              | writing legendary and cosmic spells                                                                                     |
 | `REPAIR_MODEL`       | `claude-haiku-5-5`             | mending a program that crashed, whatever its tier                                                                       |
 | `SPELL_EFFORT`       | `medium`                       | how long the spell writer thinks                                                                                        |
-| `BUDGET_USD`         | `48`                           | Claude spend allowed per calendar month, everyone together; the staging Worker has $2 and the Console workspace $50     |
+| `BUDGET_USD`         | `48`                           | Claude spend allowed per calendar month, everyone together; the staging Worker has $5 and the Console workspace $50     |
 | `INVITE_CAP_USD`     | `5`                            | what each invite may spend per calendar month, unless the admin tops it up (3.4)                                        |
 | `JUDGE_MODEL`        | `claude-haiku-5-5`             | scoring three Spell Lab frames of a program (3.3)                                                                       |
 | `REWRITE_BUDGET_USD` | `0.5`                          | dollars a day for rewrites by votes, the judge, failed test runs, broken promises and, one a day, evidence              |
@@ -274,9 +274,33 @@ Your checklist, in this order. Each line is a setting only you can change.
 10. Staging's own admin token: a new Actions secret `STAGING_ADMIN_TOKEN`, the second value, and the same name and value in the sessions' environment. The Staging workflow copies it to the staging Worker on its next run (Actions > Staging > Run workflow to do it now); previews, the reviewer and the night's checks then use it instead of production's.
 11. On the account page, signed in as yourself: check that the passkeys listed are all yours.
 
+**The production environment** (2026-11-11, "credentials: yes"). Since the pull request "Production secrets only on main", Deploy, Staging, Night, Judge and Ideas read `CLOUDFLARE_API_TOKEN` and `MM_TOKEN` from the GitHub environment `production`, which only `main` may use (Ideas runs main's copy through `pull_request_target`). A branch, or a run dispatched on a branch, gets neither. `scripts/workflows-test.mjs` fails if a job names either secret outside it. The preview is the one exception, with its own environment. Before you delete the two repository-level secrets:
+
+12. Settings > Environments > `preview` > Add environment secret `CLOUDFLARE_API_TOKEN`: a token of its own, made in Cloudflare (My Profile > API Tokens > Create Token > "Edit Cloudflare Workers" template, account `angelus76300`, then add **D1: Edit**). It still reaches the whole account, since Cloudflare cannot limit a token to one Worker; its own token means you can revoke it alone, and production's token is no longer in reach of a branch.
+13. Check that the repository secret `STAGING_ADMIN_TOKEN` exists (step 10): the preview's smoke test uses it once `MM_TOKEN` is gone.
+14. After one green Deploy run since the merge: Settings > Secrets and variables > Actions > Repository secrets, delete `CLOUDFLARE_API_TOKEN` and `MM_TOKEN`. Then open any ready pull request's Preview run and check that it still uploaded and its smoke passed.
+
+What stays open: the preview job runs a branch's own copy of `preview.yml` with the preview token, so a branch can still print that token (review of 10 November, section 3, item 2). Closing it means building the preview without secrets and uploading it from a workflow on `main` (`workflow_run`), which can only be tested once merged; it is listed as its own step.
+
 **Things to know**
 
 - Your email address is the author of the squash merges made on github.com (46 commits today). It becomes visible in the history; rewriting history to remove it is not worth the risk. To keep it out of future merges: GitHub Settings > Emails > **Keep my email addresses private**. Session commits use `noreply@anthropic.com`.
 - Issues become public, the Ideas routine's included. They hold the brief and the idea's text, never a player's name. The only one today, #14, is your own test.
 - The game's addresses, the Cloudflare account id in `wrangler.jsonc` and the names of the secrets are public from now on. None of them lets anyone act: every admin route needs the token's value, and staging lets nobody in without it.
 - A GitHub environment with a required reviewer is free on a public repository, so previews could wait for your approval (ROADMAP 4.5.1a item 1). Not set up: your answer of 5 November was to keep previews as they are, and a required reviewer would also stop the Gate from merging green work at night.
+
+## 8. A ruleset on main: required checks, no bypass (2026-11-11)
+
+What it adds: nothing reaches `main` unless CI passed on the pull request, whoever merges it (the Gate, the planner, a session acting as your account). Today that holds only in the Gate's own code. Free on a public repository. About 5 minutes, on github.com, signed in as yourself.
+
+1. Settings > Rules > Rulesets. Open the ruleset `main` from section 7, step 6 (or New ruleset > New branch ruleset, named `main`, Enforcement status **Active**, Target branches > Add target > **Include default branch**).
+2. **Bypass list: leave it empty.** Every session acts as your account, so a rule you may bypass does not stop a session.
+3. Tick **Restrict deletions** and **Block force pushes** (already on if section 7 was done).
+4. Tick **Require a pull request before merging**. Required approvals: **0** (every session posts as you, so an approval proves nothing, and you cannot approve your own pull requests). Allowed merge methods: **Squash** only.
+5. Tick **Require status checks to pass**. Add the check **`check`** (the CI job; type `check` and pick the one from GitHub Actions). Leave **Require branches to be up to date before merging unticked**: CI already tests the head merged with `main`, and the Gate tests it again when `main` moves, so ticking it would bring back the catch-up pushes this pipeline removed.
+6. Leave **Require deployments to succeed**, **Require signed commits** and **Require code scanning results** unticked: none of the pipeline's merges would pass them.
+7. **Create** (or **Save changes**).
+
+To check it worked: open any pull request that is not merged. The merge box lists `check` as **Required**. A direct push to `main` from a session is refused with "Changes must be made through a pull request".
+
+If something stops merging after this: the Gate's summary (Actions > Gate, the newest run) names the reason. To undo, set the ruleset's Enforcement status to **Disabled**; nothing else changes.

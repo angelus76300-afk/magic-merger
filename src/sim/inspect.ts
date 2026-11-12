@@ -1,6 +1,8 @@
+import { siteLine } from "./sites";
 import { abilitiesOf } from "./abilities";
 import { jobOf, TASK_WORDS } from "./goals";
 import { villageOf } from "./kin";
+import { roadsOf } from "./roads";
 import { unpackLook } from "./villagers";
 import { isArtifact, type Artifact } from "./artifacts";
 import { holding } from "./held";
@@ -114,6 +116,12 @@ export function inspect(world: World, c: Creature, kindOf: (c: Creature) => Crea
       ]);
     const v = villageOf(world, c.homeX, c.homeY);
     if (v) rows.push(["Village stores", `food ${Math.floor(v.food)}, wood ${Math.floor(v.wood)}, gold ${Math.floor(v.gold)}`]);
+    // 4.9: where its village's roads go, and what they wait for.
+    const roads = v ? roadsOf(world, v) : [];
+    if (roads.length) rows.push(["Roads", roads.slice(0, 3).join("; ")]);
+    // 4.9 part 2: what its village is raising, and how far along.
+    const going = v ? siteLine(world, v) : null;
+    if (going) rows.push(["Building", going]);
   }
   if (m && m.lair >= 0 && c.kind !== "villager") {
     const mark = world.marks.find((mk) => Math.abs(mk.x - (m.lair % world.w)) <= 3 && Math.abs(mk.y - Math.floor(m.lair / world.w)) <= 3);

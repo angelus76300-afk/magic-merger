@@ -1,6 +1,6 @@
 import { C, F, G, S } from "./materials";
 import { explode, forDisc, setBlastSpawn } from "./physics";
-import { lull, names, social, stepLandmarks, TAGS, type Mood } from "./social";
+import { BUILT_IN, lull, names, social, stepLandmarks, TAGS, type Mood } from "./social";
 import { WARD, damageWard, warded } from "./wards";
 import { daylight } from "./daylight";
 import type { World } from "./world";
@@ -8,6 +8,7 @@ import { body, type BodySpec } from "./body";
 import { SPECIES, habitatCell, habitatCellSure, targetOf } from "./wildlife";
 import { keepBalance, stepMovers } from "./balance";
 import { growSettlements, wearPaths } from "./ecology";
+import { roadSpeed, stepRoads } from "./roads";
 import { DRAGON, stepWonders } from "./wonders";
 import { growBuildings, stepBuildings } from "./buildings";
 import { packLook, randomLook, shirtOf, sizeOf, unpackLook } from "./villagers";
@@ -16,6 +17,7 @@ import { abilitiesFromName, useAbilities } from "./abilities";
 import { stepArtifacts } from "./artifacts";
 import { meter } from "./motion";
 import { steer } from "./steer";
+import { riderAim, ridden, throwOut } from "./possess";
 import { alarm, calmDown, fleeing } from "./flight";
 import { pathsOf, solidCovers } from "./paths";
 import { LOADS, deed, harmed, life, newMind, noteDeath, reborn, storyOn, tell, villageOf, type AbilitySpec, type Goal, type Mind } from "./kin";
@@ -222,6 +224,7 @@ for (const k of [
 }
 
 export const BUILTIN_KINDS = new Set(KINDS.keys());
+for (const name of BUILTIN_KINDS) BUILT_IN.add(name);
 
 export interface Creature {
   id: number;
@@ -272,8 +275,11 @@ let nextId = 1;
 
 // Tests only: creature ids feed some choices, so a replay that must give the
 // same answer whatever ran before it starts from the same id.
-export function resetCreatureIds(): void {
-  nextId = 1;
+// It returns where the count was, to be put back after (`to`).
+export function resetCreatureIds(to = 1): number {
+  const was = nextId;
+  nextId = to;
+  return was;
 }
 
 export function kindOf(c: Creature): CreatureKind {
@@ -463,15 +469,41 @@ function blocked(world: World, x: number, y: number, c: Creature, k: CreatureKin
   if (k.aquatic) return !wet(world, i, 0.6);
   // Solid covers by id from a table (4.3: steering asks this many times a tick).
   if (solidCovers(world)[world.cover[i]]) return true;
+  // A bridge's deck carries walkers over the water (4.9).
+  const deck = world.cover[i] === C.BRIDGE && world.onDeck(i);
   // Deep water and any lava are walls for those who would die in them.
   const f = world.fluid[i];
-  if (f !== F.NONE && f !== F.ICE && world.depth[i] > 0.05) {
+  if (!deck && f !== F.NONE && f !== F.ICE && world.depth[i] > 0.05) {
     if (f === F.LAVA && !k.fireproof) return true;
     if (world.depth[i] > 1 && !k.swims) return true;
   }
   // Cliffs: too steep a step up (ice and fluids count as the surface you walk on).
-  const here = world.level(world.idx(Math.max(0, Math.min(world.w - 1, fx)), Math.max(0, Math.min(world.h - 1, fy))));
-  return world.level(i) - here > 1.6;
+  const here = world.walkLevel(world.idx(Math.max(0, Math.min(world.w - 1, fx)), Math.max(0, Math.min(world.h - 1, fy))));
+  return world.walkLevel(i) - here > 1.6;
+}
+
+// Become anything: why a creature the player pushes along (dx, dy) does not
+// go on, in the words of the line under its name, in the order blocked() asks
+// (and the rim the ridden step keeps to, below). Null when nothing ahead stops it.
+export function whyStopped(world: World, c: Creature, dx: number, dy: number): string | null {
+  const k = kindOf(c);
+  const d = Math.hypot(dx, dy) || 1;
+  // A few steps ahead: its feelers (steer.ts) stop it a little before the wall itself.
+  for (const step of [0.6, 1, 1.5, 2]) {
+    const x = c.x + (dx / d) * step;
+    const y = c.y + (dy / d) * step;
+    if (!world.inside(x, y) || x < 3 || y < 3 || x > world.w - 4 || y > world.h - 4) return "The edge of the world";
+    if (!blocked(world, x, y, c, k)) continue;
+    if (k.flying || c.levitate > 0 || c.z > 1.5) return null;
+    const i = world.idx(x, y);
+    if (k.aquatic) return "Land stops you";
+    if (solidCovers(world)[world.cover[i]]) return world.cover[i] === C.HOUSE ? "A wall is in the way" : "Something is in the way";
+    const f = world.fluid[i];
+    if (f === F.LAVA) return "Lava stops you";
+    if (f !== F.NONE && f !== F.ICE && world.depth[i] > 1) return f === F.WATER ? "Deep water stops you" : "Too deep to wade";
+    return "Too steep";
+  }
+  return null;
 }
 
 const TIMED = ["frozen", "fear", "sleep", "calm", "levitate", "stun"] as const;
@@ -480,7 +512,10 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   const k = kindOf(c);
   freeWorld = world;
   storyOn(world);
+  // The player is this creature (possess.ts): its own decisions are skipped below.
+  const rider = ridden(c);
   if (c.dead) {
+    if (rider) throwOut(c);
     if (c.deadFor === 0) {
       noteDeath(world, c);
       if (k.ai?.onDeath) deathOf(world, c, k.ai.onDeath);
@@ -501,6 +536,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
 
   const i = world.idx(Math.max(0, Math.min(world.w - 1, c.x)), Math.max(0, Math.min(world.h - 1, c.y)));
   const onGround = c.z < 0.5 && !k.flying && c.levitate <= 0;
+  // On a bridge's deck: dry feet whatever the water under it (4.9).
+  const onDeck = onGround && !k.aquatic && world.cover[i] === C.BRIDGE && world.onDeck(i);
 
   const ai = k.ai;
   const weak = (e: string) => !!ai && ai.weak.includes(e);
@@ -509,12 +546,21 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     const age = ((c.data.age as number) ?? 0) + dt;
     c.data.age = age;
     if (ai.lifespan > 0 && age > ai.lifespan) c.hp = 0;
-    if (weak("water") && world.fluid[i] === F.WATER && world.depth[i] > 0.05) c.hp -= 40 * dt;
+    // Water hurts what is in it, not a flier above it (2026-11-11: a wisp awake on
+    // arrival died at two blocks over a lake).
+    const above = k.flying && c.z > 0.5;
+    if (weak("water") && !above && world.fluid[i] === F.WATER && world.depth[i] > 0.05) c.hp -= 40 * dt;
     if (weak("water") && world.gas[i] === S.STEAM) c.hp -= 10 * dt;
     if (weak("cold") && world.temp[i] < 2) c.hp -= 25 * dt;
     if (weak("fire") && (c.burning > 0 || world.temp[i] > 80)) c.hp -= 30 * dt;
     if (weak("acid") && world.fluid[i] === F.ACID) c.hp -= 60 * dt;
-    if (weak("light") && world.tick % 15 === 0 && daylight(world.time).night < 0.3 && !(ai.active === "night" && shaded(world, i))) {
+    if (
+      weak("light") &&
+      world.tick % 15 === 0 &&
+      daylight(world.time).night < 0.3 &&
+      !((ai.active === "night" || shunsDay(k)) && shaded(world, i)) &&
+      !(shunsDay(k) && arriving(world, c))
+    ) {
       c.hp -= 12 * 0.5;
       if (Math.random() < 0.3) world.particles.add({ x: c.x, y: c.y, z: 1, vz: 2, life: 0.6, color: 0xfff0c0, size: 1, glow: true });
     }
@@ -533,10 +579,10 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   if (onGround) {
     if (world.fire[i] > 0.25 && !k.fireproof && !immune("fire")) c.burning = Math.max(c.burning, 3);
     const fluid = world.materials.get("fluid", world.fluid[i]);
-    if (world.depth[i] > 0.05 && fluid.hurts > 0 && !(k.fireproof && world.fluid[i] === F.LAVA) && !(immune("acid") && world.fluid[i] === F.ACID))
+    if (!onDeck && world.depth[i] > 0.05 && fluid.hurts > 0 && !(k.fireproof && world.fluid[i] === F.LAVA) && !(immune("acid") && world.fluid[i] === F.ACID))
       c.hp -= fluid.hurts * dt;
     if (world.fluid[i] === F.WATER && world.depth[i] > 0.25) c.burning = 0;
-    if (world.fluid[i] === F.WATER && world.depth[i] > 1.4 && !k.swims && !immune("water")) {
+    if (!onDeck && world.fluid[i] === F.WATER && world.depth[i] > 1.4 && !k.swims && !immune("water")) {
       c.drowning += dt;
       if (c.drowning > 4) c.hp -= 12 * dt;
     } else c.drowning = Math.max(0, c.drowning - dt);
@@ -561,6 +607,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   if (c.hp <= 0) {
     c.dead = true;
     c.burning = 0;
+    // At 0 health the player is thrown out at once; the body is the simulation's.
+    if (rider) throwOut(c);
     return;
   }
 
@@ -578,7 +626,16 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   let socialMood: Mood = null;
   // Which decision drove this tick's step, for the motion meter (4.3).
   let drive = busy ? "asleep" : "idle";
-  if (!busy) {
+  if (rider && !busy) {
+    // Become anything (2026-11-12): the stick says where it goes, in place of
+    // everything it would decide (fear, needs, goals, behavior, wandering).
+    // Its mind is left as it was, so releasing it gives its own goal back.
+    const aim = riderAim(rider);
+    wantX = aim.x;
+    wantY = aim.y;
+    pace = aim.pace;
+    drive = "possessed";
+  } else if (!busy) {
     // Danger is probed every third tick and remembered in between (3.6: goals
     // keep creatures on the move, and this was the dearest part of a tick).
     let dangerDir = c.data.danger as { x: number; y: number } | null | undefined;
@@ -619,13 +676,18 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       pace = 0;
       drive = "calm";
       calmDown(c);
-    } else if (ai && ai.active !== "always" && daylight(world.time).night > 0.5 !== (ai.active === "night")) {
+    } else if (
+      ai &&
+      ((ai.active !== "always" && daylight(world.time).night > 0.5 !== (ai.active === "night")) || (shunsDay(k) && daylight(world.time).night < 0.3)) &&
+      !arrivalAwake(world, c, k, i, weak("light") && (ai.active === "night" || shunsDay(k)))
+    ) {
       // Out of its hours it rests where it is; a creature of the night that
       // daylight burns first looks for the shade of the woods (3.6).
       pace = 0;
       mood = "asleep";
       drive = "asleep";
-      const shade = ai.active === "night" && weak("light") && !shaded(world, i) ? shadeNear(world, c) : null;
+      const shy = shunsDay(k) && ai.active !== "night";
+      const shade = (ai.active === "night" || shy) && weak("light") && !shaded(world, i) ? shadeNear(world, c) : null;
       if (shade) {
         wantX = shade.x - c.x;
         wantY = shade.y - c.y;
@@ -634,7 +696,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
         drive = "shade";
       }
       if (c.mind) {
-        c.mind.action = shade ? "hiding from the sun" : `asleep until ${ai.active === "night" ? "night" : "day"}`;
+        c.mind.action = shade ? "hiding from the sun" : shy ? "keeping to the shade until dusk" : `asleep until ${ai.active === "night" ? "night" : "day"}`;
         c.mind.task = "none";
         if (!shade && needs && !k.flying) denDown(world, c);
       }
@@ -712,24 +774,43 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   // them. A flight or a chase runs through its point; anything else slows
   // down to arrive.
   const chase = mood === "fear" || mood === "angry" || mood === "hunt" || drive === "fear" || drive === "burning" || drive === "danger" || drive === "flee";
-  const arrive = !chase || drive === "shelter";
+  // Ridden, it goes straight where the stick points: no flow field that would
+  // take it another way round, only its own feelers and walls (steer.ts).
+  const arrive = !rider && (!chase || drive === "shelter");
   const len = Math.hypot(wantX, wantY);
   let wanted = 0;
   {
     let speed = 0;
     if (len > 0 && pace > 0) {
       speed = k.speed * pace * Math.sqrt(c.size);
-      if (onGround && world.depth[i] > 0.3 && world.fluid[i] !== F.ICE) speed *= 0.5;
-      if (onGround && world.fluid[i] === F.MUD) speed *= 0.3;
+      if (onGround && !onDeck && world.depth[i] > 0.3 && world.fluid[i] !== F.ICE) speed *= 0.5;
+      if (onGround && !onDeck && world.fluid[i] === F.MUD) speed *= 0.3;
+      // Faster on a path, a road or a bridge (4.9, roads.ts).
+      if (onGround && !k.aquatic) speed *= roadSpeed(world, i);
     }
     // The end of the trip, for its flow field: the task's place, when the
     // point asked for is only a bend on the way (goals.ts roamAim).
     const m = c.mind;
-    const trip = drive === "pursue" && m && m.task !== "none";
+    // A traveller following a road (4.9) goes to the next bend of it.
+    const trip = drive === "pursue" && m && m.task !== "none" && !c.data.via;
     const gx = trip ? (m.target ? m.target.x : m.tx) : c.x + wantX;
     const gy = trip ? (m.target ? m.target.y : m.ty) : c.y + wantY;
     const hunting = mood === "hunt" || mood === "angry";
+    const ox = c.x;
+    const oy = c.y;
     const stepped = steer(world, c, k, c.x + wantX, c.y + wantY, busy ? 0 : speed, arrive, hunting, dt, blocked, gx, gy);
+    // Ridden, the same walls hold where it stands, not only ahead: steer.ts lets a creature move
+    // freely in the cell it is in, and a player pushing into the sea for a minute walked along a
+    // shore line until its centre rounded into the deep cell, then on into it (a fish onto the
+    // beach). Its own mind never pushes a wall that long.
+    // And the island's rim: wading on the shallow shelf, a player reached the edge of the world,
+    // where the island ends in the void (the frames of 12 November). Its own mind never goes there.
+    const rim = (x: number, y: number) => x < 3 || y < 3 || x > world.w - 4 || y > world.h - 4;
+    if (rider && (blocked(world, c.x, c.y, c, k, ox, oy) || (rim(c.x, c.y) && !rim(ox, oy))) && !blocked(world, ox, oy, c, k, ox, oy)) {
+      c.x = ox;
+      c.y = oy;
+      c.sp *= 0.3;
+    }
     wanted = stepped.wanted;
     if (stepped.jammed && speed > 0) {
       // Boxed in (born between trees and houses): after a while, out to the
@@ -737,7 +818,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       const stuck = ((c.data.stuck as number | undefined) ?? 0) + dt;
       c.data.stuck = stuck;
       if (stuck > 1) c.goal = 0;
-      if (stuck > 3 && !k.aquatic) {
+      // Not one the player steers: pushed into a wall for a while, it was hopped out, once to the rim of the world.
+      if (stuck > 3 && !k.aquatic && !rider) {
         c.data.stuck = 0;
         unstick(world, c, k);
       }
@@ -766,7 +848,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   c.x = Math.max(0.5, Math.min(world.w - 1.5, c.x));
   c.y = Math.max(0.5, Math.min(world.h - 1.5, c.y));
   if (ai && !busy) sideEffects(world, c, ai, i, onGround, dt);
-  if (!busy && (k.abilities?.length || c.kind === "villager")) useAbilities(world, c, k);
+  // Ridden, its abilities fire only when the player presses them (possess.ts act).
+  if (!busy && !rider && (k.abilities?.length || c.kind === "villager")) useAbilities(world, c, k);
   if (c.fear > 0 || c.burning > 0) mood = "fear";
   c.data.mood = busy ? (c.sleep > 0 ? "asleep" : null) : mood;
   const idle = idleOf(c, busy);
@@ -835,6 +918,44 @@ function unstick(world: World, c: Creature, k: CreatureKind): void {
 }
 
 // Out of the sun: under or beside a tree, or by a house.
+// A creature an item placed arrives awake (2026-11-11): whatever its hours,
+// it is awake for its first minute or until it has reached shade or its den,
+// then keeps its hours. Before, a creature of the night placed by day lay
+// asleep where it landed and the village killed it in seconds. One burnt by
+// daylight still walks to the shade first (the branch this returns false for).
+export const ARRIVAL_AWAKE = 60;
+
+// A creature an item made that daylight burns keeps to the shade by day, as a
+// creature of the night does, and is not burnt in its first minute while it
+// walks there (2026-11-11: the most common death of a placed creature by day
+// was a 30 health undead burnt in two and a half seconds where it landed).
+function shunsDay(k: CreatureKind): boolean {
+  return !!k.ai?.weak.includes("light") && !k.native && !BUILTIN_KINDS.has(k.name);
+}
+
+function arriving(world: World, c: Creature): boolean {
+  const at = c.data.arrived as number | undefined;
+  return at === undefined || (at >= 0 && world.time - at < ARRIVAL_AWAKE);
+}
+
+function arrivalAwake(world: World, c: Creature, k: CreatureKind, i: number, burnsByDay: boolean): boolean {
+  if (k.native || BUILTIN_KINDS.has(k.name)) return false;
+  const at = c.data.arrived as number | undefined;
+  if (at === undefined) {
+    c.data.arrived = world.time;
+    return !(burnsByDay && !shaded(world, i));
+  }
+  if (at < 0) return false;
+  // Only one that daylight burns ends its minute early, in the shade. A den
+  // does not end it: a den is dug where the creature lies, so it was "reached"
+  // the moment it landed (the playtest of 2026-11-11: a Werewolf asleep at 1 s).
+  if (world.time - at >= ARRIVAL_AWAKE || world.time < at || (burnsByDay && shaded(world, i))) {
+    c.data.arrived = -1;
+    return false;
+  }
+  return !burnsByDay;
+}
+
 function shaded(world: World, i: number): boolean {
   for (const d of [0, 1, -1, world.w, -world.w]) {
     const j = i + d;
@@ -975,6 +1096,9 @@ function sideEffects(world: World, c: Creature, ai: Behavior, i: number, onGroun
     deed(c, `left ${ai.leaves} where it walked`);
   }
   if (!ai.aura || world.tick % 8 !== c.id % 8) return;
+  // Asleep, a creature an item made touches no one with a harmful aura (a vampire
+  // asleep by the houses froze 11 villagers in two minutes, none of them thawed).
+  if (c.data.mood === "asleep" && ai.aura !== "heal" && ai.aura !== "calm" && !kindOf(c).native && !BUILTIN_KINDS.has(c.kind)) return;
   const r = ai.auraRadius;
   const p = ai.auraPower;
   let touched = 0;
@@ -1035,6 +1159,9 @@ function sideEffects(world: World, c: Creature, ai: Behavior, i: number, onGroun
     });
 }
 
+// How many deaths deep a line of creatures born from deaths may go (onDeath: "spawn:").
+const DEATH_LINE = 3;
+
 function deathOf(world: World, c: Creature, what: string): void {
   if (what === "explode") explode(world, c.x, c.y, 3 + c.size * 2, 1);
   else if (what === "fire") forDisc(world, c.x, c.y, 2.5, (j) => (world.fire[j] = Math.max(world.fire[j], 0.8)));
@@ -1052,8 +1179,19 @@ function deathOf(world: World, c: Creature, what: string): void {
     });
   else if (what.startsWith("spawn:")) {
     const kind = what.slice(6);
-    if (KINDS.has(kind) && world.creatures.length < 600)
-      for (let n = 0; n < 2; n++) world.creatures.push(makeCreature(kind, c.x + Math.random() - 0.5, c.y + Math.random() - 0.5));
+    // Born of a death, a creature carries how many deaths deep its line is. A creature
+    // that names its own kind (a Phoenix) is reborn once per death, not doubled, and
+    // stays one. Other kinds leave two, and no such line goes past DEATH_LINE deaths,
+    // so two spells naming each other cannot multiply forever.
+    const own = kind === c.kind;
+    const line = ((c.data.deathLine as number | undefined) ?? 0) + (own ? 0 : 1);
+    const count = own ? 1 : 2;
+    if (KINDS.has(kind) && world.creatures.length < 600 && line <= DEATH_LINE)
+      for (let n = 0; n < count; n++) {
+        const born = makeCreature(kind, c.x + Math.random() - 0.5, c.y + Math.random() - 0.5);
+        born.data.deathLine = line;
+        world.creatures.push(born);
+      }
   } else forDisc(world, c.x, c.y, 2, (j) => world.place(j, what, 0.6));
 }
 
@@ -1305,6 +1443,8 @@ export function lifeCycle(world: World, dt: number): void {
     if (Math.random() < dt * 0.2) keepBalance(world, makeCreature);
     if (world.tick % 60 === 7) stepMovers(world);
     if (world.tick % 30 === 11) wearPaths(world);
+    // 4.9: villages that trade lay roads between them.
+    stepRoads(world);
     if (world.tick % 600 === 13) growSettlements(world);
     // 4.4.5 part B: what wonders and buildings with a job do.
     if (world.tick % 600 === 13) growBuildings(world);
@@ -1334,7 +1474,7 @@ export function lifeCycle(world: World, dt: number): void {
     c.hp = maxHp(c);
     c.color = shirtOf(look);
     world.creatures.push(c);
-    tell(world, "a child was born in the village");
+    tell(world, "a child was born in the village", { x: c.x, y: c.y, who: c });
     return;
   }
 }

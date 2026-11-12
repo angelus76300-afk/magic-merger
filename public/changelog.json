@@ -2,6 +2,10 @@
   "about": "What's new in Magic Merger, one line per merged update, newest first. Players read it in the ? menu. A builder adds a line in the same pull request (docs/DAILY.md); idea is the Ideas tab id the update built, when it came from one.",
   "entries": [
     {
+      "date": "2026-11-08",
+      "text": "Villages now build roads. People go to market in the next village and to see the wonders; villages that keep sending people mark out a road, then lay it cell by cell, with a plank bridge where a river is in the way. Busy lanes in a village are trodden into dirt roads. Everyone walks faster on a road and keeps to it, and the villager's card says where its village's roads go."
+    },
+    {
       "date": "2026-11-07",
       "text": "Villagers now pick up the objects you cast and use them: a guard carries your fire staff and burns what attacks, a healing potion is drunk once when someone is badly hurt, a lantern lights the way at night. Goblins can steal them, and an object falls where its holder dies."
     },

@@ -10,6 +10,14 @@ import { guardLoops } from "../shared/spellcode";
 import { KINDS, makeCreature, populate, resetCreatureIds } from "../src/sim/creatures";
 import { interactionChecks } from "./interactions-test";
 import { sizeChecks } from "./sizes-test";
+import { roadsChecks } from "./roads-test";
+import { sitesChecks } from "./sites-test";
+import { directorChecks } from "./director-test";
+import { troubleChecks } from "./troubles-test";
+import { weatherChecks } from "./weather-test";
+import { becomeChecks } from "./become-test";
+import { dailyChecks } from "./daily-test";
+import { monsterChecks } from "./monsters-test";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
 import { logDeeds, mindOf, remember } from "../src/sim/kin";
@@ -28,17 +36,37 @@ import { capByDepth } from "../shared/tiers";
 import { joinsBoth } from "../worker/prompts";
 import type { Job } from "./challenge-worker";
 import { MOTION_SEEDS, MOTION_SECONDS, type MotionReport } from "./motion-run";
+import { DAY_SECONDS, MONSTERS, median, type MonsterLife } from "./monsters-run";
 import { mergeMotion, motionLines, type KindMotion } from "../src/sim/motion";
 import { runCheck, type SceneReport } from "../src/sim/check";
 import { readResult } from "../src/checkresult";
-import { downShare, votedDown, votedUp, votedWorse, votesNeeded } from "../shared/votes";
+import {
+  DOWN_REASONS,
+  MAX_REASONS,
+  REASONS,
+  REASONS_BY_FORM,
+  downShare,
+  reasonLabel,
+  reasonsFor,
+  storedReasons,
+  voteReasons,
+  votedDown,
+  votedUp,
+  votedWorse,
+  votesNeeded,
+} from "../shared/votes";
+import { FORMS } from "../shared/forms";
 import { pickExamples, words } from "../worker/programs";
 import { verdict, type LinkedPull } from "../worker/feedback";
+import { DROP_TILE, dropAt, dropShare } from "../src/sim/voxel/drops";
 import { cronJobs } from "../worker/cron";
 import { draftBrief } from "../shared/feedback";
 import { programToFetch } from "../shared/sync";
 import { mergeDiscoveries } from "../shared/account";
 import { helperProblem, withLibrary } from "../worker/evolve";
+import { apiSurfaceChecks } from "./api-surface-test";
+import { programChecks } from "./programs-test";
+import { saveChecks } from "./saves-test";
 import { body, bodyFrom, BUILDS, EXTRA, FEATURES, ITEMS, MAX_MODEL_BOXES, modelOf, planOfModel, PLANS, stillModelColor } from "../src/sim/body";
 import type { BodySpec, Feature, ModelBox } from "../src/sim/body";
 import { sharedFaces } from "../src/sim/voxel/faces";
@@ -71,8 +99,10 @@ import { fixesChecks } from "./fixes-test";
 import { evidenceChecks } from "./evidence-test";
 import { formChecks, keptByFormChecks } from "./forms-test";
 import { creatureChecks } from "./creatures-b-test";
+import { promiseChecks } from "./promise-test";
 import { heldChecks } from "./held-test";
 import { pacingChecks } from "./pacing-test";
+import { fogChecks } from "./fog-test";
 
 // No verdict here depends on how fast the machine is (4.1, review M8): the
 // slow cast guard is off unless SLOW_MS is set, and worst ticks are printed,
@@ -99,6 +129,8 @@ const idle: Job[] = [
   { balance: "mixed", seed: 33, seconds: WIPE_AT + RECOVER_SECONDS, size: 208, wipeAt: WIPE_AT },
   ...BIOMES.map((balance, k) => ({ balance, seed: 51 + k, seconds: BALANCE_SECONDS, size: 112, wipeAt: -1 })),
   { balance: "temperate", seed: 3, seconds: WIPE_AT + RECOVER_SECONDS, size: 152, wipeAt: WIPE_AT },
+  // Monsters that live through their first day (2026-11-11): ten creature programs placed by the village.
+  ...MONSTERS.map((_, monster) => ({ monster })),
   ...Array.from({ length: SCENE_STREAMS }, (_, n) => ({ scene: n, seconds: SCENE_SECONDS })),
   // 4.4: every biome left alone for three simulated minutes, each on its
   // own shape (the shapes go round), so every biome and every shape lives.
@@ -122,6 +154,7 @@ const motion: Record<string, KindMotion> = {};
 const motionErrors: string[] = [];
 const lands: LandLife[] = [];
 const balances: Balance[] = [];
+const monsterRows: MonsterLife[] = [];
 const nextIdle = new Int32Array(new SharedArrayBuffer(4));
 const idleDone = Promise.all(
   Array.from({ length: Math.min(4, Math.max(2, availableParallelism() - 1)) }, () => {
@@ -138,8 +171,10 @@ const idleDone = Promise.all(
         rate,
         land,
         balance,
+        monster,
       }: {
         job: Job;
+        monster?: MonsterLife;
         land?: LandLife;
         balance?: Balance;
         motion?: MotionReport;
@@ -149,7 +184,8 @@ const idleDone = Promise.all(
         report?: SceneReport;
         verified?: { ok: boolean; wins: number; runs: number };
       }) => {
-        if (balance) balances.push(balance);
+        if (monster) monsterRows.push(monster);
+        else if (balance) balances.push(balance);
         else if (land) lands.push(land);
         else if (rate && "rate" in job) challengeRates.set(job.rate, rate);
         else if (moved) {
@@ -231,6 +267,13 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   check(`old programs still run (${files.length})`, files.length > 0 && broken.length === 0, broken[0] ?? "");
   Math.random = shared;
 }
+
+// 2c. The guards of stored spells and saved islands (review of 10 November):
+// the World API's surface against its snapshot, today's program shapes
+// (versions 4 to 6) doing what they visibly do, and the golden island saves.
+apiSurfaceChecks(check);
+programChecks(check);
+saveChecks(check);
 
 // 3. A spell that loops forever is stopped, not frozen.
 {
@@ -599,7 +642,11 @@ for (const file of readdirSync(spellDir).filter((f) => f.endsWith(".js"))) {
   const spread = count();
   check("blight spreads", errors.length === 0 && spread > start * 2, `${start} then ${spread} cells${errors[0] ? ", " + errors[0] : ""}`);
   check("wolves hunt villagers", villagers() < before, `${before} then ${villagers()} villagers`);
-  check("ghouls burn by day", world.creatures.filter((c) => c.kind === "ghoul" && !c.dead).length === 0);
+  // 2026-11-11: a made creature daylight burns has its first minute to reach the
+  // shade (DESIGN, "Monsters that live"), so the ghouls are not burnt yet; that
+  // they burn when caught in the open after it is in monsters-test.ts.
+  const ghouls = world.creatures.filter((c) => c.kind === "ghoul");
+  check("ghouls are not burnt by day in their first minute", ghouls.length === 3 && ghouls.every((c) => !c.dead));
   for (let i = 0; i < world.n; i++) if (world.layerName("ground", world.ground[i]) === "blight") world.fire[i] = 1;
   for (let k = 0; k < 30 * 2; k++) step(world, rt);
   check("blight burns away", count() < spread * 0.3, `${count()} left`);
@@ -1009,6 +1056,78 @@ for (const scenario of SCENARIOS) {
   keptByFormChecks(check);
   // 4.6 part B: people are villagers, creatures live, the judge asks.
   creatureChecks(check);
+  // The review of 10 November: what the engine drops, promises of healing and summoning, protection only where it fits.
+  promiseChecks(check);
+  {
+    // Run after creatureChecks: its blacksmith check depends on the creature ids and the
+    // random stream the sections before it leave, which these islands would change.
+    const villageWorld = () => {
+      seed(8);
+      const world = generateWorld(112, 112, 4);
+      populate(world);
+      const errors: string[] = [];
+      const rt = new Runtime(world, (_k, _n, m) => errors.push(m));
+      const v = world.creatures.find((c) => c.kind === "villager")!;
+      return { world, rt, errors, v };
+    };
+    const streamBefore = Math.random;
+    // A Phoenix that names itself in onDeath is reborn once per death, not multiplied
+    // (one stored Phoenix became 262 on an island). Spells naming each other are capped too.
+    const { world, rt, errors, v } = villageWorld();
+    rt.cast(
+      {
+        key: "phx",
+        name: "Phoenix",
+        tier: "minor",
+        code: `const spell = { creatures: [{ name: "phoenix", base: "bird", behavior: "wander", hp: 20, onDeath: "spawn:phoenix" }, { name: "moth", base: "bird", behavior: "wander", hp: 20, onDeath: "spawn:ash" }, { name: "ash", base: "bird", behavior: "wander", hp: 20, onDeath: "spawn:moth" }], *cast(w) { w.spawn("phoenix", w.x, w.y); w.spawn("moth", w.x + 2, w.y); } };`,
+      },
+      v.x + 3,
+      v.y + 3,
+    );
+    for (let k = 0; k < 2; k++) step(world, rt); // the spell casts on its first steps
+    const alive = (kind: string) => world.creatures.filter((c) => !c.dead && c.kind === kind).length;
+    let peakChain = 0;
+    for (let round = 0; round < 6; round++) {
+      peakChain = Math.max(peakChain, alive("moth") + alive("ash"));
+      for (const c of world.creatures) {
+        if (!c.dead && (c.kind === "phoenix" || c.kind === "moth" || c.kind === "ash")) {
+          c.hp = 0;
+          c.dead = true;
+        }
+      }
+      for (let k = 0; k < 3; k++) step(world, rt);
+    }
+    const phoenixes = alive("phoenix");
+    check(
+      "a phoenix is reborn once per death, not multiplied",
+      errors.length === 0 && phoenixes === 1,
+      `${phoenixes} phoenixes after 6 deaths, ${errors[0] ?? "no error"}`,
+    );
+    // Other spawning items still work: one moth dying leaves two ash.
+    const t = villageWorld();
+    t.rt.cast(
+      {
+        key: "moth2",
+        name: "Moth",
+        tier: "minor",
+        code: `const spell = { creatures: [{ name: "moth", base: "bird", behavior: "wander", hp: 20, onDeath: "spawn:ash" }, { name: "ash", base: "bird", behavior: "wander", hp: 20 }], *cast(w) { w.spawn("moth", w.x, w.y); } };`,
+      },
+      t.v.x + 3,
+      t.v.y + 3,
+    );
+    for (let k = 0; k < 2; k++) step(t.world, t.rt);
+    for (const c of t.world.creatures) {
+      if (c.kind === "moth") {
+        c.hp = 0;
+        c.dead = true;
+      }
+    }
+    for (let k = 0; k < 3; k++) step(t.world, t.rt);
+    const ash = t.world.creatures.filter((c) => !c.dead && c.kind === "ash").length;
+    check("a creature dying with spawn of another kind still leaves two", t.errors.length === 0 && ash === 2, `${ash} ash`);
+    check("two spells naming each other do not multiply without limit", peakChain >= 2 && peakChain <= 8, `${peakChain} moths and ash at the peak of 6 rounds`);
+    Math.random = streamBefore;
+  }
   // 4.7: objects that are picked up and used (src/sim/held.ts).
   heldChecks(check);
   check("a small island is one land", generateWorld(112, 112, 5, resolveLand(mid, 5, 112)).biomeMap === null);
@@ -1147,6 +1266,35 @@ for (const scenario of SCENARIOS) {
 }
 
 await idleDone;
+// Monsters that live through their first day (2026-11-11, monsters-run.ts):
+// placed six cells from a house in the morning, the six monsters' median life
+// by day is over two minutes, the werewolf of the review of 10 November (dead
+// in 4 s before: asleep on arrival, then struck by a mob) lives through the
+// day, and no monster takes the island below the creature probe's 70% of
+// villagers ("the island did not hold").
+{
+  const rows = MONSTERS.map((m) => monsterRows.find((r) => r.name === m.name)!).filter(Boolean);
+  const lives = rows.map((r) => `${r.name} ${r.medianLife}`).join(", ");
+  check(
+    "monsters: all ten were followed, without an error",
+    rows.length === MONSTERS.length && rows.every((r) => !r.errors.length),
+    rows.flatMap((r) => r.errors).join("; "),
+  );
+  const hostile = rows.filter((r) => MONSTERS.find((m) => m.name === r.name)?.hostile);
+  check(
+    "monsters: the median life by day of a placed monster (the six that scare, hunt or turn people) is over 120 s",
+    hostile.length === 6 && median(hostile.map((r) => r.medianLife)) > 120,
+    lives,
+  );
+  const wolf = rows.find((r) => r.name === "Werewolf (review)");
+  check(
+    "monsters: the review's werewolf is awake on arrival (it goes more than 10 cells in its first minute) and lives through the day",
+    !!wolf && wolf.movedFirstMinute > 10 && wolf.aliveAtDusk === wolf.placed && wolf.medianLife >= DAY_SECONDS,
+    lives,
+  );
+  const fell = rows.filter((r) => r.villagersLeft < 0.7);
+  check("monsters: none leaves fewer than 70% of the villagers in five minutes", !fell.length, fell.map((r) => `${r.name} ${r.villagersLeft}`).join(", "));
+}
 // 4.4: every biome generated, populated and left alone for three minutes:
 // no species dies out, villages stand, rivers keep running, the sea does not
 // rise, nothing floods or burns by itself, the volcano keeps its lava.
@@ -2131,6 +2279,61 @@ sizeChecks(check);
   check("60% up joins the library", votedUp({ up: 3, down: 2 }, 5) && !votedUp({ up: 1, down: 0 }, 2));
   check("rolled back when voted worse", votedWorse({ up: 0, down: 2 }, { up: 1, down: 2 }, 2) && !votedWorse({ up: 1, down: 1 }, { up: 0, down: 1 }, 1));
   check("down share", downShare({ up: 1, down: 3 }) === 0.75 && downShare({ up: 0, down: 0 }) === 0);
+  // Reasons by form (2026-11-07): a creature is judged on how it moves and
+  // behaves, a building on its shape and use, never one list for all.
+  const creature = reasonsFor("creature");
+  check(
+    "a creature shows creature reasons: it barely moved, ignored everyone, not how it behaves",
+    ["still", "aloof", "nature", "body"].every((r) => creature.includes(r as never)) && !creature.includes("float") && !creature.includes("nothing"),
+    creature.join(","),
+  );
+  check(
+    "a building shows building reasons",
+    ["plain", "empty", "float"].every((r) => reasonsFor("building").includes(r as never)),
+    reasonsFor("building").join(","),
+  );
+  check(
+    "every form offers two to six known reasons, Broke the island among them",
+    FORMS.every(
+      (f) =>
+        REASONS_BY_FORM[f].length >= 2 &&
+        REASONS_BY_FORM[f].length <= 6 &&
+        REASONS_BY_FORM[f].includes("broke") &&
+        new Set(REASONS_BY_FORM[f]).size === REASONS_BY_FORM[f].length,
+    ),
+  );
+  check(
+    "labels fit a button (22 letters) and every prompt says what to do",
+    FORMS.every((f) => reasonsFor(f).every((r) => reasonLabel(r, f).length <= 22)) &&
+      Object.values(REASONS).every((d) => d.prompt.length <= 200 && /; (make|give|keep|add|draw|stand|choose|raise)/.test(d.prompt)),
+  );
+  check(
+    "a spell's small reads Too weak, a building's Too small",
+    reasonLabel("small", "spell") === "Too weak" && reasonLabel("small", "building") === "Too small",
+  );
+  check(
+    "the five first reasons stay known: old votes still read",
+    DOWN_REASONS.every((r) => r in REASONS),
+  );
+  check(
+    "a vote takes one to three known reasons, each once",
+    voteReasons({ reasons: ["still", "aloof"] })?.join() === "still,aloof" &&
+      voteReasons({ reason: "boring" })?.join() === "boring" &&
+      voteReasons({ reasons: [] }) === null &&
+      voteReasons({ reasons: ["still", "aloof", "body", "small"] }) === null &&
+      MAX_REASONS === 3 &&
+      voteReasons({ reasons: ["still", "still"] }) === null &&
+      voteReasons({ reasons: ["meh"] }) === null &&
+      voteReasons({ reasons: ["still, aloof"] }) === null &&
+      voteReasons({}) === null,
+  );
+  check(
+    "stored reasons read back, old single ones too, unknown parts dropped",
+    storedReasons("boring").join() === "boring" &&
+      storedReasons("still,body").join() === "still,body" &&
+      storedReasons("gone,small").join() === "small" &&
+      storedReasons(null).length === 0,
+  );
   const library = [
     { key: "inferno", name: "Inferno", tier: "grand", kind: "spell", description: "A roaring fire that burns the forest", code: "a" },
     { key: "golem", name: "Golem", tier: "minor", kind: "artifact", description: "A stone giant who guards villagers", code: "b" },
@@ -2256,6 +2459,55 @@ await evidenceChecks(check);
 
 // 15. The World's frame pacing (2026-11-07): scripts/pacing-test.ts.
 pacingChecks(check);
+
+// The mist from afar (2026-11-07): scripts/fog-test.ts.
+fogChecks(check);
+
+// 16. Rain and snow stay over the island when the camera moves (issue #69).
+{
+  const seeds: [number, number, number][] = [];
+  for (let k = 0; k < 200; k++) seeds.push([(k * 0.618) % 1, (k * 0.377) % 1, (k * 0.271) % 1]);
+  const from = { x: 0, y: 4, z: 0 };
+  const to = { x: 7, y: 9, z: -5 };
+  let kept = 0;
+  let inBox = true;
+  for (const snow of [0, 1])
+    for (const s of seeds) {
+      const a = dropAt(s, from, 12.3, snow);
+      const b = dropAt(s, to, 12.3, snow);
+      // A drop still inside both boxes is at the same place over the island.
+      const both = [a, b].every(
+        (p) =>
+          Math.abs(p.x - to.x) < DROP_TILE / 2 - 1 &&
+          Math.abs(p.x - from.x) < DROP_TILE / 2 - 1 &&
+          Math.abs(p.z - to.z) < DROP_TILE / 2 - 1 &&
+          Math.abs(p.z - from.z) < DROP_TILE / 2 - 1 &&
+          p.y - from.y > -12 &&
+          p.y - to.y > -12 &&
+          p.y - from.y < 38 &&
+          p.y - to.y < 38,
+      );
+      if (both && Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) < 1e-6) kept++;
+      else if (both) inBox = false;
+      if (Math.abs(b.x - to.x) > DROP_TILE / 2 || Math.abs(b.z - to.z) > DROP_TILE / 2) inBox = false;
+    }
+  check("a raindrop stays where it was over the island when the camera pans", inBox && kept > 200, `kept ${kept} of 400, in box ${inBox}`);
+  check(
+    "rain shows about as thick on screen close up and far out",
+    dropShare(1, 20) === 1 && Math.abs(dropShare(1, 200) - 1 / 9) < 1e-9,
+    `${dropShare(1, 20)} ${dropShare(1, 200)}`,
+  );
+}
+
+// Roads (4.9): scripts/roads-test.ts.
+roadsChecks(check);
+sitesChecks(check);
+directorChecks(check);
+troubleChecks(check);
+weatherChecks(check);
+becomeChecks(check);
+dailyChecks(check);
+monsterChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);

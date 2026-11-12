@@ -86,6 +86,39 @@ const touched = (f, re) => [...f.added, ...f.removed].some((l) => re.test(l));
 // The function each hunk of a file starts in (git's hunk header), for code that lives in worker/index.ts.
 const inFunction = (f, re) => (f.contexts ?? []).some((c) => re.test(c));
 
+// The World API's snapshot (scripts/api-surface.json): stored spells call what it lists. Every
+// quoted string on a removed line must come back on an added line (a reindent or a reflow keeps
+// them, an addition adds some); one that does not was removed or renamed.
+const quoted = (lines) => lines.flatMap((l) => l.match(/"(?:[^"\\]|\\.)*"/g) ?? []);
+const surfaceBroken = (f) => {
+  if (f.path !== "scripts/api-surface.json") return false;
+  if (f.status === "D") return true;
+  const left = new Map();
+  for (const q of quoted(f.added)) left.set(q, (left.get(q) ?? 0) + 1);
+  for (const q of quoted(f.removed)) {
+    if (!left.get(q)) return true;
+    left.set(q, left.get(q) - 1);
+  }
+  return false;
+};
+// The built-in materials, in order, per layer: ids come from the order (src/sim/materials.ts), so
+// a saved island keeps its meaning only while every older entry stays where it was. A material
+// added at the end of its layer is how the file says to add one, and stays green.
+const builtinOrder = (text) => {
+  const body = /export const BUILTIN\b[^]*?\n};/.exec(text ?? "")?.[0] ?? "";
+  const out = {};
+  for (const m of body.matchAll(/\bmake\(\s*"([^"]*)"\s*,\s*"([^"]*)"/g)) (out[m[2]] ??= []).push(m[1]);
+  return out;
+};
+const builtinsMoved = (f) => {
+  if (f.path !== "src/sim/materials.ts") return false;
+  // Without both versions of the file, any touched make( line is taken for a change of order.
+  if (f.oldText == null || f.newText == null) return touched(f, /\bmake\(\s*"/);
+  const before = builtinOrder(f.oldText);
+  const after = builtinOrder(f.newText);
+  return Object.entries(before).some(([layer, names]) => names.some((n, i) => after[layer]?.[i] !== n));
+};
+
 // Each rule: an id the docs cite, its class, what it protects, and a test on one changed file
 // (or, with `pr`, on the pull request as a whole). The table in docs/DAILY.md lists the same ids;
 // scripts/risk-test.mjs fails when they drift apart.
@@ -169,7 +202,7 @@ export const RULES = [
   {
     id: "R11",
     cls: "red",
-    what: "CI, deploys and secrets (.github/, .gitattributes), the agreements (CLAUDE.md, .claude/), the rules (docs/DAILY.md, docs/FEEDBACK.md, docs/REVIEWER.md) and their checks (scripts/risk.mjs, scripts/gate.mjs, scripts/smoke.mjs, the deploy error check and the loop metrics, with their tests)",
+    what: "CI, deploys and secrets (.github/, .gitattributes), the agreements (CLAUDE.md, .claude/), the rules (docs/DAILY.md, docs/FEEDBACK.md, docs/REVIEWER.md) and their checks (scripts/risk.mjs, scripts/gate.mjs, scripts/smoke.mjs and the sizes it checks, the deploy error check and the loop metrics, with their tests)",
     file: any([
       ".github/",
       ".claude/",
@@ -185,6 +218,7 @@ export const RULES = [
       "scripts/workflows-test.mjs",
       "scripts/gate.mjs",
       "scripts/smoke.mjs",
+      "scripts/sizes.mjs",
       "scripts/live-signals.mjs",
       "scripts/loop-metrics.mjs",
     ]),
@@ -252,6 +286,18 @@ export const RULES = [
     file: (f) =>
       /^scripts\/[^/]*runner[^/]*$|^scripts\/admin-api\.ts$|^scripts\/nightly-play\.mjs$|^vite\.config\.(ts|js|mjs)$/.test(f.path) ||
       (f.path.startsWith("scripts/") && added(f, /\/api\/admin\//).length > 0),
+  },
+  {
+    id: "A9",
+    cls: "amber",
+    what: "an entry removed from or renamed in scripts/api-surface.json (the World API snapshot): stored spells may call it; adding entries stays green",
+    file: surfaceBroken,
+  },
+  {
+    id: "A10",
+    cls: "amber",
+    what: "what saved islands depend on: src/sim/save.ts, a golden save of lab/saves/ changed or deleted (a new one stays green), the order of the built-in materials in src/sim/materials.ts (one added at the end of its layer stays green)",
+    file: (f) => f.path === "src/sim/save.ts" || (/^lab\/saves\/[^/]+\.json$/.test(f.path) && f.status !== "A") || builtinsMoved(f),
   },
 ];
 
@@ -355,6 +401,10 @@ export function readGit(base, head, cwd = process.cwd()) {
     git("-c", "core.quotePath=false", "diff", "-U0", "-a", "--no-textconv", "--no-color", "--no-renames", "--no-ext-diff", mergeBase, head),
   );
   for (const f of files) {
+    if (f.path === "src/sim/materials.ts") {
+      f.oldText = show(mergeBase, f.path);
+      f.newText = show(head, f.path);
+    }
     f.sections = ["docs/ROADMAP.md", "docs/IDEAS.md"].includes(f.path) ? sectionsOf(f.hunks, show(mergeBase, f.path), show(head, f.path)) : [];
   }
   return files;

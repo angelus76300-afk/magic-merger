@@ -1,4 +1,5 @@
 import { FIRST_PROGRAM_VERSION } from "../shared/spellcode";
+import { monthKey, monthSpent } from "./ledger";
 
 // 4.2: every new item is written at the merge, in a background job.
 //
@@ -141,10 +142,10 @@ export async function claimWrite(
        WHERE key = ?3 AND status = 'queued'
          AND (SELECT COALESCE(SUM(CASE status WHEN 'writing' THEN est ELSE usd END), 0) FROM writes
               WHERE day = ?4 AND status IN ('writing', 'done', 'failed', 'unpaid')) + ?2 <= ?5
-         AND (SELECT COALESCE(SUM(usd), 0) FROM spend WHERE at >= ?6)
+         AND ${monthSpent("?6", "'*'")}
            + (SELECT COALESCE(SUM(usd), 0) FROM reservations WHERE settled = 0) + ?2 <= ?7`,
     )
-    .bind(now, est, key, day, cap, month.start, month.budget * AHEAD_MONTH_SHARE)
+    .bind(now, est, key, day, cap, monthKey(month.start), month.budget * AHEAD_MONTH_SHARE)
     .run();
   if (r.meta.changes) return "go";
   const capped = await db.prepare("UPDATE writes SET status = 'capped', done_at = ? WHERE key = ? AND status = 'queued'").bind(now, key).run();

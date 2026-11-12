@@ -1,17 +1,19 @@
+import { addDeed, countTrouble, setTroublesOn, troubleCounts, troublesOn } from "./troubles";
 import type { ChronicleDigest } from "../shared/chronicle";
 import { elementKey } from "../shared/elements";
 import { castRequest } from "./cast-request";
 import type { SpellProgram } from "../shared/spellcode";
 import { TIERS, type Tier } from "../shared/tiers";
 import type { CheckRequest, SpellResponse } from "../shared/types";
-import { DOWN_REASONS, REASON_LABEL, type DownReason } from "../shared/votes";
+import { MAX_REASONS, reasonLabel, reasonsFor, type DownReason } from "../shared/votes";
+import { formOf, type Form } from "../shared/forms";
 import * as api from "./api";
 import { timeline } from "./timeline";
 import { Checker } from "./checker";
 import { reportable } from "./checkresult";
 import { chipElement } from "./craft";
 import { FilterBar, applyFilters, lastUsed, markUsed } from "./filters";
-import { MAX_SAVE_CHARS, readFromWorld } from "./sim/protocol";
+import { HOT_SLOTS, MAX_SAVE_CHARS, keepOrder, readFromWorld, type HotSlot } from "./sim/protocol";
 import { programToFetch } from "../shared/sync";
 import type { ToWorld } from "./sim/protocol";
 import { SCENARIO_LIST } from "./sim/scenario-list";
@@ -19,12 +21,14 @@ import type { CastRequest } from "./sim/runtime";
 import type { SavedWorld } from "./sim/save";
 import { WORLD_SIZES, type WorldSize } from "./sim/sizes";
 import type { Store } from "./store";
-import { toast } from "./toast";
+import { setToastFloor, toast } from "./toast";
+import { FirstCastGuide, FirstCastProbe } from "./firstcast";
 import { isQuotaError, warnStorageFull } from "./quota";
 import { WORLD_AT_KEY, WORLD_KEY, packIsland, readIslandText } from "./island-store";
 import { isFrozen } from "./device-save";
 import { BIG_SIZES, readHeadroom, sizesOffered, writeHeadroom } from "./headroom";
 import { DEFAULT_LAND, MIXED_FROM, readChoice as readLandChoice, type LandChoice } from "./sim/land-options";
+import { newerSave } from "./sim/save-guard";
 
 export { WORLD_AT_KEY, WORLD_KEY } from "./island-store";
 const MUTE_KEY = "magic-merger.muted";
@@ -92,6 +96,9 @@ export class WorldHost {
   );
   private expanded = readFlag(EXPAND_KEY);
   private checker = new Checker();
+  private firstCast = new FirstCastProbe();
+  // What waits for the first cast to land: the hint, the week's news (2026-11-11).
+  private guide = new FirstCastGuide();
   private testing = new Set<string>();
   // 4.2: programs the Worker said it is writing, since when.
   private writing = new Map<string, number>();
@@ -100,7 +107,14 @@ export class WorldHost {
   private readyToast: string[] = [];
   private readyTimer = 0;
   private voteBar: HTMLElement | null = null;
+  // The question waiting for its six seconds, and the bar's own clock: two
+  // timers, so answering one item never cancels the next one's question.
   private voteTimer = 0;
+  private voteClose = 0;
+  // A question that came while the player was picking reasons: asked once
+  // the bar closes, never over their picks.
+  private voteWaiting: (() => void) | null = null;
+  private voteKeys: ((e: KeyboardEvent) => void) | null = null;
   private asked = new Set<number>();
   private synced = false;
   // The World tab is on screen (show() until hide()).
@@ -117,6 +131,21 @@ export class WorldHost {
   // The save this tab last loaded or wrote (its WORLD_AT_KEY): another tab's
   // newer save is never overwritten by this one's older island.
   private islandAt: string | null = null;
+  // The stored island was saved by newer code than this page (a Deploy
+  // rollback, a tab left open since before an update): it is not loaded,
+  // and this page writes nothing over it (save-guard.ts).
+  private newerIsland: string | null = null;
+  // Through its eyes (2026-11-12): the island shows a creature's view and the
+  // page's header, spell drawer and tools are hidden (body.eyes); the hot bar
+  // last sent, so it goes again only when it changes.
+  private eyes = false;
+  // The player is a creature on the island: a spell is cast from it, within its reach.
+  private riding = false;
+  // The hot bar's order, fixed when the player becomes a creature: last used
+  // first then, and the same until Let go, so a cast never moves the slot
+  // under the thumb (the playtest of 12 November). New items go at its end.
+  private hotOrder: string[] | null = null;
+  private hotSent = "";
 
   constructor(
     private store: Store,
@@ -134,6 +163,14 @@ export class WorldHost {
     });
     // Leaving the page saves the island once; coming back takes it again,
     // from where another tab left it if one saved since.
+    // The island watches its stories by itself when left alone (frame.ts): not behind a dialog of the page.
+    let away = false;
+    window.setInterval(() => {
+      const now = !this.shown || !!document.querySelector("dialog[open]");
+      if (now === away) return;
+      away = now;
+      this.send({ type: "away", away });
+    }, 500);
     document.addEventListener("visibilitychange", () => {
       if (!this.shown) return;
       if (document.hidden) this.send({ type: "visible", visible: false });
@@ -319,6 +356,8 @@ export class WorldHost {
   }
 
   private replaceFrame(): void {
+    this.setEyes(false);
+    this.riding = false;
     this.frame?.remove();
     this.frame = null;
     this.ready = false;
@@ -359,6 +398,10 @@ export class WorldHost {
 
   hide(): void {
     this.shown = false;
+    // The page comes back whole when the World tab is left (the island leaves its eyes too).
+    this.setEyes(false);
+    setToastFloor("inspect", 0);
+    this.guide.hideHint();
     this.send({ type: "visible", visible: false });
   }
 
@@ -561,6 +604,9 @@ export class WorldHost {
       case "save":
         this.writeIsland(msg.data);
         break;
+      case "escape":
+        this.voteKeys?.(new KeyboardEvent("keydown", { key: "Escape" }));
+        break;
       case "tap-without-spell":
         if (this.selected) {
           const name = this.store.get(this.selected)?.element.name ?? "This spell";
@@ -572,6 +618,12 @@ export class WorldHost {
         timeline.step(msg.key, this.store.get(msg.key)!.element.name, "cast");
         this.castInAttempt.push(msg.key);
         markUsed(msg.key);
+        if (this.eyes) this.sendHotbar();
+        // In the eye view the island has its own buttons: no hint over them.
+        if (!this.challenge && !this.eyes) {
+          this.guide.again(this.el.stage);
+          this.guide.cast(this.el.stage);
+        }
         void this.afterCast(msg.key);
         // In a grid the bar covers the island: fold it once a spell is used,
         // unless the player sized it by hand (the grip, below).
@@ -579,6 +631,14 @@ export class WorldHost {
           this.expanded = false;
           this.showExpand();
         }
+        break;
+      case "cast-view":
+        this.firstCast.view(this.frame, msg.n, msg.x, msg.y);
+        break;
+      case "inspect":
+        // Toasts stack below the island's inspect card (review of 10 November, bug 4).
+        setToastFloor("inspect", msg.bottom && this.frame ? this.frame.getBoundingClientRect().top + msg.bottom : 0);
+        if (msg.bottom) this.guide.hideHint();
         break;
       case "error":
         if (this.store.get(msg.key)) void this.repair(msg.key, msg.name, msg.message);
@@ -611,6 +671,7 @@ export class WorldHost {
         this.lastPerf = now;
         api.sendPerf({
           ...msg.sample,
+          ...troubleCounts(),
           screen: `${screen.width}x${screen.height}@${window.devicePixelRatio}`,
           cores: navigator.hardwareConcurrency ?? 0,
           // 4.2: the last items made castable here, step by step.
@@ -618,6 +679,43 @@ export class WorldHost {
         });
         break;
       }
+      case "trouble": {
+        // The island needs you: the Craft tab says what is seen of a trouble while the island waits there.
+        const line = document.getElementById("board-trouble");
+        if (msg.running) {
+          if (!this.troubleBegan) this.troubleBegan = Date.now();
+          if (line) {
+            line.textContent = msg.text;
+            line.hidden = false;
+          }
+          break;
+        }
+        if (line) line.hidden = true;
+        toast(msg.text);
+        const saved = msg.outcome === "saved" && !!msg.key && !!this.store.get(msg.key);
+        if (saved) addDeed(msg.key!, msg.text);
+        countTrouble(!!msg.key, msg.key ? (this.store.get(msg.key)?.discoveredAt ?? null) : null, this.troubleBegan);
+        this.troubleBegan = 0;
+        break;
+      }
+      case "eyes":
+        this.setEyes(msg.on && this.shown);
+        break;
+      case "riding":
+        this.riding = msg.on;
+        this.hotOrder = null;
+        this.hotSent = "";
+        if (this.eyes) this.sendHotbar();
+        this.updateStatus();
+        break;
+      case "pick":
+        // From the hot bar: the same as a chip of the drawer, without its words (the drawer is hidden).
+        if (msg.key === null) {
+          this.selected = null;
+          this.send({ type: "select", spell: null });
+          this.renderSpells();
+        } else if (this.store.get(msg.key) && msg.key !== this.selected) this.selectSpell(msg.key);
+        break;
       case "objective":
         // Only the challenge this page started can report on itself.
         if (msg.id === this.challenge) this.showObjective(msg.id, msg.text, msg.status);
@@ -636,6 +734,17 @@ export class WorldHost {
     } catch {
       save = null;
     }
+    const newer = newerSave(save);
+    if (newer) {
+      console.warn(`The saved island is kept aside: ${newer}`);
+      if (!this.newerIsland)
+        toast(
+          "Your island was saved by a newer version of the game, so this page shows a new one and saves nothing. Your island is untouched: reload the page later to get it back.",
+          "error",
+        );
+      this.newerIsland = newer;
+      save = null;
+    }
     if (frame !== this.frame || !frame.contentWindow) return;
     const choice = readChoice();
     frame.contentWindow.postMessage(
@@ -645,6 +754,7 @@ export class WorldHost {
         size: choice.size,
         land: choice.land,
         rules: save ? this.rulesFor(save) : [],
+        troubles: troublesOn(),
         muted: this.muted,
         recent: readRecentSets(),
         wonders: readPool(),
@@ -732,7 +842,7 @@ export class WorldHost {
     this.saving = this.saving.then(() => this.writeIslandNow(data));
   }
   private async writeIslandNow(data: SavedWorld): Promise<void> {
-    if (!this.owner || isFrozen()) return;
+    if (!this.owner || isFrozen() || this.newerIsland) return;
     if (!this.island && readAt() !== this.islandAt) return;
     let value: string;
     try {
@@ -764,6 +874,8 @@ export class WorldHost {
   // large islands and bigger mix several lands). The
   // sizes past Large are offered only where this device's own frame numbers
   // show the headroom (headroom.ts); none is ever chosen by default.
+  // When the trouble running on the island began, for "answered by an item made since" (troubles.ts).
+  private troubleBegan = 0;
   private resetDialog: HTMLDialogElement | null = null;
   private openReset(): void {
     const d = (this.resetDialog ??= document.createElement("dialog"));
@@ -865,7 +977,21 @@ export class WorldHost {
     const grid = document.createElement("div");
     grid.className = "reset-fields";
     grid.append(field("Size", size), field("Warmth", warmth), field("Water", water), field("Mountains", relief), field("Forest", forest), field("Seed", seed));
-    d.replaceChildren(title, grid, hint, fresh, warn, actions);
+    // The island needs you: troubles start on the player's island unless they say no. It
+    // holds for the island they have now too, at once.
+    const troubles = document.createElement("label");
+    troubles.className = "reset-troubles";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = troublesOn();
+    box.addEventListener("change", () => {
+      setTroublesOn(box.checked);
+      this.send({ type: "troubles", on: box.checked });
+    });
+    const words = document.createElement("span");
+    words.textContent = "Troubles come to my villages (a fire in the woods, for a start). Off: no trouble comes by itself.";
+    troubles.append(box, words);
+    d.replaceChildren(title, grid, hint, fresh, troubles, warn, actions);
     d.showModal();
   }
 
@@ -882,10 +1008,16 @@ export class WorldHost {
     this.send({ type: "wonders", list: pool.wonders });
     const seen = readSeenWonders();
     const fresh = pool.week.filter((w) => !seen.includes(w.id));
-    if (fresh.length) {
-      writeSeenWonders([...seen, ...fresh.map((w) => w.id)]);
-      toast(`New on islands this week: ${listOf(fresh.map(wonderLabel))}. A new island may have them.`, "special");
-    }
+    // Said once, after the first cast has landed and been seen, never over
+    // it (2026-11-11), in one or two lines: the New island dialog lists them all.
+    if (fresh.length)
+      this.guide.afterFirstCast(() => {
+        if (!this.shown) return;
+        writeSeenWonders([...readSeenWonders(), ...fresh.map((w) => w.id)]);
+        const names = [...new Set(fresh.map((w) => w.kind))];
+        const said = names.length > 3 ? [...names.slice(0, 3), `${names.length - 3} more`] : names;
+        toast(`New on islands this week: ${listOf(said)}. A new island may have them.`, "special");
+      });
   }
 
   // The frame HUD, toggled by a long press on the title. Remembered per browser.
@@ -1074,22 +1206,43 @@ export class WorldHost {
     if (!canVote || this.asked.has(program.id)) return;
     this.asked.add(program.id);
     clearTimeout(this.voteTimer);
-    this.voteTimer = window.setTimeout(() => this.askVote(name, program.id!), 6000);
+    const form = formOf(this.store.get(key)!.element);
+    this.voteTimer = window.setTimeout(() => this.askVote(name, program.id!, form), 6000);
   }
 
-  private askVote(name: string, id: number): void {
+  private askVote(name: string, id: number, form: Form): void {
+    const open = this.voteBar?.isConnected ? this.voteBar : null;
+    if (open?.dataset.step === "reasons") {
+      this.voteWaiting = () => this.askVote(name, id, form);
+      return;
+    }
     const bar = (this.voteBar ??= document.createElement("div"));
     bar.className = "vote";
     bar.setAttribute("role", "group");
     bar.setAttribute("aria-label", `Vote on ${name}`);
+    delete bar.dataset.step;
+    // Focus goes back to the spells, never lost on the page, when it closes.
     const close = () => {
+      const had = bar.contains(document.activeElement);
       bar.remove();
-      clearTimeout(this.voteTimer);
+      clearTimeout(this.voteClose);
+      if (this.voteKeys) document.removeEventListener("keydown", this.voteKeys);
+      this.voteKeys = null;
+      const next = this.voteWaiting;
+      this.voteWaiting = null;
+      if (next) this.voteTimer = window.setTimeout(next, 1500);
+      if (had) (this.el.list.querySelector<HTMLElement>('.chip-castable[aria-pressed="true"]') ?? this.el.list).focus({ preventScroll: true });
     };
-    const send = async (up: boolean, reason?: DownReason) => {
+    // Escape closes it wherever focus is (after a cast it is on the island).
+    if (this.voteKeys) document.removeEventListener("keydown", this.voteKeys);
+    this.voteKeys = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("keydown", this.voteKeys);
+    const send = async (up: boolean, reasons?: DownReason[]) => {
       close();
       try {
-        await api.vote({ name, id, up, reason });
+        await api.vote({ name, id, up, reasons });
         toast(up ? `Noted: ${name} works` : `Noted: ${name} will get better`);
       } catch (err) {
         toast(err instanceof Error ? err.message : "The vote did not go through", "error");
@@ -1105,24 +1258,92 @@ export class WorldHost {
     };
     const text = document.createElement("span");
     text.className = "vote-text";
-    text.textContent = `How was ${name}?`;
+    text.id = "vote-q";
+    text.tabIndex = -1;
     const dismiss = button("×", "vote-close", close);
     dismiss.setAttribute("aria-label", "Not now");
+    // Reasons by the item's form (a creature that barely moved, a building
+    // floating): one to three, then Send. Picks are kept if the player goes
+    // Back and taps Not good again.
+    const picked: DownReason[] = [];
+    let warned = 0;
     const showReasons = () => {
-      text.textContent = "What was wrong?";
-      bar.replaceChildren(text, ...DOWN_REASONS.map((r) => button(REASON_LABEL[r], "vote-reason", () => void send(false, r))), dismiss);
+      // Choosing takes longer than a tap: no clock while the player picks.
+      clearTimeout(this.voteClose);
+      bar.dataset.step = "reasons";
+      text.textContent = `What was wrong with ${name}?`;
+      const head = document.createElement("div");
+      head.className = "vote-head";
+      const hint = document.createElement("span");
+      hint.className = "vote-hint";
+      hint.setAttribute("aria-live", "polite");
+      const say = (line: string, warn = false) => {
+        hint.textContent = line;
+        hint.toggleAttribute("data-warn", warn);
+        clearTimeout(warned);
+        if (warn) warned = window.setTimeout(refresh, 3000);
+      };
+      head.append(text, hint);
+      const grid = document.createElement("div");
+      grid.className = "vote-reasons";
+      grid.setAttribute("role", "group");
+      grid.setAttribute("aria-label", "Reasons");
+      const sendButton = button("Send", "vote-send", () => {
+        if (picked.length) void send(false, [...picked]);
+        else say("Pick at least one reason", true);
+      });
+      const choices = reasonsFor(form).map((r) => {
+        const b = button(reasonLabel(r, form), "vote-reason", () => {
+          const at = picked.indexOf(r);
+          if (at >= 0) picked.splice(at, 1);
+          else if (picked.length < MAX_REASONS) picked.push(r);
+          else {
+            // On its side the picked ones may have scrolled out of view.
+            choices.find((c) => c.getAttribute("aria-pressed") === "true")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+            return say(`${MAX_REASONS} is the most. Tap one to unpick it.`, true);
+          }
+          refresh();
+        });
+        b.dataset.reason = r;
+        return b;
+      });
+      function refresh() {
+        for (const b of choices) b.setAttribute("aria-pressed", String(picked.includes(b.dataset.reason as DownReason)));
+        sendButton.setAttribute("aria-disabled", String(picked.length === 0));
+        say(picked.length >= MAX_REASONS ? `${MAX_REASONS} picked, the most` : `Pick 1 to ${MAX_REASONS}`);
+      }
+      grid.replaceChildren(...choices);
+      const actions = document.createElement("div");
+      actions.className = "vote-actions";
+      actions.append(
+        button("Back", "vote-back", () => {
+          clearTimeout(warned);
+          showAsk();
+          bar.querySelector<HTMLElement>(".vote-down")?.focus({ preventScroll: true });
+        }),
+        sendButton,
+      );
+      refresh();
+      bar.replaceChildren(head, grid, actions, dismiss);
+      text.focus({ preventScroll: true });
     };
-    bar.replaceChildren(
-      text,
-      button("Good", "vote-up", () => void send(true)),
-      button("Not good", "vote-down", showReasons),
-      dismiss,
-    );
+    const showAsk = () => {
+      delete bar.dataset.step;
+      text.textContent = `How was ${name}?`;
+      bar.replaceChildren(
+        text,
+        button("Good", "vote-up", () => void send(true)),
+        button("Not good", "vote-down", showReasons),
+        dismiss,
+      );
+    };
+    showAsk();
     // On the drawer, in place of its hint line (2026-11-07): over the island
     // it covered the island's own panels and the ground where spells land.
     if (!bar.isConnected) this.el.status.before(bar);
     // Unanswered, it goes away; the next cast asks again.
-    this.voteTimer = window.setTimeout(close, 30_000);
+    clearTimeout(this.voteClose);
+    this.voteClose = window.setTimeout(close, 30_000);
   }
 
   renderSpells(): void {
@@ -1194,6 +1415,7 @@ export class WorldHost {
 
   private updateStatus(): void {
     this.refreshChips();
+    if (this.eyes) this.sendHotbar();
     const key = this.selected;
     const name = key ? this.store.get(key)?.element.name : null;
     let text = "Pick a spell, then tap the island to cast it, or tap a creature to see what it wants. Drag to turn, pinch to zoom, two fingers to pan.";
@@ -1201,12 +1423,43 @@ export class WorldHost {
       if (this.testing.has(key)) text = `Testing ${name} on a practice island…`;
       else if (this.writing.has(key)) text = `The grimoire is writing ${name}… it will be ready in a moment.`;
       else if (this.preparing.has(key)) text = `Preparing ${name}… the first cast of a spell takes a moment.`;
+      else if (this.request(key) && this.riding)
+        text = `Tap the island to ${this.store.get(key)?.element.kind === "artifact" ? "place" : "cast"} ${name} from where you stand, up to 14 steps away.`;
       else if (this.request(key))
         text = `Tap the island to ${this.store.get(key)?.element.kind === "artifact" ? "place" : "cast"} ${name}. Tap it again to put it away and look at creatures.`;
       else text = `${name} is not ready yet.`;
     }
     this.el.status.textContent = text;
     this.showCreation(key);
+  }
+
+  private setEyes(on: boolean): void {
+    if (on === this.eyes) return;
+    this.eyes = on;
+    document.body.classList.toggle("eyes", on);
+    this.hotSent = "";
+    if (on) {
+      this.guide.hideHint();
+      this.sendHotbar();
+    }
+  }
+
+  // Every spell and item, last used first then the newest, in the order of the moment the player became a creature.
+  private sendHotbar(): void {
+    const keyOf = (d: { element: { name: string } }) => elementKey(d.element.name);
+    const now = applyFilters(this.store.discoveries(), { kind: "all", tier: "any", sort: "used", query: "" }, lastUsed, keyOf);
+    this.hotOrder ??= now.map(keyOf);
+    const byKey = new Map(now.map((d) => [keyOf(d), d]));
+    const slots: HotSlot[] = keepOrder([...byKey.keys()], this.hotOrder)
+      .slice(0, HOT_SLOTS)
+      .map((key) => {
+        const d = byKey.get(key)!;
+        return { key, name: d.element.name, emoji: d.element.emoji, ready: !!this.request(key) };
+      });
+    const text = JSON.stringify(slots);
+    if (text === this.hotSent) return;
+    this.hotSent = text;
+    this.send({ type: "hotbar", slots });
   }
 
   // The creation bar under the status line, while the spell in hand is not

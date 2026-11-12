@@ -8,13 +8,24 @@
       "mcp__claude-code-remote__create_session",
       "mcp__claude-code-remote__send_message"
     ],
-    "deny": ["Edit(/scripts/rewrite-one.mjs)", "Edit(/.claude/hooks/session-guard.mjs)"]
+    "deny": ["Edit(/scripts/rewrite-one.mjs)", "Edit(/.claude/hooks/session-guard.mjs)", "Edit(/.claude/hooks/session-cap.mjs)"]
   },
   "hooks": {
     "PreToolUse": [
       {
         "matcher": "mcp__claude-code-remote__create_session",
-        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/session-guard.mjs\"", "onFailure": "block" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/session-guard.mjs\"",
+            "onFailure": "block"
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/session-cap.mjs\"",
+            "onFailure": "block"
+          }
+        ]
       }
     ]
   }

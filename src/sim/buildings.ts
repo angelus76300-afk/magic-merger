@@ -7,6 +7,7 @@ import { WOODLAND, cellHash, type Settlement } from "./ecology";
 import { daylight, dayOf } from "./daylight";
 import { tell, villageOf, type Village } from "./kin";
 import { wordOf } from "./names";
+import { canStake, checkSites, sitesOf, sitesOn, stake } from "./sites";
 
 // Buildings that differ inside a village (4.4.5 part B). A village is laid
 // out round a plaza with a main street; its houses face the paths and some
@@ -230,7 +231,8 @@ export function layOutVillage(world: World, s: Settlement, rng: Rng, biomes: rea
         if (world.depth[i] > 0 || world.fluid[i] !== F.NONE) break;
         if (isBuilding(world.cover[i]) || world.ground[i] === G.FIELD) continue;
         if (world.cover[i] !== C.WELL) world.setCover(i, C.NONE);
-        world.ground[i] = G.PATH;
+        // 4.9: the main street is a dirt road from the start.
+        world.ground[i] = G.ROAD;
       }
     }
     // Gardens beside some houses: flowers or berries, behind a fence.
@@ -241,7 +243,7 @@ export function layOutVillage(world: World, s: Settlement, rng: Rng, biomes: rea
         if (world.cover[i] !== C.HOUSE || cellHash(i, world.seed + 4801) > 0.18) continue;
         for (const [dx, dy] of DIRS) {
           const j = (y + dy) * world.w + x + dx;
-          if (!world.inside(x + dx, y + dy) || !free(world, j) || world.ground[j] === G.PATH) continue;
+          if (!world.inside(x + dx, y + dy) || !free(world, j) || world.ground[j] === G.PATH || world.ground[j] === G.ROAD) continue;
           world.setCover(j, rng.next() < 0.5 ? C.BERRIES : C.FLOWER);
         }
       }
@@ -275,6 +277,7 @@ const spotted = new WeakMap<Settlement, number>();
 // rebuild, a new one when the village can afford it, the granary's stores
 // and the market's trade days.
 export function growBuildings(world: World): void {
+  checkSites(world);
   world.settlements.forEach((s, k) => {
     const v = villageNear(world, s);
     for (const job of [...(s.jobs ?? [])]) {
@@ -286,13 +289,14 @@ export function growBuildings(world: World): void {
       } else if (!covers.some((c) => c === C.RUBBLE || c === job.kind || c === C.HOUSE)) {
         // Gone for good (a crater, a flood): it may be raised again elsewhere.
         s.jobs = s.jobs!.filter((j) => j !== job);
-        tell(world, `${s.name || "a village"} lost its ${JOB_BY_ID.get(job.kind)?.name ?? "building"}`);
+        tell(world, `${s.name || "a village"} lost its ${JOB_BY_ID.get(job.kind)?.name ?? "building"}`, { x: s.x, y: s.y });
       }
     }
     if (!v) return;
     const tier = tierOf(housesOf(world, s));
     const had = tiers.get(s);
-    if (had && had !== tier && tier !== "hamlet" && (had === "hamlet" || tier === "town")) tell(world, `${s.name || "a village"} grew into a ${tier}`);
+    if (had && had !== tier && tier !== "hamlet" && (had === "hamlet" || tier === "town"))
+      tell(world, `${s.name || "a village"} grew into a ${tier}`, { x: s.x, y: s.y });
     tiers.set(s, tier);
     // A new building: stores to spare, its turn come, room in the tier.
     const built = s.jobs?.length ?? 0;
@@ -300,15 +304,27 @@ export function growBuildings(world: World): void {
     // Paid in wood, or in gold where its houses took every log (a poorer
     // village used to never build at all).
     const pays = v.wood >= 4 || v.gold >= 3;
-    if (built < MOST_JOBS[tier] && rich >= 30 + built * 20 && world.time >= (built + 1) * JOB_SECONDS && pays) {
+    // 4.9 part 2: on islands of 4.4.5 and later it is staked as a site and
+    // raised by the builders (sites.ts); a building going up counts as built.
+    const going = sitesOn(world) ? sitesOf(world, v).filter((o) => o.kind !== C.HOUSE) : [];
+    const begun = built + going.length;
+    if (begun < MOST_JOBS[tier] && rich >= 30 + begun * 20 && world.time >= (begun + 1) * JOB_SECONDS && pays && (!sitesOn(world) || canStake(world, v, 0))) {
       // One of the next three it wants, so two villages grow apart.
-      const rng = new Rng((world.seed ^ 0x6a62) + k * 31 + built * 977);
-      const options = JOBS.filter((j) => jobAt(s, j.id) < 0 && j.wants(world, s)).slice(0, 3);
+      const rng = new Rng((world.seed ^ 0x6a62) + k * 31 + begun * 977);
+      const options = JOBS.filter((j) => jobAt(s, j.id) < 0 && !going.some((o) => o.kind === j.id) && j.wants(world, s)).slice(0, 3);
       const next = options[Math.floor(rng.next() * options.length)];
-      if (next && raise(world, s, next, rng)) {
+      if (next && sitesOn(world)) {
+        const at = siteFor(world, s, next, rng);
+        if (at >= 0) {
+          const wood = v.wood >= 4;
+          if (wood) v.wood -= 4;
+          else v.gold -= 3;
+          stake(world, at, next.id, wood ? 4 : 0);
+        }
+      } else if (next && raise(world, s, next, rng)) {
         if (v.wood >= 4) v.wood -= 4;
         else v.gold -= 3;
-        tell(world, `${s.name || "a village"} built a ${next.name}`);
+        tell(world, `${s.name || "a village"} built a ${next.name}`, { x: s.x, y: s.y });
       }
     }
     // The granary: a surplus is put away, and given back when food runs out.
@@ -322,7 +338,7 @@ export function growBuildings(world: World): void {
         const back = Math.min(6, s.store);
         s.store -= back;
         v.food += back;
-        tell(world, `${s.name || "a village"} opened its granary`);
+        tell(world, `${s.name || "a village"} opened its granary`, { x: s.x, y: s.y });
       }
     }
     // Market days, one day in two: a little gold, and food to the poorest.
@@ -423,7 +439,7 @@ export function stepBuildings(
       }
       if (world.time - (spotted.get(s) ?? -999) > 60) {
         spotted.set(s, world.time);
-        tell(world, `the watchtower of ${s.name || "a village"} spotted a ${foe.kind.split("#")[0]}`);
+        tell(world, `the watchtower of ${s.name || "a village"} spotted a ${foe.kind.split("#")[0]}`, { x: foe.x, y: foe.y, who: foe });
       }
     }
   }

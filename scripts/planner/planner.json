@@ -1,0 +1,84 @@
+{
+  "mode": "One lead session builds (the experiment, since 11 November)",
+  "usage": {
+    "fiveHour": "ok",
+    "weekly": "warning",
+    "weeklyResets": "Tuesday 17 November, 5 PM Toronto"
+  },
+  "working": ["Measuring the wildfire, then the next trouble"],
+  "next": [
+    "Measure the wildfire: the share of troubles answered by an item made since they began",
+    "The next troubles: a drought on a village's fields, then high water",
+    "The eye view's rest: light through the crowns, the sea at the world's edge, animals up close, tools in hand",
+    "Spend only on what players use: big items at first cast, the weekly design call",
+    "A proposal for what tiers should mean, from the wildfire's numbers"
+  ],
+  "parked": ["Feedback draft: the Sound button turns the sound off and back on (unowned)"],
+  "roadmap": [
+    {
+      "v": "1",
+      "name": "The island tells its stories",
+      "state": "Live",
+      "done": 1,
+      "total": 1,
+      "eta": "11 November"
+    },
+    {
+      "v": "2",
+      "name": "One game instead of two (the island needs you)",
+      "state": "Wildfire live",
+      "done": 1,
+      "total": 3,
+      "eta": "this week"
+    },
+    {
+      "v": "3",
+      "name": "Become anything",
+      "state": "Live, with the eye view and the ground art",
+      "done": 1,
+      "total": 1,
+      "eta": "12 November"
+    },
+    {
+      "v": "4",
+      "name": "Items worth showing a friend",
+      "state": "Needs your yes with a cost",
+      "done": 0,
+      "total": 1,
+      "eta": ""
+    },
+    {
+      "v": "5",
+      "name": "Towns you can read from the sky",
+      "state": "Later",
+      "done": 0,
+      "total": 1,
+      "eta": ""
+    },
+    {
+      "v": "6",
+      "name": "It runs beautifully on the Fold",
+      "state": "In passing: weather fronts live",
+      "done": 0,
+      "total": 1,
+      "eta": ""
+    }
+  ],
+  "updates": [
+    {
+      "name": "Updates live (lead session)",
+      "done": 5,
+      "total": 5
+    },
+    {
+      "name": "Pull requests merged that needed a later fix",
+      "done": 1,
+      "total": 10
+    },
+    {
+      "name": "Reviewer sessions started",
+      "done": 6,
+      "total": 6
+    }
+  ]
+}

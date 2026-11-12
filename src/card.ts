@@ -1,3 +1,4 @@
+import { deedsOf } from "./troubles";
 import { PROGRAM_VERSION } from "../shared/version";
 import { TIERS, TIER_LABEL, tierFromDepth, type Tier } from "../shared/tiers";
 import * as api from "./api";
@@ -42,6 +43,17 @@ export function openCard(store: Store, key: string, first = false): void {
   const tier = TIER_LABEL[element.tier ?? tierFromDepth(element.depth)];
   d.querySelector(".card-depth")!.textContent = element.depth === 0 ? `Primal force · ${tier}` : `${tier} · depth ${element.depth}`;
   d.querySelector(".card-recipe")!.textContent = recipe ? `${recipe[0]} + ${recipe[1]}` : "One of the eight primal forces";
+  // What this item did for the player's villages (the island needs you): theirs alone, never shown to others.
+  const deeds = d.querySelector<HTMLElement>(".card-deeds")!;
+  const lines = deedsOf(key);
+  deeds.hidden = lines.length === 0;
+  deeds.replaceChildren(
+    ...lines.map((l) => {
+      const li = document.createElement("li");
+      li.textContent = l;
+      return li;
+    }),
+  );
 
   // Claude names things: a player who finds a name offensive or wrong tells the admin.
   const report = d.querySelector<HTMLButtonElement>(".card-report")!;
@@ -136,7 +148,7 @@ export function openCard(store: Store, key: string, first = false): void {
   d.querySelector<HTMLButtonElement>(".card-new-description")!.onclick = () => showDescription(true);
   // The only way a stored spell is ever written again: one at a time, by the
   // admin, after seeing what it costs. A version bump never does it.
-  const label = isSpell ? "Rewrite this spell" : "Rewrite this artifact";
+  const label = isSpell ? "Rewrite this spell" : `Rewrite this ${element.form && element.form !== "spell" ? element.form : "thing"}`;
   const newSpell = d.querySelector<HTMLButtonElement>(".card-new-spell")!;
   newSpell.textContent = label;
   newSpell.onclick = async () => {
@@ -228,6 +240,7 @@ function ensureDialog(): HTMLDialogElement {
       <button class="card-close" aria-label="Close">×</button>
     </div>
     <p class="card-recipe"></p>
+    <ul class="card-deeds" hidden></ul>
     <p class="card-description"></p>
     <p class="card-summary"></p>
     <button class="card-cast">Cast in the World</button>

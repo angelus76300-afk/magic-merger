@@ -1,5 +1,8 @@
 import { C, F, G } from "./materials";
-import { hasJob, settlementNear, tavernFor } from "./buildings";
+import { SITE, STAGE_WORDS, canStake, handsOn, kindName, siteToWork, standBy, sitesOf, sitesOn, stageOf, stake, work as workSite, type Site } from "./sites";
+import { MIN_PEOPLE, alongRoad, claim, isWay, nextPave, noteTrip, pave, planned, type PaveJob } from "./roads";
+import type { Wonder } from "./wonders";
+import { hasJob, housesOf, settlementNear, tavernFor, tierOf } from "./buildings";
 import { VK } from "./voxels";
 import { daylight } from "./daylight";
 import { names, type Plan } from "./social";
@@ -32,6 +35,7 @@ import type { Behavior, Creature, CreatureKind } from "./creatures";
 import type { World } from "./world";
 import { artifactVisit, useArtifact, type Visit } from "./artifacts";
 import { meter } from "./motion";
+import { facing, standsUpTo, strikeBack } from "./social";
 
 // Goals (3.6): nothing on the island just stands there. Every creature has a
 // goal from a small vocabulary (kin.ts, GOALS), needs that come before it
@@ -210,6 +214,8 @@ const DURATION: Partial<Record<Task, number>> = {
   heal: 1,
   carry: 0.3,
   trade: 0.5,
+  pave: 3,
+  raise: 4,
   roam: 0,
   herd: 0,
   patrol: 1,
@@ -219,6 +225,9 @@ const DURATION: Partial<Record<Task, number>> = {
 };
 const REACH: Partial<Record<Task, number>> = {
   use: 2.2,
+  trade: 4,
+  pave: 1.6,
+  raise: 1.6,
   forge: 2.4,
   fish: 2.6,
   fell: 1.9,
@@ -246,6 +255,8 @@ export const TASK_WORDS: Record<Task, string> = {
   harvest: "harvesting",
   fish: "fishing",
   build: "building a house",
+  pave: "laying a road",
+  raise: "building a house",
   repair: "rebuilding a ruin",
   dam: "building a dam",
   take: "taking treasure",
@@ -448,7 +459,10 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
       return null;
     }
     // Somewhere it cannot reach: give up and think again (a fish spawns where it got to).
-    if (m.walk > (strike ? 20 : 30)) {
+    // A trip to another village (4.9) is a long walk, not a lost one.
+    // So is the way home from it.
+    const far = !!world.flora && (m.task === "trade" || ((m.task === "eat" || m.task === "carry" || m.task === "rest") && Math.hypot(tx - c.x, ty - c.y) > 30));
+    if (m.walk > (strike ? 20 : far ? 150 : 30)) {
       if (m.task === "spawn") finish(world, c, k, m);
       else {
         // A home it cannot reach any more (cut off by water, a fallen wall): it settles where it is.
@@ -463,6 +477,15 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
     OUT.x = tx;
     OUT.y = ty;
     OUT.pace = m.pace;
+    // 4.9: a long walk keeps to a road that goes there.
+    const long = world.roads.length > 0 && (m.task === "trade" || ((m.task === "eat" || m.task === "carry" || m.task === "rest") && d > 30));
+    if (!long) c.data.via = undefined;
+    else if ((world.tick + c.id) % 10 === 0 || c.data.via === undefined) c.data.via = alongRoad(world, c.x, c.y, tx, ty, VIA) ? [VIA.x, VIA.y] : null;
+    const via = c.data.via as [number, number] | null | undefined;
+    if (via) {
+      OUT.x = via[0];
+      OUT.y = via[1];
+    }
     if (m.task === "roam") roamAim(world, c, m, d);
     else if (m.task === "hunt" && t) surround(world, c, t, d);
     return OUT;
@@ -495,6 +518,7 @@ function hit(world: World, c: Creature, k: CreatureKind, m: Mind, t: Creature, d
   m.work += dt;
   t.hp -= blow;
   harmed(world, t, c, blow);
+  if (t.hp > 0) strikeBack(world, t, life.kindOf(t), c, dt);
   if (t.kind === "villager" && t.fear <= 0 && m.task === "hunt") {
     t.fear = 3;
     t.fearX = c.x;
@@ -569,6 +593,10 @@ function stillValid(world: World, c: Creature, m: Mind): boolean {
       return m.hunger > 0.3 && m.fed < 3;
     case "take":
       return world.lures.some((p) => p.taken && Math.abs(p.x - m.tx) < 0.6 && Math.abs(p.y - m.ty) < 0.6);
+    case "pave": {
+      const job = c.data.pave as PaveJob | undefined;
+      return !!job && world.roads.includes(job.road) && job.road.cells[job.k] === job.cell;
+    }
   }
   return true;
 }
@@ -598,9 +626,10 @@ function urgent(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
         }
       }
       if (worst) {
-        if (job === "guard") setTask(m, "fight", worst.x, worst.y, 1.3, -1, worst);
+        const goes = job === "guard" && standsUpTo(c, worst, life.kindOf(worst), facing(world, c, worst));
+        if (goes) setTask(m, "fight", worst.x, worst.y, 1.3, -1, worst);
         else setTask(m, "avoid", c.x + (c.x - worst.x) * 1.5, c.y + (c.y - worst.y) * 1.5, 1.4);
-        m.action = `${job === "guard" ? "going for" : "keeping away from"} the ${base(worst.kind)} that hurt them`;
+        m.action = `${goes ? "going for" : "keeping away from"} the ${base(worst.kind)} that hurt them`;
         return true;
       }
     }
@@ -801,8 +830,18 @@ function work(world: World, c: Creature, m: Mind): void {
   // A job a spell invented and hired it for (w.hire), when its spell's rules are loaded.
   const hired = m.job ? CUSTOM_GOALS.get(m.job) : undefined;
   if (hired && customTask(world, c, m, hired)) return;
+  if (job !== "guard" && job !== "priest" && goToMarket(world, c, m, v)) return;
+  // 4.9 part 2: a villager with no trade lends a hand on a house going up
+  // half the time, before its chores.
+  if (job === "none" && world.sites.length && Math.random() < 0.5 && raiseSite(world, m, v)) return;
   job2(world, c, m, v, job);
-  // Nothing for its job right now: a chore, so nobody just stands there.
+  // Nothing for its job right now: lend a hand on a road, or a chore, so
+  // nobody just stands there.
+  // 4.9 part 2: or on a house going up.
+  if (m.task === "none" && (job === "none" || job === "woodcutter" || job === "farmer") && world.sites.length && Math.random() < 0.5 && raiseSite(world, m, v))
+    return;
+  if (m.task === "none" && (job === "none" || job === "woodcutter" || job === "farmer") && world.roads.length && Math.random() < 0.5 && layRoad(world, c, m, v))
+    return;
   if (m.task === "none" && !forage(world, c, m) && Math.random() < 0.25) plantFlowers(world, c, m, true);
 }
 
@@ -891,17 +930,114 @@ export function smithyNear(world: World, x: number, y: number): number {
 function build(world: World, c: Creature, m: Mind, v: Village): void {
   const ruin = findCell(world, v.x, v.y, 14, 20, (i) => world.cover[i] === C.RUBBLE);
   if (ruin >= 0) return cellTask(world, m, "repair", ruin);
+  // 4.9 part 2: a house or building the village began comes first.
+  if (world.sites.length && raiseSite(world, m, v)) return;
+  // 4.9: a road the village marked out is laid, most of the time.
+  if (world.roads.length && Math.random() < 0.7 && layRoad(world, c, m, v)) return;
   const cap = 12 + Math.floor(v.gold / 4);
-  if (v.wood >= 5 && v.houses < cap && v.people >= v.houses * 1.2) {
+  if (
+    v.wood >= SITE.houseWood &&
+    v.houses + houseSitesOf(world, v) < cap &&
+    v.people >= v.houses * 1.2 &&
+    (!sitesOn(world) || canStake(world, v, C.HOUSE, isTown(world, v)))
+  ) {
     const site = houseSite(world, v.x, v.y);
+    // Since 4.9 part 2 it is staked out and paid now, and raised in stages.
+    if (site >= 0 && sitesOn(world)) {
+      v.wood -= SITE.houseWood;
+      return raiseOn(world, m, stake(world, site, C.HOUSE, SITE.houseWood));
+    }
     if (site >= 0) return cellTask(world, m, "build", site);
   }
   if (v.wood < 5 && fellTree(world, c, m, v)) return;
   forage(world, c, m);
 }
 
+// 4.9 part 2: to work on a site of its village, if one needs hands.
+function raiseSite(world: World, m: Mind, v: Village): boolean {
+  const s = siteToWork(world, v);
+  if (!s) return false;
+  raiseOn(world, m, s);
+  return true;
+}
+
+function raiseOn(world: World, m: Mind, s: Site): void {
+  // Beside the block, each hand on its own side; the task keeps the site's cell.
+  const at = standBy(world, s, handsOn(world, s));
+  if (at < 0) return cellTask(world, m, "raise", s.i);
+  setTask(m, "raise", at % world.w, Math.floor(at / world.w), 1, s.i);
+  m.action = `${STAGE_WORDS[stageOf(s)]} a ${kindName(s.kind)}`;
+}
+
+function isTown(world: World, v: Village): boolean {
+  const s = settlementNear(world, v.x, v.y);
+  return !!s && tierOf(housesOf(world, s)) === "town";
+}
+
+function houseSitesOf(world: World, v: Village): number {
+  return world.sites.length ? sitesOf(world, v).filter((s) => s.kind === C.HOUSE).length : 0;
+}
+
 // A 2 by 2 spot of dry, free, flat land near a village; its top left cell.
 // 4.4.5 part B: along the main street first, so houses line the paths.
+// The next cell of one of its village's roads, from the village's end.
+function layRoad(world: World, c: Creature, m: Mind, v: Village): boolean {
+  if (!world.roads.length) return false;
+  const job = nextPave(world, v);
+  if (!job) return false;
+  claim(world, job.cell);
+  c.data.pave = job;
+  setTask(m, "pave", job.stand % world.w, Math.floor(job.stand / world.w), 1, job.cell);
+  m.action = job.bridge ? `building a bridge to ${job.road.a === nameNear(world, v) ? job.road.b : job.road.a}` : "laying a road";
+  return true;
+}
+
+function nameNear(world: World, v: Village): string {
+  return settlementNear(world, v.x, v.y)?.name ?? "the village";
+}
+
+// 4.9: every minute and a half or so a village sends someone to market: to
+// a village within a long walk, or now and then to see a wonder. Ends that
+// keep seeing each other's people lay a road between them (roads.ts).
+function goToMarket(world: World, c: Creature, m: Mind, v: Village): boolean {
+  // Islands of 4.4.5 and later, where roads are stepped; the challenges and
+  // the oldest island keep their villagers as they were.
+  if (!world.flora) return false;
+  if (v.market === undefined) v.market = world.time + 20 + Math.random() * 60;
+  if (world.time < v.market) return false;
+  v.market = world.time + 70 + Math.random() * 40;
+  let dest: { x: number; y: number; name: string; to: Village | Wonder } | null = null;
+  const wonders = world.wonders.filter((w) => Math.hypot(w.x - v.x, w.y - v.y) < 70 && Math.hypot(w.x - v.x, w.y - v.y) > 16);
+  if (wonders.length && Math.random() < 0.3) {
+    const w = wonders[Math.floor(Math.random() * wonders.length)];
+    // To its edge, not into it.
+    const d = Math.hypot(v.x - w.x, v.y - w.y);
+    const r = Math.min(6, Math.max(2, w.r)) + 1;
+    dest = { x: w.x + ((v.x - w.x) / d) * r, y: w.y + ((v.y - w.y) / d) * r, name: w.name, to: w };
+  } else {
+    // Nearer villages more often.
+    let total = 0;
+    const near = world.villages.filter((o) => o !== v && o.people >= MIN_PEOPLE && Math.hypot(o.x - v.x, o.y - v.y) < 110);
+    for (const o of near) total += 1 / Math.max(20, Math.hypot(o.x - v.x, o.y - v.y));
+    let pick = Math.random() * total;
+    for (const o of near) {
+      pick -= 1 / Math.max(20, Math.hypot(o.x - v.x, o.y - v.y));
+      if (pick <= 0) {
+        dest = { x: o.x, y: o.y, name: nameNear(world, o), to: o };
+        break;
+      }
+    }
+  }
+  if (!dest) return false;
+  c.data.trip = { from: v, to: dest.to };
+  // Counted as it sets out: a river or a cliff that turns it back is why
+  // the two lay a road, with a bridge (roads.ts).
+  noteTrip(world, v, dest.to);
+  setTask(m, "trade", dest.x, dest.y, 1);
+  m.action = dest.to && "seed" in dest.to ? `going to see ${dest.name}` : `going to market in ${dest.name}`;
+  return true;
+}
+
 function houseSite(world: World, x: number, y: number): number {
   const s = world.settlements.length ? settlementNear(world, x, y) : null;
   if (s) {
@@ -919,7 +1055,12 @@ function houseSite(world: World, x: number, y: number): number {
       if (hx < 1 || hy < 1 || hx + 2 >= world.w || hy + 2 >= world.h) continue;
       const cells = [hy * world.w + hx, hy * world.w + hx + 1, (hy + 1) * world.w + hx, (hy + 1) * world.w + hx + 1];
       const h0 = world.height[cells[0]];
-      if (cells.some((i) => !dryFree(world, i) || world.ground[i] === G.FIELD || world.ground[i] === G.PATH || Math.abs(world.height[i] - h0) > 1.2)) continue;
+      if (
+        cells.some(
+          (i) => !dryFree(world, i) || world.ground[i] === G.FIELD || isWay(world.ground[i]) || planned(world, i) || Math.abs(world.height[i] - h0) > 1.2,
+        )
+      )
+        continue;
       return cells[0];
     }
   }
@@ -929,7 +1070,12 @@ function houseSite(world: World, x: number, y: number): number {
     if (hx < 1 || hy < 1 || hx + 2 >= world.w || hy + 2 >= world.h) continue;
     const cells = [hy * world.w + hx, hy * world.w + hx + 1, (hy + 1) * world.w + hx, (hy + 1) * world.w + hx + 1];
     const h0 = world.height[cells[0]];
-    if (cells.some((i) => !dryFree(world, i) || world.ground[i] === G.FIELD || Math.abs(world.height[i] - h0) > 1.2)) continue;
+    if (
+      cells.some(
+        (i) => !dryFree(world, i) || world.ground[i] === G.FIELD || world.ground[i] === G.ROAD || planned(world, i) || Math.abs(world.height[i] - h0) > 1.2,
+      )
+    )
+      continue;
     return cells[0];
   }
   return -1;
@@ -938,7 +1084,8 @@ function houseSite(world: World, x: number, y: number): number {
 function guardVillage(world: World, c: Creature, m: Mind, v: { x: number; y: number }): void {
   // 4.4.5 part B: from a watchtower, guards see twice as far.
   const foe = intruder(world, c, v.x, v.y, world.settlements.length && hasJob(world, v.x, v.y, C.WATCHTOWER) ? 30 : 15);
-  if (foe) {
+  // Not alone against what has more than twice its health (social.ts, standsUpTo).
+  if (foe && standsUpTo(c, foe, life.kindOf(foe), facing(world, c, foe))) {
     setTask(m, "fight", foe.x, foe.y, 1.3, -1, foe);
     m.action = `driving off a ${base(foe.kind)}`;
     return;
@@ -1010,6 +1157,8 @@ function trade(world: World, c: Creature, m: Mind, v: Village): void {
   if (poor) {
     v.food -= 2;
     m.carry = "food";
+    c.data.trip = { from: v, to: poor };
+    noteTrip(world, v, poor);
     setTask(m, "trade", poor.x, poor.y, 1);
     m.action = "taking food to a poorer village";
     return;
@@ -1176,6 +1325,8 @@ function flock(world: World, c: Creature, m: Mind): boolean {
 
 // On its way somewhere: a flock member keeps its place by its leader; anyone
 // else bends its way a little, slowly, so a walk is not a ruler line (4.3).
+const VIA = { x: 0, y: 0 };
+
 function roamAim(world: World, c: Creature, m: Mind, d: number): void {
   const id = c.data.flockLead as number | undefined;
   if (id !== undefined) {
@@ -1696,9 +1847,21 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       return;
     case "trade": {
       const there = villageOf(world, c.x, c.y);
-      if (there && m.carry === "food") there.food += 2;
+      const trip = c.data.trip as { from: Village; to: Village | Wonder } | undefined;
+      c.data.trip = undefined;
+      c.data.via = undefined;
+      const food = m.carry === "food";
       m.carry = null;
-      deed(c, "brought food to a poorer village");
+      if (food) {
+        if (there) there.food += 2;
+        deed(c, "brought food to a poorer village");
+      } else deed(c, trip && "seed" in trip.to ? "went to see a wonder" : "went to market");
+      return;
+    }
+    case "pave": {
+      const job = c.data.pave as PaveJob | undefined;
+      c.data.pave = undefined;
+      if (job && pave(world, job, v)) deed(c, job.bridge ? "built a bridge" : "laid a road");
       return;
     }
     case "forge": {
@@ -1729,6 +1892,12 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       if (world.settlements.length) world.patched.add(i);
       deed(c, "rebuilt a house");
       return;
+    case "raise": {
+      const s = world.sites.find((o) => i >= 0 && (o.i === i || o.i + 1 === i || o.i + world.w === i || o.i + world.w + 1 === i));
+      const done = s ? workSite(world, s, DURATION.raise!, c) : null;
+      if (s && done) deed(c, done === "finished" ? `finished a ${kindName(s.kind)}` : `worked on a ${kindName(s.kind)}`);
+      return;
+    }
     case "build": {
       if (!v || v.wood < 5) return;
       const cells = [i, i + 1, i + world.w, i + world.w + 1];
@@ -1944,4 +2113,188 @@ function prayed(world: World, c: Creature, m: Mind): void {
     world.setCover(i, C.FLOWER);
   }
   deed(c, "left an offering");
+}
+
+// ---- Become anything: its own acts on demand (possess.ts) -------------------
+// Through its eyes (2026-11-12): the player presses what the creature already
+// does by itself. Each one runs the engine's own code above (hit, finish), so
+// it does exactly what the creature would do, no more.
+
+// It strikes when it does by itself: a hunter of prey (eat), a fighter by its
+// behavior (creatures.ts behave), a villager who is a guard (urgent).
+export function strikes(c: Creature, k: CreatureKind): boolean {
+  if (c.kind === "villager") return jobOf(c) === "guard";
+  const ai = k.ai;
+  if (ai && ai.attack > 0 && (ai.mode === "hunt" || ai.mode === "guard")) return true;
+  return hasNeeds(c, k) && !!(PREY[c.kind] ?? (k.needs ? preyOf(k) : null))?.length;
+}
+
+// What is in front of it along `facing`, within its own reach (act's reach for
+// a strike): the nearest one, at most 70 degrees off the way it looks.
+export function inFront(world: World, c: Creature, facing: number, test: (o: Creature) => boolean): Creature | null {
+  const k = life.kindOf(c);
+  let best: Creature | null = null;
+  let bestD = Infinity;
+  for (const o of world.crowd.near(world, c.x, c.y, 6)) {
+    if (o === c || !test(o)) continue;
+    const dx = o.x - c.x;
+    const dy = o.y - c.y;
+    const d = Math.hypot(dx, dy);
+    const reach = k.radius * c.size + life.kindOf(o).radius * o.size + 0.7;
+    if (d > reach || d >= bestD) continue;
+    const off = d < 0.05 ? 0 : Math.abs(Math.atan2(Math.sin(Math.atan2(dy, dx) - facing), Math.cos(Math.atan2(dy, dx) - facing)));
+    if (off > (70 * Math.PI) / 180) continue;
+    best = o;
+    bestD = d;
+  }
+  return best;
+}
+
+// One strike: `seconds` of its own blows (hit) at the living one in front.
+export function strikeNow(world: World, c: Creature, facing: number, seconds: number): Creature | null {
+  const k = life.kindOf(c);
+  if (!strikes(c, k)) return null;
+  const t = inFront(world, c, facing, (o) => !o.dead && o.hp > 0);
+  if (!t) return null;
+  const m = mindOf(c);
+  c.hd = Math.atan2(t.y - c.y, t.x - c.x);
+  hit(world, c, k, m, t, seconds);
+  return t;
+}
+
+// It eats by itself when it is an animal with needs. A villager eats at home
+// from the village's store, which is no act to play (the owner, 12 November:
+// "nobody becomes a woodcutter to eat"): its button is its trade.
+export function eats(c: Creature, k: CreatureKind): boolean {
+  return c.kind !== "villager" && hasNeeds(c, k);
+}
+
+// A thing to do, found in front: the engine's own task on the engine's own
+// cell or creature, run through finish() as the creature would at the end of
+// its work. `said`: what the line says after; `seconds`: the task's own length.
+export interface Chore {
+  task: Task;
+  verb: string;
+  cell: number;
+  target: Creature | null;
+  said: string;
+  seconds: number;
+}
+
+// The cells in front along `facing`: one and two steps ahead, then underfoot.
+function frontCells(world: World, c: Creature, facing: number, steps = [1, 2, 0]): number[] {
+  const out: number[] = [];
+  for (const s of steps) {
+    const i = world.idx(Math.max(0, Math.min(world.w - 1, c.x + Math.cos(facing) * s)), Math.max(0, Math.min(world.h - 1, c.y + Math.sin(facing) * s)));
+    if (!out.includes(i)) out.push(i);
+  }
+  return out;
+}
+
+const chore = (task: Task, verb: string, cell: number, said: string, target: Creature | null = null): Chore => ({
+  task,
+  verb,
+  cell,
+  target,
+  said,
+  seconds: DURATION[task] ?? 2,
+});
+
+// A meal in front, as eat() finds one: a kill for a hunter, its plants (or the
+// grass it makes do with) for a grazer. Null when there is none: Eat shows
+// only for an animal at its food.
+export function mealFor(world: World, c: Creature, facing: number): Chore | null {
+  const k = life.kindOf(c);
+  if (!eats(c, k)) return null;
+  const prey = PREY[c.kind] ?? (k.needs ? preyOf(k) : null);
+  if (prey && prey.length) {
+    const kill = inFront(world, c, facing, (o) => o.dead && !o.data.eaten && names(prey, o.kind));
+    if (kill) return chore("feast", "Eat", -1, `Ate the ${base(kill.kind)}`, kill);
+  }
+  const plants = PLANTS[c.kind] ?? (prey ? null : [C.BUSH, C.FLOWER, C.CROP]);
+  if (!plants) return null;
+  const cells = frontCells(world, c, facing, [1, 0]);
+  for (const i of cells) {
+    if (!plants.includes(world.cover[i]) || world.depth[i] >= 0.3) continue;
+    const cover = world.cover[i];
+    return chore("graze", "Eat", i, `Ate ${cover === C.CROP ? "crops" : cover === C.FLOWER ? "flowers" : cover === C.BERRIES ? "berries" : "a plant"}`);
+  }
+  const here = cells[cells.length - 1];
+  if ((MAKE_DO[c.kind] ?? [G.GRASS]).includes(world.ground[here]) && world.cover[here] === C.NONE) return chore("graze", "Eat", here, "Ate the grass");
+  return null;
+}
+
+// A villager's trade, on what is in front, through the engine's own task for
+// its job (job2 above): the woodcutter fells, the fisher fishes, the farmer
+// harvests, sows or tills, the builder repairs or builds, the smith forges at
+// its smithy, the priest buries the dead, a villager with no trade, a child or
+// an elder picks berries. The guard's trade is Strike; the merchant's is a
+// walk to another village, nothing in front: neither gets a button here.
+// Returns the chore, what is missing for it, or null for no trade.
+export function tradeFor(world: World, c: Creature, facing: number): Chore | { verb: string; missing: string } | null {
+  if (c.kind !== "villager") return null;
+  const job = jobOf(c);
+  const look = unpackLook(c.look);
+  const trade: Job = look.age === "child" || (look.age === "elder" && job !== "priest") ? "none" : job;
+  const cells = frontCells(world, c, facing);
+  const first = (test: (i: number) => boolean) => cells.find(test) ?? -1;
+  const v = villageOf(world, c.homeX, c.homeY);
+  switch (trade) {
+    case "woodcutter": {
+      const i = first((j) => world.cover[j] === C.TREE || world.cover[j] === C.BUSH);
+      return i >= 0 ? chore("fell", "Fell", i, world.cover[i] === C.TREE ? "Felled a tree" : "Cut down a bush") : { verb: "Fell", missing: "No tree in front" };
+    }
+    case "fisher": {
+      const i = frontCells(world, c, facing, [1, 2, 3]).find((j) => world.fluid[j] === F.WATER && world.depth[j] > 0.6) ?? -1;
+      return i >= 0 ? chore("fish", "Fish", i, "Cast a line") : { verb: "Fish", missing: "No deep water in front" };
+    }
+    case "farmer": {
+      const ripe = first((j) => world.cover[j] === C.CROP && world.fire[j] < 0.1);
+      if (ripe >= 0) return chore("harvest", "Harvest", ripe, "Harvested the crops");
+      const bare = first((j) => world.ground[j] === G.FIELD && world.cover[j] === C.NONE && world.depth[j] < 0.1);
+      if (bare >= 0) return chore("plant", "Sow", bare, "Sowed the field");
+      const open = first(
+        (j) => j !== cells[cells.length - 1] && (world.ground[j] === G.GRASS || world.ground[j] === G.DIRT || world.ground[j] === G.ASH) && dryFree(world, j),
+      );
+      return open >= 0 ? chore("plant", "Till", open, "Tilled a new field") : { verb: "Sow", missing: "No field or open ground in front" };
+    }
+    case "smith":
+    case "builder": {
+      if (trade === "smith") {
+        const forge = first((j) => world.cover[j] === C.SMITHY);
+        if (forge >= 0) return chore("forge", "Forge", forge, "Forged tools");
+      }
+      const ruin = first((j) => world.cover[j] === C.RUBBLE);
+      if (ruin >= 0) return chore("repair", "Repair", ruin, "Rebuilt a house");
+      if (!v || v.wood < 5) return { verb: "Build", missing: "The village has no wood to build with" };
+      const i = cells[1];
+      const room = [i, i + 1, i + world.w, i + world.w + 1].every((j) => j >= 0 && j < world.n && dryFree(world, j));
+      return room ? chore("build", "Build", i, "Built a house") : { verb: "Build", missing: "No ruin or open ground in front" };
+    }
+    case "priest": {
+      const dead = inFront(world, c, facing, (o) => o.dead && o.kind === "villager" && !o.data.buried);
+      return dead ? chore("bury", "Bury", -1, "Buried the dead", dead) : { verb: "Bury", missing: "No one to bury here" };
+    }
+    case "none": {
+      const i = first((j) => world.cover[j] === C.BUSH || world.cover[j] === C.FLOWER || world.cover[j] === C.CROP);
+      return i >= 0
+        ? chore("forage", "Pick", i, world.cover[i] === C.FLOWER ? "Picked flowers" : "Picked berries")
+        : { verb: "Pick", missing: "Nothing to pick in front" };
+    }
+  }
+  return null;
+}
+
+// Does it now: the task set as its own thinking would set it, then finished.
+// What it changed is the engine's (a felled tree is a stump, a catch is
+// carried); the goal it had before possession comes back on release.
+export function doChore(world: World, c: Creature, ch: Chore): string {
+  const m = mindOf(c);
+  const k = life.kindOf(c);
+  if (ch.target) setTask(m, ch.task, ch.target.x, ch.target.y, 1, -1, ch.target);
+  else cellTask(world, m, ch.task, ch.cell);
+  const carried = m.carry;
+  finish(world, c, k, m);
+  if (ch.task === "fish") return m.carry === "fish" && carried !== "fish" ? "Caught a fish" : "Nothing bit";
+  return ch.said;
 }

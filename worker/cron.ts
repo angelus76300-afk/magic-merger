@@ -52,3 +52,18 @@ export async function lastRunAt(db: D1Database, job: string): Promise<number | n
 export async function takeRun(db: D1Database, job: string, day: string, max: number, now = Date.now()): Promise<boolean> {
   return (await noteRun(db, job, day, now)) <= max;
 }
+
+// D1 counts every row a statement scans as a row read, and the free plan allows
+// 5,000,000 a day for the whole account. A job that looks for work in a table
+// it must scan (the programs that failed their test run, the artifacts nobody
+// has sorted) paid the table's size at each of the 144 runs a day, though the
+// work it looks for turns up a few times a day at most. `scanDue` lets such a
+// job scan once in `everyMs`: it answers from one row of `job_runs` (the last
+// scan, by the job's own name) and notes this scan before it is made, so a
+// scan that finds nothing, or throws, is not repeated at the next run.
+export async function scanDue(db: D1Database, job: string, everyMs: number, now = Date.now()): Promise<boolean> {
+  const row = await db.prepare("SELECT last_at FROM job_runs WHERE job = ? ORDER BY day DESC LIMIT 1").bind(job).first<{ last_at: number }>();
+  if (row && now - row.last_at < everyMs) return false;
+  await noteRun(db, job, new Date(now).toISOString().slice(0, 10), now);
+  return true;
+}

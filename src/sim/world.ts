@@ -1,5 +1,6 @@
 import type { ArtHooks } from "./artifacts";
-import type { StoryLine } from "./kin";
+import type { Happening, StoryLine } from "./kin";
+import { TROUBLE_FIRST, type Stone, type Trouble, type TroubleEnd } from "./troubles";
 import type { Creature } from "./creatures";
 import { C, F, G, MaterialTable, type Layer } from "./materials";
 import { Rng, fbm, valueNoise } from "./noise";
@@ -17,6 +18,8 @@ import type { Landmark, Presence } from "./social";
 import type { Ruin, Ward } from "./wards";
 import type { Prop } from "./props";
 import type { Death, Mark, Village } from "./kin";
+import type { Road } from "./roads";
+import type { Site } from "./sites";
 
 export const TICK = 1 / 30;
 export const AMBIENT = 15;
@@ -76,6 +79,8 @@ export class World {
   // The island's story (3.7, kin.ts): lines worth telling, and everyday work counted.
   story: StoryLine[] = [];
   storyCounts: Record<string, number> = {};
+  // Where the latest lines happened and to whom (kin.ts, Happening): not saved.
+  happenings: Happening[] = [];
   // Places spells keep safe for a while (wards.ts), and what each cell is
   // protected against, as bits.
   wards: Ward[] = [];
@@ -124,6 +129,27 @@ export class World {
   settlements: Settlement[] = [];
   // How often villagers walked over each cell lately: paths wear in (not saved).
   wear: Uint8Array | null = null;
+  // Roads villages laid between them and to wonders (4.9, roads.ts), saved;
+  // the deck height of each bridge cell; and a counter the view redraws on.
+  roads: Road[] = [];
+  readonly decks = new Map<number, number>();
+  roadsVersion = 0;
+  // Houses and buildings going up (4.9 part 2, sites.ts), saved; and a
+  // counter the view redraws them on.
+  sites: Site[] = [];
+  // Rain and snow do things on this island (weather.ts): on for the player's island, off for
+  // challenges, test runs and scripts, which play the same under any sky. Not saved.
+  weather = false;
+  // The island needs you (troubles.ts): the trouble running now, how many
+  // this island has had, when the next may start, and the stones villages
+  // raised to the items that saved them. Saved.
+  trouble: Trouble | null = null;
+  troubles = 0;
+  troubleNext = TROUBLE_FIRST;
+  stones: Stone[] = [];
+  // How the last trouble ended, until the frame has told it (not saved).
+  troubleEnd: TroubleEnd | null = null;
+  sitesVersion = 0;
   // Wonders and the island's name (4.4.5 part B, wonders.ts); none on the
   // old island and the challenges. House cells rebuilt after a fire wear a
   // patched roof.
@@ -182,6 +208,19 @@ export class World {
   // Surface height: terrain plus whatever fluid lies on it.
   level(i: number): number {
     return this.height[i] + this.depth[i];
+  }
+
+  // Where a walker stands: on a bridge's deck (4.9), else the surface.
+  walkLevel(i: number): number {
+    const deck = this.cover[i] === C.BRIDGE ? this.decks.get(i) : undefined;
+    return deck !== undefined && deck >= this.height[i] + this.depth[i] - 0.3 ? deck : this.height[i] + this.depth[i];
+  }
+
+  // A bridge a walker can cross here, its deck above the water.
+  onDeck(i: number): boolean {
+    if (this.cover[i] !== C.BRIDGE) return false;
+    const deck = this.decks.get(i);
+    return deck !== undefined && deck >= this.height[i] + this.depth[i] - 0.3;
   }
 
   setCover(i: number, id: number): void {

@@ -165,6 +165,8 @@ export type Task =
   | "avoid"
   | "use"
   | "forge"
+  | "pave"
+  | "raise"
   | "custom";
 
 export function newMind(goal: Goal | string): Mind {
@@ -259,9 +261,41 @@ export function storyOn(world: World | null): void {
   storyWorld = world;
 }
 
-export function tell(world: World, text: string): void {
+// Where a story line happened and whom it is about (the island tells its
+// stories, 2026-11-11): what the director's camera goes to (director.ts) and
+// what the line on the island leads to. Not saved: a happening is of the
+// moment, and the saved story keeps its lines as before.
+export interface Happening {
+  t: number;
+  text: string;
+  x: number;
+  y: number;
+  // The creature it is about, by id; 0 when it is about a place.
+  who: number;
+  // 3 a life begins or ends, a fight, a wonder wakes; 2 something was made,
+  // tamed or driven off; 1 the rest; 0 the player's own doing.
+  weight: number;
+}
+export const MAX_HAPPENINGS = 40;
+export interface Where {
+  x: number;
+  y: number;
+  who?: Creature;
+  weight?: number;
+}
+const BIG = /\b(killed|died|born|slain|woke|destroyed|burned|rose from|grew into|founded|attacked|raided|robbed|stole|struck)\b/;
+const MID = /\b(fought|tamed|built|finished|raised|raising|spotted|cast|danced|bridge|appeared|came to|thawed|converted|shared|lost its)\b/;
+export function weightOf(text: string): number {
+  return BIG.test(text) ? 3 : MID.test(text) ? 2 : 1;
+}
+
+export function tell(world: World, text: string, at?: Where): void {
   const clean = text.replace(/\s+/g, " ").trim().slice(0, 120);
   if (!clean) return;
+  if (at && Number.isFinite(at.x) && Number.isFinite(at.y)) {
+    world.happenings.push({ t: world.time, text: clean, x: at.x, y: at.y, who: at.who?.id ?? 0, weight: at.weight ?? weightOf(clean) });
+    if (world.happenings.length > MAX_HAPPENINGS) world.happenings.shift();
+  }
   const last = world.story.find((l) => l.text === clean && world.time - l.t < 120);
   if (last) {
     last.n++;
@@ -278,7 +312,7 @@ function storyDeed(world: World, c: Creature, what: string): void {
     world.storyCounts[what] = (world.storyCounts[what] ?? 0) + 1;
     return;
   }
-  tell(world, `${kind === "villager" ? "a villager" : `the ${kind}`} ${what}`);
+  tell(world, `${kind === "villager" ? "a villager" : `the ${kind}`} ${what}`, { x: c.x, y: c.y, who: c });
 }
 
 // Tests count what was done, by words; off (null) in the game.
@@ -340,6 +374,8 @@ export interface Village {
   // Counted when the villages are found again.
   people: number;
   houses: number;
+  // 4.9: when it next sends someone to market (not saved).
+  market?: number;
 }
 
 export const VILLAGE_REACH = 22;
@@ -470,6 +506,7 @@ export function noteDeath(world: World, c: Creature): void {
   // Who killed it, as far as it remembers.
   const by = c.mind?.memory.filter((e) => e.feel < 0).sort((a, b) => a.feel - b.feel)[0]?.kind;
   const kind = c.kind.split("#")[0];
-  if (kind !== "fish" && kind !== "bird") tell(world, `${kind === "villager" ? "a villager" : `a ${kind}`} died${by ? `, killed by the ${by}` : ""}`);
+  if (kind !== "fish" && kind !== "bird")
+    tell(world, `${kind === "villager" ? "a villager" : `a ${kind}`} died${by ? `, killed by the ${by}` : ""}`, { x: c.x, y: c.y, who: c });
   if (world.deaths.length > 48) world.deaths.splice(0, world.deaths.length - 48);
 }

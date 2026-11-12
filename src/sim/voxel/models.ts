@@ -3,9 +3,11 @@ import { BufferAttribute, BufferGeometry } from "three";
 // Small voxel models built from boxes, with lighting baked into vertex colors:
 // tops are brightest, the sides facing the sun a little darker, the others
 // darker still. Materials are unlit, so the GPU does no lighting at all, which
-// is what keeps phones fast. Bottom faces are skipped: they are never seen.
+// is what keeps phones fast. Bottom faces were skipped as never seen; seen from
+// a creature's eyes (2026-11-12) a crown or an eave above the ground showed the
+// sky through it, so a box that does not stand on the ground has one, in shade.
 
-export const FACE_LIGHT = { top: 1, east: 0.84, south: 0.74, west: 0.66, north: 0.58 };
+export const FACE_LIGHT = { top: 1, east: 0.84, south: 0.74, west: 0.66, north: 0.58, bottom: 0.42 };
 
 export interface Box {
   x: number;
@@ -17,8 +19,9 @@ export interface Box {
   color: number;
 }
 
-// Appends the five visible faces of a box to position and color arrays.
-export function pushBox(pos: number[], col: number[], b: Box): void {
+// Appends the visible faces of a box to position and color arrays: five, and
+// the bottom too with `bottom` (a box off the ground, seen from under it).
+export function pushBox(pos: number[], col: number[], b: Box, bottom = false): void {
   const { x, y, z, w, h, d, color } = b;
   const r = ((color >> 16) & 255) / 255;
   const g = ((color >> 8) & 255) / 255;
@@ -78,12 +81,23 @@ export function pushBox(pos: number[], col: number[], b: Box): void {
     ],
     FACE_LIGHT.north,
   );
+  if (bottom)
+    quad(
+      [
+        [x, y, z],
+        [x1, y, z],
+        [x1, y, z1],
+        [x, y, z1],
+      ],
+      FACE_LIGHT.bottom,
+    );
 }
 
-export function geometryOf(boxes: Box[]): BufferGeometry {
+// `bottoms`: every box with its bottom face, for what is seen from under it (clouds).
+export function geometryOf(boxes: Box[], bottoms = false): BufferGeometry {
   const pos: number[] = [];
   const col: number[] = [];
-  for (const b of boxes) pushBox(pos, col, b);
+  for (const b of boxes) pushBox(pos, col, b, bottoms || b.y > 0.02);
   const g = new BufferGeometry();
   g.setAttribute("position", new BufferAttribute(new Float32Array(pos), 3));
   g.setAttribute("color", new BufferAttribute(new Float32Array(col), 3));

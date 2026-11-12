@@ -1,3 +1,5 @@
+import { GRAPHICS } from "./graphics";
+import { fronts } from "../weather";
 import {
   AdditiveBlending,
   BufferAttribute,
@@ -34,27 +36,32 @@ import { Figures, figureMaterials, type Pose } from "./figures";
 import { buildRig, drawScale, paletteOf, ROLES, variantOf, type Rig } from "./rigs";
 import { easeGround, walkGround, type Footing } from "./walk";
 import { gaitOf, hipHeight, lookAround, strideRate } from "./gait";
-import { BUILTIN, C, F, S } from "../materials";
+import { BUILTIN, C, F, G, S } from "../materials";
+import { laid } from "../roads";
 import { envelope, type Body, type Visuals } from "../visuals";
 import { TICK, type World } from "../world";
 import { bodyGeometry } from "./bodies";
 import { daylight } from "../daylight";
 import { MODELS, geometryOf } from "./models";
 import { OrbitCamera } from "./orbit";
-import { CHUNK, Terrain, columnTop, surfaceY } from "./terrain";
+import { CHUNK, Terrain, V, columnTop, surfaceY } from "./terrain";
 import { hexColor, mixColor } from "../colors";
 import { DecorInstances } from "./decor-instances";
 import { Darkness } from "./darkness";
 import { Domes } from "./domes";
 import { keyLevel, keyX, keyY } from "../voxelkey";
 import { LOOKS, biomeAt } from "../land";
-import { DAMP, HEART, HOUSE_STYLES, R as RARE, STYLE_BITS, TREE_STYLES } from "../ecology";
+import { DAMP, HEART, HOUSE_STYLES, R as RARE, STYLE_BITS, TREE_STYLES, type TreeStyle } from "../ecology";
+import { NEAR_CELLS, nearTreeModel } from "./near";
 import { GLOWING, VARIANTS, floraModels } from "./flora";
 import { Buildings } from "./buildings";
 import { WonderModels } from "./wonders";
 import { PropModels } from "./props";
 import { valueNoise } from "../noise";
-import { Sky } from "./sky";
+import { LAB_SKY, Sky } from "./sky";
+import { eyeFogRange, fogRange } from "./fog";
+import { clearEye } from "../eyes";
+import { solidCovers } from "../paths";
 
 // What a spell's darkness pulls the sky toward.
 const NIGHT_SKY = 0x04020f;
@@ -79,6 +86,15 @@ export class VoxelView {
   private terrain: Terrain;
   private covers = new Map<string, InstancedMesh>();
   private coverCounts = new Map<string, number>();
+  // Near the eye (near.ts): each tree cell's model and its place in that model's mesh, and the
+  // meshes of the boxes drawn over the trees within NEAR_CELLS of the eye.
+  private treeSlots = new Map<number, number>();
+  private treeKeys: string[] = [];
+  private nearMeshes = new Map<string, InstancedMesh>();
+  private nearSlots = new Map<string, number[]>();
+  private nearAt = -1;
+  private coversDrawn = 0;
+  private nearDrawn = -1;
   private coverMaterial!: MeshBasicMaterial;
   // Plants and crystals that shine by themselves (4.4.5): never darkened.
   private glowMaterial = new MeshBasicMaterial({ vertexColors: true });
@@ -149,6 +165,8 @@ export class VoxelView {
   private domes = new Domes(this.scene);
   private lights: Sprite[] = [];
   private clouds: InstancedMesh;
+  // Rain seen from afar, under a front's cloud.
+  private rainShafts: InstancedMesh;
   // Materials tinted by the time of day (fire and glows are not).
   private lit: MeshBasicMaterial[] = [];
   private windows!: InstancedMesh;
@@ -247,6 +265,14 @@ export class VoxelView {
     this.dullPoints = pointCloud(world.particles.capacity, false, this.glowTexture);
     this.scene.add(this.glowPoints, this.dullPoints);
     this.clouds = this.makeClouds();
+    this.rainShafts = new InstancedMesh(
+      geometryOf(MODELS.puff),
+      new MeshBasicMaterial({ color: 0xc4d2e4, transparent: true, opacity: 0.2, depthWrite: false }),
+      80,
+    );
+    this.rainShafts.frustumCulled = false;
+    this.rainShafts.count = 0;
+    this.scene.add(this.rainShafts);
     this.decorMesh = this.instanced("puff", basic, 20000);
     this.decorGlow = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true }), 20000);
     this.decorInstances = new DecorInstances([this.decorMesh, this.decorGlow], 20000, world.w / 2, world.h / 2);
@@ -317,12 +343,16 @@ export class VoxelView {
   paceMs = 1000 / 30;
   // A cast changed the land outside a tick (Engine.cast).
   landChanged = true;
+  // The roads the pegs were placed for (4.9).
+  private roadsDrawn = -1;
+  private sitesDrawn = -1;
   private scannedAt = NaN;
 
   render(visuals: Visuals, time: number, dt: number, reducedMotion: boolean): void {
     const started = performance.now();
     this.lapAt = started;
     const { world } = this;
+    if (this.orbit.eye) this.placeEye();
     this.orbit.update(dt, time, this.groundAt, reducedMotion);
     // The land changes only in a tick or a cast: a frame between two ticks
     // does not compare every column again (3.5 ms a frame on a large island).
@@ -334,11 +364,12 @@ export class VoxelView {
     this.terrain.rebuild(this.firstBuild);
     this.firstBuild = false;
     this.lap("terrain");
-    if (this.terrain.coversChanged && time - this.lastCovers > 0.25) {
+    if ((this.terrain.coversChanged || this.roadsDrawn !== world.roadsVersion || this.sitesDrawn !== world.sitesVersion) && time - this.lastCovers > 0.25) {
       this.terrain.coversChanged = false;
       this.lastCovers = time;
       this.placeCovers();
     }
+    this.placeNearTrees();
     this.lap("covers");
     if (world.wonders.length) this.wonderModels.update(world, time);
     this.propModels.update(world, this.groundAt);
@@ -357,8 +388,8 @@ export class VoxelView {
     this.domes.update(world, world.time, (x, y, h) => this.toScene(x, y, h), this.groundAt);
     this.lap("effects");
     this.paintDecal(visuals);
-    this.moveClouds(time);
-    this.applyDaylight(time, visuals.darknessLevel(), visuals);
+    this.moveClouds(LAB_SKY.time ?? time);
+    this.applyDaylight(LAB_SKY.time ?? time, visuals.darknessLevel(), visuals);
     this.lap("decal+day");
     this.renderer.render(this.scene, this.orbit.camera);
     this.lap("draw");
@@ -499,6 +530,14 @@ export class VoxelView {
       const along = (x > 0 && world.cover[i - 1] === C.FENCE) || (x < world.w - 1 && world.cover[i + 1] === C.FENCE);
       return along ? "fence-x" : "fence-z";
     }
+    if (c === C.BRIDGE) {
+      // Along the way it carries: the side with more bridge or road.
+      const x = i % world.w;
+      const way = (j: number) => j >= 0 && j < world.n && (world.cover[j] === C.BRIDGE || world.ground[j] === G.ROAD);
+      const ex = (x > 0 && way(i - 1) ? 1 : 0) + (x < world.w - 1 && way(i + 1) ? 1 : 0);
+      const ez = (way(i - world.w) ? 1 : 0) + (way(i + world.w) ? 1 : 0);
+      return ez > ex ? "bridge-z" : "bridge-x";
+    }
     return world.materials.get("cover", c).name;
   }
 
@@ -536,7 +575,7 @@ export class VoxelView {
     const trees = world.land ? LOOKS[world.land.biome].trees : null;
     const flora = world.flora;
     // Villages of 4.4.5 part B: houses and buildings drawn whole, each its own.
-    const whole = world.settlements.length ? this.buildings.update(world) : null;
+    const whole = world.settlements.length || world.sites.length ? this.buildings.update(world) : null;
     for (let i = 0; i < world.n; i++) {
       const c = world.cover[i];
       if (whole?.has(i) || c === C.WONDER) continue;
@@ -550,12 +589,26 @@ export class VoxelView {
       }
       add(this.coverKey(i, c, trees, builtinCovers), i);
     }
+    // 4.9: pegs every few cells along a road marked out and not laid yet.
+    for (const r of world.roads)
+      for (let k = 2; k < r.cells.length - 1; k += 4) {
+        const i = r.cells[k];
+        if (world.cover[i] === C.NONE && world.depth[i] <= 0.3 && !laid(world, r, k)) add("road-peg", i);
+      }
+    this.roadsDrawn = world.roadsVersion;
+    this.sitesDrawn = world.sitesVersion;
     this.houseCells = [];
     for (const [key, cells] of lists) if (key === "house" || key.startsWith("house-")) for (const i of cells) this.houseCells.push(i);
     const m = this.m;
+    this.treeSlots.clear();
+    this.treeKeys = [];
+    this.coversDrawn++;
     for (const [key, cells] of lists) {
       if (!cells.length && !this.covers.has(key)) continue;
       const mesh = this.coverMesh(key, cells.length);
+      // A tree of the flora kit has boxes drawn over it near the eye (near.ts).
+      const slot = key.startsWith("tree:") ? this.treeKeys.push(key) - 1 : -1;
+      if (slot >= 0) for (let k = 0; k < cells.length; k++) this.treeSlots.set(cells[k], slot * 0x100000 + k);
       const tree =
         key.startsWith("tree") || key === "pine" || key === "palm" || key === "snowpine" || key === "jungle" || key === "willow" || key === "juniper";
       const house = key === "house" || key.startsWith("house-");
@@ -568,8 +621,9 @@ export class VoxelView {
         let base = columnTop(world, i);
         if (key === "lily") base = surfaceY(world, i) + 0.01;
         else if (key === "dock") base = Math.max(base, surfaceY(world, i)) - 0.24;
+        else if (key === "bridge-x" || key === "bridge-z") base = world.walkLevel(i) * V - 0.3;
         const p = this.toScene(x + 0.5, y + 0.5, base);
-        if (house) {
+        if (house || key === "bridge-x" || key === "bridge-z") {
           m.makeTranslation(p.x - 0.5, p.y, p.z - 0.5);
         } else if (tree && flora) {
           // Every tree its own (4.4.5): height, girth, a lean and a turn.
@@ -603,6 +657,82 @@ export class VoxelView {
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       this.coverCounts.set(key, cells.length);
+    }
+  }
+
+  // In the eye view, the trees within NEAR_CELLS of the eye are drawn with their near model
+  // (near.ts) in place of their own, placed and tinted as they were; their own instance is folded to
+  // nothing meanwhile. Again only when the eye enters another cell or the covers change. From the
+  // sky, none: every tree is its own model, at its own cost.
+  private placeNearTrees(): void {
+    const eye = this.orbit.eye;
+    const { world } = this;
+    const at = eye ? Math.floor(eye.y) * world.w + Math.floor(eye.x) : -1;
+    if (at === this.nearAt && this.nearDrawn === this.coversDrawn) return;
+    // The trees near the eye before put back as they were, unless the covers were placed again since.
+    if (this.nearDrawn === this.coversDrawn)
+      for (const [key, slots] of this.nearSlots) {
+        const base = this.covers.get(key);
+        const mesh = this.nearMeshes.get(key);
+        if (!base || !mesh) continue;
+        for (let n = 0; n < slots.length; n++) {
+          mesh.getMatrixAt(n, this.m);
+          base.setMatrixAt(slots[n], this.m);
+        }
+        if (slots.length) base.instanceMatrix.needsUpdate = true;
+      }
+    this.nearSlots.clear();
+    this.nearAt = at;
+    this.nearDrawn = this.coversDrawn;
+    const lists = new Map<string, number[]>();
+    for (const key of this.nearMeshes.keys()) lists.set(key, []);
+    if (eye) {
+      const ex = Math.floor(eye.x);
+      const ey = Math.floor(eye.y);
+      const R = NEAR_CELLS;
+      for (let y = Math.max(0, ey - R); y <= Math.min(world.h - 1, ey + R); y++)
+        for (let x = Math.max(0, ex - R); x <= Math.min(world.w - 1, ex + R); x++) {
+          if ((x - ex) * (x - ex) + (y - ey) * (y - ey) > R * R) continue;
+          const slot = this.treeSlots.get(y * world.w + x);
+          if (slot === undefined) continue;
+          const key = this.treeKeys[Math.floor(slot / 0x100000)];
+          let list = lists.get(key);
+          if (!list) lists.set(key, (list = []));
+          list.push(slot % 0x100000);
+        }
+    }
+    for (const [key, slots] of lists) {
+      let mesh = this.nearMeshes.get(key);
+      const base = this.covers.get(key);
+      if (!base) continue;
+      if (!mesh || slots.length > mesh.instanceMatrix.count) {
+        if (!slots.length) continue;
+        const boxes = nearTreeModel(key.split(":")[1] as TreeStyle, FLORA_MODELS[key] ?? []);
+        const geometry = mesh ? mesh.geometry : geometryOf(boxes);
+        const bigger = new InstancedMesh(geometry, base.material, Math.max(32, Math.ceil(slots.length * 1.5)));
+        withColors(bigger);
+        bigger.frustumCulled = false;
+        if (mesh) {
+          this.scene.remove(mesh);
+          mesh.dispose();
+        }
+        this.scene.add(bigger);
+        this.nearMeshes.set(key, (mesh = bigger));
+      }
+      for (let n = 0; n < slots.length; n++) {
+        base.getMatrixAt(slots[n], this.m);
+        mesh.setMatrixAt(n, this.m);
+        base.setMatrixAt(slots[n], FOLDED);
+        if (base.instanceColor) {
+          base.getColorAt(slots[n], this.col);
+          mesh.setColorAt(n, this.col);
+        }
+      }
+      if (slots.length) base.instanceMatrix.needsUpdate = true;
+      this.nearSlots.set(key, slots);
+      mesh.count = slots.length;
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
   }
 
@@ -673,6 +803,7 @@ export class VoxelView {
     // bring the fog in.
     const o = this.orbit;
     const target = this.toScene(o.tx, o.ty, this.groundAt(o.tx, o.ty));
+    this.sky.dropsFrom = o.eye ? 2.5 : 0;
     this.sky.update(time, day.night, o.camera, target, o.dist, this.pixelRatio);
     this.waveTime.value = time;
     const grey = this.sky.overcast;
@@ -698,11 +829,14 @@ export class VoxelView {
       paintSky(this.skyCanvas, top, low);
       (this.scene.background as CanvasTexture).image = this.skyCanvas;
       (this.scene.background as CanvasTexture).needsUpdate = true;
-      const fog = this.scene.fog as Fog;
-      fog.color.set(fogStep ? hexColor(mixColor(parseInt(low.slice(1), 16), 0xc4c8cc, fogStep * 0.6)) : low);
-      fog.near = this.world.w * 1.6 * (1 - fogStep * 0.85);
-      fog.far = this.world.w * 5 * (1 - fogStep * 0.8);
+      (this.scene.fog as Fog).color.set(fogStep ? hexColor(mixColor(parseInt(low.slice(1), 16), 0xc4c8cc, fogStep * 0.6)) : low);
     }
+    // The mist moves back with the camera, so the island keeps its colours
+    // when zoomed out (fog.ts).
+    const range = o.eye ? eyeFogRange(fogStep) : fogRange(Math.max(this.world.w, this.world.h), o.dist, fogStep);
+    const fog = this.scene.fog as Fog;
+    fog.near = range.near;
+    fog.far = range.far;
     let n = 0;
     const lights = this.world.settlements.length ? this.buildings.lights : null;
     if (day.night > 0.15 && lights) {
@@ -788,6 +922,43 @@ export class VoxelView {
     }
     return rig;
   }
+
+  // Through its eyes (2026-11-12, eyes.ts): the creature the player sees
+  // from, which is not drawn while the camera is at its head.
+  eyeId = -1;
+
+  // The eye at its head, where the creature is drawn this frame (between two
+  // ticks, on the ground as its feet are eased up and down steps).
+  private placeEye(): void {
+    const { world } = this;
+    const c = world.creatures.find((o) => o.id === this.eyeId);
+    if (!c) return;
+    const k = kindOf(c);
+    const rig = this.rigFor(c, k);
+    const size = drawScale(k.body, k.radius, rig, c.size);
+    const g = this.gaits.get(c.id);
+    const a = this.between;
+    const x = g ? g.px + (c.x - g.px) * a : c.x;
+    const y = g ? g.py + (c.y - g.py) * a : c.y;
+    const ground = g && Number.isFinite(g.gy) ? g.gy : walkGround(world, x, y);
+    // Eyes sit a little under the top of the head (a hat or antlers above them),
+    // kept clear of walls, trunks and steps of ground (eyes.ts clearEye): pressed
+    // to a cliff or a house the view was one flat colour (the playtest of 12 November).
+    const e = clearEye(x, y, ground + c.z + Math.max(0.35, rig.height * size * 0.88), this.groundAt, this.solidCell);
+    this.orbit.eyeAt(e.x, e.y, e.h);
+    this.eyeCell.x = e.x;
+    this.eyeCell.y = e.y;
+  }
+
+  // Where the eye is, in cells, for hiding what stands right against it.
+  private eyeCell = { x: NaN, y: NaN };
+
+  // A wall or a trunk in the cell (cx, cy): what a walker cannot enter (paths.ts solidCovers).
+  solidCell = (cx: number, cy: number): boolean => {
+    const { world } = this;
+    if (cx < 0 || cy < 0 || cx >= world.w || cy >= world.h) return false;
+    return solidCovers(world)[world.cover[cy * world.w + cx]] === 1;
+  };
 
   private placeCreatures(time: number): void {
     const { world } = this;
@@ -894,6 +1065,9 @@ export class VoxelView {
       const p = this.toScene(rx, ry, y);
       this.sphere.center.set(p.x, p.y + rig.height * size * 0.5, p.z);
       this.sphere.radius = Math.max(rig.height, 1.4) * size;
+      // The one the player sees from is not drawn: its own head would fill the view.
+      // Nor anyone closer than a cell to the eye: a face or a back filled the screen.
+      if (this.orbit.eye && (c.id === this.eyeId || Math.hypot(rx - this.eyeCell.x, ry - this.eyeCell.y) < 1.1)) continue;
       const seen = this.frustum.intersectsSphere(this.sphere);
 
       // The mark over its head, then the figure, when the camera sees it.
@@ -955,6 +1129,7 @@ export class VoxelView {
       } else if (k.glow) pose.y += Math.sin(time * 2 + c.id) * 0.08 * size;
       if (asleep && !c.dead && !pose.flying) pose.y -= size * 0.05;
       pose.detail = camPos.distanceToSquared(this.sphere.center) < (detailRange * size) ** 2;
+      pose.close = !!this.orbit.eye && camPos.distanceToSquared(this.sphere.center) < CLOSE_CELLS * CLOSE_CELLS;
       this.figures.add(rig, paletteOf(this.palette, rig, k.body, c.color, c.look), pose);
     }
     this.figures.end();
@@ -1241,8 +1416,14 @@ export class VoxelView {
     }
   }
 
+  // With bottom faces: seen from under a storm (the eye view), boxes without them were thin grey bars.
   private makeClouds(): InstancedMesh {
-    const mesh = new InstancedMesh(geometryOf(MODELS.puff), new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9 }), 120);
+    const geometry = geometryOf(MODELS.puff, true);
+    // A cloud's underside is lit by the land and the sky around it: 0.8, not the 0.42 of a box's
+    // shaded bottom, which made a storm overhead black. The bottom face is the last six vertices.
+    const col = geometry.getAttribute("color").array as Float32Array;
+    for (let k = col.length - 18; k < col.length; k++) col[k] *= 0.8 / 0.42;
+    const mesh = new InstancedMesh(geometry, new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9 }), 300);
     withColors(mesh);
     mesh.frustumCulled = false;
     this.scene.add(mesh);
@@ -1269,7 +1450,66 @@ export class VoxelView {
         n++;
       }
     }
+    // A front of rain or snow (weather.ts) is a storm cloud in the island's own blocks: a dark flat
+    // base where it rains, lighter layers heaped toward the middle, a bright top. Seen from afar
+    // it is a shape that crosses the map with the wind, with thin shafts of rain under it.
+    let shafts = 0;
+    const held = LAB_SKY.time === null ? null : LAB_SKY.front ? [{ kind: "rain" as const, amount: 1, ...LAB_SKY.front }] : [];
+    for (const f of held ?? (GRAPHICS.weather ? fronts(world, time).slice(0, 2) : [])) {
+      const grow = 0.45 + 0.55 * f.amount;
+      const snow = f.kind === "snow";
+      const fx = f.x - world.w / 2;
+      const fz = f.y - world.h / 2;
+      // The same blocks in the same places of the front every frame: a hash of the block's number.
+      const h = (k: number, salt: number) => {
+        const v = Math.sin(k * 127.1 + salt * 311.7) * 43758.5453;
+        return v - Math.floor(v);
+      };
+      const layer = (count: number, reach: number, y: number, size: number, thick: number, color: number, salt: number) => {
+        for (let k = 0; k < count; k++) {
+          const a = h(k, salt) * Math.PI * 2;
+          const d = Math.sqrt(h(k, salt + 1)) * f.r * reach;
+          const sx = size * (0.8 + h(k, salt + 2) * 0.7) * grow;
+          const sz = size * (0.7 + h(k, salt + 3) * 0.6) * grow;
+          this.m.makeScale(sx, thick * (0.8 + h(k, salt + 4) * 0.5), sz);
+          this.m.setPosition(fx + Math.cos(a) * d, y + h(k, salt + 5) * thick * 0.5, fz + Math.sin(a) * d);
+          this.clouds.setMatrixAt(n, this.m);
+          this.clouds.setColorAt(n, this.col.setHex(color));
+          n++;
+        }
+      };
+      layer(30, 0.9, 46, f.r * 0.34, 3, snow ? 0xb9c3d1 : 0x566173, 1);
+      layer(22, 0.68, 50, f.r * 0.3, 4.5, snow ? 0xd5dce6 : 0x7f8a9c, 11);
+      layer(14, 0.42, 55, f.r * 0.26, 5.5, snow ? 0xeef2f7 : 0xb7c0cd, 21);
+      layer(6, 0.2, 61, f.r * 0.2, 5, 0xffffff, 31);
+      // From under it, in the eye view, the base showed the sky through its gaps (broken grey
+      // slabs, 12 November): a belly of wide, low blocks closes it, darker toward the middle.
+      if (this.orbit.eye) {
+        layer(10, 0.72, 44.6, f.r * 0.5, 1.8, snow ? 0xa9b3c1 : 0x4d5767, 51);
+        layer(5, 0.3, 44.2, f.r * 0.45, 1.6, snow ? 0x9aa4b2 : 0x434c5a, 61);
+      }
+      if (snow) continue;
+      // Shafts of rain from the base to the ground, a third of them resting at any moment.
+      const beat = Math.floor(time * 5);
+      for (let k = 0; k < 40 && shafts < 80; k++) {
+        if (h(k + beat * 7, 41) < 0.34) continue;
+        const a = h(k, 42) * Math.PI * 2;
+        const d = Math.sqrt(h(k, 43)) * f.r * 0.8;
+        this.m.makeScale(0.5, 46, 0.5);
+        this.m.setPosition(fx + Math.cos(a) * d, 23, fz + Math.sin(a) * d);
+        this.rainShafts.setMatrixAt(shafts++, this.m);
+      }
+    }
+    this.rainShafts.count = shafts;
+    this.rainShafts.instanceMatrix.needsUpdate = true;
     this.clouds.count = n;
+    // From the eyes a storm overhead is 40 cells up, past the mist of the eye view: without
+    // this it was a blank grey. The clouds take no mist there; from the sky they do, as before.
+    const cm = this.clouds.material as MeshBasicMaterial;
+    if (cm.fog === !!this.orbit.eye) {
+      cm.fog = !this.orbit.eye;
+      cm.needsUpdate = true;
+    }
     this.clouds.instanceMatrix.needsUpdate = true;
     if (this.clouds.instanceColor) this.clouds.instanceColor.needsUpdate = true;
   }
@@ -1456,6 +1696,10 @@ function withColors(mesh: InstancedMesh): void {
 }
 
 const FLORA_MODELS = floraModels();
+// Within this many cells of the eye, creatures show the parts seen only up close (rigs.ts lod 2).
+const CLOSE_CELLS = 5;
+// An instance drawn as nothing: a tree near the eye, drawn by its near model instead.
+const FOLDED = new Matrix4().makeScale(0, 0, 0);
 // Where water that flooded a damp cell may grow lily pads (4.4.5).
 const LILY_LANDS = new Set(["temperate", "swamp", "jungle"]);
 

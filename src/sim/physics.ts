@@ -338,7 +338,11 @@ function burnOut(world: World, i: number): void {
   const c = world.cover[i];
   if (c === C.TREE) world.setCover(i, C.STUMP);
   else if (isBuilding(c)) world.setCover(i, C.RUBBLE);
-  else if (c === C.POWDER) {
+  else if (c === C.SITE) {
+    // 4.9 part 2: a house going up burns to ash, never to rubble.
+    world.setCover(i, C.NONE);
+    world.ground[i] = G.ASH;
+  } else if (c === C.POWDER) {
     world.setCover(i, C.NONE);
     explode(world, i % world.w, Math.floor(i / world.w), 3.5, 0.7);
   } else world.setCover(i, C.NONE);
@@ -548,6 +552,8 @@ export function explode(world: World, x: number, y: number, r: number, power: nu
       const c = world.cover[i];
       if (c === C.POWDER) world.fire[i] = 1;
       else if (isBuilding(c)) world.setCover(i, C.RUBBLE);
+      // 4.9: a building site is blown away, never left as rubble to rebuild.
+      else if (c === C.SITE) world.setCover(i, C.NONE);
       else if (c !== C.NONE && c !== C.RUBBLE) world.setCover(i, rng.next() < 0.4 ? C.RUBBLE : C.NONE);
     }
     if (k > 0.55) world.ground[i] = G.ASH;

@@ -54,7 +54,7 @@ export interface Part {
   // Which segment, for SEG and ORBIT; a delay for the others.
   seg: number;
   glow: boolean;
-  // 1: a detail, left out from far away.
+  // 1: a detail, left out from far away. 2: seen up close only, from a creature's eyes (pose.close).
   lod: number;
 }
 
@@ -181,6 +181,23 @@ function twoLegs(B: Builder, build: Build, villager: Look | null): Anchors {
     const drop = villager.long ? H * 0.75 : H * 0.3;
     B.box(R.HAIR, -H / 2 - 0.02, head.top - drop, head.back - 0.025, H + 0.04, drop + 0.04, H * 0.45, { p: neck, anim: A.HEAD });
     B.box(R.HAIR, -H / 2 - 0.02, head.top - 0.08, head.back - 0.025, H + 0.04, 0.12, H * 0.85, { p: neck, anim: A.HEAD });
+    // Seen face to face from a creature's eyes (lod 2, figures.ts: within a few cells in the eye
+    // view only): a nose, a mouth, brows, the whites of the eyes, ears, a fringe and a belt. From
+    // the sky the face stays two dots, as it was.
+    const close = { p: neck, anim: A.HEAD, lod: 2 };
+    const front = head.front;
+    const fy = L + T + H * 0.55;
+    const e = Math.max(0.035, (H / 2) * 0.28);
+    B.c(R.SKIN, 0, fy - e * 1.9, front + 0.015, 0.07, 0.1, 0.05, close);
+    B.c(R.DARK, 0, fy - e * 3.1, front + 0.004, H * 0.26, 0.025, 0.02, close);
+    for (const side of [1, -1]) {
+      const ex = side * (H / 2) * 0.45;
+      B.c(R.FIXED, ex, fy - e / 2 - 0.006, front + 0.002, e * 1.75, e + 0.012, 0.02, { ...close, color: 0xf4efe6 });
+      B.c(R.HAIR, ex, fy + e * 0.85, front + 0.004, e * 1.6, 0.032, 0.025, close);
+      B.c(R.SKIN, side * (H / 2 + 0.012), fy - e * 2, 0.01, 0.026, 0.1, 0.07, close);
+    }
+    B.box(R.HAIR, -H / 2 - 0.015, head.top - 0.075, front - 0.06, H + 0.03, 0.09, 0.075, close);
+    B.c(R.DARK, 0, L + 0.03, 0, W + 0.02, 0.06, D + 0.02, { lod: 2 });
   }
   return {
     head,

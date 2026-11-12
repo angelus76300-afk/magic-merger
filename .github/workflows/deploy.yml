@@ -59,6 +59,9 @@ jobs:
     if: needs.tip.outputs.newest == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # 2026-11-11, "credentials: yes": production's secrets live in the GitHub environment "production",
+    # which only main may use; a branch or a dispatch on a branch gets none of them.
+    environment: production
     env:
       MM_URL: https://magic-merger.angelus76300.workers.dev
       GH_TOKEN: ${{ github.token }}
@@ -92,7 +95,10 @@ jobs:
         # dependencies (wrangler, the Anthropic SDK) to versions CI never tested.
         run: |
           npm install --prefix "$RUNNER_TEMP/pw" --no-save --no-package-lock playwright
-          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+          # --with-deps also installs fonts from Ubuntu's package servers. When the
+          # runner cannot reach them (11 November 2026: three runs in a row), the
+          # browser alone is installed: the runner image already has what it needs.
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium || "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install chromium
           echo "NODE_PATH=$RUNNER_TEMP/pw/node_modules" >> "$GITHUB_ENV"
       - name: migrations
         env:

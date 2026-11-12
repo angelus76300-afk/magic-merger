@@ -1,4 +1,14 @@
 let container: HTMLElement | null = null;
+// Edges toasts stay under, in page pixels, besides the header (2026-11-11):
+// the island's inspect card and the first cast's hint while they are shown.
+const floors = new Map<string, number>();
+
+export function setToastFloor(key: string, px: number): void {
+  if (px > 0) floors.set(key, px);
+  else floors.delete(key);
+  container ??= document.getElementById("toasts");
+  if (container) placeBelowHeader(container);
+}
 
 export function toast(message: string, tone: "info" | "special" | "error" = "info"): void {
   container ??= document.getElementById("toasts");
@@ -26,5 +36,5 @@ export function toast(message: string, tone: "info" | "special" | "error" = "inf
 function placeBelowHeader(box: HTMLElement): void {
   const header = document.querySelector(".topbar");
   const bottom = header ? header.getBoundingClientRect().bottom : 0;
-  box.style.top = `${Math.max(8, Math.round(bottom) + 8)}px`;
+  box.style.top = `${Math.max(8, Math.round(bottom) + 8, ...[...floors.values()].map((f) => Math.round(f) + 8))}px`;
 }

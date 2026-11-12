@@ -14,10 +14,17 @@
 // every tab. Staging is a copy with $2 a month; a merge of two starting items
 // is a known recipe there and costs nothing.
 //
+// 2026-11-10, "folds: yes": then, in both modes, the first screen once at each
+// of the other sizes every check uses (scripts/sizes.mjs: the owner's Z Fold
+// folded and unfolded, a foldable open, a desktop): it opens, nothing is wider
+// than the screen, and in preview the tabs sit at the bottom on a phone, a
+// fold and a touch screen. A few seconds each, in the same browser.
+//
 // Exit 0 when every check passes. Frames and report.json go to --out.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { SIZES } from "./sizes.mjs";
 
 const { chromium } = createRequire(import.meta.url)("playwright");
 
@@ -163,9 +170,50 @@ try {
     }
   }
   await page.waitForTimeout(1000);
+  await ctx.close();
+
+  // 3. The first screen at the other sizes (the phone above played the whole path).
+  for (const size of SIZES.filter((z) => !(z.width === 390 && z.height === 844))) {
+    const tag = `${size.name} ${size.width}x${size.height}`;
+    const c = await browser.newContext({ viewport: { width: size.width, height: size.height }, deviceScaleFactor: 1, hasTouch: size.touch, isMobile: false });
+    const p = await c.newPage();
+    p.on("pageerror", (e) => errors.push(`${tag} pageerror: ${e.message}`));
+    p.on("response", (r) => {
+      if (r.url().startsWith(BASE) && r.status() >= 500) failedRequests.push(`${tag} ${r.status()} ${r.url().slice(BASE.length)}`);
+    });
+    if (mode === "preview" && TOKEN)
+      await p.addInitScript((t) => {
+        try {
+          localStorage.setItem("magic-merger.token", t);
+        } catch {
+          // the sandboxed frames have no storage
+        }
+      }, TOKEN);
+    await p.goto(`${BASE}/`, { waitUntil: "domcontentloaded" });
+    const first = await p.waitForSelector(mode === "live" ? "#gate:not([hidden])" : ".chip-inventory", { timeout: 20000 }).catch(() => null);
+    check(`${tag}: the first screen opens`, !!first);
+    // Offers (an account, what's new) open a moment after the first screen: close them as a player would.
+    await p.waitForTimeout(1500);
+    for (let i = 0; i < 4 && (await p.locator("dialog[open]").count()); i++) {
+      await p.keyboard.press("Escape");
+      await p.waitForTimeout(300);
+    }
+    const wide = await p.evaluate(() => document.documentElement.scrollWidth);
+    check(`${tag}: nothing is wider than the screen`, wide <= size.width, `${wide} px wide`);
+    if (mode === "preview") {
+      // ui-frames' rule: the tabs at the bottom below 1024 px, or below 1280 on a touch screen.
+      const bottom = await p.evaluate(() => {
+        const el = document.querySelector(".tabs");
+        return el ? Math.round(el.getBoundingClientRect().bottom) : null;
+      });
+      if (size.width < 1024 || (size.touch && size.width < 1280))
+        check(`${tag}: the tabs sit at the bottom`, bottom !== null && Math.abs(bottom - size.height) <= 1, `tabs end at ${bottom}`);
+    }
+    await shot(p, `${size.name}-${size.width}x${size.height}`);
+    await c.close();
+  }
   check("no error on the page", errors.length === 0, errors.slice(0, 5).join(" | "));
   check("no server error", failedRequests.length === 0, failedRequests.slice(0, 5).join(", "));
-  await ctx.close();
 } finally {
   await browser.close();
 }

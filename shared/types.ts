@@ -107,7 +107,9 @@ export interface VoteRequest {
   name: string;
   id: number;
   up: boolean;
-  // Required on a down vote.
+  // One to three on a down vote (reasons by form, 2026-11-07).
+  reasons?: DownReason[];
+  // The one reason of a client from before reasons by form; still read.
   reason?: DownReason;
 }
 

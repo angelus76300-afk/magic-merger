@@ -168,7 +168,7 @@ export class CraftSound {
   private out: GainNode | null = null;
   private unlocked = false;
   private last = new Map<string, number>();
-  private wait: { gain: GainNode; osc: OscillatorNode; timer: number } | null = null;
+  private wait: { gain: GainNode | null; osc: OscillatorNode | null; timer: number } | null = null;
 
   constructor() {
     if (typeof window === "undefined") return;
@@ -215,12 +215,17 @@ export class CraftSound {
     voice(ctx, this.out, now);
   }
 
-  // The swell while a merge's answer is on its way; stopped by the result.
+  // The swell while merges' answers are on their way: one swell however many
+  // are in flight, stopped when the last one answers (review of #87: with one
+  // slot, the first answer cut the second merge's swell).
+  private inFlight = 0;
+
   startWait(): void {
-    this.stopWait();
+    this.inFlight++;
+    if (this.wait) return;
     const timer = window.setTimeout(() => {
       const ctx = this.context();
-      if (!ctx || !this.out) return;
+      if (!ctx || !this.out || !this.wait) return;
       const now = ctx.currentTime;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -234,13 +239,15 @@ export class CraftSound {
       osc.connect(gain).connect(this.out);
       osc.start(now);
       osc.stop(now + WAIT_MAX - WAIT_AFTER + 0.05);
-      if (this.wait) this.wait = { ...this.wait, gain, osc };
+      this.wait.gain = gain;
+      this.wait.osc = osc;
     }, WAIT_AFTER * 1000);
-    this.wait = { gain: null as unknown as GainNode, osc: null as unknown as OscillatorNode, timer };
+    this.wait = { gain: null, osc: null, timer };
   }
 
   stopWait(): void {
-    if (!this.wait) return;
+    this.inFlight = Math.max(0, this.inFlight - 1);
+    if (this.inFlight > 0 || !this.wait) return;
     window.clearTimeout(this.wait.timer);
     const { gain, osc } = this.wait;
     this.wait = null;
@@ -250,5 +257,10 @@ export class CraftSound {
       gain.gain.setTargetAtTime(0.0001, now, 0.05);
       osc.stop(now + 0.2);
     }
+  }
+
+  // How many merges wait for an answer (for the checks).
+  get waiting(): number {
+    return this.inFlight;
   }
 }

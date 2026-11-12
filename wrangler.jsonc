@@ -102,9 +102,9 @@
         "SPELL_SMALL_UP_TO": "grand",
         "REPAIR_MODEL": "claude-haiku-5-5",
         "SPELL_EFFORT": "medium",
-        // $2 a month for the previews together, the admin included; the
+        // $5 a month for the previews together, the admin included; the
         // nightly copy keeps staging's own spend, so the month holds.
-        "BUDGET_USD": "2",
+        "BUDGET_USD": "5",
         "INVITE_CAP_USD": "2",
         "JUDGE_MODEL": "claude-haiku-5-5",
         "REWRITE_BUDGET_USD": "0.1",

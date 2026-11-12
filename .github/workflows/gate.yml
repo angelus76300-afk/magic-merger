@@ -29,10 +29,12 @@ on:
   pull_request_target:
     types: [labeled, ready_for_review]
   workflow_dispatch:
-    inputs:
-      pr:
-        description: "Pull request number"
-        required: true
+  # 2026-11-10: a run the Gate starts itself (the merge queue's CI by workflow_dispatch)
+  # does not wake the Gate when it finishes; seen live on #102. Every 15 minutes the Gate sweeps anyway,
+  # so an updated pull request merges within a quarter of an hour. This relies on the repository being
+  # public (Actions minutes are free): if it ever goes private, make it hourly ("7 * * * *").
+  schedule:
+    - cron: "7,22,37,52 * * * *"
 permissions:
   contents: write
   pull-requests: write
@@ -40,18 +42,29 @@ permissions:
   actions: write
   checks: read
   deployments: read
+# 2026-11-08: one Gate run at a time, for every pull request, so two merges can never race (each
+# would be checked against a main the other is about to change). A newer run waiting replaces an
+# older one waiting; nothing is lost, because every run ends with a sweep of all open pull requests.
+concurrency:
+  group: gate
+  cancel-in-progress: false
 jobs:
+  # The merge queue: every run is one sweep of all open pull requests, oldest first (scripts/gate.mjs
+  # sweep). Whatever woke it, the sweep merges at most one that is ready, then, for the oldest one that
+  # waits only for a test with the main of now, starts CI on main's copy of ci.yml by workflow_dispatch
+  # (2026-11-11): CI merges main into the head in the runner and pushes nothing, so the head, its review
+  # and its preview stand, and a workflow change on main stops no branch. One job, not two.
   gate:
     if: >-
-      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository) ||
+      (github.event_name == 'workflow_run' && (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'workflow_dispatch') && github.event.workflow_run.head_repository.full_name == github.repository) ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.author_association == 'OWNER' && github.event.comment.user.login == github.repository_owner && (contains(github.event.comment.body, 'mm-review') || contains(github.event.comment.body, 'mm-owner'))) ||
       (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository) ||
-      github.event_name == 'workflow_dispatch'
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    concurrency:
-      group: gate-${{ github.event.workflow_run.head_sha || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
-      cancel-in-progress: false
+    # Up to 4 rounds of a sweep and a wait of at most 30 minutes for the CI it started (--follow):
+    # 4 x 30 min stays under this timeout with room for the sweeps.
+    timeout-minutes: 150
     env:
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}
@@ -60,31 +73,12 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-      - name: which pull request
-        id: which
-        env:
-          FROM_RUN: ${{ github.event.workflow_run.pull_requests[0].number }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          FROM_ISSUE: ${{ github.event.issue.number }}
-          FROM_PR: ${{ github.event.pull_request.number }}
-          FROM_INPUT: ${{ inputs.pr }}
-        run: |
-          n="${FROM_RUN:-${FROM_ISSUE:-${FROM_PR:-$FROM_INPUT}}}"
-          if [ -z "$n" ] && [ -n "$HEAD_SHA" ]; then n=$(gh api "repos/${{ github.repository }}/commits/$HEAD_SHA/pulls" --jq '.[0].number // empty'); fi
-          echo "pr=$n" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
-        if: steps.which.outputs.pr != ''
         with:
           node-version: 22
-      - name: decide, and merge when ready
-        id: gate
-        if: steps.which.outputs.pr != ''
-        env:
-          PR: ${{ steps.which.outputs.pr }}
-        run: |
-          case "$PR" in ''|*[!0-9]*) echo "not a pull request number: $PR"; exit 1;; esac
-          node scripts/gate.mjs pr "$PR" --merge
-      # A merge made with this workflow's token starts no push workflow: start the deploy here.
-      - name: deploy
-        if: steps.gate.outputs.merged == 'true' && steps.gate.outputs.docs != 'true'
-        run: gh workflow run deploy.yml --ref main
+      - name: sweep the open pull requests, merge one, test one again with the main of now
+        id: sweep
+        run: node scripts/gate.mjs sweep --merge --update --follow
+      # A merge made with this workflow's token starts no push workflow: scripts/gate.mjs starts the
+      # deploy itself right after each merge that is not docs only (mergeOne), so a merge made in an early
+      # round of --follow deploys at once, and a job killed by its timeout leaves nothing undeployed.

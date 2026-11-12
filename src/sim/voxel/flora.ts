@@ -36,8 +36,14 @@ function trunk(out: Box[], rng: Rng, height: number, width: number, color: numbe
   return { x: x + Math.cos(a) * lean * 0.5, z: z + Math.sin(a) * lean * 0.5, top: from + height };
 }
 
-// A crown of leaves: a few boxes around a point, wide at the bottom.
+// A crown of leaves: a few boxes around a point, wide at the bottom, and under
+// it a narrower, darker layer: from a creature's eyes (2026-11-12) a crown was
+// one flat slab; this gives it a shaded, layered underside, as foliage has.
 function crown(out: Box[], rng: Rng, cx: number, cz: number, y: number, width: number, height: number, leaves: number[], parts = 2): void {
+  const under = width * 0.72;
+  const shade = vary(rng, pick(rng, leaves), 0.05);
+  const dark = ((((shade >> 16) & 255) * 0.62) << 16) | ((((shade >> 8) & 255) * 0.62) << 8) | ((shade & 255) * 0.62);
+  out.push(B(cx - under / 2, y - 0.16, cz - under / 2, under, 0.18, under, Math.round(dark)));
   for (let k = 0; k < parts; k++) {
     const f = k / parts;
     const wk = width * (1 - f * 0.45) * (0.9 + rng.next() * 0.2);
@@ -313,6 +319,36 @@ export const COVER_MODELS: Record<string, Box[]> = {
     B(0.04, -0.6, 0.82, 0.1, 0.84, 0.1, 0x5b3d24),
     B(0.86, -0.6, 0.82, 0.1, 0.84, 0.1, 0x5b3d24),
   ],
+  // 4.9 (roads.ts): a plank bridge on a road, its deck's top at 0.3, rails
+  // either side and a post down into the water; planks run across the way.
+  "bridge-x": [
+    B(0, 0.22, 0.08, 0.32, 0.08, 0.84, 0x8a6a44),
+    B(0.33, 0.22, 0.08, 0.33, 0.08, 0.84, 0x7a5c3a),
+    B(0.67, 0.22, 0.08, 0.33, 0.08, 0.84, 0x94744c),
+    B(0, 0.16, 0.06, 1, 0.07, 0.08, 0x5b3d24),
+    B(0, 0.16, 0.86, 1, 0.07, 0.08, 0x5b3d24),
+    B(0.44, 0.3, 0.07, 0.1, 0.38, 0.07, 0x6a4a2e),
+    B(0.44, 0.3, 0.86, 0.1, 0.38, 0.07, 0x6a4a2e),
+    B(0, 0.6, 0.075, 1, 0.05, 0.05, 0x8a6a44),
+    B(0, 0.6, 0.865, 1, 0.05, 0.05, 0x8a6a44),
+    B(0.45, -1.1, 0.15, 0.1, 1.28, 0.1, 0x4a3420),
+    B(0.45, -1.1, 0.75, 0.1, 1.28, 0.1, 0x4a3420),
+  ],
+  "bridge-z": [
+    B(0.08, 0.22, 0, 0.84, 0.08, 0.32, 0x8a6a44),
+    B(0.08, 0.22, 0.33, 0.84, 0.08, 0.33, 0x7a5c3a),
+    B(0.08, 0.22, 0.67, 0.84, 0.08, 0.33, 0x94744c),
+    B(0.06, 0.16, 0, 0.08, 0.07, 1, 0x5b3d24),
+    B(0.86, 0.16, 0, 0.08, 0.07, 1, 0x5b3d24),
+    B(0.07, 0.3, 0.44, 0.07, 0.38, 0.1, 0x6a4a2e),
+    B(0.86, 0.3, 0.44, 0.07, 0.38, 0.1, 0x6a4a2e),
+    B(0.075, 0.6, 0, 0.05, 0.05, 1, 0x8a6a44),
+    B(0.865, 0.6, 0, 0.05, 0.05, 1, 0x8a6a44),
+    B(0.15, -1.1, 0.45, 0.1, 1.28, 0.1, 0x4a3420),
+    B(0.75, -1.1, 0.45, 0.1, 1.28, 0.1, 0x4a3420),
+  ],
+  // A surveyor's peg with a red rag, where a road is marked out and not laid yet.
+  "road-peg": [B(0.46, 0, 0.46, 0.08, 0.55, 0.08, 0xd8c8a0), B(0.5, 0.42, 0.46, 0.16, 0.1, 0.03, 0xc0402e)],
   "fence-x": [B(0.45, 0, 0.45, 0.1, 0.42, 0.1, 0x6a4a2e), B(0, 0.28, 0.47, 1, 0.06, 0.06, 0x8a6a44), B(0, 0.12, 0.475, 1, 0.05, 0.05, 0x8a6a44)],
   "fence-z": [B(0.45, 0, 0.45, 0.1, 0.42, 0.1, 0x6a4a2e), B(0.47, 0.28, 0, 0.06, 0.06, 1, 0x8a6a44), B(0.475, 0.12, 0, 0.05, 0.05, 1, 0x8a6a44)],
   // 4.4.5 part B: a crater's strange ore and a dragon's gold, both shining.

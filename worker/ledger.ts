@@ -10,6 +10,11 @@
 // allowance. D1 runs one statement at a time, so two requests at the last
 // dollar cannot both pass. When the call returns, its real cost goes to
 // `spend` and the hold is settled, in one batch.
+//
+// 4.7: the month's spend is read from `spend_totals` (one row for the game,
+// one per invite, kept by triggers on `spend`: migrations/0020), not summed
+// from `spend`: the sum read every row of the month on each paid call. The
+// cron compares the totals with the ledger once a day (checkTotals).
 
 export type InviteStatus = "active" | "paused" | "revoked";
 
@@ -167,25 +172,30 @@ export async function relink(db: D1Database, id: string): Promise<string | null>
   return r.meta.changes ? secret : null;
 }
 
+// The month's spend of a scope ('*' for the game, else an invite id), as SQL:
+// one row of `spend_totals`, 0 before the month's first call.
+export function monthSpent(month: string, scope: string): string {
+  return `COALESCE((SELECT usd FROM spend_totals WHERE month = ${month} AND scope = ${scope}), 0)`;
+}
+
 // Holds `usd` for one call, or throws why it may not be made. The burst guard
 // counts requests, not calls: a spell that needs its description first holds
 // twice under the same request.
 export async function hold(db: D1Database, ledger: Ledger, call: string, usd: number, budget: number, now = Date.now()): Promise<number> {
   const p = ledger.payer;
   if (p.status === "paused") throw new LedgerError(402, "paused", "Your invite is paused for now. Everything already discovered still works.");
-  const start = monthStart(now);
   const guarded = p.invite !== "admin" && !ledger.burstFree;
   const r = await db
     .prepare(
       `INSERT INTO reservations (req, invite, call, at, usd)
        SELECT ?1, ?2, ?3, ?4, ?5
-       WHERE (SELECT COALESCE(SUM(usd), 0) FROM spend WHERE at >= ?6)
+       WHERE ${monthSpent("?6", "'*'")}
            + (SELECT COALESCE(SUM(usd), 0) FROM reservations WHERE settled = 0) + ?5 <= ?7
-         AND (?8 IS NULL OR (SELECT COALESCE(SUM(usd), 0) FROM spend WHERE invite = ?2 AND at >= ?6)
+         AND (?8 IS NULL OR ${monthSpent("?6", "?2")}
            + (SELECT COALESCE(SUM(usd), 0) FROM reservations WHERE settled = 0 AND invite = ?2) + ?5 <= ?8)
          AND (?9 = 0 OR (SELECT COUNT(DISTINCT req) FROM reservations WHERE invite = ?2 AND at >= ?10 AND req != ?1) < ?11)`,
     )
-    .bind(ledger.req, p.invite, call, now, usd, start, budget, p.cap, guarded ? 1 : 0, now - BURST.windowMs, BURST.requests)
+    .bind(ledger.req, p.invite, call, now, usd, monthKey(now), budget, p.cap, guarded ? 1 : 0, now - BURST.windowMs, BURST.requests)
     .run();
   if (r.meta.changes) {
     const id = Number(r.meta.last_row_id);
@@ -228,13 +238,12 @@ export async function settle(db: D1Database, ledger: Ledger, spent: { call: stri
 
 // Spent this month by one invite, open holds included.
 export async function spentBy(db: D1Database, invite: string, now = Date.now()): Promise<number> {
-  const start = monthStart(now);
   const row = await db
     .prepare(
-      `SELECT (SELECT COALESCE(SUM(usd), 0) FROM spend WHERE invite = ?1 AND at >= ?2)
+      `SELECT ${monthSpent("?2", "?1")}
             + (SELECT COALESCE(SUM(usd), 0) FROM reservations WHERE settled = 0 AND invite = ?1) AS total`,
     )
-    .bind(invite, start)
+    .bind(invite, monthKey(now))
     .first<{ total: number }>();
   return row?.total ?? 0;
 }
@@ -243,12 +252,78 @@ export async function spentBy(db: D1Database, invite: string, now = Date.now()):
 export async function monthTotals(db: D1Database, now = Date.now()): Promise<{ spent: number; held: number }> {
   const row = await db
     .prepare(
-      `SELECT (SELECT COALESCE(SUM(usd), 0) FROM spend WHERE at >= ?) AS spent,
+      `SELECT ${monthSpent("?1", "'*'")} AS spent,
               (SELECT COALESCE(SUM(usd), 0) FROM reservations WHERE settled = 0) AS held`,
     )
-    .bind(monthStart(now))
+    .bind(monthKey(now))
     .first<{ spent: number; held: number }>();
   return { spent: row?.spent ?? 0, held: row?.held ?? 0 };
+}
+
+// A total further than this from the ledger is drift: smaller gaps are the
+// rounding of adding the same reals in another order.
+export const DRIFT_USD = 0.01;
+
+export interface TotalsDrift {
+  month: string;
+  scope: string;
+  ledger: number;
+  total: number;
+}
+
+// The month's totals against the ledger, which is the truth (4.7). Reads the
+// month's `spend` once (the cron runs it once a day). A scope that is off by
+// more than DRIFT_USD is logged as an error, and the month's totals are then
+// rebuilt from the ledger in one batch, so a cap is never enforced for longer
+// than a day on a total the ledger contradicts. Returns what drifted.
+export async function checkTotals(db: D1Database, now = Date.now()): Promise<TotalsDrift[]> {
+  const month = monthKey(now);
+  const start = monthStart(now);
+  const d = new Date(start);
+  const end = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+  // One batch: both reads see the same ledger.
+  const [ledger, totals] = await db.batch<{ scope: string | null; usd: number }>([
+    db.prepare("SELECT invite AS scope, SUM(usd) AS usd FROM spend WHERE at >= ? AND at < ? GROUP BY invite").bind(start, end),
+    db.prepare("SELECT scope, usd FROM spend_totals WHERE month = ?").bind(month),
+  ]);
+  const want = new Map<string, number>([["*", 0]]);
+  for (const r of ledger.results) {
+    want.set("*", (want.get("*") ?? 0) + r.usd);
+    if (r.scope !== null) want.set(r.scope, r.usd);
+  }
+  const have = new Map(totals.results.map((r) => [r.scope ?? "", r.usd]));
+  const drift: TotalsDrift[] = [];
+  for (const scope of new Set([...want.keys(), ...have.keys()])) {
+    const a = want.get(scope) ?? 0;
+    const b = have.get(scope) ?? 0;
+    if (Math.abs(a - b) > DRIFT_USD) drift.push({ month, scope, ledger: a, total: b });
+  }
+  if (drift.length) {
+    console.error(JSON.stringify({ guard: "spend-totals", drift }));
+    await rebuildTotals(db, now);
+  }
+  return drift;
+}
+
+// The month's totals written again from the ledger, in one batch (a
+// transaction: a call settled meanwhile is counted once, by the trigger or by
+// the sum).
+export async function rebuildTotals(db: D1Database, now = Date.now()): Promise<void> {
+  const month = monthKey(now);
+  const start = monthStart(now);
+  const d = new Date(start);
+  const end = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+  await db.batch([
+    db.prepare("DELETE FROM spend_totals WHERE month = ?").bind(month),
+    db
+      .prepare("INSERT INTO spend_totals (month, scope, usd) SELECT ?1, '*', COALESCE(SUM(usd), 0) FROM spend WHERE at >= ?2 AND at < ?3")
+      .bind(month, start, end),
+    db
+      .prepare(
+        "INSERT INTO spend_totals (month, scope, usd) SELECT ?1, invite, SUM(usd) FROM spend WHERE at >= ?2 AND at < ?3 AND invite IS NOT NULL GROUP BY invite",
+      )
+      .bind(month, start, end),
+  ]);
 }
 
 // Holds a request died with are turned into spend at their estimate (the call

@@ -1,40 +1,105 @@
 # Lint (the simulation never imports the view, no import cycles), check
-# formatting, typecheck and build everything, the risk and gate checks, then
-# the Worker itself under wrangler dev with a stub Claude: invites, the budget
-# caps and the bug guard.
+# formatting, typecheck and build everything, the risk and gate checks, the
+# simulation's tests (npm test), then the Worker itself under wrangler dev with
+# a stub Claude: invites, the budget caps and the bug guard.
 #
-# 4.5.2: `npm test` (the simulation: 19 of these 23 minutes) does not run here.
-# The free 2,000 Actions minutes of a private repository were spent at about
-# 400 a day, mostly on it. It runs in Claude Code sessions, which cost no
-# Actions minutes: the builder before it asks for a review, the reviewer on the
-# head commit (its verdict says tests=pass, and the Gate requires it), and the
-# planner's night run on main (docs/DAILY.md). On pull requests only; main is
-# checked by the Deploy workflow, which calls this one. A draft or a docs only
-# change runs the light steps and skips test:worker. A newer push cancels the
-# run it replaces.
+# 2026-11-11, the lighter pipeline (the owner's "lighter pipeline: yes", 10
+# November): the repository is public, so Actions minutes are free, and npm test
+# runs here again, on the merge result: the pull request's head merged with
+# main. Under pull_request that is GitHub's own merge commit; a run the Gate
+# starts merges main in itself, in the runner, and pushes nothing. The run says
+# which main it tested ("Tested with main", a notice and a log line); the Gate
+# merges only what CI tested with the main of the moment, and when main moved it
+# starts this workflow again instead of pushing a catch-up to the branch. So a
+# merge of main needs no new review, and a workflow change on main stalls no
+# branch. On main itself (the Deploy workflow calls this one) npm test is not run
+# again: the merge result was tested, and the night's run on main is the backstop.
+# A draft or a docs only change runs the light steps. A newer push cancels the run
+# it replaces.
 #
 # 2026-11-06, the repository is public: this workflow runs a pull request's own
 # code, a fork's included once the owner approves the run, so it names no
-# secret and its token only reads (scripts/workflows-test.mjs fails if a job
-# here gains a secret without the same-repository guard).
+# secret, its token only reads, and the checkout keeps no credentials
+# (scripts/workflows-test.mjs fails if a job here gains a secret without the
+# same-repository guard).
+#
+# The Gate starts it with workflow_dispatch on main (main's copy of this file,
+# whatever the branch holds), naming the pull request and the head it expects.
+# The run checks that this head is the pull request's head right now, from the
+# API, reads the base and the draft state there, and checks out that commit. Its
+# name carries the pull request and the head, which is how the Gate finds it.
 name: CI
+# Quoted: an unquoted " #" would start a YAML comment and cut the line (review of #117).
+run-name: "${{ inputs.pr && format('CI for #{0} at {1}', inputs.pr, inputs.sha) || github.event.pull_request.title }}"
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_call:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Pull request number (the Gate's merge queue)"
+        required: true
+      sha:
+        description: "The head commit the Gate expects"
+        required: true
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 permissions:
   contents: read
+  pull-requests: read
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
+      # Started by the Gate: this commit must be the head it named, of a pull request of this repository.
+      # Keyed on the input, never on the event's name: the Deploy workflow calls this one, and in a called
+      # workflow github.event_name is the caller's ("workflow_dispatch" when the Gate starts a deploy).
+      - name: the pull request the Gate named
+        id: pr
+        if: inputs.pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ inputs.pr }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          case "$PR" in ''|*[!0-9]*) echo "not a pull request number: $PR"; exit 1;; esac
+          case "$SHA" in *[!0-9a-f]*|'') echo "not a commit: $SHA"; exit 1;; esac
+          gh api "repos/$REPO/pulls/$PR" --jq '[.state, .head.sha, .head.repo.full_name, .base.ref, (.draft | tostring), .head.ref] | @tsv' > "$RUNNER_TEMP/pr.tsv"
+          IFS=$'\t' read -r state head repo base draft ref < "$RUNNER_TEMP/pr.tsv"
+          if [ "$state" != "open" ] || [ "$head" != "$SHA" ] || [ "$repo" != "$REPO" ]; then echo "#$PR is $state at $head from $repo: not this commit of this repository"; exit 1; fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "draft=$draft" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # Under a dispatch, the head the guard checked; else the event's own commit (a pull request's merge commit).
+          ref: ${{ inputs.sha || '' }}
+          persist-credentials: false
+      # The merge result: under pull_request the checkout is GitHub's merge commit (main first, the head
+      # second); under the Gate's dispatch main is merged in here. Nothing is pushed.
+      - name: merge with main
+        if: github.event_name == 'pull_request' || inputs.pr != ''
+        env:
+          DISPATCHED: ${{ inputs.pr }}
+          BASE: ${{ github.event.pull_request.base.ref || steps.pr.outputs.base }}
+        run: |
+          if [ -n "$DISPATCHED" ]; then
+            main=$(git rev-parse "origin/$BASE")
+            git -c user.name=ci -c user.email=ci@localhost merge --quiet --no-edit "$main"
+          elif git rev-parse --verify --quiet HEAD^2 >/dev/null; then
+            main=$(git rev-parse HEAD^1)
+          else
+            # A head that already held main: no merge commit, the main tested is the newest one under it.
+            main=$(git merge-base HEAD "origin/$BASE")
+          fi
+          git merge-base --is-ancestor "$main" "origin/$BASE"
+          echo "::notice title=Tested with main::$main"
+          echo "Tested with main: $main" | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -45,22 +110,24 @@ jobs:
         id: scope
         env:
           EVENT: ${{ github.event_name }}
-          DRAFT: ${{ github.event.pull_request.draft }}
-          BASE: ${{ github.event.pull_request.base.ref }}
+          DISPATCHED: ${{ inputs.pr }}
+          DRAFT: ${{ github.event.pull_request.draft || steps.pr.outputs.draft }}
+          BASE: ${{ github.event.pull_request.base.ref || steps.pr.outputs.base }}
         run: |
           full=true
-          if [ "$EVENT" = "pull_request" ]; then
+          if [ "$EVENT" = "pull_request" ] || [ -n "$DISPATCHED" ]; then
             changed=$(git diff --name-only "origin/$BASE...HEAD")
             other=$(printf '%s\n' "$changed" | grep -vE '^(docs/|\.claude/skills/)|\.md$|^\.claude/settings\.json$' || true)
             if [ "$DRAFT" = "true" ] || [ -z "$other" ]; then full=false; fi
           fi
           echo "full=$full" >> "$GITHUB_OUTPUT"
-          echo "Full run: $full" >> "$GITHUB_STEP_SUMMARY"
+          # In the log too: when GitHub lists the job without its steps, the Gate reads this line.
+          echo "Full run: $full" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: risk class
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || inputs.pr != ''
         env:
-          BASE: ${{ github.event.pull_request.base.ref }}
-          GITHUB_HEAD_REF: ${{ github.head_ref }}
+          BASE: ${{ github.event.pull_request.base.ref || steps.pr.outputs.base }}
+          GITHUB_HEAD_REF: ${{ github.head_ref || steps.pr.outputs.ref }}
         run: |
           # main's copy classifies the pull request, so it cannot grade itself.
           if git show "origin/$BASE:scripts/risk.mjs" > "$RUNNER_TEMP/risk.mjs" 2>/dev/null; then cp "$RUNNER_TEMP/risk.mjs" scripts/.risk-main.mjs; else cp scripts/risk.mjs scripts/.risk-main.mjs; fi
@@ -74,6 +141,10 @@ jobs:
         run: npm run build
       - name: risk and gate checks
         run: npm run test:risk
+      # The simulation's tests, on the merge result of a pull request (not again on main: see the top).
+      - name: test
+        if: steps.scope.outputs.full == 'true' && (github.event_name == 'pull_request' || inputs.pr != '')
+        run: npm test
       - name: test:worker
         if: steps.scope.outputs.full == 'true'
         run: npm run test:worker
