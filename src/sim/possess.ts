@@ -1,5 +1,7 @@
 import { abilitiesOf, enemyOf, fireAbility } from "./abilities";
-import { doChore, eats, mealFor, strikeNow, strikes, tradeFor } from "./goals";
+import { doChore, eats, jobOf, mealFor, strikeNow, strikes, tradeFor } from "./goals";
+import { bankFor, heapBank } from "./highwater";
+import { unpackLook } from "./villagers";
 import { life, mindOf, type AbilitySpec, type Mind } from "./kin";
 import { names } from "./social";
 import type { Creature } from "./creatures";
@@ -187,7 +189,7 @@ export function deedsOf(world: World, c: Creature, facing = c.hd): DeedButton[] 
   const k = life.kindOf(c);
   const out: DeedButton[] = [];
   if (strikes(c, k)) out.push({ id: "strike", verb: "Strike" });
-  const t = tradeFor(world, c, facing);
+  const t = banks(world, c, facing) ? { verb: "Build" } : tradeFor(world, c, facing);
   if (t) out.push({ id: "trade", verb: t.verb });
   if (mealFor(world, c, facing)) out.push({ id: "eat", verb: "Eat" });
   return out;
@@ -209,6 +211,14 @@ export function doDeed(world: World, what: Deed, facing: number): { done: string
     p.busy = world.time + STRIKE_SECONDS;
     return { done: `Struck the ${t.kind.split("#")[0]}` };
   }
+  // A builder at the edge of high water (highwater.ts) heaps earth there: it slows the water, never ends it.
+  const bank = what === "trade" ? banks(world, c, facing) : null;
+  if (bank) {
+    if (world.time < p.busy) return "busy";
+    if (!heapBank(world, bank)) return { missing: "The bank is as high as it can be" };
+    p.busy = world.time + 2;
+    return { done: "Banked the water with earth" };
+  }
   const found =
     what === "trade" ? tradeFor(world, c, facing) : eats(c, k) ? (mealFor(world, c, facing) ?? { verb: "Eat", missing: "Nothing to eat here" }) : null;
   if (!found) return null;
@@ -216,6 +226,12 @@ export function doDeed(world: World, what: Deed, facing: number): { done: string
   if ("missing" in found) return { missing: found.missing };
   p.busy = world.time + found.seconds;
   return { done: doChore(world, c, found) };
+}
+
+// A grown builder facing high water: the cells it would bank.
+function banks(world: World, c: Creature, facing: number): number[] | null {
+  if (c.kind !== "villager" || jobOf(c) !== "builder" || unpackLook(c.look).age !== "adult") return null;
+  return bankFor(world, c, facing);
 }
 
 // Let go: the creature's own mind takes over where it left off.
