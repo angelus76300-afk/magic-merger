@@ -625,6 +625,10 @@ function usePower(n: number): void {
   if (r === "nothing" && spec)
     powerNote = { text: POWER_NOTHING[spec.do] ?? `${POWER_WORDS[spec.do] ?? "That"}: nothing in reach`, until: performance.now() + 2200 };
   else if (r === "done" && spec) powerNote = POWER_DONE[spec.do] ? { text: POWER_DONE[spec.do], until: performance.now() + 2200 } : null;
+  else if (r === "cooling" && spec) {
+    const left = powersOf(engine.world, riding)[n]?.left ?? 0;
+    powerNote = { text: `${POWER_WORDS[spec.do] ?? "That"}: ready in ${Math.ceil(left)} s`, until: performance.now() + 1800 };
+  }
   if (r === "done" || r === "nothing") saveSoon();
   drawPowers();
   tellRider();
@@ -983,8 +987,9 @@ function placeFor(sort: "village" | "house" | "woods" | "shore" | "fire"): { x: 
   if (look?.become && engine && !riding) {
     const o0 = engine.view.orbit;
     const kind = look.become;
-    const who = engine.world.creatures
-      .filter((k) => !k.dead && k.kind.split("#")[0] === kind)
+    const w0 = engine.world;
+    const who = w0.creatures
+      .filter((k) => !k.dead && (kind === "power" ? powersOf(w0, k).length > 0 : k.kind.split("#")[0] === kind))
       .sort((a, b) => Math.hypot(a.x - o0.tx, a.y - o0.ty) - Math.hypot(b.x - o0.tx, b.y - o0.ty))[0];
     if (!who) return null;
     startBecome(who);
@@ -1014,6 +1019,7 @@ function placeFor(sort: "village" | "house" | "woods" | "shore" | "fire"): { x: 
     deeds: riding ? deedsOf(riding) : [],
     ...eyeStats,
     fov: o?.camera.fov ?? 0,
+    allCasts: casts,
     caption,
     rider: riding ? { kind: riding.kind, hp: Math.round(riding.hp), burning: riding.burning > 0, x: riding.x, y: riding.y } : null,
     trouble: engine?.world.trouble ? { stage: engine.world.trouble.stage, casts: engine.world.trouble.casts.length } : null,
