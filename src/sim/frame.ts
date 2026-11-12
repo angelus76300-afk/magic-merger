@@ -1445,6 +1445,8 @@ function mount(next: Engine): void {
   engine = next;
   // Weather is real on the player's island, never in a challenge.
   engine.world.weather = !scenario;
+  // Spells answer each other there too (4.12, reactions.ts), never in a challenge.
+  engine.world.reactions = !scenario;
   engine.runtime.setLibrary(library);
   engine.sound.muted = muted;
   unbind = engine.bindInput();

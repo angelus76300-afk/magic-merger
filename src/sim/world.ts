@@ -20,6 +20,7 @@ import type { Prop } from "./props";
 import type { Death, Mark, Village } from "./kin";
 import type { Road } from "./roads";
 import type { Site } from "./sites";
+import type { LightField, LightSource } from "./reactions";
 
 export const TICK = 1 / 30;
 export const AMBIENT = 15;
@@ -140,6 +141,15 @@ export class World {
   // Rain and snow do things on this island (weather.ts): on for the player's island, off for
   // challenges, test runs and scripts, which play the same under any sky. Not saved.
   weather = false;
+  // Spells answer each other (4.12, reactions.ts): creatures of fire carry fire, light and shadow
+  // are in the world, gusts move fire, smoke and water, ash is fertile, creatures meet by what they
+  // are. On for the player's island where weather is; off for challenges and the test run, which
+  // play as they were judged. Not saved, and neither is what follows: the lights and darkness spells
+  // put down, the field they make, and how long burnt ground stays fertile.
+  reactions = false;
+  lightSources: LightSource[] = [];
+  lightField: LightField | null = null;
+  fertile: Uint16Array | null = null;
   // The island needs you (troubles.ts): the trouble running now, how many
   // this island has had, when the next may start, and the stones villages
   // raised to the items that saved them. Saved.

@@ -6,6 +6,7 @@ import { addGas } from "./cells";
 import { igniteVoxels, stepVoxels } from "./voxels";
 import { WARD, stepWards, wardHit, warded } from "./wards";
 import { SPREADS, sprout, woodland } from "./ecology";
+import { ashGrowth, gust } from "./reactions";
 
 // The rules of the land. Spells set them in motion; these keep them going:
 // water runs downhill and freezes, fire spreads with the wind and leaves ash,
@@ -284,6 +285,12 @@ function stepFire(world: World, dt: number): void {
       burning = true;
       if (rng.next() < dt * 0.6) world.ground[i] = G.ASH;
     }
+    // 4.12: a strong wind blows a small fire out (it fans a big one: the spread below).
+    if (burning && world.reactions && f < 0.35 && wind.x * wind.x + wind.y * wind.y > 9 && rng.next() < dt * 1.5) {
+      fire[i] = 0;
+      addGas(world, i, S.SMOKE, 0.2);
+      continue;
+    }
     if (!burning) {
       fire[i] = f - dt * 2.5;
       if (fire[i] < 0.02) fire[i] = 0;
@@ -484,6 +491,8 @@ function stepGrowth(world: World): void {
     if (t < 2 || t > 45) continue;
     const g = ground[i];
     const j = neighbor(world, i);
+    // 4.12: ash is fertile, and a burnt forest comes back faster (reactions.ts).
+    if (world.reactions && ashGrowth(world, i, j, rng.next())) continue;
     // An island with flora (4.4.5) grows back by succession, its own way.
     if (world.flora) {
       floraGrowth(world, i, j, g);
@@ -541,6 +550,9 @@ function neighbor(world: World, i: number): number {
 export function explode(world: World, x: number, y: number, r: number, power: number): void {
   const { w, rng } = world;
   let blocked = false;
+  // 4.12: the blast's breath first blows out small fires, fans big ones, pushes smoke and
+  // splashes water out of the crater (reactions.ts); then the blast lights its own.
+  if (world.reactions) gust(world, x, y, r * 1.4, Math.min(2, power));
   forDisc(world, x, y, r, (i, k) => {
     // A ward against harm shrugs off the blast: the land and houses inside stay.
     if (warded(world, i, WARD.harm)) {
