@@ -53,6 +53,33 @@ An experiment the owner asked for: one session leads and builds, instead of a pl
 
 The owner's "rules: lead" (12 November, about 11:20 UTC): `CLAUDE.md` has a section "Who leads" that makes the lead session the planner's replacement everywhere the rules say "the planner". The three questions of 11 November are settled: "rules: lead", "fresh: no" (this session carries on; a successor is started only when the owner says), and the watch stays on Haiku in its own standing session.
 
+### State on 13 November, about 15:30 UTC (handover to a fresh lead)
+
+The Opus lead (`session_01NxvtAnVeeSftkua711EPa8`) passed 560,000 tokens of context and proposes a fresh lead. Read this section first.
+
+**Live since 03:00 UTC**: the looks measured (#145, owner "looks measure: ok"); spells that answer each other (#146: fire creatures, light and shadow with a per-tick light budget, blasts moving fire and water, growth on ash, natures hunting each other, opposites transforming; only on the player's island, never in challenges); the eye view's trees (#148: slide round trunks, walk through crowns, near trees shrink smoothly, cliffs still stop you); smarter spells (#147, red, owner "smarter spells: yes" recorded with `owner-yes`: w.here, w.wouldHurt, w.nearest, w.fights, w.nature, a signature rule and neighbours of the same kind for the writer, a soft "smart" check).
+
+**The owner's words since 03:00 UTC, all in force**: "looks measure: ok"; "budget: rewrite first" (the nightly rebuild `trig_01HRc4vbeXeuFqGFUuSAgbzX` is paused, enabled false, until the 143-item rewrite is done); "eyes: better but trees blocked me too much" (fixed, #148); "smarter spells: yes"; on looks: depth of field matters more than bloom, "only kick in as you zoom a lot, we shouldn't have it on a full island view", "a bit strong, make the in-focus zone bigger"; "I do not like the cone as they should be small cube voxels", "maybe have a way to convert the different shapes to little cubes"; "make it less minecrafty and refine the transition between heights and different blocks"; houses "are still ugly". 14 reference pictures sent (castles, a cottage island, a floating ruin, dark city with domes, a voxel terrain map, a camp with trees and a boat); the cottage island (the owner's picture 16) is the target: one small cube size for land, house, trees and props; grass lip over a dirt cliff; sand and foam rings; water banded by depth; tiled roofs, timber frames, recessed windows. Style notes are in `docs/LOOKS.md` (on #150).
+
+**In flight**:
+
+- #149 "Looks: sun shadows, colour, glow at night, a miniature's blur" (green; `claude/look-render`). The reviewer (session "Review #149", `session_01NxvtAmhew78e6RptFKaJ5g`) blocked twice on: the description says the blur grows over the whole island (wrong), and the HUD switch row covers the Watch button. Its helper is fixing both. Then ask the same reviewer, then the Gate.
+- #150 "Looks: new shapes" (green; `claude/look-tools`): shapes drawn as quarter-cell cubes, 160 parts, far looks coarser, old looks byte-identical. In review (session "Review #150", `session_01NxvtAnZvd59Tkobk7bkaYx`).
+- #151 the land in quarter-cell sub-voxels near the camera (`claude/look-terrain`, draft): its helper is building; switches off must give main's exact mesh.
+- The owner was told the demos are "the technique works, not beautiful yet", and promised: a target scene (one cottage, tree and shore built by hand to match picture 16, then a test of an eighth-cell cube) once the land lands; village houses, trees, fences, wells and boats redrawn in the same small cubes; a fix so a look never lands across a house (move it to the nearest free spot within reach; `propBounds` before `addProp`).
+
+**Waiting, in this order**: the rewrite of the 143 wrong spells, within November's refresh budget ($4.26 left), with the smarter writer, first a batch of 20 judged old against new, after a test that 43 lab fixtures give identical fingerprints (the reviewer of #147 found that claim in no test); the white squares that float over villages in every frame (pre-existing, found by the light helper); the village fire check that cannot fail (counts net houses, from the review of #146); the HUD text overflowing at 344 wide.
+
+**Asked of the owner, open**: "flood:" (too easy, fine, too hard), "wide:" (the wide shot on its own or after Watch only), "looks: yes, up to $25" before any paid looks pilot, two minutes with the look switches on the Fold once #149 is live.
+
+**Learned**:
+
+- A planning step leaves the session in plan mode after the plan is approved; `create_session` with auto then fails ("parent is plan"). The owner switches back with the mode chip.
+- Red needs the owner's yes by name after the concept says why it is red; reading a general "continue" as a yes was wrong and was corrected before merge.
+- Helpers pushing unchecked WIP burn Actions minutes: tell every helper to run format, lint, typecheck and build before each push, and to push WIP at most hourly.
+- Check a helper's reported head with `git ls-remote` before asking a reviewer: one helper named the wrong commit.
+- Look at a helper's frames before showing them to the owner: the first grade turned grass neon.
+
 ### State on 13 November, about 03:00 UTC (the Opus lead, `session_01NxvtAnVeeSftkua711EPa8`)
 
 **Live since the switch**: high water (#134, the credit rule "each cast is thanked only for what its own program changed"); the eye view's second pass (#141); the island as a map (#142, roads half laid drawn thin after a reading test found false joins); thin parts drawn at 0.05 instead of dropped (#143, found by the nightly judge). Merged, nothing players see: the spell measurement (#139).
