@@ -1023,6 +1023,8 @@ export class VoxelView {
     const fogK = this.sky.fog;
     const dim = 1 - grey;
     for (const m of this.lit) m.color.setRGB(day.r * dim, day.g * dim, day.b * dim);
+    // Smoke, steam and dust are lit by the day as the land is: grey at night, not white.
+    (this.dullPoints.material as ShaderMaterial).uniforms.tint.value.setRGB(day.r * dim, day.g * dim, day.b * dim);
     this.lightTheDark(Math.min(0.95, dark), visuals);
     // The sky is repainted only when it changes by a visible step.
     const shade = Math.round(Math.min(0.95, dark) * 20) / 20;
@@ -2112,7 +2114,10 @@ function glowTexture(): CanvasTexture {
   return new CanvasTexture(c);
 }
 
-// Particles as screen facing points, sized by distance, faded by their life.
+// Particles as screen facing points, sized by distance, faded by their life. Those that do not
+// glow (chimney smoke, a hot spring's steam, a waterfall's spray, dust and chips) are soft round
+// puffs lit by the day: they were drawn as hard opaque squares, white even at night, which read
+// as white boxes floating over every village (the lead's review, 13 November).
 function pointCloud(capacity: number, glow: boolean, texture: CanvasTexture): Points {
   const geo = new BufferGeometry();
   geo.setAttribute("position", new BufferAttribute(new Float32Array(capacity * 3), 3));
@@ -2120,12 +2125,17 @@ function pointCloud(capacity: number, glow: boolean, texture: CanvasTexture): Po
   geo.setAttribute("size", new BufferAttribute(new Float32Array(capacity), 1));
   geo.setDrawRange(0, 0);
   const material = new ShaderMaterial({
-    uniforms: { scale: { value: 400 }, map: { value: texture } },
+    uniforms: { scale: { value: 400 }, map: { value: texture }, tint: { value: new Color(1, 1, 1) } },
     vertexShader: `attribute float size; attribute vec4 color; varying vec4 vColor; uniform float scale;
       void main() { vColor = color; vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_PointSize = max(2.0, size * scale / -mv.z); gl_Position = projectionMatrix * mv; }`,
     fragmentShader: glow
       ? `uniform sampler2D map; varying vec4 vColor; void main() { vec4 t = texture2D(map, gl_PointCoord); gl_FragColor = vec4(vColor.rgb, vColor.a * t.a); }`
-      : `varying vec4 vColor; void main() { gl_FragColor = vColor; }`,
+      : `uniform vec3 tint; varying vec4 vColor; void main() {
+          vec2 q = gl_PointCoord * 2.0 - 1.0;
+          float d = dot(q, q);
+          if (d > 1.0) discard;
+          gl_FragColor = vec4(vColor.rgb * tint, vColor.a * (1.0 - smoothstep(0.2, 1.0, d)));
+        }`,
     transparent: true,
     depthWrite: false,
     ...(glow ? { blending: AdditiveBlending } : {}),

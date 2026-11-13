@@ -57,11 +57,11 @@ export const PRESETS: Record<Quality, Record<LooksFlag, boolean>> = {
 };
 
 // The most device pixels per CSS pixel each level draws (the Fold folded has
-// about 2.6). Low keeps the cap the game had before the looks; medium draws
-// fewer pixels; high draws as many as before, and lowers them only when frames
-// are actually late (LATE_ONLY), never because the drawing took long while the
-// frames kept their cadence.
-export const PIXEL_CAPS: Record<Quality, number> = { low: 2, medium: 1.5, high: 2 };
+// about 2.6): 2 at every level, as the game had before the looks (the owner
+// wants it finer, so the level a device starts at must not get coarser). High
+// alone lowers them only when frames are actually late (LATE_ONLY), never
+// because the drawing took long while the frames kept their cadence.
+export const PIXEL_CAPS: Record<Quality, number> = { low: 2, medium: 2, high: 2 };
 export const LATE_ONLY: Record<Quality, boolean> = { low: false, medium: false, high: true };
 
 // The view's pixel density after a second of frames (view.ts adapt). avg: the

@@ -124,8 +124,8 @@ export function looksChecks(check: Check): void {
   check("the depth of field shows at most two thirds of the blur", FOCUS_MAX > 0.6 && FOCUS_MAX < 0.7, `${FOCUS_MAX}`);
 
   // Finer pixels (the owner: "the render is finer"): high draws up to 2 device pixels a CSS pixel
-  // and smooths edges, medium up to 1.5, low as before; high lowers its pixels only when frames are late.
-  check("high draws at up to 2 pixels, medium 1.5, low as before", PIXEL_CAPS.high === 2 && PIXEL_CAPS.medium === 1.5 && PIXEL_CAPS.low === 2);
+  // at every level, and high smooths edges and lowers its pixels only when frames are late.
+  check("every level draws up to 2 pixels, none coarser than before", PIXEL_CAPS.high === 2 && PIXEL_CAPS.medium === 2 && PIXEL_CAPS.low === 2);
   check("high smooths edges, low and medium do not", PRESETS.high.aa && !PRESETS.medium.aa && !PRESETS.low.aa);
   const busy = { ratio: 2, max: 2, avg: 33, draw: 35, fast: false, quiet: 20_000 };
   check(
@@ -135,7 +135,7 @@ export function looksChecks(check: Check): void {
   );
   check("on low a long draw still lowers them, as before", nextPixelRatio({ ...busy, lateOnly: LATE_ONLY.low }).ratio === 1.75);
   check("on high late frames lower them", nextPixelRatio({ ...busy, avg: 60, lateOnly: true }).ratio === 1.75);
-  check("going to medium brings 2 down to its cap at once", nextPixelRatio({ ...busy, draw: 5, max: 1.5, lateOnly: false }).ratio === 1.5);
+  check("a cap below the density brings it down at once", nextPixelRatio({ ...busy, draw: 5, max: 1.5, lateOnly: false }).ratio === 1.5);
   check(
     "they come back up only after quiet frames with room",
     nextPixelRatio({ ratio: 1.5, max: 2, avg: 33, draw: 5, fast: false, quiet: 20_000, lateOnly: true }).ratio === 1.75 &&

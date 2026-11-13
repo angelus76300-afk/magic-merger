@@ -10,8 +10,9 @@ their cadence.
   at full resolution, nine taps a pixel, in the last pass of `looks.ts`. It
   needs the frame drawn into a texture first; when bloom or the depth of field
   already do that, it adds no pass.
-- Pixel caps per level (`PIXEL_CAPS`): high up to 2 device pixels per CSS
-  pixel (the Fold folded has about 2.6), medium up to 1.5, low 2 as before.
+- Pixel caps per level (`PIXEL_CAPS`): 2 device pixels per CSS pixel at every
+  level (the Fold folded has about 2.6), as before; the owner wants it finer, so
+  the level a device starts at (medium) does not get coarser.
 - On high the density drops only when frames are actually late (`LATE_ONLY`,
   `nextPixelRatio`): a long draw with frames on time keeps the pixels. Low and
   medium keep the old rule (late frames, or a draw over 30 ms).
@@ -34,8 +35,17 @@ JavaScript per frame (p50):
 | off (low) | 3.4 ms | 3.3 ms      | 2.7 ms        | 0                      |
 | `aa`      | 3.5 ms | 3.4 ms      | 2.8 ms        | 1 (none more with DoF) |
 
-The pixel caps change no JavaScript; they change the pixels the GPU fills. At
-390x844 a cap of 2 is 1.32 million pixels a frame, 1.5 is 0.74 million (56%);
-at 344x882 (the Fold folded), 1.21 and 0.68 million. Medium, the level a device
-starts at, used to draw at 2: it now draws 44% fewer pixels, and high as many
-as before. The late-only rule can be judged only on the phone.
+The pixel caps are as before (2), so they change neither the JavaScript nor
+the pixels filled. The late-only rule on high can be judged only on the phone.
+
+## The white squares over villages
+
+They were chimney smoke (and a hot spring's steam, a waterfall's spray, dust):
+particles that do not glow were drawn as hard, opaque, untinted squares, so
+each new puff showed as a white box over a house, day and night, and bloom made
+it glow. They were meant to be soft puffs that rise and fade. They are now
+round, soft-edged and lit by the day (bluish grey at night), in `view.ts`
+`pointCloud`. `scripts/puff-proof.mjs` draws one puff alone and reads the
+pixels: the corner of its square must be untouched, its middle must show, and
+at night it must not be white; it fails on the old squares. Frames before (left)
+and after (right), high preset: `puffs-village-{day,night}-{390x844,344x882}-before-after.png`.
