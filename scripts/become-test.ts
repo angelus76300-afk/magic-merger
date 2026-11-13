@@ -856,6 +856,22 @@ function driveChecks(check: Check, world: World, rt: Runtime): void {
     world.setCover(ti, C.NONE);
   }
 
+  // 21c. A tree on a cliff is still a cliff (the review of 13 November: a tree let the player climb a 3 high step).
+  {
+    const ti = world.idx(at.x0 + 10, at.cl);
+    world.setCover(ti, C.TREE);
+    const v = put("villager", at.x0 + 3, at.cl);
+    v.x = at.x0 + 3;
+    v.y = at.cl + 0.45;
+    awake(v);
+    push(world, 1, 0);
+    run(world, rt, 1.2, () => awake(v));
+    const x = v.x - (at.x0 + 10);
+    check("drive: a tree on a 3 high step does not let the player climb it", x < 0, `${x.toFixed(2)} cells past the step`);
+    gone(v);
+    world.setCover(ti, C.NONE);
+  }
+
   // 22. Strafing: in its eyes, looking along +x, the stick to the right walks it to the right of the
   // look at once (+y), its body turned to face where it goes; the look is the player's and does not move.
   {

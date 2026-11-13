@@ -89,13 +89,26 @@ const FEEL = 0.3;
 // creature walks through the crown and the leaves at its foot, and is stopped only by the trunk, a
 // post of this radius at the cell's middle. It slides round it along the tangent. Every other
 // creature keeps the whole cell (blocked() in creatures.ts is unchanged).
-export const TRUNK = 0.3;
+export const TRUNK = 0.2;
 
-// Is this point of a ridden walker in the crown of a tree, clear of its trunk? (creatures.ts keeps it
-// out of blocked cells where it stands; a crown is not one.)
-export function inCrown(world: World, x: number, y: number): boolean {
+// What blocked() says of a cell with its tree taken away: the cliff, the water and the lava still hold
+// (a tree on a cliff must not make it a stair). The cover is put back at once.
+export function groundBlocked(world: World, x: number, y: number, c: Creature, k: CreatureKind, fx: number, fy: number, blocked: Blocked): boolean {
+  const i = world.idx(x, y);
+  const was = world.cover[i];
+  world.cover[i] = C.NONE;
+  try {
+    return blocked(world, x, y, c, k, fx, fy);
+  } finally {
+    world.cover[i] = was;
+  }
+}
+
+// Is this point of a ridden walker in the crown of a tree, clear of its trunk and of any cliff or water?
+// (creatures.ts keeps it out of blocked cells where it stands; a crown is not one.)
+export function inCrown(world: World, x: number, y: number, c: Creature, k: CreatureKind, fx: number, fy: number, blocked: Blocked): boolean {
   if (!world.inside(x, y) || world.cover[world.idx(x, y)] !== C.TREE) return false;
-  return Math.hypot(x - Math.round(x), y - Math.round(y)) >= TRUNK;
+  return Math.hypot(x - Math.round(x), y - Math.round(y)) >= TRUNK && !groundBlocked(world, x, y, c, k, fx, fy, blocked);
 }
 
 type Blocked = (world: World, x: number, y: number, c: Creature, k: CreatureKind, fx?: number, fy?: number) => boolean;
@@ -205,7 +218,8 @@ export function drive(
     // Its own cell never stops it (a tree grown where it stands is walked out of), as in steer.ts.
     if (Math.round(px) === Math.round(c.x) && Math.round(py) === Math.round(c.y)) return true;
     // A tree: only the trunk stops it.
-    if (!banks && world.inside(px, py) && world.cover[world.idx(px, py)] === C.TREE) return trunkOf(px, py) === null;
+    if (!banks && world.inside(px, py) && world.cover[world.idx(px, py)] === C.TREE)
+      return trunkOf(px, py) === null && !groundBlocked(world, px, py, c, k, c.x, c.y, blocked);
     return !blocked(world, px, py, c, k, c.x, c.y);
   };
   const n = Math.ceil(wanted / 0.25);

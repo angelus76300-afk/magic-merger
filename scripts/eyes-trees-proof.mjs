@@ -5,7 +5,7 @@
 //   npm run build && node scripts/eyes-trees-proof.mjs <out dir> <tag> [344x882] [seed]
 // Exits 1 when the branch's two claims fail: it walks at least 1.5 times as far in the wood as the
 // numbers in EXPECT_MIN_BEFORE_FACTOR say is needed (checked against a number given by BEFORE=<cells>),
-// and trees within 2.5 cells of the eye are drawn small.
+// and trees within 3 cells of the eye are drawn smaller.
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { startLocalGame } from "./local-game.mjs";
@@ -119,7 +119,7 @@ try {
   );
   if (BEFORE !== null)
     expect("in 10 s in the wood the thumb walks it at least 1.5 times as far as before", net >= BEFORE * 1.5, `${net.toFixed(1)} cells, before ${BEFORE}`);
-  expect("trees within 2.5 cells of the eye are drawn small", faded > 0, `${faded} trees`);
+  expect("trees within 3 cells of the eye are drawn smaller", faded > 0, `${faded} trees`);
 } finally {
   await browser.close();
   game.stop();

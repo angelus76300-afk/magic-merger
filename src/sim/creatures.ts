@@ -825,7 +825,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     const rim = (x: number, y: number) => x < 3 || y < 3 || x > world.w - 4 || y > world.h - 4;
     if (
       rider &&
-      ((blocked(world, c.x, c.y, c, k, ox, oy) && !inCrown(world, c.x, c.y)) || (rim(c.x, c.y) && !rim(ox, oy))) &&
+      ((blocked(world, c.x, c.y, c, k, ox, oy) && !inCrown(world, c.x, c.y, c, k, ox, oy, blocked)) || (rim(c.x, c.y) && !rim(ox, oy))) &&
       !blocked(world, ox, oy, c, k, ox, oy)
     ) {
       c.x = ox;
