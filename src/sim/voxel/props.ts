@@ -117,9 +117,17 @@ export class PropModels {
 function place(world: World, p: Prop, lit: { pos: number[]; col: number[] }, glow: { pos: number[]; col: number[] }): void {
   const cx = Math.max(0, Math.min(world.w - 1, Math.round(p.x)));
   const cy = Math.max(0, Math.min(world.h - 1, Math.round(p.y)));
-  const ground = columnTop(world, cy * world.w + cx);
-  const ox = p.x + 0.5 - world.w / 2;
-  const oz = p.y + 0.5 - world.h / 2;
+  propMesh(p, columnTop(world, cy * world.w + cx), p.x + 0.5 - world.w / 2, p.y + 0.5 - world.h / 2, lit, glow);
+}
+
+export interface MeshArrays {
+  pos: number[];
+  col: number[];
+}
+
+// One prop's faces, turned about its center and standing on `ground`, its
+// center at (ox, oz) in the view: the lit parts in `lit`, what shines in `glow`.
+export function propMesh(p: Prop, ground: number, ox: number, oz: number, lit: MeshArrays, glow: MeshArrays): void {
   const c = Math.cos(p.turn);
   const s = Math.sin(p.turn);
   for (const b of p.boxes) {
