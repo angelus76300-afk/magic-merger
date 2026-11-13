@@ -12,6 +12,8 @@ Magic is drawn in a second language: particles, blocks drifting off, glowing sea
 
 ## Rules
 
+0. **One small cube size for everything.** Objects and land are made of the same cube, a quarter of a land cell (the owner, 13 November: "they should be small cube voxels"). A look that uses any new field is drawn as these cubes: a cone is a stepped spire, a dome a stepped shell, a turned part a staircased block. Lay parts on the quarter grid (0, 0.25, 0.5 ...) so edges land where you mean them.
+
 1. **Small parts against the object.** A tower is 40 to 80 small steps tall, so trim, windows and ivy can be seen. Detail lives in parts of 0.05 to 0.3 of a cell.
 2. **Silhouette first.** Crenellations, cone roofs, spires, arches, stepped bases. Never a plain box on top.
 3. **Three to five tones of one hue per material, plus one accent.** Pink roofs on beige stone; cyan glow on grey stone and green.
@@ -36,15 +38,16 @@ A part is `[x, y, z, w, d, h, color, ...]` or `{x, y, z, w, d, h, color, ...}`, 
 | `grain`    | `true` (0.08) or 0 to 0.3: each face cut in tiles of about half a cell, each its own tone. |
 
 - A wedge is full height on its west side and slopes down to nothing on its east side. Two wedges back to back, one turned with `rz: 180`, make a roof.
-- A cyl and a cone have eight sides; a dome is half a sphere with eight sides and three rings.
+- Every part of such a look is filled into quarter-cell cubes. A part thinner than a cube is drawn one cube thick. A later part paints over an earlier one: put windows, doors and trim after the wall they sit on.
+- Roofs read best as rows of tile cubes with a darker eave row and ridge; walls as a timber frame in a contrasting colour; windows set one cube behind the frame; greenery hanging off edges (the reference cottage).
 - A model keeps 160 parts.
 - Example, a tower: `[-0.5, -0.5, 0, 1, 1, 3, "#b8ab94", "cyl", "grain"]`, then a cone roof `[-0.6, -0.6, 3, 1.2, 1.2, 1.2, "#c8606a", "cone"]`.
 
 ## Cost
 
-Triangles per part: box 10, wedge 6, cyl 22, cone 8, dome 40 (a few more when a part is off the ground or tilted: it shows its underside). Grain cuts each four-sided face into up to 4 by 4 tiles, two triangles each.
+Faces of cubes that touch, match in colour and share their corner shade are merged, so a flat wall of one colour costs a few triangles. Grain gives every cube its own tone, so a grainy face cannot merge: use it on stone, grass and roofs, not on everything.
 
-The island draws its props within 90,000 triangles, the looks nearest the camera first. Past that, a far look draws its 24 largest parts. A look of 160 domes with grain is expensive: draw large surfaces with few parts and grain, and spend parts on the silhouette.
+The island draws its props within 90,000 triangles, the looks nearest the camera first. Past that, a far look is drawn with cubes twice the size (a stored look of plain boxes draws its 24 largest parts). A look of 160 domes with grain is expensive: draw large surfaces with few parts and grain, and spend parts on the silhouette.
 
 ## Honest limits
 

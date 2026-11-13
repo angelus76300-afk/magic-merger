@@ -86,43 +86,56 @@ export function towerBefore(): Part[] {
 // --- Cottage with a well and barrels ----------------------------------------------------
 
 const WALL = "#ecdcbc";
-const BEAM = "#6b4a2b";
+const BEAM = "#8a4a2e";
 const TILE = "#b5523b";
+const TILE_L = "#c4603f";
+const TILE_D = "#8c3a2a";
 const WOOD = "#8a5a2a";
 
 export function cottageAfter(): Part[] {
+  // Laid on the quarter-cell voxel grid, as the reference cottage (image 16): a timber frame in a
+  // darker colour than the wall, windows set back behind the frame, a roof of tile rows with a
+  // darker eave row and ridge, greenery hanging off the edges.
+  const roof: Part[] = [];
+  for (let i = 0; i < 7; i++) {
+    const tone = i === 0 ? TILE_D : i % 2 ? TILE : TILE_L;
+    roof.push([-1.75 + i * 0.25, -1.0, 1.75 + i * 0.25, 0.25, 2.0, 0.5, tone, { grain: 0.06 }]);
+    roof.push([1.5 - i * 0.25, -1.0, 1.75 + i * 0.25, 0.25, 2.0, 0.5, tone, { grain: 0.06 }]);
+  }
   return [
-    // A low stone footing, then the walls.
-    [-1.35, -1.0, 0, 2.7, 2.0, 0.25, "#9a948a", "grain"],
-    [-1.25, -0.9, 0.25, 2.5, 1.8, 1.25, WALL, { grain: 0.05 }],
-    // Timber frame: corner posts, a beam round the top, braces.
-    ...[
-      [-1.3, -0.95],
-      [1.18, -0.95],
-      [-1.3, 0.83],
-      [1.18, 0.83],
-    ].map(([x, y]): Part => [x, y, 0.25, 0.12, 0.12, 1.25, BEAM]),
-    [-1.3, 0.85, 1.38, 2.6, 0.1, 0.12, BEAM],
-    [-1.3, -0.95, 1.38, 2.6, 0.1, 0.12, BEAM],
-    [-0.75, 0.88, 0.55, 0.08, 0.06, 0.9, BEAM, { ry: 35 }],
-    [0.65, 0.88, 0.55, 0.08, 0.06, 0.9, BEAM, { ry: -35 }],
-    // Gables, then the roof: two wedges back to back, eaves out past the walls, a ridge beam.
-    [-1.25, -0.9, 1.5, 1.25, 1.8, 0.95, WALL, "wedge", { rz: 180 }],
-    [0, -0.9, 1.5, 1.25, 1.8, 0.95, WALL, "wedge"],
-    [-1.55, -1.15, 1.42, 1.55, 2.3, 1.12, TILE, "wedge", { rz: 180, grain: 0.1 }],
-    [0, -1.15, 1.42, 1.55, 2.3, 1.12, TILE, "wedge", { grain: 0.1 }],
-    [-0.08, -1.2, 2.5, 0.16, 2.4, 0.12, "#8c3a2a"],
-    // A chimney with a cap.
-    [0.55, -0.5, 1.9, 0.32, 0.32, 1.0, "#8c7c6c", "grain"],
-    [0.5, -0.55, 2.9, 0.42, 0.42, 0.08, "#6c5c50"],
-    // The door (arched), two windows lit warm, a step.
-    [-0.25, 0.9, 0.25, 0.5, 0.06, 0.7, "#5a3b22"],
-    [-0.25, 0.68, 0.92, 0.5, 0.5, 0.06, "#5a3b22", "cyl", { rx: 90 }],
-    [-0.3, 0.96, 0, 0.6, 0.3, 0.25, "#9a948a"],
-    [-1.0, 0.9, 0.7, 0.4, 0.05, 0.4, "#ffd37a", "glow"],
-    [0.6, 0.9, 0.7, 0.4, 0.05, 0.4, "#ffd37a", "glow"],
-    [-1.05, 0.93, 0.66, 0.5, 0.08, 0.06, BEAM],
-    [0.55, 0.93, 0.66, 0.5, 0.08, 0.06, BEAM],
+    // A stone footing, then the walls and the gables.
+    [-1.5, -1.0, 0, 3.0, 2.0, 0.25, "#9a948a", "grain"],
+    [-1.25, -0.75, 0.25, 2.5, 1.5, 1.5, WALL, { grain: 0.05 }],
+    [-1.25, -0.75, 1.75, 1.25, 1.5, 1.5, WALL, "wedge", { rz: 180, grain: 0.05 }],
+    [0, -0.75, 1.75, 1.25, 1.5, 1.5, WALL, "wedge", { grain: 0.05 }],
+    // The roof, a ridge, a chimney.
+    ...roof,
+    [-0.25, -1.0, 3.5, 0.5, 2.0, 0.25, TILE_D],
+    [0.5, -0.5, 2.25, 0.25, 0.25, 1.75, "#8c7c6c", "grain"],
+    [0.5, -0.5, 4.0, 0.25, 0.25, 0.25, "#6c5c50"],
+    // The timber frame on the front: posts and a top plate.
+    ...[-1.25, -0.5, 0.25, 1.0].map((x): Part => [x, 0.75, 0.25, 0.25, 0.25, 1.5, BEAM]),
+    [-1.25, 0.75, 1.75, 2.5, 0.25, 0.25, BEAM],
+    // And on the east side.
+    ...[-0.75, 0.5].map((y): Part => [1.25, y, 0.25, 0.25, 0.25, 1.5, BEAM]),
+    [1.25, -0.75, 1.75, 0.25, 1.5, 0.25, BEAM],
+    // Windows lit warm, set back behind the frame; the door, set back too, and its step.
+    [-1.0, 0.5, 0.75, 0.25, 0.25, 0.5, "#ffd37a", "glow"],
+    [0.75, 0.5, 0.75, 0.25, 0.25, 0.5, "#ffd37a", "glow"],
+    [1.0, 0.25, 0.75, 0.25, 0.25, 0.5, "#ffd37a", "glow"],
+    [1.0, -0.5, 0.75, 0.25, 0.25, 0.5, "#ffd37a", "glow"],
+    [-0.25, 0.5, 0.25, 0.5, 0.25, 1.0, "#5a3b22"],
+    [-0.25, 1.0, 0, 0.5, 0.25, 0.25, "#9a948a"],
+    // Flower boxes under the front windows, greenery hanging off the eaves and climbing a corner.
+    [-1.0, 1.0, 0.5, 0.5, 0.25, 0.25, "#4f8a3a"],
+    [0.5, 1.0, 0.5, 0.5, 0.25, 0.25, "#4f8a3a"],
+    [-1.0, 1.0, 0.75, 0.25, 0.25, 0.25, "#e86a9a"],
+    [0.75, 1.0, 0.75, 0.25, 0.25, 0.25, "#f2c94c"],
+    [-1.75, 0.75, 1.25, 0.25, 0.25, 0.5, "#5f9a44", "grain"],
+    [-1.75, 0.25, 1.5, 0.25, 0.5, 0.25, "#4f8a3a"],
+    [1.5, -1.0, 1.25, 0.25, 0.5, 0.5, "#5f9a44", "grain"],
+    [-1.5, 0.75, 0, 0.25, 0.5, 1.25, "#4f8a3a", "grain"],
+    [-1.75, 0.5, 0, 0.5, 0.75, 0.5, "#5f9a44", "dome"],
     // The well: stone ring, water that shines a little, two posts, a little roof, a bucket.
     [1.8, 1.1, 0, 0.9, 0.9, 0.55, "#9a9aa0", "cyl", "grain"],
     [1.88, 1.18, 0.5, 0.74, 0.74, 0.06, "#4fb3e8", "cyl", "glow"],
@@ -188,8 +201,8 @@ function shell(R: number, H: number): Part[] {
   const out: Part[] = [];
   const els = [0, 22.5, 45, 67.5, 90].map((d) => (d * Math.PI) / 180);
   const at = (a: number, e: number) => [Math.cos(e) * Math.cos(a) * R, Math.cos(e) * Math.sin(a) * R, Math.sin(e) * H];
-  for (let m = 0; m < 8; m++) {
-    const a = (m * Math.PI) / 4;
+  for (let m = 0; m < 6; m++) {
+    const a = (m * Math.PI) / 3;
     for (let i = 0; i + 1 < els.length; i++) {
       const p = at(a, els[i]);
       const q = at(a, els[i + 1]);
@@ -199,7 +212,7 @@ function shell(R: number, H: number): Part[] {
       out.push([r2(c[0] - 0.04), r2(c[1] - 0.04), r2(c[2] - L / 2), 0.08, 0.08, r2(L + 0.04), RUNE, "glow", { ry: -deg(tilt), rz: deg(a) }]);
     }
   }
-  for (const e of [0, 0.7]) {
+  for (const e of [0]) {
     const r = Math.cos(e) * R;
     const z = Math.sin(e) * H;
     const L = 2 * r * Math.sin(Math.PI / 16) + 0.04;
@@ -253,7 +266,7 @@ export function runeAfter(): Part[] {
       [-0.7, -0.6, 2.7, 15],
     ].map(([x, y, z, t]): Part => [x, y, z, 0.22, 0.22, 0.22, "#8a8698", "grain", { rx: t, ry: t / 2, rz: t * 2 }]),
     // The shell.
-    ...shell(1.75, 3.6),
+    ...shell(2.0, 3.6),
   ];
 }
 

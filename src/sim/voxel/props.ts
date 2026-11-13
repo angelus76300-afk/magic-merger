@@ -2,7 +2,7 @@ import { BufferAttribute, BufferGeometry, Mesh, type Material, type Scene } from
 import type { World } from "../world";
 import type { Prop } from "../props";
 import { heldScale } from "../held";
-import { FAR_PARTS, propLocal, propTriangles, type LocalMesh, type MeshArrays } from "./shapes";
+import { FAR_PARTS, isSoft, propLocal, propTriangles, type LocalMesh, type MeshArrays } from "./shapes";
 import { columnTop } from "./terrain";
 
 export type { MeshArrays } from "./shapes";
@@ -16,7 +16,9 @@ export type { MeshArrays } from "./shapes";
 //
 // The cost guard (looks revamp, phase 1): the props of an island draw
 // PROP_TRIANGLE_BUDGET triangles at most in full, the nearest to where the
-// camera looks first; past it a look draws its largest FAR_PARTS parts. When
+// camera looks first; past it a look made of fine voxels is drawn with voxels
+// twice the side (FAR_COARSEN), and a stored look of boxes draws its largest
+// FAR_PARTS parts. When
 // some were drawn simpler, the mesh is made again once the camera has looked
 // REFOCUS cells away.
 
@@ -25,6 +27,8 @@ const REFOCUS = 16;
 
 export interface PropStats {
   triangles: number;
+  // Of them, the looks drawn in full.
+  full: number;
   simpler: number;
 }
 
@@ -38,10 +42,9 @@ export class PropModels {
   private full = new WeakMap<Prop, LocalMesh>();
   private simple = new WeakMap<Prop, LocalMesh>();
   private inHand = new WeakMap<Prop, LocalMesh>();
-  private counts = new WeakMap<Prop, number>();
   // Where the camera looked when the mesh was made, while some looks are drawn simpler.
   private builtAt: { x: number; y: number } | null = null;
-  stats: PropStats = { triangles: 0, simpler: 0 };
+  stats: PropStats = { triangles: 0, full: 0, simpler: 0 };
 
   constructor(
     private scene: Scene,
@@ -60,11 +63,7 @@ export class PropModels {
       world,
       at,
       (p, simple) => this.local(p, simple),
-      (p) => {
-        let n = this.counts.get(p);
-        if (n === undefined) this.counts.set(p, (n = propTriangles(p)));
-        return n;
-      },
+      (p) => (isSoft(p) ? this.local(p, false).tris : propTriangles(p)),
     );
     this.stats = stats;
     this.builtAt = this.stats.simpler ? { x: at.x, y: at.y } : null;
@@ -179,7 +178,7 @@ export function buildGround(
   let left = budget;
   for (const { p } of order) {
     const n = count(p);
-    if (n > left && p.boxes.length > FAR_PARTS) simpler.add(p);
+    if (n > left && (isSoft(p) || p.boxes.length > FAR_PARTS)) simpler.add(p);
     else left -= n;
   }
   // Drawn in the island's own order, as before the budget.
@@ -191,7 +190,8 @@ export function buildGround(
     const cy = Math.max(0, Math.min(world.h - 1, Math.round(p.y)));
     append(meshes[i], Math.cos(p.turn), Math.sin(p.turn), p.x + 0.5 - world.w / 2, columnTop(world, cy * world.w + cx), p.y + 0.5 - world.h / 2, lit, glow);
   });
-  return { lit, glow, stats: { triangles: meshes.reduce((t, m) => t + m.tris, 0), simpler: simpler.size } };
+  const full = ground.reduce((t, p, i) => t + (simpler.has(p) ? 0 : meshes[i].tris), 0);
+  return { lit, glow, stats: { triangles: meshes.reduce((t, m) => t + m.tris, 0), full, simpler: simpler.size } };
 }
 
 // One prop's faces, turned about its center and standing on `ground`, its

@@ -31,7 +31,9 @@ interface LabOptions {
   jpeg?: boolean;
   // Where to cast: next to a village (default), on a shore between water and
   // higher land, or where a river spills off the island's edge.
-  aim?: "village" | "shore" | "edge";
+  aim?: "village" | "shore" | "edge" | "clear";
+  // With aim "clear": the half sizes of the open, flat ground wanted (cells across and down).
+  clear?: { rx: number; ry: number };
   // Camera angles around the target (orbit.ts), for visual checks.
   theta?: number;
   phi?: number;
@@ -74,6 +76,38 @@ function findSpot(world: World, aim: "shore" | "edge"): { x: number; y: number }
     }
   }
   return null;
+}
+
+// Covers a look may stand over: grass, flowers and small plants. Not a house, a tree or a wonder.
+const OPEN = new Set<number>([C.NONE, C.FLOWER, C.FERN, C.PEBBLES, C.BUSH]);
+
+// A spot near `near` whose rectangle of half sizes rx by ry is dry land, open (no house, tree or
+// wonder) and as flat as can be found (height range plus a twentieth of the distance, least
+// first): where looks can stand without clipping.
+function findClear(world: World, near: { x: number; y: number }, half: { rx: number; ry: number }): { x: number; y: number } | null {
+  const { w, h } = world;
+  let best: { x: number; y: number; score: number } | null = null;
+  for (let cy = half.ry + 2; cy < h - half.ry - 2; cy++)
+    for (let cx = half.rx + 2; cx < w - half.rx - 2; cx++) {
+      const d = Math.hypot(cx - near.x, cy - near.y) / 20;
+      if (best && d >= best.score) continue;
+      if (world.wonders.some((o) => Math.abs(o.x - cx) < half.rx + o.r + 2 && Math.abs(o.y - cy) < half.ry + o.r + 2)) continue;
+      let lo = Infinity;
+      let hi = -Infinity;
+      let ok = true;
+      for (let y = cy - half.ry; ok && y <= cy + half.ry; y++)
+        for (let x = cx - half.rx; x <= cx + half.rx; x++) {
+          const i = y * w + x;
+          if (world.fluid[i] !== 0 || !OPEN.has(world.cover[i])) {
+            ok = false;
+            break;
+          }
+          lo = Math.min(lo, world.height[i]);
+          hi = Math.max(hi, world.height[i]);
+        }
+      if (ok && hi - lo + d < (best?.score ?? Infinity)) best = { x: cx, y: cy, score: hi - lo + d };
+    }
+  return best ? { x: best.x, y: best.y } : null;
 }
 
 function seedRandom(seed: number): void {
@@ -161,6 +195,7 @@ async function runSpell(code: string, options: LabOptions = {}) {
     }
   }
   if (options.aim === "shore" || options.aim === "edge") target = findSpot(world, options.aim) ?? target;
+  if (options.aim === "clear") target = findClear(world, target, options.clear ?? { rx: 10, ry: 4 }) ?? target;
   engine.view.orbit.tx = target.x;
   engine.view.orbit.ty = target.y;
   if (options.theta !== undefined) engine.view.orbit.theta = options.theta;

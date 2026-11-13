@@ -4,17 +4,13 @@ import { FACE_LIGHT, pushBox } from "./models";
 // The parts of an item's look (props.ts) as faces, 2026-11-13 (the looks
 // revamp, phase 1). A part that is an upright box with none of the new fields
 // is drawn by pushBox exactly as before, so a stored look draws byte for byte
-// as it did. A look that uses a new field (a shape, a turn, grain) is "soft":
-// every part of it is drawn here, with
-//   - its shape: box, wedge (a ramp), cyl (8 sides), cone (8 sides), dome
-//     (half a sphere, 8 sides, 3 rings), turned by rx, ry, rz about its center;
-//   - baked light from the face's direction, the same light as pushBox's for
-//     a face that looks along an axis (FACE_LIGHT);
-//   - soft shadow in its corners (ambient occlusion): every corner of every
-//     face looks at five points just above it, and each one inside another
-//     part, or under the ground, darkens it. Once per look, cached;
-//   - grain: a large face cut in tiles of about half a cell, each a slightly
-//     different tone, so stone and grass are not one flat colour.
+// as it did. A look that uses a new field (a shape, a turn, grain) is drawn
+// as fine voxels, as in the owner's reference pictures ("they should be small
+// cube voxels"): every part is filled into a grid of LOOK_VOXEL cubes (a cone
+// becomes a stepped spire, a dome a stepped shell, a turned box a staircased
+// block), then the grid is meshed with its faces merged where they match
+// (greedy meshing) and soft shadow in every corner (ambient occlusion, as the
+// terrain's, terrain.ts). Grain is a tone per voxel. Once per look, cached.
 
 export interface MeshArrays {
   pos: number[];
@@ -29,14 +25,17 @@ export interface LocalMesh {
 
 type V = [number, number, number];
 
-// How far a corner looks for what shades it, and how dark a corner fully shut in gets.
-export const AO_REACH = 0.3;
-export const AO_STRENGTH = 0.6;
-// A far look keeps its largest parts only (PropModels' triangle budget).
+// The side of a look's voxels, in cells: a quarter of a land cell, the one small cube
+// size the owner's references are made of, land included (13 November).
+export const LOOK_VOXEL = 0.25;
+// A far look is the same grid at twice the side (PropModels' triangle budget).
+export const FAR_COARSEN = 2;
+// A look's grid holds this many voxels at most; past it the side grows.
+const MAX_CELLS = 2_000_000;
+// Light of a corner by how shut in it is, as the terrain's (terrain.ts AO_LIGHT).
+const AO_LIGHT = [0.62, 0.75, 0.88, 1];
+// Kept for the budget's far looks of stored (box only) looks.
 export const FAR_PARTS = 24;
-// Grain tiles: about this long, at most this many along a side.
-const TILE = 0.5;
-const MAX_TILES = 4;
 
 export function isPlain(b: PropBox): boolean {
   return b.shape === undefined && !b.rx && !b.ry && !b.rz && !b.grain;
@@ -59,159 +58,26 @@ export function largestParts(boxes: PropBox[], n: number): PropBox[] {
   return boxes.filter((_, i) => keep.has(i));
 }
 
-// --- Shapes in the unit cube: x east, y south, z up --------------------------------
-
-const OCT = Array.from({ length: 8 }, (_, k) => ((k * 45 + 22.5) * Math.PI) / 180);
-// The octagon's flat sides touch the box's sides.
-const OCT_R = 0.5 / Math.cos(Math.PI / 8);
-const ring = (scale: number, z: number): V[] => OCT.map((a) => [0.5 + OCT_R * scale * Math.cos(a), 0.5 + OCT_R * scale * Math.sin(a), z]);
-const DOME_RINGS = [0, 30, 60].map((d) => (d * Math.PI) / 180);
-
-const FACES = new Map<string, V[][]>();
-
-// The faces of a shape, each a convex polygon; `bottom` adds the face it stands on. Shared: not to be changed.
-export function unitFaces(shape: Shape, bottom: boolean): V[][] {
-  const key = `${shape}${bottom}`;
-  let f = FACES.get(key);
-  if (!f) FACES.set(key, (f = makeFaces(shape, bottom)));
-  return f;
-}
-
-function makeFaces(shape: Shape, bottom: boolean): V[][] {
-  const f: V[][] = [];
+// Is (u, v, t), in the part's own unit box (0 to 1 each way, t up), inside its shape?
+export function insideShape(shape: Shape, u: number, v: number, t: number): boolean {
+  if (u < 0 || u > 1 || v < 0 || v > 1 || t < 0 || t > 1) return false;
+  const du = u - 0.5;
+  const dv = v - 0.5;
   switch (shape) {
     case "box":
-      f.push(
-        [
-          [0, 0, 1],
-          [1, 0, 1],
-          [1, 1, 1],
-          [0, 1, 1],
-        ],
-        [
-          [1, 0, 0],
-          [1, 1, 0],
-          [1, 1, 1],
-          [1, 0, 1],
-        ],
-        [
-          [0, 1, 0],
-          [0, 1, 1],
-          [1, 1, 1],
-          [1, 1, 0],
-        ],
-        [
-          [0, 0, 0],
-          [0, 0, 1],
-          [0, 1, 1],
-          [0, 1, 0],
-        ],
-        [
-          [0, 0, 0],
-          [1, 0, 0],
-          [1, 0, 1],
-          [0, 0, 1],
-        ],
-      );
-      if (bottom)
-        f.push([
-          [0, 0, 0],
-          [0, 1, 0],
-          [1, 1, 0],
-          [1, 0, 0],
-        ]);
-      break;
+      return true;
     case "wedge":
-      // Full height on its west side (x), sloping down to nothing at its east side.
-      f.push(
-        [
-          [0, 0, 0],
-          [0, 0, 1],
-          [0, 1, 1],
-          [0, 1, 0],
-        ],
-        [
-          [0, 0, 1],
-          [1, 0, 0],
-          [1, 1, 0],
-          [0, 1, 1],
-        ],
-        [
-          [0, 0, 0],
-          [1, 0, 0],
-          [0, 0, 1],
-        ],
-        [
-          [0, 1, 0],
-          [0, 1, 1],
-          [1, 1, 0],
-        ],
-      );
-      if (bottom)
-        f.push([
-          [0, 0, 0],
-          [0, 1, 0],
-          [1, 1, 0],
-          [1, 0, 0],
-        ]);
-      break;
-    case "cyl": {
-      const lo = ring(1, 0);
-      const hi = ring(1, 1);
-      for (let k = 0; k < 8; k++) f.push([lo[k], lo[(k + 1) % 8], hi[(k + 1) % 8], hi[k]]);
-      f.push(hi);
-      if (bottom) f.push(lo);
-      break;
-    }
+      // Full height on its west side, down to nothing on its east side.
+      return t <= 1 - u;
+    case "cyl":
+      return du * du + dv * dv <= 0.25;
     case "cone": {
-      const lo = ring(1, 0);
-      for (let k = 0; k < 8; k++) f.push([lo[k], lo[(k + 1) % 8], [0.5, 0.5, 1]]);
-      if (bottom) f.push(lo);
-      break;
+      const r = 0.5 * (1 - t);
+      return du * du + dv * dv <= r * r;
     }
-    case "dome": {
-      const rings = DOME_RINGS.map((e) => ring(Math.cos(e), Math.sin(e)));
-      for (let r = 0; r + 1 < rings.length; r++)
-        for (let k = 0; k < 8; k++) f.push([rings[r][k], rings[r][(k + 1) % 8], rings[r + 1][(k + 1) % 8], rings[r + 1][k]]);
-      const top = rings[rings.length - 1];
-      for (let k = 0; k < 8; k++) f.push([top[k], top[(k + 1) % 8], [0.5, 0.5, 1]]);
-      if (bottom) f.push(rings[0]);
-      break;
-    }
+    case "dome":
+      return du * du + dv * dv + 0.25 * t * t <= 0.25;
   }
-  return f;
-}
-
-// Triangles a part draws (two per quad, n - 2 per polygon), before grain cuts its faces.
-const TRIS = new Map<string, number>();
-export function trianglesOf(shape: Shape, bottom: boolean): number {
-  const key = `${shape}${bottom}`;
-  let n = TRIS.get(key);
-  if (n === undefined) TRIS.set(key, (n = unitFaces(shape, bottom).reduce((t, f) => t + f.length - 2, 0)));
-  return n;
-}
-
-// How much of the occluders' box a shape fills, to shade with: a cone fills little of its box.
-const FILL: Record<Shape, number> = { box: 1, wedge: 0.7, cyl: 0.85, cone: 0.5, dome: 0.75 };
-
-// --- Small vector helpers -----------------------------------------------------------
-
-const sub = (a: V, b: V): V => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-const cross = (a: V, b: V): V => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-const dot = (a: V, b: V) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const unit = (a: V): V => {
-  const l = Math.hypot(a[0], a[1], a[2]) || 1;
-  return [a[0] / l, a[1] / l, a[2] / l];
-};
-
-// The light of a face by where it looks, in the view (x east, y up, z south):
-// FACE_LIGHT's six, blended by the square of each part of the direction.
-export function lightOf(n: V): number {
-  return (
-    n[0] * n[0] * (n[0] > 0 ? FACE_LIGHT.east : FACE_LIGHT.west) +
-    n[1] * n[1] * (n[1] > 0 ? FACE_LIGHT.top : FACE_LIGHT.bottom) +
-    n[2] * n[2] * (n[2] > 0 ? FACE_LIGHT.south : FACE_LIGHT.north)
-  );
 }
 
 function hash3(a: number, b: number, c: number): number {
@@ -222,232 +88,249 @@ function hash3(a: number, b: number, c: number): number {
   return (h >>> 0) / 4294967296;
 }
 
-interface Part {
-  b: PropBox;
-  polys: V[][];
-  // Its bounds in the view, and the smaller box that shades others.
-  lo: V;
-  hi: V;
-  olo: V;
-  ohi: V;
-  seed: number;
+// A look filled into voxels: x east, y south, z up (the model's axes), side s.
+export interface VoxelGrid {
+  s: number;
+  o: V; // the corner of voxel (0, 0, 0)
+  n: V;
+  // Colour of each voxel, -1 for none; glow 1 for what shines.
+  color: Int32Array;
+  glow: Uint8Array;
+  count: number;
 }
 
-// A part's faces in the view, before the look is turned and set on the ground:
-// scaled by k about (mx, my) on the ground, as a held object is.
-function partOf(b: PropBox, index: number, k: number, mx: number, my: number): Part {
-  const shape = b.shape ?? "box";
-  const turned = !!(b.rx || b.ry);
-  const polys0 = unitFaces(shape, turned || b.z > 0.02);
+const idx = (g: VoxelGrid, x: number, y: number, z: number) => (z * g.n[1] + y) * g.n[0] + x;
+
+// A turned part's rotation (by x, then y, then z, degrees), as props.ts partCorners.
+function rotation(b: PropBox): number[] {
   const [ax, ay, az] = [((b.rx ?? 0) * Math.PI) / 180, ((b.ry ?? 0) * Math.PI) / 180, ((b.rz ?? 0) * Math.PI) / 180];
   const [cx, sx, cy, sy, cz, sz] = [Math.cos(ax), Math.sin(ax), Math.cos(ay), Math.sin(ay), Math.cos(az), Math.sin(az)];
-  const C: V = [b.x + b.w / 2, b.y + b.d / 2, b.z + b.h / 2];
-  const toView = (u: V): V => {
-    // In the model: x east, y south on the ground, z up; turned about the center by x, then y, then z.
-    let x = (u[0] - 0.5) * b.w;
-    let y = (u[1] - 0.5) * b.d;
-    let z = (u[2] - 0.5) * b.h;
-    [y, z] = [y * cx - z * sx, y * sx + z * cx];
-    [x, z] = [x * cy + z * sy, -x * sy + z * cy];
-    [x, y] = [x * cz - y * sz, x * sz + y * cz];
-    return [(C[0] + x - mx) * k, (C[2] + z) * k, (C[1] + y - my) * k];
-  };
-  const polys = polys0.map((p) => p.map(toView));
-  // Wound so the front is outside: the shapes are convex, so the middle of their corners is inside.
-  const all = polys.flat();
-  const mid: V = [0, 0, 0];
-  for (const v of all) for (let i = 0; i < 3; i++) mid[i] += v[i] / all.length;
-  for (const p of polys) {
-    const n = cross(sub(p[1], p[0]), sub(p[2], p[0]));
-    const c: V = [0, 0, 0];
-    for (const v of p) for (let i = 0; i < 3; i++) c[i] += v[i] / p.length;
-    if (dot(n, sub(c, mid)) < 0) p.reverse();
-  }
+  // R = Rz * Ry * Rx, row major.
+  return [cz * cy, cz * sy * sx - sz * cx, cz * sy * cx + sz * sx, sz * cy, sz * sy * sx + cz * cx, sz * sy * cx - cz * sx, -sy, cy * sx, cy * cx];
+}
+
+// Every part, in the program's order (a later part paints over an earlier one: a window over its
+// wall). A part thinner than a voxel is drawn a voxel thick, so a window or a rib is not lost.
+export function voxelize(boxes: PropBox[], side: number): VoxelGrid {
+  const parts = boxes.map((b) => {
+    const R = rotation(b);
+    const W = Math.max(b.w, side);
+    const D = Math.max(b.d, side);
+    const H = Math.max(b.h, side);
+    const C: V = [b.x + b.w / 2, b.y + b.d / 2, b.z + b.h / 2];
+    const lo: V = [Infinity, Infinity, Infinity];
+    const hi: V = [-Infinity, -Infinity, -Infinity];
+    for (const a of [-0.5, 0.5])
+      for (const c of [-0.5, 0.5])
+        for (const e of [-0.5, 0.5]) {
+          const p = [a * W, c * D, e * H];
+          for (let i = 0; i < 3; i++) {
+            const v = C[i] + R[i * 3] * p[0] + R[i * 3 + 1] * p[1] + R[i * 3 + 2] * p[2];
+            lo[i] = Math.min(lo[i], v);
+            hi[i] = Math.max(hi[i], v);
+          }
+        }
+    return { b, R, W, D, H, C, lo, hi };
+  });
   const lo: V = [Infinity, Infinity, Infinity];
   const hi: V = [-Infinity, -Infinity, -Infinity];
-  for (const v of all)
+  for (const p of parts)
     for (let i = 0; i < 3; i++) {
-      lo[i] = Math.min(lo[i], v[i]);
-      hi[i] = Math.max(hi[i], v[i]);
+      lo[i] = Math.min(lo[i], p.lo[i]);
+      hi[i] = Math.max(hi[i], p.hi[i]);
     }
-  const f = FILL[shape];
-  const olo = lo.map((l, i) => l + ((hi[i] - l) * (1 - f)) / 2) as V;
-  const ohi = hi.map((h, i) => h - ((h - lo[i]) * (1 - f)) / 2) as V;
-  // A dome or a cone is solid low down: its shading box sits on its base.
-  if (shape === "cone" || shape === "dome") {
-    olo[1] = lo[1];
-    ohi[1] = lo[1] + (hi[1] - lo[1]) * f;
-  }
-  const seed =
-    (Math.imul(b.color, 2654435761) ^ Math.imul(index + 1, 40503) ^ Math.imul(Math.round(b.x * 20), 73856093) ^ Math.imul(Math.round(b.z * 20), 19349663)) | 0;
-  return { b, polys, lo, hi, olo, ohi, seed };
-}
-
-// How shut in a corner is, from 0 (open sky) to 1: five points just off the face, each under the
-// ground or inside another part.
-function occlusion(P: V, n: V, t1: V, t2: V, grid: Grid, self: number, r: number): number {
-  let hit = 0;
-  const a = r * 0.5;
-  const s = r * 0.7;
-  for (let k = 0; k < 5; k++) {
-    const up = k === 0 ? r : a;
-    const s1 = k === 0 ? 0 : k & 1 ? s : -s;
-    const s2 = k === 0 ? 0 : k < 3 ? s : -s;
-    const y = P[1] + n[1] * up + t1[1] * s1 + t2[1] * s2;
-    if (y < -1e-4 || grid.hit(P[0] + n[0] * up + t1[0] * s1 + t2[0] * s2, y, P[2] + n[2] * up + t1[2] * s1 + t2[2] * s2, self)) hit++;
-  }
-  return hit / 5;
-}
-
-// The parts that shade, by cells of a coarse grid over the look, so a corner asks a few parts, not all.
-class Grid {
-  private lo: V = [Infinity, Infinity, Infinity];
-  private hi: V = [-Infinity, -Infinity, -Infinity];
-  private n: V = [1, 1, 1];
-  private size: V = [1, 1, 1];
-  private cells: number[][] = [];
-  constructor(
-    private parts: Part[],
-    size: number,
-  ) {
-    const hi = this.hi;
-    for (const p of parts)
-      for (let i = 0; i < 3; i++) {
-        this.lo[i] = Math.min(this.lo[i], p.olo[i]);
-        hi[i] = Math.max(hi[i], p.ohi[i]);
-      }
-    for (let i = 0; i < 3; i++) {
-      this.size[i] = Math.max(size, (hi[i] - this.lo[i]) / 48);
-      this.n[i] = Math.max(1, Math.ceil((hi[i] - this.lo[i]) / this.size[i]));
-    }
-    this.cells = Array.from({ length: this.n[0] * this.n[1] * this.n[2] }, () => []);
-    parts.forEach((p, k) => {
-      if (p.b.glow) return;
-      const a = [0, 1, 2].map((i) => this.cell(p.olo[i], i));
-      const b = [0, 1, 2].map((i) => this.cell(p.ohi[i], i));
-      for (let x = a[0]; x <= b[0]; x++)
-        for (let y = a[1]; y <= b[1]; y++) for (let z = a[2]; z <= b[2]; z++) this.cells[(x * this.n[1] + y) * this.n[2] + z].push(k);
-    });
-  }
-  private cell(v: number, i: number): number {
-    return Math.max(0, Math.min(this.n[i] - 1, Math.floor((v - this.lo[i]) / this.size[i])));
-  }
-  hit(x: number, y: number, z: number, self: number): boolean {
-    const lo = this.lo;
-    const hi = this.hi;
-    if (!(x > lo[0] && x < hi[0] && y > lo[1] && y < hi[1] && z > lo[2] && z < hi[2])) return false;
-    const list = this.cells[(this.cell(x, 0) * this.n[1] + this.cell(y, 1)) * this.n[2] + this.cell(z, 2)];
-    for (let i = 0; i < list.length; i++) {
-      const k = list[i];
-      if (k === self) continue;
-      const a = this.parts[k].olo;
-      const b = this.parts[k].ohi;
-      if (x > a[0] + 1e-4 && x < b[0] - 1e-4 && y > a[1] + 1e-4 && y < b[1] - 1e-4 && z > a[2] + 1e-4 && z < b[2] - 1e-4) return true;
-    }
-    return false;
-  }
-}
-
-// Grain tiles along a face's two sides.
-function tilesOf(poly: V[], k: number): [number, number] {
-  const side = (a: V, b: V) => Math.max(1, Math.min(MAX_TILES, Math.ceil(Math.hypot(...sub(b, a)) / (TILE * k) - 1e-6)));
-  return [side(poly[0], poly[1]), side(poly[0], poly[3])];
-}
-
-// The triangles a look draws, without shading it: what the island's budget counts.
-export function propTriangles(p: Prop, simple = false): number {
-  const boxes = simple ? largestParts(p.boxes, FAR_PARTS) : p.boxes;
-  if (!isSoft(p)) return boxes.length * 10;
-  let n = 0;
-  for (const b of boxes) {
-    const shape = b.shape ?? "box";
-    const bottom = !!(b.rx || b.ry) || b.z > 0.02;
-    if (simple || !b.grain) {
-      n += trianglesOf(shape, bottom);
-      continue;
-    }
-    // A turn keeps the sides' lengths: the tiles are counted on the unturned shape.
-    for (const poly of unitFaces(shape, bottom)) {
-      if (poly.length !== 4) n += poly.length - 2;
-      else {
-        const [nu, nv] = tilesOf(
-          poly.map((u) => [u[0] * b.w, u[1] * b.d, u[2] * b.h] as V),
-          1,
-        );
-        n += nu * nv * 2;
-      }
-    }
-  }
-  return n;
-}
-
-function softMesh(boxes: PropBox[], k: number, mx: number, my: number, grainOn: boolean, out: LocalMesh): void {
-  const parts = boxes.map((b, i) => partOf(b, i, k, mx, my));
-  const r = AO_REACH * k;
-  const grid = new Grid(parts, r);
-  for (let i = 0; i < parts.length; i++) {
-    const me = parts[i];
-    const b = me.b;
-    const dst = b.glow ? out.glow : out.lit;
-    const rgb = [((b.color >> 16) & 255) / 255, ((b.color >> 8) & 255) / 255, (b.color & 255) / 255];
-    const grain = grainOn ? (b.grain ?? 0) : 0;
-    me.polys.forEach((poly, fi) => {
-      const n = unit(cross(sub(poly[1], poly[0]), sub(poly[2], poly[0])));
-      const t1 = unit(sub(poly[1], poly[0]));
-      const t2 = cross(n, t1);
-      const light = lightOf(n);
-      // What shines is not shaded: it gives light.
-      const ao = (P: V) => (b.glow ? 1 : 1 - AO_STRENGTH * occlusion(P, n, t1, t2, grid, i, r));
-      const emit = (tri: V[], tone: number, shade: number[]) => {
-        for (let v = 0; v < 3; v++) {
-          dst.pos.push(tri[v][0], tri[v][1], tri[v][2]);
-          const l = light * tone * shade[v];
-          dst.col.push(rgb[0] * l, rgb[1] * l, rgb[2] * l);
-        }
-        out.tris++;
-      };
-      const faceTone = grain ? 1 + (hash3(me.seed, fi, 0) - 0.5) * grain : 1;
-      if (grain && poly.length === 4) {
-        // Tiles of about TILE, each its own tone.
-        const [p0, p1, p2, p3] = poly;
-        const [nu, nv] = tilesOf(poly, k);
-        const at = (u: number, v: number): V => {
-          const a = p0.map((c, i) => c + (p1[i] - c) * u);
-          const d = p3.map((c, i) => c + (p2[i] - c) * u);
-          return a.map((c, i) => c + (d[i] - c) * v) as V;
-        };
-        const shade = new Map<string, number>();
-        const aoAt = (u: number, v: number) => {
-          const key = `${u},${v}`;
-          let s = shade.get(key);
-          if (s === undefined) shade.set(key, (s = ao(at(u / nu, v / nv))));
-          return s;
-        };
-        for (let u = 0; u < nu; u++)
-          for (let v = 0; v < nv; v++) {
-            const tone = faceTone * (1 + (hash3(me.seed, fi * 64 + u * 8 + v, 1) - 0.5) * 2 * grain);
-            const q = [at(u / nu, v / nv), at((u + 1) / nu, v / nv), at((u + 1) / nu, (v + 1) / nv), at(u / nu, (v + 1) / nv)];
-            const s = [aoAt(u, v), aoAt(u + 1, v), aoAt(u + 1, v + 1), aoAt(u, v + 1)];
-            emit([q[0], q[1], q[2]], tone, [s[0], s[1], s[2]]);
-            emit([q[0], q[2], q[3]], tone, [s[0], s[2], s[3]]);
+  let s = side;
+  const dims = (q: number): V => [0, 1, 2].map((i) => Math.max(1, Math.ceil(hi[i] / q) - Math.floor(lo[i] / q))) as V;
+  while (dims(s).reduce((a, b) => a * b, 1) > MAX_CELLS) s *= 1.5;
+  // The grid lies on multiples of s from the model's origin, so the ground (z = 0) is a layer's floor.
+  const o: V = [Math.floor(lo[0] / s) * s, Math.floor(lo[1] / s) * s, Math.floor(lo[2] / s) * s];
+  const n = dims(s);
+  const g: VoxelGrid = { s, o, n, color: new Int32Array(n[0] * n[1] * n[2]).fill(-1), glow: new Uint8Array(n[0] * n[1] * n[2]), count: 0 };
+  parts.forEach((p, k) => {
+    const shape = p.b.shape ?? "box";
+    const grain = p.b.grain ?? 0;
+    const i0 = [0, 1, 2].map((i) => Math.max(0, Math.floor((p.lo[i] - o[i]) / s)));
+    const i1 = [0, 1, 2].map((i) => Math.min(n[i] - 1, Math.ceil((p.hi[i] - o[i]) / s) - 1));
+    const R = p.R;
+    const seed = (Math.imul(p.b.color, 2654435761) ^ Math.imul(k + 1, 40503)) | 0;
+    for (let z = i0[2]; z <= i1[2]; z++)
+      for (let y = i0[1]; y <= i1[1]; y++)
+        for (let x = i0[0]; x <= i1[0]; x++) {
+          const d0 = o[0] + (x + 0.5) * s - p.C[0];
+          const d1 = o[1] + (y + 0.5) * s - p.C[1];
+          const d2 = o[2] + (z + 0.5) * s - p.C[2];
+          // Into the part's own axes: the inverse turn is the transpose.
+          const u = (R[0] * d0 + R[3] * d1 + R[6] * d2) / p.W + 0.5;
+          const v = (R[1] * d0 + R[4] * d1 + R[7] * d2) / p.D + 0.5;
+          const t = (R[2] * d0 + R[5] * d1 + R[8] * d2) / p.H + 0.5;
+          if (!insideShape(shape, u, v, t)) continue;
+          const i = idx(g, x, y, z);
+          if (g.color[i] < 0) g.count++;
+          let c = p.b.color;
+          if (grain) {
+            const kk = 1 + (hash3(seed, x * 73856093 + y, z) - 0.5) * 2 * grain;
+            const ch = (sh: number) => Math.max(0, Math.min(255, Math.round(((c >> sh) & 255) * kk)));
+            c = (ch(16) << 16) | (ch(8) << 8) | ch(0);
           }
-        return;
+          g.color[i] = c;
+          g.glow[i] = p.b.glow ? 1 : 0;
+        }
+  });
+  return g;
+}
+
+// Model axis a (0 x east, 1 y south, 2 z up) and its sign: the face's light, as pushBox's.
+const LIGHT = [
+  [FACE_LIGHT.west, FACE_LIGHT.east],
+  [FACE_LIGHT.north, FACE_LIGHT.south],
+  [FACE_LIGHT.bottom, FACE_LIGHT.top],
+];
+
+// The grid's faces, merged where colour, glow and corner shade match, in the view (x, up, south),
+// scaled by k about (mx, my) on the ground. Below the ground counts as solid: no face is drawn
+// against it, and it shades the corners next to it.
+export function meshGrid(g: VoxelGrid, out: LocalMesh, k = 1, mx = 0, my = 0): void {
+  const { n, s, o } = g;
+  const groundZ = Math.round(-o[2] / s); // voxels with z index below this are under the ground
+  const solid = (x: number, y: number, z: number) => {
+    if (z < groundZ) return true;
+    if (x < 0 || y < 0 || z < 0 || x >= n[0] || y >= n[1] || z >= n[2]) return false;
+    return g.color[idx(g, x, y, z)] >= 0;
+  };
+  const cell = [0, 0, 0];
+  for (let a = 0; a < 3; a++) {
+    const ua = (a + 1) % 3;
+    const va = (a + 2) % 3;
+    const nu = n[ua];
+    const nv = n[va];
+    const keyC = new Int32Array(nu * nv);
+    const keyA = new Int32Array(nu * nv);
+    for (const sign of [-1, 1]) {
+      const light = LIGHT[a][sign > 0 ? 1 : 0];
+      for (let sl = 0; sl < n[a]; sl++) {
+        keyC.fill(-1);
+        for (let v = 0; v < nv; v++)
+          for (let u = 0; u < nu; u++) {
+            cell[a] = sl;
+            cell[ua] = u;
+            cell[va] = v;
+            const i = idx(g, cell[0], cell[1], cell[2]);
+            const c = g.color[i];
+            if (c < 0) continue;
+            cell[a] = sl + sign;
+            if (solid(cell[0], cell[1], cell[2])) continue;
+            // The four corners' shade, from the layer the face looks into.
+            let ao = 0;
+            if (!g.glow[i]) {
+              const at = (du: number, dv: number) => {
+                cell[ua] = u + du;
+                cell[va] = v + dv;
+                return solid(cell[0], cell[1], cell[2]) ? 1 : 0;
+              };
+              const corner = (du: number, dv: number) => {
+                const s1 = at(du, 0);
+                const s2 = at(0, dv);
+                const cc = at(du, dv);
+                return s1 && s2 ? 0 : 3 - s1 - s2 - cc;
+              };
+              ao = corner(-1, -1) | (corner(1, -1) << 2) | (corner(1, 1) << 4) | (corner(-1, 1) << 6);
+            } else ao = 0xff;
+            keyC[v * nu + u] = c;
+            keyA[v * nu + u] = ao | (g.glow[i] << 8);
+          }
+        // Greedy: the widest run along u, then as many rows along v as match it.
+        for (let v = 0; v < nv; v++)
+          for (let u = 0; u < nu; ) {
+            const j = v * nu + u;
+            const c = keyC[j];
+            if (c < 0) {
+              u++;
+              continue;
+            }
+            const ka = keyA[j];
+            let w = 1;
+            while (u + w < nu && keyC[j + w] === c && keyA[j + w] === ka) w++;
+            let h = 1;
+            grow: while (v + h < nv) {
+              for (let q = 0; q < w; q++) {
+                const jj = (v + h) * nu + u + q;
+                if (keyC[jj] !== c || keyA[jj] !== ka) break grow;
+              }
+              h++;
+            }
+            for (let r = 0; r < h; r++) keyC.fill(-1, (v + r) * nu + u, (v + r) * nu + u + w);
+            emitQuad(out, g, a, ua, va, sign, sl, u, v, w, h, c, ka, light, k, mx, my);
+            u += w;
+          }
       }
-      const s = poly.map(ao);
-      for (let t = 1; t + 1 < poly.length; t++) emit([poly[0], poly[t], poly[t + 1]], faceTone, [s[0], s[t], s[t + 1]]);
-    });
+    }
   }
 }
 
-// A look's faces in the view before it is turned and set on the ground. `simple`: its
-// largest FAR_PARTS parts, without grain (a far look). k, mx, my: scaled about (mx, my).
+function emitQuad(
+  out: LocalMesh,
+  g: VoxelGrid,
+  a: number,
+  ua: number,
+  va: number,
+  sign: number,
+  sl: number,
+  u: number,
+  v: number,
+  w: number,
+  h: number,
+  c: number,
+  ka: number,
+  light: number,
+  k: number,
+  mx: number,
+  my: number,
+): void {
+  const glow = (ka >> 8) & 1;
+  const dst = glow ? out.glow : out.lit;
+  const plane = g.o[a] + (sl + (sign > 0 ? 1 : 0)) * g.s;
+  const corner = (cu: number, cv: number): V => {
+    const m = [0, 0, 0];
+    m[a] = plane;
+    m[ua] = g.o[ua] + cu * g.s;
+    m[va] = g.o[va] + cv * g.s;
+    // Model x, y, z to the view's x, up, south.
+    return [(m[0] - mx) * k, m[2] * k, (m[1] - my) * k];
+  };
+  const p = [corner(u, v), corner(u + w, v), corner(u + w, v + h), corner(u, v + h)];
+  const shade = [ka & 3, (ka >> 2) & 3, (ka >> 4) & 3, (ka >> 6) & 3].map((x) => (glow ? 1 : AO_LIGHT[x]));
+  const rgb = [((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255];
+  // Outward, as the view sees it: the model's axis a in the view.
+  const want: V = [0, 0, 0];
+  want[[0, 2, 1][a]] = sign;
+  const e1 = [p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]];
+  const e2 = [p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]];
+  const nx = e1[1] * e2[2] - e1[2] * e2[1];
+  const ny = e1[2] * e2[0] - e1[0] * e2[2];
+  const nz = e1[0] * e2[1] - e1[1] * e2[0];
+  let order = [0, 1, 2, 3];
+  if (nx * want[0] + ny * want[1] + nz * want[2] < 0) order = [0, 3, 2, 1];
+  // Split along the brighter diagonal, so the shade does not crease (as terrain.ts).
+  const [q0, q1, q2, q3] = order;
+  const tris = shade[q0] + shade[q2] < shade[q1] + shade[q3] ? [q1, q2, q3, q1, q3, q0] : [q0, q1, q2, q0, q2, q3];
+  for (const q of tris) {
+    dst.pos.push(p[q][0], p[q][1], p[q][2]);
+    const l = light * shade[q];
+    dst.col.push(rgb[0] * l, rgb[1] * l, rgb[2] * l);
+  }
+  out.tris += 2;
+}
+
+// A look's faces in the view before it is turned and set on the ground. `simple`: a far look,
+// its grid at FAR_COARSEN times the side (a stored look of boxes keeps its largest FAR_PARTS
+// parts). k, mx, my: scaled about (mx, my), as a held object is.
 export function propLocal(p: Prop, simple = false, k = 1, mx = 0, my = 0): LocalMesh {
   const out: LocalMesh = { lit: { pos: [], col: [] }, glow: { pos: [], col: [] }, tris: 0 };
-  const boxes = simple ? largestParts(p.boxes, FAR_PARTS) : p.boxes;
   if (isSoft(p)) {
-    softMesh(boxes, k, mx, my, !simple, out);
+    meshGrid(voxelize(p.boxes, LOOK_VOXEL * (simple ? FAR_COARSEN : 1)), out, k, mx, my);
     return out;
   }
+  const boxes = simple ? largestParts(p.boxes, FAR_PARTS) : p.boxes;
   for (const b of boxes) {
     const dst = b.glow ? out.glow : out.lit;
     // The model's x and y lie on the ground, z goes up: the view's x, z and y.
@@ -456,4 +339,10 @@ export function propLocal(p: Prop, simple = false, k = 1, mx = 0, my = 0): Local
     out.tris += 10;
   }
   return out;
+}
+
+// The triangles a look draws: what the island's budget counts.
+export function propTriangles(p: Prop, simple = false): number {
+  if (!isSoft(p)) return (simple ? largestParts(p.boxes, FAR_PARTS) : p.boxes).length * 10;
+  return propLocal(p, simple).tris;
 }

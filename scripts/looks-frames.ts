@@ -17,7 +17,7 @@ const SIZES = [
   { name: "phone", width: 390, height: 844 },
   { name: "fold", width: 344, height: 882 },
 ];
-const VIEW = { tier: "cosmic", kind: "spell", shots: [1], settle: 0.2, dist: 26, phi: 0.88, theta: 0.72, time: 40 };
+const VIEW = { tier: "cosmic", kind: "spell", shots: [1], settle: 0.2, dist: 24, phi: 0.88, theta: 0.72, time: 40, aim: "clear", clear: { rx: 11, ry: 5 } };
 
 interface Lab {
   page: { evaluate: (fn: (json: string) => unknown, arg: string) => Promise<unknown> };
@@ -40,7 +40,7 @@ async function frames(): Promise<void> {
       // A closer look at each, the camera nearer.
       for (const k of ["tower", "cottage", "rune"] as const) {
         if (size.name !== "phone") continue;
-        const c = await lab.cast(demoOne(k, version), { ...VIEW, dist: 14, phi: 0.78, theta: 0.7 });
+        const c = await lab.cast(demoOne(k, version), { ...VIEW, dist: 13, phi: 0.82, theta: 0.7 });
         save(join(out, `${k}-${version}.png`), c.frames[c.frames.length - 1].png);
       }
       console.log(`${size.name} ${version}: drew ${r.draw.triangles} triangles in ${r.draw.calls} calls`);
