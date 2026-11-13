@@ -101,6 +101,8 @@ const VIEWS = [
   ["island-day", { clock: DAY, cam: { dist: "whole", phi: 0.72 } }],
   // A mid zoom on the village, for the depth of field (the owner, 13 November).
   ["village-mid", { clock: DAY, cam: { village: true, dist: 0.36, phi: 0.88 } }],
+  // The closest sky zoom on the village, where the depth of field is whole.
+  ["village-close", { clock: DAY, cam: { village: true, dist: 0.066, phi: 0.95 } }],
 ];
 
 for (const size of sizes.split(",")) {

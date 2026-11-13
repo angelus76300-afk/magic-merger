@@ -111,6 +111,19 @@ export interface LooksFrame {
   dist: number;
 }
 
+// The depth of field begins when the camera is this close to what it looks at (cells), and is
+// whole at FOCUS_FULL (the sky view's closest is 8).
+export const FOCUS_FROM = 40;
+export const FOCUS_FULL = 10;
+
+// How much of the blurred frame the depth of field may show, 0 to 1, for a sky camera this far
+// from what it looks at; 0 in the eye view.
+export function focusBlur(dist: number, eye: boolean): number {
+  if (eye) return 0;
+  const close = Math.min(1, Math.max(0, (FOCUS_FROM - dist) / (FOCUS_FROM - FOCUS_FULL)));
+  return close * close * (3 - 2 * close);
+}
+
 // The tint of the land in shade and in the sun.
 const SHADE = new Vector3(0.58, 0.64, 0.86);
 const LIT = new Vector3(1.03, 0.99, 0.92);
@@ -252,14 +265,14 @@ float sunLight(vec3 n) {
 
     // Glow at night, and in a spell's darkness.
     this.bloomAmount = GRAPHICS.bloom ? Math.min(1, Math.max(Math.max(0, f.night - 0.2) / 0.6, f.dark)) : 0;
-    // The miniature's depth of field: at every zoom of the sky view, in focus at the point under
-    // the middle of the screen, blurred in front of it and behind it; stronger, and with a
-    // shallower focus, the more of the island the camera holds. Never in the eye view.
-    const whole = Math.min(1, Math.max(0, (f.cover - 0.15) / 0.75));
-    this.tiltAmount = GRAPHICS.tilt && !f.eye ? 0.75 + 0.25 * whole : 0;
+    // The miniature's depth of field, only when the camera comes close (the owner: "it's really
+    // only when we zoom a lot"): none from FOCUS_FROM cells away and farther (a mid zoom, the
+    // whole island), growing to full at the closest the sky view goes. In focus at the point
+    // under the middle of the screen, blurred in front of it and behind it. Never in the eye view.
+    this.tiltAmount = GRAPHICS.tilt ? focusBlur(f.dist, f.eye) : 0;
     this.tiltCenter = 0.5;
     // How far in front or behind the focus stays sharp, as a share of the focus distance.
-    this.tiltSharp = 0.035 + 0.05 * (1 - whole);
+    this.tiltSharp = 0.06;
   }
 
   // Lays the shadow map over what the camera holds, from the sun's side. The

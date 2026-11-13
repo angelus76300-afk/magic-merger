@@ -29,10 +29,10 @@ export const GRAPHICS = {
   // only; three passes at a quarter of the pixels, and the frame is drawn
   // into a texture first.
   bloom: false,
-  // The miniature's depth of field: in focus at the point under the middle of
-  // the screen, blurred in front of it and behind it, at every zoom of the sky
-  // view, shallower the more the camera holds the whole island. Off in the eye
-  // view. Two blur passes at half the pixels; the frame and its depth are
+  // The miniature's depth of field, only when the camera comes close: none
+  // at a mid zoom or over the whole island, growing to full at the closest
+  // sky zoom; in focus at the point under the middle of the screen, blurred
+  // in front of it and behind it. Off in the eye view. Two blur passes at half the pixels; the frame and its depth are
   // drawn into textures by the scene's own pass (no pass for the depth).
   tilt: false,
 };

@@ -16,7 +16,7 @@ import {
   setLooksChoice,
   type Quality,
 } from "../src/sim/voxel/graphics";
-import { gradeColor } from "../src/sim/voxel/looks";
+import { FOCUS_FULL, focusBlur, gradeColor } from "../src/sim/voxel/looks";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
@@ -108,6 +108,15 @@ export function looksChecks(check: Check): void {
     "the grade stays in range",
     [grey, black, white].every((c) => [c.r, c.g, c.b].every((v) => v >= 0 && v <= 1)),
   );
+
+  // The depth of field only when the camera comes close (the owner, 13 November): none over the
+  // whole island (a medium island is seen from about 83 cells) or at a mid zoom (55), whole at
+  // the closest sky zoom, never in the eye view.
+  check("no depth of field over the whole island", focusBlur(83, false) === 0);
+  check("no depth of field at a mid zoom", focusBlur(55, false) === 0);
+  check("the depth of field is whole at the closest sky zoom", focusBlur(FOCUS_FULL, false) === 1 && focusBlur(8, false) === 1);
+  check("the depth of field grows as the camera comes closer", focusBlur(30, false) > 0 && focusBlur(30, false) < focusBlur(15, false));
+  check("no depth of field in the eye view", focusBlur(8, true) === 0);
 
   for (const f of LOOKS_FLAGS) GRAPHICS[f] = was[f];
 }
