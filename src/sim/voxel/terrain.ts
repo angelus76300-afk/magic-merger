@@ -224,7 +224,7 @@ export class Terrain {
       if (land) {
         if (!this.dirtyLand.has(c)) {
           this.swap(c, "land", this.buildLand(c));
-          this.staleFine(c);
+          this.staleFine(c, true);
         }
       } else if (!this.dirtyFluid.has(c)) this.swap(c, "fluid", this.buildFluid(c));
       break;
@@ -268,36 +268,54 @@ export class Terrain {
   private job: { c: number; sub: number; tiles: [number, number, number, number][]; next: number } | null = null;
   // The longest a frame spent on the fine land, ms (for the measures).
   readonly fineStats = { maxFrameMs: 0, maxTileMs: 0, tiles: 0, tileMs: [] as number[] };
-  private eye = { x: 0, y: 0, z: 0, known: false };
+  private eye = { x: 0, y: 0, z: 0, tx: 0, tz: 0, reach: 0, known: false };
   private fineCells = makeFineCells();
-  private seeCamera = (_r: unknown, _s: unknown, camera: { position: { x: number; y: number; z: number } }): void => {
-    this.focus(camera.position.x, camera.position.y, camera.position.z);
+  private seeCamera = (
+    _r: unknown,
+    _s: unknown,
+    camera: { position: { x: number; y: number; z: number }; matrixWorld: { elements: ArrayLike<number> } },
+  ): void => {
+    const e = camera.matrixWorld.elements;
+    const p = camera.position;
+    // Where the camera looks: its forward ray met with the land's height.
+    const fx = -e[8];
+    const fy = -e[9];
+    const fz = -e[10];
+    if (fy < -0.2 && p.y > FINE_TOP) {
+      const t = (p.y - FINE_TOP) / -fy;
+      this.focus(p.x, p.y, p.z, p.x + fx * t, p.z + fz * t);
+    } else this.focus(p.x, p.y, p.z);
   };
 
-  // Where the camera is, in the scene.
-  focus(x: number, y: number, z: number): void {
+  // Where the camera is, in the scene, and the point of the land it looks at (itself when it
+  // looks ahead, as in the eye view).
+  focus(x: number, y: number, z: number, tx = x, tz = z): void {
     this.eye.x = x;
     this.eye.y = y;
     this.eye.z = z;
+    this.eye.tx = tx;
+    this.eye.tz = tz;
+    this.eye.reach = tx === x && tz === z ? Math.max(0, y - FINE_TOP) : Math.hypot(x - tx, y - FINE_TOP, z - tz);
     this.eye.known = true;
   }
 
-  // The camera's distance to a chunk's box, in scene units; its height counts half (from the sky
-  // view the land under the camera is as near as it looks).
+  // How near a chunk is, in scene units: its distance to the point the camera looks at, with half
+  // the camera's distance to that point. Turning the camera round that point leaves every chunk at
+  // its level, and zooming out moves every chunk farther.
   private chunkDistance(c: number): number {
     const { x0, y0, x1, y1 } = this.bounds(c);
     const ox = -this.world.w / 2;
     const oz = -this.world.h / 2;
-    const dx = Math.max(x0 + ox - this.eye.x, 0, this.eye.x - (x1 + ox));
-    const dz = Math.max(y0 + oz - this.eye.z, 0, this.eye.z - (y1 + oz));
-    const dy = Math.max(0, this.eye.y - FINE_TOP) * 0.5;
-    return Math.hypot(dx, dy, dz);
+    const dx = Math.max(x0 + ox - this.eye.tx, 0, this.eye.tx - (x1 + ox));
+    const dz = Math.max(y0 + oz - this.eye.tz, 0, this.eye.tz - (y1 + oz));
+    return Math.hypot(dx, this.eye.reach * 0.5, dz);
   }
 
   // A chunk whose land changed keeps its fine mesh on show until the new one is built: a river
   // that flows changes its chunk every few frames, and the land would flicker between the two.
-  private staleFine(c: number): void {
-    if (this.fine[c] !== undefined) this.fineStale[c] = 1;
+  private staleFine(c: number, flow = false): void {
+    // Water flowing at a river's edge (`flow`) waits longer than a real change.
+    if (this.fine[c] !== undefined) this.fineStale[c] = flow && this.fineStale[c] !== 1 ? 2 : 1;
     if (this.job?.c === c) this.job = null;
   }
 
@@ -346,10 +364,12 @@ export class Terrain {
       let best = -1;
       let bestRank = Infinity;
       let bestSub = 0;
+      let keep = false;
       for (let c = 0; c < n; c++) {
         const d = high ? Infinity : this.chunkDistance(c);
         if (d > FINE_DROP && this.fine[c] !== undefined) this.dropFine(c);
         const want = this.wantLevel(c, d);
+        if (this.job?.c === c && want === this.job.sub) keep = true;
         // Missing or at the wrong level first, nearest first; then a changed chunk, at most one in
         // STALE_MS.
         const rank =
@@ -357,7 +377,7 @@ export class Terrain {
             ? Infinity
             : this.fine[c] === undefined || this.fineLevel[c] !== want
               ? d
-              : this.fineStale[c] && (all || start - this.staleBuiltAt > STALE_MS)
+              : this.fineStale[c] && (all || start - this.staleBuiltAt > (this.fineStale[c] === 2 ? FLOW_STALE_MS : STALE_MS))
                 ? d + 1000
                 : Infinity;
         if (!this.dirtyLand.has(c) && rank < bestRank) {
@@ -374,9 +394,12 @@ export class Terrain {
           if (fine) fine.visible = this.chunkOn[c] === 1 && show === 1;
         }
       }
-      // The job carries on unless the camera moved so that another chunk or level comes first.
-      if (best < 0) this.job = null;
-      else if (!this.job || this.job.c !== best || this.job.sub !== bestSub) this.startFine(best, bestSub);
+      // A started chunk is finished first while it still wants that level: turning the camera
+      // changes which chunk is nearest, and starting over each time wasted every build.
+      if (!keep) {
+        if (best < 0) this.job = null;
+        else if (!this.job || this.job.c !== best || this.job.sub !== bestSub) this.startFine(best, bestSub);
+      }
       if (!this.job) break;
       const job = this.job;
       while (job.next < job.tiles.length) {
@@ -432,8 +455,8 @@ export class Terrain {
       }
     }
     const tiles: [number, number, number, number][] = [];
-    // Eighth voxels in tiles of half the side: the same work a tile.
-    const side = sub === 8 ? TILE / 2 : TILE;
+    // Tiles of 4 cells a side in quarter voxels, 2 in eighths: the same work a tile.
+    const side = sub === 8 ? TILE / 4 : TILE / 2;
     for (let ty = y0; ty < y1; ty += side) for (let tx = x0; tx < x1; tx += side) tiles.push([tx, ty, Math.min(x1, tx + side), Math.min(y1, ty + side)]);
     FINE_OUT.reset();
     // Room for a fine chunk's vertices from the start: growing in the middle of a tile copies
@@ -835,7 +858,7 @@ const WET_OFF = 0.005;
 // about the height of the land. A frame spends at most about FINE_BUDGET_MS building them.
 const FINE8_NEAR = 12;
 const FINE8_KEEP = 16;
-const FINE_BUDGET_MS = 5;
+const FINE_BUDGET_MS = 4;
 const FINE_NEAR = 34;
 const FINE_KEEP = 42;
 const FINE_DROP = 90;
@@ -843,7 +866,8 @@ const FINE_TOP = 6;
 // The camera higher than this sees the island in whole cells, and a changed fine chunk is built
 // again at most once in STALE_MS.
 const FINE_HIGH = 42;
-const STALE_MS = 400;
+const STALE_MS = 2000;
+const FLOW_STALE_MS = 10000;
 // How far a waterfall hangs in front of the island's cut side, in cells.
 const FALL_GAP = 0.06;
 

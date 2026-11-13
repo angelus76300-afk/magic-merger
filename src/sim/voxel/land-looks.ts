@@ -3,21 +3,22 @@
 // are never changed. With all of them off the land and water are drawn exactly as before them
 // (scripts/terrain-looks-test.ts).
 export const LAND_LOOKS = {
-  // Near the camera (close and mid zoom), each cell of land drawn as 4 by 4 columns of quarter
-  // voxels, the scale of the reference models; the one cell mesh farther away and from high up.
+  // Near where the camera looks, each cell of land drawn as columns of eighth voxels (close up)
+  // or quarter voxels (a little farther), the scale of the reference models; the one cell mesh
+  // farther away and from high up.
   fine: true,
   // In the fine land: a rise of one voxel becomes a few small irregular steps; a cliff of two or
   // more keeps its wall and gets a broken top lip.
   steps: true,
-  // In the fine land: grounds that meet (grass and sand, dirt, rock or snow) mix over a quarter
-  // voxel or two; sand pokes out of the shallows; grass and snow hang over the edge of a cliff.
+  // In the fine land: the border of two grounds that meet (grass and sand, dirt, rock, snow or a
+  // path) is a wavy line; sand reaches into the shallows; grass and snow hang over cliff edges.
   blend: true,
-  // In the fine land: every quarter voxel a tone of its own, soil with its own grain, and cliffs in
+  // In the fine land: each ground in soft patches of three shades, soil the same, and cliffs in
   // darker strata bands.
   grain: true,
-  // In the fine land: a ring of white foam voxels where water meets land.
+  // In the fine land: a line of white foam where water meets land.
   foam: true,
-  // Flowers on grass and pebbles on sand, single quarter voxels seeded by position (fine land).
+  // In the fine land: a few small clusters of flowers on grass and pebbles on sand.
   bits: true,
   // Water in bands of colour by depth, clearer in the shallows so the bed shows (everywhere).
   bands: true,
