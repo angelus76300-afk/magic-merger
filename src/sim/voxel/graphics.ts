@@ -38,6 +38,10 @@ export const GRAPHICS = {
   // in front of it and behind it. Off in the eye view. Two blur passes at half the pixels; the frame and its depth are
   // drawn into textures by the scene's own pass (no pass for the depth).
   tilt: false,
+  // Edges smoothed (5.2.5, the owner: "the render is finer ... refined and
+  // detailed, not messy"): FXAA at full resolution, nine taps a pixel, in the
+  // last pass; the frame is drawn into a texture first.
+  aa: false,
 };
 
 export type GraphicsFlag = keyof typeof GRAPHICS;
@@ -45,15 +49,41 @@ export type GraphicsFlag = keyof typeof GRAPHICS;
 // The looks a quality level turns on (5.2.5). Low is the island as it was
 // before them; the device picks one from its own frame times (QualityChooser),
 // and the owner can pick one, or one switch at a time, in the frame HUD.
-export const LOOKS_FLAGS = ["shadows", "grade", "bloom", "tilt", "fine"] as const;
+export const LOOKS_FLAGS = ["shadows", "grade", "bloom", "tilt", "aa", "fine"] as const;
 export type LooksFlag = (typeof LOOKS_FLAGS)[number];
 export const QUALITIES = ["low", "medium", "high"] as const;
 export type Quality = (typeof QUALITIES)[number];
 export const PRESETS: Record<Quality, Record<LooksFlag, boolean>> = {
-  low: { shadows: false, grade: false, bloom: false, tilt: false, fine: false },
-  medium: { shadows: true, grade: true, bloom: false, tilt: false, fine: true },
-  high: { shadows: true, grade: true, bloom: true, tilt: true, fine: true },
+  low: { shadows: false, grade: false, bloom: false, tilt: false, aa: false, fine: false },
+  medium: { shadows: true, grade: true, bloom: false, tilt: false, aa: false, fine: true },
+  high: { shadows: true, grade: true, bloom: true, tilt: true, aa: true, fine: true },
 };
+
+// The most device pixels per CSS pixel each level draws (the Fold folded has
+// about 2.6): 2 at every level, as the game had before the looks (the owner
+// wants it finer, so the level a device starts at must not get coarser). High
+// alone lowers them only when frames are actually late (LATE_ONLY), never
+// because the drawing took long while the frames kept their cadence.
+export const PIXEL_CAPS: Record<Quality, number> = { low: 2, medium: 2, high: 2 };
+export const LATE_ONLY: Record<Quality, boolean> = { low: false, medium: false, high: true };
+
+// The view's pixel density after a second of frames (view.ts adapt). avg: the
+// mean time between frames; draw: the mean of the view's own work; fast: the
+// engine aims at 60 a second; quiet: ms since the last drop. Frames come every
+// 33 ms at 30 a second; well past that they are late. At 60 a second a missed
+// cadence first falls back to 30 (pacing.ts), so the old rule lowered pixels
+// there on the draw time alone. Above the level's cap it comes down at once.
+export function nextPixelRatio(o: { ratio: number; max: number; avg: number; draw: number; fast: boolean; quiet: number; lateOnly: boolean }): {
+  ratio: number;
+  dropped: boolean;
+} {
+  if (o.ratio > o.max) return { ratio: o.max, dropped: false };
+  const late = !o.fast && o.avg > 52;
+  if (late || (!o.lateOnly && o.draw > 30)) return { ratio: Math.max(0.6, o.ratio - 0.25), dropped: true };
+  const room = o.avg < (o.fast ? 19 : 38) && (o.lateOnly || o.draw < 12);
+  if (room && o.quiet > 10_000) return { ratio: Math.min(o.max, o.ratio + 0.25), dropped: false };
+  return { ratio: o.ratio, dropped: false };
+}
 
 // What the player chose: a level, or "auto" (the device's), and switches
 // turned the other way from that level.
@@ -77,6 +107,7 @@ export function readLooksChoice(v: unknown): LooksChoice {
 export function applyLooks(choice: LooksChoice, auto: Quality): Quality {
   const level = choice.level === "auto" ? auto : choice.level;
   for (const f of LOOKS_FLAGS) GRAPHICS[f] = PRESETS[level][f] !== choice.flip.includes(f);
+  LOOKS_STATE.level = level;
   return level;
 }
 

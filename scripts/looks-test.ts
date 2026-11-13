@@ -11,6 +11,9 @@ import {
   PRESETS,
   QUALITIES,
   QualityChooser,
+  LATE_ONLY,
+  PIXEL_CAPS,
+  nextPixelRatio,
   applyLooks,
   readLooksChoice,
   setLooksChoice,
@@ -119,6 +122,25 @@ export function looksChecks(check: Check): void {
   check("no depth of field in the eye view", focusBlur(8, true) === 0);
   // The owner, after the closest frame: "a bit strong". At most two thirds of the blurred frame.
   check("the depth of field shows at most two thirds of the blur", FOCUS_MAX > 0.6 && FOCUS_MAX < 0.7, `${FOCUS_MAX}`);
+
+  // Finer pixels (the owner: "the render is finer"): high draws up to 2 device pixels a CSS pixel
+  // at every level, and high smooths edges and lowers its pixels only when frames are late.
+  check("every level draws up to 2 pixels, none coarser than before", PIXEL_CAPS.high === 2 && PIXEL_CAPS.medium === 2 && PIXEL_CAPS.low === 2);
+  check("high smooths edges, low and medium do not", PRESETS.high.aa && !PRESETS.medium.aa && !PRESETS.low.aa);
+  const busy = { ratio: 2, max: 2, avg: 33, draw: 35, fast: false, quiet: 20_000 };
+  check(
+    "on high a long draw with frames on time keeps the pixels",
+    nextPixelRatio({ ...busy, lateOnly: LATE_ONLY.high }).ratio === 2,
+    JSON.stringify(nextPixelRatio({ ...busy, lateOnly: LATE_ONLY.high })),
+  );
+  check("on low a long draw still lowers them, as before", nextPixelRatio({ ...busy, lateOnly: LATE_ONLY.low }).ratio === 1.75);
+  check("on high late frames lower them", nextPixelRatio({ ...busy, avg: 60, lateOnly: true }).ratio === 1.75);
+  check("a cap below the density brings it down at once", nextPixelRatio({ ...busy, draw: 5, max: 1.5, lateOnly: false }).ratio === 1.5);
+  check(
+    "they come back up only after quiet frames with room",
+    nextPixelRatio({ ratio: 1.5, max: 2, avg: 33, draw: 5, fast: false, quiet: 20_000, lateOnly: true }).ratio === 1.75 &&
+      nextPixelRatio({ ratio: 1.5, max: 2, avg: 33, draw: 5, fast: false, quiet: 5_000, lateOnly: true }).ratio === 1.5,
+  );
 
   for (const f of LOOKS_FLAGS) GRAPHICS[f] = was[f];
 }

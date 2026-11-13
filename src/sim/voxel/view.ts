@@ -1,4 +1,4 @@
-import { GRAPHICS, LOOKS_STATE, setLooksChoice } from "./graphics";
+import { GRAPHICS, LATE_ONLY, LOOKS_STATE, PIXEL_CAPS, nextPixelRatio, setLooksChoice } from "./graphics";
 import { Looks } from "./looks";
 import { fronts } from "../weather";
 import {
@@ -244,7 +244,7 @@ export class VoxelView {
       preserveDrawingBuffer: !!options.preserveDrawingBuffer,
     });
     this.renderer.outputColorSpace = LinearSRGBColorSpace;
-    this.pixelRatio = Math.min(2, window.devicePixelRatio || 1);
+    this.pixelRatio = Math.min(PIXEL_CAPS[LOOKS_STATE.level], window.devicePixelRatio || 1);
     this.renderer.setPixelRatio(this.pixelRatio);
     this.overlayCtx = overlay.getContext("2d")!;
     this.orbit = new OrbitCamera(world.w, world.h);
@@ -593,7 +593,7 @@ export class VoxelView {
     if (
       choice?.level === "auto" &&
       !this.orbit.eye &&
-      LOOKS_STATE.chooser.feed(dt * 1000, ms, this.paceMs, this.pixelRatio, Math.min(2, window.devicePixelRatio || 1))
+      LOOKS_STATE.chooser.feed(dt * 1000, ms, this.paceMs, this.pixelRatio, Math.min(PIXEL_CAPS[LOOKS_STATE.level], window.devicePixelRatio || 1))
     )
       setLooksChoice(choice);
     if (this.frameTimes.length < 60) return;
@@ -601,20 +601,21 @@ export class VoxelView {
     const draw = this.drawTimes.reduce((a, b) => a + b, 0) / this.drawTimes.length;
     this.frameTimes = [];
     this.drawTimes = [];
-    const max = Math.min(2, window.devicePixelRatio || 1);
-    // Frames come every 33 ms, one per simulation tick, unless a finger moves
-    // the view. Well past that, frames are being missed: draw fewer pixels.
-    // Back up only when both the cadence and the drawing have room, and not
-    // within 10 s of a drop, so it does not see-saw. At 60 a second
-    // (pacing.ts) a missed cadence first falls back to 30, so only the draw
-    // time lowers the pixels there; the way back up needs the same room.
+    // Fewer pixels when frames are slow, back up when there is room, not within 10 s of a drop so
+    // it does not see-saw; the cap and the rule are the looks level's (graphics.ts nextPixelRatio).
+    const level = LOOKS_STATE.level;
     const now = performance.now();
-    const fast = this.paceMs < 25;
-    let next = this.pixelRatio;
-    if ((!fast && avg > 52) || draw > 30) {
-      next = Math.max(0.6, this.pixelRatio - 0.25);
-      this.droppedAt = now;
-    } else if (avg < (fast ? 19 : 38) && draw < 12 && now - this.droppedAt > 10_000) next = Math.min(max, this.pixelRatio + 0.25);
+    const step = nextPixelRatio({
+      ratio: this.pixelRatio,
+      max: Math.min(PIXEL_CAPS[level], window.devicePixelRatio || 1),
+      avg,
+      draw,
+      fast: this.paceMs < 25,
+      quiet: now - this.droppedAt,
+      lateOnly: LATE_ONLY[level],
+    });
+    if (step.dropped) this.droppedAt = now;
+    const next = step.ratio;
     if (next !== this.pixelRatio) {
       this.pixelRatio = next;
       this.renderer.setPixelRatio(next);
@@ -1022,6 +1023,8 @@ export class VoxelView {
     const fogK = this.sky.fog;
     const dim = 1 - grey;
     for (const m of this.lit) m.color.setRGB(day.r * dim, day.g * dim, day.b * dim);
+    // Smoke, steam and dust are lit by the day as the land is: grey at night, not white.
+    (this.dullPoints.material as ShaderMaterial).uniforms.tint.value.setRGB(day.r * dim, day.g * dim, day.b * dim);
     this.lightTheDark(Math.min(0.95, dark), visuals);
     // The sky is repainted only when it changes by a visible step.
     const shade = Math.round(Math.min(0.95, dark) * 20) / 20;
@@ -2111,7 +2114,10 @@ function glowTexture(): CanvasTexture {
   return new CanvasTexture(c);
 }
 
-// Particles as screen facing points, sized by distance, faded by their life.
+// Particles as screen facing points, sized by distance, faded by their life. Those that do not
+// glow (chimney smoke, a hot spring's steam, a waterfall's spray, dust and chips) are soft round
+// puffs lit by the day: they were drawn as hard opaque squares, white even at night, which read
+// as white boxes floating over every village (the lead's review, 13 November).
 function pointCloud(capacity: number, glow: boolean, texture: CanvasTexture): Points {
   const geo = new BufferGeometry();
   geo.setAttribute("position", new BufferAttribute(new Float32Array(capacity * 3), 3));
@@ -2119,12 +2125,17 @@ function pointCloud(capacity: number, glow: boolean, texture: CanvasTexture): Po
   geo.setAttribute("size", new BufferAttribute(new Float32Array(capacity), 1));
   geo.setDrawRange(0, 0);
   const material = new ShaderMaterial({
-    uniforms: { scale: { value: 400 }, map: { value: texture } },
+    uniforms: { scale: { value: 400 }, map: { value: texture }, tint: { value: new Color(1, 1, 1) } },
     vertexShader: `attribute float size; attribute vec4 color; varying vec4 vColor; uniform float scale;
       void main() { vColor = color; vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_PointSize = max(2.0, size * scale / -mv.z); gl_Position = projectionMatrix * mv; }`,
     fragmentShader: glow
       ? `uniform sampler2D map; varying vec4 vColor; void main() { vec4 t = texture2D(map, gl_PointCoord); gl_FragColor = vec4(vColor.rgb, vColor.a * t.a); }`
-      : `varying vec4 vColor; void main() { gl_FragColor = vColor; }`,
+      : `uniform vec3 tint; varying vec4 vColor; void main() {
+          vec2 q = gl_PointCoord * 2.0 - 1.0;
+          float d = dot(q, q);
+          if (d > 1.0) discard;
+          gl_FragColor = vec4(vColor.rgb * tint, vColor.a * (1.0 - smoothstep(0.2, 1.0, d)));
+        }`,
     transparent: true,
     depthWrite: false,
     ...(glow ? { blending: AdditiveBlending } : {}),
