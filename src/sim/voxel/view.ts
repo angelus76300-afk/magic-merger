@@ -94,6 +94,8 @@ export class VoxelView {
   private treeKeys: string[] = [];
   private nearMeshes = new Map<string, InstancedMesh>();
   private nearSlots = new Map<string, number[]>();
+  // The trees close to the eye drawn small, and their matrices as they were (placeNearTrees).
+  private faded: { key: string; slot: number; m: Matrix4 }[] = [];
   private nearAt = -1;
   private coversDrawn = 0;
   private nearDrawn = -1;
@@ -482,6 +484,8 @@ export class VoxelView {
         names.get(mesh) ?? (mesh.name || ((mesh as InstancedMesh).isInstancedMesh ? "other instanced" : n > 2000 ? "big mesh (land, water)" : "small mesh"));
       out[key] = (out[key] ?? 0) + Math.round(n * inst);
     });
+    // Not triangles: the trees close to the eye drawn small (placeNearTrees), for scripts/eyes-trees-proof.mjs.
+    out["faded trees (count)"] = this.faded.length;
     return out;
   }
 
@@ -789,6 +793,14 @@ export class VoxelView {
         }
         if (slots.length) base.instanceMatrix.needsUpdate = true;
       }
+    if (this.nearDrawn === this.coversDrawn)
+      for (const f of this.faded) {
+        const base = this.covers.get(f.key);
+        if (!base) continue;
+        base.setMatrixAt(f.slot, f.m);
+        base.instanceMatrix.needsUpdate = true;
+      }
+    this.faded.length = 0;
     this.nearSlots.clear();
     this.nearAt = at;
     this.nearDrawn = this.coversDrawn;
@@ -806,7 +818,24 @@ export class VoxelView {
           const d2 = (x - ex) * (x - ex) + (y - ey) * (y - ey);
           if (d2 > R * R) continue;
           const slot = this.treeSlots.get(y * world.w + x);
-          if (slot !== undefined) found.push([d2, slot]);
+          if (slot === undefined) continue;
+          // A tree within EYE_CLEAR cells of the eye fills the screen with its crown (the owner, 13
+          // November: "trees blocked me too much"): it is drawn as a sapling and not near.
+          if (this.eyeCuts && (x - eye.x) * (x - eye.x) + (y - eye.y) * (y - eye.y) < EYE_CLEAR * EYE_CLEAR) {
+            const key = this.treeKeys[Math.floor(slot / 0x100000)];
+            const base = this.covers.get(key);
+            if (base) {
+              const m = new Matrix4();
+              base.getMatrixAt(slot % 0x100000, m);
+              this.faded.push({ key, slot: slot % 0x100000, m });
+              const e = m.clone().elements;
+              for (const k of [0, 1, 2, 4, 5, 6, 8, 9, 10]) e[k] *= 0.2;
+              base.setMatrixAt(slot % 0x100000, new Matrix4().fromArray(e));
+              base.instanceMatrix.needsUpdate = true;
+              continue;
+            }
+          }
+          found.push([d2, slot]);
         }
       if (found.length > NEAR_BUDGET && this.eyeCuts) found.sort((a, b) => a[0] - b[0]).length = NEAR_BUDGET;
       for (const [, slot] of found) {
@@ -2073,6 +2102,8 @@ const FLORA_MODELS = floraModels();
 // Within this many cells of the eye, creatures show the parts seen only up close (rigs.ts lod 2).
 const CLOSE_CELLS = 5;
 // An instance drawn as nothing: a tree near the eye, drawn by its near model instead.
+// Trees within this many cells of the eye are drawn small (placeNearTrees).
+const EYE_CLEAR = 2.5;
 const FOLDED = new Matrix4().makeScale(0, 0, 0);
 // Where water that flooded a damp cell may grow lily pads (4.4.5).
 const LILY_LANDS = new Set(["temperate", "swamp", "jungle"]);
