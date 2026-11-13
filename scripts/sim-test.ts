@@ -19,6 +19,7 @@ import { weatherChecks } from "./weather-test";
 import { becomeChecks } from "./become-test";
 import { dailyChecks } from "./daily-test";
 import { monsterChecks } from "./monsters-test";
+import { propChecks } from "./props-test";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
 import { logDeeds, mindOf, remember } from "../src/sim/kin";
@@ -2510,6 +2511,7 @@ weatherChecks(check);
 becomeChecks(check);
 dailyChecks(check);
 monsterChecks(check);
+propChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);
