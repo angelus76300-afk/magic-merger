@@ -53,6 +53,24 @@ An experiment the owner asked for: one session leads and builds, instead of a pl
 
 The owner's "rules: lead" (12 November, about 11:20 UTC): `CLAUDE.md` has a section "Who leads" that makes the lead session the planner's replacement everywhere the rules say "the planner". The three questions of 11 November are settled: "rules: lead", "fresh: no" (this session carries on; a successor is started only when the owner says), and the watch stays on Haiku in its own standing session.
 
+### State on 13 November, about 03:00 UTC (the Opus lead, `session_01NxvtAnVeeSftkua711EPa8`)
+
+**Live since the switch**: high water (#134, the credit rule "each cast is thanked only for what its own program changed"); the eye view's second pass (#141); the island as a map (#142, roads half laid drawn thin after a reading test found false joins); thin parts drawn at 0.05 instead of dropped (#143, found by the nightly judge). Merged, nothing players see: the spell measurement (#139).
+
+**The owner's words since**: "Style: fine voxel art" and "Two passes" (13 November, for the looks revamp, now 5.2.5 in `docs/ROADMAP.md`). The owner raised the Anthropic key's limit to $75, with $25 meant for looks, and asked for a plan first; the plan was approved, but no spend is approved until the owner types "looks: yes, up to $25" in the lead session. "Include this in our regular flow. I don't want us to ignore what we were working on": the looks revamp joins the list after 4.12, nothing else is dropped.
+
+**Asked of the owner, open**: "eyes:" (a minute in the eye view, folded, frame counter on); "budget:" (rewrite first, share, or raise, for November's $4.26 between the 143 rewrites, about $2.64, and the nightly rebuild, about $0.21 a night); "flood:" (too easy, fine, too hard: a dam or cold at the source saved 5 of 5); "wide:" (the wide shot on its own, or after Watch only); 3 to 5 pictures of the look wanted; "archive: allow" (archiving was refused twice by the permission check, then went through when the owner asked).
+
+**In flight**: the engine's reactions (4.12 step 2, Opus helper, `claude/spells-answer-each-other`); the looks measured (5.2.5 step 1, Sonnet helper, `claude/look-measure`). At most two helpers at once.
+
+**Learned**:
+
+- The nightly rebuild runs in a fresh session that has no `send_message`: its report never reaches the lead. Read its session yourself each morning (`list_sessions`, then `list_events`), and archive it after.
+- The watch still reports to the closed lead: its prompt can only be changed from the watch's own session. The owner was told; a watch alert goes nowhere until then, so check `get_trigger` `last_run` now and then.
+- Archive every reviewer when its pull request is live, and the old lead at a handover: the owner wants one conversation in the sidebar.
+- The rolled back count went from 12 to 14 on 13 November with nothing in the night's run to explain it: find why.
+- The three items kept for thin parts (Holy Tome, Lost Tome, Mana Potion) go on the rewrite list.
+
 ### State at the switch to Opus (12 November, about 17:30 UTC)
 
 The owner is switching the lead session's model from Fable to Opus 5.5 ("plan a switch of your model to opus 5.5 soon, so make sure to fully pause before this"). Everything below is what the lead session holds in its head; a lead that has lost it starts here.
