@@ -3,6 +3,7 @@ import {
   Camera,
   Color,
   CustomToneMapping,
+  DepthTexture,
   DirectionalLight,
   Fog,
   HalfFloatType,
@@ -12,6 +13,7 @@ import {
   MeshBasicMaterial,
   NoToneMapping,
   OrthographicCamera,
+  PerspectiveCamera,
   PlaneGeometry,
   Scene,
   ShaderChunk,
@@ -34,7 +36,7 @@ import { GRAPHICS } from "./graphics";
 //   shadows  a sun that casts soft shadows, warm in its light, cool in shade
 //   grade    a filmic curve and a colour grade, and haze over the far side
 //   bloom    glow that spills around bright parts, at night only
-//   tilt     the miniature's blur at the top and bottom of the sky view
+//   tilt     the miniature's depth of field in the sky view, focused where the camera looks
 
 // The colour grade, the same in GLSL and in JavaScript (the fog's colour is
 // added after the materials' grade, so it is graded here first). Colours are
@@ -250,12 +252,14 @@ float sunLight(vec3 n) {
 
     // Glow at night, and in a spell's darkness.
     this.bloomAmount = GRAPHICS.bloom ? Math.min(1, Math.max(Math.max(0, f.night - 0.2) / 0.6, f.dark)) : 0;
-    // The miniature's blur: from the sky, more the more of the island the camera holds.
+    // The miniature's depth of field: at every zoom of the sky view, in focus at the point under
+    // the middle of the screen, blurred in front of it and behind it; stronger, and with a
+    // shallower focus, the more of the island the camera holds. Never in the eye view.
     const whole = Math.min(1, Math.max(0, (f.cover - 0.15) / 0.75));
-    this.tiltAmount = GRAPHICS.tilt && !f.eye ? 0.45 + 0.55 * whole * whole * (3 - 2 * whole) : 0;
+    this.tiltAmount = GRAPHICS.tilt && !f.eye ? 0.75 + 0.25 * whole : 0;
     this.tiltCenter = 0.5;
-    // The sharp band narrows as the camera pulls back over the whole island.
-    this.tiltSharp = 0.05 + 0.1 * (1 - whole);
+    // How far in front or behind the focus stays sharp, as a share of the focus distance.
+    this.tiltSharp = 0.035 + 0.05 * (1 - whole);
   }
 
   // Lays the shadow map over what the camera holds, from the sun's side. The
@@ -356,7 +360,7 @@ float sunLight(vec3 n) {
 
 // The passes after the scene: the frame is drawn into a texture; bloom takes
 // its bright parts at a quarter of the width (a sixteenth of the pixels) and
-// blurs them, the tilt blur at half the width; one last pass mixes them and
+// blurs them, the depth of field's blur at half the width; one last pass mixes them and
 // grades the colour on the way to the screen.
 class Post {
   private scene = new Scene();
@@ -374,7 +378,8 @@ class Post {
 
   constructor() {
     const opts = { minFilter: LinearFilter, magFilter: LinearFilter, depthBuffer: false, type: UnsignedByteType };
-    this.full = new WebGLRenderTarget(1, 1, { ...opts, depthBuffer: true });
+    // Its depth is kept as a texture for the depth of field: written by the scene's own pass, no pass more.
+    this.full = new WebGLRenderTarget(1, 1, { ...opts, depthBuffer: true, depthTexture: new DepthTexture(1, 1) });
     this.halfA = new WebGLRenderTarget(1, 1, opts);
     this.halfB = new WebGLRenderTarget(1, 1, opts);
     // Bloom adds light: kept in half floats where the device has them, so faint glow does not band.
@@ -430,6 +435,10 @@ class Post {
     mixer.uniforms.tilt.value = o.tilt;
     mixer.uniforms.center.value = o.center;
     mixer.uniforms.sharp.value = o.sharp;
+    mixer.uniforms.tDepth.value = this.full.depthTexture;
+    const cam = camera as PerspectiveCamera;
+    mixer.uniforms.camNear.value = cam.near ?? 0.1;
+    mixer.uniforms.camFar.value = cam.far ?? 1000;
     this.pass(renderer, mixer, before);
     return passes + 1;
   }
@@ -459,6 +468,9 @@ class Post {
         tilt: { value: 0 },
         center: { value: 0.5 },
         sharp: { value: 0.1 },
+        tDepth: { value: null },
+        camNear: { value: 0.1 },
+        camFar: { value: 1000 },
       },
       vertexShader: QUAD_VERTEX,
       fragmentShader: `
@@ -469,14 +481,23 @@ uniform float bloom;
 uniform float tilt;
 uniform float center;
 uniform float sharp;
+uniform sampler2D tDepth;
+uniform float camNear;
+uniform float camFar;
 varying vec2 vUv;
+float viewDepth(vec2 uv) {
+  float z = texture2D(tDepth, uv).x * 2.0 - 1.0;
+  return 2.0 * camNear * camFar / (camFar + camNear - z * (camFar - camNear));
+}
 ${GRADE_GLSL}
 void main() {
   vec3 c = texture2D(tScene, vUv).rgb;
 #ifdef TILT
-  // Sharp in a band across the middle, blurred toward the top and bottom.
-  float d = abs(vUv.y - center);
-  float k = smoothstep(sharp, sharp + 0.24, d) * tilt;
+  // In focus at the point under the middle of the screen; the farther in front or behind, the
+  // more of the blurred frame shows.
+  float focus = viewDepth(vec2(center, 0.5));
+  float rel = abs(viewDepth(vUv) - focus) / max(focus, 1e-3);
+  float k = smoothstep(sharp, sharp * 3.0 + 0.12, rel) * tilt;
   c = mix(c, texture2D(tBlur, vUv).rgb, k);
 #endif
 #ifdef BLOOM

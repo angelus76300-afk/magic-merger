@@ -15,9 +15,13 @@ four switches in `src/sim/voxel/graphics.ts`, each measured alone, drawn in
   the far side of the island, tuned with the existing fog.
 - `bloom`: glow that spills around bright parts, at night and in a spell's
   darkness only. Three passes at a quarter width (a sixteenth of the pixels).
-- `tilt`: the miniature's blur. The top and bottom of the screen go out of
-  focus in the sky view, more the more the camera holds the whole island; off
-  in the eye view. Two passes at half width. This is the diorama look.
+- `tilt`: the miniature's depth of field (the owner, after the first frames:
+  "more than bloom it's more depth of field"). In focus at the point under the
+  middle of the screen, blurred more the farther in front of it or behind it,
+  at every zoom of the sky view, with a shallower focus the more the camera
+  holds the whole island; off in the eye view. The depth comes from a depth
+  texture the scene's own pass writes (no extra pass); the blur is two passes
+  at half width. Frames `village-mid-*` show it at a mid zoom on a village.
 
 A quality preset (low, medium, high) is chosen from the device's own frame
 times (`QualityChooser`), with each look assigned to a level: low is the game
@@ -27,12 +31,13 @@ look at a time in the frame HUD (long press the title, open the World).
 
 ## The frames
 
-Three island views, each with every look off (`-low`) and with the high preset
+Four island views, each with every look off (`-low`) and with the high preset
 (`-high`), at 390x844 (a phone) and 344x882 (the owner's Z Fold folded):
 
 - `village-day-*` a village by day
 - `village-night-*` the same village at night, lit windows and glowing items
 - `island-day-*` the whole island from above
+- `village-mid-*` the village at a mid zoom (the depth of field)
 
 ## Cost (CPU side only; the phone must judge the GPU)
 
@@ -49,7 +54,7 @@ Measured alone at 700x830 (the Fold open), medium island, dpr 1:
 | shadows       | 4.4 ms       | 4.9 ms      | +45 (map)   | 0                  |
 | grade         | ~0 extra     | ~0 extra    | 0           | 0                  |
 | bloom (night) | +0.3 ms      | n/a (day)   | 0           | 3                  |
-| tilt          | +0.9 ms      | +0.0 ms     | 0           | 3                  |
+| tilt (depth)  | +0.1 ms      | +0.1 ms     | 0           | 3 (depth: none)    |
 
 Shadows cost one extra scene pass into the map (its draw calls scale with what
 casts). Grade is free on the CPU (a shader change, no pass). Bloom and tilt add

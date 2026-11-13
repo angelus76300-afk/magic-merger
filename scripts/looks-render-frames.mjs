@@ -99,6 +99,8 @@ const VIEWS = [
   ["village-day", { clock: DAY, cam: { village: true, dist: 0.2, phi: 0.95 } }],
   ["village-night", { clock: NIGHT, cam: { village: true, dist: 0.2, phi: 0.95 } }],
   ["island-day", { clock: DAY, cam: { dist: "whole", phi: 0.72 } }],
+  // A mid zoom on the village, for the depth of field (the owner, 13 November).
+  ["village-mid", { clock: DAY, cam: { village: true, dist: 0.36, phi: 0.88 } }],
 ];
 
 for (const size of sizes.split(",")) {
