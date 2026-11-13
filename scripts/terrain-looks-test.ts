@@ -45,7 +45,7 @@ export interface IslandMesh {
 
 // Builds the whole island's land and water (as the first frame does), then the fine chunks for a
 // camera at `zoom` over the island's middle, and hashes every attribute of every mesh drawn.
-export function buildIsland(cells: number, seed: number, land: LandOptions, zoom: Zoom = "close"): IslandMesh {
+export function buildIsland(cells: number, seed: number, land: LandOptions, zoom: Zoom = "close", after?: (terrain: Terrain) => void): IslandMesh {
   const world = generateWorld(cells, cells, seed, land);
   const meshes: { kind: "land" | "fluid"; mesh: Mesh }[] = [];
   const landMat = new MeshBasicMaterial();
@@ -71,6 +71,7 @@ export function buildIsland(cells: number, seed: number, land: LandOptions, zoom
   const t1 = performance.now();
   if (GRAPHICS.fine) terrain.updateFine(0, true);
   const fineMs = performance.now() - t1;
+  after?.(terrain);
   const hash = { land: 0x811c9dc5, fluid: 0x811c9dc5 };
   for (const { kind, mesh } of meshes) {
     if (!mesh.visible) continue;
@@ -134,6 +135,23 @@ export function terrainLooksChecks(check: Check): void {
       a.map((m, k) => `${LOOK_ISLANDS[k].name} ${m.landTriangles + m.fluidTriangles} triangles`).join(", "),
     );
   }
+  // The fine land turned off while playing (the quality preset steps down to
+  // low, or the owner's switch): every fine chunk goes, and the land is the
+  // cell mesh again.
+  const dropped = LOOK_ISLANDS.map((_, k) => {
+    const { cells, seed, land } = LOOK_ISLANDS[k];
+    return withSwitches(LOOK_SWITCHES, () =>
+      buildIsland(cells, seed, land, "close", (terrain) => {
+        GRAPHICS.fine = false;
+        for (let i = 0; i < 3; i++) terrain.rebuild(true);
+      }),
+    );
+  });
+  check(
+    "turning the fine land off while playing drops every fine chunk and shows the cell land again",
+    dropped.every((m, k) => m.fineChunks === 0 && m.landTriangles === off[k].landTriangles),
+    dropped.map((m, k) => `${LOOK_ISLANDS[k].name} ${m.fineChunks} fine, ${m.landTriangles}/${off[k].landTriangles} land triangles`).join(", "),
+  );
   // From high up (the whole island) nothing is drawn finely.
   const far = LOOK_ISLANDS.map((_, k) => islandWith(LOOK_SWITCHES, k, "far"));
   check(

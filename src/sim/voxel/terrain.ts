@@ -214,6 +214,7 @@ export class Terrain {
       this.swap(c, "fluid", this.buildFluid(c));
     }
     if (GRAPHICS.fine) this.updateFine(until);
+    else if (this.hasFine) this.dropAllFine();
     // One chunk of the slow queue every third frame, land and water in turn,
     // if time is left.
     if (performance.now() > until || this.slowTurn++ % 3 !== 0) return;
@@ -292,6 +293,15 @@ export class Terrain {
   // that flows changes its chunk every few frames, and the land would flicker between the two.
   private staleFine(c: number): void {
     if (this.fine[c] !== undefined) this.fineStale[c] = 1;
+  }
+
+  // The fine land turned off at run time (the quality preset stepped down, or
+  // the HUD switch): every fine chunk goes, and the cell mesh shows again.
+  private get hasFine(): boolean {
+    return this.fine.some((m) => m !== undefined);
+  }
+  dropAllFine(): void {
+    for (let c = 0; c < this.fine.length; c++) if (this.fine[c] !== undefined) this.dropFine(c);
   }
 
   private dropFine(c: number): void {
