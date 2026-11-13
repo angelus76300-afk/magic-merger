@@ -6,7 +6,8 @@
 import { MeshBasicMaterial, type Mesh } from "three";
 import { generateWorld } from "../src/sim/world";
 import { DEFAULT_LAND, resolveLand, type LandOptions } from "../src/sim/land-options";
-import { Terrain } from "../src/sim/voxel/terrain";
+import { Terrain, columnTop } from "../src/sim/voxel/terrain";
+import { C } from "../src/sim/materials";
 import { GRAPHICS } from "../src/sim/voxel/graphics";
 import { LAND_LOOKS } from "../src/sim/voxel/land-looks";
 
@@ -40,6 +41,12 @@ export interface IslandMesh {
   eighths: number; // of the fine chunks, those in eighth voxels
   maxTileMs: number; // the longest tile of a fine chunk to build
   tileP95: number;
+  // The worst gap, scene units, between the drawn ground and the cell's height under what is
+  // placed by the cell's height: plants and other covers across their foot (0.12 cells from the
+  // middle), houses across their whole floor (0.45). Creatures stand on the drawn ground itself.
+  coverGap: number;
+  houseGap: number;
+  sampled: number;
   landHash: string;
   fluidHash: string;
   ms: number; // the whole island's first build, one cell meshes
@@ -88,6 +95,31 @@ export function buildIsland(cells: number, seed: number, land: LandOptions, zoom
     }
   }
   const shown = terrain.shownTriangles();
+  let coverGap = 0;
+  let houseGap = 0;
+  let sampled = 0;
+  for (let i = 0; i < world.n; i++) {
+    const cover = world.cover[i];
+    if (cover === C.NONE) continue;
+    const x = i % world.w;
+    const y = Math.floor(i / world.w);
+    const r = cover === C.HOUSE ? 0.45 : 0.12;
+    const top = columnTop(world, i);
+    if (terrain.groundAt(x + 0.5, y + 0.5) === top && !GRAPHICS.fine) continue;
+    for (const [dx, dy] of [
+      [0, 0],
+      [-r, -r],
+      [r, -r],
+      [-r, r],
+      [r, r],
+    ]) {
+      const gap = Math.abs(terrain.groundAt(x + 0.5 + dx, y + 0.5 + dy) - top);
+      if (world.fluid[i] !== 0) continue;
+      sampled++;
+      if (cover === C.HOUSE) houseGap = Math.max(houseGap, gap);
+      else coverGap = Math.max(coverGap, gap);
+    }
+  }
   const hex = (h: number) => h.toString(16).padStart(8, "0");
   return {
     landTriangles: shown.land,
@@ -95,6 +127,9 @@ export function buildIsland(cells: number, seed: number, land: LandOptions, zoom
     fineChunks: shown.fineChunks,
     eighths: shown.eighths,
     maxTileMs: terrain.fineStats.maxTileMs,
+    coverGap,
+    houseGap,
+    sampled,
     tileP95: [...terrain.fineStats.tileMs].sort((a, b) => a - b)[Math.floor(terrain.fineStats.tileMs.length * 0.95)] ?? 0,
     landHash: hex(hash.land),
     fluidHash: hex(hash.fluid),
@@ -147,6 +182,12 @@ export function terrainLooksChecks(check: Check): void {
     "close up the land is in eighth voxels near the camera and quarters around them; at mid zoom in quarters",
     close.every((m) => m.eighths > 0 && m.fineChunks > m.eighths) && mid.every((m) => m.eighths === 0 && m.fineChunks > 0),
     close.map((m, k) => `${LOOK_ISLANDS[k].name} close ${m.eighths} eighths of ${m.fineChunks}, mid ${mid[k].fineChunks}`).join(", "),
+  );
+  // What stands on a cell stands on the drawn ground, within an eighth voxel.
+  check(
+    "plants and houses stand on the slopes of the fine land within an eighth of a voxel",
+    close.every((m) => m.coverGap <= 0.125 && m.houseGap <= 0.125 && m.sampled > 0),
+    close.map((m, k) => `${LOOK_ISLANDS[k].name}: plants ${m.coverGap.toFixed(3)}, houses ${m.houseGap.toFixed(3)} (${m.sampled} points)`).join(", "),
   );
   // From high up (the whole island) nothing is drawn finely.
   const far = LOOK_ISLANDS.map((_, k) => islandWith(LOOK_SWITCHES, k, "far"));

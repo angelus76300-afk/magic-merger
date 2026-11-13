@@ -358,12 +358,8 @@ export class VoxelView {
   }
 
   // Height of the visible surface (land or fluid) under a point, in scene units.
-  groundAt = (x: number, y: number): number => {
-    const { world } = this;
-    const cx = Math.max(0, Math.min(world.w - 1, Math.floor(x)));
-    const cy = Math.max(0, Math.min(world.h - 1, Math.floor(y)));
-    return surfaceY(world, cy * world.w + cx);
-  };
+  // With the fine land on, the slopes it draws (terrain.ts groundAt); else the cell's, as before.
+  groundAt = (x: number, y: number): number => this.terrain.groundAt(x, y);
 
   // The cell under a screen point, by walking along the camera ray.
   pick(sx: number, sy: number): { x: number; y: number } | null {

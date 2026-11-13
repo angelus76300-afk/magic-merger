@@ -1,5 +1,5 @@
 import { BufferAttribute, BufferGeometry, Mesh, type Material } from "three";
-import { BUILTIN, F, G, type Material as LandMaterial } from "../materials";
+import { BUILTIN, C, F, G, type Material as LandMaterial } from "../materials";
 import type { World } from "../world";
 import { FACE_LIGHT } from "./models";
 import { mixColor, scaleColor } from "../colors";
@@ -7,7 +7,7 @@ import { GRAPHICS } from "./graphics";
 import { LOOKS, biomeAt } from "../land";
 import { DAMP, R as RARE } from "../ecology";
 import { eyeKeepsChunk } from "./fog";
-import { TILE, buildFineTile, fineAt, makeFineCells, sizeFineCells } from "./terrain-fine";
+import { TILE, buildFineTile, fieldHeight, fineAt, makeFineCells, sizeFineCells, type LandRead } from "./terrain-fine";
 
 // The island as voxel columns. Each cell is one column whose top sits at its
 // height (half a unit per height unit, rounded to whole voxels). Walls are
@@ -270,7 +270,7 @@ export class Terrain {
   private fineStale = new Uint8Array(0);
   private chunkOn = new Uint8Array(0);
   private staleBuiltAt = -1e9;
-  private job: { c: number; sub: number; tiles: [number, number, number, number][]; next: number } | null = null;
+  private job: { c: number; sub: number; tiles: [number, number, number, number][]; next: number; again: boolean } | null = null;
   // The longest a frame spent on the fine land, ms (for the measures).
   readonly fineStats = { maxFrameMs: 0, maxTileMs: 0, tiles: 0, tileMs: [] as number[] };
   private eye = { x: 0, y: 0, z: 0, tx: 0, tz: 0, reach: 0, known: false };
@@ -314,6 +314,44 @@ export class Terrain {
     const dx = Math.max(x0 + ox - this.eye.tx, 0, this.eye.tx - (x1 + ox));
     const dz = Math.max(y0 + oz - this.eye.tz, 0, this.eye.tz - (y1 + oz));
     return Math.hypot(dx, this.eye.reach * 0.5, dz);
+  }
+
+  // The cells as the secondary terrain map reads them (terrain-fine.ts fieldHeight), the same
+  // links as the fine land's: dry ground, not built (a path counts as ground), at most a voxel apart.
+  private landRead: LandRead = {
+    top: (x, y) => {
+      const { world } = this;
+      return x >= 0 && y >= 0 && x < world.w && y < world.h ? columnTop(world, y * world.w + x) : BOTTOM;
+    },
+    linked: (ax, ay, bx, by) => {
+      const { world } = this;
+      if (bx < 0 || by < 0 || bx >= world.w || by >= world.h) return false;
+      const a = ay * world.w + ax;
+      const b = by * world.w + bx;
+      if (this.wet[a] || this.wet[b] || world.cover[a] === C.HOUSE || world.cover[b] === C.HOUSE) return false;
+      const ground = (i: number) => this.builtColor(i) === null || world.ground[i] === G.PATH;
+      return ground(a) && ground(b) && Math.abs(columnTop(world, a) - columnTop(world, b)) <= 1;
+    },
+  };
+
+  // The height of the land as drawn under (x, y) in cells, in scene units: the secondary terrain
+  // map where the land is drawn finely with slopes, at the level it is drawn; the cell's own
+  // height (or its water's) elsewhere. Creatures and what stands on the land are placed by it.
+  groundAt(x: number, y: number): number {
+    const { world } = this;
+    const cx = Math.max(0, Math.min(world.w - 1, Math.floor(x)));
+    const cy = Math.max(0, Math.min(world.h - 1, Math.floor(y)));
+    const i = cy * world.w + cx;
+    const base = surfaceY(world, i);
+    if (!GRAPHICS.fine || !GRAPHICS.steps || !this.fine.length || this.wet[i]) return base;
+    const c = Math.floor(cy / CHUNK) * this.cols + Math.floor(cx / CHUNK);
+    if (!this.fineShown[c] || !this.fine[c]) return base;
+    if (this.builtColor(i) !== null && world.ground[i] !== G.PATH) return base;
+    const sub = this.fineLevel[c];
+    // The middle of the column drawn there.
+    const px = (Math.floor(Math.min(cx + 0.999, Math.max(cx, x)) * sub) + 0.5) / sub;
+    const py = (Math.floor(Math.min(cy + 0.999, Math.max(cy, y)) * sub) + 0.5) / sub;
+    return Math.round(fieldHeight(this.landRead, px, py) * sub) / sub;
   }
 
   // A chunk whose land changed keeps its fine mesh on show until the new one is built: a river
@@ -415,7 +453,8 @@ export class Terrain {
         this.fineStats.maxTileMs = Math.max(this.fineStats.maxTileMs, t1 - t0);
         this.fineStats.tiles++;
         if (this.fineStats.tileMs.length < 4096) this.fineStats.tileMs.push(t1 - t0);
-        if (!all && t1 - start > FINE_BUDGET_MS) break;
+        // A chunk built again because its land changed takes a smaller share of the frame.
+        if (!all && t1 - start > (job.again ? FINE_AGAIN_MS : FINE_BUDGET_MS)) break;
       }
       if (job.next >= job.tiles.length) this.finishFine(job.c, job.sub);
       if (!all) break;
@@ -457,6 +496,7 @@ export class Terrain {
         f.hangs[k] = g === G.GRASS || g === G.SNOW ? 1 : 0;
         f.flowers[k] = g === G.GRASS && world.cover[i] === 0 ? 1 : 0;
         f.pebbles[k] = g === G.SAND ? 1 : 0;
+        f.flat[k] = world.cover[i] === C.HOUSE ? 1 : 0;
       }
     }
     const tiles: [number, number, number, number][] = [];
@@ -467,7 +507,7 @@ export class Terrain {
     // Room for a fine chunk's vertices from the start: growing in the middle of a tile copies
     // megabytes, a spike of tens of milliseconds.
     FINE_OUT.reserve(FINE_VERTICES);
-    this.job = { c, sub, tiles, next: 0 };
+    this.job = { c, sub, tiles, next: 0, again: this.fine[c] !== undefined && this.fineLevel[c] === sub };
   }
 
   // The chunk's tiles are all written: its new fine mesh takes the place of the old one.
@@ -864,6 +904,7 @@ const WET_OFF = 0.005;
 const FINE8_NEAR = 12;
 const FINE8_KEEP = 16;
 const FINE_BUDGET_MS = 4;
+const FINE_AGAIN_MS = 1.5;
 const FINE_NEAR = 34;
 const FINE_KEEP = 42;
 const FINE_DROP = 90;

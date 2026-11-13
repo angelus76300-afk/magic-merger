@@ -48,7 +48,37 @@ function spots() {
       }
       if (!shore && near(x, y, 3, (j) => w.ground[j] === G.GRASS && w.fluid[j] === 0) && Math.hypot(x - w.w / 2, y - w.h / 2) < w.w * 0.4) shore = { x, y };
     }
-  return { village: v ? { x: v.x, y: v.y } : { x: w.w / 2, y: w.h / 2 }, beach: beach ?? { x: w.w / 2, y: w.h / 2 }, shore: shore ?? beach, side: w.w };
+  // A grassy hill: the most rises of one voxel around a dry grass cell, and no cliff; a cliff: the
+  // highest drop next to a dry cell. Voxel heights as the land draws them (terrain.ts columnTop).
+  const top = (i) => Math.round(w.height[i] * 0.5);
+  let hill = null;
+  let cliff = null;
+  let bestHill = -1;
+  let bestCliff = 1;
+  for (let y = 6; y < w.h - 6; y++)
+    for (let x = 6; x < w.w - 6; x++) {
+      const i = at(x, y);
+      if (w.fluid[i] !== 0) continue;
+      let ones = 0;
+      let cliffs = 0;
+      for (let dy = -3; dy <= 3; dy++)
+        for (let dx = -3; dx < 3; dx++) {
+          const d = Math.abs(top(at(x + dx, y + dy)) - top(at(x + dx + 1, y + dy)));
+          if (d === 1) ones++;
+          else if (d >= 2) cliffs++;
+        }
+      if (w.ground[i] === G.GRASS && !cliffs && ones > bestHill && !near(x, y, 3, (j) => w.fluid[j] !== 0)) {
+        bestHill = ones;
+        hill = { x, y };
+      }
+      const drop = top(i) - Math.min(top(at(x + 1, y)), top(at(x, y + 1)), top(at(x - 1, y)), top(at(x, y - 1)));
+      if (drop > bestCliff && w.fluid[i] === 0) {
+        bestCliff = drop;
+        cliff = { x, y };
+      }
+    }
+  const mid = { x: w.w / 2, y: w.h / 2 };
+  return { village: v ? { x: v.x, y: v.y } : mid, beach: beach ?? mid, shore: shore ?? beach, hill: hill ?? mid, cliff: cliff ?? mid, side: w.w };
 }
 
 const VIEWS = {
@@ -56,13 +86,15 @@ const VIEWS = {
   beach: (s) => ({ tx: s.beach.x, ty: s.beach.y, dist: 24, phi: 1.05 }),
   island: (s) => ({ tx: s.side / 2, ty: s.side / 2, dist: s.side * 0.55, phi: 0.95 }),
   shore: (s) => ({ tx: s.shore.x, ty: s.shore.y, dist: 11, phi: 0.9 }),
+  hill: (s) => ({ tx: s.hill.x, ty: s.hill.y, dist: 13, phi: 1.0 }),
+  cliff: (s) => ({ tx: s.cliff.x, ty: s.cliff.y, dist: 14, phi: 1.1 }),
 };
 
 let found = null;
 const browser = await chromium.launch({ args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--ignore-gpu-blocklist"] });
 try {
   for (const [W, H] of SIZES) {
-    for (const look of ["off", "on"]) {
+    for (const look of (process.env.LOOKS ?? "off,on").split(",")) {
       const ctx = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: 1, hasTouch: true });
       const page = await ctx.newPage();
       page.on("pageerror", (err) => console.error("page error:", err.message));
@@ -71,7 +103,8 @@ try {
       await page.evaluate(() => document.querySelectorAll("div").forEach((d) => (d.style.display = "none")));
       // The spots once, on the first island shown (villagers move the village's middle).
       await page.waitForTimeout(3000);
-      found ??= await page.evaluate(spots);
+      // SPOTS='{"hill":{"x":8,"y":44},...}' holds them, to frame another build at the same places.
+      found ??= { ...(await page.evaluate(spots)), ...JSON.parse(process.env.SPOTS ?? "{}") };
       const s = found;
       for (const [name, view] of Object.entries(VIEWS)) {
         if (ONLY && !ONLY.has(name)) continue;
@@ -96,3 +129,4 @@ try {
 } finally {
   await browser.close();
 }
+console.log("spots", JSON.stringify(found));

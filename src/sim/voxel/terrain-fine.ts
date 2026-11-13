@@ -51,6 +51,8 @@ export interface FineCells {
   hangs: Uint8Array;
   flowers: Uint8Array;
   pebbles: Uint8Array;
+  // A house's cell: kept flat, its floor on its height (no slope into or out of it).
+  flat: Uint8Array;
 }
 
 export function makeFineCells(): FineCells {
@@ -78,6 +80,7 @@ export function makeFineCells(): FineCells {
     hangs: new Uint8Array(0),
     flowers: new Uint8Array(0),
     pebbles: new Uint8Array(0),
+    flat: new Uint8Array(0),
   };
 }
 
@@ -108,6 +111,7 @@ export function sizeFineCells(f: FineCells, x0: number, y0: number, x1: number, 
     f.hangs = new Uint8Array(n);
     f.flowers = new Uint8Array(n);
     f.pebbles = new Uint8Array(n);
+    f.flat = new Uint8Array(n);
   }
 }
 
@@ -156,11 +160,75 @@ const FOAM_SOFT = 0xd9eef6;
 const CREASE = 0.74;
 // Quarter or eighth voxels of border kept around a tile, for its walls and its foam.
 const B = 3;
+// The highest step, in columns' units, drawn as part of a slope rather than as a wall.
+const RISER = 2;
 
+// A ground's tone: soft patches of three shades, and inside each a second, slightly darker
+// shade in smaller patches, so a field of grass is calm but not flat.
 function shadeAt(px: number, py: number): number {
   const n = noise(px, py, 2.6, 31);
-  return SHADES[n < 0.38 ? 0 : n < 0.64 ? 1 : 2];
+  return SHADES[n < 0.38 ? 0 : n < 0.64 ? 1 : 2] * (noise(px, py, 0.8, 33) > 0.6 ? 0.965 : 1);
 }
+
+// The secondary terrain map (steps): a finer height field made from the cells' heights, read
+// by the fine land and by what stands on it (Terrain.groundAt). Around a cell's middle (CORE
+// cells each way) it is the cell's own height, so a tree or a house on the cell stands on it;
+// toward a neighbour one voxel higher or lower it eases into the neighbour's height, meeting it
+// half way at their common side, so a rise of one voxel is a slope of small steps; a neighbour two
+// or more away is not followed, and the cliff stays. On slopes a little low noise, so they are not
+// all alike. Heights in scene units; (px, py) in cells, cell (x, y) spanning [x, x + 1).
+export interface LandRead {
+  top(x: number, y: number): number;
+  // Whether two neighbouring cells slope into each other.
+  linked(ax: number, ay: number, bx: number, by: number): boolean;
+}
+const CORE = 0.12;
+function ease(a: number): number {
+  const x = Math.max(0, (a - CORE) / (0.5 - CORE));
+  return 0.5 * x * x * (3 - 2 * x);
+}
+export function fieldHeight(land: LandRead, px: number, py: number): number {
+  const cx = Math.floor(px);
+  const cy = Math.floor(py);
+  const t = land.top(cx, cy);
+  const fx = px - cx - 0.5;
+  const fy = py - cy - 0.5;
+  const u = ease(Math.abs(fx));
+  const v = ease(Math.abs(fy));
+  if (u === 0 && v === 0) return t;
+  const nx = cx + (fx < 0 ? -1 : 1);
+  const ny = cy + (fy < 0 ? -1 : 1);
+  const h1 = u > 0 && land.linked(cx, cy, nx, cy) ? land.top(nx, cy) : t;
+  const h2 = v > 0 && land.linked(cx, cy, cx, ny) ? land.top(cx, ny) : t;
+  let h3 = h1 + h2 - t;
+  if (u > 0 && v > 0 && land.linked(cx, cy, nx, ny)) h3 = land.top(nx, ny);
+  h3 = Math.max(Math.min(t, h1, h2), Math.min(Math.max(t, h1, h2), h3));
+  let h = t * (1 - u) * (1 - v) + h1 * u * (1 - v) + h2 * (1 - u) * v + h3 * u * v;
+  if (h1 !== t || h2 !== t || h3 !== t) h += (noise(px, py, 1.3, 91) - 0.5) * 0.2 * Math.max(u, v) * 2;
+  return h;
+}
+
+// The fine cells as a LandRead, for the mesher.
+let READ_F: FineCells | null = null;
+const FINE_READ: LandRead = {
+  top: (x, y) => READ_F!.top[fineAt(READ_F!, x, y)],
+  linked: (ax, ay, bx, by) => {
+    const f = READ_F!;
+    const a = fineAt(f, ax, ay);
+    const b = fineAt(f, bx, by);
+    return !!(
+      f.inside[a] &&
+      f.inside[b] &&
+      f.natural[a] &&
+      f.natural[b] &&
+      !f.wet[a] &&
+      !f.wet[b] &&
+      !f.flat[a] &&
+      !f.flat[b] &&
+      Math.abs(f.top[a] - f.top[b]) <= 1
+    );
+  },
+};
 
 // Reused between builds: heights and colours of a tile's columns with a border of B.
 let H = new Int32Array(0);
@@ -187,8 +255,7 @@ export function buildFineTile(f: FineCells, out: Writer, ox: number, oz: number,
     DONE = new Uint8Array(SW * SH);
   }
   const bottom = f.bottom * sub;
-  // The band of columns along a cell's side that steps (1 of 4, 2 of 8).
-  const zone = Math.max(1, sub >> 2);
+  READ_F = f;
 
   for (let j = 0; j < SH; j++) {
     for (let k = 0; k < SW; k++) {
@@ -215,7 +282,10 @@ export function buildFineTile(f: FineCells, out: Writer, ox: number, oz: number,
       const lx = sx - cx * sub;
       const ly = sy - cy * sub;
       if (f.natural[c]) {
+        // The secondary terrain map: slopes where the land rises one voxel.
+        if (steps && !f.wet[c]) hgt = Math.round(fieldHeight(FINE_READ, px, py) * sub);
         let border = Infinity;
+        let shore = false;
         for (let d = 0; d < 4; d++) {
           // Columns from this side of the cell, and the distance in cells.
           const away = d === 0 ? sub - 1 - lx : d === 1 ? sub - 1 - ly : d === 2 ? lx : ly;
@@ -224,15 +294,9 @@ export function buildFineTile(f: FineCells, out: Writer, ox: number, oz: number,
           const n = fineAt(f, cx + DX[d], cy + DY[d]);
           if (!f.inside[n] || !f.natural[n]) continue;
           const dt = f.top[n] - t;
-          if (steps && away < zone && !f.wet[c] && !f.wet[n]) {
-            // A rise of one voxel: the low side's edge part way up, the high side's part way down,
-            // so the step becomes several small ones, a little irregular along the edge.
-            const part = Math.round((sub * (zone - away)) / (2 * zone + 1)) + (noise(px, py, 0.55, 1) > 0.55 ? 1 : 0);
-            if (dt === 1) hgt = Math.max(hgt, t * sub + part);
-            else if (dt === -1) hgt = Math.min(hgt, t * sub - part);
-            // A cliff's lip, broken in short runs.
-            else if (dt <= -2 && away === 0 && noise(px, py, 0.7, 2) > 0.62) hgt = Math.min(hgt, t * sub - Math.max(1, sub >> 3));
-          }
+          // A cliff's lip, broken in short runs.
+          if (steps && dt <= -2 && away === 0 && !f.wet[c] && !f.wet[n] && noise(px, py, 0.7, 2) > 0.62) hgt = Math.min(hgt, t * sub - Math.max(1, sub >> 3));
+          if (f.wet[n] && !f.wet[c] && af < 0.3) shore = true;
           if (!blend) continue;
           if (f.wet[c] && !f.wet[n] && f.water[c] > -1e8 && f.top[n] >= f.water[c] - 0.5) {
             // The shore: sand reaches into the shallows in a wavy line, just above the water.
@@ -253,10 +317,18 @@ export function buildFineTile(f: FineCells, out: Writer, ox: number, oz: number,
         }
         if (bits && !f.wet[c] && src === c) {
           // A few small clusters, not a sprinkle.
-          if (f.flowers[c] && noise(px, py, 3.2, 21) > 0.86 && hash(sx, sy, 22) < 0.22) {
+          if (f.flowers[c] && noise(px, py, 3.2, 21) > 0.8 && hash(sx, sy, 22) < 0.28) {
             bit = FLOWERS[Math.floor(hash(Math.floor(px / 3), Math.floor(py / 3), 23) * FLOWERS.length)];
             raise = 1;
-          } else if (f.pebbles[c] && noise(px, py, 3.6, 24) > 0.86 && hash(sx, sy, 25) < 0.3) bit = PEBBLES[Math.floor(hash(sx, sy, 26) * PEBBLES.length)];
+          } else if (f.flowers[c] && noise(px, py, 2.2, 27) > 0.84 && hash(sx, sy, 28) < 0.22) {
+            // A tuft of grass, a shade lighter or darker than the ground.
+            bit = scaleColor(f.color[c], hash(sx, sy, 29) < 0.4 ? 1.1 : 0.88);
+            raise = 1;
+          } else if (f.pebbles[c] && shore && hash(sx, sy, 25) < 0.07) {
+            // Pebbles along the shore line only.
+            bit = PEBBLES[Math.floor(hash(sx, sy, 26) * PEBBLES.length)];
+            raise = 1;
+          }
         }
       }
       H[s] = hgt + raise;
@@ -266,12 +338,32 @@ export function buildFineTile(f: FineCells, out: Writer, ox: number, oz: number,
       C[s] = col;
     }
   }
-  // Tops lower than a neighbour sit in its shadow (kept in the colour, so tops still merge).
+  // Light, kept in the colour so tops still merge. A slope of tiny steps is lit as the tilted
+  // ground it stands for, by which way it faces, so it reads as a slope and not as stripes (its
+  // risers take the same light, wallFaces); a top below a real wall sits in its shadow.
   for (let j = 1; j < SH - 1; j++)
     for (let k = 1; k < SW - 1; k++) {
       const s = j * SW + k;
       const h0 = H[s];
-      if (H[s + 1] > h0 || H[s - 1] > h0 || H[s + SW] > h0 || H[s - SW] > h0) C[s] = scaleColor(C[s], 0.88);
+      const e = H[s + 1] - h0;
+      const w = h0 - H[s - 1];
+      const so = H[s + SW] - h0;
+      const no = h0 - H[s - SW];
+      if (e > RISER || -w > RISER || so > RISER || -no > RISER) {
+        C[s] = scaleColor(C[s], 0.88);
+        continue;
+      }
+      // Rise per column toward +x and +z, over the gentle steps only.
+      const gx = (Math.abs(e) <= RISER ? e : 0) + (Math.abs(w) <= RISER ? w : 0);
+      const gz = (Math.abs(so) <= RISER ? so : 0) + (Math.abs(no) <= RISER ? no : 0);
+      if (!gx && !gz) continue;
+      const kx = Math.min(0.6, Math.abs(gx) * 0.15);
+      const kz = Math.min(0.6, Math.abs(gz) * 0.15);
+      // Rising toward +x, the ground faces west; toward +z, north.
+      const lx = gx > 0 ? FACE_LIGHT.west : FACE_LIGHT.east;
+      const lz = gz > 0 ? FACE_LIGHT.north : FACE_LIGHT.south;
+      const light = 1 - kx * (1 - lx) - kz * (1 - lz);
+      C[s] = scaleColor(C[s], Math.round(light * 25) / 25);
     }
 
   // Tops, merged into rectangles of one height and colour.
@@ -446,6 +538,13 @@ function wallFaces(
   };
   if (!f.natural[c]) {
     face(low, T, f.edge[c]);
+    return n;
+  }
+  // The riser of a slope's tiny step: the colour and light of the ground above it.
+  if (T - low <= RISER && !f.wet[c] && low > bottom) {
+    face(low, T, C[s]);
+    FACES[n - 1].light = 1;
+    FACES[n - 1].foot = 1;
     return n;
   }
   const px = (sx + 0.5) / sub;
