@@ -1,0 +1,3 @@
+section: Backlog
+
+- **A spell that shows it read the island** (the designer's idea, 2026-11-13, from 4.12 step 4; lens: the promise an item's name makes). When a program calls `w.here` or `w.wouldHurt` and then chooses (a frost that bridges the lake instead of burying the village), a short glyph flickers over the spot for half a second before the cast: a wave for water, a roof for a village, a stone for bare rock. What the player feels: the spell looked before it struck, so the same item cast twice in two places feels clever, not random. What it adds: the 9% of items that already choose by place get noticed, and players learn to aim. What it costs: one draw call per cast, read from the calls the runtime already counts; no new spend, no stored program changed. Claude.

@@ -46,6 +46,7 @@ import {
 } from "./wards";
 import { makeBuilding, makePerson, makeVillage, makeWonder, shapeLand } from "./makers";
 import { FINE_BOX, MAX_PROP_BOXES, addProp, propBounds, readProp, shadeParts } from "./props";
+import { findNearest, natureOf as readNature, readFights, readHere, readHurt } from "./reading";
 
 // Runs spell programs. A program is JavaScript that defines `spell`:
 //
@@ -1523,6 +1524,36 @@ export class SpellApi {
       temp: w.temp[i],
       gas: w.layerName("gas", w.gas[i]),
     };
+  }
+
+  // 4.12, reading the island (reading.ts): the questions a smart spell asks,
+  // one call each, all within (x, y, r), the cast's spot and reach by default.
+  // They only read, so programs that never call them run as before.
+  private area(x: unknown, y: unknown, r: unknown): [number, number, number] {
+    return [num(x, -1e4, 1e4, this.x), num(y, -1e4, 1e4, this.y), num(r, 0, 400, this.r)];
+  }
+  private handles(list: Creature[]): CreatureHandle[] {
+    return list.map((c) => new CreatureHandle(c, this.rt, this.req.key));
+  }
+  here(x?: number, y?: number, r?: number) {
+    const h = readHere(this.rt.world, ...this.area(x, y, r));
+    const f = (l: Creature[]) => this.handles(l);
+    return { ...h, villagers: f(h.villagers), animals: f(h.animals), undead: f(h.undead), hostile: f(h.hostile), spirits: f(h.spirits), wounded: f(h.wounded) };
+  }
+  wouldHurt(x?: number, y?: number, r?: number) {
+    return readHurt(this.rt.world, ...this.area(x, y, r));
+  }
+  nearest(what: string, x?: number, y?: number, max?: number) {
+    const [px, py] = this.area(x, y, 0);
+    const found = findNearest(this.rt.world, String(what), px, py, num(max, 0, 1000, Math.max(this.r * 3, 60)));
+    if (!found) return null;
+    return { x: found.x, y: found.y, d: found.d, ...(found.creature ? { creature: this.handles([found.creature])[0] } : {}) };
+  }
+  fights(x?: number, y?: number, r?: number) {
+    return readFights(this.rt.world, ...this.area(x, y, r)).map((f) => ({ attacker: this.handles([f.attacker])[0], target: this.handles([f.target])[0] }));
+  }
+  nature(c: { raw?: Creature } | null | undefined): string {
+    return c && c.raw ? readNature(c.raw) : "none";
   }
 
   // Writing one cell. `set` puts any material on its own layer; for a fluid or

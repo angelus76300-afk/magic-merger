@@ -210,6 +210,7 @@ Fine models, for the look of a thing at the detail of the island's own wonders (
 Free voxels for anything else (z in voxels above the ground at that cell; at most 20000 in the world): w.voxel(x, y, z, color, kind), w.sphere(x, y, z, r, colors, density, kind), w.box(x, y, z, sx, sy, sz, colors, kind), w.unvoxel(x, y, r), w.burnVoxels(x, y, r). kind: stone (default), wood, leaf, ice, glow (shines at night): all of these fall if nothing holds them up; magic (shines) and float stay where they are put. Use magic or float only for things that really float.
 People: w.person(x, y, {calling, job, title, age}) makes one of the island's own villagers (a home, a household, a job; null when the island is full). A human, or a role a human has (a Wizard, a Druid, a Healer, a Saint, a Hunter), is always made with w.person: never with w.spawn or spell.creatures, never as a beast, a spirit or a figure.
 Creatures: w.creatures(x, y, r), w.corpses(x, y, r), w.spawn(kind, x, y). Each has x, y, z, kind, hp, alive, data and hurt(n), heal(n), kill(), revive(), push(dx, dy, up), status(name, seconds, fromX, fromY), transform(kind), resize(factor), tint(color), teleport(x, y).
+Reading the island, to choose what to do (x, y, r default to w.x, w.y, w.r): w.here(x, y, r) gives {ground, cover, fluid, height, water, ice, lava, fire, snow, trees, rock (shares 0 to 1), houses, village, villagers, animals, undead, hostile, spirits, wounded (lists of creatures), dead}; w.wouldHurt(x, y, r) gives {houses, villagers, crops, trees, animals, safe}; w.nearest(what, x, y, max) gives {x, y, d, creature} or null, what being village, house, water, ice, lava, fire, tree, field, snow, rock, a material, a creature kind, villager, animal, undead or hostile; w.fights(x, y, r) lists {attacker, target}; w.nature(c) is villager, animal, undead, hostile, spirit or other.
 Bodies, the moving parts of a spell, drawn in voxels: w.body({x, y, z, vx, vy, vz, r, look, color, color2, glow, trail, life, gravity, drag, tick(b, w, dt), land(b, w), end(b, w)}). look: orb, flame, cloud, ring, shard, vortex, star, meteor, swarm, none. trail: a color it leaves behind. A body with z above 0 and gravity falls and calls land on touching the ground; a body that leaves the island near the ground disappears. r is its radius in cells: 0.5 to 3 for most, up to 8 for the biggest. A body has the same fields plus age, data, kill(), seek(x, y, speed).
 Effects: w.particle({x, y, z, vx, vy, vz, life, color, size, glow, gravity, drag}), w.burst(x, y, {count, colors, speed, up, life, size, gravity, drag}), w.shockwave(x, y, r, color, seconds, width), w.light(x, y, r, color, seconds), w.darken(amount, seconds) (night: lights, fire and glowing things show through), w.tint(color, alpha, seconds), w.flash(color, strength), w.circle(x, y, r, color, color2, seconds) (magic circle on the ground), w.draw((ctx, t) => {...}, seconds, "world") (canvas 2D painted on the land, one unit is one cell: runes, scorch marks), w.camera(x, y, r, seconds), w.cameraBack(seconds), w.shake(amount, seconds), w.sound(name, size 0 to 1) with boom, thump, crackle, hiss, whoosh, rumble, rise, fall, chime, ping, drone, zap, gong, choir, wind, water, splash, crystal, heartbeat, sparkle, pluck, roar, howl, grunt, chirp, squelch, buzz, creak, clang, chop, grind, click, whisper: pick the one that is what the thing is (water for a spring, crystal for ice or glass, choir for something holy, heartbeat for life, howl for a wolf, clang for iron, creak for old wood, boom and rumble for what falls from the sky). chime is for small bright magic only: six items in ten used it, and they all sounded alike.
 
@@ -241,9 +242,9 @@ Its test run places it by a village and leaves it alone for five minutes: it mus
 An item is placed by day as often as by night, and its tests begin in the morning. A creature of the night (active: "night", or weak to light) must live through the day it arrives in: it sleeps in a den, hides in the shade or waits as mist until dusk. One that is weak to light with a few hit points in the open is dead in six seconds, and that is all the player sees of it.
 
 GOOD SPELLS
-1. A signature: decide what this spell looks like that no other does (its colors, its shape, how it moves) before writing. Avoid the default of an orb and an explosion; a Blizzard, a Plague and a Meteor Shower should never look alike.
+1. A signature: one behaviour no other item of its kind has, and a look to match (its colors, its shape, how it moves), decided before writing. Seven items in ten are one of five shapes: a ball that bursts, a ring of something, a creature dropped, a patch painted, a dome. Use them as parts, never as the whole item; a Blizzard, a Plague and a Meteor Shower should never look alike.
 2. A gathering (a circle, a sound, a light), a delivery (something travels: a falling star, a rolling wave, a growing tree), an impact the player cannot miss, and an aftermath the world carries on.
-3. Logic: think about what the spell would really do to this world and its people, then use the interactions: frost turns lakes into bridges and trees into ice, lightning finds the tallest tree, a plague spreads and burns away, a summoned beast hunts or protects. One clever interaction beats ten particles.
+3. Logic: think about what the spell would really do to this world and its people, then use the interactions: frost turns lakes into bridges and trees into ice, lightning finds the tallest tree, a plague spreads and burns away, a summoned beast hunts or protects. One clever interaction beats ten particles. Half the library does the same thing wherever it lands: read the island first, so it differs on water, in a village and on bare rock. Frost: const h = w.here(); if (h.water > 0.4) w.temperature(w.x, w.y, w.r, -80); else if (!w.wouldHurt().safe) h.hostile.forEach((c) => c.status("freeze", 8)); else w.paint(w.x, w.y, w.r, "ice", 0.8);
 4. Everything that exists in the world is drawn in the world: bodies, voxels, lightning, beams. Screen space drawing and big tints are only for moods. Nothing hangs in the sky unless it is magic.
 5. Short, plain code: about 20 to 60 lines.
 6. Its own arrival. The first second and its sound are what the thing is: a comet booms, shakes and leaves a crater; a spring trickles; a swarm buzzes up out of the reeds. A flash, a chime and a burst of sparks open two programs in three: use them only where the thing is small bright magic.
@@ -653,6 +654,12 @@ export interface Rewrite {
   code?: string;
 }
 
+// 4.12 step 3: an item of the same kind already in the library, by its card's summary.
+export interface Neighbour {
+  name: string;
+  summary: string;
+}
+
 export function spellUserMessage(
   name: string,
   kind: string,
@@ -663,6 +670,7 @@ export function spellUserMessage(
   rewrite?: Rewrite,
   intents: Intent[] = [],
   form?: Form,
+  neighbours: Neighbour[] = [],
 ): string {
   const origin = recipe ? `It is made from ${recipe[0]} and ${recipe[1]}.` : "It is one of the primal forces.";
   const shaped = form && form !== "spell" ? form : null;
@@ -674,6 +682,9 @@ export function spellUserMessage(
   // Healing and summoning are tested on spells: an item's own tests follow it for minutes.
   const promise = intents.length && (intents[0] === "protect" || kind !== "artifact") ? PROMISE_TEST[intents[0]] : undefined;
   if (promise) text += `\n\n${promise}`;
+  // 4.12 step 3: what its neighbours in the library already do, so its signature is its own.
+  if (neighbours.length)
+    text += `\n\nItems of its kind already on the island. Give it one behaviour none of these has:\n${neighbours.map((n) => `- ${n.name}: ${n.summary}`).join("\n")}`;
   if (examples.length) {
     text += `\n\nPrograms players liked, for reference only. This spell needs its own signature: take what makes them work (scale, a clear impact, an interaction the world carries on), not their look.`;
     for (const e of examples) text += `\n\nLiked: ${e.name} (${e.tier} ${e.kind})\n${e.code}`;
