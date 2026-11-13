@@ -18,13 +18,17 @@ const base = process.env.LAB_URL ?? "http://localhost:5191/lab/perf.html";
 const [out = "/tmp/looks-render", qualities = "low,high", sizes = "390x844,344x882"] = process.argv.slice(2);
 const seed = process.env.SEED ?? "7";
 const timing = !!process.env.TIME;
+// DSF=2: the browser's device pixels per CSS pixel, and the view pinned to as many (default 1).
+const dsf = Number(process.env.DSF ?? 1);
+// ONLY=village-close,village-mid: these views alone.
+const only = process.env.ONLY ? process.env.ONLY.split(",") : null;
 mkdirSync(out, { recursive: true });
 const DAY = 40;
 const NIGHT = 262;
 const browser = await chromium.launch({ args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--ignore-gpu-blocklist"] });
 
 async function open(w, h, look) {
-  const ctx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1, hasTouch: true, isMobile: true });
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: dsf, hasTouch: true, isMobile: true });
   const page = await ctx.newPage();
   page.on("pageerror", (e) => console.error("page error:", e.message));
   // Seeded, so the island and its people are the same in every run.
@@ -39,7 +43,7 @@ async function open(w, h, look) {
     };
   }, seed);
   const q = look.startsWith("on=") ? `quality=low&${look}` : `quality=${look}`;
-  await page.goto(`${base}?size=medium&seed=${seed}&dpr=1&${q}`);
+  await page.goto(`${base}?size=medium&seed=${seed}&dpr=${dsf}&${q}`);
   await page.waitForFunction(() => window.perfReady === true, null, { timeout: 120_000 });
   await page.evaluate(() => {
     document.querySelectorAll("body > div").forEach((d) => (d.style.visibility = "hidden"));
@@ -109,8 +113,8 @@ for (const size of sizes.split(",")) {
   const [w, h] = size.split("x").map(Number);
   for (const look of qualities.split(",")) {
     const { ctx, page } = await open(w, h, look);
-    const tag = look.replace("=", "-");
-    for (const [name, p] of VIEWS) {
+    const tag = look.replace(/[=&]/g, "-");
+    for (const [name, p] of VIEWS.filter(([n]) => !only || only.includes(n))) {
       const c = await pose(page, p);
       if (timing) console.log(JSON.stringify({ size, look, view: name, ...(await time(page)) }));
       else {

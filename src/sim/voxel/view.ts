@@ -1,4 +1,4 @@
-import { GRAPHICS, LOOKS_STATE, setLooksChoice } from "./graphics";
+import { GRAPHICS, LATE_ONLY, LOOKS_STATE, PIXEL_CAPS, nextPixelRatio, setLooksChoice } from "./graphics";
 import { Looks } from "./looks";
 import { fronts } from "../weather";
 import {
@@ -244,7 +244,7 @@ export class VoxelView {
       preserveDrawingBuffer: !!options.preserveDrawingBuffer,
     });
     this.renderer.outputColorSpace = LinearSRGBColorSpace;
-    this.pixelRatio = Math.min(2, window.devicePixelRatio || 1);
+    this.pixelRatio = Math.min(PIXEL_CAPS[LOOKS_STATE.level], window.devicePixelRatio || 1);
     this.renderer.setPixelRatio(this.pixelRatio);
     this.overlayCtx = overlay.getContext("2d")!;
     this.orbit = new OrbitCamera(world.w, world.h);
@@ -593,7 +593,7 @@ export class VoxelView {
     if (
       choice?.level === "auto" &&
       !this.orbit.eye &&
-      LOOKS_STATE.chooser.feed(dt * 1000, ms, this.paceMs, this.pixelRatio, Math.min(2, window.devicePixelRatio || 1))
+      LOOKS_STATE.chooser.feed(dt * 1000, ms, this.paceMs, this.pixelRatio, Math.min(PIXEL_CAPS[LOOKS_STATE.level], window.devicePixelRatio || 1))
     )
       setLooksChoice(choice);
     if (this.frameTimes.length < 60) return;
@@ -601,20 +601,21 @@ export class VoxelView {
     const draw = this.drawTimes.reduce((a, b) => a + b, 0) / this.drawTimes.length;
     this.frameTimes = [];
     this.drawTimes = [];
-    const max = Math.min(2, window.devicePixelRatio || 1);
-    // Frames come every 33 ms, one per simulation tick, unless a finger moves
-    // the view. Well past that, frames are being missed: draw fewer pixels.
-    // Back up only when both the cadence and the drawing have room, and not
-    // within 10 s of a drop, so it does not see-saw. At 60 a second
-    // (pacing.ts) a missed cadence first falls back to 30, so only the draw
-    // time lowers the pixels there; the way back up needs the same room.
+    // Fewer pixels when frames are slow, back up when there is room, not within 10 s of a drop so
+    // it does not see-saw; the cap and the rule are the looks level's (graphics.ts nextPixelRatio).
+    const level = LOOKS_STATE.level;
     const now = performance.now();
-    const fast = this.paceMs < 25;
-    let next = this.pixelRatio;
-    if ((!fast && avg > 52) || draw > 30) {
-      next = Math.max(0.6, this.pixelRatio - 0.25);
-      this.droppedAt = now;
-    } else if (avg < (fast ? 19 : 38) && draw < 12 && now - this.droppedAt > 10_000) next = Math.min(max, this.pixelRatio + 0.25);
+    const step = nextPixelRatio({
+      ratio: this.pixelRatio,
+      max: Math.min(PIXEL_CAPS[level], window.devicePixelRatio || 1),
+      avg,
+      draw,
+      fast: this.paceMs < 25,
+      quiet: now - this.droppedAt,
+      lateOnly: LATE_ONLY[level],
+    });
+    if (step.dropped) this.droppedAt = now;
+    const next = step.ratio;
     if (next !== this.pixelRatio) {
       this.pixelRatio = next;
       this.renderer.setPixelRatio(next);

@@ -337,7 +337,7 @@ float sunLight(vec3 n) {
     renderer.shadowMap.needsUpdate = this.shadowOn;
     this.passes = 0;
     const fog = scene.fog as Fog | null;
-    const posting = this.bloomAmount > 0.01 || this.tiltAmount > 0.01;
+    const posting = this.bloomAmount > 0.01 || this.tiltAmount > 0.01 || GRAPHICS.aa;
     // The fog is added after the materials' grade: grade its colour here, and set it back after.
     const grading = GRAPHICS.grade && !posting && fog;
     if (grading) {
@@ -356,6 +356,7 @@ float sunLight(vec3 n) {
       center: this.tiltCenter,
       sharp: this.tiltSharp,
       grade: GRAPHICS.grade,
+      aa: GRAPHICS.aa,
     });
   }
 
@@ -424,7 +425,12 @@ class Post {
   }
 
   // Returns the passes drawn after the scene.
-  draw(renderer: WebGLRenderer, scene: Scene, camera: Camera, o: { bloom: number; tilt: number; center: number; sharp: number; grade: boolean }): number {
+  draw(
+    renderer: WebGLRenderer,
+    scene: Scene,
+    camera: Camera,
+    o: { bloom: number; tilt: number; center: number; sharp: number; grade: boolean; aa: boolean },
+  ): number {
     this.resize(renderer);
     const before = renderer.getRenderTarget();
     renderer.setRenderTarget(this.full);
@@ -443,7 +449,8 @@ class Post {
       this.step(renderer, this.blur, this.quarterB, this.quarterA, 1, 0, 3.2);
       passes += 3;
     }
-    const mixer = this.mixer(bloom, tilt, o.grade);
+    const mixer = this.mixer(bloom, tilt, o.grade, o.aa);
+    mixer.uniforms.texel.value.set(1 / this.full.width, 1 / this.full.height);
     mixer.uniforms.tScene.value = this.full.texture;
     mixer.uniforms.tBlur.value = this.halfB.texture;
     mixer.uniforms.tBloom.value = this.quarterA.texture;
@@ -466,14 +473,15 @@ class Post {
     this.pass(renderer, m, to);
   }
 
-  private mixer(bloom: boolean, tilt: boolean, grade: boolean): ShaderMaterial {
-    const key = `${+bloom}${+tilt}${+grade}`;
+  private mixer(bloom: boolean, tilt: boolean, grade: boolean, aa: boolean): ShaderMaterial {
+    const key = `${+bloom}${+tilt}${+grade}${+aa}`;
     let m = this.mixers.get(key);
     if (m) return m;
     const defines: Record<string, string> = {};
     if (bloom) defines.BLOOM = "";
     if (tilt) defines.TILT = "";
     if (grade) defines.GRADE = "";
+    if (aa) defines.FXAA = "";
     m = new ShaderMaterial({
       defines,
       uniforms: {
@@ -487,6 +495,7 @@ class Post {
         tDepth: { value: null },
         camNear: { value: 0.1 },
         camFar: { value: 1000 },
+        texel: { value: new Vector2() },
       },
       vertexShader: QUAD_VERTEX,
       fragmentShader: `
@@ -500,6 +509,31 @@ uniform float sharp;
 uniform sampler2D tDepth;
 uniform float camNear;
 uniform float camFar;
+uniform vec2 texel;
+#ifdef FXAA
+// Edge smoothing (FXAA, after Timothy Lottes): along an edge found from the
+// light of the four diagonal neighbours, the pixel takes the mean of two or
+// four taps across it. Nine taps; flat areas come out as they went in.
+vec3 fxaa(vec2 uv) {
+  vec3 nw = texture2D(tScene, uv + vec2(-1.0, -1.0) * texel).rgb;
+  vec3 ne = texture2D(tScene, uv + vec2(1.0, -1.0) * texel).rgb;
+  vec3 sw = texture2D(tScene, uv + vec2(-1.0, 1.0) * texel).rgb;
+  vec3 se = texture2D(tScene, uv + vec2(1.0, 1.0) * texel).rgb;
+  vec3 m = texture2D(tScene, uv).rgb;
+  vec3 w = vec3(0.299, 0.587, 0.114);
+  float lnw = dot(nw, w), lne = dot(ne, w), lsw = dot(sw, w), lse = dot(se, w), lm = dot(m, w);
+  float lo = min(lm, min(min(lnw, lne), min(lsw, lse)));
+  float hi = max(lm, max(max(lnw, lne), max(lsw, lse)));
+  vec2 dir = vec2(-((lnw + lne) - (lsw + lse)), (lnw + lsw) - (lne + lse));
+  float reduce = max((lnw + lne + lsw + lse) * 0.03125, 1.0 / 128.0);
+  float scale = 1.0 / (min(abs(dir.x), abs(dir.y)) + reduce);
+  dir = clamp(dir * scale, vec2(-8.0), vec2(8.0)) * texel;
+  vec3 a = 0.5 * (texture2D(tScene, uv + dir * (1.0 / 3.0 - 0.5)).rgb + texture2D(tScene, uv + dir * (2.0 / 3.0 - 0.5)).rgb);
+  vec3 b = a * 0.5 + 0.25 * (texture2D(tScene, uv - dir * 0.5).rgb + texture2D(tScene, uv + dir * 0.5).rgb);
+  float lb = dot(b, w);
+  return (lb < lo || lb > hi) ? a : b;
+}
+#endif
 varying vec2 vUv;
 float viewDepth(vec2 uv) {
   float z = texture2D(tDepth, uv).x * 2.0 - 1.0;
@@ -507,7 +541,11 @@ float viewDepth(vec2 uv) {
 }
 ${GRADE_GLSL}
 void main() {
+#ifdef FXAA
+  vec3 c = fxaa(vUv);
+#else
   vec3 c = texture2D(tScene, vUv).rgb;
+#endif
 #ifdef TILT
   // In focus at the point under the middle of the screen; the farther in front or behind, the
   // more of the blurred frame shows.
