@@ -1,3 +1,5 @@
+import { GRAPHICS, LOOKS_FLAGS, LOOKS_STATE, QUALITIES, type LooksChoice } from "./voxel/graphics";
+
 // The frame HUD: what a frame costs, measured where it runs. Shown behind a
 // long press on the title; while it is on, a summary goes to the page every
 // 30 seconds and from there to /api/perf, so a session on a real phone comes
@@ -137,16 +139,36 @@ function round(v: number): number {
   return Math.round(v * 10) / 10;
 }
 
-// A small text panel in the corner of the World.
+// A small text panel in the corner of the World. With `pick` (the game), a
+// row of switches under it for the looks (5.2.5): the quality level, "auto"
+// for the device's own, and each look on or off by itself.
 export class Hud {
   private el: HTMLDivElement;
+  private text: HTMLDivElement;
+  private row: HTMLDivElement | null = null;
   private timer = 0;
 
-  constructor(public stats: FrameStats) {
+  constructor(
+    public stats: FrameStats,
+    private pick?: (choice: LooksChoice) => void,
+    // Controls of the World the panel must never cover (the review of 13 November: its switches
+    // sat over Watch and took its taps): the panel stands above whichever of them is shown.
+    private avoid: string[] = [],
+  ) {
     this.el = document.createElement("div");
+    // Lines wrap, and the panel stops short of the column of buttons on the World's right (62 px):
+    // only its own switches take taps.
     this.el.style.cssText =
-      "position:absolute;left:6px;bottom:6px;z-index:5;pointer-events:none;font:11px/1.35 ui-monospace,Menlo,monospace;color:#e8fff0;background:rgba(0,0,0,.55);padding:4px 6px;border-radius:6px;white-space:pre";
+      "position:absolute;left:6px;bottom:6px;z-index:5;pointer-events:none;font:11px/1.35 ui-monospace,Menlo,monospace;color:#e8fff0;background:rgba(0,0,0,.55);padding:4px 6px;border-radius:6px;white-space:pre-wrap;overflow-wrap:anywhere;max-width:calc(100vw - 76px);box-sizing:border-box";
     this.el.hidden = true;
+    this.text = document.createElement("div");
+    this.el.appendChild(this.text);
+    if (pick) {
+      this.row = document.createElement("div");
+      this.row.className = "looks";
+      this.row.style.cssText = "display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;pointer-events:none;white-space:normal";
+      this.el.appendChild(this.row);
+    }
     document.body.appendChild(this.el);
   }
 
@@ -163,12 +185,62 @@ export class Hud {
   private draw(): void {
     const s = this.stats.summary();
     const k = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k` : String(v));
-    this.el.textContent = [
+    const choice = LOOKS_STATE.choice;
+    this.text.textContent = [
       `frame ${s.frameP50} / ${s.frameP95} ms (p50/p95) · ${s.fps} fps`,
       `sim ${s.simP50} / ${s.simP95} ms · draw ${s.renderP50} / ${s.renderP95} ms`,
       `calls ${s.calls} · tris ${k(s.triangles)} · dpr ${s.pixelRatio}`,
       `voxels ${k(s.voxels)} · creatures ${s.creatures} (${k(s.parts)} parts) · idle ${s.idle}`,
       `sound ${s.voices} voices · ${s.beds} beds · ${s.audioNodes} nodes · ${k(s.merged)} merged · ${k(s.dropped)} held`,
+      ...(choice
+        ? [
+            `looks ${choice.level === "auto" ? `auto (${LOOKS_STATE.level})` : choice.level}${choice.flip.length ? ` · changed: ${choice.flip.join(", ")}` : ""}`,
+          ]
+        : []),
     ].join("\n");
+    this.drawRow();
+    this.place();
+  }
+
+  // Above the controls it must not cover, those shown now: Watch, the stick, the first look's card.
+  private place(): void {
+    let bottom = 6;
+    for (const sel of this.avoid) {
+      const el = document.querySelector(sel) as HTMLElement | null;
+      if (!el || el.hidden) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) continue;
+      bottom = Math.max(bottom, Math.ceil(innerHeight - r.top) + 6);
+    }
+    this.el.style.bottom = `${bottom}px`;
+  }
+
+  // The switches, drawn again when what they show changed.
+  private shown = "";
+  private drawRow(): void {
+    const row = this.row;
+    const pick = this.pick;
+    const choice = LOOKS_STATE.choice;
+    if (!row || !pick || !choice) return;
+    const key = JSON.stringify([choice, LOOKS_STATE.level, LOOKS_FLAGS.map((f) => GRAPHICS[f])]);
+    if (key === this.shown) return;
+    this.shown = key;
+    row.replaceChildren();
+    const button = (label: string, on: boolean, act: () => void) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      b.setAttribute("aria-pressed", String(on));
+      b.style.cssText = `pointer-events:auto;font:11px ui-monospace,Menlo,monospace;min-height:44px;min-width:44px;padding:0 9px;border-radius:6px;border:1px solid ${on ? "#9ef0b8" : "rgba(255,255,255,.3)"};background:${on ? "rgba(80,200,120,.35)" : "rgba(0,0,0,.35)"};color:#e8fff0`;
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        act();
+        this.draw();
+      });
+      row.appendChild(b);
+    };
+    for (const level of ["auto", ...QUALITIES] as const) button(level, choice.level === level, () => pick({ level, flip: [] }));
+    for (const f of LOOKS_FLAGS)
+      button(f, GRAPHICS[f], () => pick({ level: choice.level, flip: choice.flip.includes(f) ? choice.flip.filter((x) => x !== f) : [...choice.flip, f] }));
   }
 }

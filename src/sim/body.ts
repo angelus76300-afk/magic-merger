@@ -5,7 +5,7 @@ import { toColor } from "./colors";
 //
 //   body: "four legs", features: ["horns", "wings"], color2: "#ffd166"
 //
-// or, for a creature no body plan fits, a model of up to 16 boxes. Kinds that
+// or, for a creature no body plan fits, a model of up to 48 boxes. Kinds that
 // declare nothing get a body from their name (a Fire Wolf has four legs, a
 // Lich King a crown), and failing that from their base kind, so the creatures
 // of spells written before 3.5 get a body without being written again.
@@ -51,7 +51,9 @@ export interface ModelBox {
   part: ModelPart | null;
 }
 
-export const MAX_MODEL_BOXES = 16;
+// 48 since the looks revamp (phase 1, was 16): a creature's own model can be
+// as fine as a small prop. Sides may be fractional, as they always could.
+export const MAX_MODEL_BOXES = 48;
 
 export interface BodySpec {
   plan: Plan;
@@ -156,7 +158,7 @@ export function featuresOf(v: unknown): Feature[] {
 }
 
 // [x, y, z, w, h, d, color, part] or {x, y, z, w, h, d, color, part}; at most
-// 16, numbers bounded, boxes without a size dropped. null when nothing is left.
+// MAX_MODEL_BOXES, numbers bounded, boxes without a size dropped. null when nothing is left.
 export function modelOf(v: unknown): ModelBox[] | null {
   if (!Array.isArray(v)) return null;
   const out: ModelBox[] = [];
