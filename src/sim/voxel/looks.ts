@@ -126,6 +126,19 @@ export function focusBlur(dist: number, eye: boolean): number {
   return close * close * (3 - 2 * close);
 }
 
+// Glow at night and in a spell's darkness, only as the camera comes close (the owner, after the
+// first nights on the Fold: "Bloom looks weird when unzoomed"): none from BLOOM_FROM island
+// sides away and farther (the whole island is seen from about 0.55), whole from BLOOM_FULL in.
+export const BLOOM_FROM = 0.5;
+export const BLOOM_FULL = 0.38;
+export function bloomAt(night: number, dark: number, dist: number, side: number): number {
+  const dusk = Math.min(1, Math.max(Math.max(0, night - 0.2) / 0.6, dark));
+  const near = Math.min(1, Math.max(0, (BLOOM_FROM * side - dist) / ((BLOOM_FROM - BLOOM_FULL) * side)));
+  return dusk * near;
+}
+// How strongly the glow is added, half what it was first (the owner: "lower the bloom quite a bit").
+export const BLOOM_STRENGTH = 0.9;
+
 // The tint of the land in shade and in the sun.
 const SHADE = new Vector3(0.58, 0.64, 0.86);
 const LIT = new Vector3(1.03, 0.99, 0.92);
@@ -266,7 +279,7 @@ float sunLight(vec3 n) {
     if (this.shadowOn) this.placeSun(f);
 
     // Glow at night, and in a spell's darkness.
-    this.bloomAmount = GRAPHICS.bloom ? Math.min(1, Math.max(Math.max(0, f.night - 0.2) / 0.6, f.dark)) : 0;
+    this.bloomAmount = GRAPHICS.bloom ? bloomAt(f.night, f.dark, f.dist, f.side) : 0;
     // The miniature's depth of field, only when the camera comes close (the owner: "it's really
     // only when we zoom a lot"): none from FOCUS_FROM cells away and farther (a mid zoom, the
     // whole island), growing to full at the closest the sky view goes. In focus at the point
@@ -330,6 +343,70 @@ float sunLight(vec3 n) {
     });
   }
 
+  // What glows (glow.ts parts, lit windows, flames, sparks, bolts, creatures' glowing parts), lava,
+  // and spell bodies that glow (userData.glow): set by the view. Only these bloom, never a bright
+  // surface such as snow, sand or moonlit ground.
+  private glowing = new Set<Material>();
+  private lavaFrom: Material | null = null;
+  private lavaMask = lavaMaskMaterial();
+  private occluder = new MeshBasicMaterial({ color: 0x000000, fog: false });
+  private clear = new Color();
+  private hidden: Object3D[] = [];
+  private swapped: { o: Mesh; m: Material | Material[] }[] = [];
+  glows(materials: Material[], lava: Material): void {
+    for (const m of materials) this.glowing.add(m);
+    this.lavaFrom = lava;
+  }
+
+  private isGlowing(o: Object3D): boolean {
+    const m = (o as Mesh).material as Material | undefined;
+    if (m && this.glowing.has(m)) return true;
+    for (let a: Object3D | null = o; a; a = a.parent) if (a.userData.glow) return true;
+    return false;
+  }
+
+  // The glow mask, at a quarter of the width: the scene again with what glows in its own colours,
+  // lava in its own, and everything else black, so a wall still hides the window behind it.
+  private drawGlowMask = (target: WebGLRenderTarget, camera: Camera): void => {
+    const { renderer, scene } = this;
+    const list: Object3D[] = [];
+    scene.traverseVisible((o) => list.push(o));
+    for (const o of list) {
+      const mesh = o as Mesh;
+      const drawn = (mesh as { isMesh?: boolean }).isMesh || (o as { isPoints?: boolean }).isPoints || (o as { isSprite?: boolean }).isSprite;
+      if (!drawn) continue;
+      let sky = false;
+      for (let a: Object3D | null = o; a; a = a.parent) if (a.name === "sky") sky = true;
+      if (sky) {
+        o.visible = false;
+        this.hidden.push(o);
+      } else if (this.isGlowing(o)) continue;
+      else if (mesh.material === this.lavaFrom) {
+        this.swapped.push({ o: mesh, m: mesh.material });
+        mesh.material = this.lavaMask;
+      } else if (!(mesh as { isMesh?: boolean }).isMesh || (mesh.material as Material).transparent) {
+        o.visible = false;
+        this.hidden.push(o);
+      } else {
+        this.swapped.push({ o: mesh, m: mesh.material });
+        mesh.material = this.occluder;
+      }
+    }
+    const background = scene.background;
+    scene.background = null;
+    renderer.getClearColor(this.clear);
+    const alpha = renderer.getClearAlpha();
+    renderer.setClearColor(0x000000, 1);
+    renderer.setRenderTarget(target);
+    renderer.render(scene, camera);
+    renderer.setClearColor(this.clear, alpha);
+    scene.background = background;
+    for (const o of this.hidden) o.visible = true;
+    for (const { o, m } of this.swapped) o.material = m;
+    this.hidden.length = 0;
+    this.swapped.length = 0;
+  };
+
   // Draws the frame: the shadow map when the sun casts, then the scene,
   // straight to the screen or through the passes of bloom and blur.
   render(camera: Camera): void {
@@ -357,6 +434,7 @@ float sunLight(vec3 n) {
       sharp: this.tiltSharp,
       grade: GRAPHICS.grade,
       aa: GRAPHICS.aa,
+      mask: this.drawGlowMask,
     });
   }
 
@@ -388,9 +466,9 @@ class Post {
   private halfB: WebGLRenderTarget;
   private quarterA: WebGLRenderTarget;
   private quarterB: WebGLRenderTarget;
+  private mask: WebGLRenderTarget;
   private size = new Vector2();
-  private blur = blurMaterial(false);
-  private bright = blurMaterial(true);
+  private blur = blurMaterial();
   private mixers = new Map<string, ShaderMaterial>();
 
   constructor() {
@@ -402,6 +480,7 @@ class Post {
     // Bloom adds light: kept in half floats where the device has them, so faint glow does not band.
     this.quarterA = new WebGLRenderTarget(1, 1, { ...opts, type: HalfFloatType });
     this.quarterB = new WebGLRenderTarget(1, 1, { ...opts, type: HalfFloatType });
+    this.mask = new WebGLRenderTarget(1, 1, { ...opts, depthBuffer: true });
     this.quad.frustumCulled = false;
     this.scene.add(this.quad);
   }
@@ -416,6 +495,7 @@ class Post {
     this.halfB.setSize(Math.ceil(w / 2), Math.ceil(h / 2));
     this.quarterA.setSize(Math.ceil(w / 4), Math.ceil(h / 4));
     this.quarterB.setSize(Math.ceil(w / 4), Math.ceil(h / 4));
+    this.mask.setSize(Math.ceil(w / 4), Math.ceil(h / 4));
   }
 
   private pass(renderer: WebGLRenderer, material: ShaderMaterial, target: WebGLRenderTarget | null): void {
@@ -429,7 +509,15 @@ class Post {
     renderer: WebGLRenderer,
     scene: Scene,
     camera: Camera,
-    o: { bloom: number; tilt: number; center: number; sharp: number; grade: boolean; aa: boolean },
+    o: {
+      bloom: number;
+      tilt: number;
+      center: number;
+      sharp: number;
+      grade: boolean;
+      aa: boolean;
+      mask: (target: WebGLRenderTarget, camera: Camera) => void;
+    },
   ): number {
     this.resize(renderer);
     const before = renderer.getRenderTarget();
@@ -444,9 +532,10 @@ class Post {
       passes += 2;
     }
     if (bloom) {
-      this.step(renderer, this.bright, this.full, this.quarterA, 1, 0, 1.6);
-      this.step(renderer, this.blur, this.quarterA, this.quarterB, 0, 1, 1.6);
-      this.step(renderer, this.blur, this.quarterB, this.quarterA, 1, 0, 3.2);
+      // What glows, alone (the scene again at a quarter of the width), then a short blur.
+      o.mask(this.mask, camera);
+      this.step(renderer, this.blur, this.mask, this.quarterB, 1, 0, 1.2);
+      this.step(renderer, this.blur, this.quarterB, this.quarterA, 0, 1, 1.2);
       passes += 3;
     }
     const mixer = this.mixer(bloom, tilt, o.grade, o.aa);
@@ -555,7 +644,7 @@ void main() {
   c = mix(c, texture2D(tBlur, vUv).rgb, k);
 #endif
 #ifdef BLOOM
-  c += texture2D(tBloom, vUv).rgb * bloom * 1.8;
+  c += texture2D(tBloom, vUv).rgb * bloom * ${BLOOM_STRENGTH.toFixed(2)};
 #endif
 #ifdef GRADE
   c = mmGrade(c);
@@ -571,8 +660,8 @@ void main() {
   }
 
   dispose(): void {
-    for (const t of [this.full, this.halfA, this.halfB, this.quarterA, this.quarterB]) t.dispose();
-    for (const m of [this.blur, this.bright, ...this.mixers.values()]) m.dispose();
+    for (const t of [this.full, this.halfA, this.halfB, this.quarterA, this.quarterB, this.mask]) t.dispose();
+    for (const m of [this.blur, ...this.mixers.values()]) m.dispose();
     this.quad.geometry.dispose();
   }
 }
@@ -585,11 +674,9 @@ void main() {
 }`;
 
 // A nine tap Gaussian along one direction, using the texture's own linear
-// filter between taps. `bright`: only what is brighter than the glow's
-// threshold passes (bloom's first step).
-function blurMaterial(bright: boolean): ShaderMaterial {
+// filter between taps.
+function blurMaterial(): ShaderMaterial {
   return new ShaderMaterial({
-    defines: bright ? { BRIGHT: "" } : {},
     uniforms: { tSrc: { value: null }, dir: { value: new Vector2() } },
     vertexShader: QUAD_VERTEX,
     fragmentShader: `
@@ -597,12 +684,7 @@ uniform sampler2D tSrc;
 uniform vec2 dir;
 varying vec2 vUv;
 vec3 tap(vec2 uv) {
-  vec3 c = texture2D(tSrc, uv).rgb;
-#ifdef BRIGHT
-  float l = max(c.r, max(c.g, c.b));
-  c *= smoothstep(0.5, 0.8, l);
-#endif
-  return c;
+  return texture2D(tSrc, uv).rgb;
 }
 void main() {
   vec3 c = tap(vUv) * 0.227;
@@ -614,4 +696,18 @@ void main() {
     depthWrite: false,
     toneMapped: false,
   });
+}
+
+// Lava in the glow mask: the fluid's own colour where it is lava's (bright, far redder than blue),
+// black elsewhere (water, and any fluid that does not glow).
+function lavaMaskMaterial(): MeshBasicMaterial {
+  const m = new MeshBasicMaterial({ vertexColors: true, fog: false });
+  m.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <opaque_fragment>",
+      "outgoingLight *= smoothstep(0.12, 0.3, outgoingLight.r - outgoingLight.b) * step(0.55, outgoingLight.r);\n#include <opaque_fragment>",
+    );
+  };
+  m.customProgramCacheKey = () => "lava-glow-mask";
+  return m;
 }

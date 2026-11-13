@@ -19,7 +19,7 @@ import {
   setLooksChoice,
   type Quality,
 } from "../src/sim/voxel/graphics";
-import { FOCUS_FULL, FOCUS_MAX, focusBlur, gradeColor } from "../src/sim/voxel/looks";
+import { BLOOM_STRENGTH, FOCUS_FULL, FOCUS_MAX, bloomAt, focusBlur, gradeColor } from "../src/sim/voxel/looks";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
@@ -141,6 +141,15 @@ export function looksChecks(check: Check): void {
     nextPixelRatio({ ratio: 1.5, max: 2, avg: 33, draw: 5, fast: false, quiet: 20_000, lateOnly: true }).ratio === 1.75 &&
       nextPixelRatio({ ratio: 1.5, max: 2, avg: 33, draw: 5, fast: false, quiet: 5_000, lateOnly: true }).ratio === 1.5,
   );
+
+  // Bloom (the owner on the Fold: "Bloom looks weird when unzoomed ... lower the bloom quite a
+  // bit"): none over the whole island at night (a medium island, 152 cells, is seen from about 83),
+  // whole at a mid zoom (55) and closer, none by day, and half as strong as first built (1.8).
+  check("no bloom over the whole island at night", bloomAt(1, 0, 83, 152) === 0);
+  check("bloom at a mid zoom at night", bloomAt(1, 0, 55, 152) === 1);
+  check("no bloom by day", bloomAt(0, 0, 30, 152) === 0);
+  check("bloom fades in between", bloomAt(1, 0, 66, 152) > 0 && bloomAt(1, 0, 66, 152) < 1, `${bloomAt(1, 0, 66, 152)}`);
+  check("bloom about half as strong as before", BLOOM_STRENGTH <= 1, `${BLOOM_STRENGTH}`);
 
   for (const f of LOOKS_FLAGS) GRAPHICS[f] = was[f];
 }

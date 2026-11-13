@@ -334,6 +334,20 @@ export class VoxelView {
       new Set([this.farRoads, this.markMesh, this.windows, this.flames, this.boltCore, this.decorGlow, this.rainShafts]),
     );
     for (const m of [land, basic, figureMats.lit]) this.looks.receive(m);
+    // What blooms at night: what shines by itself, and lava (looks.ts glow mask).
+    this.looks.glows(
+      [
+        this.glowMaterial,
+        figureMats.glow,
+        this.windows.material as Material,
+        this.flames.material as Material,
+        this.decorGlow.material as Material,
+        this.boltCore.material as Material,
+        this.boltHalo.material as Material,
+        this.glowPoints.material as Material,
+      ],
+      fluid,
+    );
     // The draw calls of a frame are counted over all its passes (the shadow map, bloom, blur).
     this.renderer.info.autoReset = false;
   }
@@ -1724,6 +1738,8 @@ export class VoxelView {
       group.add(new Mesh(bodyGeometry(b.look, b.color, b.color2), mat));
     }
     if (b.glow) {
+      // A spell's glowing body blooms at night (looks.ts).
+      group.userData.glow = true;
       const glow = new Sprite(
         new SpriteMaterial({ map: this.glowTexture, color, blending: AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.7 }),
       );
