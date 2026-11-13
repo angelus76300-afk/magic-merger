@@ -44,6 +44,8 @@ for (const guests of [false, true]) {
   seed(11);
   resetCreatureIds();
   const world = generateWorld(208, 208, 11);
+  // PROF_REACTIONS=1: the reactions of 4.12 on, as on the player's island (reactions.ts).
+  world.reactions = process.env.PROF_REACTIONS === "1";
   populate(world);
   world.time = 20;
   const rt = new Runtime(world, (_k, _n, m) => console.log("  error:", m));

@@ -13,6 +13,7 @@ import { CUSTOM_GOALS, LOADS, TRIGGERS, mindOf, remember, tell, type AbilitySpec
 import { BUILTIN, BUILTIN_BEFORE_4_4_5, C, F, G, LAYERS, isBuilding, type Layer } from "./materials";
 import { valueNoise } from "./noise";
 import { addGas } from "./cells";
+import { LIGHT_MIN_SECONDS, N, addLight, fertile, fertilize, gust, holyName, natureOf } from "./reactions";
 import { explode, forDisc, quake } from "./physics";
 import type { ParticleOptions } from "./particles";
 import { BODY_LOOKS, Visuals, type Body, type BodyLook, type DrawFn } from "./visuals";
@@ -1192,6 +1193,23 @@ export class CreatureHandle {
     if (this.raw.hp <= 0) this.raw.dead = true;
   }
   heal(n: number) {
+    // 4.12: life burns the undead (reactions.ts).
+    const w = this.rt.world;
+    if (w.reactions && natureOf(w, kindOf(this.raw)) & N.UNDEAD && !kindOf(this.raw).native) {
+      this.hurt(n);
+      for (let k = 0; k < 4; k++)
+        w.particles.add({
+          x: this.raw.x + Math.random() - 0.5,
+          y: this.raw.y + Math.random() - 0.5,
+          z: 1,
+          vz: 2.5,
+          life: 0.6,
+          color: 0xfff0c0,
+          size: 1,
+          glow: true,
+        });
+      return;
+    }
     if (this.raw.kind === "villager" && this.raw.hp < maxHp(this.raw) - 5) remember(this.raw, "magic", 0.5);
     this.raw.hp = Math.min(maxHp(this.raw), this.raw.hp + num(n, 0, 1e6, 0));
     this.raw.burning = 0;
@@ -2015,8 +2033,11 @@ export class SpellApi {
       if (w.depth[i] > 0.1 || w.fire[i] > 0) return;
       const g = w.ground[i];
       if (g === G.DIRT || g === G.ASH || g === G.SAND || g === G.SNOW) w.ground[i] = G.GRASS;
+      // 4.12: ash is fertile (reactions.ts): growth there is thicker, and stays quick a while.
+      const ash = w.reactions && (g === G.ASH || fertile(w, i));
+      if (ash) fertilize(w, i);
       if (w.cover[i] === C.NONE || w.cover[i] === C.STUMP) {
-        const p = Math.random();
+        const p = Math.random() / (ash ? 1.8 : 1);
         if (p < d * 0.35 * (0.5 + k)) w.setCover(i, C.TREE);
         else if (p < d * 0.45) w.setCover(i, Math.random() < 0.5 ? C.BUSH : C.FLOWER);
       }
@@ -2372,6 +2393,8 @@ export class SpellApi {
 
   // Screen and camera.
   shockwave(x: number, y: number, r: number, color: string | number = "#ffffff", seconds = 0.8, width = 1) {
+    // 4.12: a shockwave is a gust as well as a ring: it moves fire, smoke and water (reactions.ts).
+    if (this.rt.world.reactions) gust(this.rt.world, num(x, -1e4, 1e4, this.x), num(y, -1e4, 1e4, this.y), num(r, 0, 40, 10), 0.5);
     this.rt.visuals.shockwaves.push({
       x,
       y,
@@ -2383,9 +2406,29 @@ export class SpellApi {
     });
   }
   light(x: number, y: number, r: number, color: string | number = "#fff3b0", seconds = 2) {
-    this.rt.visuals.lights.push({ x, y, r: num(r, 0, 3000, 8), color: colorOr(color, 0xfff3b0), t: 0, dur: num(seconds, 0.05, 60, 2) });
+    const world = this.rt.world;
+    let dur = num(seconds, 0.05, 60, 2);
+    // 4.12: the light falls on the land and lingers a few seconds, its glow drawn as long
+    // (reactions.ts): what light hurts is hurt in it, unless something stands between.
+    if (world.reactions && Number.isFinite(x) && Number.isFinite(y)) {
+      dur = Math.max(dur, LIGHT_MIN_SECONDS);
+      addLight(world, { x, y, r: num(r, 0, 60, 8), until: world.time + dur, power: 1, holy: holyName(this.req.name), dark: false });
+    }
+    this.rt.visuals.lights.push({ x, y, r: num(r, 0, 3000, 8), color: colorOr(color, 0xfff3b0), t: 0, dur });
   }
   darken(amount: number, seconds: number) {
+    // 4.12: a darkness lies where it was cast, over the cast's reach (reactions.ts).
+    const world = this.rt.world;
+    if (world.reactions)
+      addLight(world, {
+        x: this.x,
+        y: this.y,
+        r: Math.max(12, Math.min(60, this.r * 1.5)),
+        until: world.time + num(seconds, 0.1, 60, 3),
+        power: num(amount, 0, 1, 0.6) / 0.6,
+        holy: false,
+        dark: true,
+      });
     this.rt.visuals.darkness.push({ color: 0, alpha: num(amount, 0, 1, 0.6), t: 0, dur: num(seconds, 0.1, 60, 3) });
   }
   tint(color: string | number, alpha: number, seconds: number) {

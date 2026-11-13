@@ -20,6 +20,7 @@ import { steer } from "./steer";
 import { DEAD_ZONE, riderAim, ridden, throwOut } from "./possess";
 import { drive as driveRidden } from "./drive";
 import { alarm, calmDown, fleeing } from "./flight";
+import { N, boldness, darkWakes, lightAt, meet, natureOf, natureTick, spellMade, strike, touch, type Meeting } from "./reactions";
 import { pathsOf, solidCovers } from "./paths";
 import { LOADS, deed, harmed, life, newMind, noteDeath, reborn, storyOn, tell, villageOf, type AbilitySpec, type Goal, type Mind } from "./kin";
 
@@ -570,7 +571,9 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       world.tick % 15 === 0 &&
       daylight(world.time).night < 0.3 &&
       !((ai.active === "night" || shunsDay(k)) && shaded(world, i)) &&
-      !(shunsDay(k) && arriving(world, c))
+      !(shunsDay(k) && arriving(world, c)) &&
+      // 4.12: a darkness a spell or a creature of the dark brought shades it from the sun.
+      !(world.reactions && lightAt(world, c.x, c.y).dark >= 0.5)
     ) {
       c.hp -= 12 * 0.5;
       if (Math.random() < 0.3) world.particles.add({ x: c.x, y: c.y, z: 1, vz: 2, life: 0.6, color: 0xfff0c0, size: 1, glow: true });
@@ -578,9 +581,13 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     if (immune("cold")) c.frozen = 0;
     if (immune("fire")) c.burning = 0;
   }
+  // 4.12: what it is made of answers the land and the light (reactions.ts).
+  if (world.reactions && !k.native) natureTick(world, c, k, i, onGround || (k.flying && c.z < 3.5 && c.levitate <= 0), dt);
   // A fish out of water chokes.
   if (k.aquatic && !wet(world, i, 0.25)) c.hp -= 15 * dt;
 
+  // 4.12: a creature of fire is at home in fire and lava (reactions.ts).
+  const fireBorn = world.reactions && !k.native && !!(natureOf(world, k) & N.FIRE);
   // Under a ward: no burning, no frost, no poison from outside.
   const ward = world.wardMask[i];
   if (ward & WARD.fire) c.burning = 0;
@@ -588,9 +595,15 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
 
   // The land hurts.
   if (onGround) {
-    if (world.fire[i] > 0.25 && !k.fireproof && !immune("fire")) c.burning = Math.max(c.burning, 3);
+    if (world.fire[i] > 0.25 && !k.fireproof && !immune("fire") && !fireBorn) c.burning = Math.max(c.burning, 3);
     const fluid = world.materials.get("fluid", world.fluid[i]);
-    if (!onDeck && world.depth[i] > 0.05 && fluid.hurts > 0 && !(k.fireproof && world.fluid[i] === F.LAVA) && !(immune("acid") && world.fluid[i] === F.ACID))
+    if (
+      !onDeck &&
+      world.depth[i] > 0.05 &&
+      fluid.hurts > 0 &&
+      !((k.fireproof || fireBorn) && world.fluid[i] === F.LAVA) &&
+      !(immune("acid") && world.fluid[i] === F.ACID)
+    )
       c.hp -= fluid.hurts * dt;
     if (world.fluid[i] === F.WATER && world.depth[i] > 0.25) c.burning = 0;
     if (!onDeck && world.fluid[i] === F.WATER && world.depth[i] > 1.4 && !k.swims && !immune("water")) {
@@ -604,7 +617,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     if (gas.hurts > 0 && !(ward & WARD.harm)) c.hp -= gas.hurts * world.gasAmt[i] * dt;
   }
   if (c.burning > 0) {
-    if (k.fireproof) c.burning = 0;
+    if (k.fireproof || fireBorn) c.burning = 0;
     else {
       c.burning -= dt;
       c.hp -= 14 * dt;
@@ -635,6 +648,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   let plan2: ReturnType<typeof social> = null;
   let flight: { x: number; y: number } | null = null;
   let socialMood: Mood = null;
+  let meeting: Meeting | null = null;
   // Which decision drove this tick's step, for the motion meter (4.3).
   let drive = busy ? "asleep" : "idle";
   if (rider && !busy) {
@@ -690,7 +704,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     } else if (
       ai &&
       ((ai.active !== "always" && daylight(world.time).night > 0.5 !== (ai.active === "night")) || (shunsDay(k) && daylight(world.time).night < 0.3)) &&
-      !arrivalAwake(world, c, k, i, weak("light") && (ai.active === "night" || shunsDay(k)))
+      !arrivalAwake(world, c, k, i, weak("light") && (ai.active === "night" || shunsDay(k))) &&
+      !darkWakes(world, k, c)
     ) {
       // Out of its hours it rests where it is; a creature of the night that
       // daylight burns first looks for the shade of the woods (3.6).
@@ -729,6 +744,33 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       mood = "fear";
       drive = "flee";
       if (c.mind) c.mind.action = "running away";
+    } else if (world.reactions && spellMade(k, BUILTIN_KINDS) && (meeting = meet(world, c, k, BUILTIN_KINDS, dt))) {
+      // 4.12: another item's creature near it, answered by what both are (reactions.ts).
+      const o = meeting.who;
+      if (meeting.fight) {
+        wantX = o.x - c.x;
+        wantY = o.y - c.y;
+        pace = 1.3;
+        mood = "hunt";
+        drive = "meet";
+        if (strike(world, c, k, o, kindOf(o), dt)) {
+          harmed(world, o, c, 1);
+          if (c.data.struck !== o.id) {
+            c.data.struck = o.id;
+            deed(c, `fought a ${o.kind.split("#")[0]}`);
+          }
+          if (o.dead) deed(c, `killed a ${o.kind.split("#")[0]}`);
+        }
+        if (c.mind) c.mind.action = natureOf(world, k) & N.HOLY ? "smiting the dead" : "hunting";
+      } else {
+        alarm(world, c, o, o.x, o.y, Math.min(20, ai?.sense ?? 10));
+        wantX = c.x - o.x;
+        wantY = c.y - o.y;
+        pace = 1.4;
+        mood = "fear";
+        drive = "flee";
+        if (c.mind) c.mind.action = "running away";
+      }
     } else if (needs && (plan2 = pursue(world, c, k, dt))) {
       wantX = plan2.x - c.x;
       wantY = plan2.y - c.y;
@@ -873,6 +915,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   c.x = Math.max(0.5, Math.min(world.w - 1.5, c.x));
   c.y = Math.max(0.5, Math.min(world.h - 1.5, c.y));
   if (ai && !busy) sideEffects(world, c, ai, i, onGround, dt);
+  if (world.reactions && !k.native) touch(world, c, k, dt);
   // Ridden, its abilities fire only when the player presses them (possess.ts act).
   if (!busy && !rider && (k.abilities?.length || c.kind === "villager")) useAbilities(world, c, k);
   if (c.fear > 0 || c.burning > 0) mood = "fear";
@@ -1042,7 +1085,7 @@ function behave(world: World, c: Creature, k: CreatureKind, ai: Behavior, dt: nu
       c.tx = target.x;
       c.ty = target.y;
       if (Math.hypot(target.x - c.x, target.y - c.y) < kindOf(c).radius * c.size + kindOf(target).radius * target.size + 0.6) {
-        const blow = ai.attack * dt * (shieldedCreature(world, target) ? 0.15 : 1);
+        const blow = ai.attack * dt * (shieldedCreature(world, target) ? 0.15 : 1) * boldness(world, k, c);
         target.hp -= blow;
         harmed(world, target, c, blow);
         if (c.data.struck !== target.id) {
@@ -1132,6 +1175,11 @@ function sideEffects(world: World, c: Creature, ai: Behavior, i: number, onGroun
     if (o.kind !== c.kind) touched++;
     switch (ai.aura) {
       case "heal":
+        // 4.12: life burns the undead.
+        if (world.reactions && o.kind !== c.kind && natureOf(world, kindOf(o)) & N.UNDEAD && !kindOf(o).native) {
+          o.hp -= 10 * p * 0.27;
+          break;
+        }
         if (o.hp < maxHp(o) && o.kind === "villager") harmed(world, o, c, -1);
         o.hp = Math.min(maxHp(o), o.hp + 10 * p * 0.27);
         o.burning = 0;
