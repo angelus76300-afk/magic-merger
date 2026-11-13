@@ -18,7 +18,7 @@ import { stepArtifacts } from "./artifacts";
 import { meter } from "./motion";
 import { steer } from "./steer";
 import { DEAD_ZONE, riderAim, ridden, throwOut } from "./possess";
-import { drive as driveRidden } from "./drive";
+import { drive as driveRidden, inCrown } from "./drive";
 import { alarm, calmDown, fleeing } from "./flight";
 import { N, boldness, darkWakes, lightAt, meet, natureOf, natureTick, spellMade, strike, touch, type Meeting } from "./reactions";
 import { pathsOf, solidCovers } from "./paths";
@@ -865,7 +865,11 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     // And the island's rim: wading on the shallow shelf, a player reached the edge of the world,
     // where the island ends in the void (the frames of 12 November). Its own mind never goes there.
     const rim = (x: number, y: number) => x < 3 || y < 3 || x > world.w - 4 || y > world.h - 4;
-    if (rider && (blocked(world, c.x, c.y, c, k, ox, oy) || (rim(c.x, c.y) && !rim(ox, oy))) && !blocked(world, ox, oy, c, k, ox, oy)) {
+    if (
+      rider &&
+      ((blocked(world, c.x, c.y, c, k, ox, oy) && !inCrown(world, c.x, c.y, c, k, ox, oy, blocked)) || (rim(c.x, c.y) && !rim(ox, oy))) &&
+      !blocked(world, ox, oy, c, k, ox, oy)
+    ) {
       c.x = ox;
       c.y = oy;
       c.sp *= 0.3;

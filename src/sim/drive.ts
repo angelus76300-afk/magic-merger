@@ -1,4 +1,5 @@
 import type { Creature, CreatureKind } from "./creatures";
+import { C } from "./materials";
 import { wrapAngle } from "./steer";
 import type { World } from "./world";
 
@@ -83,6 +84,32 @@ const BODY_TURN = 14;
 const BANK_TURN = 2.4;
 // How far ahead of its centre a step is felt for a wall, in cells.
 const FEEL = 0.3;
+
+// A tree is a trunk, not a cell (the owner, 13 November, "trees blocked me too much"): the player's
+// creature walks through the crown and the leaves at its foot, and is stopped only by the trunk, a
+// post of this radius at the cell's middle. It slides round it along the tangent. Every other
+// creature keeps the whole cell (blocked() in creatures.ts is unchanged).
+export const TRUNK = 0.2;
+
+// What blocked() says of a cell with its tree taken away: the cliff, the water and the lava still hold
+// (a tree on a cliff must not make it a stair). The cover is put back at once.
+export function groundBlocked(world: World, x: number, y: number, c: Creature, k: CreatureKind, fx: number, fy: number, blocked: Blocked): boolean {
+  const i = world.idx(x, y);
+  const was = world.cover[i];
+  world.cover[i] = C.NONE;
+  try {
+    return blocked(world, x, y, c, k, fx, fy);
+  } finally {
+    world.cover[i] = was;
+  }
+}
+
+// Is this point of a ridden walker in the crown of a tree, clear of its trunk and of any cliff or water?
+// (creatures.ts keeps it out of blocked cells where it stands; a crown is not one.)
+export function inCrown(world: World, x: number, y: number, c: Creature, k: CreatureKind, fx: number, fy: number, blocked: Blocked): boolean {
+  if (!world.inside(x, y) || world.cover[world.idx(x, y)] !== C.TREE) return false;
+  return Math.hypot(x - Math.round(x), y - Math.round(y)) >= TRUNK && !groundBlocked(world, x, y, c, k, fx, fy, blocked);
+}
 
 type Blocked = (world: World, x: number, y: number, c: Creature, k: CreatureKind, fx?: number, fy?: number) => boolean;
 
@@ -176,12 +203,23 @@ export function drive(
   // The step in pieces of at most a quarter cell, each felt ahead for a wall.
   // Against one it slides along it, as a player expects, instead of stopping dead.
   const rim = (x: number, y: number) => x < 3 || y < 3 || x > world.w - 4 || y > world.h - 4;
+  // The trunk a point is in, as the direction from its middle (null: clear of it).
+  const trunkOf = (x: number, y: number): { dx: number; dy: number } | null => {
+    if (!world.inside(x, y) || world.cover[world.idx(x, y)] !== C.TREE) return null;
+    const dx = x - Math.round(x);
+    const dy = y - Math.round(y);
+    const d = Math.hypot(dx, dy);
+    return d < TRUNK ? { dx: dx / (d || 1), dy: d ? dy / d : 1 } : null;
+  };
   const free = (x: number, y: number, ux: number, uy: number) => {
     const px = x + ux * FEEL;
     const py = y + uy * FEEL;
     if (rim(px, py) && !rim(c.x, c.y)) return false;
     // Its own cell never stops it (a tree grown where it stands is walked out of), as in steer.ts.
     if (Math.round(px) === Math.round(c.x) && Math.round(py) === Math.round(c.y)) return true;
+    // A tree: only the trunk stops it.
+    if (!banks && world.inside(px, py) && world.cover[world.idx(px, py)] === C.TREE)
+      return trunkOf(px, py) === null && !groundBlocked(world, px, py, c, k, c.x, c.y, blocked);
     return !blocked(world, px, py, c, k, c.x, c.y);
   };
   const n = Math.ceil(wanted / 0.25);
@@ -195,6 +233,23 @@ export function drive(
       c.x += sx;
       c.y += sy;
       continue;
+    }
+    // A trunk: round it along its tangent, at the speed it was walked.
+    const tr = banks ? null : trunkOf(c.x + sx + (sx / len) * FEEL, c.y + sy + (sy / len) * FEEL);
+    if (tr) {
+      let tx2 = -tr.dy;
+      let ty2 = tr.dx;
+      if (tx2 * sx + ty2 * sy < 0) {
+        tx2 = -tx2;
+        ty2 = -ty2;
+      }
+      const nx = c.x + tx2 * len;
+      const ny = c.y + ty2 * len;
+      if (free(nx, ny, tx2, ty2)) {
+        c.x = nx;
+        c.y = ny;
+        continue;
+      }
     }
     // Slide: the part of the step along one axis, the velocity across the wall taken away.
     if (sx && free(c.x + sx, c.y, Math.sign(sx), 0)) {

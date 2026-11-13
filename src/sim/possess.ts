@@ -6,6 +6,8 @@ import { life, mindOf, type AbilitySpec, type Mind } from "./kin";
 import { names } from "./social";
 import type { Creature } from "./creatures";
 import type { Driven } from "./drive";
+import { C } from "./materials";
+import { solidCovers } from "./paths";
 import type { World } from "./world";
 
 // Become anything (2026-11-12, the most voted player idea): the player takes
@@ -248,8 +250,29 @@ export function release(world: World, why: Ended = "let go"): Creature | null {
     m.walk = 0;
     m.near = Infinity;
     m.stall = 0;
+    stepOut(world, p.c);
   }
   return p.c;
+}
+
+// Let go in the crown of a tree (drive.ts: the player walks through crowns): out of the cell to the
+// nearest one with nothing solid on it, so its own mind is not boxed in by the tree it stands in.
+function stepOut(world: World, c: Creature): void {
+  const solid = solidCovers(world);
+  const here = world.idx(c.x, c.y);
+  if (!world.inside(c.x, c.y) || !solid[world.cover[here]] || world.cover[here] === C.HOUSE) return;
+  const cx = Math.round(c.x);
+  const cy = Math.round(c.y);
+  for (let r = 1; r <= 4; r++)
+    for (let dy = -r; dy <= r; dy++)
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r || !world.inside(cx + dx, cy + dy)) continue;
+        const j = world.idx(cx + dx, cy + dy);
+        if (solid[world.cover[j]] || world.depth[j] > 0.3 || Math.abs(world.walkLevel(j) - world.walkLevel(here)) > 1) continue;
+        c.x = cx + dx;
+        c.y = cy + dy;
+        return;
+      }
 }
 
 // At 0 health the player is thrown out at once (creatures.ts calls this as it

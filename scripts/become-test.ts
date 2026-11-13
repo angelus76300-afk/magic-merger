@@ -267,6 +267,10 @@ function becomeChecksSeeded(check: Check): void {
 
   // 4. Released: its own goal is back, and it walks again on its own.
   push(world, 0, 0);
+  // The walk to the sea now crosses the crowns of trees and ends at the rim: back on the open ground it
+  // began on, as the check below is about its own mind and not about where a long walk ended.
+  c.x = start.x;
+  c.y = start.y;
   const back = release(world);
   check("become: release gives the creature back with its goal", back === c && !possessed(world) && m.task === task, `task ${m.task}`);
   {
@@ -820,6 +824,52 @@ function driveChecks(check: Check, world: World, rt: Runtime): void {
       `90 percent of ${run0} cells/s in ${(up * 1000).toFixed(0)} ms (top ${top.toFixed(2)}); stopped in ${(down * 1000).toFixed(0)} ms, ${coast.toFixed(2)} cells after the release`,
     );
     gone(v);
+  }
+
+  // 21b. A tree is a trunk (the owner, 13 November: "trees blocked me too much"): through the crown, a
+  // post of 0.3 cells stops it, and it slides round the post instead of stopping. Before, the whole cell was a wall.
+  {
+    const ti = world.idx(at.x0 + 7, at.a);
+    world.setCover(ti, C.TREE);
+    const walk = (dy: number) => {
+      const v = put("villager", at.x0 + 3, at.a);
+      v.x = at.x0 + 3;
+      v.y = at.a + dy;
+      awake(v);
+      push(world, 1, 0);
+      let near = Infinity;
+      for (let k = 0; k < 30; k++) {
+        run(world, rt, tick, () => awake(v));
+        near = Math.min(near, Math.hypot(v.x - (at.x0 + 7), v.y - at.a));
+      }
+      const out = { x: v.x - (at.x0 + 7), dy: v.y - (at.a + dy), near };
+      gone(v);
+      return out;
+    };
+    const crown = walk(0.45);
+    const head = walk(0.04);
+    check(
+      "drive: through a crown it walks on in a straight line, and head on at a trunk it slides round it, never into it, and is past it",
+      crown.x > 0.5 && Math.abs(crown.dy) < 0.02 && head.x > 0.3 && head.near > 0.2,
+      `crown: ${crown.x.toFixed(2)} past, ${crown.dy.toFixed(2)} off line; trunk: ${head.x.toFixed(2)} past, closest ${head.near.toFixed(2)}`,
+    );
+    world.setCover(ti, C.NONE);
+  }
+
+  // 21c. A tree on a cliff is still a cliff (the review of 13 November: a tree let the player climb a 3 high step).
+  {
+    const ti = world.idx(at.x0 + 10, at.cl);
+    world.setCover(ti, C.TREE);
+    const v = put("villager", at.x0 + 3, at.cl);
+    v.x = at.x0 + 3;
+    v.y = at.cl + 0.45;
+    awake(v);
+    push(world, 1, 0);
+    run(world, rt, 1.2, () => awake(v));
+    const x = v.x - (at.x0 + 10);
+    check("drive: a tree on a 3 high step does not let the player climb it", x < 0, `${x.toFixed(2)} cells past the step`);
+    gone(v);
+    world.setCover(ti, C.NONE);
   }
 
   // 22. Strafing: in its eyes, looking along +x, the stick to the right walks it to the right of the
