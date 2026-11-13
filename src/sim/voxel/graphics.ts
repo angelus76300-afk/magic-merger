@@ -45,14 +45,14 @@ export type GraphicsFlag = keyof typeof GRAPHICS;
 // The looks a quality level turns on (5.2.5). Low is the island as it was
 // before them; the device picks one from its own frame times (QualityChooser),
 // and the owner can pick one, or one switch at a time, in the frame HUD.
-export const LOOKS_FLAGS = ["shadows", "grade", "bloom", "tilt"] as const;
+export const LOOKS_FLAGS = ["shadows", "grade", "bloom", "tilt", "fine"] as const;
 export type LooksFlag = (typeof LOOKS_FLAGS)[number];
 export const QUALITIES = ["low", "medium", "high"] as const;
 export type Quality = (typeof QUALITIES)[number];
 export const PRESETS: Record<Quality, Record<LooksFlag, boolean>> = {
-  low: { shadows: false, grade: false, bloom: false, tilt: false },
-  medium: { shadows: true, grade: true, bloom: false, tilt: false },
-  high: { shadows: true, grade: true, bloom: true, tilt: true },
+  low: { shadows: false, grade: false, bloom: false, tilt: false, fine: false },
+  medium: { shadows: true, grade: true, bloom: false, tilt: false, fine: true },
+  high: { shadows: true, grade: true, bloom: true, tilt: true, fine: true },
 };
 
 // What the player chose: a level, or "auto" (the device's), and switches
