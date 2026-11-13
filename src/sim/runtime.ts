@@ -1197,7 +1197,16 @@ export class CreatureHandle {
     if (w.reactions && natureOf(w, kindOf(this.raw)) & N.UNDEAD && !kindOf(this.raw).native) {
       this.hurt(n);
       for (let k = 0; k < 4; k++)
-        w.particles.add({ x: this.raw.x + Math.random() - 0.5, y: this.raw.y + Math.random() - 0.5, z: 1, vz: 2.5, life: 0.6, color: 0xfff0c0, size: 1, glow: true });
+        w.particles.add({
+          x: this.raw.x + Math.random() - 0.5,
+          y: this.raw.y + Math.random() - 0.5,
+          z: 1,
+          vz: 2.5,
+          life: 0.6,
+          color: 0xfff0c0,
+          size: 1,
+          glow: true,
+        });
       return;
     }
     if (this.raw.kind === "villager" && this.raw.hp < maxHp(this.raw) - 5) remember(this.raw, "magic", 0.5);
@@ -2380,7 +2389,15 @@ export class SpellApi {
     // 4.12: a darkness lies where it was cast, over the cast's reach (reactions.ts).
     const world = this.rt.world;
     if (world.reactions)
-      addLight(world, { x: this.x, y: this.y, r: Math.max(12, Math.min(60, this.r * 1.5)), until: world.time + num(seconds, 0.1, 60, 3), power: num(amount, 0, 1, 0.6) / 0.6, holy: false, dark: true });
+      addLight(world, {
+        x: this.x,
+        y: this.y,
+        r: Math.max(12, Math.min(60, this.r * 1.5)),
+        until: world.time + num(seconds, 0.1, 60, 3),
+        power: num(amount, 0, 1, 0.6) / 0.6,
+        holy: false,
+        dark: true,
+      });
     this.rt.visuals.darkness.push({ color: 0, alpha: num(amount, 0, 1, 0.6), t: 0, dur: num(seconds, 0.1, 60, 3) });
   }
   tint(color: string | number, alpha: number, seconds: number) {

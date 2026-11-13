@@ -239,13 +239,21 @@ export function stepLight(world: World): void {
   f.at = world.tick;
   // Glowing creatures of light, holy or fire shed light around them.
   const shed: LightSource[] = [];
+  let readers = false;
   for (const c of world.creatures) {
     if (c.dead) continue;
     const k = life.kindOf(c);
     if (k.native) continue;
+    readers = true;
     const n = natureOf(world, k);
     if (k.glow && n & (N.LIGHT | N.HOLY | N.FIRE) && !(n & N.DARK))
       shed.push({ x: c.x, y: c.y, r: 3 + k.radius * c.size * 2, until: now + 1, power: 0.8, holy: !!(n & N.HOLY), dark: false });
+  }
+  // Only an item's creatures read the light of fires (natureTick): with none, and no light or
+  // darkness a spell cast, there is nothing to make (the island as generated pays nothing).
+  if (!readers && !world.lightSources.length) {
+    f.any = false;
+    return;
   }
   // Fire and lava light the cells around them (coarse, unblocked: they are low and many).
   let fires = false;
@@ -459,7 +467,14 @@ export function natureTick(world: World, c: Creature, k: CreatureKind, i: number
     if (low && world.time - last > every && !wet) {
       c.data.spark = world.time;
       const flam = Math.max(world.materials.get("cover", world.cover[i]).flammable, world.materials.get("ground", world.ground[i]).flammable);
-      if (flam > 0 && world.fire[i] === 0 && !isBuilding(world.cover[i]) && !nearHouses(world, i, 5) && !fireNear(world, i, 3) && !(world.wardMask[i] & WARD.fire)) {
+      if (
+        flam > 0 &&
+        world.fire[i] === 0 &&
+        !isBuilding(world.cover[i]) &&
+        !nearHouses(world, i, 5) &&
+        !fireNear(world, i, 3) &&
+        !(world.wardMask[i] & WARD.fire)
+      ) {
         world.fire[i] = 0.4;
         embers(world, i);
       }
@@ -474,6 +489,13 @@ export function natureTick(world: World, c: Creature, k: CreatureKind, i: number
     if (low && world.fire[i] > 0) {
       world.fire[i] = 0;
       addGas(world, i, S.STEAM, 0.3);
+    }
+    // Lava it walks on crusts over into stone where it steps.
+    if (low && world.fluid[i] === F.LAVA && world.depth[i] > 0.05 && Math.random() < dt * 4) {
+      world.height[i] += world.depth[i] * 0.9;
+      world.ground[i] = G.BASALT;
+      world.setFluid(i, F.NONE, 0);
+      addGas(world, i, S.STEAM, 0.4);
     }
   }
   if (n & N.WATER && low) {
@@ -628,7 +650,7 @@ export function touch(world: World, c: Creature, k: CreatureKind, dt: number): v
     if (!b || !opposed(a, b)) continue;
     if (Math.hypot(o.x - c.x, o.y - c.y) > k.radius * c.size + ok.radius * o.size + 0.4) continue;
     // Each burns the other by the other's size: three ticks' worth.
-    c.hp -= 8 * Math.sqrt(o.size * ok.radius / 0.6) * dt * 3;
+    c.hp -= 8 * Math.sqrt((o.size * ok.radius) / 0.6) * dt * 3;
     if (Math.random() < 0.3) puff(world, (c.x + o.x) / 2, (c.y + o.y) / 2, a & (N.FIRE | N.COLD | N.WATER) ? 0xe8eef2 : 0xfff0c0);
   }
 }

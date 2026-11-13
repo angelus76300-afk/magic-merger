@@ -597,7 +597,13 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   if (onGround) {
     if (world.fire[i] > 0.25 && !k.fireproof && !immune("fire") && !fireBorn) c.burning = Math.max(c.burning, 3);
     const fluid = world.materials.get("fluid", world.fluid[i]);
-    if (!onDeck && world.depth[i] > 0.05 && fluid.hurts > 0 && !((k.fireproof || fireBorn) && world.fluid[i] === F.LAVA) && !(immune("acid") && world.fluid[i] === F.ACID))
+    if (
+      !onDeck &&
+      world.depth[i] > 0.05 &&
+      fluid.hurts > 0 &&
+      !((k.fireproof || fireBorn) && world.fluid[i] === F.LAVA) &&
+      !(immune("acid") && world.fluid[i] === F.ACID)
+    )
       c.hp -= fluid.hurts * dt;
     if (world.fluid[i] === F.WATER && world.depth[i] > 0.25) c.burning = 0;
     if (!onDeck && world.fluid[i] === F.WATER && world.depth[i] > 1.4 && !k.swims && !immune("water")) {

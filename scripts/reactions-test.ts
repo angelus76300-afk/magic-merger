@@ -67,6 +67,88 @@ const creature = (def: string, n = 1) =>
 // fireproof, hurt by water and cold, that leaves flowers. Nothing in it says fire but its name.
 const PHOENIX = `{ name: "phoenix", base: "beast", body: "bird", color: "#d9461f", glow: true, flying: true, fireproof: true, radius: 0.6, speed: 4.5, hp: 120, goal: "spread", leaves: "flowers", behavior: "wander", weak: ["water", "cold"], active: "day", scares: ["wolf"] }`;
 
+// 6. Opposed natures cancel or transform: fire on ice, water on lava, lava on water, cold on lava.
+function opposedPairs(check: Check): void {
+  const basalt = (w: World) => count(w, (i) => w.ground[i] === G.BASALT);
+  const steam = (w: World) => count(w, (i) => w.gas[i] === S.STEAM && w.gasAmt[i] > 0.05);
+  // Volcano then Great Flood: a lava pool, then water poured over it.
+  const quench = (on: boolean) => {
+    const s = meadow(on);
+    forDisc(s.world, MID, MID, 6, (i) => s.world.setFluid(i, F.LAVA, 0.6));
+    cast(s, "Great Flood", `const spell = { *cast(w) { w.flood(w.x, w.y, 8, "water", 1); } };`);
+    run(s, 1 / 30);
+    return { stone: basalt(s.world), steam: steam(s.world) };
+  };
+  const qOn = quench(true);
+  const qOff = quench(false);
+  check(
+    "reactions: water poured on lava turns it to stone, with steam",
+    qOn.stone >= 60 && qOn.steam >= 60 && qOff.stone === 0,
+    `${qOn.stone} stone cells, ${qOn.steam} steam (off: ${qOff.stone} stone, ${qOff.steam} steam)`,
+  );
+  // Lava poured into a pond: it hardens to stone in the water.
+  const pond = (on: boolean) => {
+    const s = meadow(on);
+    forDisc(s.world, MID, MID, 6, (i) => s.world.setFluid(i, F.WATER, 0.8));
+    cast(s, "Molten Gold", `const spell = { *cast(w) { w.flood(w.x, w.y, 4, "lava", 1); } };`);
+    run(s, 1 / 30);
+    return { stone: basalt(s.world), lava: count(s.world, (i) => s.world.fluid[i] === F.LAVA) };
+  };
+  const pOn = pond(true);
+  const pOff = pond(false);
+  check(
+    "reactions: lava poured into water hardens to stone instead of replacing the water",
+    pOn.stone >= 30 && pOn.lava === 0 && pOff.lava >= 30,
+    `${pOn.stone} stone, ${pOn.lava} lava left (off: ${pOff.stone} stone, ${pOff.lava} lava)`,
+  );
+  // Black Ice then Fire: fire on frozen water melts it into water and steam.
+  const thaw = (on: boolean) => {
+    const s = meadow(on);
+    // A frozen pond in a hard frost: on main the ice stays ice under the fire.
+    forDisc(s.world, MID, MID, 6, (i) => {
+      s.world.setFluid(i, F.ICE, 0.5);
+      s.world.temp[i] = -40;
+    });
+    cast(s, "Fire", `const spell = { *cast(w) { w.ignite(w.x, w.y, 6, 1); } };`);
+    run(s, 3 / 30);
+    return { water: count(s.world, (i) => s.world.fluid[i] === F.WATER), steam: steam(s.world) };
+  };
+  const tOn = thaw(true);
+  const tOff = thaw(false);
+  check(
+    "reactions: fire on ice melts it into water, with steam",
+    tOn.water >= 40 && tOn.steam >= 40 && tOff.water === 0,
+    `${tOn.water} water cells, ${tOn.steam} steam (off: ${tOff.water} water, ${tOff.steam} steam)`,
+  );
+  // Fire then Great Flood: the flood hisses where the fire was.
+  const douse = (on: boolean) => {
+    const s = meadow(on);
+    forDisc(s.world, MID, MID, 6, (i) => (s.world.fire[i] = 1));
+    cast(s, "Great Flood", `const spell = { *cast(w) { w.flood(w.x, w.y, 8, "water", 1); } };`);
+    run(s, 0.2);
+    return steam(s.world);
+  };
+  const dOn = douse(true);
+  const dOff = douse(false);
+  check("reactions: a flood over a fire leaves a cloud of steam", dOn >= 60 && dOn > dOff * 3, `${dOn} steam cells (off: ${dOff})`);
+  // A creature of ice crossing a lava flow crusts it over.
+  const crust = (on: boolean) => {
+    const s = meadow(on);
+    cast(s, "Frost Giant", creature(`{ name: "frost giant", base: "golem", hp: 3000, speed: 0.01 }`));
+    run(s, 0.5);
+    const g = kind(s, "frost giant")[0];
+    if (g) still(g);
+    const i = s.world.idx(g.x, g.y);
+    // A deep lava flow under it, that would not harden by itself this soon.
+    forDisc(s.world, g.x, g.y, 4, (j) => s.world.setFluid(j, F.LAVA, 1.5));
+    run(s, 1);
+    return s.world.ground[i] === G.BASALT ? 1 : 0;
+  };
+  const cOn = crust(true);
+  const cOff = crust(false);
+  check("reactions: a creature of ice on lava turns it to stone where it stands", cOn === 1 && cOff === 0, `stone under it: ${cOn} (off: ${cOff})`);
+}
+
 export function reactionChecks(check: Check): void {
   const outer = Math.random;
   try {
@@ -76,6 +158,7 @@ export function reactionChecks(check: Check): void {
     ashPairs(check);
     meetingPairs(check);
     holyPairs(check);
+    opposedPairs(check);
     guards(check);
   } finally {
     Math.random = outer;
@@ -166,7 +249,14 @@ function lightPairs(check: Check): void {
     run(s, 0.5);
     const hp0 = wraith.hp;
     cast(s, "Lantern", `const spell = { *cast(w) { w.light(w.x, w.y, 12, "#fff3b0", 6); } };`, MID - 8, MID);
-    for (let q = 0; q < 10; q++) { run(s, 0.5); if (wall) console.log(q, wraith.x.toFixed(2), wraith.hp.toFixed(1), s.world.decor.size, s.world.lightField?.top[16 * 32 + 14]); }
+    // Held where it stands: a creature that cannot walk is stepped free toward where it looks
+    // (creatures.ts, free), which would take it round the wall's end.
+    const x0 = wraith.x;
+    const y0 = wraith.y;
+    for (let q = 0; q < 150; q++) {
+      stepHeadless(s.world, s.rt);
+      Object.assign(wraith, { x: x0, y: y0, tx: x0, ty: y0 });
+    }
     return Math.round(hp0 - wraith.hp);
   };
   const open = lit(true, false);
@@ -312,7 +402,11 @@ function gustPairs(check: Check): void {
     run(s, 6);
     return count(s.world, (i) => s.world.fire[i] > 0 || s.world.ground[i] === G.ASH);
   };
-  check("reactions: a gale blows out sparks in a dry field before they spread", windy(true) < windy(false) / 2, `${windy(true)} cells burnt (off: ${windy(false)})`);
+  check(
+    "reactions: a gale blows out sparks in a dry field before they spread",
+    windy(true) < windy(false) / 2,
+    `${windy(true)} cells burnt (off: ${windy(false)})`,
+  );
 }
 
 // 4. Growth loves ash.
@@ -399,7 +493,11 @@ function meetingPairs(check: Check): void {
     const b = s.world.creatures.find((c) => c.kind === "frost wolf")!;
     return Math.round(300 - Math.max(0, a.hp) - Math.max(0, b.hp));
   };
-  check("reactions: a creature of fire and a creature of ice fight when they meet", duel(true) >= 60 && duel(false) === 0, `${duel(true)} health lost (off: ${duel(false)})`);
+  check(
+    "reactions: a creature of fire and a creature of ice fight when they meet",
+    duel(true) >= 60 && duel(false) === 0,
+    `${duel(true)} health lost (off: ${duel(false)})`,
+  );
 }
 
 // 6. Holy light hurts the undead, and natures oppose.
@@ -422,7 +520,11 @@ function holyPairs(check: Check): void {
   // An archangel and the undead fight.
   const host = (on: boolean) => {
     const s = meadow(on);
-    cast(s, "Archangel", creature(`{ name: "archangel", base: "spirit", glow: true, flying: true, hp: 420, attack: 30, behavior: "guard", sense: 16, prey: ["wolf"] }`));
+    cast(
+      s,
+      "Archangel",
+      creature(`{ name: "archangel", base: "spirit", glow: true, flying: true, hp: 420, attack: 30, behavior: "guard", sense: 16, prey: ["wolf"] }`),
+    );
     cast(s, "Lich", creature(`{ name: "lich", base: "beast", hp: 200, speed: 1.2, behavior: "wander" }`), MID + 6, MID);
     run(s, 10);
     const lich = s.world.creatures.find((c) => c.kind === "lich")!;
@@ -459,7 +561,11 @@ function guards(check: Check): void {
       for (const e of s.errors) errors.push(`${file}: ${e}`);
       ran++;
     }
-  check("reactions: stored programs of every old version still run with the reactions on", ran >= 30 && !errors.length, `${ran} programs, ${errors.slice(0, 3).join("; ")}`);
+  check(
+    "reactions: stored programs of every old version still run with the reactions on",
+    ran >= 30 && !errors.length,
+    `${ran} programs, ${errors.slice(0, 3).join("; ")}`,
+  );
 
   // A save taken with the reactions running round trips, and comes back with them as the page sets them.
   {
@@ -489,7 +595,9 @@ function guards(check: Check): void {
       times.push(performance.now() - t0);
     }
     times.sort((a, b) => a - b);
-    console.log(`  light field on the large island, 20 lights: ${times[20].toFixed(2)} ms a update (p50), ${times[38].toFixed(2)} ms (p95), budget ${LIGHT_BUDGET_MS} ms, 3 updates a second`);
+    console.log(
+      `  light field on the large island, 20 lights: ${times[20].toFixed(2)} ms a update (p50), ${times[38].toFixed(2)} ms (p95), budget ${LIGHT_BUDGET_MS} ms, 3 updates a second`,
+    );
   }
 
   // Balance: a Phoenix by a village for five minutes burns a corner of the island, not the island or the village.
@@ -512,7 +620,11 @@ function guards(check: Check): void {
     let most = 0;
     for (let k = 0; k < 300 * 30; k++) {
       stepHeadless(world, rt);
-      if (k % 30 === 0) most = Math.max(most, count(world, (i) => world.fire[i] > 0));
+      if (k % 30 === 0)
+        most = Math.max(
+          most,
+          count(world, (i) => world.fire[i] > 0),
+        );
     }
     const ash = count(world, (i) => world.ground[i] === G.ASH);
     const lost = houses0 - count(world, (i) => world.cover[i] === C.HOUSE);

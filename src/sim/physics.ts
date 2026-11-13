@@ -159,7 +159,11 @@ function fluidSurface(world: World, i: number, f: number, x: number, y: number, 
   const { depth, rng } = world;
   if (f === F.WATER) {
     if (world.height[i] > world.seaLevel) depth[i] -= 0.004 * dt;
-    if (world.fire[i] > 0) world.fire[i] = 0;
+    if (world.fire[i] > 0) {
+      // 4.12: water poured on a fire hisses into steam (reactions.ts).
+      if (world.reactions && world.fire[i] > 0.2) addGas(world, i, S.STEAM, 0.4);
+      world.fire[i] = 0;
+    }
     if (world.cover[i] === C.CROP || world.cover[i] === C.FLOWER) {
       if (depth[i] > 0.6) world.setCover(i, C.NONE);
     }
@@ -263,11 +267,21 @@ function stepFire(world: World, dt: number): void {
     if ((fl === F.WATER || fl === F.ICE || fl === F.MUD) && world.depth[i] > 0.05) {
       fire[i] = 0;
       addGas(world, i, S.STEAM, 0.2);
+      // 4.12: fire on ice melts it to water, with the steam (reactions.ts).
+      if (fl === F.ICE && world.reactions) {
+        world.fluid[i] = F.WATER;
+        world.temp[i] = Math.max(world.temp[i], 20);
+      }
       continue;
     }
     if (world.ground[i] === G.SNOW) {
       fire[i] = 0;
       world.ground[i] = G.DIRT;
+      // 4.12: and snow melts to a puddle, with a breath of steam.
+      if (world.reactions) {
+        world.place(i, "water", 0.15);
+        addGas(world, i, S.STEAM, 0.2);
+      }
       continue;
     }
     const coverMat = materials.get("cover", cover[i]);

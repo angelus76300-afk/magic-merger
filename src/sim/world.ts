@@ -8,6 +8,7 @@ import { Particles } from "./particles";
 import { VoxelState, packVoxel, VK } from "./voxels";
 import { keyX, keyY, voxelKey } from "./voxelkey";
 import { DecorStore } from "./decor";
+import { fluidsMeet } from "./cells";
 import { BIOMES, buildLand, drainage, type LandOptions, type Spring } from "./land";
 import { dressSettlements, ecology, growSettlements, markRefuges, type Refuge, type Settlement } from "./ecology";
 import { SPECIES } from "./wildlife";
@@ -254,6 +255,8 @@ export class World {
     if (layer === "ground") this.ground[i] = id;
     else if (layer === "cover") this.setCover(i, id);
     else if (layer === "fluid") {
+      // 4.12: poured onto its opposite, it reacts (cells.ts, fluidsMeet).
+      if (this.reactions && this.fluid[i] !== id && this.fluid[i] !== F.NONE && fluidsMeet(this, i, this.fluid[i], id, amount)) return true;
       if (this.fluid[i] === id || this.fluid[i] === F.NONE) this.setFluid(i, id, this.depth[i] + amount);
       else this.setFluid(i, id, amount);
     } else {
