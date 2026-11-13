@@ -20,6 +20,13 @@ export const LAND_LOOKS = {
   foam: true,
   // In the fine land: a few small clusters of flowers on grass and pebbles on sand.
   bits: true,
+  // In the fine land: elevation that reads on smooth slopes. Slopes lit light or dark by the way
+  // they face and how steep they are, shade in hollows and a thin darker line at the foot of a
+  // slope, and the ground tinted by its height (low warmer and darker, high lighter and cooler).
+  relief: true,
+  // In the fine land: rock cliffs in strata of three tones with darker seams and cracks, small
+  // ledges, and a few boulders fallen at their foot.
+  rocks: true,
   // Water in bands of colour by depth, clearer in the shallows so the bed shows (everywhere).
   bands: true,
 };
