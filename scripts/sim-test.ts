@@ -20,6 +20,7 @@ import { becomeChecks } from "./become-test";
 import { dailyChecks } from "./daily-test";
 import { monsterChecks } from "./monsters-test";
 import { propChecks } from "./props-test";
+import { reactionChecks } from "./reactions-test";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
 import { logDeeds, mindOf, remember } from "../src/sim/kin";
@@ -2512,6 +2513,8 @@ becomeChecks(check);
 dailyChecks(check);
 monsterChecks(check);
 propChecks(check);
+// Spells that answer each other (4.12 step 2): scripts/reactions-test.ts.
+reactionChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);

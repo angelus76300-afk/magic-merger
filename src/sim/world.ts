@@ -8,6 +8,7 @@ import { Particles } from "./particles";
 import { VoxelState, packVoxel, VK } from "./voxels";
 import { keyX, keyY, voxelKey } from "./voxelkey";
 import { DecorStore } from "./decor";
+import { fluidsMeet } from "./cells";
 import { BIOMES, buildLand, drainage, type LandOptions, type Spring } from "./land";
 import { dressSettlements, ecology, growSettlements, markRefuges, type Refuge, type Settlement } from "./ecology";
 import { SPECIES } from "./wildlife";
@@ -20,6 +21,7 @@ import type { Prop } from "./props";
 import type { Death, Mark, Village } from "./kin";
 import type { Road } from "./roads";
 import type { Site } from "./sites";
+import type { LightField, LightSource } from "./reactions";
 
 export const TICK = 1 / 30;
 export const AMBIENT = 15;
@@ -140,6 +142,15 @@ export class World {
   // Rain and snow do things on this island (weather.ts): on for the player's island, off for
   // challenges, test runs and scripts, which play the same under any sky. Not saved.
   weather = false;
+  // Spells answer each other (4.12, reactions.ts): creatures of fire carry fire, light and shadow
+  // are in the world, gusts move fire, smoke and water, ash is fertile, creatures meet by what they
+  // are. On for the player's island where weather is; off for challenges and the test run, which
+  // play as they were judged. Not saved, and neither is what follows: the lights and darkness spells
+  // put down, the field they make, and how long burnt ground stays fertile.
+  reactions = false;
+  lightSources: LightSource[] = [];
+  lightField: LightField | null = null;
+  fertile: Uint16Array | null = null;
   // The island needs you (troubles.ts): the trouble running now, how many
   // this island has had, when the next may start, and the stones villages
   // raised to the items that saved them. Saved.
@@ -244,6 +255,8 @@ export class World {
     if (layer === "ground") this.ground[i] = id;
     else if (layer === "cover") this.setCover(i, id);
     else if (layer === "fluid") {
+      // 4.12: poured onto its opposite, it reacts (cells.ts, fluidsMeet).
+      if (this.reactions && this.fluid[i] !== id && this.fluid[i] !== F.NONE && fluidsMeet(this, i, this.fluid[i], id, amount)) return true;
       if (this.fluid[i] === id || this.fluid[i] === F.NONE) this.setFluid(i, id, this.depth[i] + amount);
       else this.setFluid(i, id, amount);
     } else {

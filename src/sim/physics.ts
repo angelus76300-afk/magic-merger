@@ -6,6 +6,7 @@ import { addGas } from "./cells";
 import { igniteVoxels, stepVoxels } from "./voxels";
 import { WARD, stepWards, wardHit, warded } from "./wards";
 import { SPREADS, sprout, woodland } from "./ecology";
+import { ashGrowth, gust } from "./reactions";
 
 // The rules of the land. Spells set them in motion; these keep them going:
 // water runs downhill and freezes, fire spreads with the wind and leaves ash,
@@ -158,7 +159,11 @@ function fluidSurface(world: World, i: number, f: number, x: number, y: number, 
   const { depth, rng } = world;
   if (f === F.WATER) {
     if (world.height[i] > world.seaLevel) depth[i] -= 0.004 * dt;
-    if (world.fire[i] > 0) world.fire[i] = 0;
+    if (world.fire[i] > 0) {
+      // 4.12: water poured on a fire hisses into steam (reactions.ts).
+      if (world.reactions && world.fire[i] > 0.2) addGas(world, i, S.STEAM, 0.4);
+      world.fire[i] = 0;
+    }
     if (world.cover[i] === C.CROP || world.cover[i] === C.FLOWER) {
       if (depth[i] > 0.6) world.setCover(i, C.NONE);
     }
@@ -262,11 +267,21 @@ function stepFire(world: World, dt: number): void {
     if ((fl === F.WATER || fl === F.ICE || fl === F.MUD) && world.depth[i] > 0.05) {
       fire[i] = 0;
       addGas(world, i, S.STEAM, 0.2);
+      // 4.12: fire on ice melts it to water, with the steam (reactions.ts).
+      if (fl === F.ICE && world.reactions) {
+        world.fluid[i] = F.WATER;
+        world.temp[i] = Math.max(world.temp[i], 20);
+      }
       continue;
     }
     if (world.ground[i] === G.SNOW) {
       fire[i] = 0;
       world.ground[i] = G.DIRT;
+      // 4.12: and snow melts to a puddle, with a breath of steam.
+      if (world.reactions) {
+        world.place(i, "water", 0.15);
+        addGas(world, i, S.STEAM, 0.2);
+      }
       continue;
     }
     const coverMat = materials.get("cover", cover[i]);
@@ -283,6 +298,13 @@ function stepFire(world: World, dt: number): void {
     } else if (groundMat.flammable > 0) {
       burning = true;
       if (rng.next() < dt * 0.6) world.ground[i] = G.ASH;
+    }
+    // 4.12: a strong wind blows a small fire out, one with few flames around it (it fans a
+    // big one: the spread below, more easily downwind).
+    if (burning && world.reactions && wind.x * wind.x + wind.y * wind.y > 9 && rng.next() < dt * 2 && fewFlames(world, i)) {
+      fire[i] = 0;
+      addGas(world, i, S.SMOKE, 0.2);
+      continue;
     }
     if (!burning) {
       fire[i] = f - dt * 2.5;
@@ -331,6 +353,19 @@ function stepFire(world: World, dt: number): void {
       if (rng.next() < f * flam * dt * 1.6 * downwind * diag) fire[j] = 0.3;
     }
   }
+}
+
+// A fire of a cell or two: at most two of its eight neighbors burn.
+function fewFlames(world: World, i: number): boolean {
+  const x = i % world.w;
+  const y = (i / world.w) | 0;
+  let n = 0;
+  for (const [dx, dy] of N8) {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (nx >= 0 && ny >= 0 && nx < world.w && ny < world.h && world.fire[ny * world.w + nx] > 0 && ++n > 2) return false;
+  }
+  return true;
 }
 
 // A cover has burned through.
@@ -484,6 +519,8 @@ function stepGrowth(world: World): void {
     if (t < 2 || t > 45) continue;
     const g = ground[i];
     const j = neighbor(world, i);
+    // 4.12: ash is fertile, and a burnt forest comes back faster (reactions.ts).
+    if (world.reactions && ashGrowth(world, i, j, rng.next())) continue;
     // An island with flora (4.4.5) grows back by succession, its own way.
     if (world.flora) {
       floraGrowth(world, i, j, g);
@@ -541,6 +578,9 @@ function neighbor(world: World, i: number): number {
 export function explode(world: World, x: number, y: number, r: number, power: number): void {
   const { w, rng } = world;
   let blocked = false;
+  // 4.12: the blast's breath first blows out small fires, fans big ones, pushes smoke and
+  // splashes water out of the crater (reactions.ts); then the blast lights its own.
+  if (world.reactions) gust(world, x, y, r * 1.4, Math.min(2, power));
   forDisc(world, x, y, r, (i, k) => {
     // A ward against harm shrugs off the blast: the land and houses inside stay.
     if (warded(world, i, WARD.harm)) {

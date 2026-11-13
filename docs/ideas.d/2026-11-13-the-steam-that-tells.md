@@ -1,0 +1,3 @@
+section: Backlog
+
+- **The steam that tells** (the builder of "Spells that answer each other"; lens: the promise an item's name makes). When two of a player's items react for the first time on an island (water turns lava to stone, holy light burns a lich), the stories line says it once: "The flood met the lava, and stone was born". What the player feels: discovery, that the island noticed what they did together, and a hint that other pairs are worth trying. What it adds: the reactions of 4.12 are silent today, and a player may see steam without knowing they caused it; one line per kind of reaction teaches the system without a tutorial. What it costs: S, no paid call; about eight lines and a flag per island for the reactions it has seen (saved, so a save change: amber).

@@ -50,11 +50,27 @@ const scenes: Scene[] = process.argv.slice(2).length
         burnAt: 12,
       },
       { name: "crowd of 300", crowd: 300 },
+      {
+        // 4.12: items that answer each other: creatures of fire, holy and undead, lights and a darkness.
+        name: "answers",
+        code: `const spell = { creatures: [
+  { name: "phoenix", base: "beast", body: "bird", flying: true, fireproof: true, glow: true, hp: 120, weak: ["water", "cold"] },
+  { name: "bone walker", base: "beast", hp: 200, behavior: "wander", weak: ["light"] },
+  { name: "angel", base: "spirit", glow: true, flying: true, hp: 300, attack: 20, behavior: "guard" },
+  { name: "frost wolf", base: "beast", hp: 120, attack: 10 } ],
+  *cast(w) { for (let k = 0; k < 6; k++) { w.spawn("phoenix", w.x + k * 3, w.y); w.spawn("bone walker", w.x - k * 3, w.y + 4); w.spawn("frost wolf", w.x, w.y - k * 3); }
+    w.spawn("angel", w.x - 6, w.y + 6); w.spawn("angel", w.x + 6, w.y + 6);
+    for (;;) { w.light(w.x + w.rand(-30, 30), w.y + w.rand(-30, 30), 14, "#fff3b0", 4); w.darken(0.5, 3); w.shockwave(w.x + w.rand(-20, 20), w.y, 10); yield 2; } } };`,
+        tier: "legendary",
+      },
     ];
 
 // PROF_ONLY=forest keeps the scenes whose name contains the word.
 if (process.env.PROF_ONLY) scenes.splice(0, scenes.length, ...scenes.filter((s) => s.name.includes(process.env.PROF_ONLY!)));
 const SECONDS = Number(process.env.PROF_SECONDS ?? 20);
+// PROF_SIZE=208 profiles the large island; PROF_REACTIONS=1 turns on the reactions of 4.12 (reactions.ts).
+const SIZE = Number(process.env.PROF_SIZE ?? 152);
+const MID = SIZE / 2;
 const stats = (a: number[]) => {
   const s = [...a].sort((x, y) => x - y);
   const q = (p: number) => s[Math.min(s.length - 1, Math.floor(p * s.length))];
@@ -65,14 +81,15 @@ console.log(`ms per tick, p50 / p95 / max over ${SECONDS} s (30 ticks a second)`
 for (const scene of scenes) {
   seed(11);
   resetCreatureIds();
-  const world = generateWorld(152, 152, 11);
+  const world = generateWorld(SIZE, SIZE, 11);
+  world.reactions = process.env.PROF_REACTIONS === "1";
   populate(world);
   const rt = new Runtime(world, (_k, _n, m) => console.log("  error:", m));
-  if (scene.code) rt.cast({ key: "p", name: scene.name, tier: isTier(scene.tier) ? scene.tier : "legendary", code: scene.code }, 76, 76);
+  if (scene.code) rt.cast({ key: "p", name: scene.name, tier: isTier(scene.tier) ? scene.tier : "legendary", code: scene.code }, MID, MID);
   if (scene.crowd) {
     const kinds = ["villager", "villager", "villager", "beast", "beast", "spirit"];
     for (let k = world.creatures.length; k < scene.crowd; k++) {
-      const c = makeCreature(kinds[k % kinds.length], 30 + Math.random() * 92, 30 + Math.random() * 92);
+      const c = makeCreature(kinds[k % kinds.length], 30 + Math.random() * (SIZE - 60), 30 + Math.random() * (SIZE - 60));
       world.creatures.push(c);
     }
     rt.cast(
@@ -82,8 +99,8 @@ for (const scene of scenes) {
         tier: "major",
         code: `const spell = { creatures: [{ name: "wolf", base: "beast", behavior: "hunt", prey: ["villager"], attack: 4, hp: 300 }], *cast(w) { for (let k = 0; k < 12; k++) w.spawn("wolf", w.x + k % 4, w.y + (k >> 2)); } };`,
       },
-      76,
-      76,
+      MID,
+      MID,
     );
   }
   const parts = { physics: [] as number[], creatures: [] as number[], life: [] as number[], runtime: [] as number[], total: [] as number[] };
@@ -92,8 +109,8 @@ for (const scene of scenes) {
   const total = 30 * (SECONDS + (scene.burnAt ?? 0));
   for (let tick = 0; tick < total; tick++) {
     if (scene.burnAt && tick === scene.burnAt * 30) {
-      igniteVoxels(world, 76, 76, 30);
-      forDisc(world, 76, 76, 6, (i) => (world.fire[i] = 1));
+      igniteVoxels(world, MID, MID, 30);
+      forDisc(world, MID, MID, 6, (i) => (world.fire[i] = 1));
       console.log(`  set alight: ${world.voxels.burning.size} of ${world.decor.size} voxels burning`);
     }
     const measured = !scene.burnAt || tick >= scene.burnAt * 30;
