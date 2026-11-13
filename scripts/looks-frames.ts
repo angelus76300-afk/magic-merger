@@ -21,7 +21,10 @@ const VIEW = { tier: "cosmic", kind: "spell", shots: [1], settle: 0.2, dist: 26,
 
 interface Lab {
   page: { evaluate: (fn: (json: string) => unknown, arg: string) => Promise<unknown> };
-  cast: (code: string, options: Record<string, unknown>) => Promise<{ frames: { png: string }[]; draw: { triangles: number; calls: number }; errors: string[]; timing?: unknown }>;
+  cast: (
+    code: string,
+    options: Record<string, unknown>,
+  ) => Promise<{ frames: { png: string }[]; draw: { triangles: number; calls: number }; errors: string[]; timing?: unknown }>;
   close: () => Promise<void>;
 }
 const save = (file: string, png: string) => writeFileSync(file, Buffer.from(png.replace(/^data:image\/png;base64,/, ""), "base64"));
