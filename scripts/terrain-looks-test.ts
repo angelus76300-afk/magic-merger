@@ -37,6 +37,9 @@ export interface IslandMesh {
   landTriangles: number;
   fluidTriangles: number;
   fineChunks: number;
+  eighths: number; // of the fine chunks, those in eighth voxels
+  maxTileMs: number; // the longest tile of a fine chunk to build
+  tileP95: number;
   landHash: string;
   fluidHash: string;
   ms: number; // the whole island's first build, one cell meshes
@@ -90,6 +93,9 @@ export function buildIsland(cells: number, seed: number, land: LandOptions, zoom
     landTriangles: shown.land,
     fluidTriangles: shown.fluid,
     fineChunks: shown.fineChunks,
+    eighths: shown.eighths,
+    maxTileMs: terrain.fineStats.maxTileMs,
+    tileP95: [...terrain.fineStats.tileMs].sort((a, b) => a - b)[Math.floor(terrain.fineStats.tileMs.length * 0.95)] ?? 0,
     landHash: hex(hash.land),
     fluidHash: hex(hash.fluid),
     ms,
@@ -134,6 +140,14 @@ export function terrainLooksChecks(check: Check): void {
       a.map((m, k) => `${LOOK_ISLANDS[k].name} ${m.landTriangles + m.fluidTriangles} triangles`).join(", "),
     );
   }
+  // Close up the nearest chunks are in eighth voxels, the next ones in quarters.
+  const close = LOOK_ISLANDS.map((_, k) => islandWith(LOOK_SWITCHES, k, "close"));
+  const mid = LOOK_ISLANDS.map((_, k) => islandWith(LOOK_SWITCHES, k, "mid"));
+  check(
+    "close up the land is in eighth voxels near the camera and quarters around them; at mid zoom in quarters",
+    close.every((m) => m.eighths > 0 && m.fineChunks > m.eighths) && mid.every((m) => m.eighths === 0 && m.fineChunks > 0),
+    close.map((m, k) => `${LOOK_ISLANDS[k].name} close ${m.eighths} eighths of ${m.fineChunks}, mid ${mid[k].fineChunks}`).join(", "),
+  );
   // From high up (the whole island) nothing is drawn finely.
   const far = LOOK_ISLANDS.map((_, k) => islandWith(LOOK_SWITCHES, k, "far"));
   check(
