@@ -256,6 +256,9 @@ function waterIsland(seed: number): { world: World; rt: Runtime } {
     return { world, rt: new Runtime(world, () => undefined) };
   }
   Math.random = seeded(seed * 3 + 1);
+  // The island is made from the same first id whatever ran before: ids feed the creatures' choices, and a
+  // village made from a later id was a different village (the hill check passed or failed by what ran first).
+  resetCreatureIds(1);
   const { world } = island(seed);
   storyOn(null);
   kept.set(seed, JSON.stringify(saveWorld(world, new Map())));
@@ -392,10 +395,11 @@ const M = 5;
 const H = 4;
 const CRUSH = P("w.terraform(w.x, w.y, 2, 8);");
 const CRUSH_WIDE = P("w.terraform(w.x, w.y, 4, 10);");
-// What answers it, each on an island where it does (the families' run, docs/DESIGN.md "High water").
+// What answers it, each on an island where it does (the families' run, docs/DESIGN.md "High water"). A hill on the
+// water's way is a weak answer on some islands (seeds 5, 9 and 27 lose a house to it), so it has its own.
 const FAMILIES: [string, number, Cast][] = [
   ["earth raised round the village", 9, { key: "dike", code: DIKE, at: "village" }],
-  ["a hill raised on its way", M, { key: "hill", code: HILL, at: "mid" }],
+  ["a hill raised on its way", 12, { key: "hill", code: HILL, at: "mid" }],
   ["cold at its source", M, { key: "frost", code: FROST, at: "source" }],
   ["its source dammed", M, { key: "dam", code: DAM, at: "source" }],
   ["a channel dug round the village", 10, { key: "moat", code: MOAT, at: "village" }],
