@@ -20,14 +20,16 @@ export class OrbitCamera implements CameraControl {
   private returnAt = 0;
   // The island tells its stories (2026-11-11, director.ts): a subject the
   // camera keeps in frame, moving with it, until the player touches the view.
-  private watched: { x: number; y: number; dist: number } | null = null;
+  private watched: { x: number; y: number; dist: number; phi: number; zoom: number } | null = null;
   // Become anything (2026-11-12, possess.ts): behind and above the creature
   // the player is. It turns behind it once, when it is taken (turn); after
   // that its turn is the player's (the playtest of 12 November: a camera that
   // swung behind the creature after every step turned the stick under the
   // thumb, and a pull down walked it back and forth). A drag turns it round
   // the creature, as in the eye view.
-  private chased: { x: number; y: number; z: number; hd: number; dist: number; turn: number | null; tilt: number } | null = null;
+  // A flier or a swimmer is steered by bank (drive.ts): its camera follows
+  // behind it (follow), as a flight game's does, since the stick turns it.
+  private chased: { x: number; y: number; z: number; hd: number; dist: number; turn: number | null; tilt: number; follow: boolean } | null = null;
   // Through its eyes (2026-11-12, eyes.ts): at the head of the creature the
   // player is, looking where they look. A drag turns the look; the chase
   // above keeps following meanwhile, so the behind view comes back in place.
@@ -58,6 +60,13 @@ export class OrbitCamera implements CameraControl {
     const fov = (this.camera.fov * Math.PI) / 180;
     const narrow = Math.min(1, this.camera.aspect);
     return (r * 1.15) / Math.tan(fov / 2) / narrow;
+  }
+
+  // The farthest a pinch, a flight or the watch takes the camera: three island widths, or as far
+  // as the whole island needs on a narrow screen (a folded phone, 344 wide, needs four and a half:
+  // the tour's whole island was cut at the sides there).
+  farthest(): number {
+    return Math.max(this.maxDist * 0.5, this.distanceFor(Math.max(this.worldW, this.worldH) * 0.55));
   }
 
   visibleRadius(): number {
@@ -94,16 +103,18 @@ export class OrbitCamera implements CameraControl {
     this.chased = null;
     this.returnAt = 0;
     const turn = theta === undefined ? undefined : this.theta + Math.atan2(Math.sin(theta - this.theta), Math.cos(theta - this.theta));
-    this.goal = { tx, ty, dist: Math.max(this.minDist, Math.min(this.maxDist * 0.5, dist)), phi, speed: 1 / Math.max(0.2, seconds), theta: turn };
+    this.goal = { tx, ty, dist: Math.max(this.minDist, Math.min(this.farthest(), dist)), phi, speed: 1 / Math.max(0.2, seconds), theta: turn };
   }
 
-  // Keeps (x, y) in the middle from `dist` away, called again as the subject moves.
-  watch(x: number, y: number, dist: number): void {
+  // Keeps (x, y) in the middle from `dist` away, called again as the subject moves. `phi`: the
+  // tilt it eases to (the whole island is seen more from above, as the tour sees it). `zoom`: how
+  // fast the distance eases (the whole island is ten times farther than a villager: twice as fast).
+  watch(x: number, y: number, dist: number, phi = 0.98, zoom = 1.6): void {
     if (this.chased) return;
     this.goal = null;
     this.saved = null;
     this.returnAt = 0;
-    this.watched = { x, y, dist: Math.max(this.minDist * 1.5, Math.min(this.maxDist * 0.5, dist)) };
+    this.watched = { x, y, dist: Math.max(this.minDist * 1.5, Math.min(this.farthest(), dist)), phi, zoom };
   }
 
   unwatch(): void {
@@ -117,7 +128,7 @@ export class OrbitCamera implements CameraControl {
   // Behind the creature at (x, y), z above the ground, facing `heading`
   // (radians, 0 along +x as creatures.ts hd). Called again as it moves. `size`:
   // its radius in cells, so a dragon is not filmed from as close as a rabbit.
-  chase(x: number, y: number, z: number, heading: number, size = 0.6): void {
+  chase(x: number, y: number, z: number, heading: number, size = 0.6, follow = false): void {
     if (!this.chased) {
       this.goal = null;
       this.saved = null;
@@ -125,13 +136,15 @@ export class OrbitCamera implements CameraControl {
       this.watched = null;
       // Close enough that the creature is the subject on a folded phone (344 px wide).
       const dist = Math.max(9, Math.min(24, 7.5 + size * 6.5));
-      this.chased = { x, y, z, hd: heading, dist, turn: Math.atan2(-Math.cos(heading), -Math.sin(heading)), tilt: 0 };
+      this.chased = { x, y, z, hd: heading, dist, turn: Math.atan2(-Math.cos(heading), -Math.sin(heading)), tilt: 0, follow };
       return;
     }
     this.chased.x = x;
     this.chased.y = y;
     this.chased.z = z;
     this.chased.hd = heading;
+    this.chased.follow = follow;
+    if (follow) this.chased.turn = Math.atan2(-Math.cos(heading), -Math.sin(heading));
   }
 
   // Let go: the camera stays where it is, it does not fly back.
@@ -153,6 +166,11 @@ export class OrbitCamera implements CameraControl {
     this.eyed.x = x;
     this.eyed.y = y;
     this.eyed.h = h;
+  }
+
+  // The tilt of the view from behind, -0.35 (from above) to 0.3 (from low): a flier's climb.
+  get tilt(): number {
+    return this.chased?.tilt ?? 0;
   }
 
   // Back behind it, turned the way the eyes looked.
@@ -217,7 +235,7 @@ export class OrbitCamera implements CameraControl {
       return;
     }
     this.release();
-    this.dist = Math.max(this.minDist, Math.min(this.maxDist * 0.5, this.dist / factor));
+    this.dist = Math.max(this.minDist, Math.min(this.farthest(), this.dist / factor));
   }
 
   // Pans along the ground, in screen pixels.
@@ -255,8 +273,8 @@ export class OrbitCamera implements CameraControl {
       const k = Math.min(1, dt * 2.2);
       this.tx += (this.watched.x - this.tx) * k;
       this.ty += (this.watched.y - this.ty) * k;
-      this.dist = Math.exp(Math.log(this.dist) + (Math.log(this.watched.dist) - Math.log(this.dist)) * Math.min(1, dt * 1.6));
-      this.phi += (0.98 - this.phi) * Math.min(1, dt * 1.2);
+      this.dist = Math.exp(Math.log(this.dist) + (Math.log(this.watched.dist) - Math.log(this.dist)) * Math.min(1, dt * this.watched.zoom));
+      this.phi += (this.watched.phi - this.phi) * Math.min(1, dt * 1.2);
       if (!reducedMotion) this.theta += dt * 0.035;
     }
     const ch = this.chased;
@@ -271,7 +289,7 @@ export class OrbitCamera implements CameraControl {
       if (ch.turn !== null) {
         const turn = Math.atan2(Math.sin(ch.turn - this.theta), Math.cos(ch.turn - this.theta));
         this.theta += turn * Math.min(1, dt * (reducedMotion ? 0.8 : 2.6));
-        if (Math.abs(turn) < 0.01) ch.turn = null;
+        if (Math.abs(turn) < 0.01 && !ch.follow) ch.turn = null;
       }
       this.phi += (0.9 + ch.tilt - this.phi) * Math.min(1, dt * (reducedMotion ? 1 : 3));
       this.dist = Math.exp(Math.log(this.dist) + (Math.log(ch.dist) - Math.log(this.dist)) * Math.min(1, dt * (reducedMotion ? 1.2 : 2.5)));
@@ -336,6 +354,8 @@ export class OrbitCamera implements CameraControl {
     const across = Math.tan((75 * Math.PI) / 360) / Math.max(0.1, this.camera.aspect);
     this.camera.fov = Math.max(55, Math.min(95, (Math.atan(across) * 360) / Math.PI));
     this.camera.near = 0.06;
+    // The sky's sun, stars and ring of clouds are far off: the far plane stays out there. What
+    // lies past the mist is left out by the view itself (view.ts, fog.ts EYE_DRAW).
     this.camera.far = Math.max(this.worldW, this.worldH) * 3 + 200;
     this.camera.updateProjectionMatrix();
   }

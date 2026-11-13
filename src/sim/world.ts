@@ -1,6 +1,6 @@
 import type { ArtHooks } from "./artifacts";
 import type { Happening, StoryLine } from "./kin";
-import { TROUBLE_FIRST, type Stone, type Trouble, type TroubleEnd } from "./troubles";
+import { TROUBLE_FIRST, type Stone, type Trouble, type TroubleEnd, type TroubleKind } from "./troubles";
 import type { Creature } from "./creatures";
 import { C, F, G, MaterialTable, type Layer } from "./materials";
 import { Rng, fbm, valueNoise } from "./noise";
@@ -157,6 +157,8 @@ export class World {
   troubles = 0;
   troubleNext = TROUBLE_FIRST;
   stones: Stone[] = [];
+  // The kind of the last trouble, so a wildfire and a high water take turns (saved).
+  troubleLast: TroubleKind | null = null;
   // How the last trouble ended, until the frame has told it (not saved).
   troubleEnd: TroubleEnd | null = null;
   sitesVersion = 0;

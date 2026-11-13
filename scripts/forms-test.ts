@@ -226,19 +226,19 @@ export function formChecks(check: Check): void {
     const y = world.settlements[0].y;
     cast(
       world,
-      `const spell = { *cast(w) { w.model(w.x, w.y, [[-0.1, -0.1, 0, 0.2, 0.2, 1.5, "#4a3324"], [0.05, -0.05, 1.2, 0.3, 0.1, 0.08, "#2b2b30"], [0.2, -0.1, 0.8, 0.2, 0.2, 0.3, "#ffd36a", "glow"], [0, 0, 0, 0.01, 0.5, 0.5, "#fff"]], { name: "Lamp" }); } };`,
+      `const spell = { *cast(w) { w.model(w.x, w.y, [[-0.1, -0.1, 0, 0.2, 0.2, 1.5, "#4a3324"], [0.05, -0.05, 1.2, 0.3, 0.1, 0.08, "#2b2b30"], [0.2, -0.1, 0.8, 0.2, 0.2, 0.3, "#ffd36a", "glow"], [0, 0, 0, 0, 0.5, 0.5, "#fff"], [0, 0, 0, 0.01, 0.5, 0.5, "#fff"]], { name: "Lamp" }); } };`,
       x,
       y,
       1,
     );
     const p = world.props[0];
     check(
-      "w.model keeps boxes as fine as a twentieth of a cell, drops a box with no size, marks what glows",
-      world.props.length === 1 && p.boxes.length === 3 && p.boxes[1].h === 0.08 && p.boxes[2].glow && !p.boxes[0].glow,
+      "w.model keeps boxes as fine as a twentieth of a cell, draws a thinner one at 0.05, drops a box with no size, marks what glows",
+      world.props.length === 1 && p.boxes.length === 4 && p.boxes[1].h === 0.08 && p.boxes[3].w === 0.05 && p.boxes[2].glow && !p.boxes[0].glow,
       JSON.stringify(p?.boxes),
     );
     const back = loadWorld(JSON.parse(JSON.stringify(saveWorld(world, new Map()))), () => {})!;
-    check("a fine model is kept by a save", back.props.length === 1 && back.props[0].boxes.length === 3 && back.props[0].name === "Lamp");
+    check("a fine model is kept by a save", back.props.length === 1 && back.props[0].boxes.length === 4 && back.props[0].name === "Lamp");
     cast(world, `const spell = { *cast(w) { w.explode(w.x, w.y, 4, 1); } };`, x, y, 1);
     check("a blast over it takes it away", world.props.length === 0);
     // The review of #50: the 41st item placed on an island was drawn with nothing.

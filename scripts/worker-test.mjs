@@ -1496,10 +1496,12 @@ console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at st
   const fay = await invite("Fay", 5);
   const gus = await invite("Gus", 5);
   await db.prepare("DELETE FROM perf").run();
-  const sample = { frameP50: 16, frameP95: 30 };
+  // The eye view, second pass: a sample says which view its frames were drawn in (view, viewFrames);
+  // one from before, without them, is kept as it was.
+  const sample = { frameP50: 16, frameP95: 30, view: "eyes", viewFrames: "sky:0,behind:12,eyes:588" };
   const sent = [];
   for (let k = 0; k < 5; k++) sent.push(await api("/api/perf", { invite: fay.secret, body: sample }));
-  await api("/api/perf", { invite: gus.secret, body: sample });
+  await api("/api/perf", { invite: gus.secret, body: { frameP50: 16, frameP95: 30 } });
   const rows = (await db.prepare("SELECT COUNT(*) AS n FROM perf").first()).n;
   check(
     "L2: five samples in a row from one invite write one row, another invite still writes",
@@ -1508,6 +1510,10 @@ console.log(`${calls} stub Claude calls, $${(calls * STUB_USD).toFixed(4)} at st
   );
   const read = await api("/api/perf", { admin: true });
   check("L2: the admin reads them back", read.status === 200 && read.data.length === 2);
+  {
+    const views = (read.data ?? []).map((r) => r.view ?? null).sort();
+    check("L2: a sample keeps the view it was taken in, and one without a view is still read", views.join() === "eyes,", JSON.stringify(views));
+  }
 
   // L7: the cron with a batch the API cannot read: the failure is a log line
   // named after its job, and the other jobs still run (the feedback sync

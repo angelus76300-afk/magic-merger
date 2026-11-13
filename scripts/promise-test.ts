@@ -48,9 +48,9 @@ export function promiseChecks(check: Check): void {
     !unplaced.ok && unplaced.problem === "idle" && /never calls w\.artifact/.test(unplaced.detail),
     `${unplaced.problem}: ${unplaced.detail}`,
   );
-  const thin = item(lantern(`{ when: "night", do: "light" }`, true, 0.04));
+  const thin = item(lantern(`{ when: "night", do: "light" }`, true, 0));
   check(
-    "promise: a model that lost its thin boxes fails its look (Leprechaun Gold, 7 of 25 drawn)",
+    "promise: a model that lost boxes with no size fails its look (a thin box is now drawn at 0.05, not lost)",
     !thin.ok && thin.problem === "look" && /drew 1 of 10 boxes/.test(thin.detail),
     `${thin.problem}: ${thin.detail}`,
   );

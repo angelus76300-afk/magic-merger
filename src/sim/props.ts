@@ -44,6 +44,8 @@ export const MAX_PROP_BOXES = 80;
 // A prop reaches 12 cells from its center and 60 voxels up at most.
 const REACH = 12;
 const UP = 60;
+// A thin side (a page, a blade, a label) is drawn at FINE_BOX, not dropped. A side of zero or less, or
+// one that is not a number, still has no box.
 export const FINE_BOX = 0.05;
 const FINE = FINE_BOX;
 
@@ -73,10 +75,13 @@ export function readBox(v: unknown): PropBox | null {
       ? (v as Record<string, unknown>)
       : null;
   if (!a) return null;
-  const w = clamp(a.w, 0, 2 * REACH, 0);
-  const d = clamp(a.d, 0, 2 * REACH, 0);
-  const h = clamp(a.h, 0, UP, 0);
-  if (w < FINE || d < FINE || h < FINE) return null;
+  const w0 = clamp(a.w, 0, 2 * REACH, 0);
+  const d0 = clamp(a.d, 0, 2 * REACH, 0);
+  const h0 = clamp(a.h, 0, UP, 0);
+  if (!(w0 > 0 && d0 > 0 && h0 > 0)) return null;
+  const w = Math.max(w0, FINE);
+  const d = Math.max(d0, FINE);
+  const h = Math.max(h0, FINE);
   return {
     x: clamp(a.x, -REACH, REACH, 0),
     y: clamp(a.y, -REACH, REACH, 0),

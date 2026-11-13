@@ -17,7 +17,8 @@ import { abilitiesFromName, useAbilities } from "./abilities";
 import { stepArtifacts } from "./artifacts";
 import { meter } from "./motion";
 import { steer } from "./steer";
-import { riderAim, ridden, throwOut } from "./possess";
+import { DEAD_ZONE, riderAim, ridden, throwOut } from "./possess";
+import { drive as driveRidden } from "./drive";
 import { alarm, calmDown, fleeing } from "./flight";
 import { N, boldness, darkWakes, lightAt, meet, natureOf, natureTick, spellMade, strike, touch, type Meeting } from "./reactions";
 import { pathsOf, solidCovers } from "./paths";
@@ -483,6 +484,16 @@ function blocked(world: World, x: number, y: number, c: Creature, k: CreatureKin
   return world.walkLevel(i) - here > 1.6;
 }
 
+// What the ground does to a pace, as for a creature's own steps: half in
+// water (not for a fish, whose pace is its own), a third in mud, faster on a road (4.9).
+function groundPace(world: World, k: CreatureKind, i: number, onGround: boolean, onDeck: boolean): number {
+  let f = 1;
+  if (onGround && !onDeck && !k.aquatic && world.depth[i] > 0.3 && world.fluid[i] !== F.ICE) f *= 0.5;
+  if (onGround && !onDeck && world.fluid[i] === F.MUD) f *= 0.3;
+  if (onGround && !k.aquatic) f *= roadSpeed(world, i);
+  return f;
+}
+
 // Become anything: why a creature the player pushes along (dx, dy) does not
 // go on, in the words of the line under its name, in the order blocked() asks
 // (and the rim the ridden step keeps to, below). Null when nothing ahead stops it.
@@ -834,7 +845,13 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     const hunting = mood === "hunt" || mood === "angry";
     const ox = c.x;
     const oy = c.y;
-    const stepped = steer(world, c, k, c.x + wantX, c.y + wantY, busy ? 0 : speed, arrive, hunting, dt, blocked, gx, gy);
+    // Ridden, the player drives it (drive.ts, the eye view's second pass): its
+    // velocity follows the stick at once, at a pace made for playing, with the
+    // same walls, and the ground's own slowing (water, mud) and a road's speed.
+    // Asleep, frozen or stunned, it goes nowhere (a dead zone over any push).
+    const stepped = rider
+      ? driveRidden(world, c, k, rider, busy ? 2 : DEAD_ZONE, groundPace(world, k, i, onGround, onDeck) * Math.sqrt(c.size), dt, blocked)
+      : steer(world, c, k, c.x + wantX, c.y + wantY, busy ? 0 : speed, arrive, hunting, dt, blocked, gx, gy);
     // Ridden, the same walls hold where it stands, not only ahead: steer.ts lets a creature move
     // freely in the cell it is in, and a player pushing into the sea for a minute walked along a
     // shore line until its centre rounded into the deep cell, then on into it (a fish onto the
@@ -869,8 +886,16 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   c.vx -= c.vx * Math.min(1, friction * dt);
   c.vy -= c.vy * Math.min(1, friction * dt);
   if (k.flying || c.levitate > 0) {
-    const target = c.levitate > 0 ? 4 + Math.sin(world.time * 2 + c.id) * 0.8 : k.altitude + (k.altitude > 3 ? Math.sin(world.time * 0.7 + c.id) * 1.5 : 0);
-    c.vz += (target - c.z) * 4 * dt - c.vz * 2 * dt;
+    // Ridden, a flier holds the altitude the player's look climbed or dived to (drive.ts).
+    const target =
+      c.levitate > 0
+        ? 4 + Math.sin(world.time * 2 + c.id) * 0.8
+        : rider && k.flying
+          ? rider.alt
+          : k.altitude + (k.altitude > 3 ? Math.sin(world.time * 0.7 + c.id) * 1.5 : 0);
+    // Its own spring is a slow float; the player's climb and dive answer at once.
+    if (rider && k.flying && c.levitate <= 0) c.vz = (target - c.z) * 6;
+    else c.vz += (target - c.z) * 4 * dt - c.vz * 2 * dt;
     c.z += c.vz * dt;
   } else {
     c.vz -= 30 * dt;

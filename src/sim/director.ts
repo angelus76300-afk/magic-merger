@@ -5,7 +5,7 @@ import type { Happening } from "./kin";
 import { wordOf } from "./names";
 import { Rng } from "./noise";
 import { kindName } from "./sites";
-import { fireOf, troubleLine } from "./troubles";
+import { focusOf, frontOf, troubleLine } from "./troubles";
 import { unpackLook } from "./villagers";
 import { floatAt } from "./wonders";
 import type { World } from "./world";
@@ -75,6 +75,8 @@ const WIDE_EVERY = 6;
 // A wonder stands still: not again for three minutes. The same sort of shot (a house going up) not within forty seconds.
 const WONDER_AGAIN = 180;
 const SORT_AGAIN = 75;
+// The whole island with its names: not again for three minutes.
+export const MAP_AGAIN = 180;
 
 /** A villager's own name, the same after a reload: from what is saved of it (its look and its home). */
 export function nameOf(world: World, c: Creature): string {
@@ -192,16 +194,20 @@ export class Director {
     // and back every ten seconds once the houses burn.
     const trouble = world.trouble;
     if (trouble && !(cur && cur.sort === "pin")) {
-      const f = fireOf(world, trouble);
-      const onVillage = trouble.stage === 3 && Math.floor(now / 10) % 2 === 0;
+      const f = frontOf(world, trouble);
+      const onVillage = trouble.kind !== "flood" && trouble.stage === 3 && Math.floor(now / 10) % 2 === 0;
       const key = `t${onVillage ? "v" : "f"}`;
       const cut = !cur || cur.sort !== "trouble" || cur.key !== key;
       const shot: Shot = cut
         ? { kind: "drama", key, sort: "trouble", who: 0, other: 0, x: 0, y: 0, r: 9, caption: "", score: 95, since: now, least: now, until: Infinity }
         : cur!;
-      shot.x = onVillage ? trouble.vx : f.x;
-      shot.y = onVillage ? trouble.vy : f.y;
-      shot.r = 9 + trouble.width;
+      // A high water is read where it meets the houses: on its edge, more on the village's side, close
+      // enough that the water is a third of the frame and not a blue slab (the playtest at 344).
+      const flood = trouble.kind === "flood";
+      const at = flood ? focusOf(world, trouble) : f;
+      shot.x = flood ? at.x : onVillage ? trouble.vx : f.x;
+      shot.y = flood ? at.y : onVillage ? trouble.vy : f.y;
+      shot.r = flood ? 7 : 9 + trouble.width;
       shot.caption = troubleLine(trouble);
       if (cut) this.take(shot, now);
       return { shot, cut };
@@ -232,7 +238,7 @@ export class Director {
     this.sinceWide = shot.kind === "wide" ? 0 : this.sinceWide + 1;
     this.log.push(shot);
     if (this.log.length > 400) this.log.shift();
-    for (const [k, t] of this.seen) if (now - t > AGAIN * 2) this.seen.delete(k);
+    for (const [k, t] of this.seen) if (now - t > Math.max(AGAIN * 2, WONDER_AGAIN, MAP_AGAIN)) this.seen.delete(k);
   }
 
   // Follows the subject, widens to hold the one it is after, and ends the
@@ -278,7 +284,7 @@ export class Director {
 
   private fresh(key: string, now: number): boolean {
     const t = this.seen.get(key);
-    return t === undefined || now - t > (key[0] === "w" ? WONDER_AGAIN : AGAIN);
+    return t === undefined || now - t > (key === "map" ? MAP_AGAIN : key[0] === "w" ? WONDER_AGAIN : AGAIN);
   }
 
   private choose(world: World): Shot | null {
@@ -392,6 +398,11 @@ export class Director {
       add("wonder", `w${w.seed}`, "wonder", 8, at.x, at.y, Math.max(8, w.r * 1.4), capital(w.name), [6, 8]);
     }
     if (this.sinceWide >= WIDE_EVERY) {
+      // The island as a map (4.9 part 3, map.ts): the whole island with its villages' names, long
+      // enough to read them, once every few minutes at most; a village seen wide in between. Drama
+      // cuts in after four seconds (the camera needs about two to get out there).
+      if (world.settlements.length >= 2)
+        add("wide", "map", "map", 36, world.w / 2, world.h / 2, Math.max(world.w, world.h) * 0.55, world.islandName ?? "The island", [4, 6.5]);
       const v = world.settlements.length ? world.settlements[Math.floor(this.random() * world.settlements.length)] : null;
       if (v) add("wide", `v${Math.round(v.x)}:${Math.round(v.y)}`, "wide", 33, v.x, v.y, 20, v.name ? `The village of ${v.name}` : "The village", [5, 7]);
       else add("wide", "island", "wide", 33, world.w / 2, world.h / 2, world.w * 0.4, world.islandName ?? "The island", [5, 7]);

@@ -139,6 +139,8 @@ export class Runtime {
   glass: { ward: Ward; harm: number; replay: (() => void)[] } | null = null;
   private compiled = new Map<string, Compiled>();
   private casts: ActiveCast[] = [];
+  // Told of each step of a program, before and after: a high water sees what each cast itself changes (highwater.ts).
+  stepWatch: { before(id: number): void; after(id: number): void } | null = null;
   private nextCast = 1;
   private nextBody = 1;
   private loops = 0;
@@ -538,6 +540,11 @@ export class Runtime {
     return true;
   }
 
+  /** The id of the cast begun last (playercast.ts: a high water watches what its program changes). */
+  get lastCast(): number {
+    return this.nextCast - 1;
+  }
+
   // Runs spell code, catching everything it throws.
   run(key: string, name: string, fn: () => void, onError?: () => void): boolean {
     // While a spell's code runs, a voxel it puts on a house, a field or a
@@ -569,11 +576,13 @@ export class Runtime {
         if (c.wait > 0) continue;
       }
       const started = performance.now();
+      this.stepWatch?.before(c.id);
       const ok = this.run(c.key, c.name, () => {
         const r = c.gen!.next();
         if (r.done) c.done = true;
         else c.wait = typeof r.value === "number" && Number.isFinite(r.value) ? Math.max(0, Math.min(30, r.value)) : 0;
       });
+      this.stepWatch?.after(c.id);
       if (!ok) this.abort(c);
       else if (performance.now() - started > Runtime.slowMs && ++c.slowTicks > 5) {
         this.report(c.key, c.name, "The spell took too long on every frame and was stopped");
@@ -1966,7 +1975,7 @@ export class SpellApi {
     if (given - kept >= Math.max(3, Math.ceil(given * 0.2)))
       this.rt.drop(
         this.req.key,
-        `w.model drew ${kept} of ${given} boxes: a box under ${FINE_BOX} on any side is not drawn (make a thin thing ${FINE_BOX} thick), and a model keeps ${MAX_PROP_BOXES} boxes at most`,
+        `w.model drew ${kept} of ${given} boxes: a box with a side of zero or less, or not a number, is not drawn (a thin side is drawn at ${FINE_BOX}), and a model keeps ${MAX_PROP_BOXES} boxes at most`,
       );
     if (!p) return null;
     // Each part a slightly different shade, as the wonders' parts are; vary: 0 keeps the colors exact.
