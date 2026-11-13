@@ -256,7 +256,8 @@ export async function neighboursOf(
   const text = words(`${target.name} ${target.description}`);
   const seen = new Set<string>();
   return rows.results
-    .filter((r) => typeof r.summary === "string" && r.summary.trim() && !seen.has(r.name) && seen.add(r.name))
+    .map((r) => ({ ...r, summary: typeof r.summary === "string" ? r.summary.trim() : "" }))
+    .filter((r) => r.summary && !seen.has(r.name) && seen.add(r.name))
     .map((r) => {
       let s = 0;
       for (const w of words(`${r.name} ${r.description ?? ""}`)) if (text.has(w)) s++;
@@ -264,7 +265,7 @@ export async function neighboursOf(
     })
     .sort((a, b) => b.s - a.s)
     .slice(0, k)
-    .map(({ r }) => ({ name: r.name.slice(0, 60), summary: String(r.summary).trim().slice(0, 200) }));
+    .map(({ r }) => ({ name: r.name.slice(0, 60), summary: (r.summary as string).slice(0, 200) }));
 }
 
 export async function libraryEntries(db: D1Database): Promise<LibraryEntry[]> {
