@@ -66,7 +66,8 @@ export function buildIsland(cells: number, seed: number, land: LandOptions, zoom
   terrain.rebuild(true);
   const ms = performance.now() - t0;
   const dist = ZOOMS[zoom] || cells * 0.55;
-  terrain.focus(dist * 0.81 * Math.SQRT1_2, dist * 0.58, dist * 0.81 * Math.SQRT1_2);
+  // The camera looks at the ground, some 8 units up on these islands.
+  terrain.focus(dist * 0.81 * Math.SQRT1_2, dist * 0.58 + 8, dist * 0.81 * Math.SQRT1_2);
   const t1 = performance.now();
   if (GRAPHICS.fine) terrain.updateFine(0, true);
   const fineMs = performance.now() - t1;

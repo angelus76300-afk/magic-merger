@@ -283,7 +283,8 @@ export class Terrain {
     const oz = -this.world.h / 2;
     const dx = Math.max(x0 + ox - this.eye.x, 0, this.eye.x - (x1 + ox));
     const dz = Math.max(y0 + oz - this.eye.z, 0, this.eye.z - (y1 + oz));
-    const dy = Math.max(0, this.eye.y - FINE_TOP);
+    // Height counts half: from the sky view the land under the camera is as near as it looks.
+    const dy = Math.max(0, this.eye.y - FINE_TOP) * 0.5;
     return Math.hypot(dx, dy, dz);
   }
 
@@ -781,7 +782,7 @@ const FINE_DROP = 90;
 const FINE_TOP = 6;
 // The camera higher than this sees the island in whole cells, and a changed fine chunk is built
 // again at most once in STALE_MS.
-const FINE_HIGH = 34;
+const FINE_HIGH = 42;
 const STALE_MS = 400;
 // How far a waterfall hangs in front of the island's cut side, in cells.
 const FALL_GAP = 0.06;
