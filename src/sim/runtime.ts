@@ -1966,7 +1966,7 @@ export class SpellApi {
     if (given - kept >= Math.max(3, Math.ceil(given * 0.2)))
       this.rt.drop(
         this.req.key,
-        `w.model drew ${kept} of ${given} boxes: a box under ${FINE_BOX} on any side is not drawn (make a thin thing ${FINE_BOX} thick), and a model keeps ${MAX_PROP_BOXES} boxes at most`,
+        `w.model drew ${kept} of ${given} boxes: a box with a side of zero or less, or not a number, is not drawn (a thin side is drawn at ${FINE_BOX}), and a model keeps ${MAX_PROP_BOXES} boxes at most`,
       );
     if (!p) return null;
     // Each part a slightly different shade, as the wonders' parts are; vary: 0 keeps the colors exact.
