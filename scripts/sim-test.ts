@@ -59,6 +59,7 @@ import {
 } from "../shared/votes";
 import { FORMS } from "../shared/forms";
 import { pickExamples, words } from "../worker/programs";
+import { readingChecks } from "./reading-test";
 import { verdict, type LinkedPull } from "../worker/feedback";
 import { DROP_TILE, dropAt, dropShare } from "../src/sim/voxel/drops";
 import { cronJobs } from "../worker/cron";
@@ -2501,6 +2502,8 @@ fogChecks(check);
   );
 }
 
+// Reading the island and smarter writing (4.12 steps 3 and 4): scripts/reading-test.ts.
+readingChecks(check);
 // Roads (4.9): scripts/roads-test.ts.
 roadsChecks(check);
 sitesChecks(check);

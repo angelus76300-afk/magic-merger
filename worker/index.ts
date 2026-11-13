@@ -62,6 +62,7 @@ import {
   insertProgram,
   libraryEntries,
   liveProgram,
+  neighboursOf,
   newerTrial,
   pickExamples,
   playerId,
@@ -1007,11 +1008,13 @@ async function buildRequest(env: Env, oracle: Oracle, element: GameElement, mode
   const tier = tierOf(element);
   const description = await ensureDescription(env, oracle, element, false);
   const small = !oracle.mock && model === smallModel(env);
-  const [intents, lib, recipe, entries] = await Promise.all([
+  const [intents, lib, recipe, entries, neighbours] = await Promise.all([
     ensureIntents(env, oracle, element, description),
     library ?? (oracle.mock ? NO_LIBRARY : liveLibrary(env.DB)),
     firstRecipe(env.DB, key),
     small ? libraryEntries(env.DB) : Promise.resolve([]),
+    // 4.12 step 3: a failed read writes the item without them, as before.
+    oracle.mock ? Promise.resolve([]) : neighboursOf(env.DB, { key, name: element.name, description, kind: element.kind, form: element.form }).catch(() => []),
   ]);
   const request: OracleSpellRequest = {
     name: element.name,
@@ -1022,6 +1025,7 @@ async function buildRequest(env: Env, oracle: Oracle, element: GameElement, mode
     tier,
     intents,
     library: lib.docs,
+    ...(neighbours.length ? { neighbours } : {}),
   };
   if (small) request.examples = pickExamples(entries, { key, name: request.name, description, kind: request.kind, tier });
   return request;

@@ -1,7 +1,7 @@
 import { FIRST_PROGRAM_VERSION, type SpellProgram } from "../shared/spellcode";
 import { TIERS } from "../shared/tiers";
 import { ACTIVE_DAYS, REASON_PROMPT, REWRITE_COOLDOWN_MS, storedReasons, type Tally } from "../shared/votes";
-import type { LibraryExample } from "./prompts";
+import type { LibraryExample, Neighbour } from "./prompts";
 
 // Every version of every program (3.3). The `spells` table still holds the
 // live one of each element, as before, plus `pid`, its row here.
@@ -233,6 +233,38 @@ export function pickExamples(
     })
     .sort((a, b) => b.s - a.s);
   return scored.slice(0, k).map(({ e }) => ({ name: e.name, tier: e.tier, kind: e.kind, code: e.code.slice(0, 3000) }));
+}
+
+// 4.12 step 3: five live items of the same kind as the one being written, by
+// name and its card's summary, the closest in words first, so the writer can
+// give it a behaviour none of them has. One read of the newest 300 live
+// programs' summaries (json_extract, the code is not read); no new column.
+export async function neighboursOf(
+  db: D1Database,
+  target: { key: string; name: string; description: string; kind: string; form?: string | null },
+  k = 5,
+): Promise<Neighbour[]> {
+  const spell = !target.form || target.form === "spell";
+  const kindWhere = spell ? "e.kind = 'spell' AND (e.form IS NULL OR e.form = 'spell')" : "e.form = ?";
+  const rows = await db
+    .prepare(
+      `SELECT e.name, e.description, json_extract(p.spec, '$.summary') AS summary FROM programs p JOIN elements e ON e.key = p.key
+       WHERE p.status = 'live' AND p.key != ? AND ${kindWhere} ORDER BY p.id DESC LIMIT 300`,
+    )
+    .bind(...(spell ? [target.key] : [target.key, target.form]))
+    .all<{ name: string; description: string | null; summary: unknown }>();
+  const text = words(`${target.name} ${target.description}`);
+  const seen = new Set<string>();
+  return rows.results
+    .filter((r) => typeof r.summary === "string" && r.summary.trim() && !seen.has(r.name) && seen.add(r.name))
+    .map((r) => {
+      let s = 0;
+      for (const w of words(`${r.name} ${r.description ?? ""}`)) if (text.has(w)) s++;
+      return { r, s };
+    })
+    .sort((a, b) => b.s - a.s)
+    .slice(0, k)
+    .map(({ r }) => ({ name: r.name.slice(0, 60), summary: String(r.summary).trim().slice(0, 200) }));
 }
 
 export async function libraryEntries(db: D1Database): Promise<LibraryEntry[]> {

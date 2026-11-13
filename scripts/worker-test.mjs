@@ -816,7 +816,30 @@ const fresh = () => ALL[pairs++];
   check("the writer is told the test its promise faces", /promises protection/.test(spellCall?.user ?? "") && spellCall.system.includes("w.ward("));
   const stored = await db.prepare("SELECT intents FROM elements WHERE key = 'aegis ward'").first();
   check("the promise is stored with the element", stored?.intents === "protect");
-  for (const name of names.slice(1)) await api("/api/spell", { admin: true, body: { name } });
+  // 4.12 step 3: the writer sees live items of the same kind by name and summary, not those of another kind.
+  for (const [key, name, kind, form, summary] of [
+    ["tide ward", "Tide Ward", "spell", null, "A wall of seawater rises round the village."],
+    ["oak lantern", "Oak Lantern", "artifact", "object", "A lantern carved from an oak root."],
+  ]) {
+    await db
+      .prepare("INSERT INTO elements (key, name, emoji, kind, depth, tier, description, created_at, form) VALUES (?, ?, '✨', ?, 3, 'major', 'a ward', ?, ?)")
+      .bind(key, name, kind, now, form)
+      .run();
+    await db
+      .prepare("INSERT INTO programs (key, spec, model, version, origin, status, created_at) VALUES (?, ?, 'claude-haiku-5-5', 6, 'new', 'live', ?)")
+      .bind(key, JSON.stringify({ code: "const spell = {};", summary }), now)
+      .run();
+  }
+  await api("/api/spell", { admin: true, body: { name: names[1] } });
+  const told = lastSpell().user;
+  check(
+    "the writer is shown live items of its kind by name and summary, and none of another kind",
+    told.includes("one behaviour none of these has") &&
+      told.includes("- Tide Ward: A wall of seawater rises round the village.") &&
+      !told.includes("Oak Lantern"),
+    told.slice(-300),
+  );
+  for (const name of names.slice(2)) await api("/api/spell", { admin: true, body: { name } });
   const gaps = await db.prepare("SELECT COUNT(DISTINCT key) AS n FROM gaps WHERE extension IS NULL").first();
   check("what the API lacked is recorded, once per program", gaps.n === 3, `${gaps.n} spells`);
 

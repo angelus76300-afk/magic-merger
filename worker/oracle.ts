@@ -28,6 +28,7 @@ import {
   spellUserMessage,
   type LibraryDoc,
   type LibraryExample,
+  type Neighbour,
   type Rewrite,
   CHRONICLE_SYSTEM,
   chronicleUserMessage,
@@ -83,6 +84,9 @@ export interface SpellRequest {
   intents?: Intent[];
   // Helpers and hints the API has grown (worker/evolve.ts).
   library?: LibraryDoc[];
+  // 4.12 step 3: five live items of the same kind, by name and summary, so
+  // its signature is one none of them has (worker/programs.ts, neighboursOf).
+  neighbours?: Neighbour[];
 }
 
 // Spells that lacked the same ability, for the API designer.
@@ -587,7 +591,7 @@ export class ClaudeOracle implements Oracle {
 }
 
 function spellMessage(r: SpellRequest): string {
-  return spellUserMessage(r.name, r.kind, r.description, r.recipe, r.tier, r.examples, r.rewrite, r.intents, r.form);
+  return spellUserMessage(r.name, r.kind, r.description, r.recipe, r.tier, r.examples, r.rewrite, r.intents, r.form, r.neighbours);
 }
 
 function requestParams(
