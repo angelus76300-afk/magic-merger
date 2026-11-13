@@ -60,6 +60,7 @@ import {
 } from "../shared/votes";
 import { FORMS } from "../shared/forms";
 import { pickExamples, words } from "../worker/programs";
+import { readingChecks } from "./reading-test";
 import { verdict, type LinkedPull } from "../worker/feedback";
 import { DROP_TILE, dropAt, dropShare } from "../src/sim/voxel/drops";
 import { cronJobs } from "../worker/cron";
@@ -2512,6 +2513,8 @@ weatherChecks(check);
 becomeChecks(check);
 dailyChecks(check);
 monsterChecks(check);
+// Reading the island and smarter writing (4.12 steps 3 and 4): scripts/reading-test.ts.
+readingChecks(check);
 propChecks(check);
 // Spells that answer each other (4.12 step 2): scripts/reactions-test.ts.
 reactionChecks(check);

@@ -54,11 +54,42 @@ export interface CheckResult {
     saved?: number;
     // The five minute test of an artifact (3.7): what it changed after its arrival.
     acted?: number;
+    // 4.12: a name that promises judgement; 1 the program reads the island, 0 it does not.
+    smart?: number;
   };
   // Milliseconds of work in each part (4.2, measured, never part of the
   // verdict): control (the island left alone), cast (the spell's own run),
   // protect and acts (the probes).
   phases?: Record<string, number>;
+  // 4.12 step 4: a soft problem. Its name promises judgement and it asked the
+  // island nothing. It does not fail the run (the program stays live, the
+  // rebuild is not blocked); stats.smart is 0 then, 1 when it did ask, so
+  // the refresh can pick these from the stored verdicts.
+  smart?: string;
+}
+
+// 4.12 step 4: names that promise judgement, a choice made from what is there.
+export const JUDGING_NAME =
+  /\b(guardians?|guards?|wardens?|sentinels?|sentry|protectors?|defenders?|watch(?:er|man)|keepers?|heal(?:er|ers|ing)|medic|physician|cleric|shepherds?|hunters?|huntress|trackers?|rangers?|scouts?|seers?|oracles?|prophets?|diviners?|sages?|judge|justice|avengers?|nemesis|seeker)\b/i;
+// The World API's reading calls: the old ones and the 4.12 helpers (reading.ts).
+const READS = /\.\s*(cell|creatures|corpses|artifacts|here|wouldHurt|nearest|fights|nature)\s*\(/;
+// Or it hands the choice to the engine, which reads for it: a creature that
+// hunts or guards, an effect or ability that waits for an enemy, a wound or a death.
+const JUDGED = /\bbehavior\s*:\s*["'](hunt|guard)["']|\bwhen\s*:\s*["'](enemy|enemy near|hurt|death|friend dies)["']/;
+
+// Does a program whose name promises judgement read the island? null when the
+// name promises none; read from the code, so it runs where the check runs.
+export function smartProblem(name: string, code: string): string | null {
+  const m = JUDGING_NAME.exec(name);
+  if (!m || READS.test(code) || JUDGED.test(code)) return null;
+  return `${name} promises judgement (a ${m[1].toLowerCase()}) but asks the island nothing: no w.here, w.nearest, w.wouldHurt, w.fights, w.creatures or w.cell.`;
+}
+
+function withSmart(result: CheckResult, req: CastRequest): CheckResult {
+  if (!result.ok || !JUDGING_NAME.test(req.name)) return result;
+  const smart = smartProblem(req.name, req.code);
+  if (!smart) return { ...result, stats: { ...result.stats, smart: 1 } };
+  return { ...result, smart, detail: `${result.detail} ${smart}`.slice(0, 400), stats: { ...result.stats, smart: 0 } };
 }
 
 // The reference island: the reach every item but a spell and land keeps on any island.
@@ -290,7 +321,7 @@ export function* checkProgram(req: CastRequest): Generator<void, CheckResult> {
       phases[at] = (phases[at] ?? 0) + performance.now() - t0;
       if (r.done) {
         for (const k of Object.keys(phases)) phases[k] = Math.round(phases[k]);
-        return { ...r.value, phases };
+        return { ...withSmart(r.value, req), phases };
       }
       yield;
     }
