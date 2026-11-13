@@ -21,8 +21,8 @@ export const GRAPHICS = {
   // draws what casts (the land, trees, houses, props, wonders, creatures)
   // into a 1024 square map.
   shadows: false,
-  // A filmic tone curve and a colour grade (a warm lift, a touch of
-  // saturation) in every material, and a haze over the far side of the
+  // A filmic tone curve and a colour grade (deeper middle tones, greens
+  // muted, warm light and cool shade) in every material, and a haze over the far side of the
   // island. No extra pass.
   grade: false,
   // Glow that blooms at night: bright parts spill light around them. At night

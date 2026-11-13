@@ -39,34 +39,32 @@ import { GRAPHICS } from "./graphics";
 // The colour grade, the same in GLSL and in JavaScript (the fog's colour is
 // added after the materials' grade, so it is graded here first). Colours are
 // authored as they should look (no colour management, view.ts), so the curve
-// works on them as they are: an S-curve that deepens the shade and lifts the
-// light (the contrast of a filmic curve such as ACES, without its darkening
-// of colours that were never linear), a touch of saturation, warmer light and
-// a warm lift of the darkest tones.
-const GRADE = { contrast: 0.5, saturation: 1.08, warm: [1.035, 1.0, 0.95], lift: [0.012, 0.006, 0.0] } as const;
+// works on them as they are. As in the reference dioramas: a little deeper
+// (a gamma that darkens the middle tones), greens held back rather than
+// pushed (the greener a colour, the more it is muted), and a split tone in
+// place of a saturation lift: warm in the light, cool in the shade.
+const GRADE = { gamma: 1.12, greenMute: 0.45, warm: [1.03, 1.0, 0.93], cool: [-0.012, 0.0, 0.022] } as const;
 const f3 = (v: readonly number[]) => v.map((x) => x.toFixed(3)).join(", ");
 
 const GRADE_GLSL = `
 vec3 mmGrade(vec3 c) {
-  c = clamp(c, 0.0, 1.0);
-  c -= ${GRADE.contrast.toFixed(3)} * c * (1.0 - c) * (1.0 - 2.0 * c);
+  c = pow(clamp(c, 0.0, 1.0), vec3(${GRADE.gamma.toFixed(3)}));
   float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-  c = mix(vec3(l), c, ${GRADE.saturation.toFixed(3)});
+  float green = clamp((c.g - max(c.r, c.b)) * 2.5, 0.0, 1.0);
+  c = mix(vec3(l), c, 1.0 - ${GRADE.greenMute.toFixed(3)} * green);
   c *= mix(vec3(1.0), vec3(${f3(GRADE.warm)}), l);
-  c += vec3(${f3(GRADE.lift)}) * (1.0 - l);
+  c += vec3(${f3(GRADE.cool)}) * (1.0 - l);
   return clamp(c, 0.0, 1.0);
 }`;
 
 export function gradeColor(c: Color, out = new Color()): Color {
-  const s = [c.r, c.g, c.b].map((v) => {
-    const x = Math.min(1, Math.max(0, v));
-    return x - GRADE.contrast * x * (1 - x) * (1 - 2 * x);
-  });
+  const s = [c.r, c.g, c.b].map((v) => Math.min(1, Math.max(0, v)) ** GRADE.gamma);
   const l = 0.2126 * s[0] + 0.7152 * s[1] + 0.0722 * s[2];
+  const green = Math.min(1, Math.max(0, (s[1] - Math.max(s[0], s[2])) * 2.5));
+  const keep = 1 - GRADE.greenMute * green;
   const [r, g, b] = s.map((v, i) => {
-    const sat = l + (v - l) * GRADE.saturation;
-    const warm = sat * (1 + (GRADE.warm[i] - 1) * l) + GRADE.lift[i] * (1 - l);
-    return Math.min(1, Math.max(0, warm));
+    const muted = l + (v - l) * keep;
+    return Math.min(1, Math.max(0, muted * (1 + (GRADE.warm[i] - 1) * l) + GRADE.cool[i] * (1 - l)));
   });
   return out.setRGB(r, g, b);
 }
@@ -113,7 +111,7 @@ export interface LooksFrame {
 
 // The tint of the land in shade and in the sun.
 const SHADE = new Vector3(0.58, 0.64, 0.86);
-const LIT = new Vector3(1.05, 1.01, 0.95);
+const LIT = new Vector3(1.03, 0.99, 0.92);
 
 export class Looks {
   readonly sun = new DirectionalLight(0xffffff, 0);

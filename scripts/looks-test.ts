@@ -94,6 +94,16 @@ export function looksChecks(check: Check): void {
   check("the grade keeps white near white", white.r > 0.9 && white.g > 0.9 && white.b > 0.9, white.getHexString());
   const grey = gradeColor(new Color(0.5, 0.5, 0.5));
   check("the grade warms the midtones", grey.r >= grey.b, `${grey.r.toFixed(3)} vs ${grey.b.toFixed(3)}`);
+  // The lead's review of the first frames: grass went neon. A grass green
+  // comes out darker and less saturated than it went in, never more.
+  const grassIn = new Color(0.42, 0.72, 0.25);
+  const grass = gradeColor(grassIn);
+  const sat = (c: Color) => Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b);
+  check(
+    "the grade keeps grass deep and muted, not neon",
+    grass.g < grassIn.g && sat(grass) < sat(grassIn),
+    `green ${grassIn.g.toFixed(3)} to ${grass.g.toFixed(3)}, spread ${sat(grassIn).toFixed(3)} to ${sat(grass).toFixed(3)}`,
+  );
   check(
     "the grade stays in range",
     [grey, black, white].every((c) => [c.r, c.g, c.b].every((v) => v >= 0 && v <= 1)),

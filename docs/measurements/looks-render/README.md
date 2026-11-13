@@ -9,8 +9,8 @@ four switches in `src/sim/voxel/graphics.ts`, each measured alone, drawn in
   PCF) over the land, trees, houses, props, wonders and creatures, following
   the hour; warm where it lights, cool in the shade. Sky view only, nothing at
   night or in the eye view.
-- `grade`: a filmic tone curve and a colour grade (a little contrast, a touch
-  of saturation, warmer light, a warm lift of the darkest tones) through
+- `grade`: a filmic tone curve and a colour grade (deeper middle tones,
+  greens muted rather than pushed, warm in the light and cool in shade) through
   three.js's own tone-mapping hook, so it costs no extra pass; plus haze over
   the far side of the island, tuned with the existing fog.
 - `bloom`: glow that spills around bright parts, at night and in a spell's
