@@ -18,7 +18,10 @@ four switches in `src/sim/voxel/graphics.ts`, each measured alone, drawn in
 - `tilt`: the miniature's depth of field (the owner: "more than bloom it's more
   depth of field", then "it's really only when we zoom a lot"). Nothing over the
   whole island or at a mid zoom: it begins 40 cells from what the camera looks
-  at and is full at 10 (the sky view's closest is 8). In focus at the point
+  at and is full at 10 (the sky view's closest is 8), where it shows two thirds
+  of the blurred frame, with a sharp zone 12% of the focus distance deep in
+  front and behind (the owner: "a bit strong", "make the in-focus zone a bit
+  bigger"). In focus at the point
   under the middle of the screen, blurred more the farther in front of it or
   behind it; off in the eye view. The depth comes from a depth texture the
   scene's own pass writes (no extra pass); the blur is two passes at half

@@ -16,7 +16,7 @@ import {
   setLooksChoice,
   type Quality,
 } from "../src/sim/voxel/graphics";
-import { FOCUS_FULL, focusBlur, gradeColor } from "../src/sim/voxel/looks";
+import { FOCUS_FULL, FOCUS_MAX, focusBlur, gradeColor } from "../src/sim/voxel/looks";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
@@ -117,6 +117,8 @@ export function looksChecks(check: Check): void {
   check("the depth of field is whole at the closest sky zoom", focusBlur(FOCUS_FULL, false) === 1 && focusBlur(8, false) === 1);
   check("the depth of field grows as the camera comes closer", focusBlur(30, false) > 0 && focusBlur(30, false) < focusBlur(15, false));
   check("no depth of field in the eye view", focusBlur(8, true) === 0);
+  // The owner, after the closest frame: "a bit strong". At most two thirds of the blurred frame.
+  check("the depth of field shows at most two thirds of the blur", FOCUS_MAX > 0.6 && FOCUS_MAX < 0.7, `${FOCUS_MAX}`);
 
   for (const f of LOOKS_FLAGS) GRAPHICS[f] = was[f];
 }

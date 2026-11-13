@@ -115,6 +115,8 @@ export interface LooksFrame {
 // whole at FOCUS_FULL (the sky view's closest is 8).
 export const FOCUS_FROM = 40;
 export const FOCUS_FULL = 10;
+// The most of the blurred frame shown, at the closest zoom: two thirds (the owner found the whole of it a bit strong).
+export const FOCUS_MAX = 0.67;
 
 // How much of the blurred frame the depth of field may show, 0 to 1, for a sky camera this far
 // from what it looks at; 0 in the eye view.
@@ -269,10 +271,11 @@ float sunLight(vec3 n) {
     // only when we zoom a lot"): none from FOCUS_FROM cells away and farther (a mid zoom, the
     // whole island), growing to full at the closest the sky view goes. In focus at the point
     // under the middle of the screen, blurred in front of it and behind it. Never in the eye view.
-    this.tiltAmount = GRAPHICS.tilt ? focusBlur(f.dist, f.eye) : 0;
+    this.tiltAmount = GRAPHICS.tilt ? focusBlur(f.dist, f.eye) * FOCUS_MAX : 0;
     this.tiltCenter = 0.5;
     // How far in front or behind the focus stays sharp, as a share of the focus distance.
-    this.tiltSharp = 0.06;
+    // Twice as deep as first built (the owner: "make the in-focus zone a bit bigger").
+    this.tiltSharp = 0.12;
   }
 
   // Lays the shadow map over what the camera holds, from the sun's side. The
