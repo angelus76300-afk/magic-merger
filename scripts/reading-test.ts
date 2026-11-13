@@ -98,7 +98,8 @@ export function fixturePrograms(): { name: string; code: string }[] {
     }
   for (const e of Object.values(FORM_EXAMPLES)) out.push({ name: e.name, code: e.code });
   for (const e of [FOX_SPIRIT_EXAMPLE, PERSON_EXAMPLE]) out.push({ name: e.name, code: e.code });
-  return out;
+  // The prompt examples kept in lab/ too are counted once.
+  return out.filter((f, i) => out.findIndex((g) => g.name === f.name) === i);
 }
 
 // The checks after it in npm test count creature ids from where they were: put back.

@@ -2502,8 +2502,6 @@ fogChecks(check);
   );
 }
 
-// Reading the island and smarter writing (4.12 steps 3 and 4): scripts/reading-test.ts.
-readingChecks(check);
 // Roads (4.9): scripts/roads-test.ts.
 roadsChecks(check);
 sitesChecks(check);
@@ -2514,6 +2512,8 @@ weatherChecks(check);
 becomeChecks(check);
 dailyChecks(check);
 monsterChecks(check);
+// Reading the island and smarter writing (4.12 steps 3 and 4): scripts/reading-test.ts.
+readingChecks(check);
 propChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
