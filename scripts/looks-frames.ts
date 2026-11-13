@@ -7,6 +7,7 @@
 //   ... looks-frames.mjs --perf      frame time, 60 looks of 160 parts (or of 80 boxes with --boxes)
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+// @ts-expect-error plain JavaScript module
 import { openLab } from "./lab-browser.mjs";
 import { demoOne, demoProgram } from "./looks-demo-models";
 import { benchProps } from "./looks-bench";
@@ -18,13 +19,17 @@ const SIZES = [
 ];
 const VIEW = { tier: "cosmic", kind: "spell", shots: [1], settle: 0.2, dist: 26, phi: 0.88, theta: 0.72, time: 40 };
 
-type Lab = Awaited<ReturnType<typeof openLab>>;
+interface Lab {
+  page: { evaluate: (fn: (json: string) => unknown, arg: string) => Promise<unknown> };
+  cast: (code: string, options: Record<string, unknown>) => Promise<{ frames: { png: string }[]; draw: { triangles: number; calls: number }; errors: string[]; timing?: unknown }>;
+  close: () => Promise<void>;
+}
 const save = (file: string, png: string) => writeFileSync(file, Buffer.from(png.replace(/^data:image\/png;base64,/, ""), "base64"));
 
 async function frames(): Promise<void> {
   mkdirSync(out, { recursive: true });
   for (const size of SIZES) {
-    const lab: Lab = await openLab({ width: size.width, height: size.height });
+    const lab = (await openLab({ width: size.width, height: size.height })) as unknown as Lab;
     for (const version of ["before", "after"] as const) {
       const r = await lab.cast(demoProgram(version), VIEW);
       if (r.errors?.length) console.error(r.errors);
@@ -46,14 +51,14 @@ async function frames(): Promise<void> {
 // grain, or 80 plain boxes each (the most a look could have before). The first frame builds the
 // mesh; the others draw it. Each frame waits for the GPU (gl.finish).
 async function perf(): Promise<void> {
-  const lab: Lab = await openLab({ width: 390, height: 844 });
+  const lab = (await openLab({ width: 390, height: 844 })) as unknown as Lab;
   for (const [name, props] of [
     ["no looks", []],
     ["60 looks of 80 plain boxes (the most before)", benchProps(false, false).map((p) => ({ ...p, boxes: p.boxes.slice(0, 80) }))],
     ["60 looks of 160 parts, shapes and grain", benchProps(true, true)],
   ] as const) {
     await lab.cast("const spell = { *cast(w) {} };", { tier: "cosmic", kind: "spell", shots: [0.1], settle: 0, dist: 60, phi: 0.95, time: 40 });
-    const r = await lab.page.evaluate((json) => {
+    const r = (await lab.page.evaluate((json: string) => {
       type E = {
         world: { w: number; h: number; props: { x: number; y: number }[]; propsVersion: number };
         view: { orbit: { tx: number; ty: number; dist: number }; renderer: { getContext(): WebGLRenderingContext; info: { render: { triangles: number } } } };
@@ -83,7 +88,7 @@ async function perf(): Promise<void> {
       }
       ms.sort((a, b) => a - b);
       return { first, p50: ms[20], p95: ms[38], triangles: e.view.renderer.info.render.triangles };
-    }, JSON.stringify(props));
+    }, JSON.stringify(props))) as { first: number; p50: number; p95: number; triangles: number };
     console.log(
       `${name}: first frame ${r.first.toFixed(0)} ms (builds the mesh), then p50 ${r.p50.toFixed(1)} ms, p95 ${r.p95.toFixed(1)} ms; ${r.triangles} triangles in the frame`,
     );
