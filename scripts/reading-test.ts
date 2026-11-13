@@ -205,6 +205,9 @@ function reading(check: Check): void {
     check("reading: the prompt's worked example is there and is a program", FROST.length > 60);
     const results: Record<string, { ice: number; frozen: number; cold: number }> = {};
     for (const where of ["water", "village", "rock"] as const) {
+      // populate() draws from Math.random: seed it first, or the creatures
+      // (and the rock the spot lands on) differ from run to run.
+      seed(5);
       const isle = islandWithSpots();
       const s = isle.spots[where];
       seed(5);
