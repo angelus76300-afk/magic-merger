@@ -21,6 +21,7 @@ import { dailyChecks } from "./daily-test";
 import { monsterChecks } from "./monsters-test";
 import { propChecks } from "./props-test";
 import { reactionChecks } from "./reactions-test";
+import { looksChecks } from "./looks-test";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
 import { logDeeds, mindOf, remember } from "../src/sim/kin";
@@ -2515,6 +2516,9 @@ monsterChecks(check);
 propChecks(check);
 // Spells that answer each other (4.12 step 2): scripts/reactions-test.ts.
 reactionChecks(check);
+
+// The looks of 5.2.5, render side: scripts/looks-test.ts.
+looksChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);

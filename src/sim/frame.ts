@@ -14,6 +14,7 @@ import { unpackLook } from "./villagers";
 import type { CastRequest, Runtime } from "./runtime";
 import type { SavedWorld } from "./save";
 import { Hud } from "./hud";
+import { AUTO_CHOICE, setLooksChoice, type LooksChoice } from "./voxel/graphics";
 import { SCENARIOS } from "./scenarios";
 import { firstLook, villageView, type Pose } from "./firstlook";
 import { fireOf, focusOf, frontOf, startTrouble, stoneAt, stoneLine, troubleLine, type Stone, type TroubleKind } from "./troubles";
@@ -60,6 +61,8 @@ let sandbox: { save: SavedWorld | null; size: WorldSize; land: LandChoice; rules
 };
 let scenario: string | null = null;
 let hud: Hud | null = null;
+// The looks (5.2.5): the device picks the level until the page hands the player's choice.
+setLooksChoice(AUTO_CHOICE);
 let hudOn = false;
 let perfTimer = 0;
 // Casts made in this frame, numbered for the page's first cast probe.
@@ -1875,7 +1878,10 @@ function openScenario(id: string, ahead = 0): void {
 function showHud(on: boolean): void {
   hudOn = on;
   if (!engine) return;
-  hud ??= new Hud(engine.stats);
+  hud ??= new Hud(engine.stats, (choice: LooksChoice) => {
+    setLooksChoice(choice);
+    send({ type: "looks", choice });
+  });
   hud.stats = engine.stats;
   hud.show(on);
   clearInterval(perfTimer);
@@ -1966,6 +1972,9 @@ window.addEventListener("message", (e: MessageEvent<ToWorld>) => {
       break;
     case "hud":
       showHud(msg.on);
+      break;
+    case "looks":
+      setLooksChoice(msg.choice);
       break;
     case "mute":
       muted = msg.muted;
