@@ -7,6 +7,7 @@ import { GRAPHICS } from "./graphics";
 import { LOOKS, biomeAt } from "../land";
 import { DAMP, R as RARE } from "../ecology";
 import { eyeKeepsChunk } from "./fog";
+import { buildFine, fineAt, makeFineCells, sizeFineCells } from "./terrain-fine";
 
 // The island as voxel columns. Each cell is one column whose top sits at its
 // height (half a unit per height unit, rounded to whole voxels). Walls are
@@ -111,8 +112,11 @@ export class Terrain {
       for (let cx = 0; cx < this.cols; cx++) {
         const c = this.chunks[cy * this.cols + cx];
         const on = !at || eyeKeepsChunk(cx * CHUNK, cy * CHUNK, CHUNK, at.x, at.y, at.r);
-        if (c.land) c.land.visible = on;
+        this.chunkOn[cy * this.cols + cx] = on ? 1 : 0;
+        if (c.land) c.land.visible = on && !this.fineShown[cy * this.cols + cx];
         if (c.fluid) c.fluid.visible = on;
+        const fine = this.fine[cy * this.cols + cx];
+        if (fine) fine.visible = on && this.fineShown[cy * this.cols + cx] === 1;
       }
   }
   private builtSinceShown = false;
@@ -199,6 +203,7 @@ export class Terrain {
       this.dirtyLand.delete(c);
       this.slowLand.delete(c);
       this.swap(c, "land", this.buildLand(c));
+      this.staleFine(c);
     }
     first = true;
     for (const c of this.dirtyFluid) {
@@ -208,6 +213,7 @@ export class Terrain {
       this.slowFluid.delete(c);
       this.swap(c, "fluid", this.buildFluid(c));
     }
+    if (GRAPHICS.fine) this.updateFine(until);
     // One chunk of the slow queue every third frame, land and water in turn,
     // if time is left.
     if (performance.now() > until || this.slowTurn++ % 3 !== 0) return;
@@ -216,7 +222,10 @@ export class Terrain {
     for (const c of queue) {
       queue.delete(c);
       if (land) {
-        if (!this.dirtyLand.has(c)) this.swap(c, "land", this.buildLand(c));
+        if (!this.dirtyLand.has(c)) {
+          this.swap(c, "land", this.buildLand(c));
+          this.staleFine(c);
+        }
       } else if (!this.dirtyFluid.has(c)) this.swap(c, "fluid", this.buildFluid(c));
       break;
     }
@@ -235,9 +244,195 @@ export class Terrain {
     mesh.matrixAutoUpdate = false;
     if (kind === "fluid") mesh.renderOrder = 2;
     chunk[kind] = mesh;
+    if (kind === "land") {
+      mesh.onBeforeRender = this.seeCamera;
+      // Drawn finely instead while the camera is near (5.2.5).
+      if (this.fineShown[c]) mesh.visible = false;
+    }
     this.add(mesh);
     // A new chunk is shown; past the eye's mist it is hidden again at the next showWithin.
     this.builtSinceShown = true;
+  }
+
+  // The fine land (5.2.5, terrain-fine.ts): each chunk near the camera drawn in quarter voxels,
+  // built when the camera comes near, one chunk a frame at most, nearest first, and kept until the
+  // chunk changes or the camera is far. The camera is read as the land is drawn.
+  private fine: (Mesh | null | undefined)[] = [];
+  private fineShown = new Uint8Array(0);
+  private fineStale = new Uint8Array(0);
+  private staleBuiltAt = -1e9;
+  private chunkOn = new Uint8Array(0);
+  private eye = { x: 0, y: 0, z: 0, known: false };
+  private fineCells = makeFineCells();
+  private seeCamera = (_r: unknown, _s: unknown, camera: { position: { x: number; y: number; z: number } }): void => {
+    this.focus(camera.position.x, camera.position.y, camera.position.z);
+  };
+
+  // Where the camera is, in the scene.
+  focus(x: number, y: number, z: number): void {
+    this.eye.x = x;
+    this.eye.y = y;
+    this.eye.z = z;
+    this.eye.known = true;
+  }
+
+  // The camera's distance to a chunk's box, in scene units.
+  private chunkDistance(c: number): number {
+    const { x0, y0, x1, y1 } = this.bounds(c);
+    const ox = -this.world.w / 2;
+    const oz = -this.world.h / 2;
+    const dx = Math.max(x0 + ox - this.eye.x, 0, this.eye.x - (x1 + ox));
+    const dz = Math.max(y0 + oz - this.eye.z, 0, this.eye.z - (y1 + oz));
+    const dy = Math.max(0, this.eye.y - FINE_TOP);
+    return Math.hypot(dx, dy, dz);
+  }
+
+  // A chunk whose land changed keeps its fine mesh on show until the new one is built: a river
+  // that flows changes its chunk every few frames, and the land would flicker between the two.
+  private staleFine(c: number): void {
+    if (this.fine[c] !== undefined) this.fineStale[c] = 1;
+  }
+
+  private dropFine(c: number): void {
+    const m = this.fine[c];
+    if (m) {
+      this.remove(m);
+      m.geometry.dispose();
+    }
+    this.fine[c] = undefined;
+    this.fineStale[c] = 0;
+    if (this.fineShown[c]) {
+      this.fineShown[c] = 0;
+      const land = this.chunks[c].land;
+      if (land) land.visible = this.chunkOn[c] === 1;
+    }
+  }
+
+  // Picks the chunks drawn finely, builds the nearest missing one (all of them when `all`), and
+  // shows each chunk one way or the other.
+  updateFine(until: number, all = false): void {
+    const n = this.chunks.length;
+    if (this.fine.length !== n) {
+      this.fine = new Array(n).fill(undefined);
+      this.fineShown = new Uint8Array(n);
+      this.fineStale = new Uint8Array(n);
+      this.chunkOn = new Uint8Array(n).fill(1);
+    }
+    if (!this.eye.known) return;
+    // From high up, the whole island in whole cells.
+    const high = this.eye.y > FINE_HIGH;
+    const now = performance.now();
+    let built = false;
+    for (;;) {
+      let best = -1;
+      let bestD = Infinity;
+      for (let c = 0; c < n; c++) {
+        const d = high ? Infinity : this.chunkDistance(c);
+        if (d > FINE_DROP && this.fine[c] !== undefined) this.dropFine(c);
+        const want = d < (this.fineShown[c] ? FINE_KEEP : FINE_NEAR);
+        // The nearest missing chunk first, then a changed one, at most one changed one in
+        // STALE_MS (all of them when `all`).
+        const rank = this.fine[c] === undefined ? d : this.fineStale[c] && (all || now - this.staleBuiltAt > STALE_MS) ? d + 1000 : Infinity;
+        if (want && !this.dirtyLand.has(c) && rank < bestD) {
+          best = c;
+          bestD = rank;
+        }
+        const show = want && !!this.fine[c] ? 1 : 0;
+        if (show !== this.fineShown[c]) {
+          this.fineShown[c] = show;
+          const land = this.chunks[c].land;
+          if (land) land.visible = this.chunkOn[c] === 1 && !show;
+          const fine = this.fine[c];
+          if (fine) fine.visible = this.chunkOn[c] === 1 && show === 1;
+        }
+      }
+      if (best < 0 || (built && !all)) break;
+      if (this.fine[best] !== undefined) {
+        // A changed chunk: the new mesh takes the old one's place.
+        this.staleBuiltAt = now;
+        const old = this.fine[best];
+        const shown = this.fineShown[best];
+        this.fine[best] = this.makeFine(best);
+        this.fineStale[best] = 0;
+        if (old) {
+          this.remove(old);
+          old.geometry.dispose();
+        }
+        const fresh = this.fine[best];
+        if (fresh) fresh.visible = shown === 1 && this.chunkOn[best] === 1;
+        else if (shown) {
+          this.fineShown[best] = 0;
+          const land = this.chunks[best].land;
+          if (land) land.visible = this.chunkOn[best] === 1;
+        }
+      } else this.fine[best] = this.makeFine(best);
+      built = true;
+    }
+  }
+
+  private makeFine(c: number): Mesh | null {
+    const { world } = this;
+    const { w, h } = world;
+    const { x0, y0, x1, y1 } = this.bounds(c);
+    const f = this.fineCells;
+    sizeFineCells(f, x0, y0, x1, y1, w, h, BOTTOM);
+    for (let y = y0 - 2; y < y1 + 2; y++) {
+      for (let x = x0 - 2; x < x1 + 2; x++) {
+        const k = fineAt(f, x, y);
+        const inside = x >= 0 && y >= 0 && x < w && y < h;
+        f.inside[k] = inside ? 1 : 0;
+        if (!inside) continue;
+        const i = y * w + x;
+        const g = world.ground[i];
+        const top = columnTop(world, i);
+        f.top[k] = top;
+        f.ground[k] = g;
+        f.wet[k] = this.wet[i];
+        f.water[k] = this.wet[i] && world.fluid[i] === F.WATER ? Math.max(surfaceY(world, i), top + FLUID_LIFT) : -1e9;
+        const surface = this.topColor(i);
+        f.color[k] = surface;
+        const built = this.builtColor(i);
+        f.natural[k] = built === null ? 1 : 0;
+        f.edge[k] = built ?? this.sideTopColor(i, surface);
+        const strata = this.strataAt(i);
+        f.soil[k] = this.soilColor(i);
+        f.stone[k] = strata.stone;
+        f.deep[k] = strata.deep;
+        f.blends[k] = g === G.GRASS || g === G.SAND || g === G.DIRT || g === G.ROCK || g === G.SNOW || g === G.ASH ? 1 : 0;
+        f.hangs[k] = g === G.GRASS || g === G.SNOW ? 1 : 0;
+        f.flowers[k] = g === G.GRASS && world.cover[i] === 0 ? 1 : 0;
+        f.pebbles[k] = g === G.SAND ? 1 : 0;
+      }
+    }
+    const out = LAND;
+    out.reset();
+    buildFine(f, out, -w / 2, -h / 2);
+    const geometry = out.geometry(3);
+    if (!geometry) return null;
+    const mesh = new Mesh(geometry, this.landMaterial);
+    mesh.matrixAutoUpdate = false;
+    mesh.onBeforeRender = this.seeCamera;
+    mesh.visible = false;
+    this.add(mesh);
+    this.builtSinceShown = true;
+    return mesh;
+  }
+
+  // For the measures: triangles of the land and water as now shown.
+  shownTriangles(): { land: number; fluid: number; fineChunks: number } {
+    let land = 0;
+    let fluid = 0;
+    let fineChunks = 0;
+    for (let c = 0; c < this.chunks.length; c++) {
+      const ch = this.chunks[c];
+      const fine = this.fine[c];
+      if (this.fineShown[c] && fine) {
+        land += fine.geometry.getAttribute("position").count / 3;
+        fineChunks++;
+      } else if (ch.land) land += ch.land.geometry.getAttribute("position").count / 3;
+      if (ch.fluid) fluid += ch.fluid.geometry.getAttribute("position").count / 3;
+    }
+    return { land, fluid, fineChunks };
   }
 
   private bounds(c: number) {
@@ -441,8 +636,10 @@ export class Terrain {
       if (hi - lo > 0.02) calm = 0;
       foam[k] = shore;
       wave[k] = calm;
-      const mean = wetCells ? a / wetCells : alpha;
-      colors[k] = wetCells ? (Math.round(r / wetCells) << 16) | (Math.round(g / wetCells) << 8) | Math.round(b / wetCells) : color;
+      // 5.2.5 (bands): each top its own band's colour, so depth steps as voxels do.
+      const banded = GRAPHICS.bands && wetCells > 0;
+      const mean = banded ? alpha : wetCells ? a / wetCells : alpha;
+      colors[k] = banded ? color : wetCells ? (Math.round(r / wetCells) << 16) | (Math.round(g / wetCells) << 8) | Math.round(b / wetCells) : color;
       alphas[k] = shore ? Math.min(0.95, mean + 0.2) : mean;
     }
     out.topFoam(X, Z, top, colors, foam, alphas, wave);
@@ -504,6 +701,14 @@ export class Terrain {
     const f = world.fluid[i];
     const d = world.depth[i];
     if (f === F.WATER) {
+      if (GRAPHICS.water && GRAPHICS.bands) {
+        // 5.2.5: light turquoise in the shallows, darker in steps further out, clear enough in
+        // the shallows for the bed to show.
+        const band = d < 0.45 ? 0 : d < 1.3 ? 1 : d < 2.6 ? 2 : d < 4.5 ? 3 : 4;
+        const water = this.waterAt(i);
+        const shallow = mixColor(water[0], 0x86eadc, 0.45);
+        return { color: mixColor(shallow, water[1], BAND_MIX[band]), alpha: BAND_ALPHA[band] };
+      }
       if (GRAPHICS.water) {
         // Clear and light in the shallows, darker quickly with depth (4.4).
         // 4.4.5 part C: nearly opaque past four voxels, so the seabed's steps
@@ -567,12 +772,23 @@ const LEVEL_STEP = 0.15;
 // Depths at which a cell starts and stops being drawn wet.
 const WET_ON = 0.06;
 const WET_OFF = 0.005;
+// The fine land (5.2.5): chunks closer to the camera than this are drawn in quarter voxels, kept
+// fine until farther than FINE_KEEP, and forgotten past FINE_DROP (scene units). The camera's
+// height counts above FINE_TOP, about the height of the land.
+const FINE_NEAR = 34;
+const FINE_KEEP = 42;
+const FINE_DROP = 90;
+const FINE_TOP = 6;
+// The camera higher than this sees the island in whole cells, and a changed fine chunk is built
+// again at most once in STALE_MS.
+const FINE_HIGH = 34;
+const STALE_MS = 400;
 // How far a waterfall hangs in front of the island's cut side, in cells.
 const FALL_GAP = 0.06;
 
 // A reusable vertex writer: typed arrays that grow when needed, so building a
 // chunk allocates nothing per vertex.
-class Writer {
+export class Writer {
   private pos = new Float32Array(3 * 6 * 4096);
   private col = new Float32Array(4 * 6 * 4096);
   // 1 where spell drawings may show (dry land tops, fluid tops), 0 on walls.
@@ -667,6 +883,79 @@ class Writer {
     }
   }
 
+  // An axis aligned rectangle (5.2.5, the fine land): the side `dir` of the box from (x0, y0, z0)
+  // to (x1, y1, z1), wound as face() winds it; 4 is its top, 5 its bottom.
+  rect(
+    dir: number,
+    x0: number,
+    x1: number,
+    y0: number,
+    y1: number,
+    z0: number,
+    z1: number,
+    color: number,
+    light: number,
+    alpha: number,
+    decal = 0,
+    foot = 1,
+  ): void {
+    if ((this.n + 6) * 4 > this.col.length) this.grow();
+    const r = (((color >> 16) & 255) / 255) * light;
+    const g = (((color >> 8) & 255) / 255) * light;
+    const b = ((color & 255) / 255) * light;
+    const v = (x: number, y: number, z: number) =>
+      foot !== 1 && y === y0 ? this.vertex(x, y, z, r * foot, g * foot, b * foot, alpha, decal) : this.vertex(x, y, z, r, g, b, alpha, decal);
+    switch (dir) {
+      case EAST:
+        v(x1, y0, z0);
+        v(x1, y1, z0);
+        v(x1, y1, z1);
+        v(x1, y0, z0);
+        v(x1, y1, z1);
+        v(x1, y0, z1);
+        break;
+      case SOUTH:
+        v(x0, y0, z1);
+        v(x1, y0, z1);
+        v(x1, y1, z1);
+        v(x0, y0, z1);
+        v(x1, y1, z1);
+        v(x0, y1, z1);
+        break;
+      case WEST:
+        v(x0, y0, z0);
+        v(x0, y0, z1);
+        v(x0, y1, z1);
+        v(x0, y0, z0);
+        v(x0, y1, z1);
+        v(x0, y1, z0);
+        break;
+      case NORTH:
+        v(x0, y0, z0);
+        v(x0, y1, z0);
+        v(x1, y1, z0);
+        v(x0, y0, z0);
+        v(x1, y1, z0);
+        v(x1, y0, z0);
+        break;
+      case TOP:
+        v(x0, y1, z0);
+        v(x0, y1, z1);
+        v(x1, y1, z1);
+        v(x0, y1, z0);
+        v(x1, y1, z1);
+        v(x1, y1, z0);
+        break;
+      default:
+        v(x0, y0, z0);
+        v(x1, y0, z1);
+        v(x0, y0, z1);
+        v(x0, y0, z0);
+        v(x1, y0, z0);
+        v(x1, y0, z1);
+    }
+  }
+
   // A top with its own light, alpha and wave at each corner, in the order
   // (X, Z), (X, Z + 1), (X + 1, Z + 1), (X + 1, Z). The square is split along
   // the diagonal joining its two darker corners, so shading runs smoothly
@@ -750,5 +1039,7 @@ function band(
   out.face(dir, X, Z, lo, hi, color, light * (1 - Math.min(0.25, (top - hi) * 0.03)), 1, 0, lo === low ? foot : 1);
 }
 
+const BAND_MIX = [0, 0.28, 0.55, 0.78, 1];
+const BAND_ALPHA = [0.42, 0.58, 0.74, 0.88, 0.96];
 const SALT = [0xf2efe6, 0xebe7dc, 0xf7f5ef, 0xe6e1d4];
 const MOSS = 0x4f7a3a;
