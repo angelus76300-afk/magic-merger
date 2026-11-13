@@ -1834,7 +1834,7 @@ sizeChecks(check);
     JSON.stringify(odd),
   );
   const modelRig = buildRig(body("two legs", [], { model: big }));
-  check("a model is scaled to a creature's size", finite(modelRig) && modelRig.parts.length === 16 && modelRig.height <= 1.71);
+  check("a model is scaled to a creature's size", finite(modelRig) && modelRig.parts.length === MAX_MODEL_BOXES && modelRig.height <= 1.71);
 
   // 3.7: sizes against a villager and a house, no two parts sharing a face,
   // still models fall back to a plan.
