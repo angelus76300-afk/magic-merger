@@ -21,6 +21,7 @@ import { dailyChecks } from "./daily-test";
 import { monsterChecks } from "./monsters-test";
 import { propChecks } from "./props-test";
 import { reactionChecks } from "./reactions-test";
+import { looksChecks } from "./looks-test";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
 import { logDeeds, mindOf, remember } from "../src/sim/kin";
@@ -1772,7 +1773,7 @@ sizeChecks(check);
 }
 
 // 9f. Many kinds of life (3.5): every plan and feature makes a sound figure,
-// names give old spells a body, models stay within 16 boxes, wild animals
+// names give old spells a body, models stay within MAX_MODEL_BOXES, wild animals
 // live in their habitat and come back, a spell's wolves stay its own.
 {
   const finite = (r: Rig) => r.parts.every((p) => [...p.p, ...p.q, ...p.o, ...p.s].every(Number.isFinite) && p.s.every((v) => v > 0));
@@ -1822,7 +1823,7 @@ sizeChecks(check);
     g.declared.plan === "slime" && g.declared.features.join() === "crown,sword" && g.declared.color2 === 0xff0000,
     `${g.declared.plan} ${g.declared.features}`,
   );
-  const big = modelOf(Array.from({ length: 40 }, (_, k) => [k, 0, 0, 1, 1, 1, "#fff", k % 2 ? "leg" : "nonsense"]));
+  const big = modelOf(Array.from({ length: MAX_MODEL_BOXES + 10 }, (_, k) => [k, 0, 0, 1, 1, 1, "#fff", k % 2 ? "leg" : "nonsense"]));
   const odd = modelOf([
     [0, 0, 0, 0, 2, 2, "#fff"],
     [1e9, -1e9, 0, 99, 1, 1, "red"],
@@ -1830,12 +1831,12 @@ sizeChecks(check);
     { x: 0, y: 0, z: 0, w: 2, h: 2, d: 2, color: "#123456", part: "wing" },
   ]);
   check(
-    "a model keeps 16 boxes, bounded",
+    "a model keeps MAX_MODEL_BOXES boxes, bounded",
     big?.length === MAX_MODEL_BOXES && odd?.length === 2 && odd[0].x === 32 && odd[0].w === 32 && odd[0].color === 0xcccccc && odd[1].part === "wing",
     JSON.stringify(odd),
   );
   const modelRig = buildRig(body("two legs", [], { model: big }));
-  check("a model is scaled to a creature's size", finite(modelRig) && modelRig.parts.length === 16 && modelRig.height <= 1.71);
+  check("a model is scaled to a creature's size", finite(modelRig) && modelRig.parts.length === MAX_MODEL_BOXES && modelRig.height <= 1.71);
 
   // 3.7: sizes against a villager and a house, no two parts sharing a face,
   // still models fall back to a plan.
@@ -2522,6 +2523,9 @@ readingChecks(check);
 propChecks(check);
 // Spells that answer each other (4.12 step 2): scripts/reactions-test.ts.
 reactionChecks(check);
+
+// The looks of 5.2.5, render side: scripts/looks-test.ts.
+looksChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);

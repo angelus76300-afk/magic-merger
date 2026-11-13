@@ -7,7 +7,7 @@ import { Engine, type WorldSize } from "../src/sim/engine";
 import { Hud, type PerfSummary } from "../src/sim/hud";
 import { readChoice, readLand, resolveLand } from "../src/sim/land";
 import { WORLD_SIZES } from "../src/sim/sizes";
-import { GRAPHICS, type GraphicsFlag } from "../src/sim/voxel/graphics";
+import { GRAPHICS, applyLooks, type GraphicsFlag } from "../src/sim/voxel/graphics";
 import { LAB_SKY, LAB_WEATHER } from "../src/sim/voxel/sky";
 import type { SavedWorld } from "../src/sim/save";
 import { firstLook } from "../src/sim/firstlook";
@@ -20,6 +20,11 @@ const size = (q.get("size") ?? "medium") as WorldSize;
 const seed = Number(q.get("seed") ?? 7);
 // 4.4: "off=ao,water" turns improvements off; "biome=desert&shape=lakes" picks
 // the land ("land=old" for the island before 4.4); "weather=rain" holds one.
+// 5.2.5: "quality=high" sets the looks as the game's preset does (low, the
+// island before them, when not given); "on=bloom" turns one on alone.
+const quality = q.get("quality");
+if (quality === "low" || quality === "medium" || quality === "high") applyLooks({ level: quality, flip: [] }, quality);
+for (const f of (q.get("on") ?? "").split(",")) if (f in GRAPHICS) GRAPHICS[f as GraphicsFlag] = true;
 for (const f of (q.get("off") ?? "").split(",")) if (f in GRAPHICS) GRAPHICS[f as GraphicsFlag] = false;
 const weather = q.get("weather");
 if (weather === "rain" || weather === "snow" || weather === "fog") LAB_WEATHER.now = { kind: weather, amount: 1 };

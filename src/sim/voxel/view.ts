@@ -1,4 +1,5 @@
-import { GRAPHICS } from "./graphics";
+import { GRAPHICS, LATE_ONLY, LOOKS_STATE, PIXEL_CAPS, nextPixelRatio, setLooksChoice } from "./graphics";
+import { Looks } from "./looks";
 import { fronts } from "../weather";
 import {
   AdditiveBlending,
@@ -58,7 +59,7 @@ import { Buildings } from "./buildings";
 import { WonderModels } from "./wonders";
 import { PropModels } from "./props";
 import { valueNoise } from "../noise";
-import { LAB_SKY, Sky } from "./sky";
+import { LAB_SKY, Sky, skyBodies } from "./sky";
 import { COVER_STEP, COVER_TURN, EYE_DRAW, eyeFogRange, eyeKeepsCover, fogRange } from "./fog";
 import { clearEye } from "../eyes";
 import { ridden } from "../possess";
@@ -209,6 +210,9 @@ export class VoxelView {
   private firstBuild = true;
   // Sun, moon, stars and weather (4.4).
   private sky!: Sky;
+  readonly looks: Looks;
+  private topAt = -Infinity;
+  private top = 0;
   private waveTime = { value: 0 };
   // The island as a map (4.9 part 3, map.ts): what the simulation holds, read every 3 s; how much
   // of the island the camera holds (1 whole); the far roads, one mesh drawn only from far; dust
@@ -240,7 +244,7 @@ export class VoxelView {
       preserveDrawingBuffer: !!options.preserveDrawingBuffer,
     });
     this.renderer.outputColorSpace = LinearSRGBColorSpace;
-    this.pixelRatio = Math.min(2, window.devicePixelRatio || 1);
+    this.pixelRatio = Math.min(PIXEL_CAPS[LOOKS_STATE.level], window.devicePixelRatio || 1);
     this.renderer.setPixelRatio(this.pixelRatio);
     this.overlayCtx = overlay.getContext("2d")!;
     this.orbit = new OrbitCamera(world.w, world.h);
@@ -323,6 +327,15 @@ export class VoxelView {
       this.plumes.material as MeshBasicMaterial,
     ];
     for (const m of this.lit) this.darkness.apply(m);
+    // The looks of 5.2.5 (looks.ts): the sun's shadows on what is solid, the grade, bloom and blur.
+    this.looks = new Looks(
+      this.renderer,
+      this.scene,
+      new Set([this.farRoads, this.markMesh, this.windows, this.flames, this.boltCore, this.decorGlow, this.rainShafts]),
+    );
+    for (const m of [land, basic, figureMats.lit]) this.looks.receive(m);
+    // The draw calls of a frame are counted over all its passes (the shadow map, bloom, blur).
+    this.renderer.info.autoReset = false;
   }
 
   private instanced(model: string, material: Material, capacity: number): InstancedMesh {
@@ -387,6 +400,7 @@ export class VoxelView {
   render(visuals: Visuals, time: number, dt: number, reducedMotion: boolean): void {
     const started = performance.now();
     this.lapAt = started;
+    this.renderer.info.reset();
     const { world } = this;
     if (this.orbit.eye) this.placeEye();
     this.orbit.update(dt, time, this.groundAt, reducedMotion);
@@ -427,7 +441,7 @@ export class VoxelView {
     this.fadeNear();
     this.lap("covers");
     if (world.wonders.length) this.wonderModels.update(world, time);
-    this.propModels.update(world, this.groundAt);
+    this.propModels.update(world, this.groundAt, this.orbit.eye ?? { x: this.orbit.tx, y: this.orbit.ty });
     if (world.decorVersion !== this.decorVersion) {
       this.decorVersion = world.decorVersion;
       this.placeDecor(time);
@@ -447,7 +461,7 @@ export class VoxelView {
     this.moveClouds(LAB_SKY.time ?? time);
     this.applyDaylight(LAB_SKY.time ?? time, visuals.darknessLevel(), visuals);
     this.lap("decal+day");
-    this.renderer.render(this.scene, this.orbit.camera);
+    this.looks.render(this.orbit.camera);
     this.lap("draw");
     this.drawOverlay(visuals);
     this.lap("overlay");
@@ -526,6 +540,39 @@ export class VoxelView {
     }
   }
 
+  // The looks for this frame (looks.ts): the sun where sky.ts draws it, the haze with the fog.
+  private applyLooks(time: number, night: number, dark: number, fog: Fog): void {
+    const o = this.orbit;
+    const { world } = this;
+    // The highest ground, looked at again every few seconds: how far shadows can reach.
+    if (time - this.topAt > 5 || time < this.topAt) {
+      this.topAt = time;
+      let top = 0;
+      for (let y = 1; y < world.h; y += 4) for (let x = 1; x < world.w; x += 4) top = Math.max(top, this.groundAt(x, y));
+      this.top = top + 12;
+    }
+    const sun = skyBodies(time);
+    const side = Math.max(world.w, world.h);
+    const eye = !!o.eye;
+    this.looks.haze(fog, { eye, dist: o.dist, side });
+    this.looks.frame({
+      night,
+      dark,
+      overcast: this.sky.overcast,
+      sunHeight: sun.sun,
+      sunAz: sun.sunAz,
+      eye,
+      cover: this.cover,
+      phi: o.phi,
+      cx: o.tx - world.w / 2,
+      cz: o.ty - world.h / 2,
+      radius: o.visibleRadius(),
+      side,
+      top: this.top,
+      dist: o.dist,
+    });
+  }
+
   // The Perf Lab pins the pixel density, so two runs draw the same pixels (4.4).
   fixedPixelRatio: number | null = null;
 
@@ -541,25 +588,34 @@ export class VoxelView {
     }
     this.frameTimes.push(dt * 1000);
     this.drawTimes.push(ms);
+    // The looks' level, from the device's own frames in the sky view (graphics.ts QualityChooser).
+    const choice = LOOKS_STATE.choice;
+    if (
+      choice?.level === "auto" &&
+      !this.orbit.eye &&
+      LOOKS_STATE.chooser.feed(dt * 1000, ms, this.paceMs, this.pixelRatio, Math.min(PIXEL_CAPS[LOOKS_STATE.level], window.devicePixelRatio || 1))
+    )
+      setLooksChoice(choice);
     if (this.frameTimes.length < 60) return;
     const avg = this.frameTimes.reduce((a, b) => a + b, 0) / this.frameTimes.length;
     const draw = this.drawTimes.reduce((a, b) => a + b, 0) / this.drawTimes.length;
     this.frameTimes = [];
     this.drawTimes = [];
-    const max = Math.min(2, window.devicePixelRatio || 1);
-    // Frames come every 33 ms, one per simulation tick, unless a finger moves
-    // the view. Well past that, frames are being missed: draw fewer pixels.
-    // Back up only when both the cadence and the drawing have room, and not
-    // within 10 s of a drop, so it does not see-saw. At 60 a second
-    // (pacing.ts) a missed cadence first falls back to 30, so only the draw
-    // time lowers the pixels there; the way back up needs the same room.
+    // Fewer pixels when frames are slow, back up when there is room, not within 10 s of a drop so
+    // it does not see-saw; the cap and the rule are the looks level's (graphics.ts nextPixelRatio).
+    const level = LOOKS_STATE.level;
     const now = performance.now();
-    const fast = this.paceMs < 25;
-    let next = this.pixelRatio;
-    if ((!fast && avg > 52) || draw > 30) {
-      next = Math.max(0.6, this.pixelRatio - 0.25);
-      this.droppedAt = now;
-    } else if (avg < (fast ? 19 : 38) && draw < 12 && now - this.droppedAt > 10_000) next = Math.min(max, this.pixelRatio + 0.25);
+    const step = nextPixelRatio({
+      ratio: this.pixelRatio,
+      max: Math.min(PIXEL_CAPS[level], window.devicePixelRatio || 1),
+      avg,
+      draw,
+      fast: this.paceMs < 25,
+      quiet: now - this.droppedAt,
+      lateOnly: LATE_ONLY[level],
+    });
+    if (step.dropped) this.droppedAt = now;
+    const next = step.ratio;
     if (next !== this.pixelRatio) {
       this.pixelRatio = next;
       this.renderer.setPixelRatio(next);
@@ -967,6 +1023,8 @@ export class VoxelView {
     const fogK = this.sky.fog;
     const dim = 1 - grey;
     for (const m of this.lit) m.color.setRGB(day.r * dim, day.g * dim, day.b * dim);
+    // Smoke, steam and dust are lit by the day as the land is: grey at night, not white.
+    (this.dullPoints.material as ShaderMaterial).uniforms.tint.value.setRGB(day.r * dim, day.g * dim, day.b * dim);
     this.lightTheDark(Math.min(0.95, dark), visuals);
     // The sky is repainted only when it changes by a visible step.
     const shade = Math.round(Math.min(0.95, dark) * 20) / 20;
@@ -994,6 +1052,7 @@ export class VoxelView {
     const fog = this.scene.fog as Fog;
     fog.near = range.near;
     fog.far = range.far;
+    this.applyLooks(time, day.night, Math.min(0.95, dark), fog);
     let n = 0;
     const lights = this.world.settlements.length ? this.buildings.lights : null;
     // As many windows lit as the village has people (map.ts): a village that lost its people goes dark.
@@ -2055,7 +2114,10 @@ function glowTexture(): CanvasTexture {
   return new CanvasTexture(c);
 }
 
-// Particles as screen facing points, sized by distance, faded by their life.
+// Particles as screen facing points, sized by distance, faded by their life. Those that do not
+// glow (chimney smoke, a hot spring's steam, a waterfall's spray, dust and chips) are soft round
+// puffs lit by the day: they were drawn as hard opaque squares, white even at night, which read
+// as white boxes floating over every village (the lead's review, 13 November).
 function pointCloud(capacity: number, glow: boolean, texture: CanvasTexture): Points {
   const geo = new BufferGeometry();
   geo.setAttribute("position", new BufferAttribute(new Float32Array(capacity * 3), 3));
@@ -2063,12 +2125,17 @@ function pointCloud(capacity: number, glow: boolean, texture: CanvasTexture): Po
   geo.setAttribute("size", new BufferAttribute(new Float32Array(capacity), 1));
   geo.setDrawRange(0, 0);
   const material = new ShaderMaterial({
-    uniforms: { scale: { value: 400 }, map: { value: texture } },
+    uniforms: { scale: { value: 400 }, map: { value: texture }, tint: { value: new Color(1, 1, 1) } },
     vertexShader: `attribute float size; attribute vec4 color; varying vec4 vColor; uniform float scale;
       void main() { vColor = color; vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_PointSize = max(2.0, size * scale / -mv.z); gl_Position = projectionMatrix * mv; }`,
     fragmentShader: glow
       ? `uniform sampler2D map; varying vec4 vColor; void main() { vec4 t = texture2D(map, gl_PointCoord); gl_FragColor = vec4(vColor.rgb, vColor.a * t.a); }`
-      : `varying vec4 vColor; void main() { gl_FragColor = vColor; }`,
+      : `uniform vec3 tint; varying vec4 vColor; void main() {
+          vec2 q = gl_PointCoord * 2.0 - 1.0;
+          float d = dot(q, q);
+          if (d > 1.0) discard;
+          gl_FragColor = vec4(vColor.rgb * tint, vColor.a * (1.0 - smoothstep(0.2, 1.0, d)));
+        }`,
     transparent: true,
     depthWrite: false,
     ...(glow ? { blending: AdditiveBlending } : {}),

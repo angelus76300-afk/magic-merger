@@ -16,7 +16,154 @@ export const GRAPHICS = {
   // way between two ticks (2026-11-07, pacing.ts). Off: 30 a second on touch
   // screens, a frame only when something changed.
   smooth: true,
+  // The looks of 5.2.5 (looks.ts), each measured alone ("off=shadows" or
+  // "on=bloom" in the Perf Lab). Set by the quality preset below.
+  // A sun that casts soft shadows over the land, following the hour, in the
+  // sky view; warm where it lights, cool in the shade. One extra pass that
+  // draws what casts (the land, trees, houses, props, wonders, creatures)
+  // into a 1024 square map.
+  shadows: false,
+  // A filmic tone curve and a colour grade (deeper middle tones, greens
+  // muted, warm light and cool shade) in every material, and a haze over the far side of the
+  // island. No extra pass.
+  grade: false,
+  // Glow that blooms at night: bright parts spill light around them. At night
+  // only; three passes at a quarter of the pixels, and the frame is drawn
+  // into a texture first.
+  bloom: false,
+  // The miniature's depth of field, only when the camera comes close: none
+  // at a mid zoom or over the whole island, growing to full at the closest
+  // sky zoom; in focus at the point under the middle of the screen, blurred
+  // in front of it and behind it. Off in the eye view. Two blur passes at half the pixels; the frame and its depth are
+  // drawn into textures by the scene's own pass (no pass for the depth).
+  tilt: false,
+  // Edges smoothed (5.2.5, the owner: "the render is finer ... refined and
+  // detailed, not messy"): FXAA at full resolution, nine taps a pixel, in the
+  // last pass; the frame is drawn into a texture first.
+  aa: false,
+  // The land of 5.2.5 (land-looks.ts): finer near the camera, soft edges, foam, bands of water.
   ...LAND_LOOKS,
 };
 
 export type GraphicsFlag = keyof typeof GRAPHICS;
+
+// The looks a quality level turns on (5.2.5). Low is the island as it was
+// before them; the device picks one from its own frame times (QualityChooser),
+// and the owner can pick one, or one switch at a time, in the frame HUD.
+export const LOOKS_FLAGS = ["shadows", "grade", "bloom", "tilt", "aa", "fine"] as const;
+export type LooksFlag = (typeof LOOKS_FLAGS)[number];
+export const QUALITIES = ["low", "medium", "high"] as const;
+export type Quality = (typeof QUALITIES)[number];
+export const PRESETS: Record<Quality, Record<LooksFlag, boolean>> = {
+  low: { shadows: false, grade: false, bloom: false, tilt: false, aa: false, fine: false },
+  medium: { shadows: true, grade: true, bloom: false, tilt: false, aa: false, fine: true },
+  high: { shadows: true, grade: true, bloom: true, tilt: true, aa: true, fine: true },
+};
+
+// The most device pixels per CSS pixel each level draws (the Fold folded has
+// about 2.6): 2 at every level, as the game had before the looks (the owner
+// wants it finer, so the level a device starts at must not get coarser). High
+// alone lowers them only when frames are actually late (LATE_ONLY), never
+// because the drawing took long while the frames kept their cadence.
+export const PIXEL_CAPS: Record<Quality, number> = { low: 2, medium: 2, high: 2 };
+export const LATE_ONLY: Record<Quality, boolean> = { low: false, medium: false, high: true };
+
+// The view's pixel density after a second of frames (view.ts adapt). avg: the
+// mean time between frames; draw: the mean of the view's own work; fast: the
+// engine aims at 60 a second; quiet: ms since the last drop. Frames come every
+// 33 ms at 30 a second; well past that they are late. At 60 a second a missed
+// cadence first falls back to 30 (pacing.ts), so the old rule lowered pixels
+// there on the draw time alone. Above the level's cap it comes down at once.
+export function nextPixelRatio(o: { ratio: number; max: number; avg: number; draw: number; fast: boolean; quiet: number; lateOnly: boolean }): {
+  ratio: number;
+  dropped: boolean;
+} {
+  if (o.ratio > o.max) return { ratio: o.max, dropped: false };
+  const late = !o.fast && o.avg > 52;
+  if (late || (!o.lateOnly && o.draw > 30)) return { ratio: Math.max(0.6, o.ratio - 0.25), dropped: true };
+  const room = o.avg < (o.fast ? 19 : 38) && (o.lateOnly || o.draw < 12);
+  if (room && o.quiet > 10_000) return { ratio: Math.min(o.max, o.ratio + 0.25), dropped: false };
+  return { ratio: o.ratio, dropped: false };
+}
+
+// What the player chose: a level, or "auto" (the device's), and switches
+// turned the other way from that level.
+export interface LooksChoice {
+  level: Quality | "auto";
+  flip: LooksFlag[];
+}
+
+export const AUTO_CHOICE: LooksChoice = { level: "auto", flip: [] };
+
+// From a message or a saved string: anything else is the automatic choice.
+export function readLooksChoice(v: unknown): LooksChoice {
+  if (!v || typeof v !== "object") return { ...AUTO_CHOICE };
+  const o = v as { level?: unknown; flip?: unknown };
+  const level = o.level === "auto" || QUALITIES.includes(o.level as Quality) ? (o.level as LooksChoice["level"]) : "auto";
+  const flip = Array.isArray(o.flip) ? LOOKS_FLAGS.filter((f) => (o.flip as unknown[]).includes(f)) : [];
+  return { level, flip };
+}
+
+// Sets the four switches from a choice and the level the device picked.
+export function applyLooks(choice: LooksChoice, auto: Quality): Quality {
+  const level = choice.level === "auto" ? auto : choice.level;
+  for (const f of LOOKS_FLAGS) GRAPHICS[f] = PRESETS[level][f] !== choice.flip.includes(f);
+  LOOKS_STATE.level = level;
+  return level;
+}
+
+// Picks the level from the device's own frames in the sky view. Starts at
+// medium; after FRAMES frames goes up to high when frames keep their cadence
+// with room to spare at full pixel density, or down to low when frames are
+// missed or the pixel density had to drop. At most one step up, and never up
+// again after a step down, so it does not see-saw.
+export class QualityChooser {
+  static readonly FRAMES = 90;
+  level: Quality = "medium";
+  private frames: number[] = [];
+  private draws: number[] = [];
+  private wentDown = false;
+  private wentUp = false;
+
+  // frameMs: time since the previous frame; drawMs: the view's own work;
+  // paceMs: the time between frames the engine aims for. Returns the new
+  // level when it changes.
+  feed(frameMs: number, drawMs: number, paceMs: number, pixelRatio: number, maxRatio: number): Quality | null {
+    this.frames.push(frameMs);
+    this.draws.push(drawMs);
+    if (this.frames.length < QualityChooser.FRAMES) return null;
+    const mid = (a: number[]) => [...a].sort((x, y) => x - y)[a.length >> 1];
+    const frame = mid(this.frames);
+    const draw = mid(this.draws);
+    this.frames = [];
+    this.draws = [];
+    return this.decide(frame, draw, paceMs, pixelRatio, maxRatio);
+  }
+
+  decide(frame: number, draw: number, paceMs: number, pixelRatio: number, maxRatio: number): Quality | null {
+    const slow = frame > paceMs * 1.45 || draw > 22 || pixelRatio < maxRatio - 0.3;
+    const roomy = frame < paceMs * 1.15 && draw < 9 && pixelRatio >= maxRatio;
+    const at = QUALITIES.indexOf(this.level);
+    let next = at;
+    if (slow && at > 0) {
+      next = at - 1;
+      this.wentDown = true;
+    } else if (roomy && !this.wentDown && !this.wentUp && at < QUALITIES.length - 1) {
+      next = at + 1;
+      this.wentUp = true;
+    }
+    if (next === at) return null;
+    this.level = QUALITIES[next];
+    return this.level;
+  }
+}
+
+// The game's choice and the device's level, kept across islands (frame.ts
+// sets the choice; the view feeds the chooser while the choice is "auto").
+// Null: nothing chosen, the switches stay as they are (the labs).
+export const LOOKS_STATE = { choice: null as LooksChoice | null, chooser: new QualityChooser(), level: "low" as Quality };
+
+export function setLooksChoice(choice: LooksChoice): void {
+  LOOKS_STATE.choice = choice;
+  LOOKS_STATE.level = applyLooks(choice, LOOKS_STATE.chooser.level);
+}

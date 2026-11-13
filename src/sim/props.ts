@@ -21,7 +21,28 @@ export interface PropBox {
   h: number;
   color: number;
   glow: boolean;
+  // The looks revamp, phase 1 (2026-11-13). All optional: a stored look that
+  // gives none of them draws exactly as it did. A turn in degrees about the
+  // part's center (rx about the east-west line, ry about the north-south line,
+  // rz about the up line), a shape other than a box, and grain (0 to 0.3): its
+  // faces cut in small tiles of slightly different tones.
+  rx?: number;
+  ry?: number;
+  rz?: number;
+  shape?: Exclude<Shape, "box">;
+  grain?: number;
 }
+
+// The shapes a part can take: a box; a wedge (a ramp, full height on its west
+// side, down to nothing on its east side: roofs, steps, buttresses); a cyl (8
+// sides: towers, barrels, trunks, columns); a cone (8 sides: roofs, spires,
+// tree tops); a dome (half a sphere: cupolas, shells, bushes). Each fills the
+// box x, y, z, w, d, h; cyl, cone and dome are round in it.
+export const SHAPES = ["box", "wedge", "cyl", "cone", "dome"] as const;
+export type Shape = (typeof SHAPES)[number];
+export const MAX_GRAIN = 0.3;
+// grain: true, or "grain" in a part's list.
+export const GRAIN = 0.08;
 
 export interface Prop {
   key: string;
@@ -34,13 +55,18 @@ export interface Prop {
   // Turned about its center, radians.
   turn: number;
   boxes: PropBox[];
+  // Soft shadow in its corners (voxel/shapes.ts): on for a look that uses a new
+  // field of its parts, or asks for it; off for the looks stored before.
+  soft?: boolean;
   // 4.7: the creature whose hand holds it (held.ts): drawn there, small, not on the ground.
   heldBy?: number | null;
 }
 
 // As many as the landmarks a save keeps (60): every placed item can have its look.
 export const MAX_PROPS = 60;
-export const MAX_PROP_BOXES = 80;
+// 160 parts since the looks revamp (phase 1); the island draws far looks with
+// fewer when it has too many triangles (voxel/props.ts).
+export const MAX_PROP_BOXES = 160;
 // A prop reaches 12 cells from its center and 60 voxels up at most.
 const REACH = 12;
 const UP = 60;
@@ -66,14 +92,34 @@ function colorOf(v: unknown, fallback: number): number {
   return fallback;
 }
 
+// A turn in degrees, from -180 to 180; 0 for what is not a number.
+function degrees(v: unknown): number {
+  if (typeof v !== "number" || !Number.isFinite(v)) return 0;
+  const d = (((v % 360) + 540) % 360) - 180;
+  return Math.round((d === -180 ? 180 : d) * 100) / 100;
+}
+
 // One box from a program: [x, y, z, w, d, h, color, "glow"] or an object
-// {x, y, z, w, d, h, color, glow}. Null when it has no size.
+// {x, y, z, w, d, h, color, glow}. Null when it has no size. Since phase 1 of
+// the looks revamp, also {rx, ry, rz, shape, grain} on the object, or after the
+// colour in the list: words ("cone", "grain") and one object of those fields
+// ([0, 0, 2, 1, 1, 1, "#c55", "cone", { rz: 45 }]).
 export function readBox(v: unknown): PropBox | null {
-  const a = Array.isArray(v)
-    ? { x: v[0], y: v[1], z: v[2], w: v[3], d: v[4], h: v[5], color: v[6], glow: v[7] === "glow" || v[7] === true }
-    : v && typeof v === "object"
-      ? (v as Record<string, unknown>)
-      : null;
+  let a: Record<string, unknown> | null = null;
+  if (Array.isArray(v)) {
+    a = { x: v[0], y: v[1], z: v[2], w: v[3], d: v[4], h: v[5], color: v[6], glow: v[7] === "glow" || v[7] === true };
+    for (const e of v.slice(7)) {
+      if (typeof e === "string") {
+        const word = e.trim().toLowerCase();
+        if ((SHAPES as readonly string[]).includes(word)) a.shape = word;
+        else if (word === "grain") a.grain = true;
+      } else if (e && typeof e === "object" && !Array.isArray(e)) {
+        const o = e as Record<string, unknown>;
+        for (const k of ["rx", "ry", "rz", "shape", "grain"]) if (o[k] !== undefined) a[k] = o[k];
+        if (o.glow === true || o.glow === "glow") a.glow = true;
+      }
+    }
+  } else if (v && typeof v === "object") a = v as Record<string, unknown>;
   if (!a) return null;
   const w0 = clamp(a.w, 0, 2 * REACH, 0);
   const d0 = clamp(a.d, 0, 2 * REACH, 0);
@@ -91,7 +137,48 @@ export function readBox(v: unknown): PropBox | null {
     h,
     color: colorOf(a.color, 0xb0a890),
     glow: a.glow === true || a.glow === "glow",
+    ...newFields(a),
   };
+}
+
+// The phase 1 fields, only those that change the look: none for a stored look.
+function newFields(a: Record<string, unknown>): Partial<PropBox> {
+  const out: Partial<PropBox> = {};
+  for (const k of ["rx", "ry", "rz"] as const) {
+    const d = degrees(a[k]);
+    if (d) out[k] = d;
+  }
+  const shape = typeof a.shape === "string" ? a.shape.trim().toLowerCase() : "";
+  if (shape !== "box" && (SHAPES as readonly string[]).includes(shape)) out.shape = shape as Exclude<Shape, "box">;
+  const g = a.grain === true || a.grain === "grain" ? GRAIN : clamp(a.grain, 0, MAX_GRAIN, 0);
+  if (g > 0) out.grain = Math.round(g * 1000) / 1000;
+  return out;
+}
+
+// A part with a phase 1 field: its look is soft-shadowed (Prop.soft).
+export function isNewPart(b: PropBox): boolean {
+  return b.shape !== undefined || !!b.rx || !!b.ry || !!b.rz || !!b.grain;
+}
+
+// The eight corners of a part on the ground's axes (x, y across, z up), turned as it is.
+export function partCorners(b: PropBox): [number, number, number][] {
+  const [ax, ay, az] = [((b.rx ?? 0) * Math.PI) / 180, ((b.ry ?? 0) * Math.PI) / 180, ((b.rz ?? 0) * Math.PI) / 180];
+  const cx = b.x + b.w / 2;
+  const cy = b.y + b.d / 2;
+  const cz = b.z + b.h / 2;
+  const out: [number, number, number][] = [];
+  for (const u of [-0.5, 0.5])
+    for (const v of [-0.5, 0.5])
+      for (const t of [-0.5, 0.5]) {
+        let x = u * b.w;
+        let y = v * b.d;
+        let z = t * b.h;
+        [y, z] = [y * Math.cos(ax) - z * Math.sin(ax), y * Math.sin(ax) + z * Math.cos(ax)];
+        [x, z] = [x * Math.cos(ay) + z * Math.sin(ay), -x * Math.sin(ay) + z * Math.cos(ay)];
+        [x, y] = [x * Math.cos(az) - y * Math.sin(az), x * Math.sin(az) + y * Math.cos(az)];
+        out.push([cx + x, cy + y, cz + z]);
+      }
+  return out;
 }
 
 export function readProp(v: unknown): Prop | null {
@@ -103,6 +190,7 @@ export function readProp(v: unknown): Prop | null {
     .filter((b): b is PropBox => b !== null)
     .slice(0, MAX_PROP_BOXES);
   if (!boxes.length) return null;
+  const soft = o.soft === true || boxes.some(isNewPart);
   return {
     key: typeof o.key === "string" ? o.key.slice(0, 80) : "",
     ...(typeof o.owner === "string" ? { owner: o.owner.slice(0, 120) } : {}),
@@ -111,6 +199,7 @@ export function readProp(v: unknown): Prop | null {
     y: o.y,
     turn: clamp(o.turn, -10, 10, 0),
     boxes,
+    ...(soft ? { soft: true } : {}),
   };
 }
 
@@ -125,12 +214,16 @@ export function propBounds(p: Prop): { across: number; tall: number; x0: number;
   const c = Math.cos(p.turn);
   const s = Math.sin(p.turn);
   for (const b of p.boxes) {
-    for (const [dx, dy] of [
-      [b.x, b.y],
-      [b.x + b.w, b.y],
-      [b.x, b.y + b.d],
-      [b.x + b.w, b.y + b.d],
-    ]) {
+    const turned = !!(b.rx || b.ry || b.rz);
+    const corners = turned
+      ? partCorners(b).map(([x, y]) => [x, y])
+      : [
+          [b.x, b.y],
+          [b.x + b.w, b.y],
+          [b.x, b.y + b.d],
+          [b.x + b.w, b.y + b.d],
+        ];
+    for (const [dx, dy] of corners) {
       const x = p.x + dx * c - dy * s;
       const y = p.y + dx * s + dy * c;
       x0 = Math.min(x0, x);
@@ -138,7 +231,7 @@ export function propBounds(p: Prop): { across: number; tall: number; x0: number;
       y0 = Math.min(y0, y);
       y1 = Math.max(y1, y);
     }
-    tall = Math.max(tall, b.z + b.h);
+    tall = Math.max(tall, turned ? Math.max(...partCorners(b).map((c) => c[2])) : b.z + b.h);
   }
   return { across: Math.max(x1 - x0, y1 - y0), tall, x0, x1, y0, y1 };
 }

@@ -214,6 +214,11 @@ export class Terrain {
       this.swap(c, "fluid", this.buildFluid(c));
     }
     if (GRAPHICS.fine) this.updateFine(until);
+    // Turned off (the low quality level): every chunk back to whole cells.
+    else if (this.fine.some((m) => m !== undefined)) {
+      this.job = null;
+      for (let c = 0; c < this.fine.length; c++) this.dropFine(c);
+    }
     // One chunk of the slow queue every third frame, land and water in turn,
     // if time is left.
     if (performance.now() > until || this.slowTurn++ % 3 !== 0) return;
