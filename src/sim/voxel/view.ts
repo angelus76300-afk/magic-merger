@@ -64,7 +64,22 @@ import { COVER_STEP, COVER_TURN, EYE_DRAW, eyeFogRange, eyeKeepsCover, fogRange 
 import { clearEye } from "../eyes";
 import { ridden } from "../possess";
 import { solidCovers } from "../paths";
-import { FAR, LETTERING, cartCenter, coverOf, emptyMap, fade, nameLabels, nameOrder, onTrip, placeNames, refreshMap, type Label, type Rect } from "../map";
+import {
+  FAR,
+  LETTERING,
+  cartCenter,
+  coverOf,
+  emptyMap,
+  fade,
+  nameLabels,
+  nameOrder,
+  onTrip,
+  placeNames,
+  refreshMap,
+  towCart,
+  type Label,
+  type Rect,
+} from "../map";
 
 // What a spell's darkness pulls the sky toward.
 const NIGHT_SKY = 0x04020f;
@@ -131,6 +146,9 @@ export class VoxelView {
       py: number;
       pphase: number;
       pyaw: number;
+      // A villager on a market trip: its cart's own heading, and where the villager was drawn
+      // last frame, so the cart turns only as it is pulled (map.ts towCart).
+      cart?: { hd: number; x: number; y: number };
     }
   >();
   private palette: number[] = new Array(ROLES).fill(0);
@@ -1503,8 +1521,14 @@ export class VoxelView {
       // A villager on a market trip pulls a cart (map.ts onTrip): larger from far, so the roads move. None in the eye view.
       if (marks + 5 <= 900 && !this.orbit.eye && onTrip(c)) {
         const s = 1 + 2.6 * fade(this.cover, FAR.carts);
-        marks = this.placeCart(marks, rx, ry, ground, c.hd, s, c.mind?.carry === "food" ? 0xe8c25a : 0xb4483a);
-      }
+        const cart = g.cart ?? (g.cart = { hd: c.hd, x: rx, y: ry });
+        const moved = Math.hypot(rx - cart.x, ry - cart.y);
+        // A jump (a teleport) sets it straight behind at once.
+        cart.hd = moved > 3 ? c.hd : towCart(cart.hd, c.hd, moved, s);
+        cart.x = rx;
+        cart.y = ry;
+        marks = this.placeCart(marks, rx, ry, ground, cart.hd, s, c.mind?.carry === "food" ? 0xe8c25a : 0xb4483a);
+      } else g.cart = undefined;
       if (!seen) continue;
       const still = c.dead || c.frozen > 0 || c.stun > 0;
       const asleep = c.sleep > 0 || c.data.mood === "asleep";
