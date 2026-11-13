@@ -46,7 +46,7 @@ import {
 } from "./wards";
 import { makeBuilding, makePerson, makeVillage, makeWonder, shapeLand } from "./makers";
 import { FINE_BOX, MAX_PROP_BOXES, addProp, propBounds, readProp, shadeParts } from "./props";
-import { findNearest, natureOf, readFights, readHere, readHurt } from "./reading";
+import { findNearest, natureOf as readNature, readFights, readHere, readHurt } from "./reading";
 
 // Runs spell programs. A program is JavaScript that defines `spell`:
 //
@@ -1553,7 +1553,7 @@ export class SpellApi {
     return readFights(this.rt.world, ...this.area(x, y, r)).map((f) => ({ attacker: this.handles([f.attacker])[0], target: this.handles([f.target])[0] }));
   }
   nature(c: { raw?: Creature } | null | undefined): string {
-    return c && c.raw ? natureOf(c.raw) : "none";
+    return c && c.raw ? readNature(c.raw) : "none";
   }
 
   // Writing one cell. `set` puts any material on its own layer; for a fluid or
