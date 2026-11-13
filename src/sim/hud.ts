@@ -151,17 +151,22 @@ export class Hud {
   constructor(
     public stats: FrameStats,
     private pick?: (choice: LooksChoice) => void,
+    // Controls of the World the panel must never cover (the review of 13 November: its switches
+    // sat over Watch and took its taps): the panel stands above whichever of them is shown.
+    private avoid: string[] = [],
   ) {
     this.el = document.createElement("div");
+    // Lines wrap, and the panel stops short of the column of buttons on the World's right (62 px):
+    // only its own switches take taps.
     this.el.style.cssText =
-      "position:absolute;left:6px;bottom:6px;z-index:5;pointer-events:none;font:11px/1.35 ui-monospace,Menlo,monospace;color:#e8fff0;background:rgba(0,0,0,.55);padding:4px 6px;border-radius:6px;white-space:pre";
+      "position:absolute;left:6px;bottom:6px;z-index:5;pointer-events:none;font:11px/1.35 ui-monospace,Menlo,monospace;color:#e8fff0;background:rgba(0,0,0,.55);padding:4px 6px;border-radius:6px;white-space:pre-wrap;overflow-wrap:anywhere;max-width:calc(100vw - 76px);box-sizing:border-box";
     this.el.hidden = true;
     this.text = document.createElement("div");
     this.el.appendChild(this.text);
     if (pick) {
       this.row = document.createElement("div");
       this.row.className = "looks";
-      this.row.style.cssText = "display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;pointer-events:auto;white-space:normal;max-width:calc(100vw - 24px)";
+      this.row.style.cssText = "display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;pointer-events:none;white-space:normal";
       this.el.appendChild(this.row);
     }
     document.body.appendChild(this.el);
@@ -194,6 +199,20 @@ export class Hud {
         : []),
     ].join("\n");
     this.drawRow();
+    this.place();
+  }
+
+  // Above the controls it must not cover, those shown now: Watch, the stick, the first look's card.
+  private place(): void {
+    let bottom = 6;
+    for (const sel of this.avoid) {
+      const el = document.querySelector(sel) as HTMLElement | null;
+      if (!el || el.hidden) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) continue;
+      bottom = Math.max(bottom, Math.ceil(innerHeight - r.top) + 6);
+    }
+    this.el.style.bottom = `${bottom}px`;
   }
 
   // The switches, drawn again when what they show changed.
@@ -212,7 +231,7 @@ export class Hud {
       b.type = "button";
       b.textContent = label;
       b.setAttribute("aria-pressed", String(on));
-      b.style.cssText = `font:11px ui-monospace,Menlo,monospace;min-height:32px;padding:0 9px;border-radius:6px;border:1px solid ${on ? "#9ef0b8" : "rgba(255,255,255,.3)"};background:${on ? "rgba(80,200,120,.35)" : "rgba(0,0,0,.35)"};color:#e8fff0`;
+      b.style.cssText = `pointer-events:auto;font:11px ui-monospace,Menlo,monospace;min-height:44px;min-width:44px;padding:0 9px;border-radius:6px;border:1px solid ${on ? "#9ef0b8" : "rgba(255,255,255,.3)"};background:${on ? "rgba(80,200,120,.35)" : "rgba(0,0,0,.35)"};color:#e8fff0`;
       b.addEventListener("click", (e) => {
         e.stopPropagation();
         act();

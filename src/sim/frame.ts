@@ -1878,10 +1878,14 @@ function openScenario(id: string, ahead = 0): void {
 function showHud(on: boolean): void {
   hudOn = on;
   if (!engine) return;
-  hud ??= new Hud(engine.stats, (choice: LooksChoice) => {
-    setLooksChoice(choice);
-    send({ type: "looks", choice });
-  });
+  hud ??= new Hud(
+    engine.stats,
+    (choice: LooksChoice) => {
+      setLooksChoice(choice);
+      send({ type: "looks", choice });
+    },
+    ["#watch", "#stick", "#first-look"],
+  );
   hud.stats = engine.stats;
   hud.show(on);
   clearInterval(perfTimer);
