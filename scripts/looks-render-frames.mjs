@@ -43,7 +43,7 @@ async function open(w, h, look) {
     };
   }, seed);
   const q = look.startsWith("on=") ? `quality=low&${look}` : `quality=${look}`;
-  await page.goto(`${base}?size=medium&seed=${seed}&dpr=${dsf}&${q}`);
+  await page.goto(`${base}?size=medium&seed=${seed}&dpr=${dsf}&${q}${process.env.EXTRA ? `&${process.env.EXTRA}` : ""}`);
   await page.waitForFunction(() => window.perfReady === true, null, { timeout: 120_000 });
   await page.evaluate(() => {
     document.querySelectorAll("body > div").forEach((d) => (d.style.visibility = "hidden"));
@@ -105,6 +105,10 @@ const VIEWS = [
   ["island-day", { clock: DAY, cam: { dist: "whole", phi: 0.72 } }],
   // A mid zoom on the village, for the depth of field (the owner, 13 November).
   ["village-mid", { clock: DAY, cam: { village: true, dist: 0.36, phi: 0.88 } }],
+  // The whole island and the village at a mid zoom at night, for the bloom (the owner: "Bloom
+  // looks weird when unzoomed").
+  ["island-night", { clock: NIGHT, cam: { dist: "whole", phi: 0.72 } }],
+  ["village-mid-night", { clock: NIGHT, cam: { village: true, dist: 0.36, phi: 0.88 } }],
   // The closest sky zoom on the village, where the depth of field is whole.
   ["village-close", { clock: DAY, cam: { village: true, dist: 0.066, phi: 0.95 } }],
 ];
