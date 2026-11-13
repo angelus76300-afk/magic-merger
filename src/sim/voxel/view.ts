@@ -441,7 +441,7 @@ export class VoxelView {
     this.fadeNear();
     this.lap("covers");
     if (world.wonders.length) this.wonderModels.update(world, time);
-    this.propModels.update(world, this.groundAt);
+    this.propModels.update(world, this.groundAt, this.orbit.eye ?? { x: this.orbit.tx, y: this.orbit.ty });
     if (world.decorVersion !== this.decorVersion) {
       this.decorVersion = world.decorVersion;
       this.placeDecor(time);

@@ -1,0 +1,122 @@
+[
+  {
+    "name": "Abyss",
+    "tris": 290,
+    "lit": "6c11d3ec1c1900e1ca419284e8b4322b",
+    "glow": "4e2418d6c08459fc22ee54a2dfe3f077"
+  },
+  {
+    "name": "Ark",
+    "tris": 240,
+    "lit": "eec8d2305a094ebab1877c95cacda58e",
+    "glow": "a84f38207935dce3e9b7b80bd6f8e5bb"
+  },
+  {
+    "name": "Barrow Wight",
+    "tris": 70,
+    "lit": "61ec3202e0a10370b6f34cdef55089b0",
+    "glow": "199ec9ee0a38f957cfc94b136b290fc0"
+  },
+  {
+    "name": "Cave",
+    "tris": 290,
+    "lit": "2145fe474b0c90efc60801558c99d764",
+    "glow": "c4f6338f48f7cded66b55923d8ad93f5"
+  },
+  {
+    "name": "Clay",
+    "tris": 30,
+    "lit": "3c9980ea66a57eecd6f819e4fc915685",
+    "glow": "e3b0c44298fc1c14e3b0c44298fc1c14"
+  },
+  {
+    "name": "Doombringer",
+    "tris": 220,
+    "lit": "d1ea95f704d2df683976b7d83338fda8",
+    "glow": "09da23fb04d7876a5ccf82a8538581de"
+  },
+  {
+    "name": "Elysium",
+    "tris": 270,
+    "lit": "299a7bdd0ec34c2f4997853fd7d07015",
+    "glow": "aabd01aefde0f0c7e20f5af9db1010b5"
+  },
+  {
+    "name": "Flaming Sword",
+    "tris": 160,
+    "lit": "49c708a1ef0f9ac25cb70a0e70581cf2",
+    "glow": "bded48517ec54f5b4dbb14676d512c3a"
+  },
+  {
+    "name": "Frozen Necropolis",
+    "tris": 40,
+    "lit": "c4be14780accc616670c0a7b6c49f730",
+    "glow": "6988043cc8848c1aeb9c6656177aca02"
+  },
+  {
+    "name": "Graveyard",
+    "tris": 620,
+    "lit": "d61a8dd4b65c53d5a2147436f1e7c937",
+    "glow": "8d86ee03ea88144e5d92fea35085ac24"
+  },
+  {
+    "name": "Holy Ground",
+    "tris": 120,
+    "lit": "6dfc8eee23c0059d79c0c89bfb69a63f",
+    "glow": "d57bd1feae453932d54c49e3dc2e3681"
+  },
+  {
+    "name": "Leprechaun Gold",
+    "tris": 250,
+    "lit": "f8a03769c5bcaf8b8f515e8fe84b8321",
+    "glow": "7b86f09f46b5e1e8395848a976a53f5f"
+  },
+  {
+    "name": "Mausoleum",
+    "tris": 130,
+    "lit": "3b49cdaf2fefb67c508992c8653264d8",
+    "glow": "c14f30d43eed8fd4ec8b1b2d72df1311"
+  },
+  {
+    "name": "Necropolis",
+    "tris": 40,
+    "lit": "f8f7cd2906d7790e3713f462081edd66",
+    "glow": "f8e00715c5cae995f2faba5bac4f84cb"
+  },
+  {
+    "name": "Rocket",
+    "tris": 140,
+    "lit": "35f4032e77996d6042586744eadf43fc",
+    "glow": "f8fc63551cc2c5405e154081089ac5a0"
+  },
+  {
+    "name": "Spaceship",
+    "tris": 140,
+    "lit": "ed9e88e5ab721af322de72b105136c58",
+    "glow": "de5696afdefedbcad189a3dbfb1337ef"
+  },
+  {
+    "name": "Supermassive Black Hole",
+    "tris": 580,
+    "lit": "22d02df0c07f9906398384d20754bf42",
+    "glow": "3ca8220fe667f19c934de1caa62edbb2"
+  },
+  {
+    "name": "Underworld",
+    "tris": 280,
+    "lit": "91eb31e71515329aa1aee451966e638a",
+    "glow": "84819d60818cbc0072d4453fed5b7724"
+  },
+  {
+    "name": "Wasteland",
+    "tris": 320,
+    "lit": "d9b9d554138991a2b061b5ae4547602d",
+    "glow": "40b259189fd25688b1d9f44afd9cd5ce"
+  },
+  {
+    "name": "Wormhole Network",
+    "tris": 390,
+    "lit": "af5635194b981aa16ac4be059b44798c",
+    "glow": "9d39d310f4565397ed5d45d9e3767473"
+  }
+]
