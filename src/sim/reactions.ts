@@ -434,6 +434,20 @@ function fireNear(world: World, i: number, r: number): boolean {
   return false;
 }
 
+// A tree within r cells: a creature's sparks scorch the open meadow, not the woods (two
+// Phoenixes over the forest by a village burnt all of it in 24 seconds in the lab).
+function treeNear(world: World, i: number, r: number): boolean {
+  const x = i % world.w;
+  const y = (i / world.w) | 0;
+  for (let dy = -r; dy <= r; dy++)
+    for (let dx = -r; dx <= r; dx++) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx >= 0 && ny >= 0 && nx < world.w && ny < world.h && world.cover[ny * world.w + nx] === C.TREE) return true;
+    }
+  return false;
+}
+
 // Seconds between two sparks a creature of fire lets fall where it goes.
 export const SPARK_EVERY = 4;
 
@@ -473,6 +487,7 @@ export function natureTick(world: World, c: Creature, k: CreatureKind, i: number
         !isBuilding(world.cover[i]) &&
         !nearHouses(world, i, 5) &&
         !fireNear(world, i, 3) &&
+        !treeNear(world, i, 4) &&
         !(world.wardMask[i] & WARD.fire)
       ) {
         world.fire[i] = 0.4;

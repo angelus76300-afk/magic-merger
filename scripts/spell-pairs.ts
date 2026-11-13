@@ -8,7 +8,7 @@
 // twenty written the way the live programs of the measurement of 12 November behave
 // (docs/measurements/spell-library-2026-11-12.md: Phoenix only spawns its creature, Divine
 // Radiance heals and lights, Shadow paints rock and smoke). Pairs: two of each group of pairs
-// a player expects something from, plus 36 drawn from all items (seeded).
+// a player expects something from, plus 28 drawn from all items (seeded).
 // The island: the test run's practice island (seed 11, the reference size), cast by a village.
 // A is cast at 0 s, B at the same spot at 3 s; the scene runs 300 s. A pair interacts in a
 // count (cells of each ground, cover, fluid and gas, cells on fire, creatures by kind, the
@@ -172,7 +172,7 @@ function sampled(n: number): [string, string, string][] {
   return out;
 }
 
-const PAIRS = [...EXPECTED, ...sampled(36)];
+const PAIRS = [...EXPECTED, ...sampled(28)];
 const SEED = 11;
 const SECONDS = 300;
 const B_AT = 3;
@@ -184,6 +184,9 @@ interface Snap {
   // Per cell, for what both items change: ground, cover, fluid and gas as one number.
   cells: Uint32Array;
 }
+// The kinds living on the island before any cast: their numbers and health drift with every
+// change (a villager walks elsewhere and lives a different life), so they are not judged.
+let ISLAND_KINDS = new Set<string>();
 
 function island(stream: number): { world: World; rt: Runtime; x: number; y: number } {
   Math.random = seeded(SEED);
@@ -192,6 +195,7 @@ function island(stream: number): { world: World; rt: Runtime; x: number; y: numb
   populate(world);
   const rt = new Runtime(world, () => {});
   for (let k = 0; k < 60; k++) stepHeadless(world, rt);
+  ISLAND_KINDS = new Set(world.creatures.map((c) => c.kind.split("#")[0]));
   let x = world.w / 2;
   let y = world.h / 2;
   for (let i = 0; i < world.n; i++)
@@ -224,7 +228,9 @@ function snap(world: World): Snap {
       add("dead");
       continue;
     }
-    add(`creature ${c.kind.split("#")[0]}`);
+    const kind = c.kind.split("#")[0];
+    if (ISLAND_KINDS.has(kind)) continue;
+    add(`creature ${kind}`);
     add("health", c.hp / 10);
   }
   add("voxels", world.decor.size / 20);
@@ -249,7 +255,7 @@ function scene(reactions: boolean, a: Item | null, b: Item | null, stream = 0): 
 }
 
 // The floor of each count, in its own units (cells, creatures, tens of health, twenties of voxels).
-const floorOf = (k: string) => (k.startsWith("creature") || k === "dead" ? 2 : k === "health" || k === "voxels" ? 2 : 8);
+const floorOf = (k: string) => (k.startsWith("creature") ? 2 : k === "dead" ? 3 : k === "health" || k === "voxels" ? 2 : 8);
 const cellCount = (k: string) => /^(ground|cover|fluid|gas|fire)/.test(k);
 
 interface Verdict {
@@ -258,20 +264,40 @@ interface Verdict {
   why: string[];
 }
 
-function judge(e: Snap[], a: Snap[], b: Snap[], ab: Snap[], noise: Snap[]): Verdict {
+// What a pair's runs leave, per snapshot: the counts of the island alone, A alone, B alone, B
+// after A, B after A on another stream, and the cells both items change alone.
+interface Runs {
+  e: Counts[];
+  a: Counts[];
+  b: Counts[];
+  ab: Counts[];
+  noise: Counts[];
+  both: number[];
+}
+
+function runsOf(e: Snap[], a: Snap[], b: Snap[], ab: Snap[], noise: Snap[]): Runs {
+  const both = SNAP_AT.map((_, s) => {
+    let n = 0;
+    for (let i = 0; i < e[s].cells.length; i++) if (a[s].cells[i] !== e[s].cells[i] && b[s].cells[i] !== e[s].cells[i]) n++;
+    return n;
+  });
+  const c = (l: Snap[]) => l.map((x) => x.counts);
+  return { e: c(e), a: c(a), b: c(b), ab: c(ab), noise: c(noise), both };
+}
+
+function judge(r: Runs): Verdict {
   const why: string[] = [];
   const made = new Set<string>();
-  for (let s = 0; s < SNAP_AT.length; s++) {
-    let both = 0;
-    for (let i = 0; i < e[s].cells.length; i++) if (a[s].cells[i] !== e[s].cells[i] && b[s].cells[i] !== e[s].cells[i]) both++;
-    const keys = new Set([...Object.keys(e[s].counts), ...Object.keys(a[s].counts), ...Object.keys(b[s].counts), ...Object.keys(ab[s].counts)]);
-    for (const k of keys) {
-      const v = (o: Snap) => o.counts[k] ?? 0;
-      const expect = v(a[s]) + v(b[s]) - v(e[s]);
-      const diff = v(ab[s]) - expect;
-      const limit = Math.max(floorOf(k), 2 * Math.abs(v(noise[s]) - v(ab[s])), cellCount(k) ? both : 0);
+  const keys = new Set<string>();
+  for (const l of [r.e, r.a, r.b, r.ab]) for (const c of l) for (const k of Object.keys(c)) keys.add(k);
+  for (const k of keys) {
+    const v = (c: Counts) => c[k] ?? 0;
+    const most = (l: Counts[]) => Math.max(...l.map(v));
+    for (let s = 0; s < SNAP_AT.length; s++) {
+      const diff = v(r.ab[s]) - (v(r.a[s]) + v(r.b[s]) - v(r.e[s]));
+      const limit = Math.max(floorOf(k), 2 * Math.abs(v(r.noise[s]) - v(r.ab[s])), cellCount(k) ? r.both[s] : 0);
       if (Math.abs(diff) > limit) why.push(`${k} ${diff > 0 ? "+" : ""}${Math.round(diff)} at ${SNAP_AT[s]} s`);
-      if (cellCount(k) && k !== "fire" && v(ab[s]) >= 5 && v(a[s]) < 2 && v(b[s]) < 2 && v(e[s]) < 2 && v(noise[s]) >= 5) made.add(k);
+      if (cellCount(k) && k !== "fire" && v(r.ab[s]) >= 5 && v(r.noise[s]) >= 5 && most(r.a) < 2 && most(r.b) < 2 && most(r.e) < 2) made.add(k);
     }
   }
   return { interacts: why.length > 0, made: [...made], why: why.slice(0, 4) };
@@ -283,7 +309,9 @@ mkdirSync(out, { recursive: true });
 
 if (args.includes("--fold")) {
   const rows: { group: string; a: string; b: string; off: Verdict; on: Verdict }[] = [];
-  for (const f of readdirSync(out).filter((f) => /^shard-\d+\.json$/.test(f))) rows.push(...JSON.parse(readFileSync(join(out, f), "utf8")));
+  for (const f of readdirSync(out).filter((f) => /^shard-\d+\.json$/.test(f)))
+    for (const raw of JSON.parse(readFileSync(join(out, f), "utf8")) as { group: string; a: string; b: string; off: Runs; on: Runs }[])
+      rows.push({ group: raw.group, a: raw.a, b: raw.b, off: judge(raw.off), on: judge(raw.on) });
   const sum = (list: typeof rows, mode: "off" | "on") => ({
     interact: list.filter((r) => r[mode].interacts).length,
     made: list.filter((r) => r[mode].made.length).length,
@@ -316,10 +344,12 @@ if (args.includes("--fold")) {
   for (const [group, an, bn] of mine) {
     const a = byName(an);
     const b = byName(bn);
-    const verdict = (mode: boolean) => judge(alone.get(`${mode}|`)!, aloneOf(mode, a, false), aloneOf(mode, b, true), scene(mode, a, b), scene(mode, a, b, 1));
-    const row = { group, a: a.name, b: b.name, off: verdict(false), on: verdict(true) };
+    const runs = (mode: boolean) => runsOf(alone.get(`${mode}|`)!, aloneOf(mode, a, false), aloneOf(mode, b, true), scene(mode, a, b), scene(mode, a, b, 1));
+    const row = { group, a: a.name, b: b.name, off: runs(false), on: runs(true) };
     results.push(row);
-    console.log(`${group}: ${a.name} then ${b.name}: off ${row.off.interacts}/${row.off.made.join(",")} on ${row.on.interacts}/${row.on.made.join(",")}`);
+    const off = judge(row.off);
+    const on = judge(row.on);
+    console.log(`${group}: ${a.name} then ${b.name}: off ${off.interacts}/${off.made.join(",")} on ${on.interacts}/${on.made.join(",")}`);
     writeFileSync(file, JSON.stringify(results));
   }
   if (!existsSync(file)) writeFileSync(file, "[]");
