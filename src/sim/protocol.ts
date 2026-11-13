@@ -3,6 +3,7 @@ import type { CastRequest } from "./runtime";
 import type { SavedWorld } from "./save";
 import type { WorldSize } from "./sizes";
 import type { LandChoice } from "./land-options";
+import { readLooksChoice, type LooksChoice } from "./voxel/graphics";
 
 // Messages between the game page and the sandboxed World iframe. The iframe
 // runs Claude's spell code, so it has no origin of its own and no network:
@@ -36,6 +37,8 @@ export type ToWorld =
   | { type: "scenario"; id: string; ahead?: number }
   | { type: "sandbox" }
   | { type: "hud"; on: boolean }
+  // The looks (5.2.5): the quality level or "auto", and switches turned the other way.
+  | { type: "looks"; choice: LooksChoice }
   // Something of the page covers the island (a dialog) or the island is not the tab shown: it does not start watching by itself.
   | { type: "away"; away: boolean }
   // The island needs you (troubles.ts): whether troubles start on this island (the player's switch).
@@ -100,6 +103,8 @@ export function readFromWorld(data: unknown): FromWorld | null {
       return m.sample && typeof m.sample === "object" && JSON.stringify(m.sample).length < 2000
         ? { type: "perf", sample: m.sample as Record<string, number | string> }
         : null;
+    case "looks":
+      return { type: "looks", choice: readLooksChoice(m.choice) };
     case "headroom": {
       const h = m.sample as Record<string, unknown> | null;
       const num = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v < 1e6;
@@ -161,6 +166,8 @@ export type FromWorld =
   | { type: "error"; key: string; name: string; message: string }
   | { type: "objective"; id: string; text: string; status: "playing" | "won" | "lost" }
   | { type: "perf"; sample: Record<string, number | string> }
+  // The looks the player picked in the HUD, for the page to keep (5.2.5).
+  | { type: "looks"; choice: LooksChoice }
   // 4.4: the frame numbers of the island being played, every 30 seconds,
   // whether the HUD is shown or not: what bigger islands are offered from.
   | { type: "headroom"; sample: { w: number; simP95: number; frameP95: number; frames: number } }

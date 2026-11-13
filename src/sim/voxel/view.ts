@@ -1,4 +1,5 @@
-import { GRAPHICS } from "./graphics";
+import { GRAPHICS, LOOKS_STATE, setLooksChoice } from "./graphics";
+import { Looks } from "./looks";
 import { fronts } from "../weather";
 import {
   AdditiveBlending,
@@ -58,7 +59,7 @@ import { Buildings } from "./buildings";
 import { WonderModels } from "./wonders";
 import { PropModels } from "./props";
 import { valueNoise } from "../noise";
-import { LAB_SKY, Sky } from "./sky";
+import { LAB_SKY, Sky, skyBodies } from "./sky";
 import { COVER_STEP, COVER_TURN, EYE_DRAW, eyeFogRange, eyeKeepsCover, fogRange } from "./fog";
 import { clearEye } from "../eyes";
 import { ridden } from "../possess";
@@ -209,6 +210,9 @@ export class VoxelView {
   private firstBuild = true;
   // Sun, moon, stars and weather (4.4).
   private sky!: Sky;
+  readonly looks: Looks;
+  private topAt = -Infinity;
+  private top = 0;
   private waveTime = { value: 0 };
   // The island as a map (4.9 part 3, map.ts): what the simulation holds, read every 3 s; how much
   // of the island the camera holds (1 whole); the far roads, one mesh drawn only from far; dust
@@ -323,6 +327,15 @@ export class VoxelView {
       this.plumes.material as MeshBasicMaterial,
     ];
     for (const m of this.lit) this.darkness.apply(m);
+    // The looks of 5.2.5 (looks.ts): the sun's shadows on what is solid, the grade, bloom and blur.
+    this.looks = new Looks(
+      this.renderer,
+      this.scene,
+      new Set([this.farRoads, this.markMesh, this.windows, this.flames, this.boltCore, this.decorGlow, this.rainShafts]),
+    );
+    for (const m of [land, basic, figureMats.lit]) this.looks.receive(m);
+    // The draw calls of a frame are counted over all its passes (the shadow map, bloom, blur).
+    this.renderer.info.autoReset = false;
   }
 
   private instanced(model: string, material: Material, capacity: number): InstancedMesh {
@@ -387,6 +400,7 @@ export class VoxelView {
   render(visuals: Visuals, time: number, dt: number, reducedMotion: boolean): void {
     const started = performance.now();
     this.lapAt = started;
+    this.renderer.info.reset();
     const { world } = this;
     if (this.orbit.eye) this.placeEye();
     this.orbit.update(dt, time, this.groundAt, reducedMotion);
@@ -447,7 +461,7 @@ export class VoxelView {
     this.moveClouds(LAB_SKY.time ?? time);
     this.applyDaylight(LAB_SKY.time ?? time, visuals.darknessLevel(), visuals);
     this.lap("decal+day");
-    this.renderer.render(this.scene, this.orbit.camera);
+    this.looks.render(this.orbit.camera);
     this.lap("draw");
     this.drawOverlay(visuals);
     this.lap("overlay");
@@ -526,6 +540,39 @@ export class VoxelView {
     }
   }
 
+  // The looks for this frame (looks.ts): the sun where sky.ts draws it, the haze with the fog.
+  private applyLooks(time: number, night: number, dark: number, fog: Fog): void {
+    const o = this.orbit;
+    const { world } = this;
+    // The highest ground, looked at again every few seconds: how far shadows can reach.
+    if (time - this.topAt > 5 || time < this.topAt) {
+      this.topAt = time;
+      let top = 0;
+      for (let y = 1; y < world.h; y += 4) for (let x = 1; x < world.w; x += 4) top = Math.max(top, this.groundAt(x, y));
+      this.top = top + 12;
+    }
+    const sun = skyBodies(time);
+    const side = Math.max(world.w, world.h);
+    const eye = !!o.eye;
+    this.looks.haze(fog, { eye, dist: o.dist, side });
+    this.looks.frame({
+      night,
+      dark,
+      overcast: this.sky.overcast,
+      sunHeight: sun.sun,
+      sunAz: sun.sunAz,
+      eye,
+      cover: this.cover,
+      phi: o.phi,
+      cx: o.tx - world.w / 2,
+      cz: o.ty - world.h / 2,
+      radius: o.visibleRadius(),
+      side,
+      top: this.top,
+      dist: o.dist,
+    });
+  }
+
   // The Perf Lab pins the pixel density, so two runs draw the same pixels (4.4).
   fixedPixelRatio: number | null = null;
 
@@ -541,6 +588,14 @@ export class VoxelView {
     }
     this.frameTimes.push(dt * 1000);
     this.drawTimes.push(ms);
+    // The looks' level, from the device's own frames in the sky view (graphics.ts QualityChooser).
+    const choice = LOOKS_STATE.choice;
+    if (
+      choice?.level === "auto" &&
+      !this.orbit.eye &&
+      LOOKS_STATE.chooser.feed(dt * 1000, ms, this.paceMs, this.pixelRatio, Math.min(2, window.devicePixelRatio || 1))
+    )
+      setLooksChoice(choice);
     if (this.frameTimes.length < 60) return;
     const avg = this.frameTimes.reduce((a, b) => a + b, 0) / this.frameTimes.length;
     const draw = this.drawTimes.reduce((a, b) => a + b, 0) / this.drawTimes.length;
@@ -994,6 +1049,7 @@ export class VoxelView {
     const fog = this.scene.fog as Fog;
     fog.near = range.near;
     fog.far = range.far;
+    this.applyLooks(time, day.night, Math.min(0.95, dark), fog);
     let n = 0;
     const lights = this.world.settlements.length ? this.buildings.lights : null;
     // As many windows lit as the village has people (map.ts): a village that lost its people goes dark.

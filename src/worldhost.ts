@@ -31,10 +31,13 @@ import { DEFAULT_LAND, MIXED_FROM, readChoice as readLandChoice, type LandChoice
 import { newerSave } from "./sim/save-guard";
 import { castRange } from "./sim/eyes";
 import { armGhostGuard, installGhostGuard } from "./ghost";
+import { readLooksChoice, type LooksChoice } from "./sim/voxel/graphics";
 
 export { WORLD_AT_KEY, WORLD_KEY } from "./island-store";
 const MUTE_KEY = "magic-merger.muted";
 const HUD_KEY = "magic-merger.hud";
+// The looks the player picked in the frame HUD (5.2.5), as JSON.
+const LOOKS_KEY = "magic-merger.looks";
 // A World frame that has said nothing for this long while on screen is stuck
 // in spell code (4.0 review M3): it is replaced by a fresh one from the save.
 const WATCHDOG_MS = 20_000;
@@ -676,6 +679,9 @@ export class WorldHost {
           )
           .catch(() => {});
         break;
+      case "looks":
+        writeLooks(msg.choice);
+        break;
       case "perf": {
         // Spell code runs in the frame too, so it could send these: only
         // forwarded while the HUD is on, and at most every 20 seconds.
@@ -786,6 +792,7 @@ export class WorldHost {
     );
     this.ready = true;
     for (const queued of this.queue.splice(0)) this.send(queued);
+    this.send({ type: "looks", choice: readLooks() });
     if (this.hud) this.send({ type: "hud", on: true });
     if (this.selected) {
       const req = this.request(this.selected);
@@ -1675,6 +1682,22 @@ function writeChoice(choice: { size: WorldSize; land: LandChoice }): void {
     localStorage.setItem(CHOICE_KEY, JSON.stringify(choice));
   } catch {
     // This choice lasts for this page.
+  }
+}
+
+function readLooks(): LooksChoice {
+  try {
+    return readLooksChoice(JSON.parse(localStorage.getItem(LOOKS_KEY) ?? "null"));
+  } catch {
+    return readLooksChoice(null);
+  }
+}
+
+function writeLooks(choice: LooksChoice): void {
+  try {
+    localStorage.setItem(LOOKS_KEY, JSON.stringify(readLooksChoice(choice)));
+  } catch {
+    // Storage blocked: the choice lasts for this page.
   }
 }
 
