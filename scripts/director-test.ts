@@ -6,6 +6,7 @@ import { makeCreature } from "../src/sim/creatures";
 import { Director, nameOf } from "../src/sim/director";
 import { MAX_HAPPENINGS, mindOf, tell, weightOf } from "../src/sim/kin";
 import { saveWorld } from "../src/sim/save";
+import { packLook, unpackLook } from "../src/sim/villagers";
 import { World } from "../src/sim/world";
 import { watchIsland } from "./director-run";
 
@@ -101,6 +102,9 @@ export function directorChecks(check: Check): void {
     const d = new Director(() => 0.5);
     check("director: the player's own cast is not a shot", d.update(world).shot === null);
     const c = makeCreature("villager", 30, 30);
+    // makeCreature draws the age from Math.random; a child is captioned "Little <name>", an elder "Old <name>".
+    // This check is about the name leading the caption, so the age is fixed to adult.
+    c.look = packLook({ ...unpackLook(c.look), age: "adult" });
     world.creatures.push(c);
     tell(world, "a villager fought a bear", { x: 30, y: 30, who: c });
     const first = d.update(world).shot;
