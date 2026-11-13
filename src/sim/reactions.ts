@@ -144,8 +144,13 @@ export const LIGHT_MIN_SECONDS = 6;
 // Coarse cells of the field, in cells, and how often it is made again (ticks).
 export const LIGHT_STEP = 2;
 export const LIGHT_EVERY = 10;
-// The field's own budget per update on the large island (scripts/reactions-test.ts measures it).
+// The field's own budget per tick on the large island (scripts/reactions-test.ts measures it).
 export const LIGHT_BUDGET_MS = 1.5;
+// The budget, as work a tick may do: cells a light looks at plus the steps of their sight lines
+// toward it, and a cell each for the scans when a field starts. About 0.6 ms on one core of
+// the machine that measured it (64 lights of radius 60: 0.62 ms p95); a light that takes more is finished alone. A field
+// with more lights than fit is made over several ticks (stepLight), the old one read meanwhile.
+export const LIGHT_WORK = 60000;
 
 export interface LightField {
   cw: number;
@@ -161,6 +166,14 @@ export interface LightField {
   at: number;
   // Any source this update: when none, every query is 0 without a look.
   any: boolean;
+  // The field being made, over as many ticks as its lights need: its lights in order, the next
+  // to shine, and whether fires or lava lit it. Swapped in for lit, holy and dark when done.
+  next: { lit: Float32Array; holy: Float32Array; dark: Float32Array; queue: LightSource[]; at: number; fires: boolean } | null;
+  nLit: Float32Array;
+  nHoly: Float32Array;
+  nDark: Float32Array;
+  // Work done by the last tick's step (tests: never more than LIGHT_WORK plus one light).
+  work: number;
 }
 
 // Spells add a light or a darkness (runtime.ts: w.light, w.darken).
@@ -186,6 +199,11 @@ function field(world: World): LightField {
       dark: new Float32Array(cw * ch),
       at: -1,
       any: false,
+      next: null,
+      nLit: new Float32Array(cw * ch),
+      nHoly: new Float32Array(cw * ch),
+      nDark: new Float32Array(cw * ch),
+      work: 0,
     };
     world.lightField = f;
   }
@@ -227,16 +245,40 @@ function rebuildTop(world: World, f: LightField): void {
   }
 }
 
-// The light and darkness of the island, a few times a second.
+// The light and darkness of the island. Called every tick (tick.ts): every LIGHT_EVERY ticks
+// it starts a new field, and each tick it shines lights into it until LIGHT_WORK is spent;
+// the finished field replaces the one queries read. A few lights finish in one tick, as
+// before; 64 large ones take a few ticks, and the tick never pays more than the budget.
 export function stepLight(world: World): void {
+  const f = field(world);
+  f.work = 0;
+  if (!f.next) {
+    if (world.tick % LIGHT_EVERY !== 0) return;
+    const work = startField(world, f);
+    if (work < 0) return;
+    f.work = work;
+  }
+  const b = f.next!;
+  while (b.at < b.queue.length && (f.work === 0 || f.work < LIGHT_WORK)) {
+    const s = b.queue[b.at++];
+    f.work += s.dark ? shade(f, s, b.dark) : shine(world, f, s, b.lit, b.holy);
+  }
+  if (b.at < b.queue.length) return;
+  // Done: the new field replaces the old.
+  [f.lit, f.nLit] = [b.lit, f.lit];
+  [f.holy, f.nHoly] = [b.holy, f.holy];
+  [f.dark, f.nDark] = [b.dark, f.dark];
+  f.any = b.fires || b.queue.length > 0;
+  f.at = world.tick;
+  f.next = null;
+}
+
+// Starts a new field: its work (the scan for fires, and the heights of what stands on the land
+// when they are remade, a cell each), or -1 when there is nothing to make.
+function startField(world: World, f: LightField): number {
   const now = world.time;
   const src = world.lightSources;
   if (src.length) world.lightSources = src.filter((s) => s.until > now);
-  const f = field(world);
-  f.lit.fill(0);
-  f.holy.fill(0);
-  f.dark.fill(0);
-  f.at = world.tick;
   // Glowing creatures of light, holy or fire shed light around them.
   const shed: LightSource[] = [];
   let readers = false;
@@ -253,8 +295,15 @@ export function stepLight(world: World): void {
   // darkness a spell cast, there is nothing to make (the island as generated pays nothing).
   if (!readers && !world.lightSources.length) {
     f.any = false;
-    return;
+    return -1;
   }
+  let work = world.n >> 2;
+  const lit = f.nLit;
+  const holy = f.nHoly;
+  const dark = f.nDark;
+  lit.fill(0);
+  holy.fill(0);
+  dark.fill(0);
   // Fire and lava light the cells around them (coarse, unblocked: they are low and many).
   let fires = false;
   const { w, h, fire, fluid } = world;
@@ -264,23 +313,26 @@ export function stepLight(world: World): void {
       const i = y * w + x;
       if (fire[i] < 0.4 && fluid[i] !== F.LAVA) continue;
       const j = row + ((x / LIGHT_STEP) | 0);
-      if (f.lit[j] < 0.7) f.lit[j] = 0.7;
+      if (lit[j] < 0.7) lit[j] = 0.7;
       fires = true;
     }
   }
-  const all = shed.length ? [...world.lightSources, ...shed] : world.lightSources;
-  f.any = fires || all.length > 0;
-  if (!all.length) return;
   // What stands on the land, every two seconds or when voxels came or went.
-  if (world.time - f.topAt > 2 || world.decor.size !== f.topSize) {
+  if (world.lightSources.length + shed.length && (world.time - f.topAt > 2 || world.decor.size !== f.topSize)) {
     rebuildTop(world, f);
     f.topAt = world.time;
     f.topSize = world.decor.size;
+    work += world.n + world.decor.size;
   }
-  for (const s of all) (s.dark ? shade : shine)(world, f, s);
+  // Darkness first (cheap), then the smallest lights, so a few lights among many large ones come at once.
+  const queue = [...world.lightSources, ...shed].sort((p, q) => (p.dark === q.dark ? p.r - q.r : p.dark ? -1 : 1));
+  f.next = { lit, holy, dark, queue, at: 0, fires };
+  return work;
 }
 
-function shine(world: World, f: LightField, s: LightSource): void {
+// Returns its work: cells looked at plus sight-line steps.
+function shine(world: World, f: LightField, s: LightSource, lit: Float32Array, holy: Float32Array): number {
+  let work = 0;
   const { cw, ch, top } = f;
   const S = LIGHT_STEP;
   const r = Math.min(60, s.r);
@@ -302,10 +354,12 @@ function shine(world: World, f: LightField, s: LightSource): void {
       if (d > rc) continue;
       const j = cy * cw + cx;
       const v = s.power * (1 - (d / (rc || 1)) ** 2);
-      if (v <= f.lit[j] && (!s.holy || v <= f.holy[j])) continue;
+      work++;
+      if (v <= lit[j] && (!s.holy || v <= holy[j])) continue;
       // Walls, houses, trees and hills between the light and this place keep it dark.
       const tz = world.walkLevel(Math.min(world.n - 1, Math.min(world.h - 1, cy * S) * world.w + Math.min(world.w - 1, cx * S))) + 1;
       const steps = Math.ceil(d);
+      work += steps;
       let open = true;
       for (let k = 1; k < steps; k++) {
         const t = k / steps;
@@ -319,12 +373,14 @@ function shine(world: World, f: LightField, s: LightSource): void {
         }
       }
       if (!open) continue;
-      if (v > f.lit[j]) f.lit[j] = v;
-      if (s.holy && v > f.holy[j]) f.holy[j] = v;
+      if (v > lit[j]) lit[j] = v;
+      if (s.holy && v > holy[j]) holy[j] = v;
     }
+  return work;
 }
 
-function shade(_world: World, f: LightField, s: LightSource): void {
+function shade(f: LightField, s: LightSource, dark: Float32Array): number {
+  let work = 0;
   const { cw, ch } = f;
   const S = LIGHT_STEP;
   const rc = Math.min(80, s.r) / S;
@@ -336,8 +392,10 @@ function shade(_world: World, f: LightField, s: LightSource): void {
       if (d > rc) continue;
       const j = cy * cw + cx;
       const v = s.power * Math.min(1, 1.6 * (1 - d / (rc || 1)));
-      if (v > f.dark[j]) f.dark[j] = v;
+      work++;
+      if (v > dark[j]) dark[j] = v;
     }
+  return work;
 }
 
 export interface LightHere {

@@ -3,7 +3,7 @@ import { stepPhysics } from "./physics";
 import type { Runtime } from "./runtime";
 import { stepTrouble } from "./troubles";
 import { wetFires } from "./weather";
-import { LIGHT_EVERY, stepLight } from "./reactions";
+import { stepLight } from "./reactions";
 import { TICK, type World } from "./world";
 
 // One tick of the simulation, the same for the engine, the test run
@@ -21,8 +21,8 @@ export function stepWorld(world: World, rt: Runtime, opts: { life?: () => number
   world.time += TICK;
   world.tick++;
   stepPhysics(world, TICK);
-  // Light and shadow in the world, a few times a second (4.12, reactions.ts).
-  if (world.reactions && world.tick % LIGHT_EVERY === 0) stepLight(world);
+  // Light and shadow in the world, made a few times a second within a budget per tick (4.12, reactions.ts).
+  if (world.reactions) stepLight(world);
   opts.mark?.("physics");
   const random = Math.random;
   if (opts.life) Math.random = opts.life;

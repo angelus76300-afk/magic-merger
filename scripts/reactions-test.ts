@@ -10,7 +10,7 @@ import { DAY_LENGTH } from "../src/sim/daylight";
 import { C, F, G, S } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
 import { forDisc } from "../src/sim/physics";
-import { LIGHT_BUDGET_MS, N, natureOf, stepLight } from "../src/sim/reactions";
+import { LIGHT_BUDGET_MS, LIGHT_WORK, N, lightAt, natureOf, stepLight } from "../src/sim/reactions";
 import { Runtime } from "../src/sim/runtime";
 import { loadWorld, saveWorld } from "../src/sim/save";
 import { SCENARIOS } from "../src/sim/scenarios";
@@ -579,24 +579,39 @@ function guards(check: Check): void {
     check("reactions: an island saved with the reactions running loads back the same", same && back!.reactions === false);
   }
 
-  // The light field's cost on the large island with twenty lights (printed, not asserted: no verdict depends on the machine).
-  {
+  // The light field keeps to its budget: 64 large lights on the large island are shone over
+  // several ticks, never more than the budget's work in one (one light may finish past it), and
+  // the field still comes. Times are printed, not asserted: no verdict depends on the machine.
+  for (const [n, r] of [
+    [20, 16],
+    [64, 60],
+  ]) {
     Math.random = seeded(7);
     const world = generateWorld(208, 208, 7);
     world.reactions = true;
     populate(world);
-    for (let k = 0; k < 20; k++)
-      world.lightSources.push({ x: 20 + k * 8, y: 104 + (k % 5) * 6, r: 16, until: 1e9, power: 1, holy: k % 3 === 0, dark: k % 7 === 0 });
+    for (let k = 0; k < n; k++)
+      world.lightSources.push({ x: 10 + (k % 16) * 12, y: 30 + Math.floor(k / 16) * 40, r, until: 1e9, power: 1, holy: k % 3 === 0, dark: k % 7 === 0 });
     const times: number[] = [];
-    for (let k = 0; k < 40; k++) {
-      world.time += 0.34;
+    let most = 0;
+    let firstField = -1;
+    for (let k = 0; k < 300; k++) {
+      world.time += 1 / 30;
+      world.tick++;
       const t0 = performance.now();
       stepLight(world);
-      times.push(performance.now() - t0);
+      const dt = performance.now() - t0;
+      const f = world.lightField!;
+      if (k >= 60 && f.work > 0) times.push(dt);
+      most = Math.max(most, f.work);
+      if (firstField < 0 && f.at > 0) firstField = k;
     }
     times.sort((a, b) => a - b);
-    console.log(
-      `  light field on the large island, 20 lights: ${times[20].toFixed(2)} ms a update (p50), ${times[38].toFixed(2)} ms (p95), budget ${LIGHT_BUDGET_MS} ms, 3 updates a second`,
+    const lit = lightAt(world, 10 + 12 * 1, 30).lit;
+    check(
+      `reactions: the light field keeps to its budget with ${n} lights of radius ${r} on the large island`,
+      LIGHT_WORK <= 60000 && most <= 120000 && firstField >= 0 && firstField < 120 && lit > 0.5,
+      `most work in a tick ${most} (budget ${LIGHT_WORK}), first field after ${firstField} ticks, light ${lit.toFixed(2)}; p95 ${times[Math.floor(times.length * 0.95)]?.toFixed(2)} ms a busy tick, budget ${LIGHT_BUDGET_MS} ms`,
     );
   }
 
