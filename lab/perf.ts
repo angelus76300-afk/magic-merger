@@ -37,6 +37,8 @@ const land =
     : q.has("mixed")
       ? resolveLand(readChoice({ warmth: num("warmth"), water: num("water"), relief: num("relief"), forest: num("forest") }), seed, WORLD_SIZES[size])
       : readLand({ biome: q.get("biome"), shape: q.get("shape") });
+// 5.2.5: "peaks=1" makes the island as new islands are made now, with taller peaks.
+if (land && q.has("peaks")) land.peaks = true;
 // 4.4.5 part C: "pool=1" hands new islands the live wonders of lab/wonders
 // (those the nightly test passed), as the World tab does with the server's pool.
 const LIVE = ["aurora-ice-spires", "moon-mire"];
