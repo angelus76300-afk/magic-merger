@@ -1730,7 +1730,9 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
     kept.status === "live" && kept.library === 0 && (await livePid("ember rain")) === p1,
     JSON.stringify(kept),
   );
-  const logged = await lookup("SELECT from_pid, to_pid, cause, status FROM rewrites WHERE key = 'ember rain'");
+  // The vote's rewrite runs after the response (waitUntil): its program row is
+  // written before its rewrites row, so wait for the record itself.
+  const logged = await until(() => lookup("SELECT from_pid, to_pid, cause, status FROM rewrites WHERE key = 'ember rain'"));
   const paid = await lookup("SELECT COUNT(*) AS n FROM spend WHERE call = 'rewrite' AND invite = ?", ann.id);
   check(
     "votes: the rewrite is recorded, and paid by the voter",
