@@ -1771,7 +1771,9 @@ function mount(next: Engine): void {
 // land from the sliders (land-options.ts, resolveLand).
 function freshIsland(size: WorldSize, choice: LandChoice, seed: number | null): Engine {
   const s = seed ?? (Math.random() * 2 ** 31) | 0;
-  return Engine.create(canvas, overlay, size, hooks, s, {}, resolveLand(choice, s, WORLD_SIZES[size] ?? WORLD_SIZES.medium), recent, pool);
+  // 5.2.5: islands made from now on have taller peaks (land.ts uplift); saved islands keep theirs.
+  const land = { ...resolveLand(choice, s, WORLD_SIZES[size] ?? WORLD_SIZES.medium), peaks: true };
+  return Engine.create(canvas, overlay, size, hooks, s, {}, land, recent, pool);
 }
 
 // The wonder sets of the player's last islands (the page keeps them), and

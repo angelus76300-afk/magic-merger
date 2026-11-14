@@ -28,6 +28,11 @@ export interface LandOptions extends LandChoice {
   biome: Biome;
   shape: Shape;
   mixed: boolean;
+  // 5.2.5 (the owner: "volcanoes and mountains should go higher"): taller peaks, steeper upper
+  // slopes and real craters. Set only for islands made from now on (frame.ts freshIsland); absent
+  // on every island made before, every challenge island and every lab, which keep their exact
+  // heights. Not kept by readLand: a saved island keeps its heights in the save itself.
+  peaks?: boolean;
 }
 
 export const DEFAULT_LAND: LandOptions = { biome: "temperate", shape: "coast", warmth: 0.5, water: 0.5, relief: 0.5, forest: 0.5, mixed: false };
