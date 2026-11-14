@@ -7,7 +7,7 @@ import { GRAPHICS } from "./graphics";
 import { LOOKS, biomeAt } from "../land";
 import { DAMP, R as RARE } from "../ecology";
 import { eyeKeepsChunk } from "./fog";
-import { TILE, buildFineTile, fieldHeight, fineAt, makeFineCells, sizeFineCells, type LandRead } from "./terrain-fine";
+import { TILE, buildFineTile, fieldHeight, fieldStep, fineAt, makeFineCells, sizeFineCells, type LandRead } from "./terrain-fine";
 
 // The island as voxel columns. Each cell is one column whose top sits at its
 // height (half a unit per height unit, rounded to whole voxels). Walls are
@@ -318,10 +318,38 @@ export class Terrain {
 
   // The cells as the secondary terrain map reads them (terrain-fine.ts fieldHeight), the same
   // links as the fine land's: dry ground, not built (a path counts as ground), at most a voxel apart.
+  // Whether something stands on a cell, so the drawn ground keeps its height there (terrain-fine.ts
+  // fieldHeight): a cover (a tree, crops, a house, a boulder), a path or a built column, or ground
+  // next to water (the water's edge stays where the water is drawn).
+  private anchoredAt(i: number): boolean {
+    const { world } = this;
+    if (world.cover[i] !== C.NONE || world.ground[i] === G.PATH || this.builtColor(i) !== null || this.wet[i]) return true;
+    const x = i % world.w;
+    const y = (i - x) / world.w;
+    return (
+      (x > 0 && this.wet[i - 1] === 1) ||
+      (x < world.w - 1 && this.wet[i + 1] === 1) ||
+      (y > 0 && this.wet[i - world.w] === 1) ||
+      (y < world.h - 1 && this.wet[i + world.w] === 1)
+    );
+  }
+
   private landRead: LandRead = {
     top: (x, y) => {
       const { world } = this;
       return x >= 0 && y >= 0 && x < world.w && y < world.h ? columnTop(world, y * world.w + x) : BOTTOM;
+    },
+    value: (x, y) => {
+      const { world } = this;
+      return x >= 0 && y >= 0 && x < world.w && y < world.h ? Math.max(BOTTOM + 2, world.height[y * world.w + x] * V) : BOTTOM;
+    },
+    anchored: (x, y) => {
+      const { world } = this;
+      return x < 0 || y < 0 || x >= world.w || y >= world.h || this.anchoredAt(y * world.w + x);
+    },
+    flat: (x, y) => {
+      const { world } = this;
+      return x >= 0 && y >= 0 && x < world.w && y < world.h && world.cover[y * world.w + x] === C.HOUSE;
     },
     linked: (ax, ay, bx, by) => {
       const { world } = this;
@@ -351,7 +379,7 @@ export class Terrain {
     // The middle of the column drawn there.
     const px = (Math.floor(Math.min(cx + 0.999, Math.max(cx, x)) * sub) + 0.5) / sub;
     const py = (Math.floor(Math.min(cy + 0.999, Math.max(cy, y)) * sub) + 0.5) / sub;
-    return Math.round(fieldHeight(this.landRead, px, py) * sub) / sub;
+    return fieldStep(fieldHeight(this.landRead, px, py), px, py, sub) / sub;
   }
 
   // A chunk whose land changed keeps its fine mesh on show until the new one is built: a river
@@ -469,8 +497,8 @@ export class Terrain {
     const { x0, y0, x1, y1 } = this.bounds(c);
     const f = this.fineCells;
     sizeFineCells(f, x0, y0, x1, y1, w, h, BOTTOM);
-    for (let y = y0 - 2; y < y1 + 2; y++) {
-      for (let x = x0 - 2; x < x1 + 2; x++) {
+    for (let y = y0 - 3; y < y1 + 3; y++) {
+      for (let x = x0 - 3; x < x1 + 3; x++) {
         const k = fineAt(f, x, y);
         const inside = x >= 0 && y >= 0 && x < w && y < h;
         f.inside[k] = inside ? 1 : 0;
@@ -497,6 +525,8 @@ export class Terrain {
         f.flowers[k] = g === G.GRASS && world.cover[i] === 0 ? 1 : 0;
         f.pebbles[k] = g === G.SAND ? 1 : 0;
         f.flat[k] = world.cover[i] === C.HOUSE ? 1 : 0;
+        f.value[k] = Math.max(BOTTOM + 2, world.height[i] * V);
+        f.anchored[k] = this.anchoredAt(i) ? 1 : 0;
       }
     }
     const tiles: [number, number, number, number][] = [];
@@ -905,8 +935,8 @@ const FINE8_NEAR = 12;
 const FINE8_KEEP = 16;
 const FINE_BUDGET_MS = 4;
 const FINE_AGAIN_MS = 1.5;
-const FINE_NEAR = 34;
-const FINE_KEEP = 42;
+const FINE_NEAR = 28;
+const FINE_KEEP = 34;
 const FINE_DROP = 90;
 const FINE_TOP = 6;
 // The camera higher than this sees the island in whole cells, and a changed fine chunk is built

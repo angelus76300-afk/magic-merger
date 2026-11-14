@@ -25,7 +25,7 @@ import type { Writer } from "./terrain";
 // Cells a side of the piece of a chunk built at once.
 export const TILE = 8;
 
-// The cells of a chunk and a border of two, as the fine mesher reads them.
+// The cells of a chunk and a border of three, as the fine mesher reads them.
 export interface FineCells {
   x0: number;
   y0: number;
@@ -34,7 +34,7 @@ export interface FineCells {
   w: number; // the island's cells
   h: number;
   bottom: number;
-  bw: number; // row length of the arrays below (chunk + 2 + 2)
+  bw: number; // row length of the arrays below (chunk + 3 + 3)
   inside: Uint8Array;
   top: Int16Array;
   ground: Uint8Array;
@@ -53,6 +53,9 @@ export interface FineCells {
   pebbles: Uint8Array;
   // A house's cell: kept flat, its floor on its height (no slope into or out of it).
   flat: Uint8Array;
+  // The cell's continuous height (scene units), and whether something stands on it.
+  value: Float32Array;
+  anchored: Uint8Array;
 }
 
 export function makeFineCells(): FineCells {
@@ -81,6 +84,8 @@ export function makeFineCells(): FineCells {
     flowers: new Uint8Array(0),
     pebbles: new Uint8Array(0),
     flat: new Uint8Array(0),
+    value: new Float32Array(0),
+    anchored: new Uint8Array(0),
   };
 }
 
@@ -93,8 +98,8 @@ export function sizeFineCells(f: FineCells, x0: number, y0: number, x1: number, 
   f.w = w;
   f.h = h;
   f.bottom = bottom;
-  f.bw = x1 - x0 + 4;
-  const n = f.bw * (y1 - y0 + 4);
+  f.bw = x1 - x0 + 6;
+  const n = f.bw * (y1 - y0 + 6);
   if (f.top.length < n) {
     f.inside = new Uint8Array(n);
     f.top = new Int16Array(n);
@@ -112,12 +117,14 @@ export function sizeFineCells(f: FineCells, x0: number, y0: number, x1: number, 
     f.flowers = new Uint8Array(n);
     f.pebbles = new Uint8Array(n);
     f.flat = new Uint8Array(n);
+    f.value = new Float32Array(n);
+    f.anchored = new Uint8Array(n);
   }
 }
 
 // Index of cell (x, y) in the arrays (island coordinates, the border included).
 export function fineAt(f: FineCells, x: number, y: number): number {
-  return (y - f.y0 + 2) * f.bw + (x - f.x0 + 2);
+  return (y - f.y0 + 3) * f.bw + (x - f.x0 + 3);
 }
 
 // A number in [0, 1) for a whole point and a purpose, the same every time.
@@ -164,7 +171,7 @@ const B = 3;
 const RISER = 2;
 // How much of a wall's darker side a slope's riser takes: enough for each small cube's edge to
 // show, not so much that the slope turns to stripes.
-const RISER_SIDE = 0.6;
+const RISER_SIDE = 0.45;
 // The rock's strata (rocks): three tones of a cliff's stone, by the voxel band.
 const ROCK_TONE = [1, 0.86, 0.94];
 
@@ -185,67 +192,122 @@ function shadeAt(px: number, py: number): number {
   return SHADES[n < 0.38 ? 0 : n < 0.64 ? 1 : 2] * (noise(px, py, 0.8, 33) > 0.6 ? 0.965 : 1);
 }
 
-// The secondary terrain map (steps): a finer height field made from the cells' heights, read
-// by the fine land and by what stands on it (Terrain.groundAt). Around a cell's middle (CORE
-// cells each way) it is the cell's own height, so a tree or a house on the cell stands on it;
-// toward a neighbour one voxel higher or lower it eases into the neighbour's height, meeting it
-// half way at their common side, so a rise of one voxel is a slope of small steps; a neighbour two
-// or more away is not followed, and the cliff stays. On slopes a little low noise, so they are not
-// all alike. Heights in scene units; (px, py) in cells, cell (x, y) spanning [x, x + 1).
+// The secondary terrain map (steps): the land drawn from the island's own continuous heights
+// (world.height, the generator's field, which the simulation keeps as floats and only rounds to
+// whole voxels in columnTop), so slopes curve, start at varied distances from a cell's side and
+// change steepness along their length. A bicubic (Catmull-Rom) through the cells' heights, read by
+// the fine land and by what stands on it (Terrain.groundAt).
+// - Where something stands (an anchored cell: a cover such as a tree, crops or a house, a path, a
+//   built column, ground next to water), the cell keeps its rounded height around its middle, so
+//   what stands on it stands on the drawn ground; a house's cell stays flat all over.
+// - A neighbour two or more voxels away is not followed: the cliff stays.
+// - Open ground undulates gently, an eighth voxel or so, over a few cells.
+// Heights in scene units; (px, py) in cells, cell (x, y) spanning [x, x + 1).
 export interface LandRead {
   top(x: number, y: number): number;
-  // Whether two neighbouring cells slope into each other.
+  // The cell's continuous height, in scene units.
+  value(x: number, y: number): number;
+  // Whether something stands on the cell, and whether it is a house's (flat all over).
+  anchored(x: number, y: number): boolean;
+  flat(x: number, y: number): boolean;
+  // Whether the land of two cells joins without a cliff.
   linked(ax: number, ay: number, bx: number, by: number): boolean;
 }
-// The owner, on pass 3: "the refinement and curves of the elevation are a bit too steep". The
-// field rises evenly from a cell's middle to its side (a steady slope of one voxel a cell), with a
-// sliver of flat ground at the middle; what stands there is within an eighth voxel of the cell.
-const CORE = 0.08;
-function ease(a: number): number {
-  return 0.5 * Math.max(0, (a - CORE) / (0.5 - CORE));
+// Catmull-Rom weights for t in [0, 1], for the samples at -1, 0, 1, 2.
+function cr(t: number, w: number[]): void {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  w[0] = -0.5 * t3 + t2 - 0.5 * t;
+  w[1] = 1.5 * t3 - 2.5 * t2 + 1;
+  w[2] = -1.5 * t3 + 2 * t2 + 0.5 * t;
+  w[3] = 0.5 * t3 - 0.5 * t2;
 }
+const WX = [0, 0, 0, 0];
+const WY = [0, 0, 0, 0];
+// Around an anchored cell's middle (ANCHOR cells each way) the cell's own height, eased out to
+// ANCHOR_OUT.
+const ANCHOR = 0.16;
+const ANCHOR_OUT = 0.44;
 export function fieldHeight(land: LandRead, px: number, py: number): number {
   const cx = Math.floor(px);
   const cy = Math.floor(py);
   const t = land.top(cx, cy);
-  const fx = px - cx - 0.5;
-  const fy = py - cy - 0.5;
-  const u = ease(Math.abs(fx));
-  const v = ease(Math.abs(fy));
-  if (u === 0 && v === 0) return t;
-  const nx = cx + (fx < 0 ? -1 : 1);
-  const ny = cy + (fy < 0 ? -1 : 1);
-  const h1 = u > 0 && land.linked(cx, cy, nx, cy) ? land.top(nx, cy) : t;
-  const h2 = v > 0 && land.linked(cx, cy, cx, ny) ? land.top(cx, ny) : t;
-  let h3 = h1 + h2 - t;
-  if (u > 0 && v > 0 && land.linked(cx, cy, nx, ny)) h3 = land.top(nx, ny);
-  h3 = Math.max(Math.min(t, h1, h2), Math.min(Math.max(t, h1, h2), h3));
-  let h = t * (1 - u) * (1 - v) + h1 * u * (1 - v) + h2 * (1 - u) * v + h3 * u * v;
-  if (h1 !== t || h2 !== t || h3 !== t) h += (noise(px, py, 1.3, 91) - 0.5) * 0.2 * Math.max(u, v) * 2;
-  return h;
+  if (land.flat(cx, cy)) return t;
+  const own = land.anchored(cx, cy) ? t : land.value(cx, cy);
+  const gx = px - 0.5;
+  const gy = py - 0.5;
+  const ix = Math.floor(gx);
+  const iy = Math.floor(gy);
+  cr(gx - ix, WX);
+  cr(gy - iy, WY);
+  let h = 0;
+  for (let j = 0; j < 4; j++) {
+    const ny = iy - 1 + j;
+    let row = 0;
+    for (let i = 0; i < 4; i++) {
+      const nx = ix - 1 + i;
+      let v = own;
+      if ((nx !== cx || ny !== cy) && land.linked(cx, cy, nx, ny)) v = land.anchored(nx, ny) ? land.top(nx, ny) : land.value(nx, ny);
+      row += WX[i] * v;
+    }
+    h += WY[j] * row;
+  }
+  // Never more than a voxel from the cell's own height: the bicubic overshoots a little.
+  h = Math.max(t - 1, Math.min(t + 1, h));
+  const fx = Math.abs(px - cx - 0.5);
+  const fy = Math.abs(py - cy - 0.5);
+  if (land.anchored(cx, cy)) {
+    const a = Math.max(0, Math.min(1, (ANCHOR_OUT - Math.max(fx, fy)) / (ANCHOR_OUT - ANCHOR)));
+    return h * (1 - a) + t * a;
+  }
+  // Open ground: a gentle swell over a few cells.
+  return h + (noise(px, py, 2.8, 95) - 0.5) * 0.24;
 }
 
-// The fine cells as a LandRead, for the mesher.
-let READ_F: FineCells | null = null;
-const FINE_READ: LandRead = {
-  top: (x, y) => READ_F!.top[fineAt(READ_F!, x, y)],
-  linked: (ax, ay, bx, by) => {
-    const f = READ_F!;
-    const a = fineAt(f, ax, ay);
-    const b = fineAt(f, bx, by);
-    return !!(
-      f.inside[a] &&
-      f.inside[b] &&
-      f.natural[a] &&
-      f.natural[b] &&
-      !f.wet[a] &&
-      !f.wet[b] &&
-      !f.flat[a] &&
-      !f.flat[b] &&
-      Math.abs(f.top[a] - f.top[b]) <= 1
-    );
-  },
-};
+// The field in whole columns of 1 / sub. Rounded with a small wobble of position (a third of a
+// step, over half a cell), so a slope running diagonally breaks into irregular little steps
+// instead of a regular checkerboard. Where the field sits on a whole step (a cell's own height,
+// under what stands on it) the wobble never changes the step.
+export function fieldStep(h: number, px: number, py: number, sub: number): number {
+  return Math.round(h * sub + (noise(px, py, 0.45, 99) - 0.5) * 0.7);
+}
+
+// fieldHeight on the fine cells' own arrays, for the mesher: the same field, without a call per
+// neighbour (16 of them a column).
+function fieldFine(f: FineCells, px: number, py: number): number {
+  const cx = Math.floor(px);
+  const cy = Math.floor(py);
+  const c = fineAt(f, cx, cy);
+  const t = f.top[c];
+  if (f.flat[c]) return t;
+  const own = f.anchored[c] ? t : f.value[c];
+  const mine = f.natural[c] && !f.wet[c];
+  const gx = px - 0.5;
+  const gy = py - 0.5;
+  const ix = Math.floor(gx);
+  const iy = Math.floor(gy);
+  cr(gx - ix, WX);
+  cr(gy - iy, WY);
+  let h = 0;
+  for (let j = 0; j < 4; j++) {
+    let n = fineAt(f, ix - 1, iy - 1 + j);
+    let row = 0;
+    for (let i = 0; i < 4; i++, n++) {
+      let v = own;
+      if (n !== c && mine && f.inside[n] && f.natural[n] && !f.wet[n] && !f.flat[n] && Math.abs(f.top[n] - t) <= 1) v = f.anchored[n] ? f.top[n] : f.value[n];
+      row += WX[i] * v;
+    }
+    h += WY[j] * row;
+  }
+  h = Math.max(t - 1, Math.min(t + 1, h));
+  if (f.anchored[c]) {
+    const fx = Math.abs(px - cx - 0.5);
+    const fy = Math.abs(py - cy - 0.5);
+    const a = Math.max(0, Math.min(1, (ANCHOR_OUT - Math.max(fx, fy)) / (ANCHOR_OUT - ANCHOR)));
+    return h * (1 - a) + t * a;
+  }
+  return h + (noise(px, py, 2.8, 95) - 0.5) * 0.24;
+}
 
 // Reused between builds: heights and colours of a tile's columns with a border of B.
 let H = new Int32Array(0);
@@ -278,7 +340,6 @@ export function buildFineTile(f: FineCells, out: Writer, ox: number, oz: number,
     SUM = new Float64Array((SW + 1) * (SH + 1));
   }
   const bottom = f.bottom * sub;
-  READ_F = f;
 
   for (let j = 0; j < SH; j++) {
     for (let k = 0; k < SW; k++) {
@@ -288,7 +349,7 @@ export function buildFineTile(f: FineCells, out: Writer, ox: number, oz: number,
       const cy = Math.floor(sy / sub);
       const s = j * SW + k;
       const c = fineAt(f, cx, cy);
-      if (cx < f.x0 - 2 || cy < f.y0 - 2 || cx >= f.x1 + 2 || cy >= f.y1 + 2 || !f.inside[c]) {
+      if (cx < f.x0 - 3 || cy < f.y0 - 3 || cx >= f.x1 + 3 || cy >= f.y1 + 3 || !f.inside[c]) {
         H[s] = bottom;
         C[s] = 0;
         D[s] = 0;
@@ -306,7 +367,7 @@ export function buildFineTile(f: FineCells, out: Writer, ox: number, oz: number,
       const ly = sy - cy * sub;
       if (f.natural[c]) {
         // The secondary terrain map: slopes where the land rises one voxel.
-        if (steps && !f.wet[c]) hgt = Math.round(fieldHeight(FINE_READ, px, py) * sub);
+        if (steps && !f.wet[c]) hgt = fieldStep(fieldFine(f, px, py), px, py, sub);
         let border = Infinity;
         let shore = false;
         let foot = -1; // the cliff this column stands at the foot of
@@ -321,7 +382,7 @@ export function buildFineTile(f: FineCells, out: Writer, ox: number, oz: number,
           // A cliff's lip, broken in short runs.
           if (steps && dt <= -2 && away === 0 && !f.wet[c] && !f.wet[n] && noise(px, py, 0.7, 2) > 0.62) hgt = Math.min(hgt, t * sub - Math.max(1, sub >> 3));
           if (f.wet[n] && !f.wet[c] && af < 0.3) shore = true;
-          if (dt >= 2 && af < 0.3 && !f.wet[n]) foot = n;
+          if (dt >= 2 && af < 0.2 && !f.wet[n]) foot = n;
           if (!blend) continue;
           if (f.wet[c] && !f.wet[n] && f.water[c] > -1e8 && f.top[n] >= f.water[c] - 0.5) {
             // The shore: sand reaches into the shallows in a wavy line, just above the water.
@@ -340,7 +401,7 @@ export function buildFineTile(f: FineCells, out: Writer, ox: number, oz: number,
             }
           }
         }
-        if (rocks && foot >= 0 && !f.wet[c] && noise(px, py, 0.9, 57) > 0.68 && hash(sx, sy, 58) < 0.4) {
+        if (rocks && foot >= 0 && !f.wet[c] && !f.anchored[c] && noise(px, py, 0.9, 57) > 0.76 && hash(sx, sy, 58) < 0.22) {
           // A few boulders fallen at the foot of a cliff, of its stone.
           bit = scaleColor(f.stone[foot], 0.92 + hash(sx, sy, 59) * 0.16);
           raise = 1 + (hash(sx, sy, 60) < 0.35 ? 1 : 0);

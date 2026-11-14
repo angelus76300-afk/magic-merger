@@ -7,7 +7,7 @@ import { MeshBasicMaterial, type Mesh } from "three";
 import { generateWorld } from "../src/sim/world";
 import { DEFAULT_LAND, resolveLand, type LandOptions } from "../src/sim/land-options";
 import { Terrain, columnTop } from "../src/sim/voxel/terrain";
-import { C } from "../src/sim/materials";
+import { C, G } from "../src/sim/materials";
 import { GRAPHICS } from "../src/sim/voxel/graphics";
 import { LAND_LOOKS } from "../src/sim/voxel/land-looks";
 
@@ -100,7 +100,10 @@ export function buildIsland(cells: number, seed: number, land: LandOptions, zoom
   let sampled = 0;
   for (let i = 0; i < world.n; i++) {
     const cover = world.cover[i];
-    if (cover === C.NONE) continue;
+    // Covers, paths, and dry ground at the water's edge.
+    const edge =
+      world.fluid[i] === 0 && [1, -1, world.w, -world.w].some((o) => world.fluid[i + o] !== undefined && world.fluid[i + o] !== 0 && world.depth[i + o] > 0.06);
+    if (cover === C.NONE && world.ground[i] !== G.PATH && !edge) continue;
     const x = i % world.w;
     const y = Math.floor(i / world.w);
     const r = cover === C.HOUSE ? 0.45 : 0.12;
@@ -185,9 +188,11 @@ export function terrainLooksChecks(check: Check): void {
   );
   // What stands on a cell stands on the drawn ground, within an eighth voxel.
   check(
-    "plants and houses stand on the slopes of the fine land within an eighth of a voxel",
+    "plants, paths, the water's edge and houses stand on the drawn ground within an eighth of a voxel",
     close.every((m) => m.coverGap <= 0.125 && m.houseGap <= 0.125 && m.sampled > 0),
-    close.map((m, k) => `${LOOK_ISLANDS[k].name}: plants ${m.coverGap.toFixed(3)}, houses ${m.houseGap.toFixed(3)} (${m.sampled} points)`).join(", "),
+    close
+      .map((m, k) => `${LOOK_ISLANDS[k].name}: plants, paths, shore ${m.coverGap.toFixed(3)}, houses ${m.houseGap.toFixed(3)} (${m.sampled} points)`)
+      .join(", "),
   );
   // From high up (the whole island) nothing is drawn finely.
   const far = LOOK_ISLANDS.map((_, k) => islandWith(LOOK_SWITCHES, k, "far"));

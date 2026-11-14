@@ -78,7 +78,14 @@ function spots() {
       }
     }
   const mid = { x: w.w / 2, y: w.h / 2 };
-  return { village: v ? { x: v.x, y: v.y } : mid, beach: beach ?? mid, shore: shore ?? beach, hill: hill ?? mid, cliff: cliff ?? mid, side: w.w };
+  // The highest dry ground: a mountain.
+  let mountain = mid;
+  for (let i = 0, best = -1e9; i < w.n; i++)
+    if (w.fluid[i] === 0 && w.height[i] > best && i % w.w > 8 && i % w.w < w.w - 8 && i > w.w * 8 && i < w.n - w.w * 8) {
+      best = w.height[i];
+      mountain = { x: i % w.w, y: Math.floor(i / w.w) };
+    }
+  return { village: v ? { x: v.x, y: v.y } : mid, beach: beach ?? mid, shore: shore ?? beach, hill: hill ?? mid, cliff: cliff ?? mid, mountain, side: w.w };
 }
 
 const VIEWS = {
@@ -88,6 +95,7 @@ const VIEWS = {
   shore: (s) => ({ tx: s.shore.x, ty: s.shore.y, dist: 11, phi: 0.9 }),
   hill: (s) => ({ tx: s.hill.x, ty: s.hill.y, dist: 13, phi: 1.0 }),
   cliff: (s) => ({ tx: s.cliff.x, ty: s.cliff.y, dist: 14, phi: 1.1 }),
+  mountain: (s) => ({ tx: s.mountain.x, ty: s.mountain.y, dist: 20, phi: 1.05 }),
 };
 
 let found = null;
