@@ -109,6 +109,7 @@ import { promiseChecks } from "./promise-test";
 import { heldChecks } from "./held-test";
 import { pacingChecks } from "./pacing-test";
 import { fogChecks } from "./fog-test";
+import { terrainLooksChecks } from "./terrain-looks-test";
 import { peaksChecks } from "./peaks-test";
 
 // No verdict here depends on how fast the machine is (4.1, review M8): the
@@ -2470,6 +2471,8 @@ pacingChecks(check);
 // The mist from afar (2026-11-07): scripts/fog-test.ts.
 fogChecks(check);
 
+// The land's looks (5.2.5): scripts/terrain-looks-test.ts.
+terrainLooksChecks(check);
 // Taller peaks on new islands, old islands unchanged (5.2.5): scripts/peaks-test.ts.
 peaksChecks(check);
 

@@ -1,0 +1,3 @@
+section: Backlog
+
+- **Paths that feet wear into the grass** (the builder of the fine land of 5.2.5; lens: what the player feels). Now that the land near the camera is drawn in quarter voxels, the cells villagers walk most could show it: grass quarter voxels turned to bare soil along the lines they walk between houses, the well and the fields, filling back in a few days after a village is gone. What the player feels: that the island is lived in, and that a village they saved has a history written in its ground. What it adds: villages that look grown, not placed, and a trace of where people went that the player can read from the sky. What it costs: S to M, no paid call; drawing only, from a count per cell of where people step, kept in memory and not saved, so green.
