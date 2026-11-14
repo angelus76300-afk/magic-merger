@@ -16,6 +16,7 @@ export const GRAPHICS = {
   // way between two ticks (2026-11-07, pacing.ts). Off: 30 a second on touch
   // screens, a frame only when something changed.
   smooth: true,
+  ...LAND_LOOKS,
   // The looks of 5.2.5 (looks.ts), each measured alone ("off=shadows" or
   // "on=bloom" in the Perf Lab). Set by the quality preset below.
   // A sun that casts soft shadows over the land, following the hour, in the
@@ -41,8 +42,10 @@ export const GRAPHICS = {
   // detailed, not messy"): FXAA at full resolution, nine taps a pixel, in the
   // last pass; the frame is drawn into a texture first.
   aa: false,
-  // The land of 5.2.5 (land-looks.ts): finer near the camera, soft edges, foam, bands of water.
-  ...LAND_LOOKS,
+  // Village houses and trees in small cubes near the camera (cubes.ts): timber frames, windows
+  // set back in their frames, tiled roofs; fluffy crowns in three shades. Farther away, and with
+  // it off, the old models.
+  cubes: false,
 };
 
 export type GraphicsFlag = keyof typeof GRAPHICS;
@@ -50,14 +53,14 @@ export type GraphicsFlag = keyof typeof GRAPHICS;
 // The looks a quality level turns on (5.2.5). Low is the island as it was
 // before them; the device picks one from its own frame times (QualityChooser),
 // and the owner can pick one, or one switch at a time, in the frame HUD.
-export const LOOKS_FLAGS = ["shadows", "grade", "bloom", "tilt", "aa", "fine"] as const;
+export const LOOKS_FLAGS = ["shadows", "grade", "bloom", "tilt", "aa", "cubes", "fine"] as const;
 export type LooksFlag = (typeof LOOKS_FLAGS)[number];
 export const QUALITIES = ["low", "medium", "high"] as const;
 export type Quality = (typeof QUALITIES)[number];
 export const PRESETS: Record<Quality, Record<LooksFlag, boolean>> = {
-  low: { shadows: false, grade: false, bloom: false, tilt: false, aa: false, fine: false },
-  medium: { shadows: true, grade: true, bloom: false, tilt: false, aa: false, fine: true },
-  high: { shadows: true, grade: true, bloom: true, tilt: true, aa: true, fine: true },
+  low: { shadows: false, grade: false, bloom: false, tilt: false, aa: false, cubes: false, fine: false },
+  medium: { shadows: true, grade: true, bloom: false, tilt: false, aa: false, cubes: true, fine: true },
+  high: { shadows: true, grade: true, bloom: true, tilt: true, aa: true, cubes: true, fine: true },
 };
 
 // The most device pixels per CSS pixel each level draws (the Fold folded has
