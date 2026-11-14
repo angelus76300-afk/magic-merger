@@ -22,6 +22,7 @@ import { monsterChecks } from "./monsters-test";
 import { propChecks } from "./props-test";
 import { reactionChecks } from "./reactions-test";
 import { looksChecks } from "./looks-test";
+import { cubesChecks } from "./cubes-test";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
 import { logDeeds, mindOf, remember } from "../src/sim/kin";
@@ -2522,6 +2523,7 @@ reactionChecks(check);
 
 // The looks of 5.2.5, render side: scripts/looks-test.ts.
 looksChecks(check);
+cubesChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);

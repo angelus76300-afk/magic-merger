@@ -6,6 +6,9 @@ import type { World } from "../world";
 import { pushBox, type Box } from "./models";
 import { columnTop } from "./terrain";
 import { logsLeft, stageOf } from "../sites";
+import { lodAt, type FineFocus } from "./cubes";
+import { fineBoxes, fineHouse } from "./cube-houses";
+import type { LocalMesh } from "./shapes";
 
 // Every house and building with a job on an island with villages (4.4.5
 // part B), each from its own seed: no two alike. A house is a two by two
@@ -28,8 +31,9 @@ function vary(rng: Rng, color: number, amount = 0.08): number {
   return (ch(16) << 16) | (ch(8) << 8) | ch(0);
 }
 const pick = <T>(rng: Rng, list: readonly T[]): T => list[Math.floor(rng.next() * list.length)];
+const tag = (b: Box, t: Tagged["tag"]): Tagged => Object.assign(b, { tag: t });
 
-type Roof = "thatch" | "tile" | "slate" | "flat" | "turf";
+export type Roof = "thatch" | "tile" | "slate" | "flat" | "turf";
 const ROOF_COLORS: Record<Roof, number[]> = {
   thatch: [0xc8a85a, 0xd4b464, 0xb8984e, 0xc09a50],
   tile: [0xb5523b, 0xc05d44, 0xa84a35, 0xc8703e, 0x9a4030],
@@ -50,7 +54,36 @@ export interface Shape {
   // Lit at night: a point on a wall and which way it faces (0 +z, 1 +x).
   windows: { x: number; y: number; z: number; axis: 0 | 1 }[];
   chimneys: { x: number; y: number; z: number }[];
+  // A house's choices, for its model in small cubes (cube-houses.ts): the same house, drawn finer.
+  plan?: HousePlan;
 }
+
+// What a house's builder chose, in the order it chose it (houseShape): size, walls, door, roof.
+export interface HousePlan {
+  style: string;
+  size: "hut" | "cottage" | "longhouse" | "two";
+  x0: number;
+  z0: number;
+  w: number;
+  d: number;
+  h: number;
+  lift: number;
+  wall: number;
+  trim: number;
+  door: number;
+  shutters: number;
+  porch: boolean;
+  roof: Roof;
+  roofColor: number;
+  chimney: { x: number; z: number; top: number; color: number } | null;
+  leanTo: { x: number; w: number; wall: number; roof: number } | null;
+  patched: boolean;
+  grown: boolean;
+}
+
+// Parts of a building with a job tagged by what they are, for its model in small cubes: a roof's
+// steps in tile rows, a window set back into its wall. The old meshes ignore the tag.
+export type Tagged = Box & { tag?: "roof" | "window" };
 
 // A pitched roof as steps: wide and low first, narrow on top.
 function roof(out: Box[], rng: Rng, kind: Roof, x0: number, z0: number, w: number, d: number, y: number, color: number, snow: boolean): number {
@@ -71,7 +104,7 @@ function roof(out: Box[], rng: Rng, kind: Roof, x0: number, z0: number, w: numbe
     const ww = alongX ? w + over * 2 : (w + over * 2) * f;
     const dd = alongX ? (d + over * 2) * f : d + over * 2;
     const c = k === steps - 1 && snow ? 0xf4f8fb : vary(rng, color, 0.05);
-    out.push(B(x0 + (w - ww) / 2, top, z0 + (d - dd) / 2, ww, rise, dd, c));
+    out.push(tag(B(x0 + (w - ww) / 2, top, z0 + (d - dd) / 2, ww, rise, dd, c), "roof"));
     top += rise;
   }
   if (snow) out.push(B(x0 - over, y + rise - 0.02, z0 - over, w + over * 2, 0.05, d + over * 2, 0xeef3f8));
@@ -130,7 +163,8 @@ export function houseShape(seed: number, style: string, grown: boolean, patched:
   windows.push({ x: x0 + w + 0.02, y: lift + 0.32, z: z0 + d * 0.5, axis: 1 });
   out.push(B(x0 + w, lift + 0.24, z0 + d * 0.5 - 0.09, 0.015, 0.16, 0.18, 0x3a3028));
   // A porch: a slab, two posts and a little roof.
-  if (rng.next() < 0.35 && size !== "hut") {
+  const porch = rng.next() < 0.35 && size !== "hut";
+  if (porch) {
     out.push(B(door - 0.2, lift, z0 + d, 0.62, 0.06, 0.32, vary(rng, 0x8a6a44)));
     out.push(B(door - 0.18, lift, z0 + d + 0.26, 0.05, 0.42, 0.05, st.trim));
     out.push(B(door + 0.35, lift, z0 + d + 0.26, 0.05, 0.42, 0.05, st.trim));
@@ -140,20 +174,26 @@ export function houseShape(seed: number, style: string, grown: boolean, patched:
   const top = roof(out, rng, kind, x0, z0, w, d, lift + h, color, style === "snowroof");
   if (kind !== "flat" && size !== "hut" && rng.next() < 0.3) out.push(B(x0 + w * 0.35, lift + h + 0.05, z0 + d - 0.05, w * 0.3, 0.22, 0.2, vary(rng, color))); // a dormer
   // A chimney through the roof, toward one end.
+  let chimney: HousePlan["chimney"] = null;
   if (rng.next() < 0.65) {
     const cx = rng.next() < 0.5 ? x0 + 0.18 : x0 + w - 0.36;
     const cz = z0 + d * (0.3 + rng.next() * 0.3);
     const ch = top - lift - h + 0.25;
     out.push(B(cx, lift + h, cz, 0.18, ch, 0.18, style === "adobe" ? 0xc89c64 : 0x8a7a70));
     chimneys.push({ x: cx + 0.09, y: lift + h + ch, z: cz + 0.09 });
+    chimney = { x: cx, z: cz, top: lift + h + ch, color: style === "adobe" ? 0xc89c64 : 0x8a7a70 };
   }
   // A lean-to added later, on the side away from the door.
+  let leanTo: HousePlan["leanTo"] = null;
   if (grown && rng.next() < 0.45 && size !== "longhouse") {
     const side = rng.next() < 0.5 ? -1 : 1;
     const lw = 0.38;
     const lx = side < 0 ? Math.max(0.02, x0 - lw) : Math.min(2 - lw - 0.02, x0 + w);
-    out.push(B(lx, lift, z0 + 0.12, lw, h * 0.6, d - 0.3, vary(rng, wall, 0.1)));
-    out.push(B(lx - 0.04, lift + h * 0.6, z0 + 0.08, lw + 0.08, 0.08, d - 0.22, vary(rng, color, 0.1)));
+    const lwall = vary(rng, wall, 0.1);
+    const lroof = vary(rng, color, 0.1);
+    out.push(B(lx, lift, z0 + 0.12, lw, h * 0.6, d - 0.3, lwall));
+    out.push(B(lx - 0.04, lift + h * 0.6, z0 + 0.08, lw + 0.08, 0.08, d - 0.22, lroof));
+    leanTo = { x: lx, w: lw, wall: lwall, roof: lroof };
   }
   // A roof rebuilt after a fire: patches of newer straw or tiles.
   if (patched)
@@ -164,7 +204,28 @@ export function houseShape(seed: number, style: string, grown: boolean, patched:
       );
     }
   dressWalls(out, windows, new Rng(seed ^ 0x51ee7), style, st.trim, x0, z0, w, d, h, lift);
-  return { boxes: out, windows, chimneys };
+  const plan: HousePlan = {
+    style: STYLE[style] ? style : "timber",
+    size,
+    x0,
+    z0,
+    w,
+    d,
+    h,
+    lift,
+    wall,
+    trim: st.trim,
+    door,
+    shutters,
+    porch,
+    roof: kind,
+    roofColor: color,
+    chimney,
+    leanTo,
+    patched,
+    grown,
+  };
+  return { boxes: out, windows, chimneys, plan };
 }
 
 // What a house shows from the street (2026-11-12, seen from a creature's eyes its walls were flat
@@ -219,7 +280,7 @@ export function jobShape(seed: number, kind: number, style: string): Shape {
   const roofColor = vary(rng, pick(rng, ROOF_COLORS[roofKind]));
   const snow = style === "snowroof";
   const win = (x: number, y: number, z: number) => {
-    out.push(B(x - 0.09, y - 0.08, z, 0.18, 0.16, 0.015, 0x3a3028));
+    out.push(tag(B(x - 0.09, y - 0.08, z, 0.18, 0.16, 0.015, 0x3a3028), "window"));
     windows.push({ x, y, z: z + 0.02, axis: 0 });
   };
   switch (kind) {
@@ -493,6 +554,13 @@ export class Buildings {
   private siteMesh: Mesh | null = null;
   private siteKey = "";
   readonly lights: Lights = { windows: [], chimneys: [] };
+  // Models in small cubes already made (cube-houses.ts), by building and size of cube, with where
+  // their lights went; and whether some were left to make at a later call (a few a call, so a
+  // village coming into view does not stall a frame).
+  private cubes = new Map<string, { mesh: LocalMesh; windows: Shape["windows"]; chimneys: Shape["chimneys"] }>();
+  pending = false;
+  // Triangles of the houses' mesh, for the measures.
+  triangles = 0;
 
   constructor(
     private scene: Scene,
@@ -501,7 +569,7 @@ export class Buildings {
 
   // Rebuilds the merged mesh when the set of buildings changed. Returns the
   // cells it drew, for the view to leave out of its per cell models.
-  update(world: World): Set<number> {
+  update(world: World, fine: FineFocus | null = null): Set<number> {
     const drawn = new Set<number>();
     const blocks: { i: number; kind: number; s: Settlement | null }[] = [];
     const W = world.w;
@@ -532,14 +600,28 @@ export class Buildings {
       blocks.push({ i, kind: C.HOUSE, s: nearest(world, i) });
       for (const c of cells) drawn.add(c);
     }
-    this.updateSites(world, drawn);
+    this.updateSites(world, drawn, fine);
     let key = "";
-    for (const b of blocks) {
+    // The size of cube each building is drawn with (cubes.ts lodAt): 0 the old model.
+    const lods = blocks.map((b) => lodAt(fine, (b.i % W) + 1 - (fine?.x ?? 0), Math.floor(b.i / W) + 1 - (fine?.y ?? 0)));
+    const started = performance.now();
+    this.pending = false;
+    blocks.forEach((b, n) => {
       const patched = b.kind === C.HOUSE && [b.i, b.i + 1, b.i + W, b.i + W + 1].some((c) => world.patched.has(c));
       key += `${b.i}:${b.kind}:${patched ? 1 : 0}:${(b.s?.level ?? 0) >= 3 ? 1 : 0},`;
-    }
+      // Models in cubes not made yet: a few milliseconds of them a call, the old model meanwhile.
+      if (lods[n] && !this.cubes.has(this.cubeKey(world, b, lods[n], patched))) {
+        if (performance.now() - started < 6) this.cubeOf(world, b, lods[n], patched);
+        else {
+          lods[n] = 0;
+          this.pending = true;
+        }
+      }
+      if (lods[n]) key += `c${lods[n]},`;
+    });
     if (key === this.key) return drawn;
     this.key = key;
+    this.triangles = 0;
     const pos: number[] = [];
     const col: number[] = [];
     this.lights.windows = [];
@@ -578,7 +660,14 @@ export class Buildings {
       };
       // Footing down to the lowest cell, so nothing floats on a slope.
       if (base - low > 0.05) add(B(0.05, low - base, 0.05, 1.9, base - low + 0.02, 1.9, 0x7a7068), 1);
-      for (const box of shape.boxes) add(box);
+      const lod = lods[blocks.indexOf(b)];
+      const cube = lod ? this.cubes.get(this.cubeKey(world, b, lod, patched)) : undefined;
+      if (cube) {
+        appendTurned(cube.mesh, qq, ox, base, oz, tint, pos, col);
+        this.triangles += cube.mesh.tris;
+        shape.windows = cube.windows;
+        shape.chimneys = cube.chimneys;
+      } else for (const box of shape.boxes) add(box);
       for (const wdw of shape.windows) {
         const p = turnPoint(wdw, qq);
         const axis = (qq % 2 === 1 ? 1 - wdw.axis : wdw.axis) as 0 | 1;
@@ -594,6 +683,7 @@ export class Buildings {
       this.mesh.geometry.dispose();
       this.mesh = null;
     }
+    this.triangles = pos.length / 9;
     if (pos.length) {
       const g = new BufferGeometry();
       g.setAttribute("position", new BufferAttribute(new Float32Array(pos), 3));
@@ -606,9 +696,27 @@ export class Buildings {
     return drawn;
   }
 
+  private cubeKey(world: World, b: { i: number; kind: number; s: Settlement | null }, lod: number, patched: boolean): string {
+    return `${b.i}:${b.kind}:${b.s ? b.s.style : -1}:${(b.s?.level ?? 0) >= 3 ? 1 : 0}:${patched ? 1 : 0}:${lod}:${world.seed}`;
+  }
+
+  // A building's model in small cubes (cube-houses.ts), made once and kept.
+  private cubeOf(world: World, b: { i: number; kind: number; s: Settlement | null }, lod: number, patched: boolean): void {
+    const style = b.s ? HOUSE_STYLES[b.s.style] : "timber";
+    const seed = hash(b.i, world.seed);
+    const shape = b.kind === C.HOUSE ? houseShape(seed, style, (b.s?.level ?? 0) >= 3, patched) : jobShape(seed, b.kind, style);
+    if (shape.plan) {
+      const f = fineHouse(shape, seed);
+      this.cubes.set(this.cubeKey(world, b, lod, patched), { mesh: (lod === 2 ? f.vox.coarse() : f.vox).mesh(), windows: f.windows, chimneys: f.chimneys });
+    } else {
+      const v = fineBoxes(shape.boxes);
+      this.cubes.set(this.cubeKey(world, b, lod, patched), { mesh: (lod === 2 ? v.coarse() : v).mesh(), windows: shape.windows, chimneys: shape.chimneys });
+    }
+  }
+
   // 4.9 part 2: the sites going up, in a mesh of their own (one more draw
   // call), rebuilt when a site is staked, moves on a stage or is finished.
-  private updateSites(world: World, drawn: Set<number>): void {
+  private updateSites(world: World, drawn: Set<number>, fine: FineFocus | null): void {
     const W = world.w;
     let key = "";
     for (const t of world.sites) {
@@ -616,6 +724,8 @@ export class Buildings {
       if (!cells.every((c) => world.cover[c] === C.SITE)) continue;
       for (const c of cells) drawn.add(c);
       key += `${t.i}:${t.kind}:${stageOf(t)}:${logsLeft(t)},`;
+      const lod = lodAt(fine, (t.i % W) + 1 - (fine?.x ?? 0), Math.floor(t.i / W) + 1 - (fine?.y ?? 0));
+      if (lod) key += `c${lod},`;
     }
     if (key === this.siteKey) return;
     this.siteKey = key;
@@ -648,7 +758,13 @@ export class Buildings {
         pushBox(pos, col, { ...r, x: r.x + ox, y: r.y + base, z: r.z + oz }, box.y > 0.05);
       };
       if (base - low > 0.05) add(B(0.05, low - base, 0.05, 1.9, base - low + 0.02, 1.9, 0x7a7068));
-      for (const box of siteShape(final, stageOf(t), logsLeft(t), STYLE[style]?.trim)) add(box);
+      const boxes = siteShape(final, stageOf(t), logsLeft(t), STYLE[style]?.trim);
+      // In small cubes near the camera: poles, planks and logs a cube or two thick.
+      const lod = lodAt(fine, x + 1 - (fine?.x ?? 0), y + 1 - (fine?.y ?? 0));
+      if (lod) {
+        const v = fineBoxes(boxes);
+        appendTurned((lod === 2 ? v.coarse() : v).mesh(), qq, ox, base, oz, 1, pos, col);
+      } else for (const box of boxes) add(box);
     }
     if (this.siteMesh) {
       this.scene.remove(this.siteMesh);
@@ -674,6 +790,20 @@ export class Buildings {
     if (this.siteMesh) {
       this.scene.remove(this.siteMesh);
       this.siteMesh.geometry.dispose();
+    }
+  }
+}
+
+// A model's faces (in the block's own frame, cells, the view's axes) turned a quarter turn qq
+// times about the block's middle as turn() does, set at (ox, oy, oz), its colours times k.
+function appendTurned(m: LocalMesh, qq: number, ox: number, oy: number, oz: number, k: number, pos: number[], col: number[]): void {
+  for (const src of [m.lit, m.glow]) {
+    for (let n = 0; n < src.pos.length; n += 3) {
+      let x = src.pos[n];
+      let z = src.pos[n + 2];
+      for (let q = 0; q < qq; q++) [x, z] = [2 - z, x];
+      pos.push(x + ox, src.pos[n + 1] + oy, z + oz);
+      col.push(Math.min(1, src.col[n] * k), Math.min(1, src.col[n + 1] * k), Math.min(1, src.col[n + 2] * k));
     }
   }
 }
