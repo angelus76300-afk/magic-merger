@@ -20,6 +20,7 @@
 import { GRAPHICS } from "./graphics";
 import { FACE_LIGHT } from "./models";
 import { scaleColor } from "../colors";
+import { G } from "../materials";
 import type { Writer } from "./terrain";
 
 // Cells a side of the piece of a chunk built at once.
@@ -172,6 +173,9 @@ const RISER = 2;
 // How much of a wall's darker side a slope's riser takes: enough for each small cube's edge to
 // show, not so much that the slope turns to stripes.
 const RISER_SIDE = 0.45;
+// On bare rock, the share of the per voxel variation kept (tone patches, risers' dark sides,
+// hollows): half, so slopes of rock read by their light rather than as a mosaic.
+const ROCK_CALM = 0.5;
 // The rock's strata (rocks): three tones of a cliff's stone, by the voxel band.
 const ROCK_TONE = [1, 0.86, 0.94];
 
@@ -314,7 +318,8 @@ let H = new Int32Array(0);
 let C = new Uint32Array(0);
 let D = new Uint8Array(0); // 1 where a top takes spell drawings
 let DONE = new Uint8Array(0);
-let LAND = new Uint8Array(0); // 1 on open dry ground (not a flower, a tuft or a boulder)
+// 1 on open dry ground (not a flower, a tuft or a boulder), 2 where that ground is bare rock.
+let LAND = new Uint8Array(0);
 let SUM = new Float64Array(0);
 
 // Writes one tile of the chunk's fine land, cells [tx0, tx1) by [ty0, ty1) in island
@@ -422,10 +427,13 @@ export function buildFineTile(f: FineCells, out: Writer, ox: number, oz: number,
         }
       }
       H[s] = hgt + raise;
-      LAND[s] = f.natural[c] && !f.wet[c] && !bit ? 1 : 0;
+      const rock = f.ground[src] === G.ROCK;
+      LAND[s] = f.natural[c] && !f.wet[c] && !bit ? (rock ? 2 : 1) : 0;
       D[s] = f.wet[c] || src !== c ? 0 : 1;
       let col = bit || f.color[src];
-      if (grain && f.natural[c] && !bit) col = scaleColor(col, shadeAt(px, py));
+      // Bare rock takes half the patches' contrast (the owner's hill read as light and dark
+      // checks): its slopes' light carries its form.
+      if (grain && f.natural[c] && !bit) col = scaleColor(col, rock ? 1 + (shadeAt(px, py) - 1) * ROCK_CALM : shadeAt(px, py));
       C[s] = col;
     }
   }
@@ -478,7 +486,7 @@ export function buildFineTile(f: FineCells, out: Writer, ox: number, oz: number,
         const W1 = SW + 1;
         const mean = (SUM[(j + 4) * W1 + k + 4] - SUM[(j - 3) * W1 + k + 4] - SUM[(j + 4) * W1 + k - 3] + SUM[(j - 3) * W1 + k - 3]) / 49;
         const above = (mean - h0) / sub;
-        if (above > 0) light *= 1 - Math.min(0.2, above * 0.3);
+        if (above > 0) light *= 1 - Math.min(0.2, above * 0.3) * (LAND[s] === 2 ? ROCK_CALM : 1);
         // The foot of a slope: flat here, a gentle rise next to it.
         if (!gx && !gz && (e > 0 || -w > 0 || so > 0 || -no > 0)) light *= 0.9;
         C[s] = tint(C[s], h0 / sub);
@@ -665,7 +673,7 @@ function wallFaces(
   // included), a little darker on its side, so every small cube's edge still shows.
   if (T - low <= RISER && !f.wet[c] && low > bottom) {
     face(low, T, C[s]);
-    FACES[n - 1].light = 1 - RISER_SIDE * (1 - light);
+    FACES[n - 1].light = 1 - RISER_SIDE * (LAND[s] === 2 ? ROCK_CALM : 1) * (1 - light);
     FACES[n - 1].foot = 1;
     return n;
   }

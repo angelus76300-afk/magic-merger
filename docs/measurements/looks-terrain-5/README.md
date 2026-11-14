@@ -52,3 +52,23 @@ A chunk is built over frames: at most 4 ms a frame for a new chunk, 1.5 ms for o
 ## Frames
 
 `*-390x844-pass4-vs-5.jpg`: pass 4 on the left, this pass on the right, for the hill, the mountain (the highest dry ground, 8 cells inside the rim), the shore and the village. Seed 7, medium island, the same spots for both.
+
+## After merging main (#151, #162), 14 November
+
+- **Calmer rock.** Bare rock keeps half of the per-voxel variation: half the contrast of its tone patches, its risers' dark sides and its hollows. Its slopes' light carries the form, so the hill's stone no longer reads as light and dark checks.
+- **Land near the camera counts.** A chunk is also drawn finely when it is near the camera itself, measured from the chunk's highest column. On a tall island the camera can stand by a summit's flank far from the point it looks at, and that flank used to stay in whole blocks. "High up" (whole cells) is now the camera's distance to the point it looks at, over 60, not its absolute height, so tall islands keep their fine land.
+- **Land triangles, all switches on** (`scripts/terrain-measure.ts`):
+
+  | Island               | Close   | Mid     | Far              |
+  | -------------------- | ------- | ------- | ---------------- |
+  | medium coast (152)   | 420 086 | 254 852 | 69 762, as main  |
+  | large mixed (208)    | 546 136 | 252 606 | 112 818, as main |
+  | small plateau desert | 540 622 | 213 840 | 40 676, as main  |
+
+  Tile p95 is under 0.6 ms and the longest tile 3 ms.
+
+- **Frames at 344 by 882:**
+  - `hill-344x882.jpg`
+  - `village-344x882.jpg`
+  - `low-sun-shadows-344x882.jpg`: the hill at time 194 (a low sun before dusk), with #149's sun shadows and grade on. The fine land casts and receives them.
+  - `taller-peak-344x882.jpg`: a close view of a tundra ridges island, seed 11, made with taller peaks (`peaks=1`).

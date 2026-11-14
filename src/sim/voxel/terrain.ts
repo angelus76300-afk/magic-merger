@@ -313,8 +313,16 @@ export class Terrain {
     const oz = -this.world.h / 2;
     const dx = Math.max(x0 + ox - this.eye.tx, 0, this.eye.tx - (x1 + ox));
     const dz = Math.max(y0 + oz - this.eye.tz, 0, this.eye.tz - (y1 + oz));
-    return Math.hypot(dx, this.eye.reach * 0.5, dz);
+    const toTarget = Math.hypot(dx, this.eye.reach * 0.5, dz);
+    // Land close to the camera itself counts too: on a tall island the camera can stand by a
+    // summit's flank far from the point it looks at, and that flank fills the front of the view.
+    const cx = Math.max(x0 + ox - this.eye.x, 0, this.eye.x - (x1 + ox));
+    const cz = Math.max(y0 + oz - this.eye.z, 0, this.eye.z - (y1 + oz));
+    const cy = Math.max(0, this.eye.y - (this.chunkTop[c] ?? FINE_TOP));
+    return Math.min(toTarget, Math.hypot(cx, cy, cz));
   }
+  // Each chunk's highest column, as last built (buildLand).
+  private chunkTop: number[] = [];
 
   // The cells as the secondary terrain map reads them (terrain-fine.ts fieldHeight), the same
   // links as the fine land's: dry ground, not built (a path counts as ground), at most a voxel apart.
@@ -430,7 +438,7 @@ export class Terrain {
     void until;
     const start = performance.now();
     // From high up, the whole island in whole cells.
-    const high = this.eye.y > FINE_HIGH;
+    const high = this.eye.reach > FINE_HIGH;
     for (;;) {
       let best = -1;
       let bestRank = Infinity;
@@ -620,10 +628,12 @@ export class Terrain {
     out.reset();
     const ox = -w / 2;
     const oz = -h / 2;
+    let highest = BOTTOM;
     for (let y = y0; y < y1; y++) {
       for (let x = x0; x < x1; x++) {
         const i = y * w + x;
         const top = topAt(x, y);
+        if (top > highest) highest = top;
         const X = x + ox;
         const Z = y + oz;
         const surface = this.topColor(i);
@@ -689,6 +699,7 @@ export class Terrain {
         }
       }
     }
+    this.chunkTop[c] = highest;
     return out.geometry(3);
   }
 
@@ -939,9 +950,9 @@ const FINE_NEAR = 28;
 const FINE_KEEP = 34;
 const FINE_DROP = 90;
 const FINE_TOP = 6;
-// The camera higher than this sees the island in whole cells, and a changed fine chunk is built
-// again at most once in STALE_MS.
-const FINE_HIGH = 42;
+// The camera farther than this from the point it looks at sees the island in whole cells (the
+// whole island from the sky), and a changed fine chunk is built again at most once in STALE_MS.
+const FINE_HIGH = 60;
 const STALE_MS = 2000;
 const FLOW_STALE_MS = 10000;
 // How far a waterfall hangs in front of the island's cut side, in cells.
