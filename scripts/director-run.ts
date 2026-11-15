@@ -31,9 +31,10 @@ export interface Watched {
   };
 }
 
-export function watchIsland(seed: number, seconds: number, size = 152): Watched {
+// `peaks`: an island made as from now on, with taller peaks (5.2.5, land.ts uplift).
+export function watchIsland(seed: number, seconds: number, size = 152, peaks = false): Watched {
   Runtime.slowMs = Infinity;
-  const world = generateWorld(size, size, seed, resolveLand({ ...DEFAULT_LAND }, seed, size));
+  const world = generateWorld(size, size, seed, { ...resolveLand({ ...DEFAULT_LAND }, seed, size), ...(peaks ? { peaks: true } : {}) });
   populate(world);
   const rt = new Runtime(world, () => undefined);
   raiseWonders(world, rt);

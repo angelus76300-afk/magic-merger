@@ -89,7 +89,8 @@ const STARS = 700;
 const DROPS = 21600;
 
 export class Sky {
-  private group = new Group();
+  // Named so the glow mask (looks.ts) leaves the sun, moon and stars out of the bloom.
+  private group = Object.assign(new Group(), { name: "sky" });
   private sun: Sprite;
   private moon: Sprite;
   private stars: Points;

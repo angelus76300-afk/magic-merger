@@ -1011,41 +1011,58 @@ function covers(world: World, land: LandOptions, seed: number, rng: Rng): void {
 }
 
 // A volcano: a cone near the middle; its crater is filled with lava once the
-// water is in (crater() below), its rim bare stone.
+// water is in (crater() below), its rim bare stone. `tall` (5.2.5, land.peaks): a higher cone
+// with steeper upper slopes and a wider, deeper crater.
 function volcano(
   world: World,
   rng: Rng,
   peak: number,
   at: { x: number; y: number; r: number } | null = null,
-): { x: number; y: number; r: number; rim: number } {
+  tall = false,
+): { x: number; y: number; r: number; rim: number; depth: number } {
   const { w, h, height } = world;
   const cx = at ? at.x : w * rng.range(0.35, 0.65);
   const cy = at ? at.y : h * rng.range(0.35, 0.65);
   const r = at ? at.r * 1.1 : Math.min(w, h) * 0.22;
-  const top = SEA + peak * 1.15;
+  const top = SEA + peak * (tall ? 1.6 : 1.15);
+  const steep = tall ? 1.8 : 1.4;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const d = Math.hypot(x - cx, y - cy) / r;
       if (d >= 1) continue;
       const i = y * w + x;
-      const cone = top * (1 - d) ** 1.4 + height[i] * (1 - (1 - d) ** 0.6);
+      const cone = top * (1 - d) ** steep + height[i] * (1 - (1 - d) ** 0.6);
       height[i] = Math.max(height[i], cone);
     }
   }
-  const cr = Math.max(3, r * 0.18);
-  return { x: cx, y: cy, r: cr, rim: top * (1 - cr / r) ** 1.4 };
+  const cr = Math.max(3, r * (tall ? 0.22 : 0.18));
+  return { x: cx, y: cy, r: cr, rim: top * (1 - cr / r) ** steep, depth: tall ? 5 : 2.2 };
 }
 
-function crater(world: World, at: { x: number; y: number; r: number; rim: number }): void {
+// Taller mountains (5.2.5, land.peaks): the upper half of the island's relief is raised, more the
+// higher it stands, so summits rise by up to half the island's peak again and their upper slopes
+// grow steeper. The lower half (shores, villages' ground, rivers' valleys) is untouched.
+function uplift(world: World, peak: number): void {
+  const { height } = world;
+  const from = SEA + peak * 0.5;
+  const span = peak * 0.5;
+  for (let i = 0; i < height.length; i++) {
+    const v = height[i];
+    if (v <= from) continue;
+    height[i] = v + span * Math.min(1.2, (v - from) / span) ** 1.6;
+  }
+}
+
+function crater(world: World, at: { x: number; y: number; r: number; rim: number; depth: number }): void {
   const { w, height } = world;
-  const { x: cx, y: cy, r: cr, rim } = at;
+  const { x: cx, y: cy, r: cr, rim, depth } = at;
   for (let y = Math.floor(cy - cr - 4); y <= cy + cr + 4; y++) {
     for (let x = Math.floor(cx - cr - 4); x <= cx + cr + 4; x++) {
       if (!world.inside(x, y)) continue;
       const i = y * w + x;
       const d = Math.hypot(x - cx, y - cy);
       if (d < cr) {
-        height[i] = rim - 2.2;
+        height[i] = rim - depth;
         world.setFluid(i, F.LAVA, 1.2);
         world.ground[i] = G.BASALT;
       } else if (d < cr + 4) {
@@ -1273,6 +1290,8 @@ export function buildLand(world: World, land: LandOptions): Built {
   // once, above the shore, before mesas and plateaus cut their own steps.
   soften(world, SEA + 1);
   if (land.shape === "plateau") terrace(world.height, 4 + land.relief * 3, 0.22);
+  // 5.2.5: taller mountains on islands made from now on (land.peaks), never on mesas and plateaus.
+  if (land.peaks && land.shape !== "plateau" && one !== "mesa" && one !== "swamp") uplift(world, peak);
   let cone: ReturnType<typeof volcano> | null = null;
   if (land.mixed) {
     // 4.4.1: regions, then their relief: mesa terraces and low swamps that
@@ -1283,10 +1302,10 @@ export function buildLand(world: World, land: LandOptions): Built {
     if (mesa) terrace(world.height, 3 + land.relief * 2, 0.16, mesa);
     const swamp = regionWeight(world, map, "swamp", 6);
     if (swamp) for (let i = 0; i < world.n; i++) if (world.height[i] > SEA) world.height[i] = SEA + (world.height[i] - SEA) * (1 - 0.55 * swamp[i]);
-    if (v) cone = volcano(world, rng, peak, v);
+    if (v) cone = volcano(world, rng, peak, v, !!land.peaks);
   } else {
     if (one === "mesa") terrace(world.height, 3 + land.relief * 2, 0.16);
-    if (one === "volcanic") cone = volcano(world, rng, peak);
+    if (one === "volcanic") cone = volcano(world, rng, peak, null, !!land.peaks);
   }
   // 4.4.5 part C (the owner's report: "there is too much water"): only the
   // biggest hollows stay lakes; the others fill up to their spill and are land.
