@@ -25,11 +25,13 @@ export interface LocalMesh {
 
 type V = [number, number, number];
 
-// The side of a look's voxels, in cells: a quarter of a land cell, the one small cube
-// size the owner's references are made of, land included (13 November).
-export const LOOK_VOXEL = 0.25;
-// A far look is the same grid at twice the side (PropModels' triangle budget).
-export const FAR_COARSEN = 2;
+// The side of a look's voxels, in cells: an eighth of a land cell, the one small cube size of the
+// land, the houses and the trees at every distance (15 November, the owner: "let's just keep 1/8
+// all the time").
+export const LOOK_VOXEL = 0.125;
+// A far look keeps the same cubes (it was the grid at twice the side): only a stored look of boxes
+// is drawn simpler past PropModels' triangle budget, by its largest parts.
+export const FAR_COARSEN = 1;
 // A look's grid holds this many voxels at most; past it the side grows.
 const MAX_CELLS = 2_000_000;
 // Light of a corner by how shut in it is, as the terrain's (terrain.ts AO_LIGHT).

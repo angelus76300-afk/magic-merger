@@ -9,10 +9,9 @@ import { meshGrid, type LocalMesh, type VoxelGrid } from "./shapes";
 // unchanged. Each model is filled into a grid of CUBE cubes, then meshed by the looks' own
 // mesher (shapes.ts meshGrid): faces merged where they match, soft shadow in every corner.
 //
-// CUBE is an eighth of a cell, the land's own fine step near the camera: a house wall is six
-// cubes tall, so a window can sit one cube back in its frame, a tree crown eight to ten across.
-// Behind GRAPHICS.cubes (graphics.ts: off on the low preset), and only near the camera
-// (view.ts): farther away the old models stay, so the island costs what it did.
+// CUBE is an eighth of a cell, the land's own fine step: a house wall is six cubes tall, so a
+// window can sit one cube back in its frame, a tree crown eight to ten across. Behind
+// GRAPHICS.cubes (graphics.ts: off on the low preset), at every distance (15 November).
 
 export const CUBE = 0.125;
 
@@ -114,13 +113,34 @@ export class Vox {
     return out;
   }
 
-  // The faces, in the view's axes (x, up, south) and cells, as a look's (shapes.ts).
-  mesh(): LocalMesh {
+  // The same model `side` cubes across instead of its own side, cubes of the same size (15
+  // November, the owner: one size of cube everywhere): a bigger tree gets more cubes, never bigger
+  // ones. Each new cube takes the colour of the cube under its middle in the model stretched to
+  // the new size.
+  sized(side: number): Vox {
+    const own = this.nx - this.pad * 2;
+    if (side === own) return this;
+    const k = side / own;
+    const out = new Vox(side, Math.max(1, Math.ceil(this.nz * k)), Math.ceil(this.pad * k), this.cube);
+    for (let z = 0; z < out.nz; z++)
+      for (let y = -out.pad; y < side + out.pad; y++)
+        for (let x = -out.pad; x < side + out.pad; x++) {
+          const at = this.at(Math.floor((x + 0.5) / k), Math.floor((y + 0.5) / k), Math.floor((z + 0.5) / k));
+          if (at < 0 || this.color[at] < 0) continue;
+          out.set(x, y, z, this.color[at], this.glow[at] === 1);
+        }
+    return out;
+  }
+
+  // The faces, in the view's axes (x, up, south) and cells, as a look's (shapes.ts). `centre`: the
+  // model's middle put at the middle of the cell (0.5, 0.5), whatever its side.
+  mesh(centre = false): LocalMesh {
     let count = 0;
     for (const c of this.color) if (c >= 0) count++;
+    const shift = centre ? 0.5 - ((this.nx - this.pad * 2) * this.cube) / 2 : 0;
     const g: VoxelGrid = {
       s: this.cube,
-      o: [-this.pad * this.cube, -this.pad * this.cube, 0],
+      o: [shift - this.pad * this.cube, shift - this.pad * this.cube, 0],
       n: [this.nx, this.ny, this.nz],
       color: this.color,
       glow: this.glow,
@@ -626,26 +646,43 @@ function mushroomCap(t: Tree, cap: number, glow: boolean): void {
 
 export const FINE_VARIANTS = 1;
 
-const trees = new Map<string, LocalMesh>();
+// A tree's size in cubes across: eight for a tree of one cell, from SIZE_MIN to SIZE_MAX.
+export const SIZE_MIN = 6;
+export const SIZE_MAX = 13;
+export function treeSize(scale: number): number {
+  return Math.max(SIZE_MIN, Math.min(SIZE_MAX, Math.round(scale * 8)));
+}
 
-// A tree kind's model in small cubes, one of FINE_VARIANTS, in the cell's own frame (x and z
-// from 0 to 1), as the old models are, so the view places it the same way.
-export function cubeTree(style: Exclude<TreeStyle, "">, variant: number, mid = false): LocalMesh {
-  const key = `${style}:${variant}:${mid ? 1 : 0}`;
+const trees = new Map<string, LocalMesh>();
+const models = new Map<string, Vox>();
+
+// A tree kind's model in small cubes, one of FINE_VARIANTS, `size` cubes across (treeSize), in
+// the cell's own frame (x and z from 0 to 1, its middle at the cell's), as the old models are, so
+// the view places it the same way, at scale 1: every tree's cubes are CUBE. `full`: with the faces
+// that look down too (the eye view looks up into crowns).
+export function cubeTree(style: Exclude<TreeStyle, "">, variant: number, size = 8, full = false): LocalMesh {
+  const key = `${style}:${variant}:${size}:${full ? 1 : 0}`;
   let m = trees.get(key);
   if (!m) {
-    let seed = 7919 + variant * 104729;
-    for (let k = 0; k < style.length; k++) seed = Math.imul(seed ^ style.charCodeAt(k), 0x01000193) >>> 0;
-    const t: Tree = { v: new Vox(8, TALL, PAD), rng: new Rng(seed), seed, leaves: new Map() };
-    (FINE[style] ?? FINE.oak)(t);
-    m = skyOnly((mid ? t.v.coarse() : t.v).mesh());
+    const base = `${style}:${variant}`;
+    let v = models.get(base);
+    if (!v) {
+      let seed = 7919 + variant * 104729;
+      for (let k = 0; k < style.length; k++) seed = Math.imul(seed ^ style.charCodeAt(k), 0x01000193) >>> 0;
+      const t: Tree = { v: new Vox(8, TALL, PAD), rng: new Rng(seed), seed, leaves: new Map() };
+      (FINE[style] ?? FINE.oak)(t);
+      v = t.v;
+      models.set(base, v);
+    }
+    const mesh = v.sized(size).mesh(true);
+    m = full ? mesh : skyOnly(mesh);
     trees.set(key, m);
   }
   return m;
 }
 
 // A tree's faces without those that look down (under a crown, a branch): the sky view never sees
-// them, and the eye view draws trees by their old models (near.ts). About a sixth of its triangles.
+// them. About a sixth of its triangles.
 function skyOnly(m: LocalMesh): LocalMesh {
   const keep = (a: { pos: number[]; col: number[] }) => {
     const pos: number[] = [];
@@ -683,58 +720,43 @@ export const OLD_TREES: Record<string, Exclude<TreeStyle, "">> = {
 };
 
 // ---------------------------------------------------------------------------------------------
-// Where the cubes are drawn: near what the camera looks at. Within `r` of it in eighth-cell cubes,
-// within `r2` in quarter-cell cubes (mid zoom), farther the old models, as the land does. The trees
-// nearest that point first, within a budget of triangles for each size (a forest seen from mid
-// zoom is hundreds of trees); the houses all within reach (a village is a few dozen). Placed
-// again once the camera has looked REFOCUS cells away or zoomed by about a third.
-
-export const FINE_DIST = 75;
-export const NEAR_TREE_TRIS = 80_000;
-export const MID_TREE_TRIS = 70_000;
-export const REFOCUS = 8;
+// Where the cubes are drawn: everywhere, at every zoom, in the eye view too (15 November, the
+// owner: "let's just keep 1/8 all the time, the transitions look super weird"; "love some of the
+// finer trees ... don't like the old ones"). Houses, trees and the land are all CUBE, the land's
+// own step, whatever the distance: nothing changes size or pops as the camera moves.
 
 export interface FineFocus {
+  // The point the camera looks at, in cells.
   x: number;
   y: number;
-  r: number;
-  r2: number;
-  // The ground under the camera: the trees nearest it get the finest cubes.
+  // The ground under the camera.
   cx: number;
   cy: number;
-  // In the eye view: the houses only (the trees near the eye have their own models, near.ts).
+  // In the eye view.
   eye: boolean;
 }
 
 export function fineFocus(
   on: boolean,
-  dist: number,
   tx: number,
   ty: number,
   eye: { x: number; y: number } | null,
   cam: { x: number; y: number } = { x: tx, y: ty },
 ): FineFocus | null {
   if (!on) return null;
-  if (eye) return { x: eye.x, y: eye.y, r: 16, r2: 32, cx: eye.x, cy: eye.y, eye: true };
-  if (dist > FINE_DIST) return null;
-  const r = dist > 45 ? 0 : Math.max(10, Math.min(22, dist * 0.55));
-  return { x: tx, y: ty, r, r2: Math.max(r + 6, Math.min(50, dist * 0.9)), cx: cam.x, cy: cam.y, eye: false };
+  if (eye) return { x: eye.x, y: eye.y, cx: eye.x, cy: eye.y, eye: true };
+  return { x: tx, y: ty, cx: cam.x, cy: cam.y, eye: false };
 }
 
-// Which size of cube at a distance d from the focus: 1 eighths, 2 quarters, 0 the old model.
-export function lodAt(f: FineFocus | null, dx: number, dy: number): 0 | 1 | 2 {
-  if (!f) return 0;
-  const d2 = dx * dx + dy * dy;
-  return d2 < f.r * f.r ? 1 : d2 < f.r2 * f.r2 ? 2 : 0;
+// Which size of cube: 1, the small cubes (CUBE), wherever the camera is; 0 the old model, only
+// with the cubes switched off.
+export function lodAt(f: FineFocus | null): 0 | 1 {
+  return f ? 1 : 0;
 }
 
-// Whether the cubes must be placed again for the camera's new focus.
+// Whether the cubes must be placed again: only when they are switched on or off, or the eye view
+// is entered or left (what the camera looks at no longer changes how anything is drawn).
 export function refocus(was: FineFocus | null, now: FineFocus | null): boolean {
   if (!was || !now) return was !== now;
-  if (was.eye !== now.eye || (was.r === 0) !== (now.r === 0)) return true;
-  return (
-    Math.hypot(now.x - was.x, now.y - was.y) > (now.eye ? 4 : REFOCUS) ||
-    Math.hypot(now.cx - was.cx, now.cy - was.cy) > REFOCUS * 1.5 ||
-    Math.abs(Math.log(now.r2 / was.r2)) > 0.28
-  );
+  return was.eye !== now.eye;
 }

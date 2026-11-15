@@ -56,7 +56,7 @@ import { DAMP, HEART, HOUSE_STYLES, R as RARE, STYLE_BITS, TREE_STYLES, type Tre
 import { FAR_CELLS, NEAR_CELLS, farTreeModel, nearTreeModel } from "./near";
 import { GLOWING, VARIANTS, floraModels } from "./flora";
 import { Buildings } from "./buildings";
-import { FINE_VARIANTS, MID_TREE_TRIS, NEAR_TREE_TRIS, OLD_TREES, cubeTree, fineFocus, geometryOfMesh, lodAt, refocus, type FineFocus } from "./cubes";
+import { FINE_VARIANTS, OLD_TREES, cubeTree, fineFocus, geometryOfMesh, refocus, treeSize, type FineFocus } from "./cubes";
 import { WonderModels } from "./wonders";
 import { PropModels } from "./props";
 import { valueNoise } from "../noise";
@@ -444,7 +444,7 @@ export class VoxelView {
       : around !== null;
     // The houses and trees in small cubes follow what the camera looks at (cubes.ts).
     const cam = this.orbit.camera.position;
-    const fine = fineFocus(GRAPHICS.cubes, this.orbit.dist, this.orbit.tx, this.orbit.ty, eye, { x: cam.x + world.w / 2, y: cam.z + world.h / 2 });
+    const fine = fineFocus(GRAPHICS.cubes, this.orbit.tx, this.orbit.ty, eye, { x: cam.x + world.w / 2, y: cam.z + world.h / 2 });
     if (refocus(this.fineAt, fine)) {
       this.fineAt = fine;
       this.lastCovers = -1;
@@ -656,11 +656,11 @@ export class VoxelView {
     // A far tree of the eye view (placeCovers): its two box model.
     const far = key.startsWith("far:");
     const own = far ? key.slice(4) : key;
-    // A tree in small cubes (cubes.ts): "cube:oak:1".
+    // A tree in small cubes (cubes.ts): "cube:oak:0:9", its kind, variant and size in cubes.
     const cube = own.startsWith("cube:") ? own.split(":") : null;
     const boxes0 = MODELS[own] ?? FLORA_MODELS[own] ?? MODELS.block;
     const boxes = far ? farTreeModel(boxes0) : boxes0;
-    const geometry = mesh ? mesh.geometry : cube ? geometryOfMesh(cubeTree(cube[1] as never, Number(cube[2]), cube[3] === "2")) : geometryOf(boxes);
+    const geometry = mesh ? mesh.geometry : cube ? geometryOfMesh(cubeTree(cube[1] as never, Number(cube[2]), Number(cube[3]))) : geometryOf(boxes);
     const glows = GLOWING.has(key) || (cube !== null && cube[1] === "glowcap");
     const bigger = new InstancedMesh(geometry, glows ? this.glowMaterial : this.coverMaterial, Math.max(64, Math.ceil(need * 1.5)));
     withColors(bigger);
@@ -737,6 +737,18 @@ export class VoxelView {
   // Where the eye was when the covers were last placed (null: placed whole, from the sky).
   private coversAround: { x: number; y: number; yaw: number } | null = null;
 
+  // A tree's size, as placeCovers draws its old model: height and girth from its cell, older trees
+  // bigger; on the old islands (no flora) a little variety by its shade.
+  private treeScale(i: number): number {
+    const { world } = this;
+    if (!world.flora) return 0.85 + (world.shade[i] % 7) * 0.04;
+    const h = cellHash(i);
+    const old = world.flora[i] & HEART ? 1.3 : 1;
+    const sh = (0.82 + (((h >> 3) % 32) / 32) * 0.4) * old;
+    const sw = (0.86 + (((h >> 8) % 32) / 32) * 0.26) * old;
+    return (sw + sh) / 2;
+  }
+
   private placeCovers(): void {
     const { world } = this;
     const lists = new Map<string, number[]>();
@@ -764,12 +776,9 @@ export class VoxelView {
     const flora = world.flora;
     // Villages of 4.4.5 part B: houses and buildings drawn whole, each its own.
     const whole = world.settlements.length || world.sites.length ? this.buildings.update(world, this.fineAt) : null;
-    // Trees near the camera in small cubes, the nearest first within their budget (cubes.ts).
-    const fine = this.fineAt && !this.fineAt.eye ? this.fineAt : null;
-    const nearTrees: [number, number, string][] = [];
-    // The point on the ground under the camera, in cells.
-    const camX = fine?.cx ?? 0;
-    const camY = fine?.cy ?? 0;
+    // Every tree in small cubes, at every zoom and in the eye view (cubes.ts), each its size in
+    // cubes of the one size (15 November).
+    const fine = this.fineAt;
     for (let i = 0; i < world.n; i++) {
       const c = world.cover[i];
       if (whole?.has(i) || c === C.WONDER) continue;
@@ -783,13 +792,9 @@ export class VoxelView {
       }
       const key = this.coverKey(i, c, trees, builtinCovers);
       if (fine && isTree(key)) {
-        const dx = (i % world.w) + 0.5 - fine.x;
-        const dy = Math.floor(i / world.w) + 0.5 - fine.y;
-        if (lodAt(fine, dx, dy)) {
-          // Nearest the camera first: what is big on the screen gets the finest cubes.
-          const cx = (i % world.w) + 0.5 - camX;
-          const cy = Math.floor(i / world.w) + 0.5 - camY;
-          nearTrees.push([cx * cx + cy * cy, i, key]);
+        const style = key.startsWith("tree:") ? key.split(":")[1] : OLD_TREES[key];
+        if (style) {
+          add(`cube:${style}:${(cellHash(i) >>> 5) % FINE_VARIANTS}:${treeSize(this.treeScale(i))}`, i);
           continue;
         }
       }
@@ -803,25 +808,6 @@ export class VoxelView {
         }
       }
       add(key, i);
-    }
-    if (nearTrees.length) {
-      nearTrees.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-      // Eighth cubes for the nearest, then quarter cubes, each within its budget; past both, the old model.
-      const left = [0, NEAR_TREE_TRIS, MID_TREE_TRIS];
-      for (const [, i, key] of nearTrees) {
-        const style = key.startsWith("tree:") ? key.split(":")[1] : OLD_TREES[key];
-        const v = (cellHash(i) >>> 5) % FINE_VARIANTS;
-        let lod = fine!.r > 0 ? 1 : 2;
-        let placed = false;
-        for (; style && lod <= 2 && !placed; lod++) {
-          const tris = cubeTree(style as never, v, lod === 2).tris;
-          if (tris > left[lod]) continue;
-          left[lod] -= tris;
-          add(`cube:${style}:${v}:${lod}`, i);
-          placed = true;
-        }
-        if (!placed) add(key, i);
-      }
     }
     // 4.9: pegs every few cells along a road marked out and not laid yet.
     for (const r of world.roads)
@@ -841,7 +827,7 @@ export class VoxelView {
       if (!cells.length && !this.covers.has(key)) continue;
       const mesh = this.coverMesh(key, cells.length);
       // A tree of the flora kit has boxes drawn over it near the eye (near.ts).
-      const slot = key.startsWith("tree:") ? this.treeKeys.push(key) - 1 : -1;
+      const slot = key.startsWith("tree:") || key.startsWith("cube:") ? this.treeKeys.push(key) - 1 : -1;
       if (slot >= 0) for (let k = 0; k < cells.length; k++) this.treeSlots.set(cells[k], slot * 0x100000 + k);
       const cube = key.startsWith("cube:");
       const tree = cube || isTree(key.startsWith("far:") ? key.slice(4) : key);
@@ -866,9 +852,11 @@ export class VoxelView {
           const sw = (0.86 + (((h >> 8) % 32) / 32) * 0.26) * old;
           const lean = (((h >> 13) % 32) / 32) * 0.1;
           const dir = (((h >> 18) % 64) / 64) * Math.PI * 2;
-          // In small cubes: as big, but square cubes and upright.
-          if (cube) placeLeaning(m, p, (h >> 1) % 4, (sw + sh) / 2, (sw + sh) / 2, 0, 0);
+          // In small cubes: upright, at scale 1 (its size is in its model, treeSize).
+          if (cube) placeLeaning(m, p, (h >> 1) % 4, 1, 1, 0, 0);
           else placeLeaning(m, p, (h >> 1) % 4, sw, sh, lean, dir);
+        } else if (cube) {
+          placeLeaning(m, p, (world.shade[i] >> 2) % 4, 1, 1, 0, 0);
         } else {
           // A little size and turn variety so forests do not look stamped.
           const s = 0.85 + (world.shade[i] % 7) * 0.04;
@@ -956,8 +944,13 @@ export class VoxelView {
       if (!base) continue;
       if (!mesh || slots.length > mesh.instanceMatrix.count) {
         if (!slots.length) continue;
-        const boxes = nearTreeModel(key.split(":")[1] as TreeStyle, FLORA_MODELS[key] ?? []);
-        const geometry = mesh ? mesh.geometry : geometryOf(boxes);
+        // A tree in small cubes keeps its model near the eye, with the faces under its crown.
+        const cube = key.startsWith("cube:") ? key.split(":") : null;
+        const geometry = mesh
+          ? mesh.geometry
+          : cube
+            ? geometryOfMesh(cubeTree(cube[1] as never, Number(cube[2]), Number(cube[3]), true))
+            : geometryOf(nearTreeModel(key.split(":")[1] as TreeStyle, FLORA_MODELS[key] ?? []));
         const bigger = new InstancedMesh(geometry, base.material, Math.max(32, Math.ceil(slots.length * 1.5)));
         withColors(bigger);
         bigger.frustumCulled = false;

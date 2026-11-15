@@ -1,15 +1,16 @@
 // The village houses and the trees in small cubes (5.2.5, src/sim/voxel/cubes.ts, cube-houses.ts):
 // with the switch off every house, building, site and tree is drawn exactly as main drew it
 // (scripts/fixtures/cubes-off-mesh.json, made on main by scripts/cubes-golden.ts); with it on,
-// near the camera, the houses keep their footprint, doors and lights, and each kind of tree its
-// own model in cubes, cheaper at mid zoom.
+// at every distance (15 November, one size of cube), the houses keep their footprint, doors and
+// lights, and each kind of tree its own model in cubes of the one size, more of them when bigger.
 import { readFileSync } from "node:fs";
 import { Mesh, MeshBasicMaterial, Scene } from "three";
 import { shapeHashes, villageHashes } from "./cubes-golden";
 import { GRAPHICS, PRESETS } from "../src/sim/voxel/graphics";
 import { Buildings, houseShape } from "../src/sim/voxel/buildings";
 import { fineHouse } from "../src/sim/voxel/cube-houses";
-import { CUBE, FINE_VARIANTS, cubeTree, fineFocus, lodAt, refocus } from "../src/sim/voxel/cubes";
+import { CUBE, FINE_VARIANTS, SIZE_MAX, SIZE_MIN, cubeTree, fineFocus, lodAt, refocus, treeSize } from "../src/sim/voxel/cubes";
+import { FAR_COARSEN, LOOK_VOXEL } from "../src/sim/voxel/shapes";
 import { HOUSE_STYLES, TREE_STYLES, type TreeStyle } from "../src/sim/ecology";
 import { generateWorld } from "../src/sim/world";
 import { DEFAULT_LAND, resolveLand } from "../src/sim/land";
@@ -30,28 +31,58 @@ export function cubesChecks(check: Check): void {
 
   check("the cubes are off on low, on at medium and high", !PRESETS.low.cubes && PRESETS.medium.cubes && PRESETS.high.cubes);
 
-  // Where they are drawn: eighths near the focus, quarters farther, the old model past that or zoomed out.
-  const near = fineFocus(true, 26, 50, 50, null);
+  // One size of cube everywhere (15 November, the owner: "let's just keep 1/8 all the time"): the
+  // small cubes wherever the camera looks and however far, the eye view included; the looks of
+  // spells in the same cubes, near and far.
+  const near = fineFocus(true, 50, 50, null);
   check(
-    "close zoom: eighth cubes by the focus, quarter cubes farther, old models past",
-    !!near && lodAt(near, 2, 2) === 1 && lodAt(near, near.r + 2, 0) === 2 && lodAt(near, near.r2 + 1, 0) === 0,
+    "one size: houses and trees in eighth cubes at every distance and in the eye view, spells' looks too",
+    !!near &&
+      [0, 10, 30, 60, 200].every((d) => lodAt(near) === 1 && lodAt(fineFocus(true, 50 + d, 50, null)) === 1) &&
+      lodAt(fineFocus(true, 0, 0, { x: 3, y: 4 })) === 1 &&
+      LOOK_VOXEL === CUBE &&
+      FAR_COARSEN === 1,
   );
-  check("zoomed far out or switched off: no cubes", fineFocus(true, 400, 0, 0, null) === null && fineFocus(false, 26, 0, 0, null) === null);
-  check("placed again only once the camera looked away", !refocus(near, fineFocus(true, 26, 53, 50, null)) && refocus(near, fineFocus(true, 26, 70, 50, null)));
+  check("switched off: no cubes", fineFocus(false, 0, 0, null) === null);
+  check(
+    "placed again only when switched, or on entering the eye view",
+    !refocus(near, fineFocus(true, 90, 50, null)) && refocus(near, fineFocus(true, 0, 0, { x: 1, y: 1 })),
+  );
 
-  // Trees: every kind has a model in cubes, cheaper in quarter cubes, and reads as a tree (taller than wide's half).
+  // Trees: every kind has a model in cubes and reads as a tree (taller than wide's half). Bigger
+  // trees have more cubes of the same size: every face of every size lies on the CUBE grid.
   const bad: string[] = [];
   for (const s of TREE_STYLES) {
     if (!s) continue;
     for (let v = 0; v < FINE_VARIANTS; v++) {
       const fine = cubeTree(s as Exclude<TreeStyle, "">, v);
-      const mid = cubeTree(s as Exclude<TreeStyle, "">, v, true);
       let top = 0;
       for (let k = 1; k < fine.lit.pos.length; k += 3) top = Math.max(top, fine.lit.pos[k]);
-      if (!fine.tris || mid.tris >= fine.tris || top < 0.6 || fine.tris > 1600) bad.push(`${s}:${v} ${fine.tris}/${mid.tris} top ${top.toFixed(2)}`);
+      if (!fine.tris || top < 0.6 || fine.tris > 1600) bad.push(`${s}:${v} ${fine.tris} top ${top.toFixed(2)}`);
+      let last = 0;
+      for (let size = SIZE_MIN; size <= SIZE_MAX; size++) {
+        const m = cubeTree(s as Exclude<TreeStyle, "">, v, size);
+        const shift = 0.5 - (size * CUBE) / 2;
+        let off = 0;
+        let high = 0;
+        for (let k = 0; k < m.lit.pos.length; k += 3) {
+          const x = (m.lit.pos[k] - shift) / CUBE;
+          const y = m.lit.pos[k + 1] / CUBE;
+          const z = (m.lit.pos[k + 2] - shift) / CUBE;
+          off = Math.max(off, Math.abs(x - Math.round(x)), Math.abs(y - Math.round(y)), Math.abs(z - Math.round(z)));
+          high = Math.max(high, m.lit.pos[k + 1]);
+        }
+        if (off > 1e-4) bad.push(`${s}:${v} size ${size} off the cube grid by ${off.toFixed(3)} cube`);
+        if (high + 1e-6 < last) bad.push(`${s}:${v} size ${size} lower than size ${size - 1}`);
+        last = high;
+      }
     }
   }
-  check("each kind of tree in cubes: drawn, under 1600 triangles, cheaper at mid zoom", bad.length === 0, bad.join("; "));
+  check(
+    "each kind of tree in cubes: drawn, under 1600 triangles; bigger trees taller, in more cubes of the same size",
+    bad.length === 0 && treeSize(1) === 8 && treeSize(1.3) === 10,
+    bad.slice(0, 6).join("; "),
+  );
 
   // Houses: the same footprint (within a cube), its lights on the walls of the new model.
   const off: string[] = [];
@@ -89,11 +120,7 @@ export function cubesChecks(check: Check): void {
     return { n, lights: b.lights.windows.length };
   };
   const before = tris(null);
-  const after = tris(fineFocus(true, 26, s0.x, s0.y, null));
-  check(
-    "a village near the camera in cubes: lit windows kept, more detail",
-    after.lights === before.lights && after.n > before.n,
-    `${before.n} -> ${after.n} triangles`,
-  );
+  const after = tris(fineFocus(true, s0.x, s0.y, null));
+  check("a village in cubes: lit windows kept, more detail", after.lights === before.lights && after.n > before.n, `${before.n} -> ${after.n} triangles`);
   GRAPHICS.cubes = was;
 }

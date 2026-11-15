@@ -159,8 +159,9 @@ const DY = [0, 1, 0, -1];
 // The strata of a cliff: a tone for each band of two voxels, by its height, so bands run level
 // across a cliff (grain).
 const STRATA_TONE = [1, 0.86, 0.95, 0.8, 1.03, 0.9];
-// Three shades a ground, in soft patches some cells across (grain).
-const SHADES = [0.95, 1, 1.05];
+// Three shades a ground, in soft patches several cells across (grain).
+const SHADES = [0.96, 1, 1.04];
+const SHADE_PERIOD = 6.5;
 const FLOWERS = [0xe8505b, 0xf4d35e, 0xf6f2ea, 0xd987e0, 0xf08a3c];
 const PEBBLES = [0xbdb6a6, 0x9a958a, 0xd8d2c4];
 const FOAM = 0xf4f9fc;
@@ -176,6 +177,8 @@ const RISER_SIDE = 0.45;
 // On bare rock, the share of the per voxel variation kept (tone patches, risers' dark sides,
 // hollows): half, so slopes of rock read by their light rather than as a mosaic.
 const ROCK_CALM = 0.5;
+// On sand and snow, the share of a step's dark side kept.
+const BRIGHT_CALM = 0.5;
 // The rock's strata (rocks): three tones of a cliff's stone, by the voxel band.
 const ROCK_TONE = [1, 0.86, 0.94];
 
@@ -189,11 +192,11 @@ function tint(color: number, height: number): number {
   return (ch(16, k * (1 + warm)) << 16) | (ch(8, k) << 8) | ch(0, k * (1 - warm));
 }
 
-// A ground's tone: soft patches of three shades, and inside each a second, slightly darker
-// shade in smaller patches, so a field of grass is calm but not flat.
+// A ground's tone: soft patches of three shades, several cells across (15 November, the owner:
+// "it looks a bit too granulated now"), so a field of grass is calm but not flat.
 function shadeAt(px: number, py: number): number {
-  const n = noise(px, py, 2.6, 31);
-  return SHADES[n < 0.38 ? 0 : n < 0.64 ? 1 : 2] * (noise(px, py, 0.8, 33) > 0.6 ? 0.965 : 1);
+  const n = noise(px, py, SHADE_PERIOD, 31);
+  return SHADES[n < 0.36 ? 0 : n < 0.64 ? 1 : 2];
 }
 
 // The secondary terrain map (steps): the land drawn from the island's own continuous heights
@@ -264,21 +267,30 @@ export function fieldHeight(land: LandRead, px: number, py: number): number {
     const a = Math.max(0, Math.min(1, (ANCHOR_OUT - Math.max(fx, fy)) / (ANCHOR_OUT - ANCHOR)));
     return h * (1 - a) + t * a;
   }
-  // Open ground: a gentle swell over a few cells.
-  return h + (noise(px, py, 2.8, 95) - 0.5) * 0.24;
+  // Open ground: a gentle swell over several cells.
+  return h + swell(px, py);
 }
 
-// The field in whole columns of 1 / sub. Rounded with a small wobble of position (a third of a
-// step, over half a cell), so a slope running diagonally breaks into irregular little steps
-// instead of a regular checkerboard. Where the field sits on a whole step (a cell's own height,
-// under what stands on it) the wobble never changes the step.
+// The gentle swell of open ground: about a tenth of a voxel either way, over patches several
+// cells wide (it was over three cells, and flat ground read as granular).
+export function swell(px: number, py: number): number {
+  return (noise(px, py, SWELL_PERIOD, 95) - 0.5) * SWELL;
+}
+const SWELL_PERIOD = 7;
+const SWELL = 0.2;
+
+// The field in whole columns of 1 / sub. Rounded with a small wobble of position (a fifth of a
+// step either way, over a cell), so a slope running diagonally breaks into wavy steps instead of
+// a regular staircase, and flat ground is not cut into a sprinkle of one cube steps. Where the
+// field sits on a whole step (a cell's own height, under what stands on it) the wobble never
+// changes the step.
 export function fieldStep(h: number, px: number, py: number, sub: number): number {
-  return Math.round(h * sub + (noise(px, py, 0.45, 99) - 0.5) * 0.7);
+  return Math.round(h * sub + (noise(px, py, 1.1, 99) - 0.5) * 0.45);
 }
 
 // fieldHeight on the fine cells' own arrays, for the mesher: the same field, without a call per
 // neighbour (16 of them a column).
-function fieldFine(f: FineCells, px: number, py: number): number {
+export function fieldFine(f: FineCells, px: number, py: number): number {
   const cx = Math.floor(px);
   const cy = Math.floor(py);
   const c = fineAt(f, cx, cy);
@@ -310,7 +322,7 @@ function fieldFine(f: FineCells, px: number, py: number): number {
     const a = Math.max(0, Math.min(1, (ANCHOR_OUT - Math.max(fx, fy)) / (ANCHOR_OUT - ANCHOR)));
     return h * (1 - a) + t * a;
   }
-  return h + (noise(px, py, 2.8, 95) - 0.5) * 0.24;
+  return h + swell(px, py);
 }
 
 // Reused between builds: heights and colours of a tile's columns with a border of B.
@@ -439,11 +451,13 @@ export function buildFineTile(f: FineCells, out: Writer, ox: number, oz: number,
   }
   // Light, kept in the colour so tops still merge. A slope of tiny steps is lit as the tilted
   // ground it stands for, by which way it faces, so it reads as a slope and not as stripes (its
-  // risers take the same light, wallFaces); a top below a real wall sits in its shadow. With
-  // `relief`, elevation reads on smooth slopes too: steeper and facing away from the light is
-  // darker, hollows and the foot of a slope are in shade with a thin darker line where the slope
-  // meets flat ground, and the ground is tinted by its height (low warmer and darker, high lighter
-  // and cooler). Every factor is in coarse steps, so flat ground still merges.
+  // risers take the same light, wallFaces); a top below a real wall sits in its shadow. The tilt is
+  // read over five columns either way (15 November: read from the next column, every terrace of
+  // a slope was lit light at one edge and dark at the other, and sand read as a washboard), so a
+  // whole terrace takes one light and still merges. With `relief`, elevation reads on smooth
+  // slopes too: steeper and facing away from the light is darker, hollows are in shade, and the
+  // ground is tinted by its height (low warmer and darker, high lighter and cooler). Every factor
+  // is in coarse steps, so flat ground still merges.
   if (relief) {
     // Sums of heights over the tile and its border, for the mean height round each column.
     for (let j = 0; j < SH; j++) {
@@ -457,8 +471,9 @@ export function buildFineTile(f: FineCells, out: Writer, ox: number, oz: number,
   // With relief, a slope of one voxel a cell is lit almost as a wall facing that way, the light
   // and dark sides that made height easy to read with whole steps (pass 1).
   const slopeK = relief ? 0.45 : 0.15;
-  for (let j = 1; j < SH - 1; j++)
-    for (let k = 1; k < SW - 1; k++) {
+  const gentle = (d: number) => (d > 2 * RISER ? 2 * RISER : d < -2 * RISER ? -2 * RISER : d);
+  for (let j = 2; j < SH - 2; j++)
+    for (let k = 2; k < SW - 2; k++) {
       const s = j * SW + k;
       const h0 = H[s];
       const e = H[s + 1] - h0;
@@ -469,9 +484,16 @@ export function buildFineTile(f: FineCells, out: Writer, ox: number, oz: number,
         C[s] = scaleColor(C[s], 0.88);
         continue;
       }
-      // Rise per column toward +x and +z, over the gentle steps only.
-      const gx = (Math.abs(e) <= RISER ? e : 0) + (Math.abs(w) <= RISER ? w : 0);
-      const gz = (Math.abs(so) <= RISER ? so : 0) + (Math.abs(no) <= RISER ? no : 0);
+      // Rise toward +x and +z over two columns each way and three rows, a real wall counted as a
+      // steep step only; twice the rise a column, as the next columns' steps measured it.
+      let gx = 0;
+      let gz = 0;
+      for (let q = -1; q <= 1; q++) {
+        gx += gentle(H[s + q * SW + 2] - h0) - gentle(H[s + q * SW - 2] - h0);
+        gz += gentle(H[s + q + 2 * SW] - h0) - gentle(H[s + q - 2 * SW] - h0);
+      }
+      gx /= 6;
+      gz /= 6;
       let light = 1;
       if (gx || gz) {
         const kx = Math.min(0.9, Math.abs(gx) * slopeK);
@@ -486,12 +508,10 @@ export function buildFineTile(f: FineCells, out: Writer, ox: number, oz: number,
         const W1 = SW + 1;
         const mean = (SUM[(j + 4) * W1 + k + 4] - SUM[(j - 3) * W1 + k + 4] - SUM[(j + 4) * W1 + k - 3] + SUM[(j - 3) * W1 + k - 3]) / 49;
         const above = (mean - h0) / sub;
-        if (above > 0) light *= 1 - Math.min(0.2, above * 0.3) * (LAND[s] === 2 ? ROCK_CALM : 1);
-        // The foot of a slope: flat here, a gentle rise next to it.
-        if (!gx && !gz && (e > 0 || -w > 0 || so > 0 || -no > 0)) light *= 0.9;
+        if (above > 0) light *= 1 - Math.min(0.15, above * 0.25) * (LAND[s] === 2 ? ROCK_CALM : 1);
         C[s] = tint(C[s], h0 / sub);
       }
-      if (light !== 1) C[s] = scaleColor(C[s], Math.round(light * 25) / 25);
+      if (light !== 1) C[s] = scaleColor(C[s], Math.round(light * 20) / 20);
     }
 
   // Tops, merged into rectangles of one height and colour.
@@ -673,7 +693,10 @@ function wallFaces(
   // included), a little darker on its side, so every small cube's edge still shows.
   if (T - low <= RISER && !f.wet[c] && low > bottom) {
     face(low, T, C[s]);
-    FACES[n - 1].light = 1 - RISER_SIDE * (LAND[s] === 2 ? ROCK_CALM : 1) * (1 - light);
+    // Bright ground (sand, snow) takes half the dark side: on sand every small step's shadow read
+    // as a washboard (15 November).
+    const bright = f.ground[c] === G.SAND || f.ground[c] === G.SNOW;
+    FACES[n - 1].light = 1 - RISER_SIDE * (LAND[s] === 2 ? ROCK_CALM : 1) * (bright ? BRIGHT_CALM : 1) * (1 - light);
     FACES[n - 1].foot = 1;
     return n;
   }
@@ -683,7 +706,9 @@ function wallFaces(
   // The top's own colour, about a quarter voxel, its lower edge wavy; deeper on grass now and then.
   const g =
     Math.max(1, Math.round(sub / 4)) + (noise(px, py, 0.5, 41 + d) > 0.55 ? Math.max(1, sub >> 3) : 0) + (f.hangs[c] && noise(px, py, 0.9, 45) > 0.75 ? 1 : 0);
-  const edgeLo = Math.max(low, T - g);
+  // Snow lies on its slope's steps down to a voxel below the cell's top, so a snowy slope is white
+  // and not a maze of white tops over black rock (15 November).
+  const edgeLo = Math.max(low, f.ground[c] === G.SNOW ? Math.min(T - g, top - sub) : T - g);
   face(edgeLo, T, f.edge[c]);
   // Soil to three voxels below the cell's top, in soft patches of tone.
   const soilLo = Math.max(low, Math.min(edgeLo, top - 3 * sub));
@@ -738,7 +763,8 @@ function wallFaces(
       const yl = (y - 1) * Q;
       const yh = y * Q;
       const rock = scaleColor(f.stone[c], 1.06);
-      out.rect(4, x0, x1, yh, yh, z0, z1, rock, FACE_LIGHT.top, 1, 0);
+      // On a snowy cliff, snow on the ledge (15 November).
+      out.rect(4, x0, x1, yh, yh, z0, z1, f.ground[c] === G.SNOW ? f.color[c] : rock, FACE_LIGHT.top, 1, 0);
       out.rect(d, x0, x1, yl, yh, z0, z1, rock, light, 1, 0);
       const e1 = (d + 1) % 4;
       const e2 = (d + 3) % 4;
