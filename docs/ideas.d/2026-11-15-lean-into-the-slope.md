@@ -1,0 +1,3 @@
+section: Backlog
+
+- **Lean into the slope** (the movement fix's builder, 2026-11-15; lens: the promise of a body, MDA sensation). Feet now stand on the land as it is drawn (terrain.ts footAt), so the view knows the slope under every walker for free. A villager walking uphill leans forward a little and shortens its stride; downhill it leans back and its steps come quicker; a cart behind it tilts with the ground. What the player feels: the island has weight; a hill is a hill to the people on it, and a village on a slope looks like hard work. What it adds: the land's new curves show in how creatures move, not only in how they look from above. Cost: a pitch and a stride factor per creature from two reads of the drawn land, no new triangles, nothing saved, no money. Claude.

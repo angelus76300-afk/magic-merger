@@ -2,6 +2,9 @@ import { PerspectiveCamera, Vector3 } from "three";
 import type { CameraControl } from "../runtime";
 import { PITCH_START, clampPitch, lookDir, lookTheta, type Eye } from "../eyes";
 
+// How quickly the watch follows its subject, per second: a cut glides there in about a second.
+export const WATCH_PACE = 3.2;
+
 // An orbiting camera around a point on the island. The player turns it with
 // one finger, zooms with a pinch or the wheel, and pans with two fingers.
 // Spells can fly it somewhere (close in, or far out to show the whole island
@@ -20,7 +23,15 @@ export class OrbitCamera implements CameraControl {
   private returnAt = 0;
   // The island tells its stories (2026-11-11, director.ts): a subject the
   // camera keeps in frame, moving with it, until the player touches the view.
-  private watched: { x: number; y: number; dist: number; phi: number; zoom: number } | null = null;
+  // `who` and `other`: the creatures it is about (director.ts), followed where they are drawn, frame
+  // by frame (follow); (x, y) where none is.
+  private watched: { x: number; y: number; dist: number; phi: number; zoom: number; who: number; other: number } | null = null;
+  // The watch's own pace over the island, cells a second (a critically damped follow).
+  private wvx = 0;
+  private wvy = 0;
+  // Set by the view: where the watched creatures are drawn this frame and how fast they go, or null
+  // when they are gone.
+  follow: ((who: number, other: number) => { x: number; y: number; vx: number; vy: number } | null) | null = null;
   // Become anything (2026-11-12, possess.ts): behind and above the creature
   // the player is. It turns behind it once, when it is taken (turn); after
   // that its turn is the player's (the playtest of 12 November: a camera that
@@ -109,12 +120,17 @@ export class OrbitCamera implements CameraControl {
   // Keeps (x, y) in the middle from `dist` away, called again as the subject moves. `phi`: the
   // tilt it eases to (the whole island is seen more from above, as the tour sees it). `zoom`: how
   // fast the distance eases (the whole island is ten times farther than a villager: twice as fast).
-  watch(x: number, y: number, dist: number, phi = 0.98, zoom = 1.6): void {
+  // `who` (and `other`): the creature the shot is about, followed where it is drawn, every frame.
+  watch(x: number, y: number, dist: number, phi = 0.98, zoom = 1.6, who = 0, other = 0): void {
     if (this.chased) return;
+    if (!this.watched) {
+      this.wvx = 0;
+      this.wvy = 0;
+    }
     this.goal = null;
     this.saved = null;
     this.returnAt = 0;
-    this.watched = { x, y, dist: Math.max(this.minDist * 1.5, Math.min(this.farthest(), dist)), phi, zoom };
+    this.watched = { x, y, dist: Math.max(this.minDist * 1.5, Math.min(this.farthest(), dist)), phi, zoom, who, other };
   }
 
   unwatch(): void {
@@ -268,11 +284,23 @@ export class OrbitCamera implements CameraControl {
       if (Math.abs(this.dist - this.goal.dist) / this.goal.dist < 0.01 && Math.hypot(this.goal.tx - this.tx, this.goal.ty - this.ty) < 0.2) this.goal = null;
     }
     if (this.watched && !this.goal) {
-      // Eased, never snapped: a cut is a glide of about a second, and a
-      // walking subject is followed without the frame trembling.
-      const k = Math.min(1, dt * 2.2);
-      this.tx += (this.watched.x - this.tx) * k;
-      this.ty += (this.watched.y - this.ty) * k;
+      // Eased, never snapped: a cut is a glide of about a second. A creature is followed where it
+      // is drawn, every frame, at its own pace (the playtest of 15 November: the frame was moved
+      // toward where the simulation had it four times a second, so its speed pulsed from 2.3 to
+      // 3.9 cells a second for a villager walking 3, and it trailed 1.7 cells behind).
+      const w = this.watched;
+      const at = w.who && this.follow ? this.follow(w.who, w.other) : null;
+      if (at) {
+        w.x = at.x;
+        w.y = at.y;
+      }
+      // A critically damped follow (WATCH_PACE), the subject's own speed fed forward.
+      const h = Math.min(dt, 0.1);
+      const k = WATCH_PACE;
+      this.wvx += (k * k * (w.x - this.tx) + 2 * k * ((at?.vx ?? 0) - this.wvx)) * h;
+      this.wvy += (k * k * (w.y - this.ty) + 2 * k * ((at?.vy ?? 0) - this.wvy)) * h;
+      this.tx += this.wvx * h;
+      this.ty += this.wvy * h;
       this.dist = Math.exp(Math.log(this.dist) + (Math.log(this.watched.dist) - Math.log(this.dist)) * Math.min(1, dt * this.watched.zoom));
       this.phi += (this.watched.phi - this.phi) * Math.min(1, dt * 1.2);
       if (!reducedMotion) this.theta += dt * 0.035;

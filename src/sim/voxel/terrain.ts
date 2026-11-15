@@ -7,7 +7,18 @@ import { GRAPHICS } from "./graphics";
 import { LOOKS, biomeAt } from "../land";
 import { DAMP, R as RARE } from "../ecology";
 import { eyeKeepsChunk } from "./fog";
-import { TILE, buildFineTile, fieldHeight, fieldStep, fineAt, makeFineCells, sizeFineCells, type FineCells, type LandRead } from "./terrain-fine";
+import {
+  TILE,
+  buildFineTile,
+  fieldHeight,
+  fieldStep,
+  fineAt,
+  makeFineCells,
+  sizeFineCells,
+  type FineCells,
+  type FineTops,
+  type LandRead,
+} from "./terrain-fine";
 
 // The island as voxel columns. Each cell is one column whose top sits at its
 // height (half a unit per height unit, rounded to whole voxels). Walls are
@@ -279,9 +290,26 @@ export class Terrain {
   private fineLevel = new Uint8Array(0); // the columns a cell of each chunk's fine mesh (FINE_SUB)
   private fineShown = new Uint8Array(0);
   private fineStale = new Uint8Array(0);
+  // When each chunk's land changed after its fine mesh was built (the first change since), and when
+  // its fine mesh was last built, performance.now() ms.
+  private staleAt = new Float64Array(0);
+  private fineBuiltAt = new Float64Array(0);
   private chunkOn = new Uint8Array(0);
-  private staleBuiltAt = -1e9;
-  private job: { c: number; sub: number; tiles: [number, number, number, number][]; next: number; again: boolean } | null = null;
+  // The top of each column each chunk's fine mesh draws (terrain-fine.ts FineTops): creatures stand
+  // on it (footAt). One spare, for the next build.
+  private fineTops: (FineTops | undefined)[] = [];
+  private spareTops: Int16Array | null = null;
+  // `redo`: the chunk's land changed while it was being built (1, or 2 for water flowing alone): it
+  // is finished all the same, and stays stale for its next build.
+  private job: {
+    c: number;
+    sub: number;
+    tiles: [number, number, number, number][];
+    next: number;
+    again: boolean;
+    tops: FineTops;
+    redo: number;
+  } | null = null;
   // The longest a frame spent on the fine land, ms (for the measures).
   readonly fineStats = { maxFrameMs: 0, maxTileMs: 0, tiles: 0, tileMs: [] as number[] };
   private eye = { x: 0, y: 0, z: 0, tx: 0, tz: 0, reach: 0, known: false };
@@ -420,12 +448,70 @@ export class Terrain {
     return fieldStep(fieldHeight(this.landRead, px, py), px, py, sub) / sub;
   }
 
+  // The tops of a chunk no longer drawn, kept for the next build.
+  private spare(c: number): void {
+    const t = this.fineTops[c];
+    if (t) this.spareTops = t.h;
+    this.fineTops[c] = undefined;
+  }
+
+  // The top of the column drawn under (x, y) in cells, scene units, as its chunk's fine mesh drew
+  // it; NaN where none is drawn, on water and on a bridge's deck.
+  drawnTop(x: number, y: number): number {
+    const { world } = this;
+    const cx = Math.floor(x);
+    const cy = Math.floor(y);
+    if (cx < 0 || cy < 0 || cx >= world.w || cy >= world.h) return NaN;
+    const i = cy * world.w + cx;
+    const c = Math.floor(cy / CHUNK) * this.cols + Math.floor(cx / CHUNK);
+    const t = this.fineTops[c];
+    if (!t || !this.fineShown[c] || this.wet[i] || world.onDeck(i)) return NaN;
+    const sub = this.fineLevel[c];
+    const sx = (cx - t.x0) * sub + Math.min(sub - 1, Math.floor((x - cx) * sub));
+    const sy = (cy - t.y0) * sub + Math.min(sub - 1, Math.floor((y - cy) * sub));
+    return t.h[sy * t.stride + sx] / sub;
+  }
+
+  // Where a creature's feet stand at (x, y) in cells, scene units: on the fine land as drawn (15
+  // November, the owner: "seems to be vibrating when moving"; feet followed the cells' whole voxels,
+  // up to 0.87 above or 0.77 under the drawn land). Between the middles of the drawn columns, so feet
+  // glide over a slope of small steps rather than hop each one; across a step taller than FOOT_JOIN
+  // (a kerb, a cliff) each side keeps its own. null where the fine land is not drawn (the low level,
+  // water, a deck, a chunk not built yet): there walk.ts walkGround, as before.
+  footAt(x: number, y: number): number | null {
+    if (!GRAPHICS.fine || !GRAPHICS.steps || !this.fineTops.length) return null;
+    const own = this.drawnTop(x, y);
+    if (Number.isNaN(own)) return null;
+    const c = Math.floor(Math.floor(y) / CHUNK) * this.cols + Math.floor(Math.floor(x) / CHUNK);
+    const sub = this.fineLevel[c];
+    const gx = x * sub - 0.5;
+    const gy = y * sub - 0.5;
+    const ix = Math.floor(gx);
+    const iy = Math.floor(gy);
+    const fx = gx - ix;
+    const fy = gy - iy;
+    const at = (i: number, j: number): number => {
+      const v = this.drawnTop((ix + i + 0.5) / sub, (iy + j + 0.5) / sub);
+      return Number.isNaN(v) || Math.abs(v - own) > FOOT_JOIN ? own : v;
+    };
+    return (at(0, 0) * (1 - fx) + at(1, 0) * fx) * (1 - fy) + (at(0, 1) * (1 - fx) + at(1, 1) * fx) * fy;
+  }
+
   // A chunk whose land changed keeps its fine mesh on show until the new one is built: a river
   // that flows changes its chunk every few frames, and the land would flicker between the two.
+  // A chunk being built when its land changes is finished, not dropped (the playtest of 15 November:
+  // Big Bang's stardust turning to crystal changed every chunk every few ticks, each build was
+  // dropped before it ended, and chunks showed the land of before the spell for two minutes). It
+  // stays stale, and is built again in turn.
   private staleFine(c: number, flow = false): void {
     // Water flowing at a river's edge (`flow`) waits longer than a real change.
-    if (this.fine[c] !== undefined) this.fineStale[c] = flow && this.fineStale[c] !== 1 ? 2 : 1;
-    if (this.job?.c === c) this.job = null;
+    const was = this.fineStale[c];
+    if (this.fine[c] !== undefined) {
+      this.fineStale[c] = flow && was !== 1 ? 2 : 1;
+      if (!was) this.staleAt[c] = performance.now();
+    }
+    const job = this.job;
+    if (job?.c === c) job.redo = flow && job.redo !== 1 ? 2 : 1;
   }
 
   private dropFine(c: number): void {
@@ -437,6 +523,7 @@ export class Terrain {
     this.fine[c] = undefined;
     this.fineLevel[c] = 0;
     this.fineStale[c] = 0;
+    this.spare(c);
     if (this.fineShown[c]) {
       this.fineShown[c] = 0;
       const land = this.chunks[c].land;
@@ -481,6 +568,9 @@ export class Terrain {
       this.fineLevel = new Uint8Array(n);
       this.fineShown = new Uint8Array(n);
       this.fineStale = new Uint8Array(n);
+      this.staleAt = new Float64Array(n);
+      this.fineBuiltAt = new Float64Array(n).fill(-1e9);
+      this.fineTops = new Array(n).fill(undefined);
       this.chunkOn = new Uint8Array(n).fill(1);
     }
     if (!this.eye.known) return;
@@ -495,15 +585,17 @@ export class Terrain {
         const d = this.chunkDistance(c);
         const want = this.wantLevel(c);
         if (this.job?.c === c && want === this.job.sub) keep = true;
-        // Missing or at the wrong level first, nearest first; then a changed chunk, at most one in
-        // STALE_MS.
+        // Missing or at the wrong level first, nearest first; then a changed chunk, each at most once
+        // in STALE_MS, nearest first, and one changed long ago before a nearer one (STALE_AGE), so
+        // a chunk that keeps changing is built again within a few seconds and none waits for ever.
+        const stale = this.fineStale[c];
         const rank =
           want === 0
             ? Infinity
             : this.fine[c] === undefined || this.fineLevel[c] !== want
               ? d
-              : this.fineStale[c] && (all || start - this.staleBuiltAt > (this.fineStale[c] === 2 ? FLOW_STALE_MS : STALE_MS))
-                ? d + 1000
+              : stale && (all || start - this.fineBuiltAt[c] > (stale === 2 ? FLOW_STALE_MS : STALE_MS))
+                ? d + 1000 - Math.min(STALE_AGE_MAX, (start - this.staleAt[c]) / 1000) * STALE_AGE
                 : Infinity;
         if (!this.dirtyLand.has(c) && rank < bestRank) {
           best = c;
@@ -530,13 +622,13 @@ export class Terrain {
       while (job.next < job.tiles.length) {
         const t0 = performance.now();
         const [tx0, ty0, tx1, ty1] = job.tiles[job.next++];
-        buildFineTile(this.fineCells, FINE_OUT, -this.world.w / 2, -this.world.h / 2, job.sub, tx0, ty0, tx1, ty1);
+        buildFineTile(this.fineCells, FINE_OUT, -this.world.w / 2, -this.world.h / 2, job.sub, tx0, ty0, tx1, ty1, job.tops);
         const t1 = performance.now();
         this.fineStats.maxTileMs = Math.max(this.fineStats.maxTileMs, t1 - t0);
         this.fineStats.tiles++;
         if (this.fineStats.tileMs.length < 4096) this.fineStats.tileMs.push(t1 - t0);
-        // A chunk built again because its land changed takes a smaller share of the frame.
-        if (!all && t1 - start > (job.again ? FINE_AGAIN_MS : FINE_BUDGET_MS)) break;
+        // A chunk built again because water flowed at its edge takes a smaller share of the frame.
+        if (!all && t1 - start > (job.again && this.fineStale[job.c] === 2 ? FINE_AGAIN_MS : FINE_BUDGET_MS)) break;
       }
       if (job.next >= job.tiles.length) this.finishFine(job.c, job.sub);
       if (!all) break;
@@ -579,7 +671,20 @@ export class Terrain {
         f.soil[k] = lifted(this.soilColor(i));
         f.stone[k] = lifted(strata.stone);
         f.deep[k] = lifted(strata.deep);
-        f.blends[k] = g === G.GRASS || g === G.SAND || g === G.DIRT || g === G.ROCK || g === G.SNOW || g === G.ASH || g === G.PATH ? 1 : 0;
+        // Crystal and a spell's own natural ground too (Big Bang's stardust met the sand it left in
+        // cell-sized squares).
+        f.blends[k] =
+          g === G.GRASS ||
+          g === G.SAND ||
+          g === G.DIRT ||
+          g === G.ROCK ||
+          g === G.SNOW ||
+          g === G.ASH ||
+          g === G.PATH ||
+          g === G.CRYSTAL ||
+          (g >= BUILTIN.ground.length && built === null)
+            ? 1
+            : 0;
         f.hangs[k] = g === G.GRASS || g === G.SNOW ? 1 : 0;
         f.flowers[k] = g === G.GRASS && world.cover[i] === 0 ? 1 : 0;
         f.pebbles[k] = g === G.SAND ? 1 : 0;
@@ -609,11 +714,15 @@ export class Terrain {
     // Room for a fine chunk's vertices from the start: growing in the middle of a tile copies
     // megabytes, a spike of tens of milliseconds.
     FINE_OUT.reserve(FINE_VERTICES);
-    this.job = { c, sub, tiles, next: 0, again: this.fine[c] !== undefined && this.fineLevel[c] === sub };
+    const stride = CHUNK * sub;
+    const h = this.spareTops?.length === stride * stride ? this.spareTops : new Int16Array(stride * stride);
+    this.spareTops = null;
+    this.job = { c, sub, tiles, next: 0, again: this.fine[c] !== undefined && this.fineLevel[c] === sub, tops: { h, x0, y0, stride }, redo: 0 };
   }
 
   // The chunk's tiles are all written: its new fine mesh takes the place of the old one.
   private finishFine(c: number, sub: number): void {
+    const job = this.job!;
     this.job = null;
     const geometry = FINE_OUT.quadGeometry();
     const old = this.fine[c];
@@ -622,9 +731,15 @@ export class Terrain {
       this.remove(old);
       old.geometry.dispose();
     }
-    if (this.fineStale[c]) this.staleBuiltAt = performance.now();
-    this.fineStale[c] = 0;
+    const now = performance.now();
+    this.fineBuiltAt[c] = now;
+    // Changed again while it was built: still stale, since the moment the build began at most.
+    this.fineStale[c] = job.redo;
+    if (job.redo) this.staleAt[c] = Math.min(this.staleAt[c], now);
     this.fineLevel[c] = sub;
+    this.spare(c);
+    if (geometry) this.fineTops[c] = job.tops;
+    else this.spareTops = job.tops.h;
     if (!geometry) {
       this.fine[c] = null;
       if (shown) {
@@ -959,10 +1074,15 @@ export class Terrain {
   }
 
   // Natural ground shows soil and stone in its walls; built materials do not.
-  // As builtColor, for the fine land: basalt is natural ground there too (15 November: the
-  // volcano's crater rim was drawn in whole cells as if built, black slabs a cell wide).
+  // As builtColor, for the fine land, which decides by what the ground is (builtGround): basalt
+  // (15 November: the volcano's crater rim was drawn in whole cells as if built, black slabs a cell
+  // wide), crystal and a spell's own ground (Big Bang's stardust drew as hard whole cells, the
+  // owner's report of 15 November) are natural there; a road, and a spell's wall or floor, built.
   private fineBuilt(i: number): number | null {
-    return this.world.ground[i] === G.BASALT ? null : this.builtColor(i);
+    const g = this.world.ground[i];
+    if (g === G.BASALT || g === G.CRYSTAL) return null;
+    if (g >= BUILTIN.ground.length && !builtGround(this.world.materials.get("ground", g).name)) return null;
+    return this.builtColor(i);
   }
 
   private builtColor(i: number): number | null {
@@ -1107,9 +1227,33 @@ function drawFacing(g: BufferGeometry, low: boolean, x: number, z: number, sun: 
   g.setDrawRange(f.first[a] * 6, (f.first[b] + f.counts[b] - f.first[a]) * 6);
 }
 
-// A changed fine chunk is built again at most once in STALE_MS.
+// Whether a spell's own ground is something built, by its name, the one thing its material says
+// about it (materials.ts: a name, colours, how it burns, glows and hurts): a wall, a floor, a road,
+// paving and the like stay flat and square in the fine land; any other (stardust, moss, glassed
+// earth, a tree's wood) takes its curves as natural ground does. Its wrong cases: a built thing named
+// for what it is made of (a "worldwood" trunk curves on top; its sides stay sheer, as anything two
+// voxels above its neighbours does), and natural ground with a built word in its name.
+const BUILT_PART = /wall|floor|brick|cobble|plank|pave|paving|masonry|concrete|cement|asphalt|tarmac|flagstone|mosaic/;
+const BUILT_WORD =
+  /\b(road|path|street|tiles?|slabs?|blocks?|deck|bridge|tower|rampart|fort|castle|keep|plaza|courtyard|court|stairs?|steps|pillar|column|platform|foundation|plinth|altar|dais|boards?|terrace)\b/;
+const builtNames = new Map<string, boolean>();
+export function builtGround(name: string): boolean {
+  let built = builtNames.get(name);
+  if (built === undefined) {
+    built = BUILT_PART.test(name) || BUILT_WORD.test(name);
+    builtNames.set(name, built);
+  }
+  return built;
+}
+
+// A changed fine chunk is built again at most once in STALE_MS. Among changed chunks, one changed
+// a second earlier counts as STALE_AGE scene units nearer, up to STALE_AGE_MAX seconds.
 const STALE_MS = 2000;
 const FLOW_STALE_MS = 10000;
+const STALE_AGE = 12;
+const STALE_AGE_MAX = 60;
+// The tallest step between two drawn columns that feet glide over (footAt), scene units.
+const FOOT_JOIN = 0.6;
 // How far a waterfall hangs in front of the island's cut side, in cells.
 const FALL_GAP = 0.06;
 

@@ -93,6 +93,14 @@ export function nameOf(world: World, c: Creature): string {
 const kindWord = (c: Creature): string => c.kind.split("#")[0];
 const article = (s: string): string => (/^[aeiou]/i.test(s) ? "An" : "A");
 
+// How far a shot about two creatures `far` cells apart is framed from the one it names toward the
+// other: both in frame while they are near; from afar the frame stays on the one the line names,
+// leaning toward the other, or both are specks; past 40 cells, on the one alone (0). The watch's
+// camera frames them so where they are drawn (orbit.ts follow).
+export function leanToward(far: number): number {
+  return far >= 40 ? 0 : far <= 12 ? 0.5 : 6 / far;
+}
+
 /** "Mira the fisher", "A wolf": who a caption is about. */
 export function whoIs(world: World, c: Creature): string {
   if (c.kind !== "villager") return `${article(kindWord(c))} ${kindWord(c)}`;
@@ -255,11 +263,9 @@ export class Director {
       return;
     }
     const o = s.other ? this.byId.get(s.other) : undefined;
-    if (o && !o.dead && Math.hypot(o.x - c.x, o.y - c.y) < 40) {
-      // Both in frame while they are near; from afar the frame stays on the
-      // one the line names, leaning toward the other, or both are specks.
+    const lean = o && !o.dead ? leanToward(Math.hypot(o.x - c.x, o.y - c.y)) : 0;
+    if (o && lean > 0) {
       const far = Math.hypot(o.x - c.x, o.y - c.y);
-      const lean = far <= 12 ? 0.5 : 6 / far;
       s.x = c.x + (o.x - c.x) * lean;
       s.y = c.y + (o.y - c.y) * lean;
       s.r = Math.max(5, Math.min(far, 12) / 2 + 4);

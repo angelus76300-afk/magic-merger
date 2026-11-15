@@ -11,7 +11,7 @@ import { weatherAt } from "./voxel/sky";
 import { stepWorld } from "./tick";
 import { VoxelView } from "./voxel/view";
 import { GRAPHICS } from "./voxel/graphics";
-import { FramePacer, ticksDue } from "./voxel/pacing";
+import { FramePacer, drawBetween, ticksDue } from "./voxel/pacing";
 import { TICK, generateWorld, type World } from "./world";
 import { SLOW_FACTOR } from "./wards";
 import { DEFAULT_LAND, type LandOptions } from "./land";
@@ -209,7 +209,7 @@ export class Engine {
     this.cameraMoved = false;
     this.lastDraw = now;
     // How far the frame is from the last tick to the next one, for the view.
-    this.view.between = this.pacer.enabled ? Math.min(1, this.acc / TICK) : 1;
+    this.view.between = this.pacer.enabled ? drawBetween(this.acc, TICK) : 1;
     this.view.paceMs = smooth ? 1000 / 60 : 1000 / 30;
     this.render(Math.min(0.1, since / 1000) * scale);
     // A draw from outside the loop (the Spell Lab, a test's frame) shows the

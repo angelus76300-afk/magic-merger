@@ -110,6 +110,7 @@ import { heldChecks } from "./held-test";
 import { pacingChecks } from "./pacing-test";
 import { fogChecks } from "./fog-test";
 import { terrainLooksChecks } from "./terrain-looks-test";
+import { movementChecks } from "./movement-test";
 import { peaksChecks } from "./peaks-test";
 
 // No verdict here depends on how fast the machine is (4.1, review M8): the
@@ -2473,6 +2474,10 @@ fogChecks(check);
 
 // The land's looks (5.2.5): scripts/terrain-looks-test.ts.
 terrainLooksChecks(check);
+
+// Movement and the fine land, 15 November: feet on the drawn land, even frames, the watch, Big
+// Bang's ground (scripts/movement-test.ts).
+movementChecks(check);
 // Taller peaks on new islands, old islands unchanged (5.2.5): scripts/peaks-test.ts.
 peaksChecks(check);
 
