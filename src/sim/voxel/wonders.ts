@@ -5,6 +5,9 @@ import { daylight } from "../daylight";
 import type { World } from "../world";
 import { floatAt, ruinHouses, vents, type Wonder } from "../wonders";
 import { pushBox, type Box } from "./models";
+import { GRAPHICS } from "./graphics";
+import { boxesInCubes } from "./shapes";
+import { geometryOfMesh } from "./cubes";
 import { columnTop, surfaceY } from "./terrain";
 
 // The wonders above the land (4.4.5 part B), each built from its own seed:
@@ -428,6 +431,8 @@ const MAKERS: Record<string, (rng: Rng, w: Wonder, world: World) => Model> = {
 };
 
 function geometryOf(boxes: Box[]): BufferGeometry {
+  // In the one size of cube with the small cubes on (15 November).
+  if (GRAPHICS.cubes) return geometryOfMesh(boxesInCubes(boxes));
   const pos: number[] = [];
   const col: number[] = [];
   for (const b of boxes) pushBox(pos, col, b);
@@ -460,7 +465,12 @@ export class WonderModels {
 
   update(world: World, time: number): void {
     // Rebuilt when the list changes (a wonder destroyed, a fall thawed).
-    if (this.built.length !== world.wonders.length || this.built.some((b, k) => b.w !== world.wonders[k] || b.kind !== b.w.kind)) this.rebuild(world);
+    if (
+      this.cubes !== GRAPHICS.cubes ||
+      this.built.length !== world.wonders.length ||
+      this.built.some((b, k) => b.w !== world.wonders[k] || b.kind !== b.w.kind)
+    )
+      this.rebuild(world);
     const night = daylight(time).night;
     for (const b of this.built) {
       if (b.w.kind === "floating rock") {
@@ -490,8 +500,10 @@ export class WonderModels {
     }
   }
 
+  private cubes = GRAPHICS.cubes;
   private rebuild(world: World): void {
     this.dispose();
+    this.cubes = GRAPHICS.cubes;
     for (const w of world.wonders) {
       const make = MAKERS[w.kind];
       if (!make) continue;

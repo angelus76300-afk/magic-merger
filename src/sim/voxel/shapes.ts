@@ -1,5 +1,6 @@
 import type { Prop, PropBox, Shape } from "../props";
-import { FACE_LIGHT, pushBox } from "./models";
+import { FACE_LIGHT, pushBox, type Box } from "./models";
+import { GRAPHICS } from "./graphics";
 
 // The parts of an item's look (props.ts) as faces, 2026-11-13 (the looks
 // revamp, phase 1). A part that is an upright box with none of the new fields
@@ -25,11 +26,17 @@ export interface LocalMesh {
 
 type V = [number, number, number];
 
-// The side of a look's voxels, in cells: a quarter of a land cell, the one small cube
-// size the owner's references are made of, land included (13 November).
-export const LOOK_VOXEL = 0.25;
-// A far look is the same grid at twice the side (PropModels' triangle budget).
-export const FAR_COARSEN = 2;
+// The side of a look's voxels, in cells: an eighth of a land cell, the one small cube size of the
+// land, the houses and the trees at every distance (15 November, the owner: "let's just keep 1/8
+// all the time").
+export const LOOK_VOXEL = 0.125;
+// A far look keeps the same cubes (it was the grid at twice the side): only a stored look of boxes
+// is drawn simpler past PropModels' triangle budget, by its largest parts.
+export const FAR_COARSEN = 1;
+// With the small cubes off (the low preset), a soft look keeps main's grid of before 15 November:
+// quarter cells, twice that far away, so it draws exactly as it did.
+export const LOOK_VOXEL_OFF = 0.25;
+export const FAR_COARSEN_OFF = 2;
 // A look's grid holds this many voxels at most; past it the side grows.
 const MAX_CELLS = 2_000_000;
 // Light of a corner by how shut in it is, as the terrain's (terrain.ts AO_LIGHT).
@@ -326,8 +333,23 @@ function emitQuad(
 // parts). k, mx, my: scaled about (mx, my), as a held object is.
 export function propLocal(p: Prop, simple = false, k = 1, mx = 0, my = 0): LocalMesh {
   const out: LocalMesh = { lit: { pos: [], col: [] }, glow: { pos: [], col: [] }, tris: 0 };
+  // With the small cubes on (15 November, one size of cube everywhere): every look in cubes of
+  // LOOK_VOXEL, a stored look of plain boxes too, and a held one scaled before it is filled in, so
+  // its cubes keep their size. Nothing stored changes; off, a look draws as it did.
+  if (GRAPHICS.cubes) {
+    const boxes = simple && !isSoft(p) ? largestParts(p.boxes, FAR_PARTS) : p.boxes;
+    const sized =
+      k === 1 && mx === 0 && my === 0
+        ? boxes
+        : boxes.map((b) => ({ ...b, x: (b.x - mx) * k, y: (b.y - my) * k, z: b.z * k, w: b.w * k, d: b.d * k, h: b.h * k }));
+    const g = voxelize(sized, LOOK_VOXEL);
+    // A stored look of plain boxes: its faces in soft patches of tone, as the land and the trees.
+    if (!isSoft(p)) tonePatches(g);
+    meshGrid(g, out);
+    return out;
+  }
   if (isSoft(p)) {
-    meshGrid(voxelize(p.boxes, LOOK_VOXEL * (simple ? FAR_COARSEN : 1)), out, k, mx, my);
+    meshGrid(voxelize(p.boxes, LOOK_VOXEL_OFF * (simple ? FAR_COARSEN_OFF : 1)), out, k, mx, my);
     return out;
   }
   const boxes = simple ? largestParts(p.boxes, FAR_PARTS) : p.boxes;
@@ -345,4 +367,66 @@ export function propLocal(p: Prop, simple = false, k = 1, mx = 0, my = 0): Local
 export function propTriangles(p: Prop, simple = false): number {
   if (!isSoft(p)) return (simple ? largestParts(p.boxes, FAR_PARTS) : p.boxes).length * 10;
   return propLocal(p, simple).tris;
+}
+
+// A model of boxes (models.ts: x east, y up, z south) in cubes of LOOK_VOXEL, meshed as a look's
+// (15 November: the wonders and the old models of covers, shrubs, cacti and flowers, in the one
+// size of cube). Made once per list of boxes and kept.
+const inCubes = new WeakMap<Box[], LocalMesh>();
+export function boxesInCubes(boxes: Box[]): LocalMesh {
+  let m = inCubes.get(boxes);
+  if (m) return m;
+  m = { lit: { pos: [], col: [] }, glow: { pos: [], col: [] }, tris: 0 };
+  if (boxes.length) {
+    const g = voxelize(
+      boxes.map((b) => ({ x: b.x, y: b.z, z: b.y, w: b.w, d: b.d, h: b.h, color: b.color, glow: false })),
+      LOOK_VOXEL,
+    );
+    tonePatches(g);
+    meshGrid(g, m);
+  }
+  inCubes.set(boxes, m);
+  return m;
+}
+
+// A model of plain boxes in cubes reads as one smooth box (15 November, the owner: every asset in
+// the small cubes): its cubes take one of PATCH_TONES in soft patches a few cubes across, as the
+// land's ground and the trees' crowns do, calm rather than speckled. By the cube's place in the
+// model, so the same model is the same every time; what glows keeps its colour.
+const PATCH_TONES = [0.94, 0.98, 1.02, 1.05];
+const PATCH_CUBES = 3.5;
+function tonePatches(g: VoxelGrid): void {
+  const h = (x: number, y: number, z: number) => {
+    let v = Math.imul(x, 0x27d4eb2d) ^ Math.imul(y, 0x165667b1) ^ Math.imul(z, 0x1b873593);
+    v = Math.imul(v ^ (v >>> 15), 0x85ebca6b);
+    v = Math.imul(v ^ (v >>> 13), 0xc2b2ae35);
+    return ((v ^ (v >>> 16)) >>> 0) / 4294967296;
+  };
+  const smooth = (t: number) => t * t * (3 - 2 * t);
+  const noise = (px: number, py: number, pz: number) => {
+    const ix = Math.floor(px);
+    const iy = Math.floor(py);
+    const iz = Math.floor(pz);
+    const fx = smooth(px - ix);
+    const fy = smooth(py - iy);
+    const fz = smooth(pz - iz);
+    const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+    const plane = (z: number) => lerp(lerp(h(ix, iy, z), h(ix + 1, iy, z), fx), lerp(h(ix, iy + 1, z), h(ix + 1, iy + 1, z), fx), fy);
+    return lerp(plane(iz), plane(iz + 1), fz);
+  };
+  const [nx, ny, nz] = g.n;
+  const ox = Math.round(g.o[0] / g.s);
+  const oy = Math.round(g.o[1] / g.s);
+  const oz = Math.round(g.o[2] / g.s);
+  for (let z = 0; z < nz; z++)
+    for (let y = 0; y < ny; y++)
+      for (let x = 0; x < nx; x++) {
+        const i = (z * ny + y) * nx + x;
+        const c = g.color[i];
+        if (c < 0 || g.glow[i]) continue;
+        const n = noise((x + ox) / PATCH_CUBES, (y + oy) / PATCH_CUBES, (z + oz) / PATCH_CUBES);
+        const k = PATCH_TONES[Math.min(PATCH_TONES.length - 1, Math.floor(n * PATCH_TONES.length))];
+        const ch = (sh: number) => Math.max(0, Math.min(255, Math.round(((c >> sh) & 255) * k)));
+        g.color[i] = (ch(16) << 16) | (ch(8) << 8) | ch(0);
+      }
 }

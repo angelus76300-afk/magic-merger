@@ -6,7 +6,8 @@
 import { MeshBasicMaterial, type Mesh } from "three";
 import { generateWorld } from "../src/sim/world";
 import { DEFAULT_LAND, resolveLand, type LandOptions } from "../src/sim/land-options";
-import { Terrain, columnTop } from "../src/sim/voxel/terrain";
+import { CHUNK, FINE_SUB, Terrain, columnTop } from "../src/sim/voxel/terrain";
+import { fieldFine } from "../src/sim/voxel/terrain-fine";
 import { C, G } from "../src/sim/materials";
 import { GRAPHICS } from "../src/sim/voxel/graphics";
 import { LAND_LOOKS } from "../src/sim/voxel/land-looks";
@@ -39,6 +40,10 @@ export interface IslandMesh {
   fluidTriangles: number;
   fineChunks: number;
   eighths: number; // of the fine chunks, those in eighth voxels
+  chunks: number; // the island's chunks
+  // The worst gap, scene units, between the fine mesher's own heights (fieldFine, read from the
+  // chunk's arrays) and groundAt's (fieldHeight), over points of every chunk.
+  fieldGap: number;
   maxTileMs: number; // the longest tile of a fine chunk to build
   tileP95: number;
   // The worst gap, scene units, between the drawn ground and the cell's height under what is
@@ -48,6 +53,7 @@ export interface IslandMesh {
   houseGap: number;
   sampled: number;
   landHash: string;
+  landSet: string; // the land's meshes whatever the order they were built in
   fluidHash: string;
   ms: number; // the whole island's first build, one cell meshes
   fineMs: number; // the fine chunks for the camera, all of them
@@ -83,8 +89,26 @@ export function buildIsland(cells: number, seed: number, land: LandOptions, zoom
   const fineMs = performance.now() - t1;
   after?.(terrain);
   const hash = { land: 0x811c9dc5, fluid: 0x811c9dc5 };
+  // The land's meshes also hashed one by one and sorted, so the same meshes built in another order
+  // (nearest the camera first) hash the same.
+  const lands: string[] = [];
   for (const { kind, mesh } of meshes) {
     if (!mesh.visible) continue;
+    if (kind === "land") {
+      let one = 0x811c9dc5;
+      const g = mesh.geometry;
+      const arrays = [
+        ...Object.keys(g.attributes)
+          .sort()
+          .map((n) => g.getAttribute(n).array),
+        ...(g.index ? [g.index.array] : []),
+      ];
+      for (const a of arrays) {
+        const bytes = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+        for (let k = 0; k < bytes.length; k++) one = Math.imul(one ^ bytes[k], 0x01000193);
+      }
+      lands.push((one >>> 0).toString(16).padStart(8, "0"));
+    }
     const g = mesh.geometry;
     for (const name of Object.keys(g.attributes).sort()) {
       const a = g.getAttribute(name).array as Float32Array;
@@ -96,14 +120,32 @@ export function buildIsland(cells: number, seed: number, land: LandOptions, zoom
     }
   }
   const shown = terrain.shownTriangles();
+  // The mesher's heights are those creatures and plants stand on: fieldFine on the chunk's arrays
+  // against fieldHeight through the land, at points spread over each chunk, edges included.
+  let fieldGap = 0;
+  const side = Math.ceil(cells / CHUNK);
+  if (GRAPHICS.fine && GRAPHICS.steps)
+    for (let c = 0; c < side * side; c++) {
+      const f = terrain.readFine(c);
+      for (let k = 0; k < 64; k++) {
+        const px = f.x0 + ((k * 0.618034 + 0.07) % 1) * (f.x1 - f.x0);
+        const py = f.y0 + ((k * 0.381966 + 0.11) % 1) * (f.y1 - f.y0);
+        fieldGap = Math.max(fieldGap, Math.abs(fieldFine(f, px, py) - terrain.field(px, py)));
+      }
+    }
   let coverGap = 0;
   let houseGap = 0;
   let sampled = 0;
   for (let i = 0; i < world.n; i++) {
     const cover = world.cover[i];
     // Covers, paths, and dry ground at the water's edge.
+    // Its four neighbours on the island (not the next row's first cell past the east edge).
+    const x0 = i % world.w;
     const edge =
-      world.fluid[i] === 0 && [1, -1, world.w, -world.w].some((o) => world.fluid[i + o] !== undefined && world.fluid[i + o] !== 0 && world.depth[i + o] > 0.06);
+      world.fluid[i] === 0 &&
+      [x0 < world.w - 1 ? 1 : 0, x0 > 0 ? -1 : 0, world.w, -world.w].some(
+        (o) => o !== 0 && world.fluid[i + o] !== undefined && world.fluid[i + o] !== 0 && world.depth[i + o] > 0.06,
+      );
     if (cover === C.NONE && world.ground[i] !== G.PATH && !edge) continue;
     const x = i % world.w;
     const y = Math.floor(i / world.w);
@@ -130,12 +172,15 @@ export function buildIsland(cells: number, seed: number, land: LandOptions, zoom
     fluidTriangles: shown.fluid,
     fineChunks: shown.fineChunks,
     eighths: shown.eighths,
+    chunks: side * side,
+    fieldGap,
     maxTileMs: terrain.fineStats.maxTileMs,
     coverGap,
     houseGap,
     sampled,
     tileP95: [...terrain.fineStats.tileMs].sort((a, b) => a - b)[Math.floor(terrain.fineStats.tileMs.length * 0.95)] ?? 0,
     landHash: hex(hash.land),
+    landSet: hex([...lands].sort().reduce((h, x) => Math.imul(h ^ parseInt(x, 16), 0x01000193), 0x811c9dc5) >>> 0),
     fluidHash: hex(hash.fluid),
     ms,
     fineMs,
@@ -196,13 +241,31 @@ export function terrainLooksChecks(check: Check): void {
     dropped.every((m, k) => m.fineChunks === 0 && m.landTriangles === off[k].landTriangles),
     dropped.map((m, k) => `${LOOK_ISLANDS[k].name} ${m.fineChunks} fine, ${m.landTriangles}/${off[k].landTriangles} land triangles`).join(", "),
   );
-  // Close up the nearest chunks are in eighth voxels, the next ones in quarters.
+  // One size of cube at every distance (15 November, the owner: "let's just keep 1/8 all the
+  // time, the transitions look super weird"): every chunk in eighth voxels, close, mid and over
+  // the whole island, and the same mesh whatever the camera, so nothing changes shape or pops.
   const close = LOOK_ISLANDS.map((_, k) => islandWith(LOOK_SWITCHES, k, "close"));
   const mid = LOOK_ISLANDS.map((_, k) => islandWith(LOOK_SWITCHES, k, "mid"));
+  const far = LOOK_ISLANDS.map((_, k) => islandWith(LOOK_SWITCHES, k, "far"));
   check(
-    "close up the land is in eighth voxels near the camera and quarters around them; at mid zoom in quarters",
-    close.every((m) => m.eighths > 0 && m.fineChunks > m.eighths) && mid.every((m) => m.eighths === 0 && m.fineChunks > 0),
-    close.map((m, k) => `${LOOK_ISLANDS[k].name} close ${m.eighths} eighths of ${m.fineChunks}, mid ${mid[k].fineChunks}`).join(", "),
+    "one size of cube: at every zoom every chunk of the land is drawn in eighth voxels, the same mesh close, mid and over the whole island",
+    FINE_SUB === 8 &&
+      [close, mid, far].every((zoom) => zoom.every((m) => m.fineChunks === m.chunks && m.eighths === m.chunks)) &&
+      close.every((m, k) => m.landSet === mid[k].landSet && m.landSet === far[k].landSet),
+    close
+      .map(
+        (m, k) =>
+          `${LOOK_ISLANDS[k].name}: ${m.eighths}/${mid[k].eighths}/${far[k].eighths} of ${m.chunks} chunks in eighths, ${m.landSet} ${mid[k].landSet} ${far[k].landSet}`,
+      )
+      .join(", "),
+  );
+  // The fine mesher's heights (fieldFine) are groundAt's (fieldHeight): a creature stands on the
+  // ground as drawn, not on a copy of it that could drift.
+  check(
+    "the fine land's mesher reads the same heights as groundAt (fieldFine equals fieldHeight)",
+    // Within float32 rounding (the arrays keep heights as 32-bit floats).
+    close.every((m) => m.fieldGap < 1e-4),
+    close.map((m, k) => `${LOOK_ISLANDS[k].name} worst gap ${m.fieldGap.toExponential(1)}`).join(", "),
   );
   // What stands on a cell stands on the drawn ground, within an eighth voxel.
   check(
@@ -211,12 +274,5 @@ export function terrainLooksChecks(check: Check): void {
     close
       .map((m, k) => `${LOOK_ISLANDS[k].name}: plants, paths, shore ${m.coverGap.toFixed(3)}, houses ${m.houseGap.toFixed(3)} (${m.sampled} points)`)
       .join(", "),
-  );
-  // From high up (the whole island) nothing is drawn finely.
-  const far = LOOK_ISLANDS.map((_, k) => islandWith(LOOK_SWITCHES, k, "far"));
-  check(
-    "the whole island from the sky is drawn in whole cells, as before",
-    far.every((m) => m.fineChunks === 0),
-    far.map((m, k) => `${LOOK_ISLANDS[k].name} ${m.fineChunks} fine chunks`).join(", "),
   );
 }

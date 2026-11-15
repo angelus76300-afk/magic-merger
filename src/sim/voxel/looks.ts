@@ -84,6 +84,8 @@ if (ShaderChunk.tonemapping_pars_fragment.includes(HOOK))
 // The sun's shadow map: 1024 texels a side, laid over what the camera holds
 // (the whole island from afar), so a texel is a fifth of a cell or less.
 export const SHADOW_SIZE = 1024;
+// The sun's steps across the sky for its shadows, radians (0.75 degrees).
+const SUN_STEP = (0.75 * Math.PI) / 180;
 
 // What the view tells the looks each frame.
 export interface LooksFrame {
@@ -294,10 +296,19 @@ float sunLight(vec3 n) {
   // Lays the shadow map over what the camera holds, from the sun's side. The
   // sun follows the hour across the sky as sky.ts draws it, never lower than
   // 20 degrees, so shadows stay short enough to read.
+  // For the measure only (scripts/looks-shadow-flicker.mjs): off lays the shadow map as before 15
+  // November (the sun turning every frame, its size in steps of 8 cells).
+  sunSteps = true;
+
   private placeSun(f: LooksFrame): void {
     const h = Math.max(0, Math.min(1, f.sunHeight));
-    const el = 0.32 + 0.5 * h;
-    let hx = Math.cos(f.sunAz);
+    // The sun turns in steps of SUN_STEP, not a little every frame (15 November, the owner:
+    // "shadows ... flicker a lot"): a shadow map that turns every frame lays its texels across
+    // the small cubes differently each time, and their shadows flicker. Between two steps the
+    // map is the same; a step moves every shadow by about a cube.
+    const step = (a: number) => (this.sunSteps ? Math.round(a / SUN_STEP) * SUN_STEP : a);
+    const el = step(0.32 + 0.5 * h);
+    let hx = Math.cos(step(f.sunAz));
     let hz = -0.6;
     const hl = Math.hypot(hx, hz);
     hx /= hl;
@@ -310,7 +321,11 @@ float sunLight(vec3 n) {
     const r = Math.min(f.side * 0.75, Math.max(24, f.radius * 1.6));
     // The ground it covers, seen from the sun: half its width, in steps of 8 so it does not swim.
     const across = r + (f.top + 6) * Math.abs(dir.y > 0.99 ? 0 : Math.sqrt(1 - dir.y * dir.y) / Math.max(0.2, dir.y)) * 0.5;
-    const half = Math.ceil(Math.max(r, across) / 8) * 8;
+    // In bands that double every two steps (32, 48, 64, 96, ...), so the texels keep their size
+    // while the camera zooms within a band; it was a step of 8 cells, crossed often.
+    let half = 32;
+    for (let k = 0; half < Math.max(r, across); k++) half = k % 2 ? 32 * 2 ** ((k + 1) / 2) : 48 * 2 ** (k / 2);
+    if (!this.sunSteps) half = Math.ceil(Math.max(r, across) / 8) * 8;
     const texel = (half * 2) / SHADOW_SIZE;
     // The middle, snapped to the texel grid so the edges of shadows stand still while the camera moves.
     const c = this.p.set(f.cx, 0, f.cz);

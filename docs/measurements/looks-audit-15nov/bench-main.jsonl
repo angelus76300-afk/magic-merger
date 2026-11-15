@@ -1,0 +1,4 @@
+{"zoom":"eye","W":344,"H":882,"built":594.3999999999069,"frames":5,"tick":[2,2.2],"draw":[5.8,17.2],"raster":[304.4,6666.1],"calls":92,"triangles":1413264,"pixelRatio":1,"land":{"land":646128,"fluid":15712,"fineChunks":9,"eighths":4}}
+{"zoom":"close","W":344,"H":882,"built":442.39999999990687,"frames":5,"tick":[1.8,4.6],"draw":[5.7,9.3],"raster":[263,6351.5],"calls":97,"triangles":1006398,"pixelRatio":1,"land":{"land":417246,"fluid":15692,"fineChunks":9,"eighths":1}}
+{"zoom":"mid","W":344,"H":882,"built":189,"frames":5,"tick":[2.1,2.2],"draw":[7.2,11.3],"raster":[277.2,6294.8],"calls":106,"triangles":982242,"pixelRatio":1,"land":{"land":261190,"fluid":15664,"fineChunks":6,"eighths":0}}
+{"zoom":"whole","W":344,"H":882,"built":0,"frames":5,"tick":[2.4,2.6],"draw":[6.2,17.4],"raster":[195.3,4959.5],"calls":98,"triangles":422022,"pixelRatio":1,"land":{"land":69762,"fluid":15806,"fineChunks":0,"eighths":0}}

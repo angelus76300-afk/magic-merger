@@ -603,7 +603,7 @@ export class Buildings {
     this.updateSites(world, drawn, fine);
     let key = "";
     // The size of cube each building is drawn with (cubes.ts lodAt): 0 the old model.
-    const lods = blocks.map((b) => lodAt(fine, (b.i % W) + 1 - (fine?.x ?? 0), Math.floor(b.i / W) + 1 - (fine?.y ?? 0)));
+    const lods: number[] = blocks.map(() => lodAt(fine));
     const started = performance.now();
     this.pending = false;
     blocks.forEach((b, n) => {
@@ -707,10 +707,10 @@ export class Buildings {
     const shape = b.kind === C.HOUSE ? houseShape(seed, style, (b.s?.level ?? 0) >= 3, patched) : jobShape(seed, b.kind, style);
     if (shape.plan) {
       const f = fineHouse(shape, seed);
-      this.cubes.set(this.cubeKey(world, b, lod, patched), { mesh: (lod === 2 ? f.vox.coarse() : f.vox).mesh(), windows: f.windows, chimneys: f.chimneys });
+      this.cubes.set(this.cubeKey(world, b, lod, patched), { mesh: f.vox.mesh(), windows: f.windows, chimneys: f.chimneys });
     } else {
       const v = fineBoxes(shape.boxes);
-      this.cubes.set(this.cubeKey(world, b, lod, patched), { mesh: (lod === 2 ? v.coarse() : v).mesh(), windows: shape.windows, chimneys: shape.chimneys });
+      this.cubes.set(this.cubeKey(world, b, lod, patched), { mesh: v.mesh(), windows: shape.windows, chimneys: shape.chimneys });
     }
   }
 
@@ -724,7 +724,7 @@ export class Buildings {
       if (!cells.every((c) => world.cover[c] === C.SITE)) continue;
       for (const c of cells) drawn.add(c);
       key += `${t.i}:${t.kind}:${stageOf(t)}:${logsLeft(t)},`;
-      const lod = lodAt(fine, (t.i % W) + 1 - (fine?.x ?? 0), Math.floor(t.i / W) + 1 - (fine?.y ?? 0));
+      const lod = lodAt(fine);
       if (lod) key += `c${lod},`;
     }
     if (key === this.siteKey) return;
@@ -760,10 +760,8 @@ export class Buildings {
       if (base - low > 0.05) add(B(0.05, low - base, 0.05, 1.9, base - low + 0.02, 1.9, 0x7a7068));
       const boxes = siteShape(final, stageOf(t), logsLeft(t), STYLE[style]?.trim);
       // In small cubes near the camera: poles, planks and logs a cube or two thick.
-      const lod = lodAt(fine, x + 1 - (fine?.x ?? 0), y + 1 - (fine?.y ?? 0));
-      if (lod) {
-        const v = fineBoxes(boxes);
-        appendTurned((lod === 2 ? v.coarse() : v).mesh(), qq, ox, base, oz, 1, pos, col);
+      if (lodAt(fine)) {
+        appendTurned(fineBoxes(boxes).mesh(), qq, ox, base, oz, 1, pos, col);
       } else for (const box of boxes) add(box);
     }
     if (this.siteMesh) {

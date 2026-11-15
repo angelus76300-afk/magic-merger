@@ -44,8 +44,9 @@ import { TICK, type World } from "../world";
 import { bodyGeometry } from "./bodies";
 import { daylight } from "../daylight";
 import { MODELS, geometryOf } from "./models";
+import { boxesInCubes } from "./shapes";
 import { OrbitCamera } from "./orbit";
-import { CHUNK, Terrain, V, columnTop, surfaceY } from "./terrain";
+import { BOTTOM, CHUNK, Terrain, V, columnTop, surfaceY } from "./terrain";
 import { hexColor, mixColor } from "../colors";
 import { DecorInstances } from "./decor-instances";
 import { Darkness } from "./darkness";
@@ -56,7 +57,7 @@ import { DAMP, HEART, HOUSE_STYLES, R as RARE, STYLE_BITS, TREE_STYLES, type Tre
 import { FAR_CELLS, NEAR_CELLS, farTreeModel, nearTreeModel } from "./near";
 import { GLOWING, VARIANTS, floraModels } from "./flora";
 import { Buildings } from "./buildings";
-import { FINE_VARIANTS, MID_TREE_TRIS, NEAR_TREE_TRIS, OLD_TREES, cubeTree, fineFocus, geometryOfMesh, lodAt, refocus, type FineFocus } from "./cubes";
+import { FINE_VARIANTS, OLD_TREES, cubeTree, fineFocus, geometryOfMesh, refocus, treeSize, type FineFocus } from "./cubes";
 import { WonderModels } from "./wonders";
 import { PropModels } from "./props";
 import { valueNoise } from "../noise";
@@ -445,6 +446,9 @@ export class VoxelView {
       this.scannedAt = time;
       this.terrain.scan();
     }
+    // How big a land cube is on the screen, for the fine land's level (terrain.ts wantLevel).
+    const lens = this.orbit.camera;
+    this.terrain.lod.perUnit = (this.cssH * this.pixelRatio) / (2 * Math.tan((lens.fov * Math.PI) / 360));
     this.terrain.rebuild(this.firstBuild);
     this.firstBuild = false;
     // In the eye view the land past the mist is not drawn (fog.ts EYE_DRAW).
@@ -462,7 +466,7 @@ export class VoxelView {
       : around !== null;
     // The houses and trees in small cubes follow what the camera looks at (cubes.ts).
     const cam = this.orbit.camera.position;
-    const fine = fineFocus(GRAPHICS.cubes, this.orbit.dist, this.orbit.tx, this.orbit.ty, eye, { x: cam.x + world.w / 2, y: cam.z + world.h / 2 });
+    const fine = fineFocus(GRAPHICS.cubes, this.orbit.tx, this.orbit.ty, eye, { x: cam.x + world.w / 2, y: cam.z + world.h / 2 });
     if (refocus(this.fineAt, fine)) {
       this.fineAt = fine;
       this.lastCovers = -1;
@@ -502,6 +506,7 @@ export class VoxelView {
     this.moveClouds(LAB_SKY.time ?? time);
     this.applyDaylight(LAB_SKY.time ?? time, visuals.darknessLevel(), visuals);
     this.lap("decal+day");
+    this.cullCubeTrees();
     this.looks.render(this.orbit.camera);
     this.lap("draw");
     this.drawOverlay(visuals);
@@ -674,11 +679,19 @@ export class VoxelView {
     // A far tree of the eye view (placeCovers): its two box model.
     const far = key.startsWith("far:");
     const own = far ? key.slice(4) : key;
-    // A tree in small cubes (cubes.ts): "cube:oak:1".
+    // A tree in small cubes (cubes.ts): "cube:oak:0:9", its kind, variant and size in cubes.
     const cube = own.startsWith("cube:") ? own.split(":") : null;
     const boxes0 = MODELS[own] ?? FLORA_MODELS[own] ?? MODELS.block;
     const boxes = far ? farTreeModel(boxes0) : boxes0;
-    const geometry = mesh ? mesh.geometry : cube ? geometryOfMesh(cubeTree(cube[1] as never, Number(cube[2]), cube[3] === "2")) : geometryOf(boxes);
+    // With the small cubes on, every other cover's model in cubes of the one size too (shapes.ts
+    // boxesInCubes): shrubs, cacti, flowers, crops, fences (15 November).
+    const geometry = mesh
+      ? mesh.geometry
+      : cube
+        ? geometryOfMesh(cubeTree(cube[1] as never, Number(cube[2]), Number(cube[3])))
+        : GRAPHICS.cubes && !far
+          ? geometryOfMesh(boxesInCubes(boxes))
+          : geometryOf(boxes);
     const glows = GLOWING.has(key) || (cube !== null && cube[1] === "glowcap");
     const bigger = new InstancedMesh(geometry, glows ? this.glowMaterial : this.coverMaterial, Math.max(64, Math.ceil(need * 1.5)));
     withColors(bigger);
@@ -755,8 +768,121 @@ export class VoxelView {
   // Where the eye was when the covers were last placed (null: placed whole, from the sky).
   private coversAround: { x: number; y: number; yaw: number } | null = null;
 
+  // A tree's size, as placeCovers draws its old model: height and girth from its cell, older trees
+  // bigger; on the old islands (no flora) a little variety by its shade.
+  private treeScale(i: number): number {
+    const { world } = this;
+    if (!world.flora) return 0.85 + (world.shade[i] % 7) * 0.04;
+    const h = cellHash(i);
+    const old = world.flora[i] & HEART ? 1.3 : 1;
+    const sh = (0.82 + (((h >> 3) % 32) / 32) * 0.4) * old;
+    const sw = (0.86 + (((h >> 8) % 32) / 32) * 0.26) * old;
+    return (sw + sh) / 2;
+  }
+
+  // Trees in small cubes, all of them as placed (placeCovers), and the ones drawn this frame
+  // (cullCubeTrees): an island has a few thousand, each a few hundred triangles, and an instanced
+  // mesh is drawn whole, in the shadow pass too.
+  private cubeAll = new Map<string, { matrices: Float32Array; colors: Float32Array | null; count: number; shown: string }>();
+  // Off only for the before and after (scripts/looks-cull-proof.mjs).
+  cullCovers = true;
+  private viewFrustum = new Frustum();
+  private sunFrustum = new Frustum();
+  private cullSphere = new Sphere();
+  private cullMatrix = new Matrix4();
+  private cullDown = new Vector3();
+  private cullAt = new Vector3();
+  private cullAt2 = new Vector3();
+  private cullLand: Mesh[] = [];
+
+  // Draws only the cube trees the camera sees or whose shadow can fall where it looks, and casts
+  // into the shadow map only the land whose shadow can: what is left out is neither on the screen
+  // nor shades it, so the frame is the same (scripts/looks-cull-proof.mjs measures it). Not in the eye view, whose near trees keep their
+  // slots (placeNearTrees).
+  private cullCubeTrees(): void {
+    const all = this.cullCovers && !this.orbit.eye;
+    const camera = this.orbit.camera;
+    camera.updateMatrixWorld();
+    this.cullMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    this.viewFrustum.setFromProjectionMatrix(this.cullMatrix);
+    const sun = GRAPHICS.shadows ? this.looks.sun : null;
+    if (sun) {
+      sun.updateMatrixWorld();
+      sun.target.updateMatrixWorld();
+      sun.shadow.updateMatrices(sun);
+      this.sunFrustum.copy(sun.shadow.getFrustum());
+    }
+    const sphere = this.cullSphere;
+    // The sun's way down, and how far a shadow can fall: from a caster's top to the island's
+    // floor (BOTTOM), slanting with the sun.
+    const down = this.cullDown;
+    let reach = 0;
+    if (sun) {
+      down.copy(sun.target.position).sub(sun.position).normalize();
+      reach = -down.y > 0.05 ? 1 / -down.y : 0;
+    }
+    // Whether a caster's shadow can fall inside the view: its sphere moved down the sun's ray
+    // in steps of its radius, to the island's floor. Only what the shadow map holds casts.
+    const shades = (c: Vector3, r: number): boolean => {
+      if (!sun || !all || !this.sunFrustum.intersectsSphere(sphere.set(c, r))) return false;
+      const len = (c.y + r - BOTTOM) * reach;
+      for (let t = 0; t <= len + r; t += r) {
+        sphere.center.copy(c).addScaledVector(down, t);
+        sphere.radius = r;
+        if (this.viewFrustum.intersectsSphere(sphere)) return true;
+      }
+      return false;
+    };
+    const seen = (c: Vector3, r: number): boolean => this.viewFrustum.intersectsSphere(sphere.set(c, r));
+    // The land: a chunk out of the view casts into the shadow map only if its shadow can reach it.
+    if (sun && all)
+      for (const mesh of this.terrain.landMeshes(this.cullLand)) {
+        const b = mesh.geometry.boundingSphere;
+        if (!b || !mesh.castShadow) continue;
+        mesh.castShadow = seen(b.center, b.radius) || shades(this.cullAt.copy(b.center), b.radius);
+        for (const child of mesh.children) child.castShadow = mesh.castShadow;
+      }
+    for (const [key, a] of this.cubeAll) {
+      const mesh = this.covers.get(key);
+      if (!mesh) continue;
+      const m = mesh.instanceMatrix.array as Float32Array;
+      const c = mesh.instanceColor ? (mesh.instanceColor.array as Float32Array) : null;
+      const keep: number[] = [];
+      for (let k = 0; k < a.count; k++) {
+        const o = k * 16;
+        // The tree's middle, a little above its foot: a tree is at most 13 cubes across and about
+        // 5.2 cells tall (cubes.ts SIZE_MAX, TALL).
+        const at = this.cullAt.set(a.matrices[o + 12], a.matrices[o + 13] + 2.6, a.matrices[o + 14]);
+        if (all && !seen(at, 3.4) && !shades(this.cullAt2.copy(at), 3.4)) continue;
+        keep.push(k);
+      }
+      const sig = keep.join(",");
+      if (sig === a.shown) continue;
+      a.shown = sig;
+      for (let n = 0; n < keep.length; n++) {
+        const k = keep[n];
+        m.set(a.matrices.subarray(k * 16, k * 16 + 16), n * 16);
+        if (c && a.colors) c.set(a.colors.subarray(k * 3, k * 3 + 3), n * 3);
+      }
+      mesh.count = keep.length;
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
+  }
+
+  private coversCubes = GRAPHICS.cubes;
   private placeCovers(): void {
     const { world } = this;
+    // The small cubes switched: every cover's model made again, the one way or the other.
+    if (this.coversCubes !== GRAPHICS.cubes) {
+      this.coversCubes = GRAPHICS.cubes;
+      for (const mesh of this.covers.values()) {
+        this.scene.remove(mesh);
+        mesh.dispose();
+      }
+      this.covers.clear();
+      this.cubeAll.clear();
+    }
     const lists = new Map<string, number[]>();
     for (const key of this.covers.keys()) lists.set(key, []);
     // In the eye view, only the covers within the mist and a step beyond it (the eye may walk
@@ -782,12 +908,9 @@ export class VoxelView {
     const flora = world.flora;
     // Villages of 4.4.5 part B: houses and buildings drawn whole, each its own.
     const whole = world.settlements.length || world.sites.length ? this.buildings.update(world, this.fineAt) : null;
-    // Trees near the camera in small cubes, the nearest first within their budget (cubes.ts).
-    const fine = this.fineAt && !this.fineAt.eye ? this.fineAt : null;
-    const nearTrees: [number, number, string][] = [];
-    // The point on the ground under the camera, in cells.
-    const camX = fine?.cx ?? 0;
-    const camY = fine?.cy ?? 0;
+    // Every tree in small cubes, at every zoom and in the eye view (cubes.ts), each its size in
+    // cubes of the one size (15 November).
+    const fine = this.fineAt;
     for (let i = 0; i < world.n; i++) {
       const c = world.cover[i];
       if (whole?.has(i) || c === C.WONDER) continue;
@@ -801,13 +924,9 @@ export class VoxelView {
       }
       const key = this.coverKey(i, c, trees, builtinCovers);
       if (fine && isTree(key)) {
-        const dx = (i % world.w) + 0.5 - fine.x;
-        const dy = Math.floor(i / world.w) + 0.5 - fine.y;
-        if (lodAt(fine, dx, dy)) {
-          // Nearest the camera first: what is big on the screen gets the finest cubes.
-          const cx = (i % world.w) + 0.5 - camX;
-          const cy = Math.floor(i / world.w) + 0.5 - camY;
-          nearTrees.push([cx * cx + cy * cy, i, key]);
+        const style = key.startsWith("tree:") ? key.split(":")[1] : OLD_TREES[key];
+        if (style) {
+          add(`cube:${style}:${(cellHash(i) >>> 5) % FINE_VARIANTS}:${treeSize(this.treeScale(i))}`, i);
           continue;
         }
       }
@@ -821,25 +940,6 @@ export class VoxelView {
         }
       }
       add(key, i);
-    }
-    if (nearTrees.length) {
-      nearTrees.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-      // Eighth cubes for the nearest, then quarter cubes, each within its budget; past both, the old model.
-      const left = [0, NEAR_TREE_TRIS, MID_TREE_TRIS];
-      for (const [, i, key] of nearTrees) {
-        const style = key.startsWith("tree:") ? key.split(":")[1] : OLD_TREES[key];
-        const v = (cellHash(i) >>> 5) % FINE_VARIANTS;
-        let lod = fine!.r > 0 ? 1 : 2;
-        let placed = false;
-        for (; style && lod <= 2 && !placed; lod++) {
-          const tris = cubeTree(style as never, v, lod === 2).tris;
-          if (tris > left[lod]) continue;
-          left[lod] -= tris;
-          add(`cube:${style}:${v}:${lod}`, i);
-          placed = true;
-        }
-        if (!placed) add(key, i);
-      }
     }
     // 4.9: pegs every few cells along a road marked out and not laid yet.
     for (const r of world.roads)
@@ -859,7 +959,7 @@ export class VoxelView {
       if (!cells.length && !this.covers.has(key)) continue;
       const mesh = this.coverMesh(key, cells.length);
       // A tree of the flora kit has boxes drawn over it near the eye (near.ts).
-      const slot = key.startsWith("tree:") ? this.treeKeys.push(key) - 1 : -1;
+      const slot = key.startsWith("tree:") || key.startsWith("cube:") ? this.treeKeys.push(key) - 1 : -1;
       if (slot >= 0) for (let k = 0; k < cells.length; k++) this.treeSlots.set(cells[k], slot * 0x100000 + k);
       const cube = key.startsWith("cube:");
       const tree = cube || isTree(key.startsWith("far:") ? key.slice(4) : key);
@@ -884,9 +984,12 @@ export class VoxelView {
           const sw = (0.86 + (((h >> 8) % 32) / 32) * 0.26) * old;
           const lean = (((h >> 13) % 32) / 32) * 0.1;
           const dir = (((h >> 18) % 64) / 64) * Math.PI * 2;
-          // In small cubes: as big, but square cubes and upright.
-          if (cube) placeLeaning(m, p, (h >> 1) % 4, (sw + sh) / 2, (sw + sh) / 2, 0, 0);
+          // In small cubes: upright, at scale 1 (its size is in its model, treeSize).
+          if (cube) placeLeaning(m, p, (h >> 1) % 4, 1, 1, 0, 0);
           else placeLeaning(m, p, (h >> 1) % 4, sw, sh, lean, dir);
+        } else if (cube || GRAPHICS.cubes) {
+          // In cubes: at scale 1, so its cubes are the one size.
+          placeLeaning(m, p, (world.shade[i] >> 2) % 4, 1, 1, 0, 0);
         } else {
           // A little size and turn variety so forests do not look stamped.
           const s = 0.85 + (world.shade[i] % 7) * 0.04;
@@ -911,6 +1014,16 @@ export class VoxelView {
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       this.coverCounts.set(key, cells.length);
+      // Trees in small cubes: every one kept, to draw only those the camera or the sun can see.
+      if (cube) {
+        const n = cells.length;
+        this.cubeAll.set(key, {
+          matrices: mesh.instanceMatrix.array.slice(0, n * 16) as Float32Array,
+          colors: mesh.instanceColor ? (mesh.instanceColor.array.slice(0, n * 3) as Float32Array) : null,
+          count: n,
+          shown: "",
+        });
+      } else this.cubeAll.delete(key);
     }
   }
 
@@ -974,8 +1087,13 @@ export class VoxelView {
       if (!base) continue;
       if (!mesh || slots.length > mesh.instanceMatrix.count) {
         if (!slots.length) continue;
-        const boxes = nearTreeModel(key.split(":")[1] as TreeStyle, FLORA_MODELS[key] ?? []);
-        const geometry = mesh ? mesh.geometry : geometryOf(boxes);
+        // A tree in small cubes keeps its model near the eye, with the faces under its crown.
+        const cube = key.startsWith("cube:") ? key.split(":") : null;
+        const geometry = mesh
+          ? mesh.geometry
+          : cube
+            ? geometryOfMesh(cubeTree(cube[1] as never, Number(cube[2]), Number(cube[3]), true))
+            : geometryOf(nearTreeModel(key.split(":")[1] as TreeStyle, FLORA_MODELS[key] ?? []));
         const bigger = new InstancedMesh(geometry, base.material, Math.max(32, Math.ceil(slots.length * 1.5)));
         withColors(bigger);
         bigger.frustumCulled = false;

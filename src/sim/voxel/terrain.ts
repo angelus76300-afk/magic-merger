@@ -1,4 +1,4 @@
-import { BufferAttribute, BufferGeometry, Mesh, type Material } from "three";
+import { BufferAttribute, BufferGeometry, FrontSide, Mesh, type Material } from "three";
 import { BUILTIN, C, F, G, type Material as LandMaterial } from "../materials";
 import type { World } from "../world";
 import { FACE_LIGHT } from "./models";
@@ -7,7 +7,7 @@ import { GRAPHICS } from "./graphics";
 import { LOOKS, biomeAt } from "../land";
 import { DAMP, R as RARE } from "../ecology";
 import { eyeKeepsChunk } from "./fog";
-import { TILE, buildFineTile, fieldHeight, fieldStep, fineAt, makeFineCells, sizeFineCells, type LandRead } from "./terrain-fine";
+import { TILE, buildFineTile, fieldHeight, fieldStep, fineAt, makeFineCells, sizeFineCells, type FineCells, type LandRead } from "./terrain-fine";
 
 // The island as voxel columns. Each cell is one column whose top sits at its
 // height (half a unit per height unit, rounded to whole voxels). Walls are
@@ -103,6 +103,17 @@ export class Terrain {
   // The eye view, second pass: chunks wholly past `r` cells from (x, y) are not drawn (the mist
   // has them, fog.ts EYE_DRAW); null draws every chunk, as from the sky.
   private shownAround: string | null = null;
+  // The land's meshes now drawn (fine or whole cells), for the view's shadow culling.
+  landMeshes(out: Mesh[]): Mesh[] {
+    out.length = 0;
+    for (let c = 0; c < this.chunks.length; c++) {
+      const fine = this.fine[c];
+      if (this.fineShown[c] && fine) out.push(fine);
+      else if (this.chunks[c].land) out.push(this.chunks[c].land!);
+    }
+    return out;
+  }
+
   showWithin(at: { x: number; y: number; r: number } | null): void {
     const key = at ? `${Math.round(at.x / 4)},${Math.round(at.y / 4)},${at.r}` : null;
     if (key === this.shownAround && !this.builtSinceShown) return;
@@ -259,13 +270,13 @@ export class Terrain {
     this.builtSinceShown = true;
   }
 
-  // The fine land (5.2.5, terrain-fine.ts): chunks near the camera drawn in small voxels, eighths
-  // close by and quarters a little farther, the one cell mesh beyond. A chunk is built a tile at a
-  // time, a few milliseconds a frame (FINE_BUDGET_MS), nearest first, and kept until the land
-  // changes or the camera goes far. Until its new mesh is ready a chunk keeps showing what it had.
+  // The fine land (5.2.5, terrain-fine.ts): every chunk drawn in eighth voxels (FINE_SUB), the one
+  // size at every distance. A chunk is built a tile at a time, a few milliseconds a frame
+  // (FINE_BUDGET_MS), nearest the camera first, and kept until the land changes. Until its new
+  // mesh is ready a chunk keeps showing what it had (the one cell mesh, before its first build).
   // The camera is read as the land is drawn.
   private fine: (Mesh | null | undefined)[] = [];
-  private fineLevel = new Uint8Array(0); // the columns a cell of each chunk's fine mesh: 4 or 8
+  private fineLevel = new Uint8Array(0); // the columns a cell of each chunk's fine mesh (FINE_SUB)
   private fineShown = new Uint8Array(0);
   private fineStale = new Uint8Array(0);
   private chunkOn = new Uint8Array(0);
@@ -331,7 +342,7 @@ export class Terrain {
   // next to water (the water's edge stays where the water is drawn).
   private anchoredAt(i: number): boolean {
     const { world } = this;
-    if (world.cover[i] !== C.NONE || world.ground[i] === G.PATH || this.builtColor(i) !== null || this.wet[i]) return true;
+    if (world.cover[i] !== C.NONE || world.ground[i] === G.PATH || this.fineBuilt(i) !== null || this.wet[i]) return true;
     const x = i % world.w;
     const y = (i - x) / world.w;
     return (
@@ -342,15 +353,34 @@ export class Terrain {
     );
   }
 
+  // The cell's continuous height as the secondary terrain map follows it (15 November, the owner:
+  // "a bit too much [variation] when the terrain should be flat ... keep it but just on bigger
+  // patches"): the mean of the generator's heights over the cell and the cells round it that its
+  // land joins (linked), what stands on them counted at its rounded height. A slope keeps its
+  // course; the bumps of single cells are smoothed into swells a few cells wide.
+  private softValue(x: number, y: number): number {
+    const { world } = this;
+    if (x < 0 || y < 0 || x >= world.w || y >= world.h) return BOTTOM;
+    const raw = (i: number) => (this.anchoredAt(i) ? columnTop(world, i) : Math.max(BOTTOM + 2, world.height[i] * V));
+    const own = y * world.w + x;
+    let sum = raw(own);
+    let n = 1;
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        if ((dx || dy) && this.landRead.linked(x, y, x + dx, y + dy)) {
+          sum += raw(own + dy * world.w + dx);
+          n++;
+        }
+      }
+    return sum / n;
+  }
+
   private landRead: LandRead = {
     top: (x, y) => {
       const { world } = this;
       return x >= 0 && y >= 0 && x < world.w && y < world.h ? columnTop(world, y * world.w + x) : BOTTOM;
     },
-    value: (x, y) => {
-      const { world } = this;
-      return x >= 0 && y >= 0 && x < world.w && y < world.h ? Math.max(BOTTOM + 2, world.height[y * world.w + x] * V) : BOTTOM;
-    },
+    value: (x, y) => this.softValue(x, y),
     anchored: (x, y) => {
       const { world } = this;
       return x < 0 || y < 0 || x >= world.w || y >= world.h || this.anchoredAt(y * world.w + x);
@@ -365,7 +395,7 @@ export class Terrain {
       const a = ay * world.w + ax;
       const b = by * world.w + bx;
       if (this.wet[a] || this.wet[b] || world.cover[a] === C.HOUSE || world.cover[b] === C.HOUSE) return false;
-      const ground = (i: number) => this.builtColor(i) === null || world.ground[i] === G.PATH;
+      const ground = (i: number) => this.fineBuilt(i) === null || world.ground[i] === G.PATH;
       return ground(a) && ground(b) && Math.abs(columnTop(world, a) - columnTop(world, b)) <= 1;
     },
   };
@@ -382,7 +412,7 @@ export class Terrain {
     if (!GRAPHICS.fine || !GRAPHICS.steps || !this.fine.length || this.wet[i]) return base;
     const c = Math.floor(cy / CHUNK) * this.cols + Math.floor(cx / CHUNK);
     if (!this.fineShown[c] || !this.fine[c]) return base;
-    if (this.builtColor(i) !== null && world.ground[i] !== G.PATH) return base;
+    if (this.fineBuilt(i) !== null && world.ground[i] !== G.PATH) return base;
     const sub = this.fineLevel[c];
     // The middle of the column drawn there.
     const px = (Math.floor(Math.min(cx + 0.999, Math.max(cx, x)) * sub) + 0.5) / sub;
@@ -414,13 +444,32 @@ export class Terrain {
     }
   }
 
-  // The level a chunk should have: 8, 4, or 0 for whole cells. With hysteresis, so a chunk at the
-  // edge of a ring does not flip as the camera turns.
-  private wantLevel(c: number, d: number): number {
-    const now = this.fine[c] ? this.fineLevel[c] : 0;
-    if (d < (now === 8 ? FINE8_KEEP : FINE8_NEAR)) return 8;
-    if (d < (now >= 4 ? FINE_KEEP : FINE_NEAR)) return 4;
-    return 0;
+  // The level a chunk should have: eighths (FINE_SUB), the one size at every distance (the owner,
+  // 15 November: "let's just keep 1/8 all the time, the transitions look super weird"), except
+  // where an eighth is drawn smaller than `lod.px` pixels on the screen: there quarters, which
+  // cannot be told apart from eighths at that size (scripts/looks-seam.mjs measures the seam). With
+  // hysteresis, so a chunk at the edge does not flip as the camera turns. `lod.perUnit` (pixels
+  // of the screen a scene unit spans at distance 1) is set by the view; 0 keeps every chunk in
+  // eighths (the checks, and the view until its first frame).
+  readonly lod = { perUnit: 0, px: LOD_PX };
+  // Off only for the before and after (scripts/looks-cull-proof.mjs): every face in every pass.
+  cullFaces = true;
+  private wantLevel(c: number): number {
+    if (!this.lod.perUnit || !this.lod.px) return FINE_SUB;
+    const eighth = this.lod.perUnit / FINE_SUB / Math.max(0.5, this.eyeDistance(c));
+    const now = this.fine[c] ? this.fineLevel[c] : FINE_SUB;
+    return eighth < this.lod.px * (now === FINE_SUB ? 1 : 1.2) ? FINE_SUB / 2 : FINE_SUB;
+  }
+
+  // The distance from the camera to the nearest point of a chunk (its land up to its highest column).
+  private eyeDistance(c: number): number {
+    const { x0, y0, x1, y1 } = this.bounds(c);
+    const ox = -this.world.w / 2;
+    const oz = -this.world.h / 2;
+    const dx = Math.max(x0 + ox - this.eye.x, 0, this.eye.x - (x1 + ox));
+    const dz = Math.max(y0 + oz - this.eye.z, 0, this.eye.z - (y1 + oz));
+    const dy = Math.max(0, this.eye.y - (this.chunkTop[c] ?? FINE_TOP));
+    return Math.hypot(dx, dy, dz);
   }
 
   // Picks each chunk's level, shows each chunk one way or the other, and builds tiles of the
@@ -437,17 +486,14 @@ export class Terrain {
     if (!this.eye.known) return;
     void until;
     const start = performance.now();
-    // From high up, the whole island in whole cells.
-    const high = this.eye.reach > FINE_HIGH;
     for (;;) {
       let best = -1;
       let bestRank = Infinity;
       let bestSub = 0;
       let keep = false;
       for (let c = 0; c < n; c++) {
-        const d = high ? Infinity : this.chunkDistance(c);
-        if (d > FINE_DROP && this.fine[c] !== undefined) this.dropFine(c);
-        const want = this.wantLevel(c, d);
+        const d = this.chunkDistance(c);
+        const want = this.wantLevel(c);
         if (this.job?.c === c && want === this.job.sub) keep = true;
         // Missing or at the wrong level first, nearest first; then a changed chunk, at most one in
         // STALE_MS.
@@ -498,8 +544,9 @@ export class Terrain {
     this.fineStats.maxFrameMs = Math.max(this.fineStats.maxFrameMs, performance.now() - start);
   }
 
-  // Reads the chunk's cells and lists its tiles.
-  private startFine(c: number, sub: number): void {
+  // The cells of chunk c and a border of three as the fine mesher reads them (this.fineCells).
+  // Public for the checks (scripts/terrain-looks-test.ts): the mesher's heights are groundAt's.
+  readFine(c: number): FineCells {
     const { world } = this;
     const { w, h } = world;
     const { x0, y0, x1, y1 } = this.bounds(c);
@@ -517,28 +564,45 @@ export class Terrain {
         f.top[k] = top;
         f.ground[k] = g;
         f.wet[k] = this.wet[i];
-        f.water[k] = this.wet[i] && world.fluid[i] === F.WATER ? Math.max(surfaceY(world, i), top + FLUID_LIFT) : -1e9;
-        const surface = this.topColor(i);
+        // Water and lava: the fine land's edge meets them in a wavy line of small cubes (lava since
+        // 15 November: its cell-shaped edge read as big cubes on the volcano).
+        const lava = world.fluid[i] === F.LAVA;
+        f.water[k] = this.wet[i] && (world.fluid[i] === F.WATER || lava) ? Math.max(surfaceY(world, i), top + FLUID_LIFT) : -1e9;
+        f.lava[k] = lava ? 1 : 0;
+        const surface = this.fineTopColor(i);
         f.color[k] = surface;
-        const built = this.builtColor(i);
+        const built = this.fineBuilt(i);
         // A trodden path is ground too: its border with the grass wanders (a road keeps its kerb).
         f.natural[k] = built === null || g === G.PATH ? 1 : 0;
         f.edge[k] = built ?? this.sideTopColor(i, surface);
         const strata = this.strataAt(i);
-        f.soil[k] = this.soilColor(i);
-        f.stone[k] = strata.stone;
-        f.deep[k] = strata.deep;
+        f.soil[k] = lifted(this.soilColor(i));
+        f.stone[k] = lifted(strata.stone);
+        f.deep[k] = lifted(strata.deep);
         f.blends[k] = g === G.GRASS || g === G.SAND || g === G.DIRT || g === G.ROCK || g === G.SNOW || g === G.ASH || g === G.PATH ? 1 : 0;
         f.hangs[k] = g === G.GRASS || g === G.SNOW ? 1 : 0;
         f.flowers[k] = g === G.GRASS && world.cover[i] === 0 ? 1 : 0;
         f.pebbles[k] = g === G.SAND ? 1 : 0;
         f.flat[k] = world.cover[i] === C.HOUSE ? 1 : 0;
-        f.value[k] = Math.max(BOTTOM + 2, world.height[i] * V);
+        f.value[k] = this.softValue(x, y);
         f.anchored[k] = this.anchoredAt(i) ? 1 : 0;
       }
     }
+    return f;
+  }
+
+  // The secondary terrain map's height at (px, py) in cells (terrain-fine.ts fieldHeight), as
+  // groundAt reads it, before it is rounded to columns. For the checks.
+  field(px: number, py: number): number {
+    return fieldHeight(this.landRead, px, py);
+  }
+
+  // Reads the chunk's cells and lists its tiles.
+  private startFine(c: number, sub: number): void {
+    const { x0, y0, x1, y1 } = this.bounds(c);
+    this.readFine(c);
     const tiles: [number, number, number, number][] = [];
-    // Tiles of 4 cells a side in quarter voxels, 2 in eighths: the same work a tile.
+    // Tiles of 2 cells a side in eighths (4 in quarters): the same work a tile.
     const side = sub === 8 ? TILE / 4 : TILE / 2;
     for (let ty = y0; ty < y1; ty += side) for (let tx = x0; tx < x1; tx += side) tiles.push([tx, ty, Math.min(x1, tx + side), Math.min(y1, ty + side)]);
     FINE_OUT.reset();
@@ -551,7 +615,7 @@ export class Terrain {
   // The chunk's tiles are all written: its new fine mesh takes the place of the old one.
   private finishFine(c: number, sub: number): void {
     this.job = null;
-    const geometry = FINE_OUT.geometry(3);
+    const geometry = FINE_OUT.quadGeometry();
     const old = this.fine[c];
     const shown = this.fineShown[c];
     if (old) {
@@ -572,7 +636,31 @@ export class Terrain {
     }
     const mesh = new Mesh(geometry, this.landMaterial);
     mesh.matrixAutoUpdate = false;
-    mesh.onBeforeRender = this.seeCamera;
+    // The east and south walls drawn by a second mesh on the same geometry, each mesh setting its
+    // run of faces as it is drawn (drawFacing); a child, so it is shown and hidden with it.
+    const twin = new Mesh(geometry, this.landMaterial);
+    twin.matrixAutoUpdate = false;
+    mesh.add(twin);
+    const facing = (m: Mesh, low: boolean) => {
+      m.onBeforeRender = (r, s, camera, ...rest) => {
+        if (low) this.seeCamera(r, s, camera as never);
+        const all = !this.cullFaces || this.landMaterial.side !== FrontSide || this.landMaterial.shadowSide !== null;
+        if (all) geometry.setDrawRange(low ? 0 : FACES_ALL, low ? FACES_ALL : 0);
+        else drawFacing(geometry, low, camera.position.x, camera.position.z, false);
+        void rest;
+      };
+      m.onBeforeShadow = (_r, _o, _c, shadowCamera) => {
+        const all = !this.cullFaces || this.landMaterial.side !== FrontSide || this.landMaterial.shadowSide !== null;
+        if (all) geometry.setDrawRange(low ? 0 : FACES_ALL, low ? FACES_ALL : 0);
+        else {
+          // Toward the sun: the light's camera looks down its own -z.
+          const e = shadowCamera.matrixWorld.elements;
+          drawFacing(geometry, low, e[8], e[10], true);
+        }
+      };
+    };
+    facing(mesh, true);
+    facing(twin, false);
     mesh.visible = shown === 1 && this.chunkOn[c] === 1;
     this.fine[c] = mesh;
     this.add(mesh);
@@ -589,7 +677,7 @@ export class Terrain {
       const ch = this.chunks[c];
       const fine = this.fine[c];
       if (this.fineShown[c] && fine) {
-        land += fine.geometry.getAttribute("position").count / 3;
+        land += (fine.geometry.index?.count ?? fine.geometry.getAttribute("position").count) / 3;
         fineChunks++;
         if (this.fineLevel[c] === 8) eighths++;
       } else if (ch.land) land += ch.land.geometry.getAttribute("position").count / 3;
@@ -820,6 +908,30 @@ export class Terrain {
     return scaleColor(base, 0.92 + Math.min(0.16, Math.max(0, world.height[i] - 8) * 0.006));
   }
 
+  // The top's colour in the fine land (15 November): the mean of the ground's colours, not one of
+  // them picked cell by cell, which drew the land as a checkerboard of cells; the fine land's own
+  // tone patches (grain) and its tint by height (relief) vary it in soft patches instead. Built
+  // ground (a road, a floor) keeps its own.
+  private fineTopColor(i: number): number {
+    const { world } = this;
+    const g = world.ground[i];
+    if (this.fineBuilt(i) !== null && g !== G.PATH) return this.topColor(i);
+    const colors = this.colorsAt(i, g, world.materials.get("ground", g));
+    let r = 0;
+    let gr = 0;
+    let b = 0;
+    for (const c of colors) {
+      r += (c >> 16) & 255;
+      gr += (c >> 8) & 255;
+      b += c & 255;
+    }
+    const n = colors.length;
+    const mean = (Math.round(r / n) << 16) | (Math.round(gr / n) << 8) | Math.round(b / n);
+    if (GRAPHICS.relief) return scaleColor(mean, 0.96);
+    // Without relief, higher land a touch lighter as topColor has it, in steps of 4%.
+    return scaleColor(mean, Math.round((0.92 + Math.min(0.16, Math.max(0, world.height[i] - 8) * 0.006)) * 25) / 25);
+  }
+
   // A built-in ground's colors in this cell's region on a mixed island
   // (4.4.1): the world's table holds the main biome's.
   private colorsAt(i: number, id: number, m: LandMaterial): number[] {
@@ -847,6 +959,12 @@ export class Terrain {
   }
 
   // Natural ground shows soil and stone in its walls; built materials do not.
+  // As builtColor, for the fine land: basalt is natural ground there too (15 November: the
+  // volcano's crater rim was drawn in whole cells as if built, black slabs a cell wide).
+  private fineBuilt(i: number): number | null {
+    return this.world.ground[i] === G.BASALT ? null : this.builtColor(i);
+  }
+
   private builtColor(i: number): number | null {
     const g = this.world.ground[i];
     if (g === G.GRASS || g === G.DIRT || g === G.SAND || g === G.SNOW || g === G.ASH || g === G.FIELD || g === G.ROCK) return null;
@@ -887,7 +1005,9 @@ export class Terrain {
       return { color: mixColor(0x5cc0f0, 0x1d5d9e, k), alpha: 0.72 + k * 0.2 };
     }
     const m = world.materials.get("fluid", f);
-    const color = m.colors[world.shade[i] % m.colors.length];
+    // With the fine land, the mean of its colours: one picked cell by cell drew a lava pool as a
+    // checkerboard of whole cells, the volcano's "big cubes" (15 November).
+    const color = GRAPHICS.fine ? meanColor(m.colors) : m.colors[world.shade[i] % m.colors.length];
     if (f === F.LAVA) return { color, alpha: 1 };
     if (f === F.ICE) return { color, alpha: 0.95 };
     if (f === F.ACID) return { color, alpha: 0.85 };
@@ -938,21 +1058,56 @@ const LEVEL_STEP = 0.15;
 // Depths at which a cell starts and stops being drawn wet.
 const WET_ON = 0.06;
 const WET_OFF = 0.005;
-// The fine land (5.2.5): chunks closer to the camera than FINE_NEAR are drawn in quarter voxels
-// and kept so until farther than FINE_KEEP; closer than FINE8_NEAR in eighth voxels, kept until
-// FINE8_KEEP; forgotten past FINE_DROP (scene units). The camera's height counts above FINE_TOP,
-// about the height of the land. A frame spends at most about FINE_BUDGET_MS building them.
-const FINE8_NEAR = 12;
-const FINE8_KEEP = 16;
+// The fine land (5.2.5): every chunk drawn in columns of 1 / FINE_SUB of a cell, nearest the
+// camera first (15 November: one size at every distance). The camera's height counts above
+// FINE_TOP, about the height of the land. A frame spends at most about FINE_BUDGET_MS building them.
+export const FINE_SUB = 8;
+// Quarters only where an eighth is smaller than this many pixels of the screen (Terrain.lod).
+// Off (0): the seam was measured (scripts/looks-seam.mjs) and quarters showed wherever they were
+// used, so every chunk stays in eighths.
+export const LOD_PX = 0;
+// Every face, as one run.
+const FACES_ALL = Infinity;
 const FINE_BUDGET_MS = 4;
 const FINE_AGAIN_MS = 1.5;
-const FINE_NEAR = 28;
-const FINE_KEEP = 34;
-const FINE_DROP = 90;
 const FINE_TOP = 6;
-// The camera farther than this from the point it looks at sees the island in whole cells (the
-// whole island from the sky), and a changed fine chunk is built again at most once in STALE_MS.
-const FINE_HIGH = 60;
+// The fine land's faces by the way they face, in the order of its index buffer (quadGeometry):
+// north walls, tops and bottoms, west walls, then east and south walls. Any ways a pass needs out
+// of the first three are one run of it, and of the last two another (drawFacing).
+const FACE_NORTH = 0;
+const FACE_TOP = 1;
+const FACE_WEST = 2;
+const FACE_EAST = 3;
+const FACE_SOUTH = 4;
+
+// Which of a fine chunk's faces a pass draws (15 November): only the walls that can face it. A
+// wall facing away is never drawn (the land is drawn from its front side, and three draws the
+// sun's shadow map from the back side), so leaving it out changes nothing on the screen; the
+// tops always go. `low` draws the run of north, top and west faces, the other the east and south.
+// (x, z) is the camera, or with `sun` the way toward the sun.
+function drawFacing(g: BufferGeometry, low: boolean, x: number, z: number, sun: boolean): void {
+  const f = g.userData.faces as { first: number[]; counts: number[]; planes: { e: number; s: number; w: number; n: number } } | undefined;
+  if (!f) return;
+  const want = sun ? [z > 0, true, x > 0, x < 0, z < 0] : [z < f.planes.n, true, x < f.planes.w, x > f.planes.e, z > f.planes.s];
+  const from = low ? 0 : 3;
+  const to = low ? 3 : 5;
+  let a = -1;
+  let b = -1;
+  for (let k = from; k < to; k++) {
+    if (!want[k] || !f.counts[k]) continue;
+    if (a < 0) a = k;
+    b = k;
+  }
+  if (a < 0) {
+    g.setDrawRange(0, 0);
+    return;
+  }
+  // The ways between the first and last wanted are drawn too (only west without top, or north
+  // without west, cannot happen: the top run is always wanted).
+  g.setDrawRange(f.first[a] * 6, (f.first[b] + f.counts[b] - f.first[a]) * 6);
+}
+
+// A changed fine chunk is built again at most once in STALE_MS.
 const STALE_MS = 2000;
 const FLOW_STALE_MS = 10000;
 // How far a waterfall hangs in front of the island's cut side, in cells.
@@ -1161,6 +1316,78 @@ export class Writer {
   }
 
   // A geometry with copies of what was written (the writer is reused).
+  // The fine land's faces as an indexed mesh (15 November): every face it writes is a rectangle,
+  // six vertices a, b, c, a, c, d, kept as four and six indices, with colours and the drawings' mask
+  // in bytes. The same triangles as geometry(3), in about half the memory: the whole island is
+  // drawn finely now, and its vertices were most of the view's memory.
+  quadGeometry(): BufferGeometry | null {
+    if (this.n === 0) return null;
+    const quads = this.n / 6;
+    const pos = new Float32Array(quads * 12);
+    const col = new Uint8Array(quads * 12);
+    const mask = new Uint8Array(quads * 4);
+    const index = new Uint32Array(quads * 6);
+    const byte = (v: number) => Math.max(0, Math.min(255, Math.round(v * 255)));
+    // Each face's way, from its winding (outward, as three's front side): the index buffer holds
+    // them in the order FACE_ORDER, so a pass draws only the ways that can show (terrain.ts
+    // drawFacing). The planes: the lowest east and south wall, the highest west and north one.
+    const way = new Uint8Array(quads);
+    const counts = [0, 0, 0, 0, 0];
+    const planes = { e: Infinity, s: Infinity, w: -Infinity, n: -Infinity };
+    for (let q = 0; q < quads; q++) {
+      const a = q * 18;
+      const p = this.pos;
+      const ux = p[a + 3] - p[a];
+      const uy = p[a + 4] - p[a + 1];
+      const uz = p[a + 5] - p[a + 2];
+      const vx = p[a + 6] - p[a];
+      const vy = p[a + 7] - p[a + 1];
+      const vz = p[a + 8] - p[a + 2];
+      const nx = uy * vz - uz * vy;
+      const ny = uz * vx - ux * vz;
+      const nz = ux * vy - uy * vx;
+      let k = FACE_TOP;
+      if (Math.abs(nx) > Math.abs(ny) && Math.abs(nx) >= Math.abs(nz)) {
+        k = nx > 0 ? FACE_EAST : FACE_WEST;
+        if (nx > 0) planes.e = Math.min(planes.e, p[a]);
+        else planes.w = Math.max(planes.w, p[a]);
+      } else if (Math.abs(nz) > Math.abs(ny)) {
+        k = nz > 0 ? FACE_SOUTH : FACE_NORTH;
+        if (nz > 0) planes.s = Math.min(planes.s, p[a + 2]);
+        else planes.n = Math.max(planes.n, p[a + 2]);
+      }
+      way[q] = k;
+      counts[k]++;
+    }
+    const first = [0, 0, 0, 0, 0];
+    for (let k = 1; k < 5; k++) first[k] = first[k - 1] + counts[k - 1];
+    const next = [...first];
+    for (let q = 0; q < quads; q++) {
+      for (let k = 0; k < 4; k++) {
+        // a, b, c from the first three vertices, d from the sixth.
+        const from = q * 6 + (k === 3 ? 5 : k);
+        const to = q * 4 + k;
+        pos[to * 3] = this.pos[from * 3];
+        pos[to * 3 + 1] = this.pos[from * 3 + 1];
+        pos[to * 3 + 2] = this.pos[from * 3 + 2];
+        col[to * 3] = byte(this.col[from * 4]);
+        col[to * 3 + 1] = byte(this.col[from * 4 + 1]);
+        col[to * 3 + 2] = byte(this.col[from * 4 + 2]);
+        mask[to] = byte(this.mask[from]);
+      }
+      const v = q * 4;
+      index.set([v, v + 1, v + 2, v, v + 2, v + 3], next[way[q]]++ * 6);
+    }
+    const g = new BufferGeometry();
+    g.setAttribute("position", new BufferAttribute(pos, 3));
+    g.setAttribute("color", new BufferAttribute(col, 3, true));
+    g.setAttribute("decalMask", new BufferAttribute(mask, 1, true));
+    g.setIndex(new BufferAttribute(index, 1));
+    g.computeBoundingSphere();
+    g.userData.faces = { first, counts, planes };
+    return g;
+  }
+
   geometry(colorSize: 3 | 4, waves = false): BufferGeometry | null {
     if (this.n === 0) return null;
     const g = new BufferGeometry();
@@ -1188,6 +1415,29 @@ const LAND = new Writer();
 const FINE_OUT = new Writer();
 const FINE_VERTICES = 6 * 4096 * 16;
 const FLUID = new Writer();
+
+// The mean of a list of colours.
+function meanColor(colors: number[]): number {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  for (const c of colors) {
+    r += (c >> 16) & 255;
+    g += (c >> 8) & 255;
+    b += c & 255;
+  }
+  const n = Math.max(1, colors.length);
+  return (Math.round(r / n) << 16) | (Math.round(g / n) << 8) | Math.round(b / n);
+}
+
+// A dark stone a little lighter in the fine land's cliff walls (15 November): the tall walls of
+// the new taller peaks read as black slabs. Colours darker than LIFT_TO (by luminance) are raised
+// toward it, at most by half.
+const LIFT_TO = 95;
+function lifted(color: number): number {
+  const l = 0.3 * ((color >> 16) & 255) + 0.59 * ((color >> 8) & 255) + 0.11 * (color & 255);
+  return l >= LIFT_TO ? color : scaleColor(color, Math.min(1.5, LIFT_TO / Math.max(1, l)));
+}
 
 // A wall's color a shade lighter or darker, warmer or cooler, the same for the same cell, side
 // and course: up to `amount` either way.
