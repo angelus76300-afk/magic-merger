@@ -6,6 +6,7 @@ import { FINE_BOX, GRAIN, MAX_GRAIN, MAX_PROP_BOXES, SHAPES, propBounds, readBox
 import { loadWorld, saveWorld } from "../src/sim/save";
 import { generateWorld } from "../src/sim/world";
 import { PROP_TRIANGLE_BUDGET, buildGround } from "../src/sim/voxel/props";
+import { GRAPHICS } from "../src/sim/voxel/graphics";
 import { LOOK_VOXEL, propLocal, propTriangles, voxelize } from "../src/sim/voxel/shapes";
 import { benchProps } from "./looks-bench";
 import { lookMeshes, type Look } from "./looks-golden";
@@ -215,6 +216,17 @@ function lookToolChecks(check: Check): void {
   check("soft shadow: a pillar is darker at its foot, where it meets the ground", foot < head * 0.95, `${foot} ${head}`);
   const flatTop = propLocal(one(readBox([0, 0, 1, 2, 2, 1, "#808080"])));
   check("faces that match are merged: a lone block in the air is 6 quads", flatTop.tris === 12, `${flatTop.tris}`);
+
+  // With the small cubes on (15 November, one size of cube everywhere), a stored look of plain
+  // boxes is drawn in cubes of LOOK_VOXEL too: every corner on the grid, held looks included.
+  const was = GRAPHICS.cubes;
+  GRAPHICS.cubes = true;
+  const stored = one(readBox([0.07, 0.03, 0, 0.61, 0.4, 0.93, "#a05030"]), false);
+  const grid = (m: ReturnType<typeof propLocal>) => m.lit.pos.every((v) => Math.abs(v / LOOK_VOXEL - Math.round(v / LOOK_VOXEL)) < 1e-6);
+  const inCubes = propLocal(stored);
+  const held = propLocal(stored, false, 0.5, 0.3, 0.2);
+  GRAPHICS.cubes = was;
+  check("with the cubes on, a stored look of boxes is drawn on the eighth grid, held or not", inCubes.tris > 0 && grid(inCubes) && held.tris > 0 && grid(held));
 
   // Grain: a tone per voxel; the same look draws the same tones.
   const slab = () => propLocal(one(readBox([0, 0, 0, 2, 2, 2, "#808080", "grain"]), false));

@@ -100,3 +100,83 @@ Building the whole island's fine land takes about 2 seconds of work (medium coas
 The close view costs as much as the whole view for two reasons. The sun's shadow pass draws every chunk, and the tree instances are not culled, so the whole island's land and trees are drawn twice even when the camera looks at one village.
 
 This is far over the 600 000 budget. Nothing visible has been cut; the choices are in the pull request.
+
+## Second pass, 15 November: culling, the seam, the volcano, assets, shadows
+
+The owner on the draft: "we can see the seam ... it was extremely obvious", "Option 1 if you are confident in the results. 2 is also fair", "the new version is pretty good except the top of the volcano, which has big cubes still", "review all assets", and "Shadows though are very bad and flicker a lot".
+
+### 1. What the camera cannot see is not drawn
+
+- Cube trees outside the view whose shadow cannot reach it are not drawn. The test sweeps each tree's sphere down the sun's ray to the island's floor (`view.ts` `cullCubeTrees`).
+- A land chunk whose shadow cannot reach the view does not cast into the shadow map.
+- Each pass draws only the walls that can face it. The land is drawn from its front side, and three draws the shadow map from the back side, so a wall facing away is never drawn either way. Each fine chunk's faces are sorted by the way they face, and two meshes share the geometry, one drawing the north, top and west run, the other the east and south run (`terrain.ts` `drawFacing`).
+- Proof (`scripts/looks-cull-proof.mjs`, frames in `cull/`): the same frame with culling off and on, at close, mid and whole. **Max difference 0, mean 0, at all three zooms.** The noise floor, the same frame drawn twice, is also 0. Triangles drawn: close 4.92M → 1.20M, mid 5.34M → 1.55M, whole 5.44M → 2.31M.
+
+### 2. Quarter cubes where an eighth is under a pixel: measured, left off
+
+`scripts/looks-seam.mjs` and `scripts/looks-seam.py` (crops in `seam/`):
+
+- The camera is set so the line between eighth and quarter chunks crosses the screen. The same frame is drawn all in eighths and with the switch, between two all-eighths frames for the noise.
+- The script crops an 80-pixel strip at the seam and saves both crops and an enlarged side by side.
+
+| View, threshold   | Chunks in quarters | Strip mean diff | Noise mean | Pixels off > 8 | Noise | Triangles     |
+| ----------------- | ------------------ | --------------- | ---------- | -------------- | ----- | ------------- |
+| low, 3 px         | 10 of 25           | 0.087%          | 0.074%     | 0.76%          | 0.66% | 1.78M → 1.40M |
+| whole, 1.5 px     | 3                  | 1.06%           | 0          | 10.9%          | 0     | 2.49M → 2.14M |
+| whole, 2 px       | 10                 | 1.36%           | 0          | 14.4%          | 0     | 2.49M → 1.90M |
+| whole, 3 px (all) | 20                 | 2.79% (frame)   | 0          | 31% (frame)    | 0     | 2.49M → 1.41M |
+
+Only far, hazy land passes (low view, 3 px). The whole view does not pass at any threshold that switches a chunk, and at 1 px nothing switches. So the switch stays off (`LOD_PX = 0`) and every chunk stays in eighths.
+
+### 3. The volcano's big cubes
+
+Two causes:
+
+- **Basalt was treated as built ground.** `builtColor` lists it as built, so the fine land drew the crater rim as plain whole-cell columns: the black slabs. In the fine land basalt is now natural ground, with slopes, strata and lighter stone (`fineBuilt`).
+- **Lava picked one of its three colours cell by cell**, a checkerboard of whole cells. With the fine land on, every fluid other than water takes the mean of its colours.
+
+What remains: the lava's surface is flat and its edge follows cells, and the tall crater terraces are the simulation's own cell heights. See `assets/lava-main.jpg` against `assets/lava-branch.jpg`.
+
+### 4. Assets at 1/8
+
+`assets/` holds one close frame each at 344 by 882, main and branch (`scripts/looks-assets.mjs`); the sheets are `assets/assets-sheet-1.jpg` to `-3.jpg`.
+
+- **Converted** (at draw time, cached, nothing stored changes; with the cubes off they draw as before):
+  - Wonders: their boxes are filled into the 1/8 grid (`shapes.ts` `boxesInCubes`).
+  - Stored spell looks of plain boxes, held looks included, scaled before they are filled, so the cubes keep their size.
+  - Every cover's old box model: shrubs, cacti, flowers, crops, fences, berries. They are placed at scale 1.
+- **Still a problem after conversion:** a large plain box filled with eighth cubes is still one smooth box, with only rounded edges and corner shade (`assets/wonder-branch.jpg`, `assets/looks-branch.jpg`, `assets/cacti-branch.jpg`). To read as small cubes they need tone patches by cube, like the trees and the land. That is a style choice not made here.
+- **Not converted:**
+  - Villagers and animals (`rigs.ts`, `figures.ts`): free boxes that turn every frame. A cube grid per part would make thin limbs vanish or crawl as they turn. That needs a per-part grid design of its own.
+  - Effects (sparks, puffs, flames, bolts): moving light, not solid things.
+  - The lava's cell-shaped edge (fluids are drawn per cell).
+
+### 5. Shadows
+
+The flicker came from the sun turning a little every frame: the shadow map's texels are laid across the small cubes differently each time, so whole crowns and grass patches switched between lit and shaded. Also, the map's size followed the zoom in steps of 8 cells, so its texels changed size often.
+
+The fix (`looks.ts` `placeSun`):
+
+- The sun turns in steps of 0.75 degrees, about one a second of island time; each step moves a shadow by about a cube.
+- The map's size is set in bands of 32, 48, 64, 96, 128 cells, so zooming within a band keeps the texels.
+- Texel snapping and the four-tap filter with normal offset stay.
+
+`scripts/looks-shadow-flicker.mjs` counts pixels that change by more than 12 between consecutive frames, with the sun as before (`sunSteps` off) and as now. Strips of four consecutive frames are in `shadows/sun-strip-before.jpg` and `shadows/sun-strip-after.jpg`.
+
+| Move (camera still unless named)       | Before, mean / max    | After, mean / max |
+| -------------------------------------- | --------------------- | ----------------- |
+| the sun moving (0.25 s of day a frame) | 1 268 / 6 600         | 565 / 754         |
+| pan, zoom, orbit                       | the same in both runs | the same          |
+
+The pan, zoom and orbit runs counted the same pixels with the old and new sun (texel snapping already held the map still while the camera moved). The shadow pass in the software renderer: 2.1 ms before and 4.6 ms after on one still frame, within this renderer's noise; the pass itself does the same work.
+
+### 6. Triangles and draw time per zoom (344 by 882, high, village island)
+
+| Zoom  | Main  | First pass | Now   | Raster p50: main / first / now |
+| ----- | ----- | ---------- | ----- | ------------------------------ |
+| eye   | 1.41M | 4.79M      | 1.15M | 304 / 744 / 442 ms             |
+| close | 1.01M | 4.79M      | 1.20M | 263 / 748 / 421 ms             |
+| mid   | 0.98M | 5.25M      | 1.35M | 277 / 797 / 443 ms             |
+| whole | 0.42M | 5.44M      | 2.29M | 195 / 872 / 631 ms             |
+
+Close and mid are still about twice the 600 000 target. What is left is the land in view at eighths and its shadow pass. The only way under the target found here is coarser cubes far away, and the seam check says that shows.

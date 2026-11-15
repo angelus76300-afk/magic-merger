@@ -44,6 +44,7 @@ import { TICK, type World } from "../world";
 import { bodyGeometry } from "./bodies";
 import { daylight } from "../daylight";
 import { MODELS, geometryOf } from "./models";
+import { boxesInCubes } from "./shapes";
 import { OrbitCamera } from "./orbit";
 import { BOTTOM, CHUNK, Terrain, V, columnTop, surfaceY } from "./terrain";
 import { hexColor, mixColor } from "../colors";
@@ -664,7 +665,15 @@ export class VoxelView {
     const cube = own.startsWith("cube:") ? own.split(":") : null;
     const boxes0 = MODELS[own] ?? FLORA_MODELS[own] ?? MODELS.block;
     const boxes = far ? farTreeModel(boxes0) : boxes0;
-    const geometry = mesh ? mesh.geometry : cube ? geometryOfMesh(cubeTree(cube[1] as never, Number(cube[2]), Number(cube[3]))) : geometryOf(boxes);
+    // With the small cubes on, every other cover's model in cubes of the one size too (shapes.ts
+    // boxesInCubes): shrubs, cacti, flowers, crops, fences (15 November).
+    const geometry = mesh
+      ? mesh.geometry
+      : cube
+        ? geometryOfMesh(cubeTree(cube[1] as never, Number(cube[2]), Number(cube[3])))
+        : GRAPHICS.cubes && !far
+          ? geometryOfMesh(boxesInCubes(boxes))
+          : geometryOf(boxes);
     const glows = GLOWING.has(key) || (cube !== null && cube[1] === "glowcap");
     const bigger = new InstancedMesh(geometry, glows ? this.glowMaterial : this.coverMaterial, Math.max(64, Math.ceil(need * 1.5)));
     withColors(bigger);
@@ -843,8 +852,19 @@ export class VoxelView {
     }
   }
 
+  private coversCubes = GRAPHICS.cubes;
   private placeCovers(): void {
     const { world } = this;
+    // The small cubes switched: every cover's model made again, the one way or the other.
+    if (this.coversCubes !== GRAPHICS.cubes) {
+      this.coversCubes = GRAPHICS.cubes;
+      for (const mesh of this.covers.values()) {
+        this.scene.remove(mesh);
+        mesh.dispose();
+      }
+      this.covers.clear();
+      this.cubeAll.clear();
+    }
     const lists = new Map<string, number[]>();
     for (const key of this.covers.keys()) lists.set(key, []);
     // In the eye view, only the covers within the mist and a step beyond it (the eye may walk
@@ -949,7 +969,8 @@ export class VoxelView {
           // In small cubes: upright, at scale 1 (its size is in its model, treeSize).
           if (cube) placeLeaning(m, p, (h >> 1) % 4, 1, 1, 0, 0);
           else placeLeaning(m, p, (h >> 1) % 4, sw, sh, lean, dir);
-        } else if (cube) {
+        } else if (cube || GRAPHICS.cubes) {
+          // In cubes: at scale 1, so its cubes are the one size.
           placeLeaning(m, p, (world.shade[i] >> 2) % 4, 1, 1, 0, 0);
         } else {
           // A little size and turn variety so forests do not look stamped.

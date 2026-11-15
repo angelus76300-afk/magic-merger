@@ -1,5 +1,6 @@
 import type { Prop, PropBox, Shape } from "../props";
-import { FACE_LIGHT, pushBox } from "./models";
+import { FACE_LIGHT, pushBox, type Box } from "./models";
+import { GRAPHICS } from "./graphics";
 
 // The parts of an item's look (props.ts) as faces, 2026-11-13 (the looks
 // revamp, phase 1). A part that is an upright box with none of the new fields
@@ -328,6 +329,18 @@ function emitQuad(
 // parts). k, mx, my: scaled about (mx, my), as a held object is.
 export function propLocal(p: Prop, simple = false, k = 1, mx = 0, my = 0): LocalMesh {
   const out: LocalMesh = { lit: { pos: [], col: [] }, glow: { pos: [], col: [] }, tris: 0 };
+  // With the small cubes on (15 November, one size of cube everywhere): every look in cubes of
+  // LOOK_VOXEL, a stored look of plain boxes too, and a held one scaled before it is filled in, so
+  // its cubes keep their size. Nothing stored changes; off, a look draws as it did.
+  if (GRAPHICS.cubes) {
+    const boxes = simple && !isSoft(p) ? largestParts(p.boxes, FAR_PARTS) : p.boxes;
+    const sized =
+      k === 1 && mx === 0 && my === 0
+        ? boxes
+        : boxes.map((b) => ({ ...b, x: (b.x - mx) * k, y: (b.y - my) * k, z: b.z * k, w: b.w * k, d: b.d * k, h: b.h * k }));
+    meshGrid(voxelize(sized, LOOK_VOXEL), out);
+    return out;
+  }
   if (isSoft(p)) {
     meshGrid(voxelize(p.boxes, LOOK_VOXEL * (simple ? FAR_COARSEN : 1)), out, k, mx, my);
     return out;
@@ -347,4 +360,24 @@ export function propLocal(p: Prop, simple = false, k = 1, mx = 0, my = 0): Local
 export function propTriangles(p: Prop, simple = false): number {
   if (!isSoft(p)) return (simple ? largestParts(p.boxes, FAR_PARTS) : p.boxes).length * 10;
   return propLocal(p, simple).tris;
+}
+
+// A model of boxes (models.ts: x east, y up, z south) in cubes of LOOK_VOXEL, meshed as a look's
+// (15 November: the wonders and the old models of covers, shrubs, cacti and flowers, in the one
+// size of cube). Made once per list of boxes and kept.
+const inCubes = new WeakMap<Box[], LocalMesh>();
+export function boxesInCubes(boxes: Box[]): LocalMesh {
+  let m = inCubes.get(boxes);
+  if (m) return m;
+  m = { lit: { pos: [], col: [] }, glow: { pos: [], col: [] }, tris: 0 };
+  if (boxes.length)
+    meshGrid(
+      voxelize(
+        boxes.map((b) => ({ x: b.x, y: b.z, z: b.y, w: b.w, d: b.d, h: b.h, color: b.color, glow: false })),
+        LOOK_VOXEL,
+      ),
+      m,
+    );
+  inCubes.set(boxes, m);
+  return m;
 }

@@ -82,6 +82,8 @@ hud.show(true);
 if (!restored) engine.start();
 (window as unknown as { __engine: Engine; __labSky: typeof LAB_SKY }).__engine = engine;
 (window as unknown as { __labSky: typeof LAB_SKY }).__labSky = LAB_SKY;
+// The switches, for the measures that turn one on and off on the same island (looks-shadow-flicker.mjs).
+(window as unknown as { __graphics: typeof GRAPHICS }).__graphics = GRAPHICS;
 
 declare global {
   interface Window {

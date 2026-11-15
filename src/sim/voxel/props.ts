@@ -4,6 +4,7 @@ import type { Prop } from "../props";
 import { heldScale } from "../held";
 import { FAR_PARTS, isSoft, propLocal, propTriangles, type LocalMesh, type MeshArrays } from "./shapes";
 import { columnTop } from "./terrain";
+import { GRAPHICS } from "./graphics";
 
 export type { MeshArrays } from "./shapes";
 
@@ -42,6 +43,7 @@ export class PropModels {
   private full = new WeakMap<Prop, LocalMesh>();
   private simple = new WeakMap<Prop, LocalMesh>();
   private inHand = new WeakMap<Prop, LocalMesh>();
+  private drawnCubes = false;
   // Where the camera looked when the mesh was made, while some looks are drawn simpler.
   private builtAt: { x: number; y: number } | null = null;
   stats: PropStats = { triangles: 0, full: 0, simpler: 0 };
@@ -55,7 +57,8 @@ export class PropModels {
   update(world: World, groundAt?: (x: number, y: number) => number, focus?: { x: number; y: number }): void {
     this.updateHeld(world, groundAt);
     const refocus = this.builtAt && focus && Math.hypot(focus.x - this.builtAt.x, focus.y - this.builtAt.y) > REFOCUS;
-    if (world.propsVersion === this.version && !refocus) return;
+    if (world.propsVersion === this.version && !refocus && this.drawnCubes === GRAPHICS.cubes) return;
+    this.drawnCubes = GRAPHICS.cubes;
     this.version = world.propsVersion;
     this.disposeGround();
     const at = focus ?? { x: world.w / 2, y: world.h / 2 };
@@ -63,7 +66,7 @@ export class PropModels {
       world,
       at,
       (p, simple) => this.local(p, simple),
-      (p) => (isSoft(p) ? this.local(p, false).tris : propTriangles(p)),
+      (p) => (isSoft(p) || GRAPHICS.cubes ? this.local(p, false).tris : propTriangles(p)),
     );
     this.stats = stats;
     this.builtAt = this.stats.simpler ? { x: at.x, y: at.y } : null;
@@ -74,9 +77,14 @@ export class PropModels {
   private local(p: Prop, simple: boolean): LocalMesh {
     const cache = simple ? this.simple : this.full;
     let m = cache.get(p);
-    if (!m) cache.set(p, (m = propLocal(p, simple)));
+    // Made again when the small cubes are switched (propLocal draws a look either way).
+    if (!m || this.cubes.get(m) !== GRAPHICS.cubes) {
+      cache.set(p, (m = propLocal(p, simple)));
+      this.cubes.set(m, GRAPHICS.cubes);
+    }
     return m;
   }
+  private cubes = new WeakMap<LocalMesh, boolean>();
 
   // A held object's own model, made HELD_SIZE tall at most, in its holder's
   // right hand, turned the way the holder faces.
@@ -89,7 +97,7 @@ export class PropModels {
       const c = world.creatures.find((o) => o.id === p.heldBy);
       if (!c || c.dead) continue;
       let m = this.inHand.get(p);
-      if (!m) {
+      if (!m || this.cubes.get(m) !== GRAPHICS.cubes) {
         let x0 = Infinity;
         let x1 = -Infinity;
         let y0 = Infinity;
@@ -101,6 +109,7 @@ export class PropModels {
           y1 = Math.max(y1, b.y + b.d);
         }
         this.inHand.set(p, (m = propLocal(p, false, heldScale(p.boxes), (x0 + x1) / 2, (y0 + y1) / 2)));
+        this.cubes.set(m, GRAPHICS.cubes);
       }
       const side = c.hd - Math.PI / 2;
       const hx = c.x + 0.5 + Math.cos(c.hd) * 0.15 + Math.cos(side) * 0.3 - world.w / 2;

@@ -342,7 +342,7 @@ export class Terrain {
   // next to water (the water's edge stays where the water is drawn).
   private anchoredAt(i: number): boolean {
     const { world } = this;
-    if (world.cover[i] !== C.NONE || world.ground[i] === G.PATH || this.builtColor(i) !== null || this.wet[i]) return true;
+    if (world.cover[i] !== C.NONE || world.ground[i] === G.PATH || this.fineBuilt(i) !== null || this.wet[i]) return true;
     const x = i % world.w;
     const y = (i - x) / world.w;
     return (
@@ -395,7 +395,7 @@ export class Terrain {
       const a = ay * world.w + ax;
       const b = by * world.w + bx;
       if (this.wet[a] || this.wet[b] || world.cover[a] === C.HOUSE || world.cover[b] === C.HOUSE) return false;
-      const ground = (i: number) => this.builtColor(i) === null || world.ground[i] === G.PATH;
+      const ground = (i: number) => this.fineBuilt(i) === null || world.ground[i] === G.PATH;
       return ground(a) && ground(b) && Math.abs(columnTop(world, a) - columnTop(world, b)) <= 1;
     },
   };
@@ -412,7 +412,7 @@ export class Terrain {
     if (!GRAPHICS.fine || !GRAPHICS.steps || !this.fine.length || this.wet[i]) return base;
     const c = Math.floor(cy / CHUNK) * this.cols + Math.floor(cx / CHUNK);
     if (!this.fineShown[c] || !this.fine[c]) return base;
-    if (this.builtColor(i) !== null && world.ground[i] !== G.PATH) return base;
+    if (this.fineBuilt(i) !== null && world.ground[i] !== G.PATH) return base;
     const sub = this.fineLevel[c];
     // The middle of the column drawn there.
     const px = (Math.floor(Math.min(cx + 0.999, Math.max(cx, x)) * sub) + 0.5) / sub;
@@ -567,7 +567,7 @@ export class Terrain {
         f.water[k] = this.wet[i] && world.fluid[i] === F.WATER ? Math.max(surfaceY(world, i), top + FLUID_LIFT) : -1e9;
         const surface = this.fineTopColor(i);
         f.color[k] = surface;
-        const built = this.builtColor(i);
+        const built = this.fineBuilt(i);
         // A trodden path is ground too: its border with the grass wanders (a road keeps its kerb).
         f.natural[k] = built === null || g === G.PATH ? 1 : 0;
         f.edge[k] = built ?? this.sideTopColor(i, surface);
@@ -911,7 +911,7 @@ export class Terrain {
   private fineTopColor(i: number): number {
     const { world } = this;
     const g = world.ground[i];
-    if (this.builtColor(i) !== null && g !== G.PATH) return this.topColor(i);
+    if (this.fineBuilt(i) !== null && g !== G.PATH) return this.topColor(i);
     const colors = this.colorsAt(i, g, world.materials.get("ground", g));
     let r = 0;
     let gr = 0;
@@ -955,6 +955,12 @@ export class Terrain {
   }
 
   // Natural ground shows soil and stone in its walls; built materials do not.
+  // As builtColor, for the fine land: basalt is natural ground there too (15 November: the
+  // volcano's crater rim was drawn in whole cells as if built, black slabs a cell wide).
+  private fineBuilt(i: number): number | null {
+    return this.world.ground[i] === G.BASALT ? null : this.builtColor(i);
+  }
+
   private builtColor(i: number): number | null {
     const g = this.world.ground[i];
     if (g === G.GRASS || g === G.DIRT || g === G.SAND || g === G.SNOW || g === G.ASH || g === G.FIELD || g === G.ROCK) return null;
@@ -995,7 +1001,9 @@ export class Terrain {
       return { color: mixColor(0x5cc0f0, 0x1d5d9e, k), alpha: 0.72 + k * 0.2 };
     }
     const m = world.materials.get("fluid", f);
-    const color = m.colors[world.shade[i] % m.colors.length];
+    // With the fine land, the mean of its colours: one picked cell by cell drew a lava pool as a
+    // checkerboard of whole cells, the volcano's "big cubes" (15 November).
+    const color = GRAPHICS.fine ? meanColor(m.colors) : m.colors[world.shade[i] % m.colors.length];
     if (f === F.LAVA) return { color, alpha: 1 };
     if (f === F.ICE) return { color, alpha: 0.95 };
     if (f === F.ACID) return { color, alpha: 0.85 };
@@ -1403,6 +1411,20 @@ const LAND = new Writer();
 const FINE_OUT = new Writer();
 const FINE_VERTICES = 6 * 4096 * 16;
 const FLUID = new Writer();
+
+// The mean of a list of colours.
+function meanColor(colors: number[]): number {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  for (const c of colors) {
+    r += (c >> 16) & 255;
+    g += (c >> 8) & 255;
+    b += c & 255;
+  }
+  const n = Math.max(1, colors.length);
+  return (Math.round(r / n) << 16) | (Math.round(g / n) << 8) | Math.round(b / n);
+}
 
 // A dark stone a little lighter in the fine land's cliff walls (15 November): the tall walls of
 // the new taller peaks read as black slabs. Colours darker than LIFT_TO (by luminance) are raised
