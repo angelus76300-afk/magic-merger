@@ -61,10 +61,10 @@ function lookToolChecks(check: Check): void {
     read.every((p) => !!p && p.soft === undefined && p.boxes.every((b) => Object.keys(b).join() === "x,y,z,w,d,h,color,glow")),
   );
 
-  // Each shape survives readBox, in an object and in a list, and fills its voxels (LOOK_VOXEL, a
-  // quarter of a cell): a 1 by 1 by 1 part is 64 voxels as a box, fewer as a stepped wedge,
-  // a round cyl, a stepped dome and a stepped spire.
-  const want: Record<string, number> = { box: 64, wedge: 40, cyl: 48, dome: 32, cone: 20 };
+  // Each shape survives readBox, in an object and in a list, and fills its voxels (LOOK_VOXEL, an
+  // eighth of a cell since 15 November): a 1 by 1 by 1 part is 512 voxels as a box, fewer as a
+  // stepped wedge, a round cyl, a stepped dome and a stepped spire.
+  const want: Record<string, number> = { box: 512, wedge: 288, cyl: 416, dome: 268, cone: 136 };
   for (const [shape, voxels] of Object.entries(want)) {
     const o = readBox({ x: 0, y: 0, z: 0, w: 1, d: 1, h: 1, color: "#888", shape: shape.toUpperCase() });
     const a = readBox([0, 0, 2, 1, 1, 1, "#888", shape]);
@@ -79,14 +79,14 @@ function lookToolChecks(check: Check): void {
   const turned = voxelize([readBox({ x: 0, y: 0, z: 0, w: 2, d: 1, h: 1, rz: 45 }) as PropBox], LOOK_VOXEL);
   check("a turned box is a staircased block of about its volume", Math.abs(turned.count * LOOK_VOXEL ** 3 - 2) < 0.4, `${turned.count} voxels`);
   const thin = voxelize([readBox([0, 0, 0, 1, 0.05, 1, "#fff"]) as PropBox], LOOK_VOXEL);
-  check("a part thinner than a voxel is drawn one voxel thick, not lost", thin.count === 16, `${thin.count}`);
+  check("a part thinner than a voxel is drawn one voxel thick, not lost", thin.count === 64, `${thin.count}`);
   const over = voxelize(
     [readBox([0, 0, 0, 1, 1, 1, "#ffffff"]) as PropBox, readBox([0.25, 0, 0.25, 0.5, 0.05, 0.5, "#ff0000", "glow"]) as PropBox],
     LOOK_VOXEL,
   );
   check(
     "a later part paints over an earlier one (a window over its wall)",
-    over.count === 64 && [...over.color].filter((c) => c === 0xff0000).length === 4 && [...over.glow].filter((x) => x).length === 4,
+    over.count === 512 && [...over.color].filter((c) => c === 0xff0000).length === 16 && [...over.glow].filter((x) => x).length === 16,
   );
   const turn = (v: unknown) => readBox({ x: 0, y: 0, z: 0, w: 1, d: 1, h: 1, rx: v, ry: v, rz: v });
   check(
@@ -225,7 +225,9 @@ function lookToolChecks(check: Check): void {
   check("grain gives the 8 by 8 voxels on top of a 2-cell block many tones", tones.size >= 20, `${g1.tris} triangles, ${tones.size} tones`);
   check("grain is the same every time (seeded by the part)", JSON.stringify(slab().lit.col) === JSON.stringify(g1.lit.col));
 
-  // The cost guard: 60 looks of 160 parts, the nearest drawn in full within the budget, the rest with coarser voxels.
+  // The cost guard: 60 looks of 160 parts, the nearest drawn in full within the budget. Past it a
+  // look made of voxels keeps its cubes (15 November, one size of cube at every distance): only a
+  // stored look of boxes is drawn simpler.
   const world = generateWorld(96, 96, 5);
   world.props = benchProps(true, true);
   const t0 = performance.now();
@@ -235,9 +237,9 @@ function lookToolChecks(check: Check): void {
   const near = propLocal(world.props[0]).tris;
   const far = propLocal(world.props[0], true).tris;
   check(
-    "60 looks of 160 parts: the looks drawn in full stay within the triangle budget, the far ones coarser",
-    drawn === stats.triangles && stats.full <= PROP_TRIANGLE_BUDGET && far < near && world.props.every((p) => p.boxes.length === MAX_PROP_BOXES),
-    `${drawn} triangles (${stats.full} in full), ${stats.simpler} coarser, a look ${near} near and ${far} far, built in ${Math.round(ms)} ms`,
+    "60 looks of 160 parts: the looks drawn in full stay within the triangle budget, the far ones in the same cubes",
+    drawn === stats.triangles && stats.full <= PROP_TRIANGLE_BUDGET && far === near && world.props.every((p) => p.boxes.length === MAX_PROP_BOXES),
+    `${drawn} triangles (${stats.full} in full), ${stats.simpler} past the budget, a look ${near} near and ${far} far, built in ${Math.round(ms)} ms`,
   );
   check("the budget counts a look's triangles as the mesh draws them", propTriangles(world.props[3]) === propLocal(world.props[3]).tris);
   const few = generateWorld(64, 64, 5);
