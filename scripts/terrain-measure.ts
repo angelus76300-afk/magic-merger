@@ -26,14 +26,14 @@ for (let k = 0; k < LOOK_ISLANDS.length; k++) {
           name.padEnd(6),
           `land ${String(b.landTriangles).padStart(7)}`,
           `water ${String(b.fluidTriangles).padStart(6)}`,
-          `fine chunks ${String(b.fineChunks).padStart(2)}`,
+          `fine chunks ${String(b.fineChunks).padStart(2)} (${b.eighths} in eighths)`,
           `island ${mid(builds.map((x) => x.ms))
             .toFixed(1)
             .padStart(6)} ms`,
           `fine ${mid(builds.map((x) => x.fineMs))
             .toFixed(1)
             .padStart(6)} ms`,
-          `(${b.fineChunks ? (mid(builds.map((x) => x.fineMs)) / b.fineChunks).toFixed(1) : "-"} a chunk)`,
+          `(${b.fineChunks ? (mid(builds.map((x) => x.fineMs)) / b.fineChunks).toFixed(1) : "-"} a chunk, tile p95 ${mid(builds.map((x) => x.tileP95)).toFixed(1)}, longest ${mid(builds.map((x) => x.maxTileMs)).toFixed(1)} ms)`,
         ].join("  "),
       );
     }
