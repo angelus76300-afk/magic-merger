@@ -564,7 +564,11 @@ export class Terrain {
         f.top[k] = top;
         f.ground[k] = g;
         f.wet[k] = this.wet[i];
-        f.water[k] = this.wet[i] && world.fluid[i] === F.WATER ? Math.max(surfaceY(world, i), top + FLUID_LIFT) : -1e9;
+        // Water and lava: the fine land's edge meets them in a wavy line of small cubes (lava since
+        // 15 November: its cell-shaped edge read as big cubes on the volcano).
+        const lava = world.fluid[i] === F.LAVA;
+        f.water[k] = this.wet[i] && (world.fluid[i] === F.WATER || lava) ? Math.max(surfaceY(world, i), top + FLUID_LIFT) : -1e9;
+        f.lava[k] = lava ? 1 : 0;
         const surface = this.fineTopColor(i);
         f.color[k] = surface;
         const built = this.fineBuilt(i);

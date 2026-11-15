@@ -11,7 +11,7 @@ The owner, on main after #151, #159, #162 and #164: "Let's just keep 1/8 all the
 - Light: `day` (time 60) and `low` sun (time 194).
 - Sizes: 344 by 882 (the Fold folded) and 700 by 830 (unfolded).
 
-`main/` holds main at `64e2571`, 48 frames. `after/` holds this branch at 344 by 882. Three after frames are missing: the sand and peaks whole views, and the peaks whole at low sun, because one frame took more than 240 seconds in the software renderer (see the numbers below). Each folder's `frames.jsonl` has the triangles of each frame as the renderer counted them, the shadow pass included.
+`main/` holds main at `64e2571`, 48 frames. `after/` holds the finished branch at 344 by 882 and 700 by 830 (re-rendered after the second pass): every island at eye, close and mid, day and low sun, and the whole views by day. Each folder's `frames.jsonl` has the triangles of each frame as the renderer counted them, the shadow pass included.
 
 ## What looked wrong on main
 
@@ -180,3 +180,9 @@ The pan, zoom and orbit runs counted the same pixels with the old and new sun (t
 | whole | 0.42M | 5.44M      | 2.29M | 195 / 872 / 631 ms             |
 
 Close and mid are still about twice the 600 000 target. What is left is the land in view at eighths and its shadow pass. The only way under the target found here is coarser cubes far away, and the seam check says that shows.
+
+### 7. Last pass: tone patches, the lava's edge, frames at 700 by 830
+
+- **Tone patches on converted models.** Every model of plain boxes filled into cubes (wonders, stored spell looks, cover models) takes one of four tones (0.94, 0.98, 1.02, 1.05) in soft patches about 3.5 cubes across, by the cube's place in the model (`shapes.ts` `tonePatches`). What glows keeps its colour; soft looks keep their own design. See `assets/wonder-after-700x830.jpg`, `assets/looks-after-700x830.jpg`, `assets/cacti-after-700x830.jpg`.
+- **Lava's edge.** The fine land meets lava as it meets water: in a wavy line of small cubes just above the surface, without foam. The pool's edge no longer follows cells (`after/peaks-close-day-700x830-after.jpg`, `assets/lava-after-700x830.jpg`).
+- **Frames.** The second pass's after frames were rendered again at both sizes (`after/`). The crater rim is in fine cubes, and the lava is one calm colour with a 1/8 edge.

@@ -338,7 +338,10 @@ export function propLocal(p: Prop, simple = false, k = 1, mx = 0, my = 0): Local
       k === 1 && mx === 0 && my === 0
         ? boxes
         : boxes.map((b) => ({ ...b, x: (b.x - mx) * k, y: (b.y - my) * k, z: b.z * k, w: b.w * k, d: b.d * k, h: b.h * k }));
-    meshGrid(voxelize(sized, LOOK_VOXEL), out);
+    const g = voxelize(sized, LOOK_VOXEL);
+    // A stored look of plain boxes: its faces in soft patches of tone, as the land and the trees.
+    if (!isSoft(p)) tonePatches(g);
+    meshGrid(g, out);
     return out;
   }
   if (isSoft(p)) {
@@ -370,14 +373,56 @@ export function boxesInCubes(boxes: Box[]): LocalMesh {
   let m = inCubes.get(boxes);
   if (m) return m;
   m = { lit: { pos: [], col: [] }, glow: { pos: [], col: [] }, tris: 0 };
-  if (boxes.length)
-    meshGrid(
-      voxelize(
-        boxes.map((b) => ({ x: b.x, y: b.z, z: b.y, w: b.w, d: b.d, h: b.h, color: b.color, glow: false })),
-        LOOK_VOXEL,
-      ),
-      m,
+  if (boxes.length) {
+    const g = voxelize(
+      boxes.map((b) => ({ x: b.x, y: b.z, z: b.y, w: b.w, d: b.d, h: b.h, color: b.color, glow: false })),
+      LOOK_VOXEL,
     );
+    tonePatches(g);
+    meshGrid(g, m);
+  }
   inCubes.set(boxes, m);
   return m;
+}
+
+// A model of plain boxes in cubes reads as one smooth box (15 November, the owner: every asset in
+// the small cubes): its cubes take one of PATCH_TONES in soft patches a few cubes across, as the
+// land's ground and the trees' crowns do, calm rather than speckled. By the cube's place in the
+// model, so the same model is the same every time; what glows keeps its colour.
+const PATCH_TONES = [0.94, 0.98, 1.02, 1.05];
+const PATCH_CUBES = 3.5;
+function tonePatches(g: VoxelGrid): void {
+  const h = (x: number, y: number, z: number) => {
+    let v = Math.imul(x, 0x27d4eb2d) ^ Math.imul(y, 0x165667b1) ^ Math.imul(z, 0x1b873593);
+    v = Math.imul(v ^ (v >>> 15), 0x85ebca6b);
+    v = Math.imul(v ^ (v >>> 13), 0xc2b2ae35);
+    return ((v ^ (v >>> 16)) >>> 0) / 4294967296;
+  };
+  const smooth = (t: number) => t * t * (3 - 2 * t);
+  const noise = (px: number, py: number, pz: number) => {
+    const ix = Math.floor(px);
+    const iy = Math.floor(py);
+    const iz = Math.floor(pz);
+    const fx = smooth(px - ix);
+    const fy = smooth(py - iy);
+    const fz = smooth(pz - iz);
+    const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+    const plane = (z: number) => lerp(lerp(h(ix, iy, z), h(ix + 1, iy, z), fx), lerp(h(ix, iy + 1, z), h(ix + 1, iy + 1, z), fx), fy);
+    return lerp(plane(iz), plane(iz + 1), fz);
+  };
+  const [nx, ny, nz] = g.n;
+  const ox = Math.round(g.o[0] / g.s);
+  const oy = Math.round(g.o[1] / g.s);
+  const oz = Math.round(g.o[2] / g.s);
+  for (let z = 0; z < nz; z++)
+    for (let y = 0; y < ny; y++)
+      for (let x = 0; x < nx; x++) {
+        const i = (z * ny + y) * nx + x;
+        const c = g.color[i];
+        if (c < 0 || g.glow[i]) continue;
+        const n = noise((x + ox) / PATCH_CUBES, (y + oy) / PATCH_CUBES, (z + oz) / PATCH_CUBES);
+        const k = PATCH_TONES[Math.min(PATCH_TONES.length - 1, Math.floor(n * PATCH_TONES.length))];
+        const ch = (sh: number) => Math.max(0, Math.min(255, Math.round(((c >> sh) & 255) * k)));
+        g.color[i] = (ch(16) << 16) | (ch(8) << 8) | ch(0);
+      }
 }

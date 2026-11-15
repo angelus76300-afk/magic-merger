@@ -41,7 +41,8 @@ export interface FineCells {
   ground: Uint8Array;
   natural: Uint8Array; // 0: a built column (a trunk, a tower), drawn plain
   wet: Uint8Array;
-  water: Float32Array; // the water's surface over a wet water cell, or -1e9
+  water: Float32Array; // the surface over a wet water or lava cell, or -1e9
+  lava: Uint8Array; // 1 where that is lava (no foam)
   color: Uint32Array; // the top's colour
   edge: Uint32Array; // the first voxel of a wall
   soil: Uint32Array;
@@ -75,6 +76,7 @@ export function makeFineCells(): FineCells {
     natural: new Uint8Array(0),
     wet: new Uint8Array(0),
     water: new Float32Array(0),
+    lava: new Uint8Array(0),
     color: new Uint32Array(0),
     edge: new Uint32Array(0),
     soil: new Uint32Array(0),
@@ -108,6 +110,7 @@ export function sizeFineCells(f: FineCells, x0: number, y0: number, x1: number, 
     f.natural = new Uint8Array(n);
     f.wet = new Uint8Array(n);
     f.water = new Float32Array(n);
+    f.lava = new Uint8Array(n);
     f.color = new Uint32Array(n);
     f.edge = new Uint32Array(n);
     f.soil = new Uint32Array(n);
@@ -824,7 +827,7 @@ function foam(f: FineCells, out: Writer, sub: number, sx0: number, sy0: number, 
       const c = fineAt(f, Math.floor(sx / sub), Math.floor(sy / sub));
       const surface = f.water[c];
       let color = 0;
-      if (surface > -1e8 && H[s] * Q <= surface) {
+      if (surface > -1e8 && !f.lava[c] && H[s] * Q <= surface) {
         // How far the nearest land is, in columns (up to `reach`).
         let near = Infinity;
         for (let dy = -reach; dy <= reach && near > 1; dy++)
