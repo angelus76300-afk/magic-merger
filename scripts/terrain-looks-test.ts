@@ -53,6 +53,7 @@ export interface IslandMesh {
   houseGap: number;
   sampled: number;
   landHash: string;
+  landSet: string; // the land's meshes whatever the order they were built in
   fluidHash: string;
   ms: number; // the whole island's first build, one cell meshes
   fineMs: number; // the fine chunks for the camera, all of them
@@ -88,8 +89,26 @@ export function buildIsland(cells: number, seed: number, land: LandOptions, zoom
   const fineMs = performance.now() - t1;
   after?.(terrain);
   const hash = { land: 0x811c9dc5, fluid: 0x811c9dc5 };
+  // The land's meshes also hashed one by one and sorted, so the same meshes built in another order
+  // (nearest the camera first) hash the same.
+  const lands: string[] = [];
   for (const { kind, mesh } of meshes) {
     if (!mesh.visible) continue;
+    if (kind === "land") {
+      let one = 0x811c9dc5;
+      const g = mesh.geometry;
+      const arrays = [
+        ...Object.keys(g.attributes)
+          .sort()
+          .map((n) => g.getAttribute(n).array),
+        ...(g.index ? [g.index.array] : []),
+      ];
+      for (const a of arrays) {
+        const bytes = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+        for (let k = 0; k < bytes.length; k++) one = Math.imul(one ^ bytes[k], 0x01000193);
+      }
+      lands.push((one >>> 0).toString(16).padStart(8, "0"));
+    }
     const g = mesh.geometry;
     for (const name of Object.keys(g.attributes).sort()) {
       const a = g.getAttribute(name).array as Float32Array;
@@ -120,8 +139,13 @@ export function buildIsland(cells: number, seed: number, land: LandOptions, zoom
   for (let i = 0; i < world.n; i++) {
     const cover = world.cover[i];
     // Covers, paths, and dry ground at the water's edge.
+    // Its four neighbours on the island (not the next row's first cell past the east edge).
+    const x0 = i % world.w;
     const edge =
-      world.fluid[i] === 0 && [1, -1, world.w, -world.w].some((o) => world.fluid[i + o] !== undefined && world.fluid[i + o] !== 0 && world.depth[i + o] > 0.06);
+      world.fluid[i] === 0 &&
+      [x0 < world.w - 1 ? 1 : 0, x0 > 0 ? -1 : 0, world.w, -world.w].some(
+        (o) => o !== 0 && world.fluid[i + o] !== undefined && world.fluid[i + o] !== 0 && world.depth[i + o] > 0.06,
+      );
     if (cover === C.NONE && world.ground[i] !== G.PATH && !edge) continue;
     const x = i % world.w;
     const y = Math.floor(i / world.w);
@@ -156,6 +180,7 @@ export function buildIsland(cells: number, seed: number, land: LandOptions, zoom
     sampled,
     tileP95: [...terrain.fineStats.tileMs].sort((a, b) => a - b)[Math.floor(terrain.fineStats.tileMs.length * 0.95)] ?? 0,
     landHash: hex(hash.land),
+    landSet: hex([...lands].sort().reduce((h, x) => Math.imul(h ^ parseInt(x, 16), 0x01000193), 0x811c9dc5) >>> 0),
     fluidHash: hex(hash.fluid),
     ms,
     fineMs,
@@ -226,11 +251,11 @@ export function terrainLooksChecks(check: Check): void {
     "one size of cube: at every zoom every chunk of the land is drawn in eighth voxels, the same mesh close, mid and over the whole island",
     FINE_SUB === 8 &&
       [close, mid, far].every((zoom) => zoom.every((m) => m.fineChunks === m.chunks && m.eighths === m.chunks)) &&
-      close.every((m, k) => m.landHash === mid[k].landHash && m.landHash === far[k].landHash),
+      close.every((m, k) => m.landSet === mid[k].landSet && m.landSet === far[k].landSet),
     close
       .map(
         (m, k) =>
-          `${LOOK_ISLANDS[k].name}: ${m.eighths}/${mid[k].eighths}/${far[k].eighths} of ${m.chunks} chunks in eighths, ${m.landHash} ${mid[k].landHash} ${far[k].landHash}`,
+          `${LOOK_ISLANDS[k].name}: ${m.eighths}/${mid[k].eighths}/${far[k].eighths} of ${m.chunks} chunks in eighths, ${m.landSet} ${mid[k].landSet} ${far[k].landSet}`,
       )
       .join(", "),
   );
@@ -238,7 +263,8 @@ export function terrainLooksChecks(check: Check): void {
   // ground as drawn, not on a copy of it that could drift.
   check(
     "the fine land's mesher reads the same heights as groundAt (fieldFine equals fieldHeight)",
-    close.every((m) => m.fieldGap < 1e-9),
+    // Within float32 rounding (the arrays keep heights as 32-bit floats).
+    close.every((m) => m.fieldGap < 1e-4),
     close.map((m, k) => `${LOOK_ISLANDS[k].name} worst gap ${m.fieldGap.toExponential(1)}`).join(", "),
   );
   // What stands on a cell stands on the drawn ground, within an eighth voxel.

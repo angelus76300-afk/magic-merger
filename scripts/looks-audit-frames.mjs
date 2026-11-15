@@ -106,15 +106,23 @@ try {
           );
           // Fine chunks are built a few milliseconds a frame: let them come.
           await page.waitForTimeout(zoom === "whole" ? 9000 : 5000);
-          await page.evaluate((time) => (window.__engine.world.time = time), time);
-          await page.waitForTimeout(400);
+          // The fine land finished at once (in the game it is built a few milliseconds a frame,
+          // and this browser draws a frame in a tenth of a second).
+          const builtMs = await page.evaluate((time) => {
+            const e = window.__engine;
+            e.world.time = time;
+            const t0 = performance.now();
+            e.view.terrain.updateFine(0, true);
+            return performance.now() - t0;
+          }, time);
+          await page.waitForTimeout(1500);
           const file = join(OUT, `${name}-${zoom}-${when}-${W}x${H}${TAG}.jpg`);
-          await page.screenshot({ path: file, type: "jpeg", quality: 62 });
+          await page.screenshot({ path: file, type: "jpeg", quality: 62, timeout: 240_000 });
           const counts = await page.evaluate(() => {
             const v = window.__engine.view;
             return { ...v.counts(), land: v.terrain?.shownTriangles?.() };
           });
-          appendFileSync(join(OUT, `frames${TAG}.jsonl`), JSON.stringify({ file, island: name, zoom, when, W, H, spot, ...counts }) + "\n");
+          appendFileSync(join(OUT, `frames${TAG}.jsonl`), JSON.stringify({ file, island: name, zoom, when, W, H, spot, builtMs, ...counts }) + "\n");
           console.log(file, counts.triangles);
         }
       }
