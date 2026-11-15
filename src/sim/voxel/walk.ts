@@ -78,3 +78,24 @@ export function easeGround(f: Footing, target: number, time: number): number {
   }
   return f.gy;
 }
+
+// Feet on the fine land (terrain.ts footAt, 15 November): its ground already glides from one small
+// column to the next, so it is followed as it is, up or down, at up to FOLLOW scene units a second
+// (a rabbit runs up a slope of a voxel a cell at about 6.4). Only a drop of more than a step (off a
+// cliff, a house that burned) falls with gravity. easeGround above fell with gravity from rest at
+// every frame of a walk downhill, and rose at a capped pace: feet lagged, caught up and lagged
+// again, a hop of up to 0.9 within half a second.
+const FOLLOW = 20;
+export function easeFoot(f: Footing, target: number, time: number): number {
+  const dt = Math.min(0.1, Math.max(0, time - f.gt));
+  f.gt = time;
+  if (!Number.isFinite(f.gy) || Math.abs(target - f.gy) > SNAP) {
+    f.gy = target;
+    f.vy = 0;
+  } else if (f.vy > 0 || target < f.gy - STEP) {
+    f.vy += GRAVITY * dt;
+    f.gy = Math.max(target, f.gy - f.vy * dt);
+    if (f.gy <= target) f.vy = 0;
+  } else f.gy = Math.max(f.gy - FOLLOW * dt, Math.min(f.gy + FOLLOW * dt, target));
+  return f.gy;
+}

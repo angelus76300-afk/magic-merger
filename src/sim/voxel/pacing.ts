@@ -89,3 +89,13 @@ export function ticksDue(acc: number, tick: number, smooth: boolean): number {
   }
   return steps;
 }
+
+// How far a frame draws creatures from the last tick to the next (view.ts between), with `acc`
+// seconds of simulation owed. ticksDue above leaves up to two ticks owed after a late frame; the
+// view used to stop at the last tick (1), so on a hitch a walker stood still a frame and then
+// jumped to catch up (the playtest of 15 November). Past 1 it walks on as it was going, up to
+// AHEAD: what is drawn stays one tick behind real time, frame after frame.
+export const AHEAD = 2;
+export function drawBetween(acc: number, tick: number): number {
+  return Math.max(0, Math.min(AHEAD, acc / tick));
+}

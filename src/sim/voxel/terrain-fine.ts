@@ -339,7 +339,27 @@ let SUM = new Float64Array(0);
 
 // Writes one tile of the chunk's fine land, cells [tx0, tx1) by [ty0, ty1) in island
 // coordinates, in columns of 1 / sub. ox, oz: the scene's offset of cell (0, 0).
-export function buildFineTile(f: FineCells, out: Writer, ox: number, oz: number, sub: number, tx0: number, ty0: number, tx1: number, ty1: number): void {
+// The top of each column a chunk draws, in columns' units, before a flower or a pebble on it:
+// what creatures stand on (Terrain.footAt). `x0`, `y0`: the chunk's first cell; `stride`: columns a row.
+export interface FineTops {
+  h: Int16Array;
+  x0: number;
+  y0: number;
+  stride: number;
+}
+
+export function buildFineTile(
+  f: FineCells,
+  out: Writer,
+  ox: number,
+  oz: number,
+  sub: number,
+  tx0: number,
+  ty0: number,
+  tx1: number,
+  ty1: number,
+  tops: FineTops | null = null,
+): void {
   const steps = GRAPHICS.steps;
   const blend = GRAPHICS.blend;
   const grain = GRAPHICS.grain;
@@ -442,6 +462,8 @@ export function buildFineTile(f: FineCells, out: Writer, ox: number, oz: number,
         }
       }
       H[s] = hgt + raise;
+      if (tops && sx >= tx0 * sub && sy >= ty0 * sub && sx < tx1 * sub && sy < ty1 * sub)
+        tops.h[(sy - tops.y0 * sub) * tops.stride + (sx - tops.x0 * sub)] = hgt;
       const rock = f.ground[src] === G.ROCK;
       LAND[s] = f.natural[c] && !f.wet[c] && !bit ? (rock ? 2 : 1) : 0;
       D[s] = f.wet[c] || src !== c ? 0 : 1;

@@ -477,7 +477,8 @@ function stepWatch(): void {
   }
   // Close enough that a villager reads, never so close that it fills a wide screen.
   // The whole island (director.ts, the map shot) is seen from higher, as the tour sees it.
-  o.watch(shot.x, shot.y, Math.max(22, o.distanceFor(shot.r)), shot.sort === "map" ? 0.72 : 0.98, shot.sort === "map" ? 3.2 : 1.6);
+  // A creature is followed where it is drawn, frame by frame (orbit.ts follow).
+  o.watch(shot.x, shot.y, Math.max(22, o.distanceFor(shot.r)), shot.sort === "map" ? 0.72 : 0.98, shot.sort === "map" ? 3.2 : 1.6, shot.who, shot.other);
   marked = shot.who ? (engine.world.creatures.find((k) => k.id === shot.who) ?? null) : null;
   say(line, false);
   measureWatch(shot);

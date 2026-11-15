@@ -35,7 +35,8 @@ import { kindOf, type Creature, type CreatureKind } from "../creatures";
 import { F as FLUID } from "../materials";
 import { Figures, figureMaterials, type Pose } from "./figures";
 import { buildRig, drawScale, paletteOf, ROLES, variantOf, type Rig } from "./rigs";
-import { easeGround, walkGround, type Footing } from "./walk";
+import { easeFoot, easeGround, walkGround, type Footing } from "./walk";
+import { leanToward } from "../director";
 import { gaitOf, hipHeight, lookAround, strideRate } from "./gait";
 import { BUILTIN, C, F, G, S } from "../materials";
 import { laid } from "../roads";
@@ -270,6 +271,7 @@ export class VoxelView {
     this.renderer.setPixelRatio(this.pixelRatio);
     this.overlayCtx = overlay.getContext("2d")!;
     this.orbit = new OrbitCamera(world.w, world.h);
+    this.orbit.follow = (who, other) => this.followed(who, other);
 
     this.scene.background = skyTexture();
     this.scene.fog = new Fog(SKY_LOW, world.w * 1.6, world.w * 5);
@@ -419,7 +421,8 @@ export class VoxelView {
 
   // Set by the engine before each frame (2026-11-07): how far the frame is
   // from the last tick to the next (0 to 1; 1 draws creatures where the
-  // simulation has them), and the time between frames it aims for.
+  // simulation has them; up to 2 after a late frame, pacing.ts drawBetween,
+  // on as they were going), and the time between frames it aims for.
   between = 1;
   paceMs = 1000 / 30;
   // A cast changed the land outside a tick (Engine.cast).
@@ -1536,6 +1539,37 @@ export class VoxelView {
   // from, which is not drawn while the camera is at its head.
   eyeId = -1;
 
+  // Where a creature is drawn this frame, part way between two ticks as placeCreatures draws it,
+  // and how fast it goes, cells a second; null when it is gone. Read before the creatures are
+  // placed: a tick run since the last frame has not reached its gait yet.
+  drawnAt(id: number): { x: number; y: number; vx: number; vy: number } | null {
+    const c = this.world.creatures.find((o) => o.id === id);
+    if (!c || c.dead) return null;
+    const g = this.gaits.get(id);
+    if (!g) return { x: c.x, y: c.y, vx: 0, vy: 0 };
+    const fresh = this.world.time > g.t;
+    let px = fresh ? g.x : g.px;
+    let py = fresh ? g.y : g.py;
+    // A jump (a teleport) is drawn there at once.
+    if (Math.hypot(c.x - px, c.y - py) > 3) {
+      px = c.x;
+      py = c.y;
+    }
+    const a = this.between;
+    return { x: px + (c.x - px) * a, y: py + (c.y - py) * a, vx: (c.x - px) / TICK, vy: (c.y - py) / TICK };
+  }
+
+  // The point the watch frames (orbit.ts follow): the creature, or two of them as the director
+  // frames them (leanToward), where they are drawn.
+  private followed(who: number, other: number): { x: number; y: number; vx: number; vy: number } | null {
+    const c = this.drawnAt(who);
+    if (!c) return null;
+    const o = other ? this.drawnAt(other) : null;
+    const lean = o ? leanToward(Math.hypot(o.x - c.x, o.y - c.y)) : 0;
+    if (!o || !lean) return c;
+    return { x: c.x + (o.x - c.x) * lean, y: c.y + (o.y - c.y) * lean, vx: c.vx + (o.vx - c.vx) * lean, vy: c.vy + (o.vy - c.vy) * lean };
+  }
+
   // The eye at its head, where the creature is drawn this frame (between two
   // ticks, on the ground as its feet are eased up and down steps).
   private placeEye(): void {
@@ -1669,15 +1703,16 @@ export class VoxelView {
       const a = this.between;
       const rx = g.px + (c.x - g.px) * a;
       const ry = g.py + (c.y - g.py) * a;
-      const yaw = g.pyaw + Math.atan2(Math.sin(g.yaw - g.pyaw), Math.cos(g.yaw - g.pyaw)) * a;
+      // Past the tick (a above 1, the engine's between) it walks on as it was going; it turns no
+      // further than the simulation has it.
+      const yaw = g.pyaw + Math.atan2(Math.sin(g.yaw - g.pyaw), Math.cos(g.yaw - g.pyaw)) * Math.min(1, a);
       const phase = g.pphase + (g.phase - g.pphase) * a;
 
       // Fish swim under the surface, also under ice (a frozen lake: they used
       // to be drawn standing on it, as if on land); a dead one floats. The
-      // rest walk up and down the island's steps instead of jumping between
-      // levels (walk.ts).
+      // rest walk up and down the island's slopes and steps (feetAt).
       const underwater = k.aquatic && !c.dead && world.depth[i] > 0.3 && (world.fluid[i] === FLUID.WATER || world.fluid[i] === FLUID.ICE);
-      const ground = underwater ? this.groundAt(rx, ry) : easeGround(g, walkGround(world, rx, ry), time - (1 - a) * TICK);
+      const ground = underwater ? this.groundAt(rx, ry) : this.feetAt(g, rx, ry, time - (1 - a) * TICK);
       const y = underwater ? ground - fishDepth(c, world.depth[i]) - size * 0.15 : ground + c.z;
       const p = this.toScene(rx, ry, y);
       this.sphere.center.set(p.x, p.y + rig.height * size * 0.5, p.z);
@@ -1770,12 +1805,22 @@ export class VoxelView {
     if (frame % 120 === 0) for (const [id, g] of this.gaits) if (g.seen !== frame) this.gaits.delete(id);
   }
 
+  // Where a walker's feet are drawn, eased at `time` (walk.ts): on the fine land as it is drawn
+  // (terrain.ts footAt), and where that is not drawn, or with it off (the low level, which draws
+  // as before), on the cells' own steps.
+  private feetAt(g: Footing, x: number, y: number, time: number): number {
+    if (!GRAPHICS.fine || !GRAPHICS.steps) return easeGround(g, walkGround(this.world, x, y), time);
+    return easeFoot(g, this.terrain.footAt(x, y) ?? walkGround(this.world, x, y), time);
+  }
+
   // A small voxel cart behind (x, y) facing `heading` (radians along +x), `s` times its size: a bed,
-  // its load, a shaft, two wheels. Into the marks' mesh, so it costs no draw call of its own.
-  private placeCart(marks: number, x: number, y: number, ground: number, heading: number, s: number, load: number): number {
+  // its load, a shaft, two wheels. Into the marks' mesh, so it costs no draw call of its own. On the
+  // fine land it stands on the ground drawn under its own middle; else on its villager's.
+  private placeCart(marks: number, x: number, y: number, walker: number, heading: number, s: number, load: number): number {
     const fx = Math.cos(heading);
     const fy = Math.sin(heading);
     const { x: cx, y: cy } = cartCenter(x, y, heading, s);
+    const ground = (GRAPHICS.fine && GRAPHICS.steps ? this.terrain.footAt(cx, cy) : null) ?? walker;
     const turn = Math.atan2(-fy, fx);
     const box = (along: number, side: number, up: number, l: number, w: number, h: number, color: number) => {
       const p = this.toScene(cx + fx * along * s - fy * side * s, cy + fy * along * s + fx * side * s, ground + up * s);
