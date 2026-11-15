@@ -309,6 +309,7 @@ export class Terrain {
     again: boolean;
     tops: FineTops;
     redo: number;
+    at: number;
   } | null = null;
   // The longest a frame spent on the fine land, ms (for the measures).
   readonly fineStats = { maxFrameMs: 0, maxTileMs: 0, tiles: 0, tileMs: [] as number[] };
@@ -597,7 +598,9 @@ export class Terrain {
               : stale && (all || start - this.fineBuiltAt[c] > (stale === 2 ? FLOW_STALE_MS : STALE_MS))
                 ? d + 1000 - Math.min(STALE_AGE_MAX, (start - this.staleAt[c]) / 1000) * STALE_AGE
                 : Infinity;
-        if (!this.dirtyLand.has(c) && rank < bestRank) {
+        // A chunk whose whole cells wait to be redrawn is built finely all the same when it has a
+        // fine mesh already (its land keeps changing: it would wait for ever).
+        if ((stale || !this.dirtyLand.has(c)) && rank < bestRank) {
           best = c;
           bestRank = rank;
           bestSub = want;
@@ -717,7 +720,16 @@ export class Terrain {
     const stride = CHUNK * sub;
     const h = this.spareTops?.length === stride * stride ? this.spareTops : new Int16Array(stride * stride);
     this.spareTops = null;
-    this.job = { c, sub, tiles, next: 0, again: this.fine[c] !== undefined && this.fineLevel[c] === sub, tops: { h, x0, y0, stride }, redo: 0 };
+    this.job = {
+      c,
+      sub,
+      tiles,
+      next: 0,
+      again: this.fine[c] !== undefined && this.fineLevel[c] === sub,
+      tops: { h, x0, y0, stride },
+      redo: 0,
+      at: performance.now(),
+    };
   }
 
   // The chunk's tiles are all written: its new fine mesh takes the place of the old one.
@@ -733,9 +745,9 @@ export class Terrain {
     }
     const now = performance.now();
     this.fineBuiltAt[c] = now;
-    // Changed again while it was built: still stale, since the moment the build began at most.
+    // Changed again while it was built: still stale, since the moment the build began.
     this.fineStale[c] = job.redo;
-    if (job.redo) this.staleAt[c] = Math.min(this.staleAt[c], now);
+    if (job.redo) this.staleAt[c] = job.at;
     this.fineLevel[c] = sub;
     this.spare(c);
     if (geometry) this.fineTops[c] = job.tops;
@@ -1248,9 +1260,9 @@ export function builtGround(name: string): boolean {
 
 // A changed fine chunk is built again at most once in STALE_MS. Among changed chunks, one changed
 // a second earlier counts as STALE_AGE scene units nearer, up to STALE_AGE_MAX seconds.
-const STALE_MS = 2000;
+const STALE_MS = 1000;
 const FLOW_STALE_MS = 10000;
-const STALE_AGE = 12;
+const STALE_AGE = 4;
 const STALE_AGE_MAX = 60;
 // The tallest step between two drawn columns that feet glide over (footAt), scene units.
 const FOOT_JOIN = 0.6;
