@@ -134,6 +134,9 @@ function lookToolChecks(check: Check): void {
 
   // Every face of every shape, turned any way, looks outward: just behind it is a voxel, just in front none.
   let inward = 0;
+  // The small cubes on (15 November): a look's voxels are LOOK_VOXEL.
+  const cubesWere = GRAPHICS.cubes;
+  GRAPHICS.cubes = true;
   let faces = 0;
   for (const shape of SHAPES)
     for (const [rx, ry, rz] of [
@@ -165,6 +168,7 @@ function lookToolChecks(check: Check): void {
       }
     }
   check("every face of every shape, turned any way, faces outward from its voxels", faces > 300 && inward === 0, `${inward} of ${faces}`);
+  GRAPHICS.cubes = cubesWere;
   const flat = readProp({ key: "k", name: "n", x: 0, y: 0, turn: 0, boxes: [{ x: -2, y: -0.1, z: 0, w: 4, d: 0.2, h: 0.2, rz: 90 }] });
   const fb = flat ? propBounds(flat) : null;
   check(
@@ -228,6 +232,22 @@ function lookToolChecks(check: Check): void {
   GRAPHICS.cubes = was;
   check("with the cubes on, a stored look of boxes is drawn on the eighth grid, held or not", inCubes.tris > 0 && grid(inCubes) && held.tris > 0 && grid(held));
 
+  // With the small cubes off (the low preset), a soft look draws as on main before 15 November:
+  // quarter-cell voxels, twice that far away (review of #165: 1250 and 1250 instead).
+  GRAPHICS.cubes = false;
+  const softLook: Prop = {
+    ...one(readBox([0, 0, 0, 2, 2, 1, "#888", "dome"])),
+    boxes: [readBox([0, 0, 0, 2, 2, 1, "#888", "dome"]) as PropBox, readBox([0.5, 0.5, 1, 1, 1, 2, "#999", "cyl"]) as PropBox],
+  };
+  const offNear = propLocal(softLook).tris;
+  const offFar = propLocal(softLook, true).tris;
+  GRAPHICS.cubes = was;
+  check(
+    "with the cubes off, a soft look of a dome and a cyl draws main's 286 triangles near and 66 far",
+    offNear === 286 && offFar === 66,
+    `${offNear} ${offFar}`,
+  );
+
   // Grain: a tone per voxel; the same look draws the same tones.
   const slab = () => propLocal(one(readBox([0, 0, 0, 2, 2, 2, "#808080", "grain"]), false));
   const g1 = slab();
@@ -240,6 +260,7 @@ function lookToolChecks(check: Check): void {
   // The cost guard: 60 looks of 160 parts, the nearest drawn in full within the budget. Past it a
   // look made of voxels keeps its cubes (15 November, one size of cube at every distance): only a
   // stored look of boxes is drawn simpler.
+  GRAPHICS.cubes = true;
   const world = generateWorld(96, 96, 5);
   world.props = benchProps(true, true);
   const t0 = performance.now();
@@ -254,6 +275,7 @@ function lookToolChecks(check: Check): void {
     `${drawn} triangles (${stats.full} in full), ${stats.simpler} past the budget, a look ${near} near and ${far} far, built in ${Math.round(ms)} ms`,
   );
   check("the budget counts a look's triangles as the mesh draws them", propTriangles(world.props[3]) === propLocal(world.props[3]).tris);
+  GRAPHICS.cubes = cubesWere;
   const few = generateWorld(64, 64, 5);
   few.props = looks.map(
     (l, i) => readProp({ key: `f${i}`, name: l.name, x: 6 + (i % 5) * 12, y: 6 + Math.floor(i / 5) * 12, turn: l.turn, boxes: l.boxes }) as Prop,

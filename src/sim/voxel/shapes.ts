@@ -33,6 +33,10 @@ export const LOOK_VOXEL = 0.125;
 // A far look keeps the same cubes (it was the grid at twice the side): only a stored look of boxes
 // is drawn simpler past PropModels' triangle budget, by its largest parts.
 export const FAR_COARSEN = 1;
+// With the small cubes off (the low preset), a soft look keeps main's grid of before 15 November:
+// quarter cells, twice that far away, so it draws exactly as it did.
+export const LOOK_VOXEL_OFF = 0.25;
+export const FAR_COARSEN_OFF = 2;
 // A look's grid holds this many voxels at most; past it the side grows.
 const MAX_CELLS = 2_000_000;
 // Light of a corner by how shut in it is, as the terrain's (terrain.ts AO_LIGHT).
@@ -345,7 +349,7 @@ export function propLocal(p: Prop, simple = false, k = 1, mx = 0, my = 0): Local
     return out;
   }
   if (isSoft(p)) {
-    meshGrid(voxelize(p.boxes, LOOK_VOXEL * (simple ? FAR_COARSEN : 1)), out, k, mx, my);
+    meshGrid(voxelize(p.boxes, LOOK_VOXEL_OFF * (simple ? FAR_COARSEN_OFF : 1)), out, k, mx, my);
     return out;
   }
   const boxes = simple ? largestParts(p.boxes, FAR_PARTS) : p.boxes;
