@@ -1,4 +1,4 @@
-import { BufferAttribute, BufferGeometry, Mesh, type Material } from "three";
+import { BufferAttribute, BufferGeometry, FrontSide, Mesh, type Material } from "three";
 import { BUILTIN, C, F, G, type Material as LandMaterial } from "../materials";
 import type { World } from "../world";
 import { FACE_LIGHT } from "./models";
@@ -103,6 +103,17 @@ export class Terrain {
   // The eye view, second pass: chunks wholly past `r` cells from (x, y) are not drawn (the mist
   // has them, fog.ts EYE_DRAW); null draws every chunk, as from the sky.
   private shownAround: string | null = null;
+  // The land's meshes now drawn (fine or whole cells), for the view's shadow culling.
+  landMeshes(out: Mesh[]): Mesh[] {
+    out.length = 0;
+    for (let c = 0; c < this.chunks.length; c++) {
+      const fine = this.fine[c];
+      if (this.fineShown[c] && fine) out.push(fine);
+      else if (this.chunks[c].land) out.push(this.chunks[c].land!);
+    }
+    return out;
+  }
+
   showWithin(at: { x: number; y: number; r: number } | null): void {
     const key = at ? `${Math.round(at.x / 4)},${Math.round(at.y / 4)},${at.r}` : null;
     if (key === this.shownAround && !this.builtSinceShown) return;
@@ -433,12 +444,32 @@ export class Terrain {
     }
   }
 
-  // The level a chunk should have: FINE_SUB, at every distance (the owner, 15 November: "let's just
-  // keep 1/8 all the time, the transitions look super weird"). One size of cube for the whole
-  // island, so nothing changes shape or pops as the camera moves; the whole cell mesh only shows
-  // until a chunk's fine mesh is first built.
-  private wantLevel(): number {
-    return FINE_SUB;
+  // The level a chunk should have: eighths (FINE_SUB), the one size at every distance (the owner,
+  // 15 November: "let's just keep 1/8 all the time, the transitions look super weird"), except
+  // where an eighth is drawn smaller than `lod.px` pixels on the screen: there quarters, which
+  // cannot be told apart from eighths at that size (scripts/looks-seam.mjs measures the seam). With
+  // hysteresis, so a chunk at the edge does not flip as the camera turns. `lod.perUnit` (pixels
+  // of the screen a scene unit spans at distance 1) is set by the view; 0 keeps every chunk in
+  // eighths (the checks, and the view until its first frame).
+  readonly lod = { perUnit: 0, px: LOD_PX };
+  // Off only for the before and after (scripts/looks-cull-proof.mjs): every face in every pass.
+  cullFaces = true;
+  private wantLevel(c: number): number {
+    if (!this.lod.perUnit || !this.lod.px) return FINE_SUB;
+    const eighth = this.lod.perUnit / FINE_SUB / Math.max(0.5, this.eyeDistance(c));
+    const now = this.fine[c] ? this.fineLevel[c] : FINE_SUB;
+    return eighth < this.lod.px * (now === FINE_SUB ? 1 : 1.2) ? FINE_SUB / 2 : FINE_SUB;
+  }
+
+  // The distance from the camera to the nearest point of a chunk (its land up to its highest column).
+  private eyeDistance(c: number): number {
+    const { x0, y0, x1, y1 } = this.bounds(c);
+    const ox = -this.world.w / 2;
+    const oz = -this.world.h / 2;
+    const dx = Math.max(x0 + ox - this.eye.x, 0, this.eye.x - (x1 + ox));
+    const dz = Math.max(y0 + oz - this.eye.z, 0, this.eye.z - (y1 + oz));
+    const dy = Math.max(0, this.eye.y - (this.chunkTop[c] ?? FINE_TOP));
+    return Math.hypot(dx, dy, dz);
   }
 
   // Picks each chunk's level, shows each chunk one way or the other, and builds tiles of the
@@ -462,7 +493,7 @@ export class Terrain {
       let keep = false;
       for (let c = 0; c < n; c++) {
         const d = this.chunkDistance(c);
-        const want = this.wantLevel();
+        const want = this.wantLevel(c);
         if (this.job?.c === c && want === this.job.sub) keep = true;
         // Missing or at the wrong level first, nearest first; then a changed chunk, at most one in
         // STALE_MS.
@@ -601,7 +632,31 @@ export class Terrain {
     }
     const mesh = new Mesh(geometry, this.landMaterial);
     mesh.matrixAutoUpdate = false;
-    mesh.onBeforeRender = this.seeCamera;
+    // The east and south walls drawn by a second mesh on the same geometry, each mesh setting its
+    // run of faces as it is drawn (drawFacing); a child, so it is shown and hidden with it.
+    const twin = new Mesh(geometry, this.landMaterial);
+    twin.matrixAutoUpdate = false;
+    mesh.add(twin);
+    const facing = (m: Mesh, low: boolean) => {
+      m.onBeforeRender = (r, s, camera, ...rest) => {
+        if (low) this.seeCamera(r, s, camera as never);
+        const all = !this.cullFaces || this.landMaterial.side !== FrontSide || this.landMaterial.shadowSide !== null;
+        if (all) geometry.setDrawRange(low ? 0 : FACES_ALL, low ? FACES_ALL : 0);
+        else drawFacing(geometry, low, camera.position.x, camera.position.z, false);
+        void rest;
+      };
+      m.onBeforeShadow = (_r, _o, _c, shadowCamera) => {
+        const all = !this.cullFaces || this.landMaterial.side !== FrontSide || this.landMaterial.shadowSide !== null;
+        if (all) geometry.setDrawRange(low ? 0 : FACES_ALL, low ? FACES_ALL : 0);
+        else {
+          // Toward the sun: the light's camera looks down its own -z.
+          const e = shadowCamera.matrixWorld.elements;
+          drawFacing(geometry, low, e[8], e[10], true);
+        }
+      };
+    };
+    facing(mesh, true);
+    facing(twin, false);
     mesh.visible = shown === 1 && this.chunkOn[c] === 1;
     this.fine[c] = mesh;
     this.add(mesh);
@@ -995,9 +1050,51 @@ const WET_OFF = 0.005;
 // camera first (15 November: one size at every distance). The camera's height counts above
 // FINE_TOP, about the height of the land. A frame spends at most about FINE_BUDGET_MS building them.
 export const FINE_SUB = 8;
+// Quarters only where an eighth is smaller than this many pixels of the screen (Terrain.lod).
+// Off (0): the seam was measured (scripts/looks-seam.mjs) and quarters showed wherever they were
+// used, so every chunk stays in eighths.
+export const LOD_PX = 0;
+// Every face, as one run.
+const FACES_ALL = Infinity;
 const FINE_BUDGET_MS = 4;
 const FINE_AGAIN_MS = 1.5;
 const FINE_TOP = 6;
+// The fine land's faces by the way they face, in the order of its index buffer (quadGeometry):
+// north walls, tops and bottoms, west walls, then east and south walls. Any ways a pass needs out
+// of the first three are one run of it, and of the last two another (drawFacing).
+const FACE_NORTH = 0;
+const FACE_TOP = 1;
+const FACE_WEST = 2;
+const FACE_EAST = 3;
+const FACE_SOUTH = 4;
+
+// Which of a fine chunk's faces a pass draws (15 November): only the walls that can face it. A
+// wall facing away is never drawn (the land is drawn from its front side, and three draws the
+// sun's shadow map from the back side), so leaving it out changes nothing on the screen; the
+// tops always go. `low` draws the run of north, top and west faces, the other the east and south.
+// (x, z) is the camera, or with `sun` the way toward the sun.
+function drawFacing(g: BufferGeometry, low: boolean, x: number, z: number, sun: boolean): void {
+  const f = g.userData.faces as { first: number[]; counts: number[]; planes: { e: number; s: number; w: number; n: number } } | undefined;
+  if (!f) return;
+  const want = sun ? [z > 0, true, x > 0, x < 0, z < 0] : [z < f.planes.n, true, x < f.planes.w, x > f.planes.e, z > f.planes.s];
+  const from = low ? 0 : 3;
+  const to = low ? 3 : 5;
+  let a = -1;
+  let b = -1;
+  for (let k = from; k < to; k++) {
+    if (!want[k] || !f.counts[k]) continue;
+    if (a < 0) a = k;
+    b = k;
+  }
+  if (a < 0) {
+    g.setDrawRange(0, 0);
+    return;
+  }
+  // The ways between the first and last wanted are drawn too (only west without top, or north
+  // without west, cannot happen: the top run is always wanted).
+  g.setDrawRange(f.first[a] * 6, (f.first[b] + f.counts[b] - f.first[a]) * 6);
+}
+
 // A changed fine chunk is built again at most once in STALE_MS.
 const STALE_MS = 2000;
 const FLOW_STALE_MS = 10000;
@@ -1219,6 +1316,40 @@ export class Writer {
     const mask = new Uint8Array(quads * 4);
     const index = new Uint32Array(quads * 6);
     const byte = (v: number) => Math.max(0, Math.min(255, Math.round(v * 255)));
+    // Each face's way, from its winding (outward, as three's front side): the index buffer holds
+    // them in the order FACE_ORDER, so a pass draws only the ways that can show (terrain.ts
+    // drawFacing). The planes: the lowest east and south wall, the highest west and north one.
+    const way = new Uint8Array(quads);
+    const counts = [0, 0, 0, 0, 0];
+    const planes = { e: Infinity, s: Infinity, w: -Infinity, n: -Infinity };
+    for (let q = 0; q < quads; q++) {
+      const a = q * 18;
+      const p = this.pos;
+      const ux = p[a + 3] - p[a];
+      const uy = p[a + 4] - p[a + 1];
+      const uz = p[a + 5] - p[a + 2];
+      const vx = p[a + 6] - p[a];
+      const vy = p[a + 7] - p[a + 1];
+      const vz = p[a + 8] - p[a + 2];
+      const nx = uy * vz - uz * vy;
+      const ny = uz * vx - ux * vz;
+      const nz = ux * vy - uy * vx;
+      let k = FACE_TOP;
+      if (Math.abs(nx) > Math.abs(ny) && Math.abs(nx) >= Math.abs(nz)) {
+        k = nx > 0 ? FACE_EAST : FACE_WEST;
+        if (nx > 0) planes.e = Math.min(planes.e, p[a]);
+        else planes.w = Math.max(planes.w, p[a]);
+      } else if (Math.abs(nz) > Math.abs(ny)) {
+        k = nz > 0 ? FACE_SOUTH : FACE_NORTH;
+        if (nz > 0) planes.s = Math.min(planes.s, p[a + 2]);
+        else planes.n = Math.max(planes.n, p[a + 2]);
+      }
+      way[q] = k;
+      counts[k]++;
+    }
+    const first = [0, 0, 0, 0, 0];
+    for (let k = 1; k < 5; k++) first[k] = first[k - 1] + counts[k - 1];
+    const next = [...first];
     for (let q = 0; q < quads; q++) {
       for (let k = 0; k < 4; k++) {
         // a, b, c from the first three vertices, d from the sixth.
@@ -1233,7 +1364,7 @@ export class Writer {
         mask[to] = byte(this.mask[from]);
       }
       const v = q * 4;
-      index.set([v, v + 1, v + 2, v, v + 2, v + 3], q * 6);
+      index.set([v, v + 1, v + 2, v, v + 2, v + 3], next[way[q]]++ * 6);
     }
     const g = new BufferGeometry();
     g.setAttribute("position", new BufferAttribute(pos, 3));
@@ -1241,6 +1372,7 @@ export class Writer {
     g.setAttribute("decalMask", new BufferAttribute(mask, 1, true));
     g.setIndex(new BufferAttribute(index, 1));
     g.computeBoundingSphere();
+    g.userData.faces = { first, counts, planes };
     return g;
   }
 

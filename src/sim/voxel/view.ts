@@ -45,7 +45,7 @@ import { bodyGeometry } from "./bodies";
 import { daylight } from "../daylight";
 import { MODELS, geometryOf } from "./models";
 import { OrbitCamera } from "./orbit";
-import { CHUNK, Terrain, V, columnTop, surfaceY } from "./terrain";
+import { BOTTOM, CHUNK, Terrain, V, columnTop, surfaceY } from "./terrain";
 import { hexColor, mixColor } from "../colors";
 import { DecorInstances } from "./decor-instances";
 import { Darkness } from "./darkness";
@@ -427,6 +427,9 @@ export class VoxelView {
       this.scannedAt = time;
       this.terrain.scan();
     }
+    // How big a land cube is on the screen, for the fine land's level (terrain.ts wantLevel).
+    const lens = this.orbit.camera;
+    this.terrain.lod.perUnit = (this.cssH * this.pixelRatio) / (2 * Math.tan((lens.fov * Math.PI) / 360));
     this.terrain.rebuild(this.firstBuild);
     this.firstBuild = false;
     // In the eye view the land past the mist is not drawn (fog.ts EYE_DRAW).
@@ -484,6 +487,7 @@ export class VoxelView {
     this.moveClouds(LAB_SKY.time ?? time);
     this.applyDaylight(LAB_SKY.time ?? time, visuals.darknessLevel(), visuals);
     this.lap("decal+day");
+    this.cullCubeTrees();
     this.looks.render(this.orbit.camera);
     this.lap("draw");
     this.drawOverlay(visuals);
@@ -749,6 +753,96 @@ export class VoxelView {
     return (sw + sh) / 2;
   }
 
+  // Trees in small cubes, all of them as placed (placeCovers), and the ones drawn this frame
+  // (cullCubeTrees): an island has a few thousand, each a few hundred triangles, and an instanced
+  // mesh is drawn whole, in the shadow pass too.
+  private cubeAll = new Map<string, { matrices: Float32Array; colors: Float32Array | null; count: number; shown: string }>();
+  // Off only for the before and after (scripts/looks-cull-proof.mjs).
+  cullCovers = true;
+  private viewFrustum = new Frustum();
+  private sunFrustum = new Frustum();
+  private cullSphere = new Sphere();
+  private cullMatrix = new Matrix4();
+  private cullDown = new Vector3();
+  private cullAt = new Vector3();
+  private cullAt2 = new Vector3();
+  private cullLand: Mesh[] = [];
+
+  // Draws only the cube trees the camera sees or whose shadow can fall where it looks, and casts
+  // into the shadow map only the land whose shadow can: what is left out is neither on the screen
+  // nor shades it, so the frame is the same (scripts/looks-cull-proof.mjs measures it). Not in the eye view, whose near trees keep their
+  // slots (placeNearTrees).
+  private cullCubeTrees(): void {
+    const all = this.cullCovers && !this.orbit.eye;
+    const camera = this.orbit.camera;
+    camera.updateMatrixWorld();
+    this.cullMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    this.viewFrustum.setFromProjectionMatrix(this.cullMatrix);
+    const sun = GRAPHICS.shadows ? this.looks.sun : null;
+    if (sun) {
+      sun.updateMatrixWorld();
+      sun.target.updateMatrixWorld();
+      sun.shadow.updateMatrices(sun);
+      this.sunFrustum.copy(sun.shadow.getFrustum());
+    }
+    const sphere = this.cullSphere;
+    // The sun's way down, and how far a shadow can fall: from a caster's top to the island's
+    // floor (BOTTOM), slanting with the sun.
+    const down = this.cullDown;
+    let reach = 0;
+    if (sun) {
+      down.copy(sun.target.position).sub(sun.position).normalize();
+      reach = -down.y > 0.05 ? 1 / -down.y : 0;
+    }
+    // Whether a caster's shadow can fall inside the view: its sphere moved down the sun's ray
+    // in steps of its radius, to the island's floor. Only what the shadow map holds casts.
+    const shades = (c: Vector3, r: number): boolean => {
+      if (!sun || !all || !this.sunFrustum.intersectsSphere(sphere.set(c, r))) return false;
+      const len = (c.y + r - BOTTOM) * reach;
+      for (let t = 0; t <= len + r; t += r) {
+        sphere.center.copy(c).addScaledVector(down, t);
+        sphere.radius = r;
+        if (this.viewFrustum.intersectsSphere(sphere)) return true;
+      }
+      return false;
+    };
+    const seen = (c: Vector3, r: number): boolean => this.viewFrustum.intersectsSphere(sphere.set(c, r));
+    // The land: a chunk out of the view casts into the shadow map only if its shadow can reach it.
+    if (sun && all)
+      for (const mesh of this.terrain.landMeshes(this.cullLand)) {
+        const b = mesh.geometry.boundingSphere;
+        if (!b || !mesh.castShadow) continue;
+        mesh.castShadow = seen(b.center, b.radius) || shades(this.cullAt.copy(b.center), b.radius);
+        for (const child of mesh.children) child.castShadow = mesh.castShadow;
+      }
+    for (const [key, a] of this.cubeAll) {
+      const mesh = this.covers.get(key);
+      if (!mesh) continue;
+      const m = mesh.instanceMatrix.array as Float32Array;
+      const c = mesh.instanceColor ? (mesh.instanceColor.array as Float32Array) : null;
+      const keep: number[] = [];
+      for (let k = 0; k < a.count; k++) {
+        const o = k * 16;
+        // The tree's middle, a little above its foot: a tree is at most 13 cubes across and about
+        // 5.2 cells tall (cubes.ts SIZE_MAX, TALL).
+        const at = this.cullAt.set(a.matrices[o + 12], a.matrices[o + 13] + 2.6, a.matrices[o + 14]);
+        if (all && !seen(at, 3.4) && !shades(this.cullAt2.copy(at), 3.4)) continue;
+        keep.push(k);
+      }
+      const sig = keep.join(",");
+      if (sig === a.shown) continue;
+      a.shown = sig;
+      for (let n = 0; n < keep.length; n++) {
+        const k = keep[n];
+        m.set(a.matrices.subarray(k * 16, k * 16 + 16), n * 16);
+        if (c && a.colors) c.set(a.colors.subarray(k * 3, k * 3 + 3), n * 3);
+      }
+      mesh.count = keep.length;
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
+  }
+
   private placeCovers(): void {
     const { world } = this;
     const lists = new Map<string, number[]>();
@@ -881,6 +975,16 @@ export class VoxelView {
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       this.coverCounts.set(key, cells.length);
+      // Trees in small cubes: every one kept, to draw only those the camera or the sun can see.
+      if (cube) {
+        const n = cells.length;
+        this.cubeAll.set(key, {
+          matrices: mesh.instanceMatrix.array.slice(0, n * 16) as Float32Array,
+          colors: mesh.instanceColor ? (mesh.instanceColor.array.slice(0, n * 3) as Float32Array) : null,
+          count: n,
+          shown: "",
+        });
+      } else this.cubeAll.delete(key);
     }
   }
 
