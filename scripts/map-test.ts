@@ -12,6 +12,7 @@ import { DEFAULT_LAND, resolveLand } from "../src/sim/land";
 import {
   FAR,
   cartCenter,
+  towCart,
   coverOf,
   emptyMap,
   fade,
@@ -269,6 +270,30 @@ function mapChecksSeeded(check: Check): void {
       "map: a cart exactly while a trip to another village is under way, behind its villager",
       !idle && going && !hungry && !wonder && !done && at.x < 20 && at.x > 18.5 && at.y === 20 && Math.abs(far.x - 20) < 1e-9 && far.y < 20 && far.y > 17.5,
       JSON.stringify({ idle, going, hungry, wonder, done, at, far }),
+    );
+  }
+  // 6b. A cart turns only as it is pulled (feedback #156): not on the spot, not with every
+  // shake of its villager's heading, and it ends up behind once the villager walks off.
+  {
+    const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+    // The villager turns round on the spot: the cart stays put.
+    let spot = 0;
+    for (let f = 0; f < 30; f++) spot = towCart(spot, (Math.PI * (f + 1)) / 30, 0, 1);
+    // Walking at 4 cells a second for 2 s, its heading shaking by half a radian each frame.
+    let shake = 0;
+    let swept = 0;
+    for (let f = 0; f < 120; f++) {
+      const next = towCart(shake, f % 2 ? 0.5 : -0.5, 4 / 60, 1);
+      swept += Math.abs(wrap(next - shake));
+      shake = next;
+    }
+    // Turned round, then 5 cells walked the other way: the cart has swung round behind.
+    let round = 0;
+    for (let f = 0; f < 60; f++) round = towCart(round, Math.PI - 0.01, 5 / 60, 1);
+    check(
+      "map: a cart turns only as it is pulled, never on the spot, and swings round behind its villager",
+      spot === 0 && Math.abs(shake) < 0.2 && swept < 6 && Math.abs(wrap(round - Math.PI)) < 0.3,
+      JSON.stringify({ spot, shake, swept, round }),
     );
   }
   // 7. The director: the whole island in its rotation, never over a drama that scores higher.

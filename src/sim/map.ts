@@ -240,6 +240,21 @@ export function cartCenter(x: number, y: number, heading: number, s: number): { 
   return { x: x - Math.cos(heading) * back, y: y - Math.sin(heading) * back };
 }
 
+/**
+ * The cart's own heading after its villager moved `moved` cells facing `heading`: a towed cart
+ * turns only as it is pulled, toward its villager, as a trailer does (feedback #156). The villager's
+ * heading shakes as it steps round others and turns on the spot; a cart drawn on that heading swung
+ * round its villager like a clock hand. Standing still, it does not turn at all.
+ */
+export function towCart(cart: number, heading: number, moved: number, s: number): number {
+  const back = 0.75 + 0.35 * s;
+  const off = Math.atan2(Math.sin(heading - cart), Math.cos(heading - cart));
+  // Pulled from behind past a right angle, it still swings round, never stalls straight ahead.
+  const pull = Math.abs(off) > Math.PI / 2 ? Math.sign(off) : Math.sin(off);
+  const turn = (moved / back) * pull;
+  return cart + (Math.abs(turn) > Math.abs(off) ? off : turn);
+}
+
 const TIER_RANK: Record<Tier, number> = { town: 3, village: 2, hamlet: 1 };
 
 /** Most important first: towns, then villages, then hamlets; more people first within each. */
