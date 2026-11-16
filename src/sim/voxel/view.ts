@@ -62,6 +62,7 @@ import { GLOWING, VARIANTS, floraModels } from "./flora";
 import { Buildings } from "./buildings";
 import { FINE_VARIANTS, OLD_TREES, cubeTree, fineFocus, geometryOfMesh, refocus, treeSize, type FineFocus } from "./cubes";
 import { WonderModels } from "./wonders";
+import { CLOUD_CUBE, CubeFlames, cloudMaterial, coverCubeGlows, coverCubeKeys, coverInCubes, nearestFlames, puffyCloud } from "./cover-cubes";
 import { PropModels } from "./props";
 import { valueNoise } from "../noise";
 import { LAB_SKY, Sky, skyBodies } from "./sky";
@@ -205,6 +206,10 @@ export class VoxelView {
   private domes = new Domes(this.scene);
   private lights: Sprite[] = [];
   private clouds: InstancedMesh;
+  // In small cubes (cover-cubes.ts): flames that flicker by frames, puffy clouds.
+  private cubeFlames: CubeFlames;
+  private puffyClouds: InstancedMesh;
+  private burning: number[] = [];
   // Rain seen from afar, under a front's cloud.
   private rainShafts: InstancedMesh;
   // Materials tinted by the time of day (fire and glows are not).
@@ -318,6 +323,7 @@ export class VoxelView {
     this.figures = new Figures(this.scene, figureMats);
     this.markMesh = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true }), 900);
     this.flames = this.instanced("flame", new MeshBasicMaterial({ vertexColors: true }), 5000);
+    this.cubeFlames = new CubeFlames(this.scene, this.flames.material as Material, 2500);
     this.puffs = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.22, depthWrite: false }), 4000);
     // Smoke, steam and a bolt's halo write no depth: drawn after the water
     // (renderOrder 2), or the water covers the part in front of it.
@@ -327,6 +333,10 @@ export class VoxelView {
     this.dullPoints = pointCloud(world.particles.capacity, false, this.glowTexture);
     this.scene.add(this.glowPoints, this.dullPoints);
     this.clouds = this.makeClouds();
+    this.puffyClouds = new InstancedMesh(geometryOfMesh(puffyCloud()), cloudMaterial(), 10);
+    this.puffyClouds.count = 0;
+    this.puffyClouds.frustumCulled = false;
+    this.scene.add(this.puffyClouds);
     this.rainShafts = new InstancedMesh(
       geometryOf(MODELS.puff),
       new MeshBasicMaterial({ color: 0xc4d2e4, transparent: true, opacity: 0.2, depthWrite: false }),
@@ -358,6 +368,7 @@ export class VoxelView {
       basic,
       this.puffs.material as MeshBasicMaterial,
       this.clouds.material as MeshBasicMaterial,
+      this.puffyClouds.material as MeshBasicMaterial,
       figureMats.lit,
       this.farRoads.material as MeshBasicMaterial,
       this.plumes.material as MeshBasicMaterial,
@@ -367,7 +378,7 @@ export class VoxelView {
     this.looks = new Looks(
       this.renderer,
       this.scene,
-      new Set([this.farRoads, this.markMesh, this.windows, this.flames, this.boltCore, this.decorGlow, this.rainShafts]),
+      new Set([this.farRoads, this.markMesh, this.windows, this.flames, ...this.cubeFlames.meshes, this.boltCore, this.decorGlow, this.rainShafts]),
     );
     for (const m of [land, basic, figureMats.lit]) this.looks.receive(m);
     // What blooms at night: what shines by itself, and lava (looks.ts glow mask).
@@ -696,7 +707,9 @@ export class VoxelView {
     const own = far ? key.slice(4) : key;
     // A tree in small cubes (cubes.ts): "cube:oak:0:9", its kind, variant and size in cubes.
     const cube = own.startsWith("cube:") ? own.split(":") : null;
-    const boxes0 = MODELS[own] ?? FLORA_MODELS[own] ?? MODELS.block;
+    // A rock, shrub, cactus, crystal or stump in cubes has its shape after its name: "boulder#2".
+    const name = own.split("#")[0];
+    const boxes0 = MODELS[name] ?? FLORA_MODELS[name] ?? MODELS.block;
     const boxes = far ? farTreeModel(boxes0) : boxes0;
     // With the small cubes on, every other cover's model in cubes of the one size too (shapes.ts
     // boxesInCubes): shrubs, cacti, flowers, crops, fences (15 November).
@@ -705,9 +718,9 @@ export class VoxelView {
       : cube
         ? geometryOfMesh(cubeTree(cube[1] as never, Number(cube[2]), Number(cube[3])))
         : GRAPHICS.cubes && !far
-          ? geometryOfMesh(boxesInCubes(boxes))
+          ? geometryOfMesh(coverInCubes(own) ?? boxesInCubes(boxes))
           : geometryOf(boxes);
-    const glows = GLOWING.has(key) || (cube !== null && cube[1] === "glowcap");
+    const glows = GLOWING.has(key) || coverCubeGlows(key) || (cube !== null && cube[1] === "glowcap");
     const bigger = new InstancedMesh(geometry, glows ? this.glowMaterial : this.coverMaterial, Math.max(64, Math.ceil(need * 1.5)));
     withColors(bigger);
     bigger.count = 0;
@@ -893,6 +906,7 @@ export class VoxelView {
       this.coversCubes = GRAPHICS.cubes;
       for (const mesh of this.covers.values()) {
         this.scene.remove(mesh);
+        mesh.geometry.dispose();
         mesh.dispose();
       }
       this.covers.clear();
@@ -954,7 +968,8 @@ export class VoxelView {
           continue;
         }
       }
-      add(key, i);
+      if (GRAPHICS.cubes) for (const k of coverCubeKeys(key, cellHash(i), world.ground[i])) add(k, i);
+      else add(key, i);
     }
     // 4.9: pegs every few cells along a road marked out and not laid yet.
     for (const r of world.roads)
@@ -1896,20 +1911,30 @@ export class VoxelView {
     let f = 0;
     let g = 0;
     const flameColors = [0xffd36a, 0xffa43a, 0xff6a1a, 0xe8420f];
+    // With the small cubes, the burning cells nearest the camera in cubes, the others as boxes
+    // (cover-cubes.ts FLAME_CUBES): gathered first, placed after the loop.
+    const cubes = GRAPHICS.cubes;
+    const burning = this.burning;
+    burning.length = 0;
+    const flame = (i: number) => {
+      const fire = world.fire[i];
+      const base = columnTop(world, i) + (world.cover[i] === C.TREE || world.cover[i] === C.HOUSE ? 0.6 : 0);
+      const p = this.toScene((i % world.w) + 0.5, Math.floor(i / world.w) + 0.5, base);
+      if (near?.has(i)) return this.cubeFlames.add(p.x, p.y, p.z, fire, i, time);
+      const flick = 0.5 + 0.5 * Math.sin(time * 18 + i * 1.7);
+      const h = (0.4 + fire * 1.2) * (0.7 + flick * 0.6);
+      this.m.makeScale(0.7, h, 0.7);
+      this.m.setPosition(p.x, p.y, p.z);
+      this.flames.setMatrixAt(f, this.m);
+      this.flames.setColorAt(f, this.col.setHex(flameColors[(i + Math.floor(time * 12)) % 4]));
+      f++;
+    };
+    let near: Set<number> | null = null;
     for (let i = 0; i < world.n; i++) {
       const fire = world.fire[i];
-      if (fire > 0.05 && f < 5000) {
-        const x = i % world.w;
-        const y = Math.floor(i / world.w);
-        const base = columnTop(world, i) + (world.cover[i] === C.TREE || world.cover[i] === C.HOUSE ? 0.6 : 0);
-        const flick = 0.5 + 0.5 * Math.sin(time * 18 + i * 1.7);
-        const h = (0.4 + fire * 1.2) * (0.7 + flick * 0.6);
-        this.m.makeScale(0.7, h, 0.7);
-        const p = this.toScene(x + 0.5, y + 0.5, base);
-        this.m.setPosition(p.x, p.y, p.z);
-        this.flames.setMatrixAt(f, this.m);
-        this.flames.setColorAt(f, this.col.setHex(flameColors[(i + Math.floor(time * 12)) % 4]));
-        f++;
+      if (fire > 0.05 && f + burning.length < 5000) {
+        if (cubes) burning.push(i);
+        else flame(i);
       }
       // Gas is sampled every other cell, so a big cloud stays affordable.
       const amt = world.gasAmt[i];
@@ -1925,7 +1950,14 @@ export class VoxelView {
         g++;
       }
     }
+    this.cubeFlames.begin();
+    if (cubes) {
+      const at = this.orbit.eye ?? { x: this.orbit.tx, y: this.orbit.ty };
+      near = nearestFlames(burning, (i) => ((i % world.w) - at.x) ** 2 + (Math.floor(i / world.w) - at.y) ** 2);
+      for (const i of burning) flame(i);
+    }
     this.flames.count = f;
+    this.cubeFlames.finish();
     this.puffs.count = g;
     this.flames.instanceMatrix.needsUpdate = true;
     this.puffs.instanceMatrix.needsUpdate = true;
@@ -2190,6 +2222,15 @@ export class VoxelView {
       const cx = Math.cos(a) * d;
       const cz = Math.sin(a) * d;
       const cy = 10 + (c % 4) * 7;
+      // In small cubes: one puffy cloud (cover-cubes.ts), turned and sized by its number.
+      if (GRAPHICS.cubes) {
+        const s = (1.1 + (c % 3) * 0.2) * (CLOUD_CUBE / 0.9);
+        this.m.makeRotationY(c * 1.3);
+        this.m.scale(this.v.set(s, s * (0.8 + (c % 2) * 0.2), s));
+        this.m.setPosition(cx, cy, cz);
+        this.puffyClouds.setMatrixAt(c, this.m);
+        continue;
+      }
       for (let k = 0; k < 9; k++) {
         const s = 3 + ((c * 7 + k * 3) % 4);
         this.m.makeScale(s * 1.4, s * 0.6, s);
@@ -2252,6 +2293,8 @@ export class VoxelView {
     this.rainShafts.count = shafts;
     this.rainShafts.instanceMatrix.needsUpdate = true;
     this.clouds.count = n;
+    this.puffyClouds.count = GRAPHICS.cubes ? 10 : 0;
+    this.puffyClouds.instanceMatrix.needsUpdate = true;
     // From the eyes a storm overhead is 40 cells up, past the mist of the eye view: without
     // this it was a blank grey. The clouds take no mist there; from the sky they do, as before.
     const cm = this.clouds.material as MeshBasicMaterial;
@@ -2267,6 +2310,10 @@ export class VoxelView {
   // next engine reuses the same canvas and so the same WebGL context.
   dispose(): void {
     this.domes.dispose();
+    this.cubeFlames.dispose();
+    this.scene.remove(this.puffyClouds);
+    this.puffyClouds.geometry.dispose();
+    this.puffyClouds.dispose();
     this.buildings.dispose();
     this.wonderModels.dispose();
     this.propModels.dispose();
