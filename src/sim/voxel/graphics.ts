@@ -71,22 +71,61 @@ export const PRESETS: Record<Quality, Record<LooksFlag, boolean>> = {
 export const PIXEL_CAPS: Record<Quality, number> = { low: 2, medium: 2, high: 2 };
 export const LATE_ONLY: Record<Quality, boolean> = { low: false, medium: false, high: true };
 
-// The view's pixel density after a second of frames (view.ts adapt). avg: the
-// mean time between frames; draw: the mean of the view's own work; fast: the
-// engine aims at 60 a second; quiet: ms since the last drop. Frames come every
-// 33 ms at 30 a second; well past that they are late. At 60 a second a missed
-// cadence first falls back to 30 (pacing.ts), so the old rule lowered pixels
-// there on the draw time alone. Above the level's cap it comes down at once.
-export function nextPixelRatio(o: { ratio: number; max: number; avg: number; draw: number; fast: boolean; quiet: number; lateOnly: boolean }): {
-  ratio: number;
-  dropped: boolean;
-} {
-  if (o.ratio > o.max) return { ratio: o.max, dropped: false };
-  const late = !o.fast && o.avg > 52;
-  if (late || (!o.lateOnly && o.draw > 30)) return { ratio: Math.max(0.6, o.ratio - 0.25), dropped: true };
-  const room = o.avg < (o.fast ? 19 : 38) && (o.lateOnly || o.draw < 12);
-  if (room && o.quiet > 10_000) return { ratio: Math.min(o.max, o.ratio + 0.25), dropped: false };
-  return { ratio: o.ratio, dropped: false };
+// The fewest device pixels per CSS pixel a level may come down to when frames are slow (16
+// November, the owner on the unfolded Fold: "Why is the quality decreasing with time giving this
+// blurry look unzoomed???"; it went down to 0.6). Never lower than the device's own.
+export const PIXEL_FLOORS: Record<Quality, number> = { low: 1, medium: 1.5, high: 1.5 };
+
+// What slow frames give up, one notch at a time, before any pixel (Relief): the shadow map at half
+// its texels, then the sun's shadows (no shadow pass), then the bloom and the depth of field. The
+// looks read TRIM.level (looks.ts); 0 gives up nothing.
+export const TRIMS = ["none", "shadow map", "shadows", "bloom and blur"] as const;
+export const TRIM = { level: 0 };
+
+// Frames are late past LATE ms at 30 a second (they come every 33); the view's own work is too long
+// past BUSY ms where the level lowers on the draw time alone (not LATE_ONLY).
+const LATE = 52;
+const BUSY = 30;
+// The quiet time before a notch is taken back, doubled each time one taken back had to be given up
+// again within BOUNCE ms (so it does not see-saw), and set back to the first after HELD ms without.
+const QUIET = 10_000;
+const QUIET_MAX = 80_000;
+const BOUNCE = 15_000;
+const HELD = 60_000;
+
+// How the view spends a slow second (view.ts adapt): extras first, then pixels down to the
+// level's floor; and when the frames are on time again, the same way back, pixels first. Fed the
+// mean of each second of frames. There is no band of frame times in which it can only go down: any
+// second that is not slow counts toward the way back (it was stuck between 38 and 52 ms before).
+export class Relief {
+  trim = 0;
+  private droppedAt = -Infinity;
+  private climbedAt = -Infinity;
+  private quiet = QUIET;
+
+  constructor(public ratio: number) {}
+
+  // avg: the mean time between frames; draw: the mean of the view's own work; fast: the engine
+  // aims at 60 a second; max and floor: the level's pixels (the device's included); now: ms.
+  // Returns whether anything changed.
+  step(o: { max: number; floor: number; avg: number; draw: number; fast: boolean; lateOnly: boolean; now: number }): boolean {
+    const was = this.ratio * 16 + this.trim;
+    const floor = Math.min(o.floor, o.max);
+    this.ratio = Math.min(o.max, Math.max(floor, this.ratio));
+    const slow = (!o.fast && o.avg > LATE) || (!o.lateOnly && o.draw > BUSY);
+    if (slow) {
+      if (o.now - this.climbedAt < BOUNCE) this.quiet = Math.min(QUIET_MAX, this.quiet * 2);
+      if (this.trim < TRIMS.length - 1) this.trim++;
+      else this.ratio = Math.max(floor, this.ratio - 0.25);
+      this.droppedAt = o.now;
+    } else if (o.now - this.droppedAt > this.quiet && o.now - this.climbedAt > this.quiet) {
+      if (this.ratio < o.max) this.ratio = Math.min(o.max, this.ratio + 0.25);
+      else if (this.trim > 0) this.trim--;
+      if (this.ratio * 16 + this.trim !== was) this.climbedAt = o.now;
+    }
+    if (o.now - this.droppedAt > HELD && o.now - this.climbedAt > HELD) this.quiet = QUIET;
+    return this.ratio * 16 + this.trim !== was;
+  }
 }
 
 // What the player chose: a level, or "auto" (the device's), and switches

@@ -1,4 +1,4 @@
-import { GRAPHICS, LATE_ONLY, LOOKS_STATE, PIXEL_CAPS, nextPixelRatio, setLooksChoice } from "./graphics";
+import { GRAPHICS, LATE_ONLY, LOOKS_STATE, PIXEL_CAPS, PIXEL_FLOORS, Relief, TRIM, setLooksChoice } from "./graphics";
 import { Looks } from "./looks";
 import { fronts } from "../weather";
 import {
@@ -226,8 +226,8 @@ export class VoxelView {
   private col = new Color();
   private frameTimes: number[] = [];
   private drawTimes: number[] = [];
-  private droppedAt = -Infinity;
   private pixelRatio = 1;
+  private relief = new Relief(1);
   private cssW = 1;
   private cssH = 1;
   private firstBuild = true;
@@ -268,6 +268,8 @@ export class VoxelView {
     });
     this.renderer.outputColorSpace = LinearSRGBColorSpace;
     this.pixelRatio = Math.min(PIXEL_CAPS[LOOKS_STATE.level], window.devicePixelRatio || 1);
+    this.relief.ratio = this.pixelRatio;
+    TRIM.level = 0;
     this.renderer.setPixelRatio(this.pixelRatio);
     this.overlayCtx = overlay.getContext("2d")!;
     this.orbit = new OrbitCamera(world.w, world.h);
@@ -625,7 +627,7 @@ export class VoxelView {
   // The Perf Lab pins the pixel density, so two runs draw the same pixels (4.4).
   fixedPixelRatio: number | null = null;
 
-  // Lower the pixel density when frames are slow, raise it back when they are fast.
+  // Give up extras, then pixels, when frames are slow; take them back when they are on time.
   private adapt(ms: number, dt: number): void {
     if (this.fixedPixelRatio !== null) {
       if (this.pixelRatio !== this.fixedPixelRatio) {
@@ -650,22 +652,22 @@ export class VoxelView {
     const draw = this.drawTimes.reduce((a, b) => a + b, 0) / this.drawTimes.length;
     this.frameTimes = [];
     this.drawTimes = [];
-    // Fewer pixels when frames are slow, back up when there is room, not within 10 s of a drop so
-    // it does not see-saw; the cap and the rule are the looks level's (graphics.ts nextPixelRatio).
+    // Slow frames give up the extras first, then pixels down to the level's floor, and take them
+    // back when frames are on time again (graphics.ts Relief).
     const level = LOOKS_STATE.level;
-    const now = performance.now();
-    const step = nextPixelRatio({
-      ratio: this.pixelRatio,
-      max: Math.min(PIXEL_CAPS[level], window.devicePixelRatio || 1),
+    const dpr = window.devicePixelRatio || 1;
+    const changed = this.relief.step({
+      max: Math.min(PIXEL_CAPS[level], dpr),
+      floor: Math.min(PIXEL_FLOORS[level], dpr),
       avg,
       draw,
       fast: this.paceMs < 25,
-      quiet: now - this.droppedAt,
       lateOnly: LATE_ONLY[level],
+      now: performance.now(),
     });
-    if (step.dropped) this.droppedAt = now;
-    const next = step.ratio;
-    if (next !== this.pixelRatio) {
+    TRIM.level = this.relief.trim;
+    const next = this.relief.ratio;
+    if (changed && next !== this.pixelRatio) {
       this.pixelRatio = next;
       this.renderer.setPixelRatio(next);
       this.renderer.setSize(this.cssW, this.cssH, false);
@@ -808,7 +810,7 @@ export class VoxelView {
     camera.updateMatrixWorld();
     this.cullMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     this.viewFrustum.setFromProjectionMatrix(this.cullMatrix);
-    const sun = GRAPHICS.shadows ? this.looks.sun : null;
+    const sun = GRAPHICS.shadows && this.looks.casting ? this.looks.sun : null;
     if (sun) {
       sun.updateMatrixWorld();
       sun.target.updateMatrixWorld();

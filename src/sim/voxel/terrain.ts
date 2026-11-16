@@ -773,7 +773,7 @@ export class Terrain {
         if (low) this.seeCamera(r, s, camera as never);
         const all = !this.cullFaces || this.landMaterial.side !== FrontSide || this.landMaterial.shadowSide !== null;
         if (all) geometry.setDrawRange(low ? 0 : FACES_ALL, low ? FACES_ALL : 0);
-        else drawFacing(geometry, low, camera.position.x, camera.position.z, false);
+        else drawFacing(geometry, low, camera.position.x, camera.position.y, camera.position.z, false);
         void rest;
       };
       m.onBeforeShadow = (_r, _o, _c, shadowCamera) => {
@@ -782,7 +782,7 @@ export class Terrain {
         else {
           // Toward the sun: the light's camera looks down its own -z.
           const e = shadowCamera.matrixWorld.elements;
-          drawFacing(geometry, low, e[8], e[10], true);
+          drawFacing(geometry, low, e[8], e[9], e[10], true);
         }
       };
     };
@@ -1204,25 +1204,29 @@ const FINE_BUDGET_MS = 4;
 const FINE_AGAIN_MS = 1.5;
 const FINE_TOP = 6;
 // The fine land's faces by the way they face, in the order of its index buffer (quadGeometry):
-// north walls, tops and bottoms, west walls, then east and south walls. Any ways a pass needs out
-// of the first three are one run of it, and of the last two another (drawFacing).
+// north walls, tops, west walls, then east walls, south walls and bottoms. Any ways a pass needs
+// out of the first three are one run of it, and of the last three another (drawFacing).
 const FACE_NORTH = 0;
 const FACE_TOP = 1;
 const FACE_WEST = 2;
 const FACE_EAST = 3;
 const FACE_SOUTH = 4;
+const FACE_BOTTOM = 5;
 
-// Which of a fine chunk's faces a pass draws (15 November): only the walls that can face it. A
-// wall facing away is never drawn (the land is drawn from its front side, and three draws the
-// sun's shadow map from the back side), so leaving it out changes nothing on the screen; the
-// tops always go. `low` draws the run of north, top and west faces, the other the east and south.
-// (x, z) is the camera, or with `sun` the way toward the sun.
-function drawFacing(g: BufferGeometry, low: boolean, x: number, z: number, sun: boolean): void {
-  const f = g.userData.faces as { first: number[]; counts: number[]; planes: { e: number; s: number; w: number; n: number } } | undefined;
+// Which of a fine chunk's faces a pass draws (15 November): only the faces that can face it. A
+// face turned away is never drawn (the land is drawn from its front side, and three draws the
+// sun's shadow map from the back side), so leaving it out changes nothing on the screen. The tops
+// face the sun, which is always above the horizon, so the shadow pass never needs them (16
+// November); the bottoms only when the camera is below one. `low` draws the run of north, top and
+// west faces, the other the east, south and bottom ones. (x, y, z) is the camera, or with `sun`
+// the way toward the sun. A run takes the ways between the first and last it needs: a superset,
+// and every face drawn is drawn as before.
+function drawFacing(g: BufferGeometry, low: boolean, x: number, y: number, z: number, sun: boolean): void {
+  const f = g.userData.faces as { first: number[]; counts: number[]; planes: { e: number; s: number; w: number; n: number; b: number } } | undefined;
   if (!f) return;
-  const want = sun ? [z > 0, true, x > 0, x < 0, z < 0] : [z < f.planes.n, true, x < f.planes.w, x > f.planes.e, z > f.planes.s];
+  const want = sun ? [z > 0, y < 0, x > 0, x < 0, z < 0, y > 0] : [z < f.planes.n, true, x < f.planes.w, x > f.planes.e, z > f.planes.s, y < f.planes.b];
   const from = low ? 0 : 3;
-  const to = low ? 3 : 5;
+  const to = low ? 3 : 6;
   let a = -1;
   let b = -1;
   for (let k = from; k < to; k++) {
@@ -1234,8 +1238,6 @@ function drawFacing(g: BufferGeometry, low: boolean, x: number, z: number, sun: 
     g.setDrawRange(0, 0);
     return;
   }
-  // The ways between the first and last wanted are drawn too (only west without top, or north
-  // without west, cannot happen: the top run is always wanted).
   g.setDrawRange(f.first[a] * 6, (f.first[b] + f.counts[b] - f.first[a]) * 6);
 }
 
@@ -1486,10 +1488,11 @@ export class Writer {
     const byte = (v: number) => Math.max(0, Math.min(255, Math.round(v * 255)));
     // Each face's way, from its winding (outward, as three's front side): the index buffer holds
     // them in the order FACE_ORDER, so a pass draws only the ways that can show (terrain.ts
-    // drawFacing). The planes: the lowest east and south wall, the highest west and north one.
+    // drawFacing). The planes: the lowest east and south wall, the highest west and north one, the
+    // highest bottom.
     const way = new Uint8Array(quads);
-    const counts = [0, 0, 0, 0, 0];
-    const planes = { e: Infinity, s: Infinity, w: -Infinity, n: -Infinity };
+    const counts = [0, 0, 0, 0, 0, 0];
+    const planes = { e: Infinity, s: Infinity, w: -Infinity, n: -Infinity, b: -Infinity };
     for (let q = 0; q < quads; q++) {
       const a = q * 18;
       const p = this.pos;
@@ -1511,12 +1514,15 @@ export class Writer {
         k = nz > 0 ? FACE_SOUTH : FACE_NORTH;
         if (nz > 0) planes.s = Math.min(planes.s, p[a + 2]);
         else planes.n = Math.max(planes.n, p[a + 2]);
+      } else if (ny < 0) {
+        k = FACE_BOTTOM;
+        planes.b = Math.max(planes.b, p[a + 1]);
       }
       way[q] = k;
       counts[k]++;
     }
-    const first = [0, 0, 0, 0, 0];
-    for (let k = 1; k < 5; k++) first[k] = first[k - 1] + counts[k - 1];
+    const first = [0, 0, 0, 0, 0, 0];
+    for (let k = 1; k < 6; k++) first[k] = first[k - 1] + counts[k - 1];
     const next = [...first];
     for (let q = 0; q < quads; q++) {
       for (let k = 0; k < 4; k++) {

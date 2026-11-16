@@ -27,7 +27,7 @@ import {
   type Texture,
   type WebGLRenderer,
 } from "three";
-import { GRAPHICS } from "./graphics";
+import { GRAPHICS, TRIM } from "./graphics";
 
 // The looks of 5.2.5, render side: what makes the owner's reference dioramas
 // beautiful and can run on a phone. Each part has its own switch in
@@ -114,11 +114,15 @@ export interface LooksFrame {
 }
 
 // The depth of field begins when the camera is this close to what it looks at (cells), and is
-// whole at FOCUS_FULL (the sky view's closest is 8).
-export const FOCUS_FROM = 40;
+// whole at FOCUS_FULL (the sky view's closest is 8). None at a mid zoom (about 28) and farther
+// (16 November, the owner: "the quality decreasing ... this blurry look unzoomed").
+export const FOCUS_FROM = 24;
 export const FOCUS_FULL = 10;
 // The most of the blurred frame shown, at the closest zoom: two thirds (the owner found the whole of it a bit strong).
 export const FOCUS_MAX = 0.67;
+// Half the height of the band across the middle of the screen that the depth of field leaves
+// sharp, as a share of the screen: the middle third.
+export const SHARP_BAND = 1 / 6;
 
 // How much of the blurred frame the depth of field may show, 0 to 1, for a sky camera this far
 // from what it looks at; 0 in the eye view.
@@ -164,6 +168,10 @@ export class Looks {
   // The switches the materials were compiled for.
   private built = { shadows: false, grade: false };
   private shadowOn = false;
+  // Whether the sun casts this frame (the view culls what casts by it).
+  get casting(): boolean {
+    return this.shadowOn;
+  }
   private post: Post | null = null;
   private bloomAmount = 0;
   private tiltAmount = 0;
@@ -275,18 +283,25 @@ float sunLight(vec3 n) {
 
     // The sun: its strength fades at dusk, under cloud, and is nothing in the eye view or at night.
     const rise = Math.min(1, Math.max(0, f.sunHeight / 0.18));
-    const strength = GRAPHICS.shadows && !f.eye ? rise * (1 - f.night) * (1 - 0.75 * f.overcast) * (1 - f.dark) : 0;
+    // Slow frames give up the shadow map's finest texels first, then the shadows (graphics.ts Relief).
+    const size = TRIM.level >= 1 ? SHADOW_SIZE / 2 : SHADOW_SIZE;
+    if (this.sun.shadow.mapSize.x !== size) {
+      this.sun.shadow.mapSize.set(size, size);
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null;
+    }
+    const strength = GRAPHICS.shadows && !f.eye && TRIM.level < 2 ? rise * (1 - f.night) * (1 - 0.75 * f.overcast) * (1 - f.dark) : 0;
     this.uniforms.sunStrength.value = strength;
     this.shadowOn = strength > 0.01;
     if (this.shadowOn) this.placeSun(f);
 
     // Glow at night, and in a spell's darkness.
-    this.bloomAmount = GRAPHICS.bloom ? bloomAt(f.night, f.dark, f.dist, f.side) : 0;
+    this.bloomAmount = GRAPHICS.bloom && TRIM.level < 3 ? bloomAt(f.night, f.dark, f.dist, f.side) : 0;
     // The miniature's depth of field, only when the camera comes close (the owner: "it's really
     // only when we zoom a lot"): none from FOCUS_FROM cells away and farther (a mid zoom, the
     // whole island), growing to full at the closest the sky view goes. In focus at the point
     // under the middle of the screen, blurred in front of it and behind it. Never in the eye view.
-    this.tiltAmount = GRAPHICS.tilt ? focusBlur(f.dist, f.eye) * FOCUS_MAX : 0;
+    this.tiltAmount = GRAPHICS.tilt && TRIM.level < 3 ? focusBlur(f.dist, f.eye) * FOCUS_MAX : 0;
     this.tiltCenter = 0.5;
     // How far in front or behind the focus stays sharp, as a share of the focus distance.
     // Twice as deep as first built (the owner: "make the in-focus zone a bit bigger").
@@ -326,7 +341,8 @@ float sunLight(vec3 n) {
     let half = 32;
     for (let k = 0; half < Math.max(r, across); k++) half = k % 2 ? 32 * 2 ** ((k + 1) / 2) : 48 * 2 ** (k / 2);
     if (!this.sunSteps) half = Math.ceil(Math.max(r, across) / 8) * 8;
-    const texel = (half * 2) / SHADOW_SIZE;
+    const texels = this.sun.shadow.mapSize.x;
+    const texel = (half * 2) / texels;
     // The middle, snapped to the texel grid so the edges of shadows stand still while the camera moves.
     const c = this.p.set(f.cx, 0, f.cz);
     const cx = Math.round(c.dot(x) / texel) * texel;
@@ -348,7 +364,7 @@ float sunLight(vec3 n) {
     cam.updateProjectionMatrix();
     // A point is moved a texel out of its face before it is looked up, so a face does not shade itself.
     this.uniforms.sunOffset.value = texel * 1.5;
-    this.uniforms.sunTexel.value = 1 / SHADOW_SIZE;
+    this.uniforms.sunTexel.value = 1 / texels;
     // What casts: what is solid. Looked at every frame the map is drawn; the scene holds a few hundred objects.
     this.scene.traverse((o) => {
       const mesh = o as Mesh;
@@ -583,7 +599,10 @@ class Post {
     if (m) return m;
     const defines: Record<string, string> = {};
     if (bloom) defines.BLOOM = "";
-    if (tilt) defines.TILT = "";
+    if (tilt) {
+      defines.TILT = "";
+      defines.SHARP_BAND = SHARP_BAND.toFixed(4);
+    }
     if (grade) defines.GRADE = "";
     if (aa) defines.FXAA = "";
     m = new ShaderMaterial({
@@ -655,7 +674,10 @@ void main() {
   // more of the blurred frame shows.
   float focus = viewDepth(vec2(center, 0.5));
   float rel = abs(viewDepth(vUv) - focus) / max(focus, 1e-3);
-  float k = smoothstep(sharp, sharp * 3.0 + 0.12, rel) * tilt;
+  // The middle third of the screen, top to bottom, is always sharp (16 November, the owner's
+  // close frames: most of the frame was blurred); the blur grows past it.
+  float band = smoothstep(SHARP_BAND, SHARP_BAND + 0.12, abs(vUv.y - 0.5));
+  float k = smoothstep(sharp, sharp * 3.0 + 0.12, rel) * band * tilt;
   c = mix(c, texture2D(tBlur, vUv).rgb, k);
 #endif
 #ifdef BLOOM
