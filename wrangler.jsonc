@@ -59,6 +59,17 @@
     // 4.4.5 part C. Dollars a month the new wonder a day may spend (held
     // before each call, inside BUDGET_USD); "0" in WONDERS stops the daily call.
     "WONDER_BUDGET_USD": "2",
+    // 5.2.5, the looks revamp (worker/looks.ts; the owner, 16 November: "looks: yes, up to $25").
+    // Off until the lead session turns it on after the pilot's gate: "pilot" lets the admin
+    // start looks by name, "bulk" the nightly share too. Its own budget, apart from BUDGET_USD:
+    // $25 in all, ending with the revamp, and $3 in any 24 hours. Sonnet writes and judges looks,
+    // Opus writes a cosmic item's.
+    "LOOKS": "off",
+    "LOOKS_BUDGET_USD": "25",
+    "LOOKS_NIGHT_USD": "3",
+    "LOOKS_MODEL": "claude-sonnet-5-5",
+    "LOOKS_MODEL_COSMIC": "claude-opus-5-5",
+    "LOOKS_JUDGE_MODEL": "claude-sonnet-5-5",
   },
   // 4.2: the programs of new items, written at the merge by a background job
   // that outlives the response (a big model's program can take a minute).
@@ -112,6 +123,10 @@
         "REFRESH_BUDGET_USD": "0",
         "AHEAD_DAILY_USD": "0.3",
         "WONDER_BUDGET_USD": "0",
+        // The looks revamp never runs on staging.
+        "LOOKS": "off",
+        "LOOKS_BUDGET_USD": "0",
+        "LOOKS_NIGHT_USD": "0",
         // Nothing runs on its own: the owner tries a change, the admin can still ask.
         "WONDERS": "0",
         "EVOLVE": "0",

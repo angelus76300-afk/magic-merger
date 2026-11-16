@@ -178,6 +178,12 @@ export function monthSpent(month: string, scope: string): string {
   return `COALESCE((SELECT usd FROM spend_totals WHERE month = ${month} AND scope = ${scope}), 0)`;
 }
 
+// The game's own month: everything but the looks revamp (roadmap 5.2.5), which has its own
+// budget, LOOKS_BUDGET_USD, kept apart in worker/looks.ts under the invite 'looks'.
+export function gameMonthSpent(month: string): string {
+  return `(${monthSpent(month, "'*'")} - ${monthSpent(month, "'looks'")})`;
+}
+
 // Holds `usd` for one call, or throws why it may not be made. The burst guard
 // counts requests, not calls: a spell that needs its description first holds
 // twice under the same request.
@@ -189,7 +195,7 @@ export async function hold(db: D1Database, ledger: Ledger, call: string, usd: nu
     .prepare(
       `INSERT INTO reservations (req, invite, call, at, usd)
        SELECT ?1, ?2, ?3, ?4, ?5
-       WHERE ${monthSpent("?6", "'*'")}
+       WHERE ${gameMonthSpent("?6")}
            + (SELECT COALESCE(SUM(usd), 0) FROM reservations WHERE settled = 0) + ?5 <= ?7
          AND (?8 IS NULL OR ${monthSpent("?6", "?2")}
            + (SELECT COALESCE(SUM(usd), 0) FROM reservations WHERE settled = 0 AND invite = ?2) + ?5 <= ?8)
@@ -252,7 +258,7 @@ export async function spentBy(db: D1Database, invite: string, now = Date.now()):
 export async function monthTotals(db: D1Database, now = Date.now()): Promise<{ spent: number; held: number }> {
   const row = await db
     .prepare(
-      `SELECT ${monthSpent("?1", "'*'")} AS spent,
+      `SELECT ${gameMonthSpent("?1")} AS spent,
               (SELECT COALESCE(SUM(usd), 0) FROM reservations WHERE settled = 0) AS held`,
     )
     .bind(monthKey(now))
