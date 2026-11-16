@@ -99,3 +99,16 @@ export const AHEAD = 2;
 export function drawBetween(acc: number, tick: number): number {
   return Math.max(0, Math.min(AHEAD, acc / tick));
 }
+
+// A frame drawn past its tick (between above 1) guessed that a walker went on as it was going. When
+// the next tick says otherwise (it stopped, it turned), the difference between what was drawn and
+// where the new tick puts it at that moment is carried as an offset that fades over CARRY_S, so
+// it is never drawn a step back at once (the review of 16 November). At a steady pace it is 0.
+// `drawn`: drawn last frame, `old` and `next`: the two ticks, `ahead`: last frame's between.
+export const CARRY_S = 0.1;
+export function carry(drawn: number, old: number, next: number, ahead: number): number {
+  return drawn - (old + (next - old) * (ahead - 1));
+}
+export function carried(offset: number, since: number): number {
+  return offset * Math.exp(-Math.max(0, since) / CARRY_S);
+}
