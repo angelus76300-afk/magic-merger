@@ -5,6 +5,7 @@ import { syntaxError } from "../shared/spellcode";
 import { REFERENCES, partTarget, referencesFor } from "../shared/looks";
 import { shapesOf, silhouette, toneGroups } from "../shared/looks/measure";
 import { changedLines, drawablePart, modelCalls, numberedProgram, oldPartsProblem, partsProblem, readLiteral, spliceLooks } from "../shared/looks/splice";
+import { drawableShare } from "./looks-drawable";
 import { MAX_PROP_BOXES, readBox, type PropBox } from "../src/sim/props";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
@@ -262,6 +263,31 @@ export function looksRefChecks(check: Check): void {
     "old parts that only name or hold data may be redrawn",
     closed.every((t) => oldPartsProblem(t) === null),
     JSON.stringify(closed.map(oldPartsProblem)),
+  );
+
+  // The runner's gate (scripts/looks-drawable.ts): the new parts as readBox reads them.
+  const lookIn = (parts: string) => `const spell = { *cast(w) { w.model(w.x, w.y, ${parts}, {}); } };`;
+  const oldLook = lookIn("[[0, 0, 0, 1, 1, 1]]");
+  const shares = ["[[ ]]", "[[],[]]", "[{}]", "[[1e9, 0, 0, 0, 0, 0]]", "[['a','b']]", "[[0, 0, 0, 1, 1, 1], [0, 0, 0, 0, 0, 0], [], {}]", anvil].map((t) =>
+    drawableShare(oldLook, lookIn(t)),
+  );
+  check(
+    "the runner counts the new parts the island can draw",
+    JSON.stringify(shares) ===
+      JSON.stringify([
+        { parts: 1, drawn: 0 },
+        { parts: 2, drawn: 0 },
+        { parts: 1, drawn: 0 },
+        { parts: 1, drawn: 0 },
+        { parts: 1, drawn: 0 },
+        { parts: 4, drawn: 1 },
+        { parts: 2, drawn: 2 },
+      ]),
+    JSON.stringify(shares),
+  );
+  check(
+    "the runner does not count a look the splice left as it was",
+    JSON.stringify(drawableShare(oldLook, oldLook)) === JSON.stringify({ parts: 0, drawn: 0 }),
   );
 
   // The whole spliced program must parse, or nothing is spliced.

@@ -111,10 +111,15 @@ function stubAnswer(n, system, user) {
       "(() => { const p = []; for (let k = 0; k < 1e9; k++) p.push([0, 0, 0, 1, 1, 1]); return p; })()",
       "[[Math.random(), 0, 0, 1, 1, 1, '#888']]",
       "(() => { w.explode(0, 0, 3); return []; })()",
+      // Round 2: nothing the island can draw.
+      "[[ ]]",
+      "[['a', 'b']]",
+      "[[1e999, 0, 0, 1, 1, 1]]",
     ];
-    const which = /Bad Lamp (\d)/.exec(user);
+    const which = /Bad Lamp (\d)\n/.exec(user);
+    const good = `[${[0, 1, 2, 3].map((k) => `[-0.5, -0.5, ${k * 0.5}, 1, 1, 0.5, '${k % 2 ? "#8a7655" : "#a08a64"}', 'cyl', 'grain']`).join(", ")}, [-0.625, -0.625, 2, 1.25, 1.25, 1, '#4c5a80', 'cone'], [-0.125, -0.625, 0.25, 0.25, 0.125, 0.5, '#ffcf6b', 'glow']]`;
     const parts = which
-      ? bad[Number(which[1])]
+      ? (bad[Number(which[1])] ?? good)
       : `[${[0, 1, 2, 3].map((k) => `[-0.5, -0.5, ${k * 0.5}, 1, 1, 0.5, '${k % 2 ? "#8a7655" : "#a08a64"}', 'cyl', 'grain']`).join(", ")}, [-0.625, -0.625, 2, 1.25, 1.25, 1, '#4c5a80', 'cone'], [-0.125, -0.625, 0.25, 0.25, 0.125, 0.5, '#ffcf6b', 'glow']]`;
     const models = calls ? Array.from({ length: calls }, (_, k) => ({ call: k + 1, parts })) : /may gain one/.test(user) ? [{ call: 0, parts }] : [];
     return JSON.stringify({ plan: "a stone column of courses under a slate cone, a lit door", models });
@@ -4077,11 +4082,15 @@ const signIn = async (key, count) => {
   };
   await liveSpell("Lamp Post", "minor");
   await liveSpell("Star Lamp", "cosmic");
-  for (let k = 0; k < 6; k++) await liveSpell(`Bad Lamp ${k}`, "minor");
+  for (let k = 0; k < 10; k++) await liveSpell(`Bad Lamp ${k}`, "minor");
   await liveSpell("Plain Spark", "minor");
   const lampPid = await setCode("Lamp Post", drawn("Lamp Post"));
   await setCode("Star Lamp", drawn("Star Lamp"));
-  for (let k = 0; k < 6; k++) await setCode(`Bad Lamp ${k}`, drawn(`Bad Lamp ${k}`));
+  for (let k = 0; k < 9; k++) await setCode(`Bad Lamp ${k}`, drawn(`Bad Lamp ${k}`));
+  // Its parts also spawn a wolf: its look must stay, and the wolf with it.
+  const spawning =
+    "const spell = {\n  *cast(w) {\n    w.model(w.x, w.y, (w.spawn('wolf', w.x, w.y), [[0, 0, 0, 1, 1, 2, '#888']]), { name: 'Bad Lamp 9' });\n  },\n};";
+  await setCode("Bad Lamp 9", spawning);
   const wonderCode =
     "const spell = {\n  *cast(w) {\n    w.terraform(w.x, w.y, 4, 2);\n    w.spire(w.x, w.y, { height: 8, radius: 1.2, kind: 'glow' });\n  },\n};";
   const wid = Number(
@@ -4098,13 +4107,13 @@ const signIn = async (key, count) => {
   const b0 = batches.size;
   const started = await api("/api/admin/looks", {
     admin: true,
-    body: { keys: ["lamp post", "star lamp", ...[0, 1, 2, 3, 4, 5].map((k) => `bad lamp ${k}`), "plain spark"], wonders: [wid] },
+    body: { keys: ["lamp post", "star lamp", ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => `bad lamp ${k}`), "plain spark"], wonders: [wid] },
   });
   const sent = [...batches.values()].slice(b0).flat();
   const modelOf = (name) => sent.find((r) => r.params.messages[0].content.includes(`: ${name}\n`))?.params.model;
   check(
     "looks: a pilot by name queues the items that draw a model and the wonder, in one batch",
-    started.status === 200 && started.data.queued.length === 9 && started.data.batches.length === 1 && started.data.skipped.join() === "Plain Spark",
+    started.status === 200 && started.data.queued.length === 13 && started.data.batches.length === 1 && started.data.skipped.join() === "Plain Spark",
     JSON.stringify(started.data),
   );
   check(
@@ -4127,18 +4136,25 @@ const signIn = async (key, count) => {
   const busy = await api("/api/admin/refresh", { admin: true, body: { forms: true, dry: true } });
   check("looks: the rebuild by kind waits while a look is in flight", busy.status === 409, `${busy.status}`);
   const polled = await api("/api/admin/looks-poll", { admin: true, body: {} });
-  check("looks: the answers come back, three spliced and six refused", polled.data.done === 3 && polled.data.failed === 6, JSON.stringify(polled.data));
+  check("looks: the answers come back, three spliced and ten refused", polled.data.done === 3 && polled.data.failed === 10, JSON.stringify(polled.data));
   const bad = (await db.prepare("SELECT key, status, reason FROM looks WHERE key LIKE 'bad lamp %' ORDER BY key").all()).results;
   check(
-    "looks: a look that is not plain data is refused (a program's name, the target, an endless loop, a billion loop, Math.random, w)",
-    bad.length === 6 && bad.every((b) => b.status === "failed" && /every look was refused/.test(b.reason)),
+    "looks: a look that is not plain data is refused (a program's name, the target, an endless loop, a billion loop, Math.random, w, nothing drawable, parts that act)",
+    bad.length === 10 && bad.every((b) => b.status === "failed" && /every look was refused/.test(b.reason)),
     JSON.stringify(bad),
   );
+  const spawner = bad.find((b) => b.key === "bad lamp 9");
+  check("looks: a call whose old parts spawn a wolf keeps its look and its wolf", /not only a look/.test(spawner?.reason ?? ""), JSON.stringify(spawner));
+  check(
+    "looks: a look with no part the island can draw is refused ([[ ]], junk, 1e999)",
+    ["bad lamp 6", "bad lamp 7", "bad lamp 8"].every((k) => /can be drawn|too large|not a list/.test(bad.find((b) => b.key === k)?.reason ?? "")),
+    JSON.stringify(bad.slice(6, 9)),
+  );
   const billed = await db.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(usd), 0) AS usd FROM spend WHERE invite = 'looks' AND call = 'looks-write'").first();
-  check("looks: every answer is billed once, to the revamp", billed.n === 9 && billed.usd > 0, JSON.stringify(billed));
+  check("looks: every answer is billed once, to the revamp", billed.n === 13 && billed.usd > 0, JSON.stringify(billed));
   await api("/api/admin/looks-poll", { admin: true, body: {} });
   const billedTwice = await db.prepare("SELECT COUNT(*) AS n FROM spend WHERE invite = 'looks'").first();
-  check("looks: a batch read twice bills once", billedTwice.n === 9, `${billedTwice.n}`);
+  check("looks: a batch read twice bills once", billedTwice.n === 13, `${billedTwice.n}`);
   const people = (await api("/api/admin/people", { admin: true })).data;
   const game = (await db.prepare("SELECT COALESCE(SUM(usd), 0) AS usd FROM spend WHERE invite IS NULL OR invite != 'looks'").first()).usd;
   check(

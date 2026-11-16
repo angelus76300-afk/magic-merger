@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { runCheck } from "../src/sim/check";
 import { checkWonderDef } from "../src/sim/wondercheck";
 import { readDef } from "../src/sim/wonders";
+import { drawableShare } from "./looks-drawable";
 import type { Tier } from "../shared/tiers";
 // @ts-expect-error plain JavaScript, shared with the other lab scripts
 import { openLab } from "./lab-browser.mjs";
@@ -105,6 +106,12 @@ async function decide(): Promise<void> {
           const now = runCheck(req as Parameters<typeof runCheck>[0]);
           tested = now.ok;
           detail = now.ok ? "passed" : `${now.problem}: ${now.detail}`;
+        }
+        // The island must draw at least half of the new parts, and some.
+        const share = drawableShare(c.oldCode, c.code);
+        if (tested && (share.drawn === 0 || share.drawn * 2 < share.parts)) {
+          tested = false;
+          detail = share.drawn === 0 ? "no drawable part" : `only ${share.drawn} of ${share.parts} parts can be drawn`;
         }
         // Frames of the old look and the new, alike: medium quality (a phone's start), the camera on the newest model.
         const shots = c.tier === "legendary" || c.tier === "cosmic" ? [2, 6] : [1, 3];
