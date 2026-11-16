@@ -14,7 +14,10 @@ import { C, F } from "../src/sim/materials";
 import { CHUNK, Terrain, builtGround, columnTop } from "../src/sim/voxel/terrain";
 import { GRAPHICS } from "../src/sim/voxel/graphics";
 import { STEP, easeFoot, easeGround, walkGround, type Footing } from "../src/sim/voxel/walk";
-import { drawBetween, ticksDue } from "../src/sim/voxel/pacing";
+import { carried, carry, drawBetween, ticksDue } from "../src/sim/voxel/pacing";
+import { RUN_BH, duty, footSlide, gaitOf, hipHeight, legSwing, limbs, strideRate } from "../src/sim/voxel/gait";
+import { buildRig, drawScale } from "../src/sim/voxel/rigs";
+import { KINDS } from "../src/sim/creatures";
 import { OrbitCamera } from "../src/sim/voxel/orbit";
 import { solidCovers } from "../src/sim/paths";
 
@@ -177,38 +180,73 @@ const show = (r: FeetReport) =>
   `under the point max ${r.pointMax.toFixed(3)} (p95 ${r.pointP95.toFixed(3)}), to the tops under the sole ${r.footMax.toFixed(3)}, ` +
   `float ${r.above.toFixed(2)} sink ${r.under.toFixed(2)}, hop ${r.hop.toFixed(2)}, reversals ${r.reversals} (land ${r.landReversals}), ${r.cells} cells`;
 
-// The walker's drawn position, frame by frame, at random frame times of 16 to 83 ms: the per frame
-// speed's coefficient of variation (0 is perfectly even). `between` is the view's part way.
-export function frameJudder(between: (acc: number) => number, frames = 3000, seed = 11): { cov: number; stops: number } {
+// The walker's drawn position, frame by frame, at random frame times of 16 to 83 ms, as the view
+// draws it (view.ts placeCreatures): the per frame speed's coefficient of variation (0 is
+// perfectly even), frames it stood still, and, when it stops dead at `stopAt` (a frame), the most
+// it was then drawn going back, cells a second. `between` is the engine's part way; `carryOn`, the
+// overshoot of a late frame carried and faded (pacing.ts carry), as the view does since 16 November.
+export function frameJudder(
+  between: (acc: number) => number,
+  carryOn: boolean,
+  stopAt = Infinity,
+  frames = 3000,
+  seed = 11,
+): { cov: number; stops: number; back: number } {
   const random = rng(seed);
-  const speed = 3; // cells a second
+  let speed = 3; // cells a second
   let acc = 0;
   let x = 0; // the simulation's position, a tick at a time
-  let px = 0;
+  let gx = 0; // the view's: the tick it last saw, the one before, its offset
+  let gpx = 0;
+  let off = 0;
+  let offAt = 0;
+  let lastA = 1;
+  let lastDrawn = NaN;
+  let lastTc = 0;
+  let time = 0; // world time
   let last = NaN;
   const speeds: number[] = [];
   let stops = 0;
+  let back = 0;
   for (let f = 0; f < frames; f++) {
+    if (f === stopAt) speed = 0;
     const dt = Math.min(0.1, (16 + random() * 67) / 1000);
     acc += dt;
     const steps = ticksDue(acc, TICK, true);
     for (let k = 0; k < steps; k++) {
-      px = x;
       x += speed * TICK;
+      time += TICK;
       acc -= TICK;
     }
     if (acc > TICK * 3) acc = 0;
-    const drawn = px + (x - px) * between(acc);
+    const a = between(acc);
+    if (steps) {
+      // As the view: two ticks in one frame drawn as the last of them, the overshoot carried.
+      const px = carryOn ? gx + (x - gx) * (1 - 1 / steps) : gx;
+      if (carryOn && Number.isFinite(lastDrawn)) {
+        off = carry(lastDrawn, px, x, lastA - steps + 1);
+        offAt = lastTc;
+      }
+      gpx = px;
+      gx = x;
+    }
+    const tc = time - (1 - a) * TICK;
+    const drawn = gpx + (gx - gpx) * a + (carryOn ? carried(off, tc - offAt) : 0);
+    lastA = a;
+    lastTc = tc;
+    lastDrawn = drawn;
     if (Number.isFinite(last) && f > 30) {
       const v = (drawn - last) / dt;
-      speeds.push(v);
-      if (v < speed * 0.1) stops++;
+      if (f < stopAt) {
+        speeds.push(v);
+        if (v < 3 * 0.1) stops++;
+      } else back = Math.max(back, -v);
     }
     last = drawn;
   }
   const mean = speeds.reduce((s, v) => s + v, 0) / speeds.length;
   const sd = Math.sqrt(speeds.reduce((s, v) => s + (v - mean) ** 2, 0) / speeds.length);
-  return { cov: sd / mean, stops };
+  return { cov: sd / mean, stops, back };
 }
 
 // The watch on a villager walking 3 cells a second, 60 frames a second, ticks 30 a second, the
@@ -305,12 +343,24 @@ export function movementChecks(check: Check): void {
 
   // 2. Late frames: drawn on as they were going.
   {
-    const before = frameJudder((acc) => Math.min(1, acc / TICK));
-    const after = frameJudder((acc) => drawBetween(acc, TICK));
+    const before = frameJudder((acc) => Math.min(1, acc / TICK), false);
+    const after = frameJudder((acc) => drawBetween(acc, TICK), true);
     check(
       "at random frame times of 16 to 83 ms a walker's drawn speed stays even",
       after.cov < 0.02 && after.stops === 0 && before.cov > 0.2,
       `per frame speed's coefficient of variation ${before.cov.toFixed(3)} before (${before.stops} frames standing still), ${after.cov.toFixed(3)} after (${after.stops})`,
+    );
+    // A walker that stops dead after a late frame drew it on: never drawn a step back at once.
+    let jump = 0;
+    let eased = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      jump = Math.max(jump, frameJudder((acc) => drawBetween(acc, TICK), false, 700, 900, seed).back);
+      eased = Math.max(eased, frameJudder((acc) => drawBetween(acc, TICK), true, 700, 900, seed).back);
+    }
+    check(
+      "a walker that stops after a late frame is not drawn a step back",
+      eased < 1.2 && jump > 2,
+      `the most it was drawn going back, 40 stops: ${jump.toFixed(2)} cells a second without the carried offset, ${eased.toFixed(2)} with it`,
     );
   }
 
@@ -328,8 +378,42 @@ export function movementChecks(check: Check): void {
 
   // 4. A spell's ground: natural unless its name says it is built.
   {
-    const natural = ["stardust", "crystal", "glassed earth", "worldwood", "gloom moss", "starmoss", "smoldering ground", "root vein", "steppe grass"];
-    const built = ["stone wall", "rootwall", "marble floor", "cobblestone", "brick", "paving", "temple steps", "stone tiles", "dirt road", "castle keep"];
+    const natural = [
+      "stardust",
+      "crystal",
+      "glassed earth",
+      "worldwood",
+      "gloom moss",
+      "starmoss",
+      "smoldering ground",
+      "root vein",
+      "steppe grass",
+      "plankton",
+      "wallow mud",
+      "swallow nest",
+      "fertile soil",
+    ];
+    const built = [
+      "stone wall",
+      "rootwall",
+      "marble floor",
+      "cobblestone",
+      "brick",
+      "paving",
+      "temple steps",
+      "stone tiles",
+      "dirt road",
+      "castle keep",
+      "mudbrick",
+      "redbrick",
+      "stonebrick",
+      "stone-brick",
+      "brickwork",
+      "floorboards",
+      "plankwood",
+      "clay tile",
+      "stone paving",
+    ];
     const wrong = [...natural.filter((n) => builtGround(n)), ...built.filter((n) => !builtGround(n))];
     check("a spell's ground is built only when its name says so", wrong.length === 0, wrong.join(", "));
   }
@@ -392,4 +476,83 @@ export function movementChecks(check: Check): void {
       rebuilt > 0 ? `built again ${(rebuilt / 1000).toFixed(2)} s after it began changing, ${frame} frames` : `not in 4 s (${frame} frames)`,
     );
   });
+
+  // 6. Strides that match the ground (16 November, the owner: "speed: similar to minecraft
+  // running"): a villager at its everyday 3 cells a second runs, and the foot on the ground stays
+  // where it is set down. The share of the ground speed a planted foot slides by, on the real
+  // figures' legs (rigs.ts hips, figures.ts swing), before and after.
+  {
+    const kinds: [string, number][] = [
+      ["villager", 3],
+      ["deer", 3.15],
+      ["wolf", 4],
+      ["boar", 3],
+    ];
+    const rows: string[] = [];
+    let worst = 0;
+    let worstBefore = 0;
+    for (const [name, speed] of kinds) {
+      const k = KINDS.get(name);
+      if (!k) continue;
+      const rig = buildRig(k.body);
+      const size = drawScale(k.body, k.radius, rig, 1);
+      const leg = hipHeight(rig) * size;
+      const tall = rig.height * size;
+      const moving = Math.min(1, speed / 1.4);
+      const old = gaitOf(speed, k.speed) * moving;
+      const now = gaitOf(speed, k.speed, tall, k.body.plan === "four legs" ? 1 : 2) * moving;
+      const before = footSlide(speed, strideRate(old, size), leg, legSwing(old) * moving);
+      const after = footSlide(speed, strideRate(now, size, leg, moving, speed), leg, legSwing(now) * moving, duty(now));
+      worst = Math.max(worst, after);
+      worstBefore = Math.max(worstBefore, before);
+      rows.push(
+        `${name} at ${speed} (${(speed / tall).toFixed(2)} heights a second): gait ${old.toFixed(2)} to ${now.toFixed(2)}, slide ${(before * 100).toFixed(0)}% to ${(after * 100).toFixed(0)}%`,
+      );
+    }
+    const v = KINDS.get("villager")!;
+    const vr = buildRig(v.body);
+    const vt = vr.height * drawScale(v.body, v.radius, vr, 1);
+    check(
+      "a planted foot does not slide, and a villager at its everyday pace runs",
+      rows.length === 4 && worst < 0.15 && worstBefore > 0.3 && gaitOf(3, v.speed, vt) > 1.5 && gaitOf(1, v.speed, vt) === 0 && RUN_BH === 2,
+      rows.join("; "),
+    );
+  }
+
+  // Each arm swings against the leg on its own side (the review of 16 November: the arms kept a
+  // sine, a quarter cycle off the stride, corr 0.35 at a walk, -0.21 at a run). In the rigs a leg
+  // on the right is LEG_A and an arm on the right ARM_B (rigs.ts), so ARM_B against LEG_A.
+  {
+    const corr = (a: number[], b: number[]) => {
+      const ma = a.reduce((s, v) => s + v, 0) / a.length;
+      const mb = b.reduce((s, v) => s + v, 0) / b.length;
+      let ab = 0;
+      let aa = 0;
+      let bb = 0;
+      for (let k = 0; k < a.length; k++) {
+        ab += (a[k] - ma) * (b[k] - mb);
+        aa += (a[k] - ma) ** 2;
+        bb += (b[k] - mb) ** 2;
+      }
+      return ab / Math.sqrt(aa * bb);
+    };
+    const rows: string[] = [];
+    let ok = true;
+    for (const gait of [0, 1, 1.87]) {
+      const leg: number[] = [];
+      const own: number[] = [];
+      const other: number[] = [];
+      for (let k = 0; k < 360; k++) {
+        const l = limbs((k / 360) * 2 * Math.PI, gait, 1, 0);
+        leg.push(l.legA);
+        own.push(l.armB);
+        other.push(l.armA);
+      }
+      const same = corr(own, leg);
+      const opposite = corr(other, leg);
+      if (!(same < -0.8 && opposite > 0.8)) ok = false;
+      rows.push(`gait ${gait}: arm on the leg's side ${same.toFixed(3)}, other arm ${opposite.toFixed(3)}`);
+    }
+    check("each arm swings against the leg on its own side", ok, rows.join("; "));
+  }
 }

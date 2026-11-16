@@ -1,5 +1,6 @@
 import { BoxGeometry, BufferAttribute, Color, Euler, InstancedMesh, Matrix4, MeshBasicMaterial, type Material, type Scene } from "three";
 import { A, R, ROLES, type Part, type Rig } from "./rigs";
+import { limbs, type Limbs } from "./gait";
 
 // Draws creatures (3.5): every part of every figure is one instance of the
 // same unit cube, in two draw calls whatever the mix of bodies: one for what
@@ -47,6 +48,10 @@ export interface Pose {
   graze?: number;
   look?: number;
   lie?: number;
+  // 16 November: hops, both legs together (rabbits, hares, frogs); glides,
+  // 0 to 1, a flier's wings held out between bursts of flapping.
+  hop?: boolean;
+  glide?: number;
 }
 
 // The light of each side, as in models.ts: top, east (+x), south (+z), west, north, bottom.
@@ -343,7 +348,9 @@ export class Figures {
     // A longer stride as it speeds up; folded legs barely move.
     const swing = Math.sin(pose.phase) * pose.moving * (0.8 + gait * 0.3) * (1 - lie);
     const live = pose.still ? 0 : 1;
-    const flap = live * (pose.flying ? Math.sin(t * rig.flapRate * Math.PI * 2) * 0.85 : 0.12 + 0.06 * Math.sin(t * 2) + swing * 0.15);
+    const glide = pose.glide ?? 0;
+    const flap =
+      live * (pose.flying ? Math.sin(t * rig.flapRate * Math.PI * 2) * 0.85 * (1 - glide) + 0.18 * glide : 0.12 + 0.06 * Math.sin(t * 2) + swing * 0.15);
     const sway = live * (Math.sin(t * 2.4) * 0.3 + Math.sin(pose.phase * 0.5) * 0.25 * pose.moving);
     const nod =
       pose.nod + (pose.graze ?? 0) * 0.95 + live * (Math.sin(pose.phase * 2) * 0.05 * pose.moving + Math.sin(t * 0.7) * 0.04 * (1 - (pose.graze ?? 0)));
@@ -353,10 +360,19 @@ export class Figures {
     const side = Math.sin(pose.phase * 1.6) * pose.moving * 0.45;
     // Each motion's cosine and sine once per figure: legs and arms swing in
     // opposite pairs, so the B side is the same cosine and the opposite sine.
-    const legC = Math.cos(0.6 * swing);
-    const legS = Math.sin(0.6 * swing);
-    const armC = Math.cos(0.5 * swing);
-    const armS = Math.sin(0.5 * swing);
+    // Legs by their stride (gait.ts legAngle, 16 November): the foot on the ground moves back
+    // evenly, as fast as the body goes, so it stays where it was set down.
+    const l = limbs(pose.phase, gait, pose.moving, lie, !!pose.hop, LIMBS);
+    const legC = Math.cos(l.legA);
+    const legS = Math.sin(l.legA);
+    const legBC = Math.cos(l.legB);
+    const legBS = Math.sin(l.legB);
+    // Arms swing wider at a run (16 November: a run, not a walk played fast).
+    // Arms by the same stride as the legs, each against the leg on its side (gait.ts limbs).
+    const armC = Math.cos(l.armA);
+    const armS = Math.sin(l.armA);
+    const armBC = Math.cos(l.armB);
+    const armBS = Math.sin(l.armB);
     const flapC = Math.cos(flap);
     const flapS = Math.sin(flap);
     const nodC = Math.cos(nod);
@@ -380,14 +396,14 @@ export class Figures {
           if (lie) fold(a, lie);
           break;
         case A.LEG_B:
-          turn(a, 0, legC, -legS, px, py, pz);
+          turn(a, 0, legBC, legBS, px, py, pz);
           if (lie) fold(a, lie);
           break;
         case A.ARM_A:
           turn(a, 0, armC, armS, px, py, pz);
           break;
         case A.ARM_B:
-          turn(a, 0, armC, -armS, px, py, pz);
+          turn(a, 0, armBC, armBS, px, py, pz);
           break;
         case A.WING_L:
           turn(a, 2, flapC, flapS, px, py, pz);
@@ -487,3 +503,6 @@ export class Figures {
     }
   }
 }
+
+// The limbs' angles of the figure being placed, reused.
+const LIMBS: Limbs = { legA: 0, legB: 0, armA: 0, armB: 0 };
