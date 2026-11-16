@@ -4183,7 +4183,7 @@ const signIn = async (key, count) => {
   check(
     "looks: a new look that passed and scored higher goes live as a new version, the old kept",
     v1.replaced &&
-      nowLive["Lamp Post"].code === lamp.code &&
+      (await liveCode("lamp post")) === lamp.code &&
       newRow.origin === "looks" &&
       newRow.version === oldRow.version &&
       newRow.parent === lampPid &&
