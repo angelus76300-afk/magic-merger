@@ -60,7 +60,7 @@ import { GLOWING, VARIANTS, floraModels } from "./flora";
 import { Buildings } from "./buildings";
 import { FINE_VARIANTS, OLD_TREES, cubeTree, fineFocus, geometryOfMesh, refocus, treeSize, type FineFocus } from "./cubes";
 import { WonderModels } from "./wonders";
-import { CLOUD_CUBE, CubeFlames, cloudMaterial, coverCubeGlows, coverCubeKeys, coverInCubes, puffyCloud } from "./cover-cubes";
+import { CLOUD_CUBE, CubeFlames, cloudMaterial, coverCubeGlows, coverCubeKeys, coverInCubes, nearestFlames, puffyCloud } from "./cover-cubes";
 import { PropModels } from "./props";
 import { valueNoise } from "../noise";
 import { LAB_SKY, Sky, skyBodies } from "./sky";
@@ -197,6 +197,7 @@ export class VoxelView {
   // In small cubes (cover-cubes.ts): flames that flicker by frames, puffy clouds.
   private cubeFlames: CubeFlames;
   private puffyClouds: InstancedMesh;
+  private burning: number[] = [];
   // Rain seen from afar, under a front's cloud.
   private rainShafts: InstancedMesh;
   // Materials tinted by the time of day (fire and glows are not).
@@ -893,6 +894,7 @@ export class VoxelView {
       this.coversCubes = GRAPHICS.cubes;
       for (const mesh of this.covers.values()) {
         this.scene.remove(mesh);
+        mesh.geometry.dispose();
         mesh.dispose();
       }
       this.covers.clear();
@@ -1863,25 +1865,30 @@ export class VoxelView {
     let f = 0;
     let g = 0;
     const flameColors = [0xffd36a, 0xffa43a, 0xff6a1a, 0xe8420f];
+    // With the small cubes, the burning cells nearest the camera in cubes, the others as boxes
+    // (cover-cubes.ts FLAME_CUBES): gathered first, placed after the loop.
     const cubes = GRAPHICS.cubes;
-    this.cubeFlames.begin();
+    const burning = this.burning;
+    burning.length = 0;
+    const flame = (i: number) => {
+      const fire = world.fire[i];
+      const base = columnTop(world, i) + (world.cover[i] === C.TREE || world.cover[i] === C.HOUSE ? 0.6 : 0);
+      const p = this.toScene((i % world.w) + 0.5, Math.floor(i / world.w) + 0.5, base);
+      if (near?.has(i)) return this.cubeFlames.add(p.x, p.y, p.z, fire, i, time);
+      const flick = 0.5 + 0.5 * Math.sin(time * 18 + i * 1.7);
+      const h = (0.4 + fire * 1.2) * (0.7 + flick * 0.6);
+      this.m.makeScale(0.7, h, 0.7);
+      this.m.setPosition(p.x, p.y, p.z);
+      this.flames.setMatrixAt(f, this.m);
+      this.flames.setColorAt(f, this.col.setHex(flameColors[(i + Math.floor(time * 12)) % 4]));
+      f++;
+    };
+    let near: Set<number> | null = null;
     for (let i = 0; i < world.n; i++) {
       const fire = world.fire[i];
-      if (fire > 0.05 && f < 5000) {
-        const x = i % world.w;
-        const y = Math.floor(i / world.w);
-        const base = columnTop(world, i) + (world.cover[i] === C.TREE || world.cover[i] === C.HOUSE ? 0.6 : 0);
-        const p = this.toScene(x + 0.5, y + 0.5, base);
-        if (cubes) this.cubeFlames.add(p.x, p.y, p.z, fire, i, time);
-        else {
-          const flick = 0.5 + 0.5 * Math.sin(time * 18 + i * 1.7);
-          const h = (0.4 + fire * 1.2) * (0.7 + flick * 0.6);
-          this.m.makeScale(0.7, h, 0.7);
-          this.m.setPosition(p.x, p.y, p.z);
-          this.flames.setMatrixAt(f, this.m);
-          this.flames.setColorAt(f, this.col.setHex(flameColors[(i + Math.floor(time * 12)) % 4]));
-        }
-        f++;
+      if (fire > 0.05 && f + burning.length < 5000) {
+        if (cubes) burning.push(i);
+        else flame(i);
       }
       // Gas is sampled every other cell, so a big cloud stays affordable.
       const amt = world.gasAmt[i];
@@ -1897,7 +1904,13 @@ export class VoxelView {
         g++;
       }
     }
-    this.flames.count = cubes ? 0 : f;
+    this.cubeFlames.begin();
+    if (cubes) {
+      const at = this.orbit.eye ?? { x: this.orbit.tx, y: this.orbit.ty };
+      near = nearestFlames(burning, (i) => ((i % world.w) - at.x) ** 2 + (Math.floor(i / world.w) - at.y) ** 2);
+      for (const i of burning) flame(i);
+    }
+    this.flames.count = f;
     this.cubeFlames.finish();
     this.puffs.count = g;
     this.flames.instanceMatrix.needsUpdate = true;
@@ -2251,6 +2264,10 @@ export class VoxelView {
   // next engine reuses the same canvas and so the same WebGL context.
   dispose(): void {
     this.domes.dispose();
+    this.cubeFlames.dispose();
+    this.scene.remove(this.puffyClouds);
+    this.puffyClouds.geometry.dispose();
+    this.puffyClouds.dispose();
     this.buildings.dispose();
     this.wonderModels.dispose();
     this.propModels.dispose();

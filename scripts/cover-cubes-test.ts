@@ -4,7 +4,19 @@
 // of boxes in cubes with tone patches of about a tenth and lighter top edges, darker bottom ones.
 import { G } from "../src/sim/materials";
 import { CUBE } from "../src/sim/voxel/cubes";
-import { COVER_SHAPES, EMBER_EVERY, FLAME_FRAMES, STUMP_THIN, coverCubeGlows, coverCubeKeys, coverInCubes, puffyCloud } from "../src/sim/voxel/cover-cubes";
+import {
+  COVER_SHAPES,
+  EMBER_EVERY,
+  FLAME_BOX_TRIANGLES,
+  FLAME_CUBES,
+  FLAME_FRAMES,
+  coverCubeGlows,
+  flameMesh,
+  nearestFlames,
+  coverCubeKeys,
+  coverInCubes,
+  puffyCloud,
+} from "../src/sim/voxel/cover-cubes";
 import { EDGE_DARK, EDGE_LIGHT, PATCH_TONES, boxesInCubes, type LocalMesh } from "../src/sim/voxel/shapes";
 import { MODELS } from "../src/sim/voxel/models";
 import { COVER_MODELS } from "../src/sim/voxel/flora";
@@ -90,12 +102,15 @@ export function coverCubesChecks(check: Check): void {
     const ks = coverCubeKeys("stump", Math.imul(h, 2654435761) >>> 0, G.ASH);
     if (ks.some((k) => k.startsWith("stump#"))) drawn++;
     if (ks.some((k) => k.startsWith("ember#"))) embers++;
-    if (coverCubeKeys("stump", Math.imul(h, 2654435761) >>> 0, G.GRASS).length === 1) grass++;
+    const hh = Math.imul(h, 2654435761) >>> 0;
+    if (coverCubeKeys("stump", hh, G.GRASS).length === 1 && coverCubeKeys("stump", hh, G.DIRT).length === 1) grass++;
   }
-  check(
-    `burnt stumps thinned (${drawn} of 6000), a few embers (${embers})`,
-    Math.abs(drawn / 6000 - 1 / STUMP_THIN) < 0.05 && embers > 300 && embers < 6000 / EMBER_EVERY && grass === 6000,
-  );
+  // A third or so drawn, whatever STUMP_THIN says: one per cell (STUMP_THIN 1) was the checkerboard.
+  check(`burnt stumps thinned to about a third (${drawn} of 6000)`, drawn / 6000 > 0.25 && drawn / 6000 < 0.42);
+  check(`a few embers on burnt ground (${embers} of 6000)`, embers > 300 && embers < 6000 / EMBER_EVERY);
+  // Once the ash has turned to dirt or grass, every stump is drawn: only there does a stump grow back
+  // into a tree (physics.ts: a cell on ash only turns to dirt), so no regrowing cell is hidden.
+  check("every stump drawn once its ash has turned to dirt or grass", grass === 6000);
   check("embers glow", coverCubeGlows("ember#0") && coverInCubes("ember#0")!.glow.pos.length > 0);
   // Stumps no longer sit on the cell's middle: a grid of them was the checkerboard.
   const mids = [0, 1, 2].map((s) => {
@@ -109,8 +124,28 @@ export function coverCubesChecks(check: Check): void {
     mids.some((x) => Math.abs(x - 0.5) > 0.1),
   );
 
-  // Flames and clouds.
+  // Flames: frames to swap, and a bounded cost. The review's fire of 1391 burning cells: the
+  // FLAME_CUBES nearest in cubes, the rest as the old box.
   check("flames: frames to swap", FLAME_FRAMES >= 3);
+  let biggest = 0;
+  let sum = 0;
+  for (let f = 0; f < FLAME_FRAMES; f++)
+    for (const big of [false, true]) {
+      biggest = Math.max(biggest, flameMesh(f, big).tris);
+      sum += flameMesh(f, big).tris;
+    }
+  const cells = Array.from({ length: 1391 }, (_, k) => k * 7);
+  const near = nearestFlames(cells, (i) => Math.abs(i - 4000));
+  const fire = near.size * biggest + (cells.length - near.size) * FLAME_BOX_TRIANGLES;
+  console.log(
+    `  a fire of 1391 cells: ${near.size} in cubes (${biggest} triangles at most each, ${Math.round(sum / FLAME_FRAMES / 2)} on average), ${cells.length - near.size} boxes: ${fire} triangles at most`,
+  );
+  check("flames in cubes: at most about 60,000 triangles, however big the fire", FLAME_CUBES * biggest <= 60_000 && near.size === FLAME_CUBES);
+  check(
+    "flames in cubes: the nearest ones",
+    [...near].every((i) => Math.abs(i - 4000) <= 7 * (FLAME_CUBES / 2 + 1)),
+  );
+  check("a small fire all in cubes", nearestFlames([1, 2, 3], () => 0).size === 3);
   const cloud = puffyCloud();
   check(`a puffy cloud in ${cloud.tris} triangles, under 4000, with faces looking down`, cloud.tris < 4000 && cloud.lit.pos.length > 0);
 

@@ -320,6 +320,28 @@ function embers(seed: number, shape: number): Vox {
 // sizes; a fire swaps its frame several times a second, each cell at its own beat.
 
 export const FLAME_FRAMES = 3;
+// A flame in cubes is 186 to 348 triangles, the old box 12: a wildfire of a thousand cells in cubes
+// was 300,000 and more (the review of 16 November). Only the FLAME_CUBES nearest the camera are
+// drawn in cubes, the others as the old box: at most FLAME_CUBES times the biggest frame.
+export const FLAME_CUBES = 160;
+export const FLAME_BOX_TRIANGLES = 12;
+
+// The burning cells drawn in cubes: all when there are FLAME_CUBES or fewer, else the nearest by `far`.
+export function nearestFlames(cells: readonly number[], far: (i: number) => number, n = FLAME_CUBES): Set<number> {
+  if (cells.length <= n) return new Set(cells);
+  const d = cells.map((i) => ({ i, d: far(i) }));
+  d.sort((a, b) => a.d - b.d || a.i - b.i);
+  return new Set(d.slice(0, n).map((o) => o.i));
+}
+
+const flames = new Map<number, LocalMesh>();
+// A frame of a flame (0 to FLAME_FRAMES - 1), small or big, made once.
+export function flameMesh(frame: number, big: boolean): LocalMesh {
+  const key = frame * 2 + (big ? 1 : 0);
+  let m = flames.get(key);
+  if (!m) flames.set(key, (m = flame(frame, big)));
+  return m;
+}
 const FLAME_HOT = [0xfff0a8, 0xffc23a, 0xff7a1a, 0xd8401a];
 
 function flame(frame: number, big: boolean): LocalMesh {
@@ -355,10 +377,14 @@ export class CubeFlames {
   private m = new Matrix4();
   private turn = new Matrix4();
 
-  constructor(scene: Scene, material: Material, capacity: number) {
+  constructor(
+    private scene: Scene,
+    material: Material,
+    capacity: number,
+  ) {
     for (const big of [false, true])
       for (let f = 0; f < FLAME_FRAMES; f++) {
-        const mesh = new InstancedMesh(geometryOfMesh(flame(f, big)), material, capacity);
+        const mesh = new InstancedMesh(geometryOfMesh(flameMesh(f, big)), material, capacity);
         mesh.count = 0;
         mesh.frustumCulled = false;
         scene.add(mesh);
@@ -397,8 +423,14 @@ export class CubeFlames {
     });
   }
 
+  // Takes the flames out of the scene and frees their geometry (the material is the old flames').
   dispose(): void {
-    for (const mesh of this.meshes) mesh.geometry.dispose();
+    for (const mesh of this.meshes) {
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      mesh.dispose();
+    }
+    this.meshes.length = 0;
   }
 }
 
