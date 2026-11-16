@@ -1,7 +1,10 @@
+import { syntaxError } from "../spellcode";
+
 // The looks revamp, phase 2 (roadmap 5.2.5): a look-only rewrite changes what an item looks like
 // and nothing it does. The writer is shown the program with its w.model calls numbered and sends
-// back, for each call, a new parts expression; the Worker splices each one in place of the call's
-// third argument. Every character outside those arguments stays as it was, so every line that is
+// back, for each call, a new parts list as plain data (readLiteral: lists, objects, numbers,
+// strings, true, false, null; no name, call or operator, so it can only draw); the Worker splices
+// each one in place of the call's third argument, and only when the whole program still parses. Every character outside those arguments stays as it was, so every line that is
 // not a look stays byte for byte the same (scripts/looks-refs-test.ts proves it). A wonder with no
 // model at all may gain one, as new lines at the start of its cast, its other lines untouched.
 
@@ -22,14 +25,14 @@ export interface ModelCall {
 }
 
 // A new look for one call: `call` is the call's index, or 0 for a model added to a wonder that
-// has none; `parts` is a JavaScript expression that evaluates to the parts array.
+// has none; `parts` is the parts list written out as plain data.
 export interface LookPatch {
   call: number;
   parts: string;
   name?: string;
 }
 
-// The longest parts expression taken: 160 parts written out are about 9,000 characters.
+// The longest parts list taken: 160 parts written out are about 9,000 characters.
 export const MAX_PARTS_TEXT = 24_000;
 // A wonder with no model gains at most this many.
 export const MAX_ADDED_MODELS = 2;
@@ -211,42 +214,131 @@ export function numberedProgram(code: string, calls: ModelCall[]): string {
   return out + code.slice(at);
 }
 
-// Words a parts expression may not hold: it draws, it never acts, waits or reaches outside.
-const FORBIDDEN =
-  /\b(?:yield|await|async|import|export|eval|Function|globalThis|window|self|this|fetch|XMLHttpRequest|constructor|__proto__|prototype|spell|while|class|delete)\b|\bnew\b(?!\s+Array\b)/;
+// A parts list is accepted only as plain data, read by a whitelist (the review of #172: a guard
+// that lists what is forbidden was bypassed by passing w as a value, (o => o.spawn("x"))(w)). Allowed:
+// arrays, objects whose keys are plain names or strings, numbers (a leading minus, decimals,
+// exponents), strings in single or double quotes, true, false and null. Nothing else: no name, call,
+// operator, comment, template or spread. Returns the value, or why it is refused.
+export function readLiteral(text: string): { value: unknown } | { why: string } {
+  let i = 0;
+  const n = text.length;
+  let depth = 0;
+  const fail = (why: string) => {
+    throw new Error(why);
+  };
+  const space = () => {
+    while (i < n && /\s/.test(text[i])) i++;
+  };
+  const str = (): string => {
+    const q = text[i++];
+    let out = "";
+    while (i < n && text[i] !== q) {
+      const c = text[i];
+      if (c === "\n" || c === "\r") fail("a string runs past its line");
+      if (c === "\\") {
+        const e = text[i + 1];
+        if (e === undefined) fail("a string never ends");
+        const map: Record<string, string> = { n: "\n", t: "\t", r: "\r", "'": "'", '"': '"', "\\": "\\", "/": "/", "0": "\0" };
+        if (e === "u") {
+          const hex = /^[0-9a-fA-F]{4}$/.exec(text.slice(i + 2, i + 6));
+          if (!hex) fail("a string has a bad escape");
+          out += String.fromCharCode(parseInt(text.slice(i + 2, i + 6), 16));
+          i += 6;
+          continue;
+        }
+        if (!(e in map)) fail("a string has a bad escape");
+        out += map[e];
+        i += 2;
+        continue;
+      }
+      out += c;
+      i++;
+    }
+    if (i >= n) fail("a string never ends");
+    i++;
+    return out;
+  };
+  const value = (): unknown => {
+    space();
+    if (i >= n) fail("it ends too soon");
+    const c = text[i];
+    if (c === "[" || c === "{") {
+      if (++depth > 6) fail("it nests too deep");
+      i++;
+      const close = c === "[" ? "]" : "}";
+      const arr: unknown[] = [];
+      const obj: Record<string, unknown> = {};
+      space();
+      while (text[i] !== close) {
+        if (c === "[") arr.push(value());
+        else {
+          space();
+          let key: string;
+          if (text[i] === '"' || text[i] === "'") key = str();
+          else {
+            const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(text.slice(i, i + 40));
+            if (!m) fail("an object key is not a plain name");
+            key = m![0];
+            i += key.length;
+          }
+          if (key === "__proto__" || key === "constructor" || key === "prototype") fail("an object key is not allowed");
+          space();
+          if (text[i] !== ":") fail("an object key has no value");
+          i++;
+          obj[key] = value();
+        }
+        space();
+        if (text[i] === ",") {
+          i++;
+          space();
+          continue;
+        }
+        if (text[i] !== close) fail("its brackets do not match, or a comma is missing");
+      }
+      i++;
+      depth--;
+      return c === "[" ? arr : obj;
+    }
+    if (c === '"' || c === "'") return str();
+    const num = /^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/.exec(text.slice(i, i + 40));
+    if (num) {
+      i += num[0].length;
+      if (i < n && /[\w$.]/.test(text[i])) fail("a number runs into a name");
+      return Number(num[0]);
+    }
+    for (const [word, v] of [
+      ["true", true],
+      ["false", false],
+      ["null", null],
+    ] as const) {
+      if (text.startsWith(word, i) && !/[\w$]/.test(text[i + word.length] ?? "")) {
+        i += word.length;
+        return v;
+      }
+    }
+    return fail("it holds something that is not plain data (a name, a call, an operator or a comment)");
+  };
+  try {
+    const v = value();
+    space();
+    if (i < n) fail("something follows the list");
+    return { value: v };
+  } catch (err) {
+    return { why: err instanceof Error ? err.message : String(err) };
+  }
+}
 
-// Why a parts expression cannot be spliced in, or null when it can. It may use loops inside a
-// function it calls at once ((() => { ... })()), Math and the variables in scope at the call,
-// never the world (w), nor anything that waits or reaches outside.
-export function partsProblem(parts: string, receiver = "w"): string | null {
+// Why a parts list cannot be spliced in, or null when it can: it must be a plain data list of parts.
+export function partsProblem(parts: string): string | null {
   const t = parts.trim();
   if (!t) return "it is empty";
   if (t.length > MAX_PARTS_TEXT) return `it is longer than ${MAX_PARTS_TEXT} characters`;
-  // A string or comment that never ends would swallow the rest of the program.
-  if (!scan(t, () => {})) return "a string or a comment in it never ends";
-  let depth = 0;
-  let broken = false;
-  scan(t, (i) => {
-    const c = t[i];
-    if (c === "(" || c === "[" || c === "{") depth++;
-    else if (c === ")" || c === "]" || c === "}") depth--;
-    if (depth < 0) broken = true;
-  });
-  if (broken || depth !== 0) return "its brackets do not match";
-  if (FORBIDDEN.test(t)) return "it acts, waits or reaches outside the look";
-  const world = new RegExp(`(^|[^\\w$.])${receiver.replace(/\$/g, "\\$")}\\s*[.[(]`);
-  if (world.test(t) || /(^|[^\w$.])w\s*[.[(]/.test(t)) return "it calls the world";
-  // A top level comma would add arguments to the call.
-  let top = 0;
-  let comma = false;
-  scan(t, (i) => {
-    const c = t[i];
-    if (c === "(" || c === "[" || c === "{") top++;
-    else if (c === ")" || c === "]" || c === "}") top--;
-    else if (c === "," && top === 0) comma = true;
-    else if (c === ";" && top === 0) comma = true;
-  });
-  if (comma) return "it is more than one expression";
+  const r = readLiteral(t);
+  if ("why" in r) return r.why;
+  if (!Array.isArray(r.value)) return "it is not a list of parts";
+  if (!r.value.length) return "it has no part";
+  if (r.value.length > 200) return "it has more than 200 parts";
+  if (!r.value.every((p) => Array.isArray(p) || (p !== null && typeof p === "object"))) return "a part is not a list or an object";
   return null;
 }
 
@@ -297,7 +389,7 @@ export function spliceLooks(code: string, patches: LookPatch[], mayAdd = false):
       refused.push({ call: p.call, why: "the call has no parts argument" });
       continue;
     }
-    const why = partsProblem(p.parts, c.receiver);
+    const why = partsProblem(p.parts);
     if (why) {
       refused.push({ call: p.call, why });
       continue;
@@ -330,6 +422,9 @@ export function spliceLooks(code: string, patches: LookPatch[], mayAdd = false):
           : out.slice(0, nl + 1) + lines.map((l) => `    ${l}\n`).join("") + out.slice(nl + 1);
     }
   }
+  // The whole program must still parse; if it does not, nothing is spliced.
+  const broken = syntaxError(out);
+  if (broken) return { code, replaced: [], added: 0, refused: [...refused, { call: -1, why: `the spliced program does not parse: ${broken}` }] };
   return { code: out, replaced, added: added.length, refused };
 }
 

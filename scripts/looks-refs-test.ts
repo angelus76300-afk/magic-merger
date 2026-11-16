@@ -4,7 +4,7 @@
 import { syntaxError } from "../shared/spellcode";
 import { REFERENCES, partTarget, referencesFor } from "../shared/looks";
 import { shapesOf, silhouette, toneGroups } from "../shared/looks/measure";
-import { changedLines, modelCalls, numberedProgram, partsProblem, spliceLooks } from "../shared/looks/splice";
+import { changedLines, modelCalls, numberedProgram, partsProblem, readLiteral, spliceLooks } from "../shared/looks/splice";
 import { MAX_PROP_BOXES, readBox, type PropBox } from "../src/sim/props";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
@@ -107,8 +107,8 @@ export function looksRefChecks(check: Check): void {
   check("the writer sees each call numbered", numbered.includes("/* MODEL CALL 1 */") && numbered.includes("/* MODEL CALL 2 */"));
 
   // --- Splicing a new look in -----------------------------------------------------------------
-  const forge =
-    "(() => { const p = []; for (let k = 0; k < 6; k++) p.push([-0.5, -0.5, k * 0.5, 1, 1, 0.5, k % 2 ? '#6a5a52' : '#7a685e', 'cyl', 'grain']); return p; })()";
+  // A look is plain data: six courses written out, as the writer must send them.
+  const forge = `[${Array.from({ length: 6 }, (_, k) => `[-0.5, -0.5, ${k * 0.5}, 1, 1, 0.5, '${k % 2 ? "#6a5a52" : "#7a685e"}', 'cyl', 'grain']`).join(", ")}, { x: -0.125, y: -0.625, z: 0.25, w: 0.25, d: 0.125, h: 0.5, color: "#ffcf6b", glow: true }]`;
   const anvil = "[[-0.5, -0.25, 0, 1, 0.5, 0.25, '#3a3a40'], [-0.375, -0.125, 0.25, 0.75, 0.25, 0.25, '#55555c', 'wedge']]";
   const spliced = spliceLooks(program, [
     { call: 1, parts: forge },
@@ -135,20 +135,76 @@ export function looksRefChecks(check: Check): void {
   );
   check(
     "the spliced program draws the new parts",
-    !runs.error && runs.calls.length === 2 && runs.calls[0].parts.length === 6 && runs.calls[1].parts.length === 2,
+    !runs.error && runs.calls.length === 2 && runs.calls[0].parts.length === 7 && runs.calls[1].parts.length === 2,
     runs.error ?? "",
   );
 
-  // --- What is refused --------------------------------------------------------------------
+  // --- What is refused: anything that is not plain data (the reviews of #172 and #173) -------
   const refused = (parts: string) => spliceLooks(program, [{ call: 1, parts }])?.refused[0]?.why ?? null;
-  check("a look that calls the world is refused", refused("(() => { w.explode(0, 0, 3); return []; })()") === "it calls the world");
-  check("a look that waits is refused", refused("(function* () { yield 1; })()") !== null);
-  check("a look of two expressions is refused", refused("[], { name: 'x' }") === "it is more than one expression");
-  check("a look whose brackets do not match is refused", refused("[[0, 0, 0, 1, 1, 1]") === "its brackets do not match");
-  check("a look that reaches outside is refused", refused("globalThis.fetch") !== null && refused("this.x") !== null);
-  check("an unfinished string is refused", refused("['#fff]") !== null);
-  check("a patch for a call that is not there is refused", spliceLooks(program, [{ call: 3, parts: "[]" }])?.refused[0]?.why === "there is no such call");
-  check("partsProblem passes a plain list", partsProblem(anvil) === null && partsProblem(forge) === null);
+  const notData = [
+    "(() => { w.explode(0, 0, 3); return []; })()",
+    "(function* () { yield 1; })()",
+    "[], { name: 'x' }",
+    "[[0, 0, 0, 1, 1, 1]",
+    "globalThis.fetch",
+    "this.x",
+    "['#fff]",
+    // A comment would swallow the rest of the call; brackets that cross.
+    "[[0,0,0,1,1,1,'#fff']] // hi",
+    "[[0,0,0,1,1,1,'#fff']] /* hi */",
+    "([)]",
+    "[([)]]",
+    // w passed as a value, reached through a function, optional chaining, an index or Reflect.
+    "(o=>o.spawn('x'))(w)",
+    "[w?.kill(),[0]]",
+    "[[w][0].kill()]",
+    "[Reflect.get(w,'kill')()]",
+    // A program's own names, the target, loops, randomness: none of them is data.
+    "[(parts = []), [0, 0, 0, 1, 1, 1]]",
+    "[target.hurt(50), [0, 0, 0, 1, 1, 1]]",
+    "(() => { for (;;) {} })()",
+    "(() => { const p = []; for (let k = 0; k < 1e9; k++) p.push([0, 0, 0, 1, 1, 1]); return p; })()",
+    "[[Math.random(), 0, 0, 1, 1, 1, '#888']]",
+    "[[0, 0, 0, 1, 1, 1, `#888`]]",
+    "[...parts]",
+    "[[0, 0, 0 + 1, 1, 1, 1]]",
+    "[[0, 0, -x, 1, 1, 1]]",
+    "[{ __proto__: [] }]",
+    "[]",
+  ];
+  const slipped = notData.filter((t) => refused(t) === null);
+  check(`${notData.length} looks that are not plain data are all refused`, slipped.length === 0, JSON.stringify(slipped));
+  check(
+    "a refused look leaves the program as it was",
+    notData.every((t) => spliceLooks(program, [{ call: 1, parts: t }])?.code === program),
+  );
+  const data = [
+    anvil,
+    forge,
+    "[[-1.5, 0.25e1, .5, 1, 1, 1, '#a\\'b', \"glow\", {rz: -45, grain: true, shape: 'cone'}], {x: 0, \"y\": 0, z: 0, w: 1, d: 1, h: 1, color: null}]",
+    "[[0,0,0,1,1,1,'#fff',],]",
+  ];
+  check(
+    "plain data looks pass: arrays, objects, negatives, decimals, exponents, strings, true, false, null",
+    data.every((t) => partsProblem(t) === null),
+    JSON.stringify(data.map(partsProblem)),
+  );
+  check(
+    "readLiteral reads a look as the data it is",
+    JSON.stringify((readLiteral("[[-0.5, 1e-1, 'a\\nb', true, false, null, {k: 'v'}]]") as { value: unknown }).value) ===
+      JSON.stringify([[-0.5, 0.1, "a\nb", true, false, null, { k: "v" }]]),
+  );
+  check(
+    "a patch for a call that is not there is refused",
+    spliceLooks(program, [{ call: 3, parts: "[[0,0,0,1,1,1]]" }])?.refused[0]?.why === "there is no such call",
+  );
+  // The whole spliced program must parse, or nothing is spliced.
+  const unparsable = "const spell = { *cast(w) { w.model(0, 0, [[0,0,0,1,1,1]], {}); } };\n}";
+  const whole = spliceLooks(unparsable, [{ call: 1, parts: anvil }]);
+  check(
+    "a splice whose program does not parse splices nothing",
+    !!whole && whole.code === unparsable && whole.replaced.length === 0 && whole.refused.some((r) => r.call === -1),
+  );
 
   // --- A wonder with no model gains one ---------------------------------------------------------
   const wonder = ["const spell = {", "  *cast(w) {", "    w.terraform(w.x, w.y, 4, 2);", "    w.build('spire', w.x, w.y, { height: 8 });", "  },", "};"].join(
