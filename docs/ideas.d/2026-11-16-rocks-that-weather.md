@@ -1,0 +1,3 @@
+# Rocks that weather
+
+Now that every boulder is its own rounded rock of small cubes, the island can wear it: rain lays moss on a rock's top over a few days of play, a fire scorches it dark for a day, and snow sits on its top cubes in the cold. What the player feels: the land remembers what happened to it, and a rock by the village tells the story of last night's storm. What it adds: weather and spells leave a mark that lasts longer than their particles, with no new rules to learn. Cost: three or four more shapes per rock kind (mossy, scorched, snowy), picked by a per-cell value the simulation already keeps (wetness, fire, temperature); a few hundred triangles per shape, no new draw call per rock, nothing saved beyond what the cell already holds, no money.
