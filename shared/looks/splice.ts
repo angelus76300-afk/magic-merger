@@ -388,7 +388,6 @@ export function oldPartsProblem(arg: string): string | null {
     if (found) return;
     const c = t[i];
     const next = t[i + 1] ?? "";
-    const prev = t[i - 1] ?? "";
     if (c === "(") found = "it calls something or groups an expression";
     else if (c === "`") found = "it holds a template";
     else if (c === "=" && isAssignment(t, i)) found = "it assigns or makes a function";
