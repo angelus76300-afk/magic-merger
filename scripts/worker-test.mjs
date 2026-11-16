@@ -99,13 +99,23 @@ function stubAnswer(n, system, user) {
     return JSON.stringify({ summary: "A dome.", code, missing: "a barrier that stops lava: to keep the village safe" });
   }
   // 5.2.5: the look-only writer redraws every call it is shown, or adds one to a wonder; a
-  // "Bad Lamp" gets a look that calls the world, which the splice must refuse.
+  // each "Bad Lamp n" gets a look that is not plain data, which the splice must refuse.
   if (system.startsWith("You draw the looks")) {
     looksAsked.push(user);
     const calls = Number(/draws with (\d+) w\.model call/.exec(user)?.[1] ?? 0);
-    const parts = /Bad Lamp/.test(user)
-      ? "(() => { w.explode(0, 0, 3); return []; })()"
-      : "(() => { const p = []; for (let k = 0; k < 4; k++) p.push([-0.5, -0.5, k * 0.5, 1, 1, 0.5, k % 2 ? '#8a7655' : '#a08a64', 'cyl', 'grain']); p.push([-0.625, -0.625, 2, 1.25, 1.25, 1, '#4c5a80', 'cone'], [-0.125, -0.625, 0.25, 0.25, 0.125, 0.5, '#ffcf6b', 'glow']); return p; })()";
+    // The reviews of #172 and #173: a look that is not plain data, by the item's number.
+    const bad = [
+      "[(parts = []), [0, 0, 0, 1, 1, 1]]",
+      "[target.hurt(50), [0, 0, 0, 1, 1, 1]]",
+      "(() => { for (;;) {} })()",
+      "(() => { const p = []; for (let k = 0; k < 1e9; k++) p.push([0, 0, 0, 1, 1, 1]); return p; })()",
+      "[[Math.random(), 0, 0, 1, 1, 1, '#888']]",
+      "(() => { w.explode(0, 0, 3); return []; })()",
+    ];
+    const which = /Bad Lamp (\d)/.exec(user);
+    const parts = which
+      ? bad[Number(which[1])]
+      : `[${[0, 1, 2, 3].map((k) => `[-0.5, -0.5, ${k * 0.5}, 1, 1, 0.5, '${k % 2 ? "#8a7655" : "#a08a64"}', 'cyl', 'grain']`).join(", ")}, [-0.625, -0.625, 2, 1.25, 1.25, 1, '#4c5a80', 'cone'], [-0.125, -0.625, 0.25, 0.25, 0.125, 0.5, '#ffcf6b', 'glow']]`;
     const models = calls ? Array.from({ length: calls }, (_, k) => ({ call: k + 1, parts })) : /may gain one/.test(user) ? [{ call: 0, parts }] : [];
     return JSON.stringify({ plan: "a stone column of courses under a slate cone, a lit door", models });
   }
@@ -4067,11 +4077,11 @@ const signIn = async (key, count) => {
   };
   await liveSpell("Lamp Post", "minor");
   await liveSpell("Star Lamp", "cosmic");
-  await liveSpell("Bad Lamp", "minor");
+  for (let k = 0; k < 6; k++) await liveSpell(`Bad Lamp ${k}`, "minor");
   await liveSpell("Plain Spark", "minor");
   const lampPid = await setCode("Lamp Post", drawn("Lamp Post"));
   await setCode("Star Lamp", drawn("Star Lamp"));
-  await setCode("Bad Lamp", drawn("Bad Lamp"));
+  for (let k = 0; k < 6; k++) await setCode(`Bad Lamp ${k}`, drawn(`Bad Lamp ${k}`));
   const wonderCode =
     "const spell = {\n  *cast(w) {\n    w.terraform(w.x, w.y, 4, 2);\n    w.spire(w.x, w.y, { height: 8, radius: 1.2, kind: 'glow' });\n  },\n};";
   const wid = Number(
@@ -4086,12 +4096,15 @@ const signIn = async (key, count) => {
   );
   const asked0 = looksAsked.length;
   const b0 = batches.size;
-  const started = await api("/api/admin/looks", { admin: true, body: { keys: ["lamp post", "star lamp", "bad lamp", "plain spark"], wonders: [wid] } });
+  const started = await api("/api/admin/looks", {
+    admin: true,
+    body: { keys: ["lamp post", "star lamp", ...[0, 1, 2, 3, 4, 5].map((k) => `bad lamp ${k}`), "plain spark"], wonders: [wid] },
+  });
   const sent = [...batches.values()].slice(b0).flat();
   const modelOf = (name) => sent.find((r) => r.params.messages[0].content.includes(`: ${name}\n`))?.params.model;
   check(
     "looks: a pilot by name queues the items that draw a model and the wonder, in one batch",
-    started.status === 200 && started.data.queued.length === 4 && started.data.batches.length === 1 && started.data.skipped.join() === "Plain Spark",
+    started.status === 200 && started.data.queued.length === 9 && started.data.batches.length === 1 && started.data.skipped.join() === "Plain Spark",
     JSON.stringify(started.data),
   );
   check(
@@ -4108,20 +4121,24 @@ const signIn = async (key, count) => {
       asked.params.system[0].cache_control?.ttl === "1h" &&
       asked.params.system[0].text.includes("Silhouette first"),
   );
-  check("looks: an estimate is held while the answers are pending", started.data.estimate > 0 && started.data.estimate < 0.5, `${started.data.estimate}`);
+  check("looks: an estimate is held while the answers are pending", started.data.estimate > 0 && started.data.estimate < 1, `${started.data.estimate}`);
   const again = await api("/api/admin/looks", { admin: true, body: { keys: ["lamp post"] } });
   check("looks: nothing is asked twice", again.data.queued.length === 0 && looksAsked.length === asked0, JSON.stringify(again.data));
   const busy = await api("/api/admin/refresh", { admin: true, body: { forms: true, dry: true } });
   check("looks: the rebuild by kind waits while a look is in flight", busy.status === 409, `${busy.status}`);
   const polled = await api("/api/admin/looks-poll", { admin: true, body: {} });
-  check("looks: the answers come back, three spliced and one refused", polled.data.done === 3 && polled.data.failed === 1, JSON.stringify(polled.data));
-  const bad = await db.prepare("SELECT status, reason FROM looks WHERE key = 'bad lamp'").first();
-  check("looks: a look that calls the world is refused", bad.status === "failed" && /calls the world/.test(bad.reason), JSON.stringify(bad));
+  check("looks: the answers come back, three spliced and six refused", polled.data.done === 3 && polled.data.failed === 6, JSON.stringify(polled.data));
+  const bad = (await db.prepare("SELECT key, status, reason FROM looks WHERE key LIKE 'bad lamp %' ORDER BY key").all()).results;
+  check(
+    "looks: a look that is not plain data is refused (a program's name, the target, an endless loop, a billion loop, Math.random, w)",
+    bad.length === 6 && bad.every((b) => b.status === "failed" && /every look was refused/.test(b.reason)),
+    JSON.stringify(bad),
+  );
   const billed = await db.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(usd), 0) AS usd FROM spend WHERE invite = 'looks' AND call = 'looks-write'").first();
-  check("looks: every answer is billed once, to the revamp", billed.n === 4 && billed.usd > 0, JSON.stringify(billed));
+  check("looks: every answer is billed once, to the revamp", billed.n === 9 && billed.usd > 0, JSON.stringify(billed));
   await api("/api/admin/looks-poll", { admin: true, body: {} });
   const billedTwice = await db.prepare("SELECT COUNT(*) AS n FROM spend WHERE invite = 'looks'").first();
-  check("looks: a batch read twice bills once", billedTwice.n === 4, `${billedTwice.n}`);
+  check("looks: a batch read twice bills once", billedTwice.n === 9, `${billedTwice.n}`);
   const people = (await api("/api/admin/people", { admin: true })).data;
   const game = (await db.prepare("SELECT COALESCE(SUM(usd), 0) AS usd FROM spend WHERE invite IS NULL OR invite != 'looks'").first()).usd;
   check(
@@ -4146,7 +4163,7 @@ const signIn = async (key, count) => {
     !!lamp &&
       keptLines(lamp.oldCode, lamp.code) &&
       lamp.code !== lamp.oldCode &&
-      lamp.code.includes("w.model(w.x, w.y, (() =>") &&
+      lamp.code.includes("w.model(w.x, w.y, [[-0.5, -0.5, 0, 1, 1, 0.5,") &&
       lamp.code.includes("{ name: 'Lamp Post' });"),
     lamp?.code,
   );
@@ -4198,16 +4215,16 @@ const signIn = async (key, count) => {
   const tie = (await api("/api/admin/looks-verdict", { admin: true, body: { id: star.id, tested: true } })).data;
   check("looks: a look that does not score higher is kept out", !tie.replaced && /did not score it higher/.test(tie.reason), JSON.stringify(tie));
   // The caps: the night's $3 and the revamp's $25, both checked before any call.
-  await db.prepare("DELETE FROM looks WHERE key IN ('star lamp', 'bad lamp')").run();
+  await db.prepare("DELETE FROM looks WHERE key = 'star lamp' OR key LIKE 'bad lamp %'").run();
   await db.prepare("INSERT INTO spend (at, call, model, usd, invite) VALUES (?, 'looks-write', 'claude-sonnet-5-5', 2.999, 'looks')").bind(Date.now()).run();
   const a1 = looksAsked.length;
-  const night = await api("/api/admin/looks", { admin: true, body: { keys: ["star lamp", "bad lamp"] } });
+  const night = await api("/api/admin/looks", { admin: true, body: { keys: ["star lamp", "bad lamp 0"] } });
   check("looks: the night's share stops it before any call", night.data.queued.length === 0 && looksAsked.length === a1, JSON.stringify(night.data));
   await db
     .prepare("UPDATE spend SET at = ?, usd = 24.999 WHERE invite = 'looks' AND usd = 2.999")
     .bind(Date.now() - 3 * 86400_000)
     .run();
-  const capped = await api("/api/admin/looks", { admin: true, body: { keys: ["star lamp", "bad lamp"] } });
+  const capped = await api("/api/admin/looks", { admin: true, body: { keys: ["star lamp", "bad lamp 0"] } });
   check("looks: the revamp's $25 stops it before any call", capped.data.queued.length === 0 && looksAsked.length === a1, JSON.stringify(capped.data));
   const lateJudge = await api("/api/admin/looks-judge", { admin: true, body: { id: star.id, old: [OLD], new: [NEW] } });
   check("looks: no judgment past the cap", lateJudge.status === 402 || lateJudge.status === 404, `${lateJudge.status}`);
