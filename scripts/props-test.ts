@@ -10,12 +10,15 @@ import { GRAPHICS } from "../src/sim/voxel/graphics";
 import { LOOK_VOXEL, propLocal, propTriangles, voxelize } from "../src/sim/voxel/shapes";
 import { benchProps } from "./looks-bench";
 import { lookMeshes, type Look } from "./looks-golden";
+import { looksRefChecks } from "./looks-refs-test";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
 const prop = (boxes: unknown[]) => readProp({ key: "k", name: "book", x: 5, y: 5, turn: 0, boxes });
 
 export function propChecks(check: Check): void {
+  // The reference looks and the look-only splice (the looks revamp, phase 2): scripts/looks-refs-test.ts.
+  looksRefChecks(check);
   // A book: a cover, a spine and ten pages 0.02 thick.
   const book: unknown[] = [
     [0, 0, 0, 3, 4, 0.5, "#632"],
