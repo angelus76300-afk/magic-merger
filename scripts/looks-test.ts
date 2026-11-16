@@ -6,6 +6,7 @@
 import { Color } from "three";
 import {
   AUTO_CHOICE,
+  usefulTrims,
   GRAPHICS,
   LOOKS_FLAGS,
   PRESETS,
@@ -13,13 +14,15 @@ import {
   QualityChooser,
   LATE_ONLY,
   PIXEL_CAPS,
-  nextPixelRatio,
+  PIXEL_FLOORS,
+  Relief,
+  TRIMS,
   applyLooks,
   readLooksChoice,
   setLooksChoice,
   type Quality,
 } from "../src/sim/voxel/graphics";
-import { BLOOM_STRENGTH, FOCUS_FULL, FOCUS_MAX, bloomAt, focusBlur, gradeColor } from "../src/sim/voxel/looks";
+import { BLOOM_STRENGTH, FOCUS_FULL, FOCUS_MAX, SHARP_BAND, bloomAt, focusBlur, gradeColor } from "../src/sim/voxel/looks";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
@@ -74,18 +77,25 @@ export function looksChecks(check: Check): void {
   // up to high when they are kept with room, and never see-sawing.
   const slow = new QualityChooser();
   const atPace = 1000 / 30;
-  check("a slow device drops to low", slow.decide(atPace * 2, 30, atPace, 0.6, 2) === "low", `level ${slow.level}`);
-  check("it does not drop past low", slow.decide(atPace * 2, 30, atPace, 0.6, 2) === null && slow.level === "low");
+  check("a slow device drops to low", slow.decide(atPace * 2, 30, atPace, { spent: true, full: false }) === "low", `level ${slow.level}`);
+  check("it does not drop past low", slow.decide(atPace * 2, 30, atPace, { spent: true, full: false }) === null && slow.level === "low");
   const fast = new QualityChooser();
-  check("a fast device rises to high", fast.decide(atPace, 5, atPace, 2, 2) === "high", `level ${fast.level}`);
+  check("a fast device rises to high", fast.decide(atPace, 5, atPace, { spent: false, full: true }) === "high", `level ${fast.level}`);
   const seesaw = new QualityChooser();
-  seesaw.decide(atPace * 2, 30, atPace, 0.6, 2); // down to low
-  check("it does not rise again after dropping", seesaw.decide(atPace, 5, atPace, 2, 2) === null && seesaw.level === "low");
+  seesaw.decide(atPace * 2, 30, atPace, { spent: true, full: false }); // down to low
+  check("it does not rise again after dropping", seesaw.decide(atPace, 5, atPace, { spent: false, full: true }) === null && seesaw.level === "low");
 
+  // The Fold at 48 ms went straight to low before the relief had acted (16 November): the level
+  // comes down only once the relief has nothing left to give up.
+  const waiting = new QualityChooser();
+  check(
+    "the level stays while the relief still has something to give up",
+    waiting.decide(atPace * 2, 30, atPace, { spent: false, full: false }) === null && waiting.level === "medium",
+  );
   // feed() picks the median over a window, then decides.
   const fed = new QualityChooser();
   let got: Quality | null = null;
-  for (let i = 0; i < QualityChooser.FRAMES; i++) got = fed.feed(atPace, 5, atPace, 2, 2) ?? got;
+  for (let i = 0; i < QualityChooser.FRAMES; i++) got = fed.feed(atPace, 5, atPace, { spent: false, full: true }) ?? got;
   check("the chooser decides over a window of frames", got === "high", `got ${got}`);
 
   // The colour grade matches between the GLSL and the JavaScript (the fog is
@@ -116,10 +126,13 @@ export function looksChecks(check: Check): void {
   // whole island (a medium island is seen from about 83 cells) or at a mid zoom (55), whole at
   // the closest sky zoom, never in the eye view.
   check("no depth of field over the whole island", focusBlur(83, false) === 0);
-  check("no depth of field at a mid zoom", focusBlur(55, false) === 0);
+  check("no depth of field at a mid zoom", focusBlur(55, false) === 0 && focusBlur(28, false) === 0);
   check("the depth of field is whole at the closest sky zoom", focusBlur(FOCUS_FULL, false) === 1 && focusBlur(8, false) === 1);
-  check("the depth of field grows as the camera comes closer", focusBlur(30, false) > 0 && focusBlur(30, false) < focusBlur(15, false));
+  check("the depth of field grows as the camera comes closer", focusBlur(20, false) > 0 && focusBlur(20, false) < focusBlur(14, false));
   check("no depth of field in the eye view", focusBlur(8, true) === 0);
+  // The owner's close frames on the Fold, 15 November: most of the frame blurred. The middle third
+  // of the screen stays sharp.
+  check("the middle third of the screen stays sharp", Math.abs(SHARP_BAND - 1 / 6) < 1e-9, `${SHARP_BAND}`);
   // The owner, after the closest frame: "a bit strong". At most two thirds of the blurred frame.
   check("the depth of field shows at most two thirds of the blur", FOCUS_MAX > 0.6 && FOCUS_MAX < 0.7, `${FOCUS_MAX}`);
 
@@ -127,20 +140,7 @@ export function looksChecks(check: Check): void {
   // at every level, and high smooths edges and lowers its pixels only when frames are late.
   check("every level draws up to 2 pixels, none coarser than before", PIXEL_CAPS.high === 2 && PIXEL_CAPS.medium === 2 && PIXEL_CAPS.low === 2);
   check("high smooths edges, low and medium do not", PRESETS.high.aa && !PRESETS.medium.aa && !PRESETS.low.aa);
-  const busy = { ratio: 2, max: 2, avg: 33, draw: 35, fast: false, quiet: 20_000 };
-  check(
-    "on high a long draw with frames on time keeps the pixels",
-    nextPixelRatio({ ...busy, lateOnly: LATE_ONLY.high }).ratio === 2,
-    JSON.stringify(nextPixelRatio({ ...busy, lateOnly: LATE_ONLY.high })),
-  );
-  check("on low a long draw still lowers them, as before", nextPixelRatio({ ...busy, lateOnly: LATE_ONLY.low }).ratio === 1.75);
-  check("on high late frames lower them", nextPixelRatio({ ...busy, avg: 60, lateOnly: true }).ratio === 1.75);
-  check("a cap below the density brings it down at once", nextPixelRatio({ ...busy, draw: 5, max: 1.5, lateOnly: false }).ratio === 1.5);
-  check(
-    "they come back up only after quiet frames with room",
-    nextPixelRatio({ ratio: 1.5, max: 2, avg: 33, draw: 5, fast: false, quiet: 20_000, lateOnly: true }).ratio === 1.75 &&
-      nextPixelRatio({ ratio: 1.5, max: 2, avg: 33, draw: 5, fast: false, quiet: 5_000, lateOnly: true }).ratio === 1.5,
-  );
+  reliefChecks(check);
 
   // Bloom (the owner on the Fold: "Bloom looks weird when unzoomed ... lower the bloom quite a
   // bit"): none over the whole island at night (a medium island, 152 cells, is seen from about 83),
@@ -152,4 +152,142 @@ export function looksChecks(check: Check): void {
   check("bloom about half as strong as before", BLOOM_STRENGTH <= 1, `${BLOOM_STRENGTH}`);
 
   for (const f of LOOKS_FLAGS) GRAPHICS[f] = was[f];
+}
+
+// Windows of frames, as view.ts adapt feeds Relief (a second each by default), over a session; the
+// pixel ratio and the notches given up after each window.
+export function foldSession(
+  windows: number,
+  avgAt: (w: number) => number,
+  o: { level?: Quality; dpr?: number; draw?: number; windowMs?: number } = {},
+): { ratio: number; trim: number }[] {
+  const level = o.level ?? "high";
+  const dpr = o.dpr ?? 2.6;
+  const r = new Relief(Math.min(PIXEL_CAPS[level], dpr));
+  const out: { ratio: number; trim: number }[] = [];
+  for (let w = 0; w < windows; w++) {
+    r.step({
+      max: Math.min(PIXEL_CAPS[level], dpr),
+      floor: Math.min(PIXEL_FLOORS[level], dpr),
+      avg: avgAt(w),
+      draw: o.draw ?? 20,
+      fast: false,
+      lateOnly: LATE_ONLY[level],
+      useful: usefulTrims(PRESETS[level]),
+      now: w * (o.windowMs ?? 1000),
+    });
+    out.push({ ratio: r.ratio, trim: r.trim });
+  }
+  return out;
+}
+
+// The unfolded Fold (16 November): frames between 40 and 50 ms, with a busy spell of 6 s (a spell,
+// a storm) every minute and a half.
+export function foldFrames(s: number): number {
+  const jitter = 40 + ((s * 7919) % 11);
+  return s % 90 >= 20 && s % 90 < 26 ? 58 : jitter;
+}
+
+// A relief on high fed a window a second, slow or not as `slowAt` says; when it changed.
+function changesOf(windows: number, slowAt: (w: number, r: Relief) => boolean): { changes: number[]; climbs: number[]; relief: Relief } {
+  const r = new Relief(2);
+  const changes: number[] = [];
+  const climbs: number[] = [];
+  for (let w = 0; w < windows; w++) {
+    const now = w * 1000;
+    const before = r.ratio * 16 - r.trim;
+    const avg = slowAt(w, r) ? 60 : 40;
+    if (r.step({ max: 2, floor: 1.5, avg, draw: 10, fast: false, lateOnly: true, useful: usefulTrims(PRESETS.high), now })) {
+      changes.push(now);
+      if (r.ratio * 16 - r.trim > before) climbs.push(now);
+    }
+  }
+  return { changes, climbs, relief: r };
+}
+
+function reliefChecks(check: Check): void {
+  check("high and medium keep 1.5 pixels at least, low 1", PIXEL_FLOORS.high === 1.5 && PIXEL_FLOORS.medium === 1.5 && PIXEL_FLOORS.low === 1);
+  // A Fold at 40 to 50 ms a frame with busy spells, three minutes: never under the floor, extras
+  // given up before any pixel, and back to full after every busy spell (main went down to 0.6 and
+  // stayed there: frames between 38 and 52 ms neither lowered nor raised it).
+  const run = foldSession(180, foldFrames);
+  const low = Math.min(...run.map((p) => p.ratio));
+  check("a Fold at 40 to 50 ms never goes under 1.5 pixels", low >= 1.5, `lowest ${low}`);
+  check(
+    "it gives up every extra before a pixel",
+    run.every((p) => p.ratio === 2 || p.trim === TRIMS.length - 1),
+    run.map((p) => `${p.ratio}/${p.trim}`).join(" "),
+  );
+  const back = [89, 179].map((s) => run[s]);
+  check(
+    "it comes back to full after each busy spell",
+    back.every((p) => p.ratio === 2 && p.trim === 0),
+    JSON.stringify(back),
+  );
+  // Steady at 45 ms after a long slow start: back to full, not stuck.
+  const stuck = foldSession(120, (s) => (s < 15 ? 70 : 45));
+  check("frames at 45 ms after a slow start climb back", stuck[119].ratio === 2 && stuck[119].trim === 0, JSON.stringify(stuck[119]));
+  check("a slow start goes down to the floor and no lower", Math.min(...stuck.map((p) => p.ratio)) === 1.5);
+  // The review of 16 November: one slow window in three (60, 40, 40 ms, windows of 2.7 s) ended at
+  // 1.5 pixels with every extra given up, for good, as each slow window began the wait again. A
+  // slow one now and then neither lowers the looks nor keeps them down, from full or after a slow
+  // start.
+  const sometimes = (w: number) => (w % 3 === 0 ? 60 : 40);
+  const fromFull = foldSession(222, sometimes, { windowMs: 2700 });
+  check(
+    "one slow window in three keeps everything",
+    fromFull.at(-1)!.ratio === 2 && fromFull.at(-1)!.trim === 0,
+    fromFull.map((p) => `${p.ratio}/${p.trim}`).join(" "),
+  );
+  const afterSlow = foldSession(222, (w) => (w < 10 ? 70 : sometimes(w)), { windowMs: 2700 });
+  check(
+    "one slow window in three after a slow start climbs back to full",
+    afterSlow[9].ratio === 1.5 && afterSlow.at(-1)!.ratio === 2 && afterSlow.at(-1)!.trim === 0,
+    `${JSON.stringify(afterSlow[9])} then ${JSON.stringify(afterSlow.at(-1))}`,
+  );
+  // On high a long draw with frames on time gives up nothing; on low it gives up pixels at once,
+  // with no notch spent on shadows or blur it does not have.
+  const onTime = foldSession(20, () => 33, { draw: 35 });
+  check(
+    "on high a long draw with frames on time keeps everything",
+    onTime.every((p) => p.ratio === 2 && p.trim === 0),
+  );
+  const lowBusy = foldSession(2, () => 33, { level: "low", draw: 35 });
+  check("on low the first slow notch is a pixel step", lowBusy[1].ratio === 1.75 && lowBusy[1].trim === 0, JSON.stringify(lowBusy));
+  const mediumSlow = foldSession(6, () => 80, { level: "medium" });
+  check(
+    "on medium no notch is spent on the bloom and blur it does not have",
+    mediumSlow[5].trim === 2 && mediumSlow[5].ratio === 1.75,
+    JSON.stringify(mediumSlow),
+  );
+  // A device that cannot keep up at all stays at the floor with every extra given up.
+  const slow = foldSession(120, () => 80);
+  check("a device always late rests at the floor", slow[119].ratio === 1.5 && slow[119].trim === TRIMS.length - 1);
+  // Low draws up to 2 and keeps 1 at least; a long draw still counts on low (not late only).
+  const lowLevel = foldSession(60, () => 30, { level: "low", draw: 40 });
+  check("low comes down to 1 pixel and no lower", Math.min(...lowLevel.map((p) => p.ratio)) === 1, JSON.stringify(lowLevel.at(-1)));
+  // A device of fewer pixels than the floor keeps its own.
+  const plain = foldSession(30, () => 80, { dpr: 1 });
+  check(
+    "a device of 1 pixel is never raised or lowered",
+    plain.every((p) => p.ratio === 1),
+  );
+  // A device slow only with everything on (the review: 29 changes in 10 minutes): once a notch
+  // taken back has to be given up again, at most one try a minute, then fewer.
+  const flap = changesOf(600, (_w, r) => r.ratio === 2 && r.trim === 0);
+  // The first try that failed: the first climb followed by a change within 15 s.
+  const failed = flap.climbs.findIndex((t) => flap.changes.some((c) => c > t && c - t < 15_000));
+  const later = flap.climbs.slice(failed + 1);
+  check(
+    "a notch that does not hold is tried at most once a minute after",
+    failed >= 0 && flap.changes.length <= 16 && later.every((t, k) => t - (k ? later[k - 1] : flap.climbs[failed]) >= 60_000),
+    `${flap.changes.length} changes at ${flap.changes.map((t) => t / 1000).join(", ")} s`,
+  );
+  check("the wait after notches that did not hold stays long", flap.relief.wait >= 120_000, `${flap.relief.wait} ms`);
+  // The wait goes back to 10 s only once a notch taken back has held for two minutes: a device that
+  // was slow at full and is now fine. Not while it is still waiting after a failed try.
+  const settled = changesOf(900, (w, r) => w < 300 && r.ratio === 2 && r.trim === 0);
+  check("the wait comes back to 10 s once the looks have held", settled.relief.wait === 10_000, `${settled.relief.wait} ms`);
+  const notYet = changesOf(330, (w, r) => w < 300 && r.ratio === 2 && r.trim === 0);
+  check("but not while it is still waiting", notYet.relief.wait > 10_000, `${notYet.relief.wait} ms`);
 }
