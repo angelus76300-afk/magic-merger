@@ -37,6 +37,8 @@ import { Figures, figureMaterials, type Pose } from "./figures";
 import { buildRig, drawScale, paletteOf, ROLES, variantOf, type Rig } from "./rigs";
 import { easeFoot, easeGround, walkGround, type Footing } from "./walk";
 import { leanToward } from "../director";
+import { BUILDS } from "../body";
+import { carried, carry } from "./pacing";
 import { gaitOf, hipHeight, lookAround, strideRate } from "./gait";
 import { BUILTIN, C, F, G, S } from "../materials";
 import { laid } from "../roads";
@@ -150,6 +152,16 @@ export class VoxelView {
       py: number;
       pphase: number;
       pyaw: number;
+      // Where it was last drawn, how far past its tick (between) and when (frame time). A frame
+      // drawn past its tick that turns out wrong (it stopped) leaves an offset that fades
+      // (pacing.ts carry), so it is never drawn a step back at once (16 November).
+      rx?: number;
+      ry?: number;
+      la?: number;
+      tc?: number;
+      ox?: number;
+      oy?: number;
+      oc?: number;
       // A villager on a market trip: its cart's own heading, and where the villager was drawn
       // last frame, so the cart turns only as it is pulled (map.ts towCart).
       cart?: { hd: number; x: number; y: number };
@@ -1563,8 +1575,9 @@ export class VoxelView {
     const g = this.gaits.get(id);
     if (!g) return { x: c.x, y: c.y, vx: 0, vy: 0 };
     const fresh = this.world.time > g.t;
-    let px = fresh ? g.x : g.px;
-    let py = fresh ? g.y : g.py;
+    const ticks = Math.max(1, Math.round((this.world.time - g.t) / TICK));
+    let px = fresh ? g.x + (c.x - g.x) * (1 - 1 / ticks) : g.px;
+    let py = fresh ? g.y + (c.y - g.y) * (1 - 1 / ticks) : g.py;
     // A jump (a teleport) is drawn there at once.
     if (Math.hypot(c.x - px, c.y - py) > 3) {
       px = c.x;
@@ -1680,10 +1693,28 @@ export class VoxelView {
       // heading is the simulation's own (4.3, steer.ts), which turns at the
       // creature's pace and on the spot before it walks off the other way.
       const walking = k.speed * Math.sqrt(c.size);
+      // Its size in scene units: how tall, and its leg from hip to sole, for a gait that matches
+      // the ground (gait.ts).
+      const tall = rig.height * size;
+      const leg = hipHeight(rig) * size;
+      const most = k.body.plan === "four legs" ? 1 : 2;
       if (time > g.t) {
         const dt = time - g.t;
-        g.px = g.x;
-        g.py = g.y;
+        // Where it was a tick before this one: two ticks in one frame (a late frame) are drawn as
+        // the last of them, not as one tick twice as long (the playtest of 16 November).
+        const ticks = Math.max(1, Math.round(dt / TICK));
+        const px = g.x + (c.x - g.x) * (1 - 1 / ticks);
+        const py = g.y + (c.y - g.y) * (1 - 1 / ticks);
+        // What the last frame drew beyond where these ticks put it at that moment (a late frame
+        // drew it on as it was going, and it stopped or turned) is carried, and fades: it is never
+        // drawn a step back at once (the review of 16 November). At a steady pace it is 0.
+        if (g.la !== undefined && g.rx !== undefined && g.ry !== undefined) {
+          g.ox = carry(g.rx, px, c.x, g.la - ticks + 1);
+          g.oy = carry(g.ry, py, c.y, g.la - ticks + 1);
+          g.oc = g.tc;
+        }
+        g.px = px;
+        g.py = py;
         g.pphase = g.phase;
         g.pyaw = g.yaw;
         const dx = c.x - g.x;
@@ -1694,6 +1725,8 @@ export class VoxelView {
           g.speed = 0;
           g.px = c.x;
           g.py = c.y;
+          g.ox = 0;
+          g.oy = 0;
         } else {
           g.speed += (d / dt - g.speed) * Math.min(1, dt * 8);
           if (!c.dead) {
@@ -1701,7 +1734,9 @@ export class VoxelView {
             turn = Math.atan2(Math.sin(turn), Math.cos(turn));
             g.yaw += turn * Math.min(1, dt * 14);
           }
-          g.phase += Math.min(g.speed, 12) * dt * strideRate(gaitOf(g.speed, walking), size);
+          // The cycle at the pace its legs cover the ground (16 November: the feet slid).
+          const moving = Math.min(1, g.speed / 1.4);
+          g.phase += Math.min(g.speed, 12) * dt * strideRate(gaitOf(g.speed, walking, tall, most) * moving, size, leg, moving, g.speed);
         }
         // Standing: head down to its food or work, lying down, looking round.
         const idle = c.dead ? undefined : (c.data.idle as string | undefined);
@@ -1716,8 +1751,15 @@ export class VoxelView {
       // Part way from the last tick to this one: 1 at a tick, or without
       // GRAPHICS.smooth (the engine's between).
       const a = this.between;
-      const rx = g.px + (c.x - g.px) * a;
-      const ry = g.py + (c.y - g.py) * a;
+      const tc = time - (1 - a) * TICK;
+      const left = g.ox || g.oy ? carried(1, tc - (g.oc ?? tc)) : 0;
+      const rx = g.px + (c.x - g.px) * a + (g.ox ?? 0) * left;
+      const ry = g.py + (c.y - g.py) * a + (g.oy ?? 0) * left;
+      if (left && left < 0.01) g.ox = g.oy = 0;
+      g.rx = rx;
+      g.ry = ry;
+      g.la = a;
+      g.tc = tc;
       // Past the tick (a above 1, the engine's between) it walks on as it was going; it turns no
       // further than the simulation has it.
       const yaw = g.pyaw + Math.atan2(Math.sin(g.yaw - g.pyaw), Math.cos(g.yaw - g.pyaw)) * Math.min(1, a);
@@ -1774,7 +1816,7 @@ export class VoxelView {
       pose.moving = still ? 0 : Math.min(1, g.speed / 1.4);
       // A walk, a trot or a run by its speed: longer strides, a body that
       // bobs and leans into a run (4.3).
-      const gait = still ? 0 : gaitOf(g.speed, walking) * pose.moving;
+      const gait = still ? 0 : gaitOf(g.speed, walking, tall, most) * pose.moving;
       pose.gait = gait;
       pose.graze = still ? 0 : g.graze;
       pose.lie = c.dead ? 0 : g.lie;
@@ -1782,8 +1824,12 @@ export class VoxelView {
       pose.still = still;
       pose.flying = !c.dead && (k.flying || c.levitate > 0) && c.z > 0.5;
       pose.nod = asleep ? 0.35 : 0;
-      pose.pitch = rig.lean + (still ? 0 : pose.moving * 0.05 + gait * 0.04 + Math.sin(phase * 2) * 0.03 * gait);
-      if (!still && gait > 0) pose.y += Math.abs(Math.sin(phase)) * 0.05 * gait * size;
+      // A run leans into it and bounces a little at each step; a hopper leaps (16 November).
+      const hop = HOPPERS.has(k.body.build) && !pose.flying;
+      pose.hop = hop;
+      pose.glide = pose.flying && !still ? glideOf(time, c.id, g.speed / Math.max(0.1, walking)) : 0;
+      pose.pitch = rig.lean + (still ? 0 : pose.moving * 0.05 + gait * 0.07 + Math.sin(phase * 2) * 0.03 * gait);
+      if (!still && gait > 0) pose.y += Math.abs(Math.sin(phase)) * (hop ? 0.22 : 0.08) * gait * size;
       if (g.lie > 0.01 && !c.dead) pose.y -= hipHeight(rig) * 0.75 * g.lie * size;
       pose.roll = 0;
       pose.offset = (c.id % 17) * 0.37;
@@ -2549,4 +2595,14 @@ function fishDepth(c: Creature, depth: number): number {
   const r = ridden(c);
   if (!r) return Math.min(0.7, depth * 0.5);
   return 0.2 + r.dive * Math.max(0, depth * 0.85 - 0.2);
+}
+
+// Hoppers (rabbits, hares, frogs): both legs together, a leap at each stride (16 November).
+const HOPPERS = new Set([BUILDS.rabbit, BUILDS.hare, BUILDS.frog]);
+// A flier going at its pace or faster glides between bursts of flapping: 0 flapping, 1 wings held
+// out, about four seconds a round, never the whole flock at once.
+function glideOf(time: number, id: number, pace: number): number {
+  if (pace < 0.8) return 0;
+  const s = Math.sin(time * 1.5 + id * 2.3);
+  return Math.max(0, Math.min(1, (s + 0.1) * 2.5));
 }

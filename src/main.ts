@@ -234,8 +234,10 @@ async function refreshSession(): Promise<void> {
     }
   }
   // A friend playing with a link is offered an account, once: after the
-  // welcome for a new player, at once for one who has played before.
-  const offer = status.account && !status.account.claimed && !status.account.signedIn && !offeredBefore() ? () => offerAccount(status) : null;
+  // welcome for a new player, at once for one who has played before. Never
+  // the admin by token (the owner, the smoke test): its dialog covered the
+  // craft view and raced the preview smoke's first click (#168).
+  const offer = !session.admin && status.account && !status.account.claimed && !status.account.signedIn && !offeredBefore() ? () => offerAccount(status) : null;
   // A new player, or anyone opening a fresh link, reads what the game is first.
   if (!session.admin && (fromLink || !welcomedBefore())) {
     const welcome = showWelcome(status, status.account?.signedIn ? openAccount : null);
