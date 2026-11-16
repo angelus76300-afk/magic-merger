@@ -37,6 +37,8 @@ import { Figures, figureMaterials, type Pose } from "./figures";
 import { buildRig, drawScale, paletteOf, ROLES, variantOf, type Rig } from "./rigs";
 import { easeFoot, easeGround, walkGround, type Footing } from "./walk";
 import { leanToward } from "../director";
+import { BUILDS } from "../body";
+import { carried, carry } from "./pacing";
 import { gaitOf, hipHeight, lookAround, strideRate } from "./gait";
 import { BUILTIN, C, F, G, S } from "../materials";
 import { laid } from "../roads";
@@ -60,6 +62,7 @@ import { GLOWING, VARIANTS, floraModels } from "./flora";
 import { Buildings } from "./buildings";
 import { FINE_VARIANTS, OLD_TREES, cubeTree, fineFocus, geometryOfMesh, refocus, treeSize, type FineFocus } from "./cubes";
 import { WonderModels } from "./wonders";
+import { CLOUD_CUBE, CubeFlames, cloudMaterial, coverCubeGlows, coverCubeKeys, coverInCubes, nearestFlames, puffyCloud } from "./cover-cubes";
 import { PropModels } from "./props";
 import { valueNoise } from "../noise";
 import { LAB_SKY, Sky, skyBodies } from "./sky";
@@ -149,6 +152,16 @@ export class VoxelView {
       py: number;
       pphase: number;
       pyaw: number;
+      // Where it was last drawn, how far past its tick (between) and when (frame time). A frame
+      // drawn past its tick that turns out wrong (it stopped) leaves an offset that fades
+      // (pacing.ts carry), so it is never drawn a step back at once (16 November).
+      rx?: number;
+      ry?: number;
+      la?: number;
+      tc?: number;
+      ox?: number;
+      oy?: number;
+      oc?: number;
       // A villager on a market trip: its cart's own heading, and where the villager was drawn
       // last frame, so the cart turns only as it is pulled (map.ts towCart).
       cart?: { hd: number; x: number; y: number };
@@ -193,6 +206,10 @@ export class VoxelView {
   private domes = new Domes(this.scene);
   private lights: Sprite[] = [];
   private clouds: InstancedMesh;
+  // In small cubes (cover-cubes.ts): flames that flicker by frames, puffy clouds.
+  private cubeFlames: CubeFlames;
+  private puffyClouds: InstancedMesh;
+  private burning: number[] = [];
   // Rain seen from afar, under a front's cloud.
   private rainShafts: InstancedMesh;
   // Materials tinted by the time of day (fire and glows are not).
@@ -308,6 +325,7 @@ export class VoxelView {
     this.figures = new Figures(this.scene, figureMats);
     this.markMesh = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true }), 900);
     this.flames = this.instanced("flame", new MeshBasicMaterial({ vertexColors: true }), 5000);
+    this.cubeFlames = new CubeFlames(this.scene, this.flames.material as Material, 2500);
     this.puffs = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.22, depthWrite: false }), 4000);
     // Smoke, steam and a bolt's halo write no depth: drawn after the water
     // (renderOrder 2), or the water covers the part in front of it.
@@ -317,6 +335,10 @@ export class VoxelView {
     this.dullPoints = pointCloud(world.particles.capacity, false, this.glowTexture);
     this.scene.add(this.glowPoints, this.dullPoints);
     this.clouds = this.makeClouds();
+    this.puffyClouds = new InstancedMesh(geometryOfMesh(puffyCloud()), cloudMaterial(), 10);
+    this.puffyClouds.count = 0;
+    this.puffyClouds.frustumCulled = false;
+    this.scene.add(this.puffyClouds);
     this.rainShafts = new InstancedMesh(
       geometryOf(MODELS.puff),
       new MeshBasicMaterial({ color: 0xc4d2e4, transparent: true, opacity: 0.2, depthWrite: false }),
@@ -348,6 +370,7 @@ export class VoxelView {
       basic,
       this.puffs.material as MeshBasicMaterial,
       this.clouds.material as MeshBasicMaterial,
+      this.puffyClouds.material as MeshBasicMaterial,
       figureMats.lit,
       this.farRoads.material as MeshBasicMaterial,
       this.plumes.material as MeshBasicMaterial,
@@ -357,7 +380,7 @@ export class VoxelView {
     this.looks = new Looks(
       this.renderer,
       this.scene,
-      new Set([this.farRoads, this.markMesh, this.windows, this.flames, this.boltCore, this.decorGlow, this.rainShafts]),
+      new Set([this.farRoads, this.markMesh, this.windows, this.flames, ...this.cubeFlames.meshes, this.boltCore, this.decorGlow, this.rainShafts]),
     );
     for (const m of [land, basic, figureMats.lit]) this.looks.receive(m);
     // What blooms at night: what shines by itself, and lava (looks.ts glow mask).
@@ -691,7 +714,9 @@ export class VoxelView {
     const own = far ? key.slice(4) : key;
     // A tree in small cubes (cubes.ts): "cube:oak:0:9", its kind, variant and size in cubes.
     const cube = own.startsWith("cube:") ? own.split(":") : null;
-    const boxes0 = MODELS[own] ?? FLORA_MODELS[own] ?? MODELS.block;
+    // A rock, shrub, cactus, crystal or stump in cubes has its shape after its name: "boulder#2".
+    const name = own.split("#")[0];
+    const boxes0 = MODELS[name] ?? FLORA_MODELS[name] ?? MODELS.block;
     const boxes = far ? farTreeModel(boxes0) : boxes0;
     // With the small cubes on, every other cover's model in cubes of the one size too (shapes.ts
     // boxesInCubes): shrubs, cacti, flowers, crops, fences (15 November).
@@ -700,9 +725,9 @@ export class VoxelView {
       : cube
         ? geometryOfMesh(cubeTree(cube[1] as never, Number(cube[2]), Number(cube[3])))
         : GRAPHICS.cubes && !far
-          ? geometryOfMesh(boxesInCubes(boxes))
+          ? geometryOfMesh(coverInCubes(own) ?? boxesInCubes(boxes))
           : geometryOf(boxes);
-    const glows = GLOWING.has(key) || (cube !== null && cube[1] === "glowcap");
+    const glows = GLOWING.has(key) || coverCubeGlows(key) || (cube !== null && cube[1] === "glowcap");
     const bigger = new InstancedMesh(geometry, glows ? this.glowMaterial : this.coverMaterial, Math.max(64, Math.ceil(need * 1.5)));
     withColors(bigger);
     bigger.count = 0;
@@ -888,6 +913,7 @@ export class VoxelView {
       this.coversCubes = GRAPHICS.cubes;
       for (const mesh of this.covers.values()) {
         this.scene.remove(mesh);
+        mesh.geometry.dispose();
         mesh.dispose();
       }
       this.covers.clear();
@@ -949,7 +975,8 @@ export class VoxelView {
           continue;
         }
       }
-      add(key, i);
+      if (GRAPHICS.cubes) for (const k of coverCubeKeys(key, cellHash(i), world.ground[i])) add(k, i);
+      else add(key, i);
     }
     // 4.9: pegs every few cells along a road marked out and not laid yet.
     for (const r of world.roads)
@@ -1555,8 +1582,9 @@ export class VoxelView {
     const g = this.gaits.get(id);
     if (!g) return { x: c.x, y: c.y, vx: 0, vy: 0 };
     const fresh = this.world.time > g.t;
-    let px = fresh ? g.x : g.px;
-    let py = fresh ? g.y : g.py;
+    const ticks = Math.max(1, Math.round((this.world.time - g.t) / TICK));
+    let px = fresh ? g.x + (c.x - g.x) * (1 - 1 / ticks) : g.px;
+    let py = fresh ? g.y + (c.y - g.y) * (1 - 1 / ticks) : g.py;
     // A jump (a teleport) is drawn there at once.
     if (Math.hypot(c.x - px, c.y - py) > 3) {
       px = c.x;
@@ -1672,10 +1700,28 @@ export class VoxelView {
       // heading is the simulation's own (4.3, steer.ts), which turns at the
       // creature's pace and on the spot before it walks off the other way.
       const walking = k.speed * Math.sqrt(c.size);
+      // Its size in scene units: how tall, and its leg from hip to sole, for a gait that matches
+      // the ground (gait.ts).
+      const tall = rig.height * size;
+      const leg = hipHeight(rig) * size;
+      const most = k.body.plan === "four legs" ? 1 : 2;
       if (time > g.t) {
         const dt = time - g.t;
-        g.px = g.x;
-        g.py = g.y;
+        // Where it was a tick before this one: two ticks in one frame (a late frame) are drawn as
+        // the last of them, not as one tick twice as long (the playtest of 16 November).
+        const ticks = Math.max(1, Math.round(dt / TICK));
+        const px = g.x + (c.x - g.x) * (1 - 1 / ticks);
+        const py = g.y + (c.y - g.y) * (1 - 1 / ticks);
+        // What the last frame drew beyond where these ticks put it at that moment (a late frame
+        // drew it on as it was going, and it stopped or turned) is carried, and fades: it is never
+        // drawn a step back at once (the review of 16 November). At a steady pace it is 0.
+        if (g.la !== undefined && g.rx !== undefined && g.ry !== undefined) {
+          g.ox = carry(g.rx, px, c.x, g.la - ticks + 1);
+          g.oy = carry(g.ry, py, c.y, g.la - ticks + 1);
+          g.oc = g.tc;
+        }
+        g.px = px;
+        g.py = py;
         g.pphase = g.phase;
         g.pyaw = g.yaw;
         const dx = c.x - g.x;
@@ -1686,6 +1732,8 @@ export class VoxelView {
           g.speed = 0;
           g.px = c.x;
           g.py = c.y;
+          g.ox = 0;
+          g.oy = 0;
         } else {
           g.speed += (d / dt - g.speed) * Math.min(1, dt * 8);
           if (!c.dead) {
@@ -1693,7 +1741,9 @@ export class VoxelView {
             turn = Math.atan2(Math.sin(turn), Math.cos(turn));
             g.yaw += turn * Math.min(1, dt * 14);
           }
-          g.phase += Math.min(g.speed, 12) * dt * strideRate(gaitOf(g.speed, walking), size);
+          // The cycle at the pace its legs cover the ground (16 November: the feet slid).
+          const moving = Math.min(1, g.speed / 1.4);
+          g.phase += Math.min(g.speed, 12) * dt * strideRate(gaitOf(g.speed, walking, tall, most) * moving, size, leg, moving, g.speed);
         }
         // Standing: head down to its food or work, lying down, looking round.
         const idle = c.dead ? undefined : (c.data.idle as string | undefined);
@@ -1708,8 +1758,15 @@ export class VoxelView {
       // Part way from the last tick to this one: 1 at a tick, or without
       // GRAPHICS.smooth (the engine's between).
       const a = this.between;
-      const rx = g.px + (c.x - g.px) * a;
-      const ry = g.py + (c.y - g.py) * a;
+      const tc = time - (1 - a) * TICK;
+      const left = g.ox || g.oy ? carried(1, tc - (g.oc ?? tc)) : 0;
+      const rx = g.px + (c.x - g.px) * a + (g.ox ?? 0) * left;
+      const ry = g.py + (c.y - g.py) * a + (g.oy ?? 0) * left;
+      if (left && left < 0.01) g.ox = g.oy = 0;
+      g.rx = rx;
+      g.ry = ry;
+      g.la = a;
+      g.tc = tc;
       // Past the tick (a above 1, the engine's between) it walks on as it was going; it turns no
       // further than the simulation has it.
       const yaw = g.pyaw + Math.atan2(Math.sin(g.yaw - g.pyaw), Math.cos(g.yaw - g.pyaw)) * Math.min(1, a);
@@ -1766,7 +1823,7 @@ export class VoxelView {
       pose.moving = still ? 0 : Math.min(1, g.speed / 1.4);
       // A walk, a trot or a run by its speed: longer strides, a body that
       // bobs and leans into a run (4.3).
-      const gait = still ? 0 : gaitOf(g.speed, walking) * pose.moving;
+      const gait = still ? 0 : gaitOf(g.speed, walking, tall, most) * pose.moving;
       pose.gait = gait;
       pose.graze = still ? 0 : g.graze;
       pose.lie = c.dead ? 0 : g.lie;
@@ -1774,8 +1831,12 @@ export class VoxelView {
       pose.still = still;
       pose.flying = !c.dead && (k.flying || c.levitate > 0) && c.z > 0.5;
       pose.nod = asleep ? 0.35 : 0;
-      pose.pitch = rig.lean + (still ? 0 : pose.moving * 0.05 + gait * 0.04 + Math.sin(phase * 2) * 0.03 * gait);
-      if (!still && gait > 0) pose.y += Math.abs(Math.sin(phase)) * 0.05 * gait * size;
+      // A run leans into it and bounces a little at each step; a hopper leaps (16 November).
+      const hop = HOPPERS.has(k.body.build) && !pose.flying;
+      pose.hop = hop;
+      pose.glide = pose.flying && !still ? glideOf(time, c.id, g.speed / Math.max(0.1, walking)) : 0;
+      pose.pitch = rig.lean + (still ? 0 : pose.moving * 0.05 + gait * 0.07 + Math.sin(phase * 2) * 0.03 * gait);
+      if (!still && gait > 0) pose.y += Math.abs(Math.sin(phase)) * (hop ? 0.22 : 0.08) * gait * size;
       if (g.lie > 0.01 && !c.dead) pose.y -= hipHeight(rig) * 0.75 * g.lie * size;
       pose.roll = 0;
       pose.offset = (c.id % 17) * 0.37;
@@ -1857,20 +1918,30 @@ export class VoxelView {
     let f = 0;
     let g = 0;
     const flameColors = [0xffd36a, 0xffa43a, 0xff6a1a, 0xe8420f];
+    // With the small cubes, the burning cells nearest the camera in cubes, the others as boxes
+    // (cover-cubes.ts FLAME_CUBES): gathered first, placed after the loop.
+    const cubes = GRAPHICS.cubes;
+    const burning = this.burning;
+    burning.length = 0;
+    const flame = (i: number) => {
+      const fire = world.fire[i];
+      const base = columnTop(world, i) + (world.cover[i] === C.TREE || world.cover[i] === C.HOUSE ? 0.6 : 0);
+      const p = this.toScene((i % world.w) + 0.5, Math.floor(i / world.w) + 0.5, base);
+      if (near?.has(i)) return this.cubeFlames.add(p.x, p.y, p.z, fire, i, time);
+      const flick = 0.5 + 0.5 * Math.sin(time * 18 + i * 1.7);
+      const h = (0.4 + fire * 1.2) * (0.7 + flick * 0.6);
+      this.m.makeScale(0.7, h, 0.7);
+      this.m.setPosition(p.x, p.y, p.z);
+      this.flames.setMatrixAt(f, this.m);
+      this.flames.setColorAt(f, this.col.setHex(flameColors[(i + Math.floor(time * 12)) % 4]));
+      f++;
+    };
+    let near: Set<number> | null = null;
     for (let i = 0; i < world.n; i++) {
       const fire = world.fire[i];
-      if (fire > 0.05 && f < 5000) {
-        const x = i % world.w;
-        const y = Math.floor(i / world.w);
-        const base = columnTop(world, i) + (world.cover[i] === C.TREE || world.cover[i] === C.HOUSE ? 0.6 : 0);
-        const flick = 0.5 + 0.5 * Math.sin(time * 18 + i * 1.7);
-        const h = (0.4 + fire * 1.2) * (0.7 + flick * 0.6);
-        this.m.makeScale(0.7, h, 0.7);
-        const p = this.toScene(x + 0.5, y + 0.5, base);
-        this.m.setPosition(p.x, p.y, p.z);
-        this.flames.setMatrixAt(f, this.m);
-        this.flames.setColorAt(f, this.col.setHex(flameColors[(i + Math.floor(time * 12)) % 4]));
-        f++;
+      if (fire > 0.05 && f + burning.length < 5000) {
+        if (cubes) burning.push(i);
+        else flame(i);
       }
       // Gas is sampled every other cell, so a big cloud stays affordable.
       const amt = world.gasAmt[i];
@@ -1886,7 +1957,14 @@ export class VoxelView {
         g++;
       }
     }
+    this.cubeFlames.begin();
+    if (cubes) {
+      const at = this.orbit.eye ?? { x: this.orbit.tx, y: this.orbit.ty };
+      near = nearestFlames(burning, (i) => ((i % world.w) - at.x) ** 2 + (Math.floor(i / world.w) - at.y) ** 2);
+      for (const i of burning) flame(i);
+    }
     this.flames.count = f;
+    this.cubeFlames.finish();
     this.puffs.count = g;
     this.flames.instanceMatrix.needsUpdate = true;
     this.puffs.instanceMatrix.needsUpdate = true;
@@ -2151,6 +2229,15 @@ export class VoxelView {
       const cx = Math.cos(a) * d;
       const cz = Math.sin(a) * d;
       const cy = 10 + (c % 4) * 7;
+      // In small cubes: one puffy cloud (cover-cubes.ts), turned and sized by its number.
+      if (GRAPHICS.cubes) {
+        const s = (1.1 + (c % 3) * 0.2) * (CLOUD_CUBE / 0.9);
+        this.m.makeRotationY(c * 1.3);
+        this.m.scale(this.v.set(s, s * (0.8 + (c % 2) * 0.2), s));
+        this.m.setPosition(cx, cy, cz);
+        this.puffyClouds.setMatrixAt(c, this.m);
+        continue;
+      }
       for (let k = 0; k < 9; k++) {
         const s = 3 + ((c * 7 + k * 3) % 4);
         this.m.makeScale(s * 1.4, s * 0.6, s);
@@ -2213,6 +2300,8 @@ export class VoxelView {
     this.rainShafts.count = shafts;
     this.rainShafts.instanceMatrix.needsUpdate = true;
     this.clouds.count = n;
+    this.puffyClouds.count = GRAPHICS.cubes ? 10 : 0;
+    this.puffyClouds.instanceMatrix.needsUpdate = true;
     // From the eyes a storm overhead is 40 cells up, past the mist of the eye view: without
     // this it was a blank grey. The clouds take no mist there; from the sky they do, as before.
     const cm = this.clouds.material as MeshBasicMaterial;
@@ -2228,6 +2317,10 @@ export class VoxelView {
   // next engine reuses the same canvas and so the same WebGL context.
   dispose(): void {
     this.domes.dispose();
+    this.cubeFlames.dispose();
+    this.scene.remove(this.puffyClouds);
+    this.puffyClouds.geometry.dispose();
+    this.puffyClouds.dispose();
     this.buildings.dispose();
     this.wonderModels.dispose();
     this.propModels.dispose();
@@ -2509,4 +2602,14 @@ function fishDepth(c: Creature, depth: number): number {
   const r = ridden(c);
   if (!r) return Math.min(0.7, depth * 0.5);
   return 0.2 + r.dive * Math.max(0, depth * 0.85 - 0.2);
+}
+
+// Hoppers (rabbits, hares, frogs): both legs together, a leap at each stride (16 November).
+const HOPPERS = new Set([BUILDS.rabbit, BUILDS.hare, BUILDS.frog]);
+// A flier going at its pace or faster glides between bursts of flapping: 0 flapping, 1 wings held
+// out, about four seconds a round, never the whole flock at once.
+function glideOf(time: number, id: number, pace: number): number {
+  if (pace < 0.8) return 0;
+  const s = Math.sin(time * 1.5 + id * 2.3);
+  return Math.max(0, Math.min(1, (s + 0.1) * 2.5));
 }

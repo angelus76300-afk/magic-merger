@@ -344,7 +344,10 @@ export function propLocal(p: Prop, simple = false, k = 1, mx = 0, my = 0): Local
         : boxes.map((b) => ({ ...b, x: (b.x - mx) * k, y: (b.y - my) * k, z: b.z * k, w: b.w * k, d: b.d * k, h: b.h * k }));
     const g = voxelize(sized, LOOK_VOXEL);
     // A stored look of plain boxes: its faces in soft patches of tone, as the land and the trees.
-    if (!isSoft(p)) tonePatches(g);
+    if (!isSoft(p)) {
+      tonePatches(g);
+      edgeLight(g);
+    }
     meshGrid(g, out);
     return out;
   }
@@ -383,6 +386,7 @@ export function boxesInCubes(boxes: Box[]): LocalMesh {
       LOOK_VOXEL,
     );
     tonePatches(g);
+    edgeLight(g);
     meshGrid(g, m);
   }
   inCubes.set(boxes, m);
@@ -392,8 +396,10 @@ export function boxesInCubes(boxes: Box[]): LocalMesh {
 // A model of plain boxes in cubes reads as one smooth box (15 November, the owner: every asset in
 // the small cubes): its cubes take one of PATCH_TONES in soft patches a few cubes across, as the
 // land's ground and the trees' crowns do, calm rather than speckled. By the cube's place in the
-// model, so the same model is the same every time; what glows keeps its colour.
-const PATCH_TONES = [0.94, 0.98, 1.02, 1.05];
+// model, so the same model is the same every time; what glows keeps its colour. Plus or minus about
+// a tenth (16 November, the owner: the patches of 15 November, a few percent, did not show: a big
+// wonder still read as flat yellow and red boxes).
+export const PATCH_TONES = [0.9, 0.96, 1.04, 1.1];
 const PATCH_CUBES = 3.5;
 function tonePatches(g: VoxelGrid): void {
   const h = (x: number, y: number, z: number) => {
@@ -429,4 +435,33 @@ function tonePatches(g: VoxelGrid): void {
         const ch = (sh: number) => Math.max(0, Math.min(255, Math.round(((c >> sh) & 255) * k)));
         g.color[i] = (ch(16) << 16) | (ch(8) << 8) | ch(0);
       }
+}
+
+// The edges of a model of boxes in cubes (16 November): a cube on a top edge (open above and to a
+// side) a little lighter, one on a bottom edge (open under and to a side, above the ground) a
+// little darker, so even a stored look of big plain boxes reads as built of small cubes, as a toy's
+// bevelled bricks. What glows keeps its colour.
+export const EDGE_LIGHT = 1.12;
+export const EDGE_DARK = 0.86;
+function edgeLight(g: VoxelGrid): void {
+  const [nx, ny, nz] = g.n;
+  const groundZ = Math.round(-g.o[2] / g.s);
+  const filled = (x: number, y: number, z: number) => x >= 0 && y >= 0 && z >= 0 && x < nx && y < ny && z < nz && g.color[(z * ny + y) * nx + x] >= 0;
+  const k = new Float32Array(nx * ny * nz);
+  for (let z = 0; z < nz; z++)
+    for (let y = 0; y < ny; y++)
+      for (let x = 0; x < nx; x++) {
+        const i = (z * ny + y) * nx + x;
+        if (g.color[i] < 0 || g.glow[i]) continue;
+        const side = !filled(x + 1, y, z) || !filled(x - 1, y, z) || !filled(x, y + 1, z) || !filled(x, y - 1, z);
+        if (!side) continue;
+        if (!filled(x, y, z + 1)) k[i] = EDGE_LIGHT;
+        else if (z > groundZ && !filled(x, y, z - 1)) k[i] = EDGE_DARK;
+      }
+  for (let i = 0; i < k.length; i++) {
+    if (!k[i]) continue;
+    const c = g.color[i];
+    const ch = (sh: number) => Math.max(0, Math.min(255, Math.round(((c >> sh) & 255) * k[i])));
+    g.color[i] = (ch(16) << 16) | (ch(8) << 8) | ch(0);
+  }
 }
