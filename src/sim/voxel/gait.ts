@@ -50,6 +50,31 @@ export function legAngle(phase: number, swing: number, d: number): number {
   return Math.asin(Math.max(-1, Math.min(1, stride(phase, d) * Math.sin(swing))));
 }
 
+// The four limbs' angles (radians) at `phase` of the cycle, as the figures draw them: legs by
+// their stride, arms by the same stride (16 November: the arms kept a sine, a quarter cycle off
+// the legs). LEG_A and ARM_A are on opposite sides of the body (rigs.ts: a leg on the right is
+// LEG_A, an arm on the right ARM_B), so ARM_A swings with LEG_A: each arm swings against the leg on
+// its own side, as people walk and run. `hop`: both legs together.
+export interface Limbs {
+  legA: number;
+  legB: number;
+  armA: number;
+  armB: number;
+}
+export function limbs(phase: number, gait: number, moving: number, lie: number, hop = false, out?: Limbs): Limbs {
+  const o = out ?? { legA: 0, legB: 0, armA: 0, armB: 0 };
+  const d = duty(gait);
+  const amp = moving * (0.8 + gait * 0.3) * (1 - lie);
+  const reach = 0.6 * amp;
+  o.legA = legAngle(phase, reach, d);
+  o.legB = hop ? o.legA : legAngle(phase + Math.PI, reach, d);
+  // Wider at a run.
+  const arm = (0.5 + gait * 0.3) * amp;
+  o.armA = arm * stride(phase, d);
+  o.armB = arm * stride(phase + Math.PI, d);
+  return o;
+}
+
 // How far the stride cycle advances per cell walked (radians). With `leg`, the leg's length in
 // scene units (hip to sole), the steps match the ground (16 November): a foot on the ground for
 // duty of the cycle moves back 2 leg sin(swing), as fast as the body goes forward, so it does not

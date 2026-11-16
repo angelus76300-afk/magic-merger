@@ -1,6 +1,6 @@
 import { BoxGeometry, BufferAttribute, Color, Euler, InstancedMesh, Matrix4, MeshBasicMaterial, type Material, type Scene } from "three";
 import { A, R, ROLES, type Part, type Rig } from "./rigs";
-import { duty, legAngle } from "./gait";
+import { limbs, type Limbs } from "./gait";
 
 // Draws creatures (3.5): every part of every figure is one instance of the
 // same unit cube, in two draw calls whatever the mix of bodies: one for what
@@ -362,16 +362,17 @@ export class Figures {
     // opposite pairs, so the B side is the same cosine and the opposite sine.
     // Legs by their stride (gait.ts legAngle, 16 November): the foot on the ground moves back
     // evenly, as fast as the body goes, so it stays where it was set down.
-    const reach = 0.6 * pose.moving * (0.8 + gait * 0.3) * (1 - lie);
-    const legA = legAngle(pose.phase, reach, duty(gait));
-    const legBAngle = pose.hop ? legA : legAngle(pose.phase + Math.PI, reach, duty(gait));
-    const legC = Math.cos(legA);
-    const legS = Math.sin(legA);
-    const legBC = Math.cos(legBAngle);
-    const legBS = Math.sin(legBAngle);
+    const l = limbs(pose.phase, gait, pose.moving, lie, !!pose.hop, LIMBS);
+    const legC = Math.cos(l.legA);
+    const legS = Math.sin(l.legA);
+    const legBC = Math.cos(l.legB);
+    const legBS = Math.sin(l.legB);
     // Arms swing wider at a run (16 November: a run, not a walk played fast).
-    const armC = Math.cos((0.5 + gait * 0.3) * swing);
-    const armS = Math.sin((0.5 + gait * 0.3) * swing);
+    // Arms by the same stride as the legs, each against the leg on its side (gait.ts limbs).
+    const armC = Math.cos(l.armA);
+    const armS = Math.sin(l.armA);
+    const armBC = Math.cos(l.armB);
+    const armBS = Math.sin(l.armB);
     const flapC = Math.cos(flap);
     const flapS = Math.sin(flap);
     const nodC = Math.cos(nod);
@@ -402,7 +403,7 @@ export class Figures {
           turn(a, 0, armC, armS, px, py, pz);
           break;
         case A.ARM_B:
-          turn(a, 0, armC, -armS, px, py, pz);
+          turn(a, 0, armBC, armBS, px, py, pz);
           break;
         case A.WING_L:
           turn(a, 2, flapC, flapS, px, py, pz);
@@ -502,3 +503,6 @@ export class Figures {
     }
   }
 }
+
+// The limbs' angles of the figure being placed, reused.
+const LIMBS: Limbs = { legA: 0, legB: 0, armA: 0, armB: 0 };

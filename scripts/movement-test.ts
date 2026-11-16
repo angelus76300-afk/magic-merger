@@ -15,7 +15,7 @@ import { CHUNK, Terrain, builtGround, columnTop } from "../src/sim/voxel/terrain
 import { GRAPHICS } from "../src/sim/voxel/graphics";
 import { STEP, easeFoot, easeGround, walkGround, type Footing } from "../src/sim/voxel/walk";
 import { carried, carry, drawBetween, ticksDue } from "../src/sim/voxel/pacing";
-import { RUN_BH, duty, footSlide, gaitOf, hipHeight, legSwing, strideRate } from "../src/sim/voxel/gait";
+import { RUN_BH, duty, footSlide, gaitOf, hipHeight, legSwing, limbs, strideRate } from "../src/sim/voxel/gait";
 import { buildRig, drawScale } from "../src/sim/voxel/rigs";
 import { KINDS } from "../src/sim/creatures";
 import { OrbitCamera } from "../src/sim/voxel/orbit";
@@ -393,7 +393,27 @@ export function movementChecks(check: Check): void {
       "swallow nest",
       "fertile soil",
     ];
-    const built = ["stone wall", "rootwall", "marble floor", "cobblestone", "brick", "paving", "temple steps", "stone tiles", "dirt road", "castle keep"];
+    const built = [
+      "stone wall",
+      "rootwall",
+      "marble floor",
+      "cobblestone",
+      "brick",
+      "paving",
+      "temple steps",
+      "stone tiles",
+      "dirt road",
+      "castle keep",
+      "mudbrick",
+      "redbrick",
+      "stonebrick",
+      "stone-brick",
+      "brickwork",
+      "floorboards",
+      "plankwood",
+      "clay tile",
+      "stone paving",
+    ];
     const wrong = [...natural.filter((n) => builtGround(n)), ...built.filter((n) => !builtGround(n))];
     check("a spell's ground is built only when its name says so", wrong.length === 0, wrong.join(", "));
   }
@@ -497,5 +517,42 @@ export function movementChecks(check: Check): void {
       rows.length === 4 && worst < 0.15 && worstBefore > 0.3 && gaitOf(3, v.speed, vt) > 1.5 && gaitOf(1, v.speed, vt) === 0 && RUN_BH === 2,
       rows.join("; "),
     );
+  }
+
+  // Each arm swings against the leg on its own side (the review of 16 November: the arms kept a
+  // sine, a quarter cycle off the stride, corr 0.35 at a walk, -0.21 at a run). In the rigs a leg
+  // on the right is LEG_A and an arm on the right ARM_B (rigs.ts), so ARM_B against LEG_A.
+  {
+    const corr = (a: number[], b: number[]) => {
+      const ma = a.reduce((s, v) => s + v, 0) / a.length;
+      const mb = b.reduce((s, v) => s + v, 0) / b.length;
+      let ab = 0;
+      let aa = 0;
+      let bb = 0;
+      for (let k = 0; k < a.length; k++) {
+        ab += (a[k] - ma) * (b[k] - mb);
+        aa += (a[k] - ma) ** 2;
+        bb += (b[k] - mb) ** 2;
+      }
+      return ab / Math.sqrt(aa * bb);
+    };
+    const rows: string[] = [];
+    let ok = true;
+    for (const gait of [0, 1, 1.87]) {
+      const leg: number[] = [];
+      const own: number[] = [];
+      const other: number[] = [];
+      for (let k = 0; k < 360; k++) {
+        const l = limbs((k / 360) * 2 * Math.PI, gait, 1, 0);
+        leg.push(l.legA);
+        own.push(l.armB);
+        other.push(l.armA);
+      }
+      const same = corr(own, leg);
+      const opposite = corr(other, leg);
+      if (!(same < -0.8 && opposite > 0.8)) ok = false;
+      rows.push(`gait ${gait}: arm on the leg's side ${same.toFixed(3)}, other arm ${opposite.toFixed(3)}`);
+    }
+    check("each arm swings against the leg on its own side", ok, rows.join("; "));
   }
 }

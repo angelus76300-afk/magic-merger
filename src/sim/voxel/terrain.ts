@@ -1245,10 +1245,11 @@ function drawFacing(g: BufferGeometry, low: boolean, x: number, z: number, sun: 
 // earth, a tree's wood) takes its curves as natural ground does. Its wrong cases: a built thing named
 // for what it is made of (a "worldwood" trunk curves on top; its sides stay sheer, as anything two
 // voxels above its neighbours does), and natural ground with a built word in its name.
-// Whole words only (the review of 16 November: "plankton" and "wallow" are not built); a wall or a
-// floor also as the end of one ("rootwall", "stonefloor").
+// Whole words (the review of 16 November: "plankton", "wallow" and "fertile" are not built), or a
+// built word at the end of a compound ("rootwall", "stonefloor", "mudbrick", "stone-brick",
+// "floorboards") or at its start before work, wood or boards ("brickwork", "plankwood").
 const BUILT_PART =
-  /\b\w*(wall|floor)s?\b|\b(bricks?|cobbles?|cobblestones?|planks?|paved|paving|pavement|masonry|concrete|cement|asphalt|tarmac|flagstones?|mosaic)\b/;
+  /\b\w*(wall|floor)s?\b|\b(floor|brick|plank|board)(work|wood|boards?)\b|\b[\w-]*(bricks?|planks?|boards?)\b|\b(cobbles?|cobblestones?|paved|paving|pavement|masonry|concrete|cement|asphalt|tarmac|flagstones?|mosaic)\b/;
 const BUILT_WORD =
   /\b(road|path|street|tiles?|slabs?|blocks?|deck|bridge|tower|rampart|fort|castle|keep|plaza|courtyard|court|stairs?|steps|pillar|column|platform|foundation|plinth|altar|dais|boards?|terrace)\b/;
 const builtNames = new Map<string, boolean>();
