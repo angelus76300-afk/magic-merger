@@ -1,4 +1,4 @@
-import { GRAPHICS, LATE_ONLY, LOOKS_STATE, PIXEL_CAPS, PIXEL_FLOORS, Relief, TRIM, setLooksChoice } from "./graphics";
+import { GRAPHICS, LATE_ONLY, LOOKS_STATE, PIXEL_CAPS, PIXEL_FLOORS, Relief, TRIM, setLooksChoice, usefulTrims } from "./graphics";
 import { Looks } from "./looks";
 import { fronts } from "../weather";
 import {
@@ -627,6 +627,15 @@ export class VoxelView {
   // The Perf Lab pins the pixel density, so two runs draw the same pixels (4.4).
   fixedPixelRatio: number | null = null;
 
+  // Whether the relief has given up all it can, or nothing (graphics.ts QualityChooser).
+  private reliefNow(): { spent: boolean; full: boolean } {
+    const level = LOOKS_STATE.level;
+    const dpr = window.devicePixelRatio || 1;
+    const max = Math.min(PIXEL_CAPS[level], dpr);
+    const r = this.relief;
+    return { spent: r.spent(usefulTrims(GRAPHICS), Math.min(PIXEL_FLOORS[level], max)), full: r.trim === 0 && this.pixelRatio >= max };
+  }
+
   // Give up extras, then pixels, when frames are slow; take them back when they are on time.
   private adapt(ms: number, dt: number): void {
     if (this.fixedPixelRatio !== null) {
@@ -641,12 +650,7 @@ export class VoxelView {
     this.drawTimes.push(ms);
     // The looks' level, from the device's own frames in the sky view (graphics.ts QualityChooser).
     const choice = LOOKS_STATE.choice;
-    if (
-      choice?.level === "auto" &&
-      !this.orbit.eye &&
-      LOOKS_STATE.chooser.feed(dt * 1000, ms, this.paceMs, this.pixelRatio, Math.min(PIXEL_CAPS[LOOKS_STATE.level], window.devicePixelRatio || 1))
-    )
-      setLooksChoice(choice);
+    if (choice?.level === "auto" && !this.orbit.eye && LOOKS_STATE.chooser.feed(dt * 1000, ms, this.paceMs, this.reliefNow())) setLooksChoice(choice);
     if (this.frameTimes.length < 60) return;
     const avg = this.frameTimes.reduce((a, b) => a + b, 0) / this.frameTimes.length;
     const draw = this.drawTimes.reduce((a, b) => a + b, 0) / this.drawTimes.length;
@@ -659,6 +663,7 @@ export class VoxelView {
     const changed = this.relief.step({
       max: Math.min(PIXEL_CAPS[level], dpr),
       floor: Math.min(PIXEL_FLOORS[level], dpr),
+      useful: usefulTrims(GRAPHICS),
       avg,
       draw,
       fast: this.paceMs < 25,

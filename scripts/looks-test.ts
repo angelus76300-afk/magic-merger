@@ -6,6 +6,7 @@
 import { Color } from "three";
 import {
   AUTO_CHOICE,
+  usefulTrims,
   GRAPHICS,
   LOOKS_FLAGS,
   PRESETS,
@@ -76,18 +77,25 @@ export function looksChecks(check: Check): void {
   // up to high when they are kept with room, and never see-sawing.
   const slow = new QualityChooser();
   const atPace = 1000 / 30;
-  check("a slow device drops to low", slow.decide(atPace * 2, 30, atPace, 0.6, 2) === "low", `level ${slow.level}`);
-  check("it does not drop past low", slow.decide(atPace * 2, 30, atPace, 0.6, 2) === null && slow.level === "low");
+  check("a slow device drops to low", slow.decide(atPace * 2, 30, atPace, { spent: true, full: false }) === "low", `level ${slow.level}`);
+  check("it does not drop past low", slow.decide(atPace * 2, 30, atPace, { spent: true, full: false }) === null && slow.level === "low");
   const fast = new QualityChooser();
-  check("a fast device rises to high", fast.decide(atPace, 5, atPace, 2, 2) === "high", `level ${fast.level}`);
+  check("a fast device rises to high", fast.decide(atPace, 5, atPace, { spent: false, full: true }) === "high", `level ${fast.level}`);
   const seesaw = new QualityChooser();
-  seesaw.decide(atPace * 2, 30, atPace, 0.6, 2); // down to low
-  check("it does not rise again after dropping", seesaw.decide(atPace, 5, atPace, 2, 2) === null && seesaw.level === "low");
+  seesaw.decide(atPace * 2, 30, atPace, { spent: true, full: false }); // down to low
+  check("it does not rise again after dropping", seesaw.decide(atPace, 5, atPace, { spent: false, full: true }) === null && seesaw.level === "low");
 
+  // The Fold at 48 ms went straight to low before the relief had acted (16 November): the level
+  // comes down only once the relief has nothing left to give up.
+  const waiting = new QualityChooser();
+  check(
+    "the level stays while the relief still has something to give up",
+    waiting.decide(atPace * 2, 30, atPace, { spent: false, full: false }) === null && waiting.level === "medium",
+  );
   // feed() picks the median over a window, then decides.
   const fed = new QualityChooser();
   let got: Quality | null = null;
-  for (let i = 0; i < QualityChooser.FRAMES; i++) got = fed.feed(atPace, 5, atPace, 2, 2) ?? got;
+  for (let i = 0; i < QualityChooser.FRAMES; i++) got = fed.feed(atPace, 5, atPace, { spent: false, full: true }) ?? got;
   check("the chooser decides over a window of frames", got === "high", `got ${got}`);
 
   // The colour grade matches between the GLSL and the JavaScript (the fog is
@@ -146,26 +154,27 @@ export function looksChecks(check: Check): void {
   for (const f of LOOKS_FLAGS) GRAPHICS[f] = was[f];
 }
 
-// One second of frames, as view.ts adapt feeds Relief, over a session; the pixel ratio and the
-// notches given up after each second.
+// Windows of frames, as view.ts adapt feeds Relief (a second each by default), over a session; the
+// pixel ratio and the notches given up after each window.
 export function foldSession(
-  seconds: number,
-  avgAt: (s: number) => number,
-  o: { level?: Quality; dpr?: number; draw?: number } = {},
+  windows: number,
+  avgAt: (w: number) => number,
+  o: { level?: Quality; dpr?: number; draw?: number; windowMs?: number } = {},
 ): { ratio: number; trim: number }[] {
   const level = o.level ?? "high";
   const dpr = o.dpr ?? 2.6;
   const r = new Relief(Math.min(PIXEL_CAPS[level], dpr));
   const out: { ratio: number; trim: number }[] = [];
-  for (let s = 0; s < seconds; s++) {
+  for (let w = 0; w < windows; w++) {
     r.step({
       max: Math.min(PIXEL_CAPS[level], dpr),
       floor: Math.min(PIXEL_FLOORS[level], dpr),
-      avg: avgAt(s),
+      avg: avgAt(w),
       draw: o.draw ?? 20,
       fast: false,
       lateOnly: LATE_ONLY[level],
-      now: s * 1000,
+      useful: usefulTrims(PRESETS[level]),
+      now: w * (o.windowMs ?? 1000),
     });
     out.push({ ratio: r.ratio, trim: r.trim });
   }
@@ -177,6 +186,23 @@ export function foldSession(
 export function foldFrames(s: number): number {
   const jitter = 40 + ((s * 7919) % 11);
   return s % 90 >= 20 && s % 90 < 26 ? 58 : jitter;
+}
+
+// A relief on high fed a window a second, slow or not as `slowAt` says; when it changed.
+function changesOf(windows: number, slowAt: (w: number, r: Relief) => boolean): { changes: number[]; climbs: number[]; relief: Relief } {
+  const r = new Relief(2);
+  const changes: number[] = [];
+  const climbs: number[] = [];
+  for (let w = 0; w < windows; w++) {
+    const now = w * 1000;
+    const before = r.ratio * 16 - r.trim;
+    const avg = slowAt(w, r) ? 60 : 40;
+    if (r.step({ max: 2, floor: 1.5, avg, draw: 10, fast: false, lateOnly: true, useful: usefulTrims(PRESETS.high), now })) {
+      changes.push(now);
+      if (r.ratio * 16 - r.trim > before) climbs.push(now);
+    }
+  }
+  return { changes, climbs, relief: r };
 }
 
 function reliefChecks(check: Check): void {
@@ -202,14 +228,38 @@ function reliefChecks(check: Check): void {
   const stuck = foldSession(120, (s) => (s < 15 ? 70 : 45));
   check("frames at 45 ms after a slow start climb back", stuck[119].ratio === 2 && stuck[119].trim === 0, JSON.stringify(stuck[119]));
   check("a slow start goes down to the floor and no lower", Math.min(...stuck.map((p) => p.ratio)) === 1.5);
-  // On high a long draw with frames on time gives up nothing; on low it still does, as before.
+  // The review of 16 November: one slow window in three (60, 40, 40 ms, windows of 2.7 s) ended at
+  // 1.5 pixels with every extra given up, for good, as each slow window began the wait again. A
+  // slow one now and then neither lowers the looks nor keeps them down, from full or after a slow
+  // start.
+  const sometimes = (w: number) => (w % 3 === 0 ? 60 : 40);
+  const fromFull = foldSession(222, sometimes, { windowMs: 2700 });
+  check(
+    "one slow window in three keeps everything",
+    fromFull.at(-1)!.ratio === 2 && fromFull.at(-1)!.trim === 0,
+    fromFull.map((p) => `${p.ratio}/${p.trim}`).join(" "),
+  );
+  const afterSlow = foldSession(222, (w) => (w < 10 ? 70 : sometimes(w)), { windowMs: 2700 });
+  check(
+    "one slow window in three after a slow start climbs back to full",
+    afterSlow[9].ratio === 1.5 && afterSlow.at(-1)!.ratio === 2 && afterSlow.at(-1)!.trim === 0,
+    `${JSON.stringify(afterSlow[9])} then ${JSON.stringify(afterSlow.at(-1))}`,
+  );
+  // On high a long draw with frames on time gives up nothing; on low it gives up pixels at once,
+  // with no notch spent on shadows or blur it does not have.
   const onTime = foldSession(20, () => 33, { draw: 35 });
   check(
     "on high a long draw with frames on time keeps everything",
     onTime.every((p) => p.ratio === 2 && p.trim === 0),
   );
   const lowBusy = foldSession(2, () => 33, { level: "low", draw: 35 });
-  check("on low a long draw still gives something up", lowBusy[0].trim === 1);
+  check("on low the first slow notch is a pixel step", lowBusy[1].ratio === 1.75 && lowBusy[1].trim === 0, JSON.stringify(lowBusy));
+  const mediumSlow = foldSession(6, () => 80, { level: "medium" });
+  check(
+    "on medium no notch is spent on the bloom and blur it does not have",
+    mediumSlow[5].trim === 2 && mediumSlow[5].ratio === 1.75,
+    JSON.stringify(mediumSlow),
+  );
   // A device that cannot keep up at all stays at the floor with every extra given up.
   const slow = foldSession(120, () => 80);
   check("a device always late rests at the floor", slow[119].ratio === 1.5 && slow[119].trim === TRIMS.length - 1);
@@ -222,17 +272,22 @@ function reliefChecks(check: Check): void {
     "a device of 1 pixel is never raised or lowered",
     plain.every((p) => p.ratio === 1),
   );
-  // Taking a notch back that has to be given up again waits longer each time (no see-saw).
-  let changes = 0;
-  const bouncing = new Relief(2);
-  let prev = "";
-  for (let s = 0; s < 300; s++) {
-    // Slow whenever all the extras are back and the pixels full.
-    const full = bouncing.ratio === 2 && bouncing.trim === 0;
-    bouncing.step({ max: 2, floor: 1.5, avg: full ? 60 : 40, draw: 10, fast: false, lateOnly: true, now: s * 1000 });
-    const now = `${bouncing.ratio}/${bouncing.trim}`;
-    if (now !== prev) changes++;
-    prev = now;
-  }
-  check("a notch that does not hold is taken back less and less often", changes < 20, `${changes} changes in 5 minutes`);
+  // A device slow only with everything on (the review: 29 changes in 10 minutes): once a notch
+  // taken back has to be given up again, at most one try a minute, then fewer.
+  const flap = changesOf(600, (_w, r) => r.ratio === 2 && r.trim === 0);
+  // The first try that failed: the first climb followed by a change within 15 s.
+  const failed = flap.climbs.findIndex((t) => flap.changes.some((c) => c > t && c - t < 15_000));
+  const later = flap.climbs.slice(failed + 1);
+  check(
+    "a notch that does not hold is tried at most once a minute after",
+    failed >= 0 && flap.changes.length <= 16 && later.every((t, k) => t - (k ? later[k - 1] : flap.climbs[failed]) >= 60_000),
+    `${flap.changes.length} changes at ${flap.changes.map((t) => t / 1000).join(", ")} s`,
+  );
+  check("the wait after notches that did not hold stays long", flap.relief.wait >= 120_000, `${flap.relief.wait} ms`);
+  // The wait goes back to 10 s only once a notch taken back has held for two minutes: a device that
+  // was slow at full and is now fine. Not while it is still waiting after a failed try.
+  const settled = changesOf(900, (w, r) => w < 300 && r.ratio === 2 && r.trim === 0);
+  check("the wait comes back to 10 s once the looks have held", settled.relief.wait === 10_000, `${settled.relief.wait} ms`);
+  const notYet = changesOf(330, (w, r) => w < 300 && r.ratio === 2 && r.trim === 0);
+  check("but not while it is still waiting", notYet.relief.wait > 10_000, `${notYet.relief.wait} ms`);
 }

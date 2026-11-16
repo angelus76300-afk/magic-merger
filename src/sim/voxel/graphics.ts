@@ -82,48 +82,79 @@ export const PIXEL_FLOORS: Record<Quality, number> = { low: 1, medium: 1.5, high
 export const TRIMS = ["none", "shadow map", "shadows", "bloom and blur"] as const;
 export const TRIM = { level: 0 };
 
+// Which notches change anything with the looks now on: none for a look that is off (low has no
+// shadows, medium no bloom or blur), so a slow second never spends itself on one.
+export function usefulTrims(g: { shadows: boolean; bloom: boolean; tilt: boolean }): boolean[] {
+  return [true, g.shadows, g.shadows, g.bloom || g.tilt];
+}
+
 // Frames are late past LATE ms at 30 a second (they come every 33); the view's own work is too long
 // past BUSY ms where the level lowers on the draw time alone (not LATE_ONLY).
 const LATE = 52;
 const BUSY = 30;
-// The quiet time before a notch is taken back, doubled each time one taken back had to be given up
-// again within BOUNCE ms (so it does not see-saw), and set back to the first after HELD ms without.
+// The last WINDOWS windows are looked at: a notch is given up when SLOW_OF of the last 3 since the
+// last notch given up were slow, taken back when ON_TIME_OF of the last 5 were on time. A slow second now and then (one in three)
+// neither lowers the looks nor keeps them down.
+const WINDOWS = 5;
+const SLOW_OF = 2;
+const ON_TIME_OF = 4;
+// The wait before a notch is taken back, after the last change. When one taken back is given up
+// again within BOUNCE ms, the wait is at least FAILED and doubles each time after, up to WAIT_MAX:
+// at most one try a minute, then fewer. It goes back to QUIET only once a notch taken back has held
+// for HELD ms with nothing given up since.
 const QUIET = 10_000;
-const QUIET_MAX = 80_000;
+const FAILED = 60_000;
+const WAIT_MAX = 240_000;
 const BOUNCE = 15_000;
-const HELD = 60_000;
+const HELD = 120_000;
 
 // How the view spends a slow second (view.ts adapt): extras first, then pixels down to the
-// level's floor; and when the frames are on time again, the same way back, pixels first. Fed the
-// mean of each second of frames. There is no band of frame times in which it can only go down: any
-// second that is not slow counts toward the way back (it was stuck between 38 and 52 ms before).
+// level's floor; and when frames are on time again, the same way back, pixels first. Fed the mean
+// of each window of frames (about a second or two).
 export class Relief {
   trim = 0;
+  wait = QUIET;
+  private slow: boolean[] = [];
   private droppedAt = -Infinity;
   private climbedAt = -Infinity;
-  private quiet = QUIET;
 
   constructor(public ratio: number) {}
 
+  // Whether nothing is left to give up: the last useful notch and the floor.
+  spent(useful: boolean[], floor: number): boolean {
+    return this.ratio <= floor && !useful.some((u, k) => u && k > this.trim);
+  }
+
   // avg: the mean time between frames; draw: the mean of the view's own work; fast: the engine
-  // aims at 60 a second; max and floor: the level's pixels (the device's included); now: ms.
-  // Returns whether anything changed.
-  step(o: { max: number; floor: number; avg: number; draw: number; fast: boolean; lateOnly: boolean; now: number }): boolean {
+  // aims at 60 a second; max and floor: the level's pixels (the device's included); useful: which
+  // notches change anything (usefulTrims); now: ms. Returns whether anything changed.
+  step(o: { max: number; floor: number; avg: number; draw: number; fast: boolean; lateOnly: boolean; useful: boolean[]; now: number }): boolean {
     const was = this.ratio * 16 + this.trim;
     const floor = Math.min(o.floor, o.max);
     this.ratio = Math.min(o.max, Math.max(floor, this.ratio));
-    const slow = (!o.fast && o.avg > LATE) || (!o.lateOnly && o.draw > BUSY);
-    if (slow) {
-      if (o.now - this.climbedAt < BOUNCE) this.quiet = Math.min(QUIET_MAX, this.quiet * 2);
-      if (this.trim < TRIMS.length - 1) this.trim++;
+    // A notch that does nothing at this level is not held.
+    while (this.trim > 0 && !o.useful[this.trim]) this.trim--;
+    this.slow.push((!o.fast && o.avg > LATE) || (!o.lateOnly && o.draw > BUSY));
+    if (this.slow.length > WINDOWS) this.slow.shift();
+    const slowOf3 = this.slow.slice(-3).filter(Boolean).length;
+    const onTime = this.slow.filter((x) => !x).length;
+    if (slowOf3 >= SLOW_OF) {
+      if (this.climbedAt > this.droppedAt && o.now - this.climbedAt < BOUNCE) this.wait = Math.min(WAIT_MAX, Math.max(FAILED, this.wait * 2));
+      const next = o.useful.findIndex((u, k) => u && k > this.trim);
+      if (next > 0) this.trim = next;
       else this.ratio = Math.max(floor, this.ratio - 0.25);
-      this.droppedAt = o.now;
-    } else if (o.now - this.droppedAt > this.quiet && o.now - this.climbedAt > this.quiet) {
+      if (this.ratio * 16 + this.trim !== was) this.droppedAt = o.now;
+      // The next notch needs slow windows of its own.
+      this.slow.length = 0;
+    } else if (onTime >= ON_TIME_OF && o.now - Math.max(this.droppedAt, this.climbedAt) > this.wait) {
       if (this.ratio < o.max) this.ratio = Math.min(o.max, this.ratio + 0.25);
-      else if (this.trim > 0) this.trim--;
+      else if (this.trim > 0) {
+        this.trim--;
+        while (this.trim > 0 && !o.useful[this.trim]) this.trim--;
+      }
       if (this.ratio * 16 + this.trim !== was) this.climbedAt = o.now;
     }
-    if (o.now - this.droppedAt > HELD && o.now - this.climbedAt > HELD) this.quiet = QUIET;
+    if (this.climbedAt > this.droppedAt && o.now - this.climbedAt > HELD) this.wait = QUIET;
     return this.ratio * 16 + this.trim !== was;
   }
 }
@@ -156,8 +187,8 @@ export function applyLooks(choice: LooksChoice, auto: Quality): Quality {
 
 // Picks the level from the device's own frames in the sky view. Starts at
 // medium; after FRAMES frames goes up to high when frames keep their cadence
-// with room to spare at full pixel density, or down to low when frames are
-// missed or the pixel density had to drop. At most one step up, and never up
+// with room to spare and nothing given up, or down to low when frames are still
+// missed once the relief has given up all it can. At most one step up, and never up
 // again after a step down, so it does not see-saw.
 export class QualityChooser {
   static readonly FRAMES = 90;
@@ -170,7 +201,8 @@ export class QualityChooser {
   // frameMs: time since the previous frame; drawMs: the view's own work;
   // paceMs: the time between frames the engine aims for. Returns the new
   // level when it changes.
-  feed(frameMs: number, drawMs: number, paceMs: number, pixelRatio: number, maxRatio: number): Quality | null {
+  // relief: whether the view's relief has nothing left to give up (spent) or has given up nothing (full).
+  feed(frameMs: number, drawMs: number, paceMs: number, relief: { spent: boolean; full: boolean }): Quality | null {
     this.frames.push(frameMs);
     this.draws.push(drawMs);
     if (this.frames.length < QualityChooser.FRAMES) return null;
@@ -179,12 +211,14 @@ export class QualityChooser {
     const draw = mid(this.draws);
     this.frames = [];
     this.draws = [];
-    return this.decide(frame, draw, paceMs, pixelRatio, maxRatio);
+    return this.decide(frame, draw, paceMs, relief);
   }
 
-  decide(frame: number, draw: number, paceMs: number, pixelRatio: number, maxRatio: number): Quality | null {
-    const slow = frame > paceMs * 1.45 || draw > 22 || pixelRatio < maxRatio - 0.3;
-    const roomy = frame < paceMs * 1.15 && draw < 9 && pixelRatio >= maxRatio;
+  // The level comes down only once the relief (Relief) has given up all it can and frames are still
+  // slow (16 November: it went straight to low on the Fold before the relief had acted).
+  decide(frame: number, draw: number, paceMs: number, relief: { spent: boolean; full: boolean }): Quality | null {
+    const slow = relief.spent && (frame > paceMs * 1.45 || draw > 22);
+    const roomy = frame < paceMs * 1.15 && draw < 9 && relief.full;
     const at = QUALITIES.indexOf(this.level);
     let next = at;
     if (slow && at > 0) {
