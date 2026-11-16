@@ -39,7 +39,15 @@ import { generateWorld, World } from "../src/sim/world";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
-function island(seed: number) {
+// A wildfire island plays the same way each time: Math.random seeded and creature ids from 1, so
+// the checks run before these in sim-test cannot change them (#168 added draws before them and the
+// first fire burned out with no house taken). High water seeds its own stream (own = false).
+// troubleChecks puts both back when it ends.
+function island(seed: number, own = true) {
+  if (own) {
+    Math.random = seeded(seed * 11 + 7);
+    resetCreatureIds(1);
+  }
   Runtime.slowMs = Infinity;
   const world = generateWorld(152, 152, seed, resolveLand({ ...DEFAULT_LAND }, seed, 152));
   populate(world);
@@ -79,6 +87,18 @@ function burn(
 }
 
 export function troubleChecks(check: Check): void {
+  const stream = Math.random;
+  const ids = resetCreatureIds();
+  resetCreatureIds(ids);
+  try {
+    troubleChecksSeeded(check);
+  } finally {
+    Math.random = stream;
+    resetCreatureIds(ids);
+  }
+}
+
+function troubleChecksSeeded(check: Check): void {
   // 1. Left alone: it reaches the village, takes one house and no more, and ends by itself.
   {
     const r = burn(21, null);
@@ -259,7 +279,7 @@ function waterIsland(seed: number): { world: World; rt: Runtime } {
   // The island is made from the same first id whatever ran before: ids feed the creatures' choices, and a
   // village made from a later id was a different village (the hill check passed or failed by what ran first).
   resetCreatureIds(1);
-  const { world } = island(seed);
+  const { world } = island(seed, false);
   storyOn(null);
   kept.set(seed, JSON.stringify(saveWorld(world, new Map())));
   return waterIsland(seed);

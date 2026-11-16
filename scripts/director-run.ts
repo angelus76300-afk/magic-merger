@@ -33,6 +33,18 @@ export interface Watched {
 
 // `peaks`: an island made as from now on, with taller peaks (5.2.5, land.ts uplift).
 export function watchIsland(seed: number, seconds: number, size = 152, peaks = false): Watched {
+  // populate, makeCreature and the sim draw from Math.random: seeded here so a watch of the same
+  // island is the same watch (the "most of what matters is seen" check failed 7 of 12 on CI, #167).
+  const own = Math.random;
+  Math.random = seeded(seed * 97 + 3);
+  try {
+    return watch(seed, seconds, size, peaks);
+  } finally {
+    Math.random = own;
+  }
+}
+
+function watch(seed: number, seconds: number, size: number, peaks: boolean): Watched {
   Runtime.slowMs = Infinity;
   const world = generateWorld(size, size, seed, { ...resolveLand({ ...DEFAULT_LAND }, seed, size), ...(peaks ? { peaks: true } : {}) });
   populate(world);
