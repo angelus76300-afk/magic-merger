@@ -28,6 +28,7 @@ import { Runtime, SpellApi, type CastRequest } from "../src/sim/runtime";
 import { stepHeadless } from "../src/sim/tick";
 import { TICK, generateWorld } from "../src/sim/world";
 import { DEF_TIER, defRequest, readDef } from "../src/sim/wonders";
+import { SILHOUETTE_GRID, shapesOf, silhouette } from "../shared/looks/measure";
 
 const arg = (name: string, fallback: string) => {
   const i = process.argv.indexOf(name);
@@ -39,7 +40,8 @@ const OUT = arg("--out", "docs/measurements");
 const SECONDS = Number(arg("--seconds", "30"));
 const LIMIT = Number(arg("--limit", "0"));
 const SHARD = arg("--shard", "0/1").split("/").map(Number);
-const STAMP = "2026-11-13";
+// The date in the file names: today, or --stamp (the first run was 2026-11-13).
+const STAMP = arg("--stamp", new Date().toISOString().slice(0, 10));
 const SEED = 11;
 const SIZE = REFERENCE_SIDE;
 const PER_SECOND = Math.round(1 / TICK);
@@ -149,6 +151,12 @@ interface Box {
   h: number;
   color: number;
   glow: boolean;
+  // The shapes of phase 1 (src/sim/props.ts), as readBox kept them.
+  shape?: string;
+  rx?: number;
+  ry?: number;
+  rz?: number;
+  grain?: number;
 }
 interface Drawn {
   models: Box[][];
@@ -176,7 +184,7 @@ SpellApi.prototype.model = function (this: SpellApi, ...a: Parameters<typeof ori
       .filter((b): b is PropBox => b !== null)
       .slice(0, MAX_PROP_BOXES);
     if (r && boxes.length) {
-      const sig = JSON.stringify(boxes.map((b) => [b.x, b.y, b.z, b.w, b.d, b.h, b.color, b.glow]));
+      const sig = JSON.stringify(boxes.map((b) => [b.x, b.y, b.z, b.w, b.d, b.h, b.color, b.glow, b.shape, b.rx, b.ry, b.rz, b.grain]));
       if (!seen.has(sig) && current.models.length < 60) {
         seen.add(sig);
         current.models.push(boxes);
@@ -271,57 +279,7 @@ function run(item: Item): Drawn {
 // --- Measures ---------------------------------------------------------------------
 
 const FINE_SIDE = 0.3;
-const GRID = 24;
-
-// Cells filled in the outline of the boxes seen from one side, over the bounding box.
-function silhouette(boxes: Box[]): { score: number; fill: number } {
-  if (!boxes.length) return { score: 0, fill: 0 };
-  const lo = [Infinity, Infinity, Infinity];
-  const hi = [-Infinity, -Infinity, -Infinity];
-  for (const b of boxes) {
-    const a = [b.x, b.y, b.z];
-    const s = [b.w, b.d, b.h];
-    for (let k = 0; k < 3; k++) {
-      lo[k] = Math.min(lo[k], a[k]);
-      hi[k] = Math.max(hi[k], a[k] + s[k]);
-    }
-  }
-  const views: [number, number][] = [
-    [0, 2], // front: x across, z up
-    [1, 2], // side: y across, z up
-    [0, 1], // top: x across, y down
-  ];
-  let score = 0;
-  let fill = 0;
-  const perimeter = 4 * GRID - 4;
-  for (const [u, v] of views) {
-    const grid = new Uint8Array(GRID * GRID);
-    const du = hi[u] - lo[u] || 1;
-    const dv = hi[v] - lo[v] || 1;
-    for (const b of boxes) {
-      const a = [b.x, b.y, b.z];
-      const s = [b.w, b.d, b.h];
-      const u0 = Math.floor(((a[u] - lo[u]) / du) * GRID);
-      const u1 = Math.ceil(((a[u] + s[u] - lo[u]) / du) * GRID);
-      const v0 = Math.floor(((a[v] - lo[v]) / dv) * GRID);
-      const v1 = Math.ceil(((a[v] + s[v] - lo[v]) / dv) * GRID);
-      for (let j = Math.max(0, v0); j < Math.min(GRID, v1); j++) for (let i = Math.max(0, u0); i < Math.min(GRID, u1); i++) grid[j * GRID + i] = 1;
-    }
-    let filled = 0;
-    let edge = 0;
-    for (let j = 0; j < GRID; j++)
-      for (let i = 0; i < GRID; i++) {
-        if (!grid[j * GRID + i]) continue;
-        filled++;
-        const open = (a: number, b: number) => a < 0 || b < 0 || a >= GRID || b >= GRID || !grid[b * GRID + a];
-        if (open(i - 1, j) || open(i + 1, j) || open(i, j - 1) || open(i, j + 1)) edge++;
-      }
-    // A full rectangle has the outline of the grid's edge (92 cells): no detail, score 0. Three times that is 1.
-    score += Math.max(0, Math.min(1, (edge - perimeter) / (2 * perimeter)));
-    fill += filled / (GRID * GRID);
-  }
-  return { score: score / 3, fill: fill / 3 };
-}
+const GRID = SILHOUETTE_GRID;
 
 interface Measure {
   key: string;
@@ -345,6 +303,10 @@ interface Measure {
   glowShare: number;
   silhouette: number;
   fill: number;
+  // Parts by shape over all its models ("box" for a plain one), and how many are turned or grained.
+  shapes: Record<string, number>;
+  shaped: number;
+  turned: number;
   noModel: boolean;
   noLook: boolean;
   errors: string[];
@@ -357,6 +319,7 @@ function measure(item: Item, d: Drawn): Measure {
   const sil = silhouette(main);
   const colours = new Set(flat.map((b) => b.color)).size;
   const noModel = all.length === 0;
+  const used = shapesOf(flat);
   return {
     key: item.key,
     name: item.name,
@@ -379,6 +342,9 @@ function measure(item: Item, d: Drawn): Measure {
     glowShare: flat.length ? Math.round((flat.filter((b) => b.glow).length / flat.length) * 1000) / 1000 : 0,
     silhouette: Math.round(sil.score * 1000) / 1000,
     fill: Math.round(sil.fill * 1000) / 1000,
+    shapes: used.shapes,
+    shaped: flat.length - (used.shapes.box ?? 0),
+    turned: used.turned,
     noModel,
     // No look at all: no model, no creature of its own, no object it declares.
     noLook: noModel && d.creatureKinds === 0 && d.artifactsDeclared === 0,
@@ -395,6 +361,14 @@ const pct = (a: number[], p: number) => {
   const lo = Math.floor(i);
   return s[lo] + (s[Math.ceil(i)] - s[lo]) * (i - lo);
 };
+// "box 12, cyl 3, 2 turned": the shapes an item's looks use.
+const shapeText = (m: Measure) =>
+  [
+    ...Object.entries(m.shapes ?? {})
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, n]) => `${k} ${n}`),
+    ...(m.turned ? [`${m.turned} turned`] : []),
+  ].join(", ") || "-";
 const r1 = (n: number) => (Number.isNaN(n) ? "-" : String(Math.round(n * 10) / 10));
 const r2 = (n: number) => (Number.isNaN(n) ? "-" : String(Math.round(n * 100) / 100));
 const share = (n: number, of: number) => (of ? `${Math.round((n / of) * 1000) / 10}%` : "-");
@@ -536,6 +510,10 @@ function finish(lib: ReturnType<typeof library>, rows: Measure[]) {
     100,
   );
   const bare = rows.filter((m) => m.noModel);
+  const byFormPlain = group(
+    rows.filter((m) => !m.noModel),
+    (m) => m.form,
+  ).map(([k, l]) => [k, plainest(l, 15)] as const);
   const missingByForm = group(lib.missing, (r) => `${r.form} (${r.kind})`).map(([k, l]) => `${k} ${l.length}`);
   const json = {
     date: STAMP,
@@ -549,6 +527,10 @@ function finish(lib: ReturnType<typeof library>, rows: Measure[]) {
     byForm: byKind,
     byTier,
     plainest100: worst,
+    // The 15 plainest of each kind that draw a model, for the pilot and the bulk pass's order.
+    plainestByForm: Object.fromEntries(
+      byFormPlain.map(([k, l]) => [k, l.map((m) => ({ key: m.key, name: m.name, tier: m.tier, boxes: m.boxes, silhouette: m.silhouette }))]),
+    ),
     noModelItems: bare.map((m) => ({
       key: m.key,
       name: m.name,
@@ -582,7 +564,7 @@ Phase 0 of the looks revamp. Read only: nothing was written to production and no
 - **Library.** Read through routes that write nothing (confirmed in \`worker/index.ts\`: \`handleAdmin\` "programs" / "challenge-candidates" / "forms" are one SELECT each; \`POST /api/library\` is \`handleLibrary\`, one SELECT over \`spells\` joined to \`elements\`; \`GET /api/wonders\` is \`livePool\`, one SELECT; the admin payer never triggers \`seen()\`). The owner's word "measure: all" covers reading the whole live library read only.
 - **Run.** Each program is cast once at the village edge of the practice island (seed ${SEED}, side ${SIZE}, \`src/sim/check.ts\` island as \`scripts/spell-measure.ts\` uses it) in the repository's own \`Runtime\`, for ${SECONDS} seconds of game time. Artifacts and wonders are cast as artifacts (a wonder with its own reach).
 - **What counts as drawn.** Every distinct model a program passed to \`w.model\` (readBox, \`src/sim/props.ts\`, as the island reads them but before it shades each part a little; the island's own limit of four models per placing is not applied, so a program that places many is counted whole, at most 60 distinct models). Plus the raw model of every creature the program declares (\`modelOf\`, \`src/sim/body.ts\`, 16 boxes at most), taken before \`bodyFrom\` turns a still model into a plan.
-- **Per item.** models (distinct); parts (boxes over all its models); boxes per model (parts divided by models); fine parts (largest side under ${FINE_SIDE}); thin parts (smallest side under ${FINE_SIDE}, a page or a blade); distinct colours; glow share (glow boxes over boxes); silhouette score.
+- **Per item.** models (distinct); parts (boxes over all its models); boxes per model (parts divided by models); fine parts (largest side under ${FINE_SIDE}); thin parts (smallest side under ${FINE_SIDE}, a page or a blade); distinct colours; glow share (glow boxes over boxes); silhouette score; shapes used (parts by shape, "box" for a plain upright part, and how many are turned).
 - **Silhouette score.** For the item's largest model: the boxes are drawn onto a ${GRID} by ${GRID} grid over the bounding box, seen from the front, the side and the top. For each view the outline is the filled cells with an empty neighbour. A solid rectangle has the outline of the grid's edge (${4 * GRID - 4} cells) and scores 0; three times that scores 1; the three views are averaged. A single brick scores 0; the richest outline in the library scores ${r2(Math.max(0, ...rows.map((m) => m.silhouette)))}. "fill" in the JSON is the share of grid cells filled, for the reader who wants the plain version.
 - **No look at all.** No model, no creature of its own, no object it declares (\`spell.artifacts\`).
 - Percentiles are the 10th, the median and the 90th, linear between ranks. Tables by kind use the library's seven kinds (spell, creature, object, building, settlement, place, land) and wonders; tiers are the element's own.
@@ -600,9 +582,15 @@ ${table(rows, (m) => m.tier, TIER_ORDER)}
 
 Among the ${sum.withModel} items that draw at least one model: fewest parts first, then fewest colours, then the flattest outline. The ${bare.length} items that draw no model are plainer still and are not in this list; they are named below (${sum.noLook} of them have nothing at all, the rest have a creature of their own drawn from a body word, or an object they declare, so they have a look the boxes do not describe).
 
-| key | name | kind | tier | models | parts | colours | fine | glow | silhouette | no look |
-|---|---|---|---|---|---|---|---|---|---|---|
-${worst.map((m) => `| ${m.key} | ${m.name} | ${m.form} | ${m.tier} | ${m.models + m.creatureModels} | ${m.boxes} | ${m.colours} | ${m.fine} | ${m.glowShare} | ${m.silhouette} | ${m.noLook ? "yes" : ""} |`).join("\n")}
+## The plainest of each kind
+
+${byFormPlain.map(([k, l]) => `- **${k}**: ${l.map((m) => `${m.name} (${m.boxes})`).join(", ")}`).join("\n")}
+
+## The 100 plainest, in full
+
+| key | name | kind | tier | models | parts | colours | fine | glow | silhouette | shapes | no look |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+${worst.map((m) => `| ${m.key} | ${m.name} | ${m.form} | ${m.tier} | ${m.models + m.creatureModels} | ${m.boxes} | ${m.colours} | ${m.fine} | ${m.glowShare} | ${m.silhouette} | ${shapeText(m)} | ${m.noLook ? "yes" : ""} |`).join("\n")}
 
 ## Items that draw no model
 

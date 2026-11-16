@@ -12,6 +12,7 @@ import { SCENARIOS } from "../src/sim/scenarios";
 import { resolveLand } from "../src/sim/land-options";
 import { daylight } from "../src/sim/daylight";
 import { WORLD_SIZES } from "../src/sim/engine";
+import { applyLooks } from "../src/sim/voxel/graphics";
 
 interface LabOptions {
   tier?: Tier;
@@ -48,6 +49,9 @@ interface LabOptions {
   focusMade?: boolean;
   // 4.6 part B: keep the camera on the first creature or person it made.
   follow?: boolean;
+  // 5.2.5: the looks preset to draw with (low, the lab's default, has no small cubes: a look made of
+  // eighths is drawn in quarters). The looks judge frames at medium, where a phone starts.
+  quality?: "low" | "medium" | "high";
   // 4.6 part B: night falls this many seconds after the cast.
   nightIn?: number;
 }
@@ -179,6 +183,8 @@ async function runSpell(code: string, options: LabOptions = {}) {
   const size = options.size ?? "medium";
   const cells = WORLD_SIZES[size] ?? WORLD_SIZES.medium;
   const land = options.land ? resolveLand({ warmth: 0.5, water: 0.5, relief: 0.5, forest: 0.5 }, seed, cells) : undefined;
+  if (options.quality === "low" || options.quality === "medium" || options.quality === "high")
+    applyLooks({ level: options.quality, flip: [] }, options.quality);
   const engine = Engine.create(canvas, overlay, size, { onError: (_k, _n, m) => errors.push(m), onTap: () => {} }, seed, { preserveDrawingBuffer: true }, land);
   current = engine;
   (window as unknown as { labEngine: Engine }).labEngine = engine;

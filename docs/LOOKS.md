@@ -12,7 +12,7 @@ Magic is drawn in a second language: particles, blocks drifting off, glowing sea
 
 ## Rules
 
-0. **One small cube size for everything.** Objects and land are made of the same cube, a quarter of a land cell (the owner, 13 November: "they should be small cube voxels"). A look that uses any new field is drawn as these cubes: a cone is a stepped spire, a dome a stepped shell, a turned part a staircased block. Lay parts on the quarter grid (0, 0.25, 0.5 ...) so edges land where you mean them.
+0. **One small cube size for everything.** Objects and land are made of the same cube, an eighth of a land cell (the owner, 13 November: "they should be small cube voxels"; 15 November: "let's just keep 1/8 all the time"). A look that uses any new field is drawn as these cubes: a cone is a stepped spire, a dome a stepped shell, a turned part a staircased block. Lay parts on the grid of eighths (0, 0.125, 0.25 ...) so edges land where you mean them: a part one eighth wide that straddles two cubes can vanish (a thin round post centred on 0 is drawn as nothing). The reference looks end with an `eighths` helper that puts every edge on the grid.
 
 1. **Small parts against the object.** A tower is 40 to 80 small steps tall, so trim, windows and ivy can be seen. Detail lives in parts of 0.05 to 0.3 of a cell.
 2. **Silhouette first.** Crenellations, cone roofs, spires, arches, stepped bases. Never a plain box on top.
@@ -38,7 +38,7 @@ A part is `[x, y, z, w, d, h, color, ...]` or `{x, y, z, w, d, h, color, ...}`, 
 | `grain`    | `true` (0.08) or 0 to 0.3: each face cut in tiles of about half a cell, each its own tone. |
 
 - A wedge is full height on its west side and slopes down to nothing on its east side. Two wedges back to back, one turned with `rz: 180`, make a roof.
-- Every part of such a look is filled into quarter-cell cubes. A part thinner than a cube is drawn one cube thick. A later part paints over an earlier one: put windows, doors and trim after the wall they sit on.
+- Every part of such a look is filled into cubes of an eighth of a cell (a quarter on the low preset). A part thinner than a cube is drawn one cube thick when it covers a cube's centre. A later part paints over an earlier one: put windows, doors and trim after the wall they sit on.
 - Roofs read best as rows of tile cubes with a darker eave row and ridge; walls as a timber frame in a contrasting colour; windows set one cube behind the frame; greenery hanging off edges (the reference cottage).
 - A model keeps 160 parts.
 - Example, a tower: `[-0.5, -0.5, 0, 1, 1, 3, "#b8ab94", "cyl", "grain"]`, then a cone roof `[-0.6, -0.6, 3, 1.2, 1.2, 1.2, "#c8606a", "cone"]`.
@@ -52,3 +52,7 @@ The island draws its props within 90,000 triangles, the looks nearest the camera
 ## Honest limits
 
 The references are offline path-traced renders. A phone at 30 frames a second will not match them. What carries over: the scale of detail, the silhouette, the palette, colour noise, soft shadow in the corners, and glow.
+
+## Reference looks
+
+Ten hand-made looks in `shared/looks/` set the level of detail the writer copies: a spellbook, a potion, a sword in the stone and a seeing orb (objects, 25 to 33 parts), a wolf and a hawk (creatures, 33 to 39), a mage tower and a shrine (buildings, 60 to 76), a spirit tree and a ruined temple (places, 82 to 89). Each is the piece of a cast that draws it, shown to the writer as written, three at a time by kind (`referencesFor`). Frames at medium: `docs/visual-checks/looks-references/` (`scripts/looks-references-frames.ts`). Their checks (`scripts/looks-refs-test.ts`): parts within the kind's range, three tones or more of one hue, a glowing accent under a third of the parts, three shapes or more, and an outline richer than the library's median or a shape that is not a block.
