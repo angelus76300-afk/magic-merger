@@ -302,9 +302,14 @@ export function readLiteral(text: string): { value: unknown } | { why: string } 
     if (c === '"' || c === "'") return str();
     const num = /^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/.exec(text.slice(i, i + 40));
     if (num) {
+      // 011 is not a number JSON or a reader agrees on (an old octal): refused.
+      if (/^-?0\d/.test(num[0])) fail("a number has a leading zero");
       i += num[0].length;
       if (i < n && /[\w$.]/.test(text[i])) fail("a number runs into a name");
-      return Number(num[0]);
+      const v = Number(num[0]);
+      // 1e999 reads as Infinity: not a size the island can draw.
+      if (!Number.isFinite(v)) fail("a number is too large");
+      return v;
     }
     for (const [word, v] of [
       ["true", true],
@@ -339,6 +344,47 @@ export function partsProblem(parts: string): string | null {
   if (!r.value.length) return "it has no part";
   if (r.value.length > 200) return "it has more than 200 parts";
   if (!r.value.every((p) => Array.isArray(p) || (p !== null && typeof p === "object"))) return "a part is not a list or an object";
+  // At least one part the island can draw, or the look would vanish (the review of #173: [[ ]]).
+  if (!r.value.some(drawablePart)) return "no part of it can be drawn";
+  return null;
+}
+
+// Whether the island draws a part (src/sim/props.ts readBox): width, depth and height are finite
+// numbers above zero, in a list at 3, 4, 5 or an object as w, d, h. readBox itself lives with the
+// game's code, which the Worker does not load; scripts/looks-refs-test.ts checks the two agree.
+export function drawablePart(p: unknown): boolean {
+  let w: unknown;
+  let d: unknown;
+  let h: unknown;
+  if (Array.isArray(p)) [w, d, h] = [p[3], p[4], p[5]];
+  else if (p && typeof p === "object") ({ w, d, h } = p as Record<string, unknown>);
+  else return false;
+  return [w, d, h].every((v) => typeof v === "number" && Number.isFinite(v) && v > 0);
+}
+
+// Why the parts argument a call has now may not be overwritten, or null when it may (the review of
+// #173: w.model(x, y, (w.spawn("wolf", x, y), [...])) lost its spawn). It may be replaced when it is
+// plain data, or a closed expression that does nothing: names, member access, indexes, literals and
+// operators, with no call, no assignment, no function, no update, nothing that waits or makes.
+export function oldPartsProblem(arg: string): string | null {
+  const t = arg.trim();
+  if (!t) return "the call has no parts";
+  if (!("why" in readLiteral(t))) return null;
+  let found: string | null = null;
+  const ok = scan(t, (i) => {
+    if (found) return;
+    const c = t[i];
+    const next = t[i + 1] ?? "";
+    const prev = t[i - 1] ?? "";
+    if (c === "(") found = "it calls something or groups an expression";
+    else if (c === "`") found = "it holds a template";
+    else if (c === "=" && next !== "=" && !"=!<>".includes(prev)) found = "it assigns or makes a function";
+    else if ((c === "+" && next === "+") || (c === "-" && next === "-")) found = "it changes a value";
+    else if (c === "." && next === "." && t[i + 2] === ".") found = "it spreads a value";
+  });
+  if (!ok) return "a string or a comment in it never ends";
+  if (found) return found;
+  if (/\b(?:yield|await|new|delete|function|class|import|this)\b/.test(t.replace(/'[^'\n]*'|"[^"\n]*"/g, "''"))) return "it acts, waits or makes something";
   return null;
 }
 
@@ -392,6 +438,12 @@ export function spliceLooks(code: string, patches: LookPatch[], mayAdd = false):
     const why = partsProblem(p.parts);
     if (why) {
       refused.push({ call: p.call, why });
+      continue;
+    }
+    // What it draws now may do something too: then its look stays, and with it what it does.
+    const kept = oldPartsProblem(code.slice(c.args[2].start, c.args[2].end));
+    if (kept) {
+      refused.push({ call: p.call, why: `its parts are not only a look (${kept})` });
       continue;
     }
     seen.add(p.call);

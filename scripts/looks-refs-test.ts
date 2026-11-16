@@ -4,7 +4,7 @@
 import { syntaxError } from "../shared/spellcode";
 import { REFERENCES, partTarget, referencesFor } from "../shared/looks";
 import { shapesOf, silhouette, toneGroups } from "../shared/looks/measure";
-import { changedLines, modelCalls, numberedProgram, partsProblem, readLiteral, spliceLooks } from "../shared/looks/splice";
+import { changedLines, drawablePart, modelCalls, numberedProgram, oldPartsProblem, partsProblem, readLiteral, spliceLooks } from "../shared/looks/splice";
 import { MAX_PROP_BOXES, readBox, type PropBox } from "../src/sim/props";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
@@ -198,6 +198,72 @@ export function looksRefChecks(check: Check): void {
     "a patch for a call that is not there is refused",
     spliceLooks(program, [{ call: 3, parts: "[[0,0,0,1,1,1]]" }])?.refused[0]?.why === "there is no such call",
   );
+  // The review of #173, round 2: leading zeros, sizes the island cannot draw, and old parts that act.
+  check(
+    "a number with a leading zero is refused",
+    partsProblem("[[011, 0, 0, 1, 1, 1]]") !== null && partsProblem("[[-01, 0, 0, 1, 1, 1]]") !== null && partsProblem("[[0.5, 0, 0, 1, 1, 1]]") === null,
+  );
+  const undrawable = [
+    "[[ ]]",
+    "[[],[]]",
+    "[{}]",
+    "[[1e999, 0, 0, 1, 1, 1]]",
+    "[[0, 0, 0, 1e999, 1, 1]]",
+    "[[0, 0, 0, 0, 0, 0]]",
+    "[[0, 0, 0, 1, 0, 1, '#fff']]",
+    "[['a','b']]",
+    "[[0, 0, 0, '1', '1', '1']]",
+  ];
+  const drew = undrawable.filter((t) => partsProblem(t) === null);
+  check(`${undrawable.length} looks with no part the island can draw are refused`, drew.length === 0, JSON.stringify(drew));
+  check(
+    "a refused undrawable look keeps the old one",
+    undrawable.every((t) => spliceLooks(program, [{ call: 1, parts: t }])?.code === program),
+  );
+  // The Worker's drawablePart says what readBox says (the Worker does not load the game's code).
+  const samples: unknown[] = [
+    [],
+    [0, 0, 0, 1, 1, 1],
+    [0, 0, 0, 0, 1, 1],
+    [0, 0, 0, -1, 1, 1],
+    [0, 0, 0, "1", 1, 1],
+    [0, 0, 0, 0.01, 0.01, 0.01],
+    {},
+    { w: 1, d: 1, h: 1 },
+    { w: 1, d: 0, h: 1 },
+    ["a", "b"],
+    null,
+    3,
+    [0, 0, 0, Infinity, 1, 1],
+    [0, 0, 0, NaN, 1, 1],
+  ];
+  check(
+    "drawablePart agrees with readBox on every sample",
+    samples.every((p) => drawablePart(p) === (readBox(p) !== null)),
+    JSON.stringify(samples.map((p) => [drawablePart(p), readBox(p) !== null])),
+  );
+  // What a call draws now may also act: then its look is kept, and what it does with it.
+  const acting = [
+    "const spell = { *cast(w) { w.model(w.x, w.y, (w.spawn('wolf', w.x, w.y), [[0, 0, 0, 1, 1, 1]]), {}); } };",
+    "const spell = { *cast(w) { w.model(w.x, w.y, parts.map(eighths), {}); } };",
+    "const spell = { *cast(w) { let p; w.model(w.x, w.y, p = [[0, 0, 0, 1, 1, 1]], {}); } };",
+    "const spell = { *cast(w) { let k = 0; w.model(w.x, w.y, ps[k++], {}); } };",
+    "const spell = { *cast(w) { w.model(w.x, w.y, [...more], {}); } };",
+    "const spell = { *cast(w) { w.model(w.x, w.y, new Array(3), {}); } };",
+  ];
+  const lost = acting.filter((code) => spliceLooks(code, [{ call: 1, parts: anvil }])?.code !== code);
+  check(`${acting.length} calls whose parts also act keep their old look and what it does`, lost.length === 0, JSON.stringify(lost));
+  check(
+    "the spawn in a call's parts survives, refused with its reason",
+    /not only a look/.test(spliceLooks(acting[0], [{ call: 1, parts: anvil }])?.refused[0]?.why ?? ""),
+  );
+  const closed = ["parts", "c.parts", "LOOKS[k]", "[[0, 0, 0, 1, 1, 1, '#888']]", "k > 2 ? a : b"];
+  check(
+    "old parts that only name or hold data may be redrawn",
+    closed.every((t) => oldPartsProblem(t) === null),
+    JSON.stringify(closed.map(oldPartsProblem)),
+  );
+
   // The whole spliced program must parse, or nothing is spliced.
   const unparsable = "const spell = { *cast(w) { w.model(0, 0, [[0,0,0,1,1,1]], {}); } };\n}";
   const whole = spliceLooks(unparsable, [{ call: 1, parts: anvil }]);
