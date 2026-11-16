@@ -250,6 +250,11 @@ export function looksRefChecks(check: Check): void {
     "const spell = { *cast(w) { let k = 0; w.model(w.x, w.y, ps[k++], {}); } };",
     "const spell = { *cast(w) { w.model(w.x, w.y, [...more], {}); } };",
     "const spell = { *cast(w) { w.model(w.x, w.y, new Array(3), {}); } };",
+    // Round 2 of #172's review: a tagged template call and the shift assignments.
+    "const spell = { *cast(w) { w.model(w.x, w.y, w.spawn`wolf`, {}); } };",
+    "const spell = { *cast(w) { let n = 8; w.model(w.x, w.y, n >>= 1, {}); } };",
+    "const spell = { *cast(w) { let n = 8; w.model(w.x, w.y, n <<= 1, {}); } };",
+    "const spell = { *cast(w) { let n = 8; w.model(w.x, w.y, n >>>= 1, {}); } };",
   ];
   const lost = acting.filter((code) => spliceLooks(code, [{ call: 1, parts: anvil }])?.code !== code);
   check(`${acting.length} calls whose parts also act keep their old look and what it does`, lost.length === 0, JSON.stringify(lost));
@@ -257,7 +262,17 @@ export function looksRefChecks(check: Check): void {
     "the spawn in a call's parts survives, refused with its reason",
     /not only a look/.test(spliceLooks(acting[0], [{ call: 1, parts: anvil }])?.refused[0]?.why ?? ""),
   );
-  const closed = ["parts", "c.parts", "LOOKS[k]", "[[0, 0, 0, 1, 1, 1, '#888']]", "k > 2 ? a : b"];
+  const closed = [
+    "parts",
+    "c.parts",
+    "LOOKS[k]",
+    "[[0, 0, 0, 1, 1, 1, '#888']]",
+    "k > 2 ? a : b",
+    "k >= 2 ? a : b",
+    "k <= 2 ? a : b",
+    "k == 2 ? a : b",
+    "k !== 2 ? a : b",
+  ];
   check(
     "old parts that only name or hold data may be redrawn",
     closed.every((t) => oldPartsProblem(t) === null),

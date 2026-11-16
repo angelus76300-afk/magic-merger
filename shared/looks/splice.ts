@@ -366,10 +366,23 @@ export function drawablePart(p: unknown): boolean {
 // #173: w.model(x, y, (w.spawn("wolf", x, y), [...])) lost its spawn). It may be replaced when it is
 // plain data, or a closed expression that does nothing: names, member access, indexes, literals and
 // operators, with no call, no assignment, no function, no update, nothing that waits or makes.
+// An "=" at i that assigns (or makes an arrow): anything but ==, ===, !=, !==, <= and >=. A shift
+// assignment (<<=, >>=, >>>=) has a second < or > before it (review of #172, round 2).
+function isAssignment(t: string, i: number): boolean {
+  const prev = t[i - 1] ?? "";
+  const next = t[i + 1] ?? "";
+  if (next === "=" || prev === "=" || prev === "!") return false;
+  if (prev === "<" || prev === ">") return t[i - 2] === prev;
+  return true;
+}
+
 export function oldPartsProblem(arg: string): string | null {
   const t = arg.trim();
   if (!t) return "the call has no parts";
   if (!("why" in readLiteral(t))) return null;
+  // A backtick anywhere: scan treats a template as a string and never reports it, so a tagged
+  // template call (w.spawn`wolf`) would pass (review of #172, round 2).
+  if (t.includes("`")) return "it holds a template";
   let found: string | null = null;
   const ok = scan(t, (i) => {
     if (found) return;
@@ -378,7 +391,7 @@ export function oldPartsProblem(arg: string): string | null {
     const prev = t[i - 1] ?? "";
     if (c === "(") found = "it calls something or groups an expression";
     else if (c === "`") found = "it holds a template";
-    else if (c === "=" && next !== "=" && !"=!<>".includes(prev)) found = "it assigns or makes a function";
+    else if (c === "=" && isAssignment(t, i)) found = "it assigns or makes a function";
     else if ((c === "+" && next === "+") || (c === "-" && next === "-")) found = "it changes a value";
     else if (c === "." && next === "." && t[i + 2] === ".") found = "it spreads a value";
   });
