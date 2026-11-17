@@ -256,6 +256,10 @@ export function looksRefChecks(check: Check): void {
     "const spell = { *cast(w) { let n = 8; w.model(w.x, w.y, n >>= 1, {}); } };",
     "const spell = { *cast(w) { let n = 8; w.model(w.x, w.y, n <<= 1, {}); } };",
     "const spell = { *cast(w) { let n = 8; w.model(w.x, w.y, n >>>= 1, {}); } };",
+    "const spell = { *cast(w) { let n = 8; w.model(w.x, w.y, n **= 2, {}); } };",
+    "const spell = { *cast(w) { let n; w.model(w.x, w.y, n ??= [], {}); } };",
+    "const spell = { *cast(w) { let n; w.model(w.x, w.y, n ||= [], {}); } };",
+    "const spell = { *cast(w) { let n; w.model(w.x, w.y, n &&= [], {}); } };",
   ];
   const lost = acting.filter((code) => spliceLooks(code, [{ call: 1, parts: anvil }])?.code !== code);
   check(`${acting.length} calls whose parts also act keep their old look and what it does`, lost.length === 0, JSON.stringify(lost));

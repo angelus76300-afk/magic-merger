@@ -16,6 +16,7 @@ import {
   PIXEL_CAPS,
   PIXEL_FLOORS,
   Relief,
+  RELIEF_TUNING,
   TRIMS,
   applyLooks,
   readLooksChoice,
@@ -225,6 +226,14 @@ function reliefChecks(check: Check): void {
     JSON.stringify(back),
   );
   // Steady at 45 ms after a long slow start: back to full, not stuck.
+  // Over 30 minutes the Fold is degraded no longer than main left it (740 s), not for good (review of #176).
+  const long = foldSession(1800, foldFrames);
+  const downFor = long.filter((p) => p.ratio !== 2 || p.trim !== 0).length;
+  check(
+    "a Fold with a busy spell every 90 s ends at full and is not down for most of 30 minutes",
+    downFor <= 800 && long[1799].ratio === 2 && long[1799].trim === 0,
+    `${downFor} s down, ends ${JSON.stringify(long[1799])}`,
+  );
   const stuck = foldSession(120, (s) => (s < 15 ? 70 : 45));
   check("frames at 45 ms after a slow start climb back", stuck[119].ratio === 2 && stuck[119].trim === 0, JSON.stringify(stuck[119]));
   check("a slow start goes down to the floor and no lower", Math.min(...stuck.map((p) => p.ratio)) === 1.5);
@@ -290,4 +299,19 @@ function reliefChecks(check: Check): void {
   check("the wait comes back to 10 s once the looks have held", settled.relief.wait === 10_000, `${settled.relief.wait} ms`);
   const notYet = changesOf(330, (w, r) => w < 300 && r.ratio === 2 && r.trim === 0);
   check("but not while it is still waiting", notYet.relief.wait > 10_000, `${notYet.relief.wait} ms`);
+  // The review of #167: a spike every 30 s (3 s of slow frames) flipped the shadow map 123 times in
+  // 30 minutes. Taking a notch back must wait out a minute before a give-up counts as a bounce.
+  const spiky = changesOf(1800, (w) => w % 30 < 3);
+  check("a spike every 30 s over 30 minutes changes the looks at most 24 times (main: 123)", spiky.changes.length <= 24, `${spiky.changes.length} changes`);
+  // ON_TIME_OF: 4 of the last 5 windows on time are needed to take a notch back; with 1 a single
+  // quiet window is enough, and a device slow on and off climbs back at once.
+  const strict = changesOf(300, (w) => w % 4 === 0 || w % 4 === 1);
+  RELIEF_TUNING.onTimeOf = 1;
+  const loose = changesOf(300, (w) => w % 4 === 0 || w % 4 === 1);
+  RELIEF_TUNING.onTimeOf = 4;
+  check(
+    "taking a notch back needs 4 of the last 5 windows on time",
+    strict.climbs.length < loose.climbs.length,
+    `${strict.climbs.length} climbs at 4 of 5, ${loose.climbs.length} at 1`,
+  );
 }
