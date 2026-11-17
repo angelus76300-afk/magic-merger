@@ -311,9 +311,10 @@ if (nightGlow > 0.001 && vLandGlow > 0.001) {
 #else
   vec3 glowBase = diffuseColor.rgb;
 #endif
-  // Warm light by the face's brightness more than its hue: lava's light on grass reads orange, not lime.
-  vec3 glowLit = glowBase * 0.25 + vec3(dot(glowBase, vec3(0.3, 0.59, 0.11))) * 0.9;
-  outgoingLight += glowLit * vLandGlow * nightGlow * ${GLOW_COLOR};
+  // The face's own colour in lava's light, as a surface lit by it: grass turns orange-brown, not lime.
+  // The night's blue light gives way to it, so green under orange does not add up to yellow.
+  float glowK = vLandGlow * nightGlow;
+  outgoingLight = outgoingLight * (1.0 - 0.7 * glowK) + glowBase * 1.3 * glowK * ${GLOW_COLOR};
 }
 #include <opaque_fragment>`,
         );
