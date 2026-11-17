@@ -46,6 +46,16 @@ export const GRAPHICS = {
   // set back in their frames, tiled roofs; fluffy crowns in three shades. Farther away, and with
   // it off, the old models.
   cubes: false,
+  // The water's light (16 November, the owner: "even water would need a light shader"): a glint
+  // of the sun (the moon at night) that moves with the camera, more sky at a low angle and more
+  // depth looking down, the soft foam at the shore moving, and lava and lit windows reflected
+  // faintly at night. In the water's own shader (water-light.ts), on the water in eighths only.
+  waterlight: false,
+  // Warm sun and cool shade on the land, buildings and creatures by the way each face turns to the
+  // sun, in the eye view and under cloud too, warmer as the sun goes down; and at night the land
+  // round lava and lit houses glows warm (baked in the fine land). A few operations a pixel in the
+  // shader the sun's shadows already use (looks.ts).
+  warmlight: false,
 };
 
 export type GraphicsFlag = keyof typeof GRAPHICS;
@@ -53,14 +63,14 @@ export type GraphicsFlag = keyof typeof GRAPHICS;
 // The looks a quality level turns on (5.2.5). Low is the island as it was
 // before them; the device picks one from its own frame times (QualityChooser),
 // and the owner can pick one, or one switch at a time, in the frame HUD.
-export const LOOKS_FLAGS = ["shadows", "grade", "bloom", "tilt", "aa", "cubes", "fine"] as const;
+export const LOOKS_FLAGS = ["shadows", "grade", "bloom", "tilt", "aa", "cubes", "fine", "waterlight", "warmlight"] as const;
 export type LooksFlag = (typeof LOOKS_FLAGS)[number];
 export const QUALITIES = ["low", "medium", "high"] as const;
 export type Quality = (typeof QUALITIES)[number];
 export const PRESETS: Record<Quality, Record<LooksFlag, boolean>> = {
-  low: { shadows: false, grade: false, bloom: false, tilt: false, aa: false, cubes: false, fine: false },
-  medium: { shadows: true, grade: true, bloom: false, tilt: false, aa: false, cubes: true, fine: true },
-  high: { shadows: true, grade: true, bloom: true, tilt: true, aa: true, cubes: true, fine: true },
+  low: { shadows: false, grade: false, bloom: false, tilt: false, aa: false, cubes: false, fine: false, waterlight: false, warmlight: false },
+  medium: { shadows: true, grade: true, bloom: false, tilt: false, aa: false, cubes: true, fine: true, waterlight: true, warmlight: true },
+  high: { shadows: true, grade: true, bloom: true, tilt: true, aa: true, cubes: true, fine: true, waterlight: true, warmlight: true },
 };
 
 // The most device pixels per CSS pixel each level draws (the Fold folded has

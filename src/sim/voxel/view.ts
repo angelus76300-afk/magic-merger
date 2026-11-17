@@ -53,6 +53,7 @@ import { BOTTOM, CHUNK, Terrain, V, columnTop, surfaceY } from "./terrain";
 import { hexColor, mixColor } from "../colors";
 import { DecorInstances } from "./decor-instances";
 import { Darkness } from "./darkness";
+import { WaterLight } from "./water-light";
 import { Domes } from "./domes";
 import { keyLevel, keyX, keyY } from "../voxelkey";
 import { LOOKS, biomeAt } from "../land";
@@ -231,6 +232,9 @@ export class VoxelView {
   private decorVersion = -1;
   private decorInstances: DecorInstances;
   private darkness = new Darkness();
+  // The water's light (water-light.ts), and when its lights near the camera were last looked for.
+  private waterLight!: WaterLight;
+  private waterLightsAt = -1e9;
   private glowKeys: number[] = [];
   private decal: HTMLCanvasElement;
   private decalCtx: CanvasRenderingContext2D;
@@ -376,6 +380,8 @@ export class VoxelView {
       this.plumes.material as MeshBasicMaterial,
     ];
     for (const m of this.lit) this.darkness.apply(m);
+    this.waterLight = new WaterLight(this.terrain.waterMap, world.w, world.h);
+    this.waterLight.apply(fluid);
     // The looks of 5.2.5 (looks.ts): the sun's shadows on what is solid, the grade, bloom and blur.
     this.looks = new Looks(
       this.renderer,
@@ -635,6 +641,8 @@ export class VoxelView {
       overcast: this.sky.overcast,
       sunHeight: sun.sun,
       sunAz: sun.sunAz,
+      moonHeight: sun.moon,
+      moonAz: sun.moonAz,
       eye,
       cover: this.cover,
       phi: o.phi,
@@ -645,6 +653,64 @@ export class VoxelView {
       top: this.top,
       dist: o.dist,
     });
+  }
+
+  // The water's light for this frame (water-light.ts): the sun and moon as the shadows take them,
+  // the sky it reflects (the colour low on the sky, as the fog has it), and at night the lava and
+  // lit windows nearest the camera, looked for four times a second.
+  private lightWater(time: number, night: number, fog: Fog, windows: { x: number; y: number; z: number }[], lit: ArrayLike<number>): void {
+    const u = this.waterLight.uniforms;
+    const looks = this.looks;
+    u.wlOn.value = GRAPHICS.waterlight ? 1 : 0;
+    u.wlTime.value = time;
+    u.wlSunDir.value.copy(looks.sunVector);
+    u.wlSun.value = looks.sunBright;
+    const dusk = 1 - Math.min(1, Math.max(0, looks.sunVector.y - 0.3) / 0.4);
+    u.wlSunCol.value.setRGB(1, 0.95 - 0.15 * dusk, 0.82 - 0.3 * dusk);
+    u.wlMoonDir.value.copy(looks.moonVector);
+    u.wlMoon.value = looks.moonBright * 0.7;
+    u.wlSky.value.copy(fog.color);
+    u.wlNight.value = GRAPHICS.waterlight ? Math.min(1, Math.max(0, (night - 0.15) / 0.6)) : 0;
+    if (!GRAPHICS.waterlight || u.wlNight.value <= 0) {
+      u.wlCount.value = 0;
+      return;
+    }
+    if (Math.abs(time - this.waterLightsAt) < 0.25) return;
+    this.waterLightsAt = time;
+    const { world } = this;
+    const o = this.orbit;
+    const near: { d: number; x: number; y: number; z: number; lava: boolean }[] = [];
+    const tx = o.tx;
+    const ty = o.ty;
+    // Lava on a coarse grid round where the camera looks.
+    const R = 22;
+    for (let y = Math.max(0, Math.floor(ty - R)); y < Math.min(world.h, ty + R); y += 2)
+      for (let x = Math.max(0, Math.floor(tx - R)); x < Math.min(world.w, tx + R); x += 2) {
+        const i = y * world.w + x;
+        if (world.fluid[i] !== F.LAVA) continue;
+        const p = this.toScene(x + 0.5, y + 0.5, surfaceY(world, i) + 0.4);
+        near.push({ d: Math.hypot(x - tx, y - ty), x: p.x, y: p.y, z: p.z, lava: true });
+      }
+    const cx = tx - world.w / 2;
+    const cz = ty - world.h / 2;
+    for (let k = 0; k < windows.length; k++) {
+      if (!lit[k]) continue;
+      const w = windows[k];
+      const d = Math.hypot(w.x - cx, w.z - cz);
+      if (d < R) near.push({ d, x: w.x, y: w.y, z: w.z, lava: false });
+    }
+    near.sort((a, b) => a.d - b.d);
+    // Lava a few cells apart, so one pool does not take every light.
+    const wl = this.waterLight;
+    wl.begin();
+    const taken: { x: number; z: number }[] = [];
+    for (const l of near) {
+      if (taken.some((t) => Math.hypot(t.x - l.x, t.z - l.z) < (l.lava ? 4 : 1.5))) continue;
+      taken.push(l);
+      if (l.lava) wl.add(l.x, l.y, l.z, 11, 1, 0.42, 0.12);
+      else wl.add(l.x, l.y, l.z, 6, 1, 0.74, 0.34);
+      if (taken.length >= 8) break;
+    }
   }
 
   // The Perf Lab pins the pixel density, so two runs draw the same pixels (4.4).
@@ -1330,6 +1396,7 @@ export class VoxelView {
       }
     }
     this.windows.count = n;
+    this.lightWater(time, day.night, fog, lights?.windows ?? [], lit);
     if (this.world.rare) this.placeSparks(time, day.night);
     this.windows.instanceMatrix.needsUpdate = true;
     if (this.windows.instanceColor) this.windows.instanceColor.needsUpdate = true;
@@ -2407,19 +2474,21 @@ if (wave > 0.0) {
 }`,
       );
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nuniform float waveTime;\nvarying float vWave;\nvarying vec2 vSea;")
+      .replace("#include <common>", "#include <common>\nuniform float waveTime;\nvarying float vWave;\nvarying vec2 vSea;\nfloat mmWaveK = -1.0;")
       .replace(
         "#include <dithering_fragment>",
         `#include <dithering_fragment>
-if (vWave > 0.01) {
+// The water in eighths sets its own weight from its depth (water-light.ts); in whole cells, vWave.
+float mmWave = mmWaveK >= 0.0 ? mmWaveK : vWave;
+if (mmWave > 0.01) {
   vec2 q = floor(vSea * 4.0) * 0.25;
   float bend = sin(q.y * 0.23 + q.x * 0.11) * 1.3 + sin(q.x * 0.17 - q.y * 0.07 + waveTime * 0.2);
   float a = sin(dot(q, vec2(0.55, 0.32)) + bend + waveTime * 1.1);
   float b = sin(dot(q, vec2(-0.21, 0.63)) - bend * 0.8 - waveTime * 0.8 + 1.9);
   float m = smoothstep(0.15, 0.85, 0.5 + 0.5 * sin(dot(q, vec2(0.47, -0.38)) + waveTime * 0.4));
   float crest = smoothstep(0.94, 1.0, a) * m + smoothstep(0.95, 1.0, b) * (1.0 - m) * 0.7;
-  gl_FragColor.rgb *= 1.0 + (a + b) * 0.02 * vWave;
-  gl_FragColor.rgb += crest * 0.07 * vWave;
+  gl_FragColor.rgb *= 1.0 + (a + b) * 0.02 * mmWave;
+  gl_FragColor.rgb += crest * 0.07 * mmWave;
 }`,
       );
   };

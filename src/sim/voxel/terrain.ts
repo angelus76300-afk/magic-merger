@@ -1,4 +1,4 @@
-import { BufferAttribute, BufferGeometry, FrontSide, Mesh, type Material } from "three";
+import { BufferAttribute, BufferGeometry, DataTexture, FrontSide, LinearFilter, Mesh, RGBAFormat, type Material } from "three";
 import { BUILTIN, C, F, G, type Material as LandMaterial } from "../materials";
 import type { World } from "../world";
 import { FACE_LIGHT } from "./models";
@@ -13,6 +13,7 @@ import {
   fieldHeight,
   fieldStep,
   fineAt,
+  joins,
   makeFineCells,
   sizeFineCells,
   type FineCells,
@@ -60,6 +61,9 @@ const FOAM = 0xf2f9ff;
 interface ChunkMeshes {
   land: Mesh | null;
   fluid: Mesh | null;
+  // With the water in eighths (fine water), the chunk's water in whole cells apart from its other
+  // fluids: shown only until its fine mesh is built.
+  water: Mesh | null;
 }
 
 // For the measure of a big spell (scripts and the frame's own hook): the switch of the one frame
@@ -100,7 +104,7 @@ export class Terrain {
   ) {
     this.cols = Math.ceil(world.w / CHUNK);
     this.rows = Math.ceil(world.h / CHUNK);
-    this.chunks = Array.from({ length: this.cols * this.rows }, () => ({ land: null, fluid: null }));
+    this.chunks = Array.from({ length: this.cols * this.rows }, () => ({ land: null, fluid: null, water: null }));
     this.landSig = new Uint32Array(world.n).fill(0xffffffff);
     this.fluidSig = new Uint32Array(world.n).fill(0xffffffff);
     this.fluidLevel = new Float32Array(world.n).fill(-1e9);
@@ -109,6 +113,52 @@ export class Terrain {
       this.strata = LOOKS[world.land.biome].strata;
       this.water = LOOKS[world.land.biome].water;
     }
+    this.waterData = new Uint8Array(world.w * world.h * 4);
+    this.waterMap = new DataTexture(this.waterData, world.w, world.h, RGBAFormat);
+    this.waterMap.magFilter = LinearFilter;
+    this.waterMap.minFilter = LinearFilter;
+  }
+
+  // The water in eighths (16 November): fine chunks draw their water with their land.
+  private get fineWaterOn(): boolean {
+    return GRAPHICS.fine && GRAPHICS.water;
+  }
+  // The water's colour by depth, a texel a cell, read by the water's shader (water-light.ts) and
+  // filtered between cells, so depth shades smoothly under the water in eighths: rgb the shallow
+  // colour of the cell's water, alpha its depth over WATER_MAP_DEPTH (height units). Dry cells take
+  // the colour of their land's water and no depth, so the shallows fade toward the shore.
+  readonly waterMap: DataTexture;
+  private waterData: Uint8Array<ArrayBuffer>;
+  private writeWaterMap(c: number): void {
+    const { world } = this;
+    const { x0, y0, x1, y1 } = this.bounds(c);
+    const data = this.waterData;
+    for (let y = y0; y < y1; y++)
+      for (let x = x0; x < x1; x++) {
+        const i = y * world.w + x;
+        const water = this.waterAt(i);
+        const k = i * 4;
+        data[k] = (water[0] >> 16) & 255;
+        data[k + 1] = (water[0] >> 8) & 255;
+        data[k + 2] = water[0] & 255;
+        const wet = this.wet[i] === 1 && world.fluid[i] === F.WATER;
+        data[k + 3] = wet ? Math.max(1, Math.min(255, Math.round((world.depth[i] / WATER_MAP_DEPTH) * 255))) : 0;
+      }
+    this.waterMap.needsUpdate = true;
+  }
+
+  // Shows or hides a chunk's meshes: within the eye's reach (chunkOn), fine or in whole cells.
+  private showParts(c: number): void {
+    const on = this.chunkOn.length ? this.chunkOn[c] === 1 : true;
+    const fine = this.fineShown.length ? this.fineShown[c] === 1 : false;
+    const ch = this.chunks[c];
+    if (ch.land) ch.land.visible = on && !fine;
+    if (ch.fluid) ch.fluid.visible = on;
+    if (ch.water) ch.water.visible = on && !(fine && this.fineWater[c]);
+    const m = this.fine[c];
+    if (m) m.visible = on && fine;
+    const w = this.fineWater[c];
+    if (w) w.visible = on && fine;
   }
 
   // The eye view, second pass: chunks wholly past `r` cells from (x, y) are not drawn (the mist
@@ -139,6 +189,7 @@ export class Terrain {
         if (c.fluid) c.fluid.visible = on;
         const fine = this.fine[cy * this.cols + cx];
         if (fine) fine.visible = on && this.fineShown[cy * this.cols + cx] === 1;
+        if (c.water) this.showParts(cy * this.cols + cx);
       }
   }
   private builtSinceShown = false;
@@ -227,13 +278,19 @@ export class Terrain {
       this.swap(c, "land", this.buildLand(c));
       this.staleFine(c);
     }
+    // The water in eighths turned on or off (the quality level): every chunk's fluids drawn again,
+    // its water with them or apart.
+    if (this.fluidSplit !== this.fineWaterOn) {
+      this.fluidSplit = this.fineWaterOn;
+      for (let c = 0; c < this.chunks.length; c++) this.dirtyFluid.add(c);
+    }
     first = true;
     for (const c of this.dirtyFluid) {
       if (!first && performance.now() > until) break;
       first = false;
       this.dirtyFluid.delete(c);
       this.slowFluid.delete(c);
-      this.swap(c, "fluid", this.buildFluid(c));
+      this.fluidBuilt(c, false);
     }
     if (GRAPHICS.fine) this.updateFine(until);
     // Turned off (the low quality level): every chunk back to whole cells.
@@ -253,12 +310,24 @@ export class Terrain {
           this.swap(c, "land", this.buildLand(c));
           this.staleFine(c, true);
         }
-      } else if (!this.dirtyFluid.has(c)) this.swap(c, "fluid", this.buildFluid(c));
+      } else if (!this.dirtyFluid.has(c)) this.fluidBuilt(c, true);
       break;
     }
   }
 
-  private swap(c: number, kind: "land" | "fluid", geometry: BufferGeometry | null): void {
+  private fluidSplit = false;
+  // A chunk's fluids drawn again: in whole cells (its water apart with the water in eighths), the
+  // water's map, and its fine water marked to be built again (`flow`: only because water flowed).
+  private fluidBuilt(c: number, flow: boolean): void {
+    const geometry = this.buildFluid(c);
+    this.swap(c, "fluid", geometry);
+    this.swap(c, "water", this.fluidSplit ? FLUID_W.geometry(4, GRAPHICS.water) : null);
+    if (!this.fluidSplit) return;
+    this.writeWaterMap(c);
+    if (this.fine[c]) this.staleFine(c, flow);
+  }
+
+  private swap(c: number, kind: "land" | "fluid" | "water", geometry: BufferGeometry | null): void {
     const chunk = this.chunks[c];
     const old = chunk[kind];
     if (old) {
@@ -269,13 +338,14 @@ export class Terrain {
     if (!geometry) return;
     const mesh = new Mesh(geometry, kind === "land" ? this.landMaterial : this.fluidMaterial);
     mesh.matrixAutoUpdate = false;
-    if (kind === "fluid") mesh.renderOrder = 2;
+    if (kind !== "land") mesh.renderOrder = 2;
     chunk[kind] = mesh;
     if (kind === "land") {
       mesh.onBeforeRender = this.seeCamera;
       // Drawn finely instead while the camera is near (5.2.5).
       if (this.fineShown[c]) mesh.visible = false;
     }
+    if (kind === "water") this.showParts(c);
     this.add(mesh);
     // A new chunk is shown; past the eye's mist it is hidden again at the next showWithin.
     this.builtSinceShown = true;
@@ -287,6 +357,8 @@ export class Terrain {
   // mesh is ready a chunk keeps showing what it had (the one cell mesh, before its first build).
   // The camera is read as the land is drawn.
   private fine: (Mesh | null | undefined)[] = [];
+  // Each fine chunk's water in eighths (null: none), drawn with it.
+  private fineWater: (Mesh | null | undefined)[] = [];
   private fineLevel = new Uint8Array(0); // the columns a cell of each chunk's fine mesh (FINE_SUB)
   private fineShown = new Uint8Array(0);
   private fineStale = new Uint8Array(0);
@@ -310,6 +382,7 @@ export class Terrain {
     tops: FineTops;
     redo: number;
     at: number;
+    water: boolean;
   } | null = null;
   // The longest a frame spent on the fine land, ms (for the measures).
   readonly fineStats = { maxFrameMs: 0, maxTileMs: 0, tiles: 0, tileMs: [] as number[] };
@@ -425,9 +498,43 @@ export class Terrain {
       const b = by * world.w + bx;
       if (this.wet[a] || this.wet[b] || world.cover[a] === C.HOUSE || world.cover[b] === C.HOUSE) return false;
       const ground = (i: number) => this.fineBuilt(i) === null || world.ground[i] === G.PATH;
-      return ground(a) && ground(b) && Math.abs(columnTop(world, a) - columnTop(world, b)) <= 1;
+      return ground(a) && ground(b) && joins(columnTop(world, b) - columnTop(world, a), this.steepAt(a), this.steepAt(b));
+    },
+    steep: (x, y) => {
+      const { world } = this;
+      return x >= 0 && y >= 0 && x < world.w && y < world.h && this.steepAt(y * world.w + x);
+    },
+    bed: (x, y) => {
+      const { world } = this;
+      if (x < 0 || y < 0 || x >= world.w || y >= world.h) return false;
+      const i = y * world.w + x;
+      return this.wet[i] === 1 && world.fluid[i] === F.WATER && this.naturalAt(i);
+    },
+    wet: (x, y) => {
+      const { world } = this;
+      return x >= 0 && y >= 0 && x < world.w && y < world.h && this.wet[y * world.w + x] === 1;
+    },
+    natural: (x, y) => {
+      const { world } = this;
+      return x >= 0 && y >= 0 && x < world.w && y < world.h && this.naturalAt(y * world.w + x);
     },
   };
+
+  // Snow or a mountain's bare rock: a step of up to STEEP_LINK voxels to such a neighbour curves
+  // (terrain-fine.ts). Not the rock of a mesa's or a desert's cliffs, nor of a plateau island: their
+  // sheer sides are what they are.
+  private steepAt(i: number): boolean {
+    const { world } = this;
+    const g = world.ground[i];
+    if (g === G.SNOW) return true;
+    if (g !== G.ROCK || world.land?.shape === "plateau") return false;
+    const biome = biomeAt(world, i);
+    return biome !== "mesa" && biome !== "desert";
+  }
+  // Natural ground, as the fine land draws it (a path counts).
+  private naturalAt(i: number): boolean {
+    return this.fineBuilt(i) === null || this.world.ground[i] === G.PATH;
+  }
 
   // The height of the land as drawn under (x, y) in cells, in scene units: the secondary terrain
   // map where the land is drawn finely with slopes, at the level it is drawn; the cell's own
@@ -522,6 +629,7 @@ export class Terrain {
       m.geometry.dispose();
     }
     this.fine[c] = undefined;
+    this.dropFineWater(c);
     this.fineLevel[c] = 0;
     this.fineStale[c] = 0;
     this.spare(c);
@@ -530,6 +638,16 @@ export class Terrain {
       const land = this.chunks[c].land;
       if (land) land.visible = this.chunkOn[c] === 1;
     }
+    this.showParts(c);
+  }
+
+  private dropFineWater(c: number): void {
+    const w = this.fineWater[c];
+    if (w) {
+      this.remove(w);
+      w.geometry.dispose();
+    }
+    this.fineWater[c] = undefined;
   }
 
   // The level a chunk should have: eighths (FINE_SUB), the one size at every distance (the owner,
@@ -573,6 +691,7 @@ export class Terrain {
       this.fineBuiltAt = new Float64Array(n).fill(-1e9);
       this.fineTops = new Array(n).fill(undefined);
       this.chunkOn = new Uint8Array(n).fill(1);
+      this.fineWater = new Array(n).fill(undefined);
     }
     if (!this.eye.known) return;
     void until;
@@ -612,6 +731,7 @@ export class Terrain {
           if (land) land.visible = this.chunkOn[c] === 1 && !show;
           const fine = this.fine[c];
           if (fine) fine.visible = this.chunkOn[c] === 1 && show === 1;
+          this.showParts(c);
         }
       }
       // A started chunk is finished first while it still wants that level: turning the camera
@@ -625,7 +745,7 @@ export class Terrain {
       while (job.next < job.tiles.length) {
         const t0 = performance.now();
         const [tx0, ty0, tx1, ty1] = job.tiles[job.next++];
-        buildFineTile(this.fineCells, FINE_OUT, -this.world.w / 2, -this.world.h / 2, job.sub, tx0, ty0, tx1, ty1, job.tops);
+        buildFineTile(this.fineCells, FINE_OUT, -this.world.w / 2, -this.world.h / 2, job.sub, tx0, ty0, tx1, ty1, job.tops, job.water ? FINE_WATER : null);
         const t1 = performance.now();
         this.fineStats.maxTileMs = Math.max(this.fineStats.maxTileMs, t1 - t0);
         this.fineStats.tiles++;
@@ -694,9 +814,84 @@ export class Terrain {
         f.flat[k] = world.cover[i] === C.HOUSE ? 1 : 0;
         f.value[k] = this.softValue(x, y);
         f.anchored[k] = this.anchoredAt(i) ? 1 : 0;
+        f.steep[k] = this.steepAt(i) ? 1 : 0;
+        f.wdeep[k] = this.waterAt(i)[1];
       }
     }
+    this.readSoft(f);
     return f;
+  }
+
+  // A spell's ground in soft patches (16 November, the owner: Big Bang's ground was "a busy
+  // camouflage patchwork of purples, lilac and sand"). Where most of the land round a cell (5 by 5,
+  // weighted to the middle) is a spell's own natural ground or crystal, the cell is drawn in the
+  // weighted mean colour of the dry land round it, eased between cells (terrain-fine.ts softColor):
+  // stardust, the crystal it turns into and the sand it left read as one ground in soft shades,
+  // still the spell's colour, instead of cell sized blots.
+  private readSoft(f: FineCells): void {
+    const { world } = this;
+    const ax = f.x0 - 5;
+    const ay = f.y0 - 5;
+    const aw = f.x1 - f.x0 + 10;
+    const ah = f.y1 - f.y0 + 10;
+    if (SOFT_FAM.length < aw * ah) {
+      SOFT_FAM = new Uint8Array(aw * ah);
+      SOFT_COL = new Int32Array(aw * ah);
+    }
+    let any = false;
+    for (let y = 0; y < ah; y++)
+      for (let x = 0; x < aw; x++) {
+        const wx = ax + x;
+        const wy = ay + y;
+        const k = y * aw + x;
+        SOFT_FAM[k] = 0;
+        SOFT_COL[k] = -1;
+        if (wx < 0 || wy < 0 || wx >= world.w || wy >= world.h) continue;
+        const i = wy * world.w + wx;
+        if (this.wet[i] || !this.naturalAt(i)) continue;
+        const g = world.ground[i];
+        // 1: dry natural land; 2: a spell's own ground or crystal.
+        SOFT_FAM[k] = g === G.CRYSTAL || g >= BUILTIN.ground.length ? 2 : 1;
+        if (SOFT_FAM[k] === 2) any = true;
+      }
+    const n = f.bw * (f.y1 - f.y0 + 6);
+    if (!any) {
+      f.softOn.fill(0, 0, n);
+      return;
+    }
+    for (let y = f.y0 - 3; y < f.y1 + 3; y++)
+      for (let x = f.x0 - 3; x < f.x1 + 3; x++) {
+        const k = fineAt(f, x, y);
+        f.softOn[k] = 0;
+        const own = (y - ay) * aw + (x - ax);
+        if (!f.inside[k] || SOFT_FAM[own] === 0 || !f.blends[k]) continue;
+        let spell = 0;
+        let all = 0;
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        let land = 0;
+        for (let dy = -2; dy <= 2; dy++)
+          for (let dx = -2; dx <= 2; dx++) {
+            const q = own + dy * aw + dx;
+            const wgt = SOFT_KERNEL[dx + 2] * SOFT_KERNEL[dy + 2];
+            all += wgt;
+            if (SOFT_FAM[q] === 0) continue;
+            if (SOFT_FAM[q] === 2) spell += wgt;
+            if (SOFT_COL[q] < 0) SOFT_COL[q] = this.fineTopColor((y + dy) * world.w + x + dx);
+            const col = SOFT_COL[q];
+            r += ((col >> 16) & 255) * wgt;
+            g += ((col >> 8) & 255) * wgt;
+            b += (col & 255) * wgt;
+            land += wgt;
+          }
+        if (spell < all * 0.5) continue;
+        const soft = (Math.round(r / land) << 16) | (Math.round(g / land) << 8) | Math.round(b / land);
+        f.softOn[k] = 1;
+        f.soft[k] = soft;
+        f.color[k] = soft;
+        f.edge[k] = soft;
+      }
   }
 
   // The secondary terrain map's height at (px, py) in cells (terrain-fine.ts fieldHeight), as
@@ -714,6 +909,7 @@ export class Terrain {
     const side = sub === 8 ? TILE / 4 : TILE / 2;
     for (let ty = y0; ty < y1; ty += side) for (let tx = x0; tx < x1; tx += side) tiles.push([tx, ty, Math.min(x1, tx + side), Math.min(y1, ty + side)]);
     FINE_OUT.reset();
+    FINE_WATER.reset();
     // Room for a fine chunk's vertices from the start: growing in the middle of a tile copies
     // megabytes, a spike of tens of milliseconds.
     FINE_OUT.reserve(FINE_VERTICES);
@@ -729,6 +925,7 @@ export class Terrain {
       tops: { h, x0, y0, stride },
       redo: 0,
       at: performance.now(),
+      water: this.fineWaterOn,
     };
   }
 
@@ -743,6 +940,16 @@ export class Terrain {
       this.remove(old);
       old.geometry.dispose();
     }
+    // Its water in eighths: drawn after the land, as the water in whole cells is.
+    this.dropFineWater(c);
+    const waterGeometry = job.water ? FINE_WATER.waterGeometry() : null;
+    if (waterGeometry) {
+      const w = new Mesh(waterGeometry, this.fluidMaterial);
+      w.matrixAutoUpdate = false;
+      w.renderOrder = 2;
+      this.fineWater[c] = w;
+      this.add(w);
+    } else this.fineWater[c] = null;
     const now = performance.now();
     this.fineBuiltAt[c] = now;
     // Changed again while it was built: still stale, since the moment the build began.
@@ -759,6 +966,8 @@ export class Terrain {
         const land = this.chunks[c].land;
         if (land) land.visible = this.chunkOn[c] === 1;
       }
+      this.dropFineWater(c);
+      this.showParts(c);
       return;
     }
     const mesh = new Mesh(geometry, this.landMaterial);
@@ -791,6 +1000,7 @@ export class Terrain {
     mesh.visible = shown === 1 && this.chunkOn[c] === 1;
     this.fine[c] = mesh;
     this.add(mesh);
+    this.showParts(c);
     this.builtSinceShown = true;
   }
 
@@ -807,7 +1017,13 @@ export class Terrain {
         land += (fine.geometry.index?.count ?? fine.geometry.getAttribute("position").count) / 3;
         fineChunks++;
         if (this.fineLevel[c] === 8) eighths++;
-      } else if (ch.land) land += ch.land.geometry.getAttribute("position").count / 3;
+        const w = this.fineWater[c];
+        if (w) fluid += w.geometry.getAttribute("position").count / 3;
+        else if (ch.water) fluid += ch.water.geometry.getAttribute("position").count / 3;
+      } else {
+        if (ch.land) land += ch.land.geometry.getAttribute("position").count / 3;
+        if (ch.water) fluid += ch.water.geometry.getAttribute("position").count / 3;
+      }
       if (ch.fluid) fluid += ch.fluid.geometry.getAttribute("position").count / 3;
     }
     return { land, fluid, fineChunks, eighths };
@@ -922,8 +1138,8 @@ export class Terrain {
     const { world } = this;
     const { w, h } = world;
     const { x0, y0, x1, y1 } = this.bounds(c);
-    const out = FLUID;
-    out.reset();
+    FLUID.reset();
+    FLUID_W.reset();
     const ox = -w / 2;
     const oz = -h / 2;
     for (let y = y0; y < y1; y++) {
@@ -931,6 +1147,8 @@ export class Terrain {
         const i = y * w + x;
         const f = world.fluid[i];
         if (f === F.NONE || !this.wet[i]) continue;
+        // With the water in eighths, water in whole cells goes apart (ChunkMeshes.water).
+        const out = this.fluidSplit && f === F.WATER ? FLUID_W : FLUID;
         const top = Math.max(surfaceY(world, i), columnTop(world, i) + FLUID_LIFT);
         this.fluidLevel[i] = top;
         const { color, alpha } = this.fluidColor(i);
@@ -959,7 +1177,7 @@ export class Terrain {
         }
       }
     }
-    return out.geometry(4, GRAPHICS.water);
+    return FLUID.geometry(4, GRAPHICS.water);
   }
 
   // A water top (4.4): foam at the corners that touch the shore, waves away
@@ -1286,6 +1504,11 @@ export class Writer {
   private mask = new Float32Array(6 * 4096);
   // How much a vertex rides the waves (water tops, 4.4).
   private wave = new Float32Array(6 * 4096);
+  // Two more numbers a vertex, set before writing (16 November): the fine land's night glow (e0,
+  // terrain-fine.ts GLOW_LEVELS); the water in eighths (e0 1, e1 its foam).
+  private extra = new Float32Array(2 * 6 * 4096);
+  e0 = 0;
+  e1 = 0;
   private n = 0;
 
   reset(): void {
@@ -1310,12 +1533,17 @@ export class Writer {
     const wave = new Float32Array(this.wave.length * 2);
     wave.set(this.wave);
     this.wave = wave;
+    const extra = new Float32Array(this.extra.length * 2);
+    extra.set(this.extra);
+    this.extra = extra;
   }
 
   private vertex(x: number, y: number, z: number, r: number, g: number, b: number, a: number, m: number, wave = 0): void {
     const n = this.n++;
     this.mask[n] = m;
     this.wave[n] = wave;
+    this.extra[n * 2] = this.e0;
+    this.extra[n * 2 + 1] = this.e1;
     this.pos[n * 3] = x;
     this.pos[n * 3 + 1] = y;
     this.pos[n * 3 + 2] = z;
@@ -1467,6 +1695,64 @@ export class Writer {
     for (const k of light[0] + light[2] > light[1] + light[3] ? FLIPPED : SQUARE) v(k);
   }
 
+  // A quad of corners a, b, c, d (triangles a b c and a c d, as rect winds them), for the water in
+  // eighths: a top takes colour and alpha ca, aa at every corner; a side (`side`) takes them at its
+  // lower edge and cb, ab at its upper one. `mask` 1 on the water's tops, 0 on its sides.
+  quad(
+    ax: number,
+    ay: number,
+    az: number,
+    bx: number,
+    by: number,
+    bz: number,
+    cx: number,
+    cy: number,
+    cz: number,
+    dx: number,
+    dy: number,
+    dz: number,
+    ca: number,
+    aa: number,
+    cb: number,
+    ab: number,
+    mask: number,
+    wave: number,
+    side: boolean,
+  ): void {
+    if ((this.n + 6) * 4 > this.col.length) this.grow();
+    const ch = (c: number, s: number) => ((c >> s) & 255) / 255;
+    const v = (x: number, y: number, z: number, low: boolean) => {
+      const c = low ? ca : cb;
+      this.vertex(x, y, z, ch(c, 16), ch(c, 8), ch(c, 0), low ? aa : ab, mask, wave);
+    };
+    // A side: its lower corners take the first colour; a top: all of them.
+    const lo = Math.min(ay, by, cy, dy) + 1e-9;
+    const lowA = !side || ay <= lo;
+    const lowB = !side || by <= lo;
+    const lowC = !side || cy <= lo;
+    const lowD = !side || dy <= lo;
+    v(ax, ay, az, lowA);
+    v(bx, by, bz, lowB);
+    v(cx, cy, cz, lowC);
+    v(ax, ay, az, lowA);
+    v(cx, cy, cz, lowC);
+    v(dx, dy, dz, lowD);
+  }
+
+  // The water in eighths as a geometry: colours with their alpha, the drawings' mask, the waves,
+  // and `waterFine` (1, the foam) for the water's shader (water-light.ts).
+  waterGeometry(): BufferGeometry | null {
+    if (this.n === 0) return null;
+    const g = new BufferGeometry();
+    g.setAttribute("position", new BufferAttribute(this.pos.slice(0, this.n * 3), 3));
+    g.setAttribute("color", new BufferAttribute(this.col.slice(0, this.n * 4), 4));
+    g.setAttribute("decalMask", new BufferAttribute(this.mask.slice(0, this.n), 1));
+    g.setAttribute("wave", new BufferAttribute(this.wave.slice(0, this.n), 1));
+    g.setAttribute("waterFine", new BufferAttribute(this.extra.slice(0, this.n * 2), 2));
+    g.computeBoundingSphere();
+    return g;
+  }
+
   // A water top: its color mixed toward foam at shore corners.
   topFoam(X: number, Z: number, y: number, colors: number[], foam: number[], alpha: number[], wave: number[]): void {
     if ((this.n + 6) * 4 > this.col.length) this.grow();
@@ -1490,6 +1776,7 @@ export class Writer {
     const pos = new Float32Array(quads * 12);
     const col = new Uint8Array(quads * 12);
     const mask = new Uint8Array(quads * 4);
+    const glow = new Uint8Array(quads * 4);
     const index = new Uint32Array(quads * 6);
     const byte = (v: number) => Math.max(0, Math.min(255, Math.round(v * 255)));
     // Each face's way, from its winding (outward, as three's front side): the index buffer holds
@@ -1542,6 +1829,7 @@ export class Writer {
         col[to * 3 + 1] = byte(this.col[from * 4 + 1]);
         col[to * 3 + 2] = byte(this.col[from * 4 + 2]);
         mask[to] = byte(this.mask[from]);
+        glow[to] = byte(this.extra[from * 2]);
       }
       const v = q * 4;
       index.set([v, v + 1, v + 2, v, v + 2, v + 3], next[way[q]]++ * 6);
@@ -1550,6 +1838,8 @@ export class Writer {
     g.setAttribute("position", new BufferAttribute(pos, 3));
     g.setAttribute("color", new BufferAttribute(col, 3, true));
     g.setAttribute("decalMask", new BufferAttribute(mask, 1, true));
+    // The night glow of the land round lava and houses (terrain-fine.ts, warmlight).
+    g.setAttribute("landGlow", new BufferAttribute(glow, 1, true));
     g.setIndex(new BufferAttribute(index, 1));
     g.computeBoundingSphere();
     g.userData.faces = { first, counts, planes };
@@ -1583,6 +1873,10 @@ const LAND = new Writer();
 const FINE_OUT = new Writer();
 const FINE_VERTICES = 6 * 4096 * 16;
 const FLUID = new Writer();
+const FLUID_W = new Writer();
+const FINE_WATER = new Writer();
+// The deepest water the water's map tells apart, height units.
+const WATER_MAP_DEPTH = 8;
 
 // The mean of a list of colours.
 function meanColor(colors: number[]): number {
@@ -1641,3 +1935,9 @@ const BAND_MIX = [0, 0.28, 0.55, 0.78, 1];
 const BAND_ALPHA = [0.42, 0.58, 0.74, 0.88, 0.96];
 const SALT = [0xf2efe6, 0xebe7dc, 0xf7f5ef, 0xe6e1d4];
 const MOSS = 0x4f7a3a;
+
+// Reused by Terrain.readSoft: the land round a chunk (0 none, 1 dry natural land, 2 a spell's ground
+// or crystal) and its colours as read (-1 not yet), and the weights of five cells across.
+let SOFT_FAM = new Uint8Array(0);
+let SOFT_COL = new Int32Array(0);
+const SOFT_KERNEL = [1, 4, 6, 4, 1];

@@ -1,0 +1,3 @@
+section: Backlog
+
+- **Spells seen in the water** (the designer's idea, 2026-11-17; lens: what the player feels). The water now reflects lava and lit windows at night from a short list of lights near the camera. A spell's own light (a fireball's body, a bolt, a glowing creature) could join that list while it shines, so a fireball cast over a lake draws a streak of orange across it. What the player feels: a spell belongs to the place it is cast in, and casting by the water is worth trying. What it adds: a reason to stage spells at the shore, with no new rule. Cost: a few lines in the view adding the brightest spell lights to the eight the water already reads; no pass, no draw call, nothing saved, no money. Claude.
