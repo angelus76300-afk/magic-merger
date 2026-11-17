@@ -4107,6 +4107,13 @@ const signIn = async (key, count) => {
         .run()
     ).lastInsertRowid,
   );
+  const askedBefore = looksAsked.length;
+  const unnamed = await api("/api/admin/looks", { admin: true, body: {} });
+  check(
+    "looks: in pilot a start that names nothing is refused and asks no writer",
+    unnamed.status === 409 && looksAsked.length === askedBefore,
+    `${unnamed.status} ${looksAsked.length - askedBefore}`,
+  );
   const asked0 = looksAsked.length;
   const b0 = batches.size;
   const started = await api("/api/admin/looks", {
