@@ -239,6 +239,8 @@ export async function startLooks(env: LooksEnv, oracle: Oracle, body: StartBody,
   let wonders = Array.isArray(body.wonders) ? body.wonders.filter((n): n is number => Number.isInteger(n)) : [];
   if (typeof body.wonders === "number") wonders = await someWonders(db, Math.min(20, Math.max(0, Math.floor(body.wonders))));
   const pilot = !cron && (asked.length > 0 || wonders.length > 0);
+  // In pilot, only a start that names its items runs: an unnamed one would take the bulk order (review of #179).
+  if (!pilot && mode !== "bulk") throw new LooksError(409, "In pilot, name the items to redraw (LOOKS is not bulk)");
   if (!pilot) {
     const order = await bulkOrder(db, limit);
     asked.push(...order.keys);
