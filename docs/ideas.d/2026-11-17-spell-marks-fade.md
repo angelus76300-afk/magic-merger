@@ -1,0 +1,3 @@
+section: Backlog
+
+- **A spell leaves a mark that fades** (the designer's idea, 2026-11-17; lens: the promise an item's name makes). Today 156 spells draw nothing of their own: a Fireball is particles and then nothing. A `w.model` option `{ fades: 60 }` would let a spell leave a scorched ring or a rune stone that crumbles into drifting cubes after a minute, so the island remembers the cast for a while without filling its 60 lasting looks. What the player feels: the spell happened here, and the place shows it. Cost: one optional field on a prop and its removal in the tick; it would let the looks pass give spells a look without the cap problem that keeps them out today. Claude.
