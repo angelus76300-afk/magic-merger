@@ -26,7 +26,7 @@
 import { elementKey } from "../shared/elements";
 import { FIRST_PROGRAM_VERSION, syntaxError } from "../shared/spellcode";
 import { isTier, TIERS, type Tier } from "../shared/tiers";
-import { PROGRAM_ADD, WONDER_ADD, mayGainModel, modelCalls, numberedProgram, spliceLooks } from "../shared/looks/splice";
+import { PROGRAM_ADD, WONDER_ADD, mayGainModel, modelCalls, numberedProgram, ownLookCall, spliceLooks } from "../shared/looks/splice";
 import type { LooksVerdict, Oracle } from "./oracle";
 import { getProgram, insertProgram, liveProgram, promote } from "./programs";
 
@@ -183,6 +183,9 @@ async function pickWonder(db: D1Database, id: number): Promise<Picked | null> {
   };
 }
 
+// On a pending row's reason: the program may gain a model (startLooks decided it; pollLooks reads it).
+const MAY_ADD = "may gain a model";
+
 // Not redrawn yet (any row but a failed one counts: a kept look is not asked again).
 const ASKED_KEY = "SELECT 1 FROM looks l WHERE l.key = s.key AND l.status != 'failed'";
 const ASKED_WONDER = "SELECT 1 FROM looks l WHERE l.wonder_id = w.id AND l.status != 'failed'";
@@ -260,8 +263,9 @@ export async function startLooks(env: LooksEnv, oracle: Oracle, body: StartBody,
   for (const p of picked) {
     if (queued.length >= limit) break;
     const calls = modelCalls(p.code);
-    // A program with no model may gain one, unless it is a creature or (not asked) a spell.
-    const notAdded = p.target === "wonder" ? null : mayGainModel(p.kind, body.spells === true);
+    // A program with no model may gain one, unless it is a creature, (not asked) a spell, or an
+    // item the island draws already (a building, a village, a built-in wonder: ownLookCall).
+    const notAdded = p.target === "wonder" ? null : (mayGainModel(p.kind, body.spells === true) ?? ownLookCall(p.code));
     const mayAdd = !notAdded;
     // Nothing to redraw: no model call and none to add, or code the splice cannot read.
     if (!calls || (!calls.length && !mayAdd)) {
@@ -277,9 +281,9 @@ export async function startLooks(env: LooksEnv, oracle: Oracle, body: StartBody,
     if (estimate + cost > room) break;
     const ins = await db
       .prepare(
-        "INSERT INTO looks (target, key, wonder_id, from_pid, status, pilot, model, estimate, old_code, at) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
+        "INSERT INTO looks (target, key, wonder_id, from_pid, status, pilot, model, estimate, old_code, reason, at) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)",
       )
-      .bind(p.target, p.key, p.wonderId, p.fromPid, pilot ? 1 : 0, model, cost, p.code, at)
+      .bind(p.target, p.key, p.wonderId, p.fromPid, pilot ? 1 : 0, model, cost, p.code, mayAdd && !calls.length ? MAY_ADD : null, at)
       .run();
     items.push({
       id: Number(ins.meta.last_row_id),
@@ -317,8 +321,8 @@ export async function pollLooks(env: LooksEnv, oracle: Oracle): Promise<{ done: 
   const db = env.DB;
   const out = { done: 0, failed: 0, waiting: 0 };
   const pending = await db
-    .prepare("SELECT id, target, batch, model, old_code FROM looks WHERE status = 'pending' AND batch IS NOT NULL")
-    .all<{ id: number; target: string; batch: string; model: string; old_code: string }>();
+    .prepare("SELECT id, target, batch, model, old_code, reason FROM looks WHERE status = 'pending' AND batch IS NOT NULL")
+    .all<{ id: number; target: string; batch: string; model: string; old_code: string; reason: string | null }>();
   if (!pending.results.length || oracle.mock) return out;
   for (const batch of new Set(pending.results.map((r) => r.batch))) {
     const outcomes = await oracle.looksResults(batch);
@@ -334,8 +338,9 @@ export async function pollLooks(env: LooksEnv, oracle: Oracle): Promise<{ done: 
       let code: string | null = null;
       let refused: string | null = null;
       if (o?.answer) {
-        // Who may gain a model was settled when it was asked: a writer told it may not sends no call 0.
-        const r = spliceLooks(row.old_code, o.answer.models, row.target === "wonder" ? WONDER_ADD : PROGRAM_ADD);
+        // Who may gain a model was settled when it was asked (MAY_ADD on its row): a call 0 for any
+        // other program (a creature, a spell not asked, a building) is refused, whatever the writer sent.
+        const r = spliceLooks(row.old_code, o.answer.models, row.target === "wonder" ? WONDER_ADD : row.reason === MAY_ADD ? PROGRAM_ADD : false);
         refused = r?.refused.length ? JSON.stringify(r.refused).slice(0, 1000) : null;
         if (!r) reason = "its code could not be read";
         else if (!r.replaced.length && !r.added) reason = r.refused.length ? `every look was refused: ${r.refused[0].why}` : "the writer redrew nothing";

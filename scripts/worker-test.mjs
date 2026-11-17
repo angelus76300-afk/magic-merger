@@ -4230,6 +4230,79 @@ const signIn = async (key, count) => {
   await db.prepare("UPDATE looks SET status = 'candidate', old_score = 12, new_score = 12 WHERE id = ?").bind(star.id).run();
   const tie = (await api("/api/admin/looks-verdict", { admin: true, body: { id: star.id, tested: true } })).data;
   check("looks: a look that does not score higher is kept out", !tie.replaced && /did not score it higher/.test(tie.reason), JSON.stringify(tie));
+  // Every item (the owner, 17 November: "looks: all items"): an artifact with no model gains one,
+  // where it is placed, and nothing else changes; a building and a creature gain none (the island
+  // draws them already); the pilot's pool is read only.
+  for (const n of ["Glow Stone", "Glow Stone Two", "Stone Hall", "Cave Bear"]) await liveSpell(n, "minor");
+  const stoneCode = (n) =>
+    `const spell = {\n  *cast(w) {\n    w.flash(w.x, w.y, '#ffd');\n    const a = w.artifact(w.x + 1, w.y, '${n}');\n    w.sound('chime', 1);\n  },\n};`;
+  await setCode("Glow Stone", stoneCode("Glow Stone"));
+  await setCode("Glow Stone Two", stoneCode("Glow Stone Two"));
+  await setCode("Stone Hall", "const spell = {\n  *cast(w) {\n    w.building(w.x, w.y, { job: 'smith' });\n  },\n};");
+  await setCode("Cave Bear", stoneCode("Cave Bear"));
+  for (const [key, form] of [
+    ["glow stone", "object"],
+    ["glow stone two", "object"],
+    ["stone hall", "building"],
+    ["cave bear", "creature"],
+  ])
+    await db.prepare("UPDATE elements SET kind = 'artifact', form = ? WHERE key = ?").bind(form, key).run();
+  const looksRows = async () => (await db.prepare("SELECT COUNT(*) AS n FROM looks").first()).n;
+  const rows0 = await looksRows();
+  const pool = await api("/api/admin/looks-pool?limit=100", { admin: true });
+  const stoneInPool = pool.data?.find?.((p) => p.key === "glow stone");
+  check(
+    "looks: the pilot's pool lists the live programs not asked yet, with casts and models, and writes nothing",
+    pool.status === 200 &&
+      stoneInPool?.models === 0 &&
+      stoneInPool.form === "object" &&
+      typeof stoneInPool.casts === "number" &&
+      stoneInPool.code.includes("w.artifact(") &&
+      !pool.data.some((p) => p.key === "lamp post") &&
+      (await looksRows()) === rows0,
+    JSON.stringify(pool.data?.map?.((p) => [p.key, p.form, p.models])),
+  );
+  const b1 = batches.size;
+  const grown = await api("/api/admin/looks", { admin: true, body: { keys: ["glow stone", "glow stone two", "stone hall", "cave bear"] } });
+  const stoneAsk =
+    [...batches.values()]
+      .slice(b1)
+      .flat()
+      .find((r) => r.params.messages[0].content.includes(": Glow Stone\n"))?.params.messages[0].content ?? "";
+  check(
+    "looks: an artifact with no model is asked for one; a building and a creature are not",
+    grown.data.queued.join() === "Glow Stone,Glow Stone Two" &&
+      grown.data.skipped.join() === "Stone Hall,Cave Bear" &&
+      /may gain one \(call 0\), the Glow Stone itself/.test(stoneAsk),
+    JSON.stringify(grown.data),
+  );
+  const notGrown = (await db.prepare("SELECT key, reason FROM looks WHERE key IN ('stone hall', 'cave bear') ORDER BY key").all()).results;
+  check(
+    "looks: what the island draws already gains no model (a creature's body, a building)",
+    /drawn by its body/.test(notGrown[0]?.reason) && /w\.building draws it already/.test(notGrown[1]?.reason),
+    JSON.stringify(notGrown),
+  );
+  // A row the Worker did not mark as one that may gain a model refuses a call 0, whatever the writer sent.
+  await db.prepare("UPDATE looks SET reason = NULL WHERE key = 'glow stone two' AND status = 'pending'").run();
+  await api("/api/admin/looks-poll", { admin: true, body: {} });
+  const stones = (await db.prepare("SELECT key, status, reason, old_code, new_code FROM looks WHERE key LIKE 'glow stone%' ORDER BY key").all()).results;
+  const [stone, stoneTwo] = stones;
+  const placed = "'Glow Stone');\n";
+  const cut = stone?.old_code.indexOf(placed) + placed.length;
+  const insertedLine = stone?.new_code?.slice(cut, stone.new_code.length - (stone.old_code.length - cut)) ?? "";
+  check(
+    "looks: the artifact gains its model right after it is placed, every other character the same",
+    stone?.status === "candidate" &&
+      stone.new_code.startsWith(stone.old_code.slice(0, cut)) &&
+      stone.new_code.endsWith(stone.old_code.slice(cut)) &&
+      /^ {4}w\.model\(w\.x \+ 1, w\.y, \[\[.*\]\]\);\n$/.test(insertedLine),
+    JSON.stringify(stone),
+  );
+  check(
+    "looks: a call 0 for a program not marked to gain a model is refused",
+    stoneTwo?.status === "failed" && /only a program with no model may gain one/.test(stoneTwo.reason),
+    JSON.stringify(stoneTwo),
+  );
   // The caps: the night's $3 and the revamp's $25, both checked before any call.
   await db.prepare("DELETE FROM looks WHERE key = 'star lamp' OR key LIKE 'bad lamp %'").run();
   await db.prepare("INSERT INTO spend (at, call, model, usd, invite) VALUES (?, 'looks-write', 'claude-sonnet-5-5', 2.999, 'looks')").bind(Date.now()).run();

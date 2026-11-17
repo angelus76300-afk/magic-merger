@@ -55,6 +55,16 @@ export function mayGainModel(form: string, spells = false): string | null {
   if (form === "spell" && !spells) return "a spell would leave a model at every cast";
   return null;
 }
+// Calls whose look the island draws itself, at the item's place: a building (voxel/buildings.ts), a
+// village's houses, a built-in wonder's model. A program that calls one already shows the item, and
+// a model beside it would draw it a second time, so it gains none. (No generic look stands in for a
+// program with no model: an artifact is a landmark, which the island does not draw; what shows is
+// what the program raises. Creatures are the other case, mayGainModel.)
+export const OWN_LOOK_CALLS = ["building", "village", "wonder"] as const;
+export function ownLookCall(code: string): string | null {
+  for (const m of OWN_LOOK_CALLS) if (callsOf(code, m)?.length) return `w.${m} draws it already`;
+  return null;
+}
 export const WONDER_ADD: AddOptions = { max: MAX_ADDED_MODELS, at: "center" };
 export const PROGRAM_ADD: AddOptions = { max: 1, at: "artifact" };
 
@@ -186,7 +196,7 @@ export function modelCalls(code: string): ModelCall[] | null {
 }
 
 // Every call of `method` on a name in the code, as modelCalls.
-function callsOf(code: string, method: "model" | "artifact"): ModelCall[] | null {
+function callsOf(code: string, method: string): ModelCall[] | null {
   const isCode = new Uint8Array(code.length);
   if (!scan(code, (i) => (isCode[i] = 1))) return null;
   const calls: ModelCall[] = [];

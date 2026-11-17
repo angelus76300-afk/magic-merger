@@ -6,6 +6,7 @@ import { REFERENCES, partTarget, referencesFor } from "../shared/looks";
 import { shapesOf, silhouette, toneGroups } from "../shared/looks/measure";
 import { changedLines, drawablePart, modelCalls, numberedProgram, oldPartsProblem, partsProblem, readLiteral, spliceLooks } from "../shared/looks/splice";
 import { drawableShare } from "./looks-drawable";
+import { looksGainChecks } from "./looks-gain-test";
 import { MAX_PROP_BOXES, readBox, type PropBox } from "../src/sim/props";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
@@ -327,4 +328,7 @@ export function looksRefChecks(check: Check): void {
   check("the grown wonder still parses", syntaxError(grown?.code ?? "") === null);
   check("an item that is not a wonder gains none", spliceLooks(wonder, [{ call: 0, parts: anvil }], false)?.added === 0);
   check("a program with models gains none", spliceLooks(program, [{ call: 0, parts: anvil }], true)?.added === 0);
+
+  // Every item: a program with no model gains one (scripts/looks-gain-test.ts).
+  looksGainChecks(check);
 }

@@ -56,3 +56,14 @@ The references are offline path-traced renders. A phone at 30 frames a second wi
 ## Reference looks
 
 Ten hand-made looks in `shared/looks/` set the level of detail the writer copies: a spellbook, a potion, a sword in the stone and a seeing orb (objects, 25 to 33 parts), a wolf and a hawk (creatures, 33 to 39), a mage tower and a shrine (buildings, 60 to 76), a spirit tree and a ruined temple (places, 82 to 89). Each is the piece of a cast that draws it, shown to the writer as written, three at a time by kind (`referencesFor`). Frames at medium: `docs/visual-checks/looks-references/` (`scripts/looks-references-frames.ts`). Their checks (`scripts/looks-refs-test.ts`): parts within the kind's range, three tones or more of one hue, a glowing accent under a third of the parts, three shapes or more, and an outline richer than the library's median or a shape that is not a block.
+
+## Items that draw no model
+
+Phase 0 counted 307 of 368 items that draw no `w.model` (the owner, 17 November: "looks: all items"). Nothing stands in for them on the island: an artifact is a landmark, which the island does not draw, so what shows is only what the program raises (voxels, particles, land). The look-only writer may give such a program one model, inserted and nothing else changed (`shared/looks/splice.ts`, `PROGRAM_ADD`; `insertedText` proves it):
+
+- An artifact's model goes right after the `w.artifact(x, y, ...)` statement of the cast's own block, at the same x and y, so it appears when the artifact does and a hand that takes the artifact takes its model. If that place is in a loop or a branch, or its x or y holds a call or an assignment (read twice it could act twice), the model goes at the start of the cast, at the cast's point.
+- It takes the item's name (`w.model`'s default) and one model at most; a wonder keeps its one or two named looks at its center.
+- None for a creature (its body is its look), nor for a program that calls `w.building`, `w.village` or `w.wonder` (the island draws those already): a model there would draw the item twice.
+- None for a spell unless the admin asks (`spells: true`, `looks-runner start --pilot --spells`): a spell's model stays where each cast fell, and the island keeps 60 models, so a spell cast often would push placed items' looks off.
+
+The pilot is picked by the runner from the live library (`GET /api/admin/looks-pool`, one SELECT, `shared/looks/pilot.ts`): the 10 plainest items that draw a model, the 10 most cast that may gain one, and 10 wonders.
