@@ -266,8 +266,8 @@ const ANCHOR_OUT = 0.44;
 // a step of up to STEEP_LINK voxels between two such cells curves as a slope instead of standing
 // as a wall, the field kept within STEEP_SPAN of the cell's height (a step of three meets at its
 // middle, a voxel and a half from either side). Taller steps stay cliffs, their lip bevelled.
-export const STEEP_LINK = 3;
-const STEEP_SPAN = 2;
+export const STEEP_LINK = 8;
+const STEEP_SPAN = 4;
 // A water bed follows the beds round it up to BED_LINK voxels, and rises toward dry land up to
 // BED_SHORE above it, so the shallows climb to the shore in small cubes instead of per cell steps.
 const BED_LINK = 4;
@@ -412,8 +412,10 @@ export function fieldFine(f: FineCells, px: number, py: number): number {
 
 // A water bed's height in columns, in eighths, without the land's dither: seen through water, its
 // lone columns read as scattered blocks, and steps of a whole voxel as fins.
-function bedStep(h: number, sub: number): number {
-  return Math.round(h * sub);
+// Never above the water: a cell the simulation counts as wet is shallow ground seen through it,
+// at least an eighth under its surface (risen toward the shore, it stood out as a sand islet).
+function bedStep(h: number, level: number, sub: number): number {
+  return Math.min(Math.round(h * sub), Math.ceil(level * sub) - 1);
 }
 
 // A water bed: natural ground under water (not lava, not another fluid).
@@ -532,7 +534,7 @@ export function buildFineTile(
       if (f.natural[c]) {
         // The secondary terrain map: slopes where the land rises one voxel, and water beds.
         if (steps && !f.wet[c]) hgt = fieldStep(fieldFine(f, px, py), px, py, sub);
-        else if (steps && isBed(f, c)) hgt = bedStep(fieldFine(f, px, py), sub);
+        else if (steps && isBed(f, c)) hgt = bedStep(fieldFine(f, px, py), f.water[c], sub);
         let border = Infinity;
         let shore = false;
         let foot = -1; // the cliff this column stands at the foot of
@@ -599,6 +601,9 @@ export function buildFineTile(
           }
         }
       }
+      // With the water in eighths, a cell the simulation counts as under water is drawn under it,
+      // an eighth at least (the shore's sand reaching into the shallows stood out as islets).
+      if (water && f.wet[c] && f.water[c] > -1e8 && !f.lava[c]) hgt = Math.min(hgt, Math.ceil(f.water[c] * sub) - 1 - raise);
       H[s] = hgt + raise;
       if (tops && sx >= tx0 * sub && sy >= ty0 * sub && sx < tx1 * sub && sy < ty1 * sub)
         tops.h[(sy - tops.y0 * sub) * tops.stride + (sx - tops.x0 * sub)] = hgt;
@@ -813,6 +818,9 @@ export function buildFineTile(
   if (water) fineWater(f, water, sub, sx0, sy0, SW, SH, ox, oz);
   else if (GRAPHICS.foam) foam(f, out, sub, sx0, sy0, SW, SH, ox, oz);
 }
+
+// The land shader's flag (landWet) for a face lit as its slope is: half way to a bed's (1).
+const SLOPE_LIT = 0.5;
 
 // The bevel of a cliff's lip on snow and rock, eighths of a voxel down by columns from the edge.
 const BEVEL = [3, 1];
@@ -1284,6 +1292,9 @@ function wallFaces(
   // included), a little darker on its side, so every small cube's edge still shows.
   if (T - low <= RS[s] && !f.wet[c] && low > bottom) {
     face(low, T, C[s]);
+    // On snow and rock the steps of a slope are lit as the slope is, not as walls: one turned from
+    // the sun read as a lone blue face, in checkers across a snowy peak (17 November).
+    if (f.steep[c]) FACES[n - 1].wet = SLOPE_LIT;
     // Bright ground (sand, snow) takes half the dark side: on sand every small step's shadow read
     // as a washboard (15 November).
     const bright = f.ground[c] === G.SAND || f.ground[c] === G.SNOW;

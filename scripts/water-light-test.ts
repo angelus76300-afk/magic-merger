@@ -194,6 +194,27 @@ export function waterLightChecks(check: Check): void {
           if (h !== columnTop(world, i)) curved++;
         }
       }
+    // A wet cell's ground stays under its water: risen toward the shore, barely wet cells stood out
+    // of the sea as sand islets (the lead's review, 17 November).
+    const levels = (terrain as unknown as { fluidLevel: Float32Array }).fluidLevel;
+    let above = 0;
+    let wetCols = 0;
+    for (let y = 2; y < world.h - 2; y++)
+      for (let x = 2; x < world.w - 2; x++) {
+        const i = y * world.w + x;
+        if (world.fluid[i] !== F.WATER || !(levels[i] > -1e8)) continue;
+        for (let k = 0; k < 64; k += 9) {
+          const h = columnTopAt(terrain, x + ((k % 8) + 0.5) / 8, y + (Math.floor(k / 8) + 0.5) / 8);
+          if (Number.isNaN(h)) continue;
+          wetCols++;
+          if (h >= levels[i]) above++;
+        }
+      }
+    check(
+      "no islet: the ground of a cell under water is drawn under the water's surface",
+      wetCols > 1000 && above === 0,
+      `${above} of ${wetCols} columns of wet cells at or above their water`,
+    );
     check(
       "the sea floor curves in eighths (no flat squares a cell wide)",
       bed > 0 && curved / bed > 0.3,
@@ -308,7 +329,7 @@ export function waterLightChecks(check: Check): void {
   // 5. Snowy peaks: steps of two or three voxels between cells of snow or rock curve.
   withFine(() => {
     const world = generateWorld(152, 152, 7, { ...DEFAULT_LAND, biome: "tundra", shape: "ridges", peaks: true });
-    const { terrain } = landOf(world);
+    const { terrain, meshes } = landOf(world);
     let borders = 0;
     let soft = 0;
     let worst = 0;
@@ -318,7 +339,7 @@ export function waterLightChecks(check: Check): void {
         const a = y * world.w + x;
         const b = a + 1;
         const dt = Math.abs(columnTop(world, a) - columnTop(world, b));
-        if (dt < 2 || dt > 3 || !steep(a) || !steep(b) || world.fluid[a] || world.fluid[b] || world.cover[a] || world.cover[b]) continue;
+        if (dt < 2 || dt > 8 || !steep(a) || !steep(b) || world.fluid[a] || world.fluid[b] || world.cover[a] || world.cover[b]) continue;
         // The largest step between two columns along the line from one cell's middle to the other's.
         let step = 0;
         let prev = columnTopAt(terrain, x + 0.5 + 1 / 16, y + 0.5);
@@ -332,10 +353,19 @@ export function waterLightChecks(check: Check): void {
         worst = Math.max(worst, step);
       }
     check(
-      "a step of two or three voxels between snow or rock cells curves: no column rises more than a voxel over the next",
+      "a step of two to eight voxels between snow or rock cells curves: no column rises more than a voxel over the next",
       borders > 20 && soft / borders > 0.9,
       `${soft} of ${borders} such borders curve (largest step ${worst.toFixed(2)} voxels)`,
     );
+    // The small steps of those slopes are lit as the slope is (landWet one half), not as walls turned
+    // from the sun: lone blue faces across the snow (the lead's review, 17 November).
+    let slopeLit = 0;
+    for (const m of meshes) {
+      const a = m.geometry.getAttribute("landWet");
+      if (!m.visible || !a) continue;
+      for (let v = 0; v < a.count; v++) if (Math.abs(a.getX(v) - 0.5) < 0.05) slopeLit++;
+    }
+    check("the small steps of snow and rock are lit as their slope, not as lone walls", slopeLit > 1000, `${slopeLit} vertices lit as their slope`);
   });
 
   // 6. Big Bang's ground: stardust, the crystal it becomes and the land it left, in soft patches.

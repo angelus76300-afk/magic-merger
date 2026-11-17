@@ -30,11 +30,11 @@ const VIEWS = {
   side: { q: "biome=temperate&shape=coast&seed=7", spot: "edge", at: { x: 88.5, y: 148 }, dist: 14, phi: 1.3, theta: 0, time: DAY },
   beach: { q: "biome=temperate&shape=coast&seed=7", spot: "beach", at: { x: 20.5, y: 14.5 }, dist: 14, phi: 1.05, theta: 0.8, time: DAY },
   peak: { q: "biome=tundra&shape=ridges&seed=7&peaks=1", spot: "peak", at: { x: 3.5, y: 29.5 }, dist: 16, phi: 0.9, theta: 0.7, time: DAY },
-  night: { q: "biome=temperate&shape=coast&seed=7", spot: "village-shore", at: { x: 97.5, y: 73.5 }, dist: 18, phi: 1.0, theta: 0.5, time: NIGHT },
+  night: { q: "biome=temperate&shape=coast&seed=7", spot: "village-shore", at: { x: 97.5, y: 73.5 }, dist: 18, phi: 1.0, theta: 0.5, time: NIGHT, still: true },
   mesa: { q: "biome=mesa&shape=plateau&seed=3", spot: "peak", at: { x: 43.5, y: 74.5 }, dist: 16, phi: 0.95, theta: 0.7, time: DAY },
   desert: { q: "biome=desert&shape=plateau&seed=3", spot: "peak", at: { x: 37.5, y: 101.5 }, dist: 16, phi: 0.95, theta: 0.7, time: DAY },
   // The village at dusk (warm sun, cool shade) and houses by the water at night (windows reflected).
-  dusk: { q: "biome=temperate&shape=coast&seed=7", spot: "village", at: { x: 97.5, y: 73.5 }, dist: 18, phi: 0.95, theta: 0.5, time: 209 },
+  dusk: { q: "biome=temperate&shape=coast&seed=7", spot: "village", at: { x: 97.5, y: 73.5 }, dist: 18, phi: 0.95, theta: 0.5, time: 209, still: true },
   harbour: { q: "biome=temperate&shape=coast&seed=7", spot: "harbour", at: { x: 56.42, y: 43.17, theta: 2.768 }, dist: 13, phi: 1.12, theta: 0, time: NIGHT },
   // Lava by the pond at night (a small pool laid by the shore, the island held still): its light on
   // the water and on the land round it.
@@ -144,7 +144,7 @@ try {
     const page = await ctx.newPage();
     page.on("pageerror", (err) => console.error("page error:", err.message));
     page.on("console", (m) => m.type() === "error" && console.error("console:", m.text().slice(0, 400)));
-    if (v.bang || v.lava)
+    if (v.bang || v.lava || v.still)
       // No frame runs by itself (the simulation would move on with the clock), and Math.random is seeded.
       await page.addInitScript(() => {
         window.requestAnimationFrame = () => 0;
@@ -205,7 +205,7 @@ try {
         o.phi = v.phi;
         o.theta = spot.theta ?? v.theta;
         // An island held still moves its camera only as frames are drawn.
-        if (v.bang || v.lava) {
+        if (v.bang || v.lava || v.still) {
           // The water's lights are looked for again as the clock moves; it is held still here.
           e.view.waterLightsAt = -1e9;
           for (let k = 0; k < 40; k++) e.render(0.1);
@@ -213,7 +213,7 @@ try {
         await wait(1500);
         e.view.terrain.updateFine(0, true);
         // An island held still moves its camera only as frames are drawn.
-        if (v.bang || v.lava) {
+        if (v.bang || v.lava || v.still) {
           // The water's lights are looked for again as the clock moves; it is held still here.
           e.view.waterLightsAt = -1e9;
           for (let k = 0; k < 40; k++) e.render(0.1);

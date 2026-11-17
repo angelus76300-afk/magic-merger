@@ -292,9 +292,11 @@ float sunLight(vec3 n) {
           "#include <opaque_fragment>",
           `// A water bed under the water is lit as the water lights it (its colour by depth), not by the
 // sun's shadows and sides: its small steps read as blue bars through the water.
-if ((sunStrength > 0.001 || sunWarm > 0.001) && vLandWet < 0.5) {
+if ((sunStrength > 0.001 || sunWarm > 0.001) && vLandWet < 0.75) {
   vec3 sunN = normalize(cross(dFdx(vSunWorld), dFdy(vSunWorld)));
   if (dot(sunN, cameraPosition - vSunWorld) < 0.0) sunN = -sunN;
+  // The small steps of a snowy or rocky slope (terrain-fine.ts SLOPE_LIT): lit as the slope's tops.
+  if (vLandWet > 0.25) sunN = vec3(0.0, 1.0, 0.0);
   float ndl = dot(sunN, sunDir);
   if (sunStrength > 0.001) {
     // Sides turned from the sun are already shaded in their baked colours: half the shade.
