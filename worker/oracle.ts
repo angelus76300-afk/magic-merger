@@ -40,6 +40,13 @@ import {
   FORMS_SYSTEM,
   WONDER_SCHEMA,
   wonderSystem,
+  LOOKS_JUDGE_SCHEMA,
+  LOOKS_JUDGE_SYSTEM,
+  LOOKS_SCHEMA,
+  LOOKS_SYSTEM,
+  looksJudgeUserMessage,
+  looksUserMessage,
+  type LooksPrompt,
 } from "./prompts";
 
 export interface MergeAnswer {
@@ -190,6 +197,53 @@ export interface SortAnswer {
   does: string;
 }
 
+// The looks revamp (roadmap 5.2.5): one item's look redrawn by the look-only writer, through the
+// Batch API, each item with its own model (Sonnet, Opus for a cosmic one).
+export interface LooksItem {
+  id: string;
+  model: string;
+  request: LooksPrompt;
+}
+
+export interface LooksAnswer {
+  plan: string;
+  models: { call: number; parts: string }[];
+}
+
+export interface LooksOutcome {
+  id: string;
+  answer?: LooksAnswer;
+  error?: string;
+  model: string;
+  usd: number;
+  tokens?: [number, number, number, number];
+}
+
+// Two versions of a look, framed alike (JPEG or PNG data URLs), for the looks judge.
+export interface LooksJudgeRequest {
+  model: string;
+  name: string;
+  kind: string;
+  tier: string;
+  description: string;
+  a: string[];
+  b: string[];
+}
+
+export interface LookScores {
+  silhouette: number;
+  name: number;
+  tones: number;
+  bricks: number;
+}
+
+export interface LooksVerdict {
+  a: LookScores;
+  b: LookScores;
+  better: "a" | "b" | "same";
+  note: string;
+}
+
 export interface ProgramAnswer {
   summary: string;
   code: string;
@@ -245,6 +299,10 @@ export interface Oracle {
   sortItems(items: { name: string; description: string }[]): Promise<SortAnswer[]>;
   // 4.6: the library sorted again, into the seven kinds, a page at a time.
   forms(items: { name: string; kind: ElementKind; description: string }[]): Promise<FormAnswer[]>;
+  // 5.2.5: looks redrawn through the Batch API at half price; the judge of two looks.
+  submitLooks(items: LooksItem[]): Promise<string>;
+  looksResults(batch: string): Promise<LooksOutcome[] | null>;
+  judgeLooks(request: LooksJudgeRequest): Promise<LooksVerdict>;
 }
 
 export interface OracleModels {
@@ -550,6 +608,59 @@ export class ClaudeOracle implements Oracle {
     return out;
   }
 
+  // 5.2.5: the look-only writer. One request per item, with its own model, at medium effort;
+  // the system prompt (the look guide) is the same for every item, cached for an hour.
+  async submitLooks(items: LooksItem[]): Promise<string> {
+    const batch = await this.client.beta.messages.batches.create({
+      requests: items.map((item) => ({
+        custom_id: item.id,
+        params: requestParams(item.model, "medium", LOOKS_SYSTEM, [{ role: "user", content: looksUserMessage(item.request) }], LOOKS_SCHEMA, 16000, "1h"),
+      })),
+    });
+    return batch.id;
+  }
+
+  async looksResults(id: string): Promise<LooksOutcome[] | null> {
+    const batch = await this.client.beta.messages.batches.retrieve(id);
+    if (batch.processing_status !== "ended") return null;
+    const out: LooksOutcome[] = [];
+    for await (const item of await this.client.beta.messages.batches.results(id)) {
+      const r = item.result;
+      if (r.type !== "succeeded") {
+        out.push({ id: item.custom_id, error: r.type === "errored" ? JSON.stringify(r.error).slice(0, 300) : r.type, model: "", usd: 0 });
+        continue;
+      }
+      const spent = logUsage("looks-write", r.message, 0.5);
+      try {
+        out.push({ id: item.custom_id, answer: toLooks(readText(r.message)), model: spent.model, usd: spent.usd, tokens: spent.tokens });
+      } catch (err) {
+        out.push({ id: item.custom_id, error: err instanceof Error ? err.message : String(err), model: spent.model, usd: spent.usd, tokens: spent.tokens });
+      }
+    }
+    return out;
+  }
+
+  // 5.2.5: two looks of one item, A and B, framed alike, scored on four points. Not cached: the
+  // frames are most of the message.
+  async judgeLooks(request: LooksJudgeRequest): Promise<LooksVerdict> {
+    const image = (frame: string): Anthropic.Beta.BetaContentBlockParam[] => {
+      const m = /^data:(image\/(?:jpeg|png));base64,(.+)$/.exec(frame);
+      return m ? [{ type: "image", source: { type: "base64", media_type: m[1] as "image/jpeg", data: m[2] } }] : [];
+    };
+    const a = request.a.slice(0, 3).flatMap(image);
+    const b = request.b.slice(0, 3).flatMap(image);
+    if (!a.length || !b.length) throw new OracleError("The looks judge needs frames of both");
+    const content: Anthropic.Beta.BetaContentBlockParam[] = [
+      { type: "text", text: looksJudgeUserMessage(request.name, request.kind, request.tier, request.description, a.length, b.length) },
+      { type: "text", text: "Version A:" },
+      ...a,
+      { type: "text", text: "Version B:" },
+      ...b,
+    ];
+    const text = await this.ask("looks-judge", request.model, "low", LOOKS_JUDGE_SYSTEM, [{ role: "user", content }], LOOKS_JUDGE_SCHEMA, 4000, false);
+    return toLooksVerdict(text);
+  }
+
   async forms(items: { name: string; kind: ElementKind; description: string }[]): Promise<FormAnswer[]> {
     if (!items.length) return [];
     // The name alone (4.6): entries written before the kinds often made a person a trinket.
@@ -629,6 +740,33 @@ function toWonder(text: string): WonderAnswer {
     code: a.code.slice(0, 40000),
     missing: str(a.missing, 300),
   };
+}
+
+function toLooks(text: string): LooksAnswer {
+  const a = parseJson(text) as Partial<LooksAnswer>;
+  if (!Array.isArray(a.models)) throw new OracleError("The looks answer did not match the schema");
+  return {
+    plan: typeof a.plan === "string" ? a.plan.slice(0, 400) : "",
+    models: a.models
+      .filter((m): m is { call: number; parts: string } => !!m && Number.isInteger(m.call) && typeof m.parts === "string")
+      .slice(0, 8)
+      .map((m) => ({ call: m.call, parts: m.parts.slice(0, 30000) })),
+  };
+}
+
+function toLooksVerdict(text: string): LooksVerdict {
+  const v = parseJson(text) as Partial<LooksVerdict>;
+  const scores = (o: unknown): LookScores | null => {
+    if (!o || typeof o !== "object") return null;
+    const r = o as Record<string, unknown>;
+    const one = (k: string) => (typeof r[k] === "number" ? Math.max(1, Math.min(5, Math.round(r[k] as number))) : NaN);
+    const out = { silhouette: one("silhouette"), name: one("name"), tones: one("tones"), bricks: one("bricks") };
+    return Object.values(out).every(Number.isFinite) ? out : null;
+  };
+  const a = scores(v.a);
+  const b = scores(v.b);
+  if (!a || !b || !["a", "b", "same"].includes(v.better as string)) throw new OracleError("The looks judge's answer did not match the schema");
+  return { a, b, better: v.better as LooksVerdict["better"], note: typeof v.note === "string" ? v.note.slice(0, 300) : "" };
 }
 
 function toProgram(text: string): ProgramAnswer {
@@ -800,6 +938,34 @@ export class MockOracle implements Oracle {
     });
   }
 
+  // 5.2.5: every item gets a small look of a few shaped parts for each call it has, or one model
+  // for a wonder that may gain one; the judge prefers B.
+  async submitLooks(items: LooksItem[]): Promise<string> {
+    const id = `mock_looks_${MOCK_LOOKS_BATCHES.size + 1}`;
+    MOCK_LOOKS_BATCHES.set(id, items);
+    return id;
+  }
+
+  async looksResults(batch: string): Promise<LooksOutcome[] | null> {
+    const items = MOCK_LOOKS_BATCHES.get(batch);
+    if (!items) return null;
+    const parts =
+      "[[-0.5, -0.5, 0, 1, 1, 1, '#8a7655', 'cyl', 'grain'], [-0.5, -0.5, 1, 1, 1, 1, '#c9b68c', 'cone'], [-0.125, -0.625, 0.25, 0.25, 0.125, 0.5, '#4de0c8', 'glow']]";
+    return items.map((it) => ({
+      id: it.id,
+      model: it.model,
+      usd: 0,
+      answer: {
+        plan: "a stone column under a cone, a glowing door",
+        models: it.request.calls ? Array.from({ length: it.request.calls }, (_, k) => ({ call: k + 1, parts })) : it.request.mayAdd ? [{ call: 0, parts }] : [],
+      },
+    }));
+  }
+
+  async judgeLooks(): Promise<LooksVerdict> {
+    return { a: { silhouette: 2, name: 2, tones: 2, bricks: 1 }, b: { silhouette: 4, name: 3, tones: 4, bricks: 4 }, better: "b", note: "B has a shape." };
+  }
+
   async forms(items: { name: string; kind: ElementKind; description: string }[]): Promise<FormAnswer[]> {
     return items.map((i) => {
       const form: Form = i.kind === "spell" ? "spell" : (guessForm(i.name) ?? "object");
@@ -819,6 +985,7 @@ export class MockOracle implements Oracle {
 }
 
 const MOCK_WONDER_BATCHES = new Map<string, WonderItem[]>();
+const MOCK_LOOKS_BATCHES = new Map<string, LooksItem[]>();
 
 const MOCK_THEMES: { words: string[]; colors: [string, string]; impact: string }[] = [
   {

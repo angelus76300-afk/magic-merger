@@ -130,6 +130,8 @@ import {
   type Payer,
 } from "./ledger";
 
+import { LooksError, judgeLooks, looksBusy, looksCandidates, looksMode, looksReport, looksVerdict, pollLooks, startLooks } from "./looks";
+
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
@@ -201,6 +203,15 @@ export interface Env {
   EVIDENCE_REWRITES?: string;
   // 4.5: "1" on the staging Worker the previews run on (wrangler.jsonc, env.staging).
   STAGING?: string;
+  // 5.2.5, the looks revamp (worker/looks.ts): "off" (default), "pilot" (the admin starts looks
+  // by name) or "bulk" (the cron starts the night's share too); its own budget in all and per
+  // night; the look-only writer (Sonnet), the one for cosmic items (Opus) and the judge (Sonnet).
+  LOOKS?: string;
+  LOOKS_BUDGET_USD?: string;
+  LOOKS_NIGHT_USD?: string;
+  LOOKS_MODEL?: string;
+  LOOKS_MODEL_COSMIC?: string;
+  LOOKS_JUDGE_MODEL?: string;
 }
 
 const MAX_NAME_LENGTH = 60;
@@ -422,6 +433,13 @@ export function cronTasks(env: Env): Record<string, (() => Promise<unknown>) | n
     wonders: () => wonderDaily(env, env.WONDERS !== "0" ? "due" : "collect"),
     "daily challenge": env.DAILY_CHALLENGES === "0" ? null : () => setDailyChallenge(env, false),
     "rewrite by evidence": env.EVIDENCE_REWRITES === "0" ? null : () => rewriteByEvidence(env),
+    // 5.2.5: the looks revamp's answers collected as soon as they end; in bulk, the night's share
+    // started once a day (both read one row when nothing is in flight).
+    "looks poll": () => pollLooks(env, makeOracle(env, {})),
+    "looks night":
+      looksMode(env) === "bulk"
+        ? async () => ((await scanDue(env.DB, "looks night", 20 * 3600_000)) ? startLooks(env, makeOracle(env, {}), {}, true) : null)
+        : null,
     // 4.7: the budget's running totals against the ledger, once a day (one
     // read of the month's spend); a drift is logged and the totals rebuilt.
     "spend totals": async () => ((await scanDue(env.DB, "spend totals", 86400_000)) ? checkTotals(env.DB) : null),
@@ -1506,6 +1524,8 @@ async function startRefresh(
   const asked = Array.isArray(body.keys) ? body.keys.filter((k): k is string => typeof k === "string").map(elementKey) : null;
   // 4.6, rewrites by form: a capped batch, at most 20 at a time (ROADMAP 4.6 item 5: never all at once).
   const byForm = body.forms === true;
+  // 5.2.5: the rebuild by kind waits while the looks revamp runs (in bulk, or a look in flight).
+  if (byForm && (await looksBusy(env))) throw new HttpError(409, "The rebuild by kind is paused while the looks revamp runs");
   const limit = Math.max(1, Math.min(byForm ? 20 : 200, Number(body.limit) || (byForm ? 5 : 20)));
   // Every element with a live program, never refreshed, the ones players hold most first.
   // By form: every element whose sorted kind the owner approved, not refreshed
@@ -1797,6 +1817,25 @@ async function refreshReport(env: Env) {
     cost: { usd: Math.round((cost?.usd ?? 0) * 10000) / 10000, programs: cost?.n ?? 0 },
     verdicts: verdicts.results,
   };
+}
+
+// --- 5.2.5: the looks revamp (worker/looks.ts). ---
+
+// Its own oracle, outside the request's ledger: what it spends is billed to the revamp's budget
+// by worker/looks.ts, never to the admin's request.
+async function handleLooks(request: Request, path: string, post: boolean, url: URL, env: Env): Promise<Response | null> {
+  try {
+    if (post && path === "looks") return json(await startLooks(env, makeOracle(env, {}), await readBody(request)));
+    if (post && path === "looks-poll") return json(await pollLooks(env, makeOracle(env, {})));
+    if (!post && path === "looks-candidates") return json(await looksCandidates(env, Number(url.searchParams.get("limit")) || 20));
+    if (post && path === "looks-judge") return json(await judgeLooks(env, makeOracle(env, {}), await readBody(request, MAX_ADMIN_BODY)));
+    if (post && path === "looks-verdict") return json(await looksVerdict(env, await readBody(request)));
+    if (!post && path === "looks-report") return json(await looksReport(env));
+  } catch (err) {
+    if (err instanceof LooksError) throw new HttpError(err.status, err.message);
+    throw err;
+  }
+  return null;
 }
 
 // --- 3.7 part E: trim duplicates without breaking anyone. ---
@@ -2434,6 +2473,8 @@ async function handleAdmin(request: Request, url: URL, env: Env, oracle: Oracle,
   if (post && path === "idea-pr") return json(await ideaPull(env, await readBody(request)));
   // 3.4.2: the API that grows.
   if (post && path === "refresh") return json(await startRefresh(env, oracle, await readBody(request)));
+  // 5.2.5: the looks revamp (worker/looks.ts), paid from its own budget, never the request's.
+  if (path.startsWith("looks")) return handleLooks(request, path, post, url, env);
   if (!post && path === "refresh-candidates") return json(await refreshCandidates(env, Number(url.searchParams.get("limit")) || 20));
   if (post && path === "refresh-verdict") return json(await refreshVerdict(env, await readBody(request)));
   if (!post && path === "refresh-report") return json(await refreshReport(env));
