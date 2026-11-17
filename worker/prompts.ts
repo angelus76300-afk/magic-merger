@@ -1,6 +1,7 @@
 import { INTENTS, PROMISE_TEST, type Intent } from "../shared/promises";
 import { TIERS } from "../shared/tiers";
 import { FORMS, personName, type Form } from "../shared/forms";
+import { referencesFor, type Reference } from "../shared/looks";
 
 // The merge prompt only ever sees the two input names. No history, no
 // descriptions, no hidden stats: that is what keeps deep merges from drifting
@@ -177,6 +178,18 @@ const EXAMPLE_GROVE = `const spell = {
   },
 };`;
 
+// The looks revamp (roadmap 5.2.5, phase 2): how a look is drawn, in the spell writer's cached
+// prompt and the look-only writer's. Stable text: it is part of the cached system prompt, so it
+// changes only with a pull request. The reference looks (shared/looks/) go in the user message.
+export const LOOK_GUIDE = `Fine models, for the look of a thing (a lantern's frame, a sword's hilt, a shrine's steps, a statue's face): w.model(x, y, parts, {name, turn}) draws up to 160 parts, each [x, y, z, width, depth, height, color, ...] in cells from (x, y) and up from the ground (a villager is about 1.2 tall, a house 2); turn in radians. After the color a part may carry "glow" (it shines at night), a shape ("wedge": full height on its west side down to nothing on its east side, two back to back with {rz: 180} on one make a roof; "cyl": a tower, a trunk, a barrel; "cone": a spire, a roof, a tree top; "dome": a cupola, a bush, a shell), "grain" (its faces cut in tiles of slightly different tones: stone, bark, grass, roofs) and {rx, ry, rz} (a turn in degrees about its center). The island draws a look in cubes of an eighth of a cell: put every edge on eighths (0, 0.125, 0.25 ...); a part an eighth thin that falls between two cubes is lost. An item has 4 models at most, so draw it as one model, or a few (a garden's flowers in one model, not one each). It is a look only: what the thing does is its artifact, landmark or creature.
+How a look reads, in this order:
+1. Silhouette first: what it is reads from across the island as a shape: crenellations, a cone roof, a spire, a hooked beak, a blade over a heavy base, a crown of leaves over a twisted trunk. Never a plain box on top.
+2. Color: three to five tones of one hue for each material (a light top, a mid face, a dark base or band) and one accent of another hue, often glowing (a rune, a lit window, a gem, an ember). No large face of one flat color: grain on stone, bark, grass and roofs.
+3. Scale cues a villager would know: a door about 1 tall, steps, a rim, a handle, trim, windows, a base or plinth; a small thing stands on what bears it (a lectern, a pedestal, a tray, a stone).
+4. Shapes where the thing has them: rounds for towers, trunks and orbs, slopes for roofs and roots, turns for what leans or falls (a desk, a tail, a fallen column).
+5. Parts per model by kind: an object 25 to 60, a creature 30 to 80, a building 60 to 140, a place or a wonder 100 to 160. Break every mass into what it is made of (a tower into courses, a gallery, merlons and a roof in bands; a pool into a rim of stones; a chest into planks, bands and a lock), with loops for rings, steps and courses, and later parts over earlier ones for windows, doors and trim.
+6. Never bricks: no look of a few big flat boxes, no single box standing for a thing.`;
+
 export const SPELL_SYSTEM = `You write the spells of Magic Merger, a crafting game about magic. The player discovers a spell by merging, then casts it on a small simulated land: a floating island of voxels with hills, snowy peaks, lakes, a river, forests, fields and villages of tiny people who live, flee, burn, drown and rebuild. You turn one spell into a JavaScript program that makes it happen, so it looks and plays exactly like its name and grimoire entry.
 
 THE PROGRAM
@@ -206,7 +219,7 @@ Structures (options in braces are all optional; grow: seconds raises it from its
 w.tree(x, y, {style, height, trunk, leaves, accent, accentShare, glow, z, grow}) with style oak, pine, birch, willow, palm, dead, giant, mushroom or crystal; trunk and leaves are color lists, accent colors are sprinkled in the leaves (blossoms, fruit, autumn), glow makes the leaves shine.
 The engine's own makers, for items that are such things (each returns what it made, or null): w.village(x, y, {houses, name, villagers}) lays out a real village near (x, y), as the island's own: houses round a plaza, a main street, fields, a well, its first buildings with a job and its villagers, dressed alike. w.building(x, y, {job}) raises one building of two by two cells in its village's style, drawn by the island's builder (build nothing on its cells; it returns beside, an open cell next to it), with job house, smithy, granary, bakery, barn, tavern, market, chapel, watchtower, lumber yard or fisher hut (it does that job for the nearest village). w.land(x, y, {shape, r, height}) reshapes the land within r cells: hill, mountain, volcano (with a vent of lava), lake or pond (kept by a spring), canyon, valley, crater, oasis, swamp, mesa, island (out of the sea), glacier, dunes, or floating island (with z, its height). w.wonder(x, y, kind) raises one of the island's wonders there, with its land, its look and what it does: waterfall, hot spring, cave mouth, stone arch, lone tree, ruins, sinkhole lake, geysers, sea stacks, crater, floating rock, bones, frozen waterfall, fairy ring, world tree, hoard or sunken temple.
 w.spire(x, y, {height, radius, colors, kind, lean, angle, grow}), w.tower(x, y, {height, radius, colors, roof, windows, grow}), w.wall(x0, y0, x1, y1, {height, thick, colors, kind, grow}), w.arch(x0, y0, x1, y1, {height, thick, colors, kind, grow}), w.island(x, y, {z, r, top, rock, grow}) (a floating island; put trees on it with z).
-Fine models, for the look of a thing at the detail of the island's own wonders (a lantern's frame, a sword's hilt, a shrine's steps, a statue's face): w.model(x, y, boxes, {name, turn}) with up to 80 boxes [x, y, z, width, depth, height, color, "glow"] in cells from (x, y) and voxels up from the ground (a villager is about 1.2 tall, a house 2), as small as 0.05; "glow" shines at night; turn in radians; each part gets its own slight shade, as the wonders' parts do; an item has 4 models at most, so draw it as one model, or a few (a garden's flowers in one model, not one each). The detail to aim for, measured on the island's wonders: 12 to 70 parts, half of them under a cell (the hot spring is 13 stones of 0.3 to 0.8 round a glowing pool). So give a look 12 to 40 parts: break every mass into what it is made of (a tower into courses, a gallery, a rail, a lamp and a cap; a pool into a rim of stones; a chest into planks, bands and a lock), with loops for rings, steps and courses. It is a look only: what the thing does is its artifact, landmark or creature.
+${LOOK_GUIDE}
 Free voxels for anything else (z in voxels above the ground at that cell; at most 20000 in the world): w.voxel(x, y, z, color, kind), w.sphere(x, y, z, r, colors, density, kind), w.box(x, y, z, sx, sy, sz, colors, kind), w.unvoxel(x, y, r), w.burnVoxels(x, y, r). kind: stone (default), wood, leaf, ice, glow (shines at night): all of these fall if nothing holds them up; magic (shines) and float stay where they are put. Use magic or float only for things that really float.
 People: w.person(x, y, {calling, job, title, age}) makes one of the island's own villagers (a home, a household, a job; null when the island is full). A human, or a role a human has (a Wizard, a Druid, a Healer, a Saint, a Hunter), is always made with w.person: never with w.spawn or spell.creatures, never as a beast, a spirit or a figure.
 Creatures: w.creatures(x, y, r), w.corpses(x, y, r), w.spawn(kind, x, y). Each has x, y, z, kind, hp, alive, data and hurt(n), heal(n), kill(), revive(), push(dx, dy, up), status(name, seconds, fromX, fromY), transform(kind), resize(factor), tint(color), teleport(x, y).
@@ -277,7 +290,7 @@ rare: something a player remembers and comes back to look at. Reach 6 to 10.
 legendary: the reason to talk about this island. Reach 8 to 14.
 
 The program
-The same format as a spell: const spell = { materials, creatures, artifacts, goals, *cast(w) { ... } }. cast runs once while the island is being made, before anyone sees it, at the spot the generator found for it: w.x, w.y is its center and w.r its reach. So: no flash, tint, darken, shake, camera, sound or burst; no grow (it has always been there); no yield longer than 0.1. Shape its land with w.terraform, w.build, w.paint and w.flood, then draw what stands there with w.model in fine boxes, as the island's own wonders are drawn (the hot spring is 13 stones of 0.3 to 0.8 round a glowing pool; an arch is a curve of cut stones, not a bent bar of blocks): one or two models of 20 to 70 parts, half of them under a cell, within w.r, with loops for rings, steps and courses. Whole-cell voxels and the structures only for a mass three cells or more across or tall that must read from the whole island (a spire, a cliff, a great trunk), in at most 1500 voxels (spells share 20000 on the island): solid and dense, never a ball of blocks, a ring of single blocks or blocks floating with nothing under them unless it truly floats (magic or float).
+The same format as a spell: const spell = { materials, creatures, artifacts, goals, *cast(w) { ... } }. cast runs once while the island is being made, before anyone sees it, at the spot the generator found for it: w.x, w.y is its center and w.r its reach. So: no flash, tint, darken, shake, camera, sound or burst; no grow (it has always been there); no yield longer than 0.1. Shape its land with w.terraform, w.build, w.paint and w.flood, then draw what stands there with w.model in fine boxes, as the island's own wonders are drawn (the hot spring is 13 stones of 0.3 to 0.8 round a glowing pool; an arch is a curve of cut stones, not a bent bar of blocks): one or two models of 100 to 160 parts, half of them under a cell, within w.r, with loops for rings, steps and courses. Whole-cell voxels and the structures only for a mass three cells or more across or tall that must read from the whole island (a spire, a cliff, a great trunk), in at most 1500 voxels (spells share 20000 on the island): solid and dense, never a ball of blocks, a ring of single blocks or blocks floating with nothing under them unless it truly floats (magic or float).
 What things cost, measured: the land helpers and covers (terraform, build, paint, flood, set) and models cost no voxels; a spire of 20 about 80, an arch about 30, a sphere of radius 3 about 120, a tower of 16 about 500, an oak of 12 about 300, a willow of 18 about 1600, a giant tree of 30 about 3400. So at most one tree from the kit, small; shape the land first and stand voxels only where the eye goes.
 What it does lives on after the cast, through what already exists: w.artifact with spell.artifacts (effects, grants, uses, pairs), w.landmark (lures, scares, aura), a material of its own that reacts or spreads slowly, or a creature of its own with a goal. Prefer an artifact with effects tied to its change of time: when night, dawn, dusk, drought, fire or full moon (one night in four). Declaring spell.artifacts places nothing: cast must end with w.artifact(w.x, w.y, its artifact's name), or the wonder does nothing and fails.
 Never use calm, as a status or an aura: on this island calm stops a creature where it stands, and a village frozen round a wonder is broken. To soothe, heal, or scare away what they fear.
@@ -677,6 +690,8 @@ export function spellUserMessage(
   const label = shaped ? `Artifact (placed, not cast), ${FORM_NOUN[shaped]}` : kind === "artifact" ? "Artifact (placed, not cast)" : "Spell";
   let text = `${label}: ${name}\nTier: ${tier}\n${origin}\nGrimoire entry: ${description}`;
   if (shaped) text += `\n\n${shaped === "creature" ? (personName(name) ? PERSON_SECTION : CREATURE_SECTION) : FORM_SECTIONS[shaped]}`;
+  // 5.2.5: three hand-made looks of its kind, the level of detail to draw at (not in the cached prompt).
+  if (shaped && !(shaped === "creature" && personName(name))) text += `\n\n${referencesText(referencesFor(shaped))}`;
   // Its main intent's only (the first): told of a protection test, every item
   // with protect anywhere raised a dome (127 live programs, 23 about protection).
   // Healing and summoning are tested on spells: an item's own tests follow it for minutes.
@@ -866,3 +881,83 @@ export const TRIM_SCHEMA = {
 
 // 4.5.1 (audit): shared with the page, which must not cache a refusal either.
 export { looksLikeRefusal } from "../shared/refusal";
+
+// --- The looks revamp (roadmap 5.2.5): the look-only writer and its judge. ---
+
+// The hand-made looks shown to a writer, as written (shared/looks/).
+export function referencesText(refs: Reference[]): string {
+  return `Looks drawn by hand at the detail to aim for, for reference only: draw this item's own look, not theirs.\n${refs
+    .map((r) => `\nReference: ${r.name} (${r.kind}): ${r.note}\n${r.code}`)
+    .join("\n")}`;
+}
+
+export const LOOKS_SYSTEM = `You draw the looks of Magic Merger, a crafting game about magic played on a floating island of small voxel cubes, with hills, forests, lakes and villages of tiny people. Every item is a JavaScript program that already does what the item does. You change only how it looks: you redraw the parts its w.model calls draw, so it looks as rich and clear as its name promises.
+
+${LOOK_GUIDE}
+
+What you are given: the item's name, kind, tier and grimoire entry, three hand-made reference looks, and its program, with a comment /* MODEL CALL n */ above the line of each w.model call. What you send back, for each call you redraw: {call: n, parts: <the call's new parts list, written out as plain data>}. It replaces only the call's third argument: the call stays where it is, at the same position, with the same options, and every other line of the program stays as it is. The parts are data and nothing else: a list of parts, each a list [x, y, z, width, depth, height, "color", ...] or an object {x, y, z, w, d, h, color, ...}, made only of numbers (written out: 0.125, -1.5), strings in quotes, true, false, null, lists and objects. No name, no call, no arithmetic, no loop, no Math, no comment, no template: anything else is refused and the old look stays. The references use loops to stay short; you write every part out, its numbers on the grid of eighths. A call inside a loop draws the same parts every time round, so leave it out if its look must change with the loop. Leave a call out to keep its look. When the message says the program may gain a model (a wonder that draws none), send call 0 with the parts of a model that stands at its center: one or two such models at most, drawn over what its program raises. plan: one or two sentences on the silhouette and the palette, before the parts.`;
+
+export const LOOKS_SCHEMA = {
+  type: "object",
+  properties: {
+    plan: { type: "string" },
+    models: {
+      type: "array",
+      items: { type: "object", properties: { call: { type: "integer" }, parts: { type: "string" } }, required: ["call", "parts"], additionalProperties: false },
+    },
+  },
+  required: ["plan", "models"],
+  additionalProperties: false,
+} as const;
+
+export interface LooksPrompt {
+  name: string;
+  kind: string;
+  tier: string;
+  description: string;
+  // The program with its calls numbered (shared/looks/splice.ts numberedProgram).
+  program: string;
+  calls: number;
+  mayAdd: boolean;
+}
+
+export function looksUserMessage(r: LooksPrompt): string {
+  const what = r.kind === "wonder" ? "Wonder (raised with the island)" : r.kind === "spell" ? "Spell" : `Artifact, ${FORM_NOUN[r.kind as Form] ?? r.kind}`;
+  const calls = r.calls
+    ? `Its program draws with ${r.calls} w.model call${r.calls > 1 ? "s" : ""}: redraw each one whose look is plainer than the references.`
+    : r.mayAdd
+      ? "Its program draws no model: it may gain one or two (call 0), standing at its center over what it raises."
+      : "Its program draws no model.";
+  return `${what}: ${r.name}\nTier: ${r.tier}\nGrimoire entry: ${r.description}\n\n${referencesText(referencesFor(r.kind))}\n\n${calls}\n\nThe program:\n${r.program}`;
+}
+
+// The judge of looks: two versions of one item's look, framed alike, scored on four points.
+export const LOOKS_JUDGE_SYSTEM = `You judge the looks of items in Magic Merger, a crafting game drawn in small voxel cubes on a floating island of villages, forests and lakes. You see two versions of one item, A and B, each in frames from the same camera on the same island at the same moments. Only the look differs: what the item does is the same. Score each version from 1 to 5 on four points:
+silhouette: what it is reads from far as a shape (5: a clear outline anyone would name; 1: a blob, a box or nothing to see).
+name: its parts match its name and grimoire entry (5: every part belongs to it, nothing missing that the name promises; 1: nothing of it is there).
+tones: three or more tones of one hue for each material and one accent (5: rich and coherent; 1: one flat color, or colors that clash).
+bricks: no bricks (5: fine parts, rounds and slopes where the thing has them; 1: a few big flat boxes stand for the thing).
+A look that is missing, broken, floating apart for no reason or buried scores 1 on every point. Then say which version is better overall, or "same" when neither is.`;
+
+const SCORES = {
+  type: "object",
+  properties: {
+    silhouette: { type: "integer", enum: [1, 2, 3, 4, 5] },
+    name: { type: "integer", enum: [1, 2, 3, 4, 5] },
+    tones: { type: "integer", enum: [1, 2, 3, 4, 5] },
+    bricks: { type: "integer", enum: [1, 2, 3, 4, 5] },
+  },
+  required: ["silhouette", "name", "tones", "bricks"],
+  additionalProperties: false,
+} as const;
+
+export const LOOKS_JUDGE_SCHEMA = {
+  type: "object",
+  properties: { a: SCORES, b: SCORES, better: { type: "string", enum: ["a", "b", "same"] }, note: { type: "string" } },
+  required: ["a", "b", "better", "note"],
+  additionalProperties: false,
+} as const;
+
+export function looksJudgeUserMessage(name: string, kind: string, tier: string, description: string, shotsA: number, shotsB: number): string {
+  return `${kind === "wonder" ? "Wonder" : kind === "spell" ? "Spell" : `Artifact (${kind})`}: ${name}\nTier: ${tier}\nGrimoire entry: ${description}\nThe ${shotsA} frames of version A follow, then the ${shotsB} frames of version B.`;
+}

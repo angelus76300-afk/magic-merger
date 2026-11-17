@@ -9,7 +9,20 @@ import type { LibraryExample, Neighbour } from "./prompts";
 // candidate (3.7): written by the refresh of the legacy library, served to
 // nobody until the refresh runner decides.
 export type ProgramStatus = "trial" | "live" | "retired" | "rejected" | "candidate";
-export type ProgramOrigin = "legacy" | "new" | "draft" | "batch" | "votes" | "judge" | "check" | "repair" | "admin" | "promise" | "refresh" | "evidence";
+export type ProgramOrigin =
+  | "legacy"
+  | "new"
+  | "draft"
+  | "batch"
+  | "votes"
+  | "judge"
+  | "check"
+  | "repair"
+  | "admin"
+  | "promise"
+  | "refresh"
+  | "evidence"
+  | "looks";
 
 export interface ProgramRow {
   id: number;

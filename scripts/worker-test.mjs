@@ -98,6 +98,32 @@ function stubAnswer(n, system, user) {
       : "const spell = { *cast(w) { w.ward(w.x, w.y, w.r, { seconds: 20 }); } };";
     return JSON.stringify({ summary: "A dome.", code, missing: "a barrier that stops lava: to keep the village safe" });
   }
+  // 5.2.5: the look-only writer redraws every call it is shown, or adds one to a wonder; a
+  // each "Bad Lamp n" gets a look that is not plain data, which the splice must refuse.
+  if (system.startsWith("You draw the looks")) {
+    looksAsked.push(user);
+    const calls = Number(/draws with (\d+) w\.model call/.exec(user)?.[1] ?? 0);
+    // The reviews of #172 and #173: a look that is not plain data, by the item's number.
+    const bad = [
+      "[(parts = []), [0, 0, 0, 1, 1, 1]]",
+      "[target.hurt(50), [0, 0, 0, 1, 1, 1]]",
+      "(() => { for (;;) {} })()",
+      "(() => { const p = []; for (let k = 0; k < 1e9; k++) p.push([0, 0, 0, 1, 1, 1]); return p; })()",
+      "[[Math.random(), 0, 0, 1, 1, 1, '#888']]",
+      "(() => { w.explode(0, 0, 3); return []; })()",
+      // Round 2: nothing the island can draw.
+      "[[ ]]",
+      "[['a', 'b']]",
+      "[[1e999, 0, 0, 1, 1, 1]]",
+    ];
+    const which = /Bad Lamp (\d)\n/.exec(user);
+    const good = `[${[0, 1, 2, 3].map((k) => `[-0.5, -0.5, ${k * 0.5}, 1, 1, 0.5, '${k % 2 ? "#8a7655" : "#a08a64"}', 'cyl', 'grain']`).join(", ")}, [-0.625, -0.625, 2, 1.25, 1.25, 1, '#4c5a80', 'cone'], [-0.125, -0.625, 0.25, 0.25, 0.125, 0.5, '#ffcf6b', 'glow']]`;
+    const parts = which
+      ? (bad[Number(which[1])] ?? good)
+      : `[${[0, 1, 2, 3].map((k) => `[-0.5, -0.5, ${k * 0.5}, 1, 1, 0.5, '${k % 2 ? "#8a7655" : "#a08a64"}', 'cyl', 'grain']`).join(", ")}, [-0.625, -0.625, 2, 1.25, 1.25, 1, '#4c5a80', 'cone'], [-0.125, -0.625, 0.25, 0.25, 0.125, 0.5, '#ffcf6b', 'glow']]`;
+    const models = calls ? Array.from({ length: calls }, (_, k) => ({ call: k + 1, parts })) : /may gain one/.test(user) ? [{ call: 0, parts }] : [];
+    return JSON.stringify({ plan: "a stone column of courses under a slate cone, a lit door", models });
+  }
   if (system.startsWith("You write the chronicle")) return "The mage came, and the village remembered.";
   // 4.6: the library sorted into the seven kinds, every page it was asked kept.
   if (system.startsWith("Magic Merger is a crafting game about magic: players merge items")) {
@@ -198,6 +224,21 @@ function stubBatches(req, res, raw) {
   res.writeHead(200, { "content-type": "application/x-jsonl" }).end(lines.join("\n"));
 }
 
+// 5.2.5: what the look-only writer was asked, and the looks judge: the version whose frames carry
+// the new look (data "TkVX", NEW) scores 4 on every point, the other 2, whichever order they come in.
+const looksAsked = [];
+let looksJudged = 0;
+function judgeLooksStub(body) {
+  looksJudged++;
+  const blocks = body.messages?.at(-1)?.content ?? [];
+  const at = (label) => blocks.findIndex((b) => b.type === "text" && b.text === label);
+  const a = blocks.slice(at("Version A:") + 1, at("Version B:")).filter((b) => b.type === "image");
+  const newIsA = a.some((b) => b.source?.data === "TkVX");
+  const high = { silhouette: 4, name: 4, tones: 4, bricks: 4 };
+  const low = { silhouette: 2, name: 2, tones: 2, bricks: 2 };
+  return JSON.stringify({ a: newIsA ? high : low, b: newIsA ? low : high, better: newIsA ? "a" : "b", note: "one has a shape" });
+}
+
 // The same server stubs GitHub and the feedback routine (3.4.1).
 const REPO = "angelus76300-afk/magic-merger";
 const gh = { issues: [], comments: [], fires: [], timeline: {}, failFire: false };
@@ -267,7 +308,7 @@ const stub = createServer((req, res) => {
     const system = (body.system ?? []).map((b) => b.text).join("");
     const last = body.messages?.at(-1)?.content;
     const user = typeof last === "string" ? last : Array.isArray(last) ? last.map((b) => b.text ?? "").join("") : "";
-    const text = stubAnswer(n, system, user);
+    const text = system.startsWith("You judge the looks") ? judgeLooksStub(body) : stubAnswer(n, system, user);
     seen[system.slice(0, 20)] = { system, user, cache: body.system?.[0]?.cache_control ?? null };
     if (system.startsWith("You write the spells")) spellCalls++;
     setTimeout(() => {
@@ -4004,6 +4045,215 @@ const signIn = async (key, count) => {
     card.status === 200 && spellCalls === s7 + 1,
     JSON.stringify({ status: card.status, calls: spellCalls - s7 }),
   );
+  await reset();
+}
+
+// 35. The looks revamp (5.2.5, worker/looks.ts): off by default; a pilot by name redraws a
+// program's w.model calls and a wonder gains a model, through the Batch API, Sonnet for every tier
+// and Opus for cosmic; only the looks' parts change; every call is billed to the revamp's own
+// budget, apart from the game's month; the judge sees old and new in an order of the Worker's, and
+// a new look goes live only when its test passed and it scored higher; the revamp stops at its
+// caps; the rebuild by kind waits while it runs.
+{
+  await reset();
+  await db.prepare("DELETE FROM looks").run();
+  const off = await api("/api/admin/looks", { admin: true, body: { keys: ["anything"] } });
+  check("looks: off by default, nothing is asked", off.status === 409 && looksAsked.length === 0, `${off.status}`);
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev({ LOOKS: "pilot" });
+  const now = Date.now();
+  const drawn = (name) => `const spell = {
+  *cast(w) {
+    w.flash(w.x, w.y, '#ffd');
+    const parts = [[0, 0, 0, 1, 1, 2, '#888']];
+    w.model(w.x, w.y, parts, { name: '${name}' });
+    yield 0.5;
+    w.model(w.x + 2, w.y, [[0, 0, 0, 1, 1, 1, '#777']], { name: '${name} base' });
+    w.sound('chime', 1);
+  },
+};`;
+  const setCode = async (name, code) => {
+    const pid = (await api("/api/spells/live", { admin: true, body: { names: [name] } })).data.programs[name].id;
+    const spec = JSON.stringify({ summary: "A lamp.", code });
+    await db.prepare("UPDATE programs SET spec = ? WHERE id = ?").bind(spec, pid).run();
+    await db.prepare("UPDATE spells SET spec = ? WHERE key = ?").bind(spec, name.toLowerCase()).run();
+    return pid;
+  };
+  await liveSpell("Lamp Post", "minor");
+  await liveSpell("Star Lamp", "cosmic");
+  for (let k = 0; k < 10; k++) await liveSpell(`Bad Lamp ${k}`, "minor");
+  await liveSpell("Plain Spark", "minor");
+  const lampPid = await setCode("Lamp Post", drawn("Lamp Post"));
+  await setCode("Star Lamp", drawn("Star Lamp"));
+  for (let k = 0; k < 9; k++) await setCode(`Bad Lamp ${k}`, drawn(`Bad Lamp ${k}`));
+  // Its parts also spawn a wolf: its look must stay, and the wolf with it.
+  const spawning =
+    "const spell = {\n  *cast(w) {\n    w.model(w.x, w.y, (w.spawn('wolf', w.x, w.y), [[0, 0, 0, 1, 1, 2, '#888']]), { name: 'Bad Lamp 9' });\n  },\n};";
+  await setCode("Bad Lamp 9", spawning);
+  const wonderCode =
+    "const spell = {\n  *cast(w) {\n    w.terraform(w.x, w.y, 4, 2);\n    w.spire(w.x, w.y, { height: 8, radius: 1.2, kind: 'glow' });\n  },\n};";
+  const wid = Number(
+    (
+      await db
+        .prepare(
+          "INSERT INTO wonders (source, kind, rarity, lands, spot, reach, does, summary, code, status, model, created_at, live_at) VALUES ('daily', 'humming spire', 'rare', 'temperate', 'flat', 6, 'it hums', 'A spire that hums.', ?, 'live', 'm', ?, ?)",
+        )
+        .bind(wonderCode, now, now)
+        .run()
+    ).lastInsertRowid,
+  );
+  const asked0 = looksAsked.length;
+  const b0 = batches.size;
+  const started = await api("/api/admin/looks", {
+    admin: true,
+    body: { keys: ["lamp post", "star lamp", ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => `bad lamp ${k}`), "plain spark"], wonders: [wid] },
+  });
+  const sent = [...batches.values()].slice(b0).flat();
+  const modelOf = (name) => sent.find((r) => r.params.messages[0].content.includes(`: ${name}\n`))?.params.model;
+  check(
+    "looks: a pilot by name queues the items that draw a model and the wonder, in one batch",
+    started.status === 200 && started.data.queued.length === 13 && started.data.batches.length === 1 && started.data.skipped.join() === "Plain Spark",
+    JSON.stringify(started.data),
+  );
+  check(
+    "looks: Sonnet writes every tier's look, Opus a cosmic one's",
+    modelOf("Lamp Post") === "claude-sonnet-5-5" && modelOf("Star Lamp") === "claude-opus-5-5" && modelOf("Humming Spire") === "claude-sonnet-5-5",
+    JSON.stringify(sent.map((r) => r.params.model)),
+  );
+  const asked = sent.find((r) => r.params.messages[0].content.includes(": Lamp Post\n"));
+  check(
+    "looks: the writer sees the calls numbered, three references and a cached guide",
+    !!asked &&
+      asked.params.messages[0].content.includes("/* MODEL CALL 2 */") &&
+      (asked.params.messages[0].content.match(/\nReference: /g) ?? []).length === 3 &&
+      asked.params.system[0].cache_control?.ttl === "1h" &&
+      asked.params.system[0].text.includes("Silhouette first"),
+  );
+  check("looks: an estimate is held while the answers are pending", started.data.estimate > 0 && started.data.estimate < 1, `${started.data.estimate}`);
+  const again = await api("/api/admin/looks", { admin: true, body: { keys: ["lamp post"] } });
+  check("looks: nothing is asked twice", again.data.queued.length === 0 && looksAsked.length === asked0, JSON.stringify(again.data));
+  const busy = await api("/api/admin/refresh", { admin: true, body: { forms: true, dry: true } });
+  check("looks: the rebuild by kind waits while a look is in flight", busy.status === 409, `${busy.status}`);
+  const polled = await api("/api/admin/looks-poll", { admin: true, body: {} });
+  check("looks: the answers come back, three spliced and ten refused", polled.data.done === 3 && polled.data.failed === 10, JSON.stringify(polled.data));
+  const bad = (await db.prepare("SELECT key, status, reason FROM looks WHERE key LIKE 'bad lamp %' ORDER BY key").all()).results;
+  check(
+    "looks: a look that is not plain data is refused (a program's name, the target, an endless loop, a billion loop, Math.random, w, nothing drawable, parts that act)",
+    bad.length === 10 && bad.every((b) => b.status === "failed" && /every look was refused/.test(b.reason)),
+    JSON.stringify(bad),
+  );
+  const spawner = bad.find((b) => b.key === "bad lamp 9");
+  check("looks: a call whose old parts spawn a wolf keeps its look and its wolf", /not only a look/.test(spawner?.reason ?? ""), JSON.stringify(spawner));
+  check(
+    "looks: a look with no part the island can draw is refused ([[ ]], junk, 1e999)",
+    ["bad lamp 6", "bad lamp 7", "bad lamp 8"].every((k) => /can be drawn|too large|not a list/.test(bad.find((b) => b.key === k)?.reason ?? "")),
+    JSON.stringify(bad.slice(6, 9)),
+  );
+  const billed = await db.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(usd), 0) AS usd FROM spend WHERE invite = 'looks' AND call = 'looks-write'").first();
+  check("looks: every answer is billed once, to the revamp", billed.n === 13 && billed.usd > 0, JSON.stringify(billed));
+  await api("/api/admin/looks-poll", { admin: true, body: {} });
+  const billedTwice = await db.prepare("SELECT COUNT(*) AS n FROM spend WHERE invite = 'looks'").first();
+  check("looks: a batch read twice bills once", billedTwice.n === 13, `${billedTwice.n}`);
+  const people = (await api("/api/admin/people", { admin: true })).data;
+  const game = (await db.prepare("SELECT COALESCE(SUM(usd), 0) AS usd FROM spend WHERE invite IS NULL OR invite != 'looks'").first()).usd;
+  check(
+    "looks: the game's month does not count the revamp's spend",
+    Math.abs(people.spent - game) < 0.001 && billed.usd > 0.001,
+    JSON.stringify({ spent: people.spent, game, looks: billed.usd }),
+  );
+  const cands = (await api("/api/admin/looks-candidates", { admin: true })).data;
+  const lamp = cands.find((c) => c.name === "Lamp Post");
+  const spire = cands.find((c) => c.target === "wonder");
+  const keptLines = (a, b) => {
+    const nb = b.split("\n").filter((l) => !l.includes(".model("));
+    return (
+      a
+        .split("\n")
+        .filter((l) => !l.includes(".model("))
+        .join("\n") === nb.join("\n")
+    );
+  };
+  check(
+    "looks: only the looks' parts change, every other line byte for byte the same",
+    !!lamp &&
+      keptLines(lamp.oldCode, lamp.code) &&
+      lamp.code !== lamp.oldCode &&
+      lamp.code.includes("w.model(w.x, w.y, [[-0.5, -0.5, 0, 1, 1, 0.5,") &&
+      lamp.code.includes("{ name: 'Lamp Post' });"),
+    lamp?.code,
+  );
+  check(
+    "looks: a wonder with no model gains one as a new line",
+    !!spire && keptLines(spire.oldCode, spire.code) && spire.code.split("\n").length === spire.oldCode.split("\n").length + 1,
+    spire?.code,
+  );
+  // The judge: old frames say OLD, new ones NEW; the stub scores NEW higher wherever it stands.
+  const OLD = "data:image/jpeg;base64,T0xE";
+  const NEW = "data:image/jpeg;base64,TkVX";
+  const j0 = looksJudged;
+  const judged = [];
+  for (const c of cands)
+    judged.push({ c, r: (await api("/api/admin/looks-judge", { admin: true, body: { id: c.id, old: [OLD, OLD], new: [NEW, NEW] } })).data });
+  check(
+    "looks: the judge scores old and new in the Worker's order, mapped back right",
+    looksJudged - j0 === cands.length &&
+      judged.every(({ r }) => r.new === 16 && r.old === 8 && r.better === "new") &&
+      new Set(cands.map((c) => c.id % 2)).size === 2,
+    JSON.stringify(judged.map(({ c, r }) => [c.id, r.old, r.new, r.better])),
+  );
+  const judgeBilled = await db.prepare("SELECT COUNT(*) AS n FROM spend WHERE invite = 'looks' AND call = 'looks-judge'").first();
+  check("looks: each judgment is billed to the revamp", judgeBilled.n === cands.length, `${judgeBilled.n}`);
+  // The verdicts: the lamp passes its test and goes live; the cosmic one fails its test and stays; the wonder goes live.
+  const star = cands.find((c) => c.name === "Star Lamp");
+  const v1 = (await api("/api/admin/looks-verdict", { admin: true, body: { id: lamp.id, tested: true } })).data;
+  const v2 = (await api("/api/admin/looks-verdict", { admin: true, body: { id: star.id, tested: false, reason: "its test run failed (crash)" } })).data;
+  const v3 = (await api("/api/admin/looks-verdict", { admin: true, body: { id: spire.id, tested: true } })).data;
+  const nowLive = (await api("/api/spells/live", { admin: true, body: { names: ["Lamp Post", "Star Lamp"] } })).data.programs;
+  const liveCode = async (key) => JSON.parse((await db.prepare("SELECT spec FROM spells WHERE key = ?").bind(key).first()).spec).code;
+  const oldRow = await db.prepare("SELECT status, version FROM programs WHERE id = ?").bind(lampPid).first();
+  const newRow = await db.prepare("SELECT origin, version, parent FROM programs WHERE id = ?").bind(nowLive["Lamp Post"].id).first();
+  check(
+    "looks: a new look that passed and scored higher goes live as a new version, the old kept",
+    v1.replaced &&
+      (await liveCode("lamp post")) === lamp.code &&
+      newRow.origin === "looks" &&
+      newRow.version === oldRow.version &&
+      newRow.parent === lampPid &&
+      oldRow.status === "retired",
+    JSON.stringify({ v1, newRow, oldRow }),
+  );
+  check("looks: a new look whose test failed is not used", !v2.replaced && (await liveCode("star lamp")) === star.oldCode, JSON.stringify(v2));
+  const wonderNow = await db.prepare("SELECT code FROM wonders WHERE id = ?").bind(wid).first();
+  check("looks: a wonder's new look replaces its code, the old kept in its row", v3.replaced && wonderNow.code === spire.code, JSON.stringify(v3));
+  // A judge that scores the new look lower keeps the old one, whatever the runner says.
+  await db.prepare("UPDATE looks SET status = 'candidate', old_score = 12, new_score = 12 WHERE id = ?").bind(star.id).run();
+  const tie = (await api("/api/admin/looks-verdict", { admin: true, body: { id: star.id, tested: true } })).data;
+  check("looks: a look that does not score higher is kept out", !tie.replaced && /did not score it higher/.test(tie.reason), JSON.stringify(tie));
+  // The caps: the night's $3 and the revamp's $25, both checked before any call.
+  await db.prepare("DELETE FROM looks WHERE key = 'star lamp' OR key LIKE 'bad lamp %'").run();
+  await db.prepare("INSERT INTO spend (at, call, model, usd, invite) VALUES (?, 'looks-write', 'claude-sonnet-5-5', 2.999, 'looks')").bind(Date.now()).run();
+  const a1 = looksAsked.length;
+  const night = await api("/api/admin/looks", { admin: true, body: { keys: ["star lamp", "bad lamp 0"] } });
+  check("looks: the night's share stops it before any call", night.data.queued.length === 0 && looksAsked.length === a1, JSON.stringify(night.data));
+  await db
+    .prepare("UPDATE spend SET at = ?, usd = 24.999 WHERE invite = 'looks' AND usd = 2.999")
+    .bind(Date.now() - 3 * 86400_000)
+    .run();
+  const capped = await api("/api/admin/looks", { admin: true, body: { keys: ["star lamp", "bad lamp 0"] } });
+  check("looks: the revamp's $25 stops it before any call", capped.data.queued.length === 0 && looksAsked.length === a1, JSON.stringify(capped.data));
+  const lateJudge = await api("/api/admin/looks-judge", { admin: true, body: { id: star.id, old: [OLD], new: [NEW] } });
+  check("looks: no judgment past the cap", lateJudge.status === 402 || lateJudge.status === 404, `${lateJudge.status}`);
+  const report = (await api("/api/admin/looks-report", { admin: true })).data;
+  check(
+    "looks: the report says what it spent, by call, and what it decided",
+    report.mode === "pilot" && report.budget === 25 && report.night === 3 && report.spent > 25 && report.byCall.length >= 2 && report.decided.length >= 2,
+    JSON.stringify({ spent: report.spent, byCall: report.byCall, counts: report.counts }),
+  );
+  await db.prepare("DELETE FROM spend WHERE invite = 'looks'").run();
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev();
   await reset();
 }
 
