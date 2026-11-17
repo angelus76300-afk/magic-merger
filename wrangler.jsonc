@@ -64,7 +64,7 @@
     // start looks by name, "bulk" the nightly share too. Its own budget, apart from BUDGET_USD:
     // $25 in all, ending with the revamp, and $3 in any 24 hours. Sonnet writes and judges looks,
     // Opus writes a cosmic item's.
-    "LOOKS": "off",
+    "LOOKS": "pilot",
     "LOOKS_BUDGET_USD": "25",
     "LOOKS_NIGHT_USD": "3",
     "LOOKS_MODEL": "claude-sonnet-5-5",

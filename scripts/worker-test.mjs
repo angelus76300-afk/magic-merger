@@ -4057,8 +4057,12 @@ const signIn = async (key, count) => {
 {
   await reset();
   await db.prepare("DELETE FROM looks").run();
+  // Production runs the pilot (wrangler.jsonc); off is checked with LOOKS set to "off" here.
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev({ LOOKS: "off" });
   const off = await api("/api/admin/looks", { admin: true, body: { keys: ["anything"] } });
-  check("looks: off by default, nothing is asked", off.status === 409 && looksAsked.length === 0, `${off.status}`);
+  check("looks: off, nothing is asked", off.status === 409 && looksAsked.length === 0, `${off.status}`);
   killDev();
   await new Promise((r) => setTimeout(r, 1500));
   await startDev({ LOOKS: "pilot" });
