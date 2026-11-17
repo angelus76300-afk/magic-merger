@@ -9,7 +9,9 @@ import { DAMP, R as RARE } from "../ecology";
 import { eyeKeepsChunk } from "./fog";
 import {
   TILE,
+  beginFineWater,
   buildFineTile,
+  fineWaterTops,
   fieldHeight,
   fieldStep,
   fineAt,
@@ -912,6 +914,7 @@ export class Terrain {
     for (let ty = y0; ty < y1; ty += side) for (let tx = x0; tx < x1; tx += side) tiles.push([tx, ty, Math.min(x1, tx + side), Math.min(y1, ty + side)]);
     FINE_OUT.reset();
     FINE_WATER.reset();
+    if (this.fineWaterOn) beginFineWater(this.fineCells, sub);
     // Room for a fine chunk's vertices from the start: growing in the middle of a tile copies
     // megabytes, a spike of tens of milliseconds.
     FINE_OUT.reserve(FINE_VERTICES);
@@ -944,6 +947,8 @@ export class Terrain {
     }
     // Its water in eighths: drawn after the land, as the water in whole cells is.
     this.dropFineWater(c);
+    // Its tops drawn for the whole chunk at once (terrain-fine.ts fineWaterTops), after its sides.
+    if (job.water) fineWaterTops(FINE_WATER, sub, -this.world.w / 2, -this.world.h / 2);
     const waterGeometry = job.water ? FINE_WATER.waterGeometry() : null;
     if (waterGeometry) {
       const w = new Mesh(waterGeometry, this.fluidMaterial);

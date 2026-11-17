@@ -96,8 +96,8 @@ export function waterLightChecks(check: Check): void {
       for (let v = 0; v < p.length / 3; v++) {
         lowest = Math.min(lowest, p[v * 3 + 1]);
         if (wf && wf[v * 2] > 0.8) {
-          // A top's corners on the eighth grid (a hair past it, to seal the seams).
-          for (const a of [p[v * 3], p[v * 3 + 2]]) if (Math.abs(a * 8 - Math.round(a * 8)) > 0.05) offGrid++;
+          // A top's corners on the eighth grid (a fan's middle on the sixteenth).
+          for (const a of [p[v * 3], p[v * 3 + 2]]) if (Math.abs(a * 16 - Math.round(a * 16)) > 0.01) offGrid++;
           if (wf[v * 2 + 1] > 0) foam.add(Math.round(wf[v * 2 + 1] * 100));
         }
       }
@@ -163,6 +163,56 @@ export function waterLightChecks(check: Check): void {
       "no wall inside the water: a side only where the surface breaks (a fall, the shore, the island's edge)",
       sides > 0 && inner === 0,
       `${inner} of ${sides} sides stand between two water tops that meet`,
+    );
+    // No T-junction: no corner of a water top lies partway along another top's edge (the review of
+    // 17 November: hairline cracks and doubled lines where large tops met smaller ones).
+    const onLine = new Map<string, number[]>();
+    const sixteenth = (a: number) => Math.round(a * 16);
+    for (const m of fine) {
+      const p = m.geometry.getAttribute("position").array as Float32Array;
+      const wf = m.geometry.getAttribute("waterFine").array as Float32Array;
+      for (let v = 0; v < p.length / 3; v++) {
+        if (wf[v * 2] < 0.8) continue;
+        const x = sixteenth(p[v * 3]);
+        const z = sixteenth(p[v * 3 + 2]);
+        for (const key of [`z${z}`, `x${x}`]) {
+          const list = onLine.get(key) ?? [];
+          list.push(key[0] === "z" ? x : z);
+          onLine.set(key, list);
+        }
+      }
+    }
+    const sorted = new Map<string, Int32Array>();
+    for (const [k, v] of onLine) sorted.set(k, Int32Array.from(new Set(v)).sort());
+    let tees = 0;
+    let edges = 0;
+    for (const m of fine) {
+      const p = m.geometry.getAttribute("position").array as Float32Array;
+      const wf = m.geometry.getAttribute("waterFine").array as Float32Array;
+      for (let t = 0; t < p.length / 9; t++) {
+        if (wf[t * 6] < 0.8) continue;
+        for (let e = 0; e < 3; e++) {
+          const a = t * 3 + e;
+          const b = t * 3 + ((e + 1) % 3);
+          const ax = sixteenth(p[a * 3]);
+          const az = sixteenth(p[a * 3 + 2]);
+          const bx = sixteenth(p[b * 3]);
+          const bz = sixteenth(p[b * 3 + 2]);
+          let line: Int32Array | undefined;
+          let lo = 0;
+          let hi = 0;
+          if (az === bz && ax !== bx) [line, lo, hi] = [sorted.get(`z${az}`), Math.min(ax, bx), Math.max(ax, bx)];
+          else if (ax === bx && az !== bz) [line, lo, hi] = [sorted.get(`x${ax}`), Math.min(az, bz), Math.max(az, bz)];
+          else continue;
+          edges++;
+          if (line && line.some((q) => q > lo && q < hi)) tees++;
+        }
+      }
+    }
+    check(
+      "no crack in the water: no corner of a top lies partway along another top's edge",
+      edges > 1000 && tees === 0,
+      `${tees} of ${edges} edges of water tops with a corner partway along them`,
     );
     let deepest = 0;
     for (let i = 0; i < world.n; i++) if (world.fluid[i] === F.WATER) deepest = Math.max(deepest, world.depth[i] * 0.5);

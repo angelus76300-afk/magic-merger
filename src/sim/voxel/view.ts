@@ -1024,6 +1024,9 @@ export class VoxelView {
         } else if (world.ground[i] === 0 && world.depth[i] === 0 && cellHash(i) % 100 < 2) add("tuft", i);
         continue;
       }
+      // With the water in eighths, a boulder under the water is part of its bed: drawn on its own,
+      // lit by the sun under the water's tint, it read as a blue blob afloat (review, 17 November).
+      if (c === C.BOULDER && GRAPHICS.fine && GRAPHICS.water && world.fluid[i] === FLUID.WATER && world.depth[i] > 0.25) continue;
       const key = this.coverKey(i, c, trees, builtinCovers);
       if (fine && isTree(key)) {
         const style = key.startsWith("tree:") ? key.split(":")[1] : OLD_TREES[key];

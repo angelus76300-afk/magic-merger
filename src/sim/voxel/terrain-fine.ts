@@ -936,10 +936,11 @@ function softColor(f: FineCells, px: number, py: number): number {
 const FOAM_LEVELS = 3;
 // Water cells whose levels are at most LEVEL_JOIN apart (scene units) share their corners' level.
 const LEVEL_JOIN = 1.2;
-// How far a level top of water reaches past its columns, scene units.
-const SEAM = 0.004;
 let WK = new Float64Array(0);
 let FO = new Uint8Array(0);
+// The rectangles of water top (i, ie, j, je, first column) and an outline's points.
+const RECTS: number[] = [];
+const PTS: number[] = [];
 // The four corner levels of each water cell of a tile and its border: (x0, y0), (x1, y0),
 // (x0, y1), (x1, y1); NaN for a cell not under water.
 let CORNER = new Float32Array(0);
@@ -1051,73 +1052,26 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
         }
       }
     }
-  // Tops, merged where the surface is level (or within a cell where it slopes).
-  for (let j = B; j < SH - B; j++) DONE.fill(0, j * SW + B, j * SW + SW - B);
+  // The tops are drawn for the whole chunk at once when its last tile is built (fineWaterTops): each
+  // column's level, key, foam and colour into the chunk's own arrays, and its cells' corners.
   for (let j = B; j < SH - B; j++)
     for (let i = B; i < SW - B; i++) {
       const s = j * SW + i;
-      if (DONE[s] || Number.isNaN(WL[s])) continue;
-      const key = WK[s];
-      const level = WL[s];
-      const fo = FO[s];
-      const col = f.wdeep[CELL[s]];
-      // A sloping surface merged within its one cell (its key): the surface is bilinear in the cell,
-      // so straight along every rectangle's edges, and a corner of a smaller quad on a larger one's
-      // edge lies on it, with no crack.
-      const same = (t: number) => !DONE[t] && !Number.isNaN(WL[t]) && WK[t] === key && FO[t] === fo && f.wdeep[CELL[t]] === col;
-      let ie = i + 1;
-      while (ie < SW - B && same(j * SW + ie)) ie++;
-      let je = j + 1;
-      grow: while (je < SH - B) {
-        for (let q = i; q < ie; q++) if (!same(je * SW + q)) break grow;
-        je++;
-      }
-      for (let jj = j; jj < je; jj++) DONE.fill(1, jj * SW + i, jj * SW + ie);
-      const x0 = (sx0 + i) * Q;
-      const x1 = (sx0 + ie) * Q;
-      const z0 = (sy0 + j) * Q;
-      const z1 = (sy0 + je) * Q;
-      let y00 = key;
-      let y01 = key;
-      let y11 = key;
-      let y10 = key;
-      if (key < 0) {
-        // Sloping: the level at each corner, within the one cell.
-        const cx = Math.floor((sx0 + i) / sub);
-        const cy = Math.floor((sy0 + j) / sub);
-        const k = ((cy - cy0) * cw + (cx - cx0)) * 4;
-        y00 = levelAt(k, x0 - cx, z0 - cy);
-        y01 = levelAt(k, x0 - cx, z1 - cy);
-        y11 = levelAt(k, x1 - cx, z1 - cy);
-        y10 = levelAt(k, x1 - cx, z0 - cy);
-      }
-      out.e0 = 1;
-      out.e1 = fo / FOAM_LEVELS;
-      // A hair wider than the columns, so where a large top meets the corners of smaller ones the
-      // seam never opens on the bed (dots of it showed along the depth's contours); the waves are
-      // the shader's, by the depth (water-light.ts), so the surface stays still and whole.
-      const e = level === key ? SEAM : 0;
-      out.quad(
-        x0 + ox - e,
-        y00,
-        z0 + oz - e,
-        x0 + ox - e,
-        y01,
-        z1 + oz + e,
-        x1 + ox + e,
-        y11,
-        z1 + oz + e,
-        x1 + ox + e,
-        y10,
-        z0 + oz - e,
-        col,
-        1,
-        col,
-        1,
-        1,
-        0,
-        false,
-      );
+      const at = (sy0 + j - CW.y0) * CW.w + (sx0 + i - CW.x0);
+      if (at < 0 || at >= CW.n || sx0 + i < CW.x0 || sx0 + i >= CW.x0 + CW.w) continue;
+      CW.side[at] = 0;
+      if (Number.isNaN(WL[s])) continue;
+      CW.level[at] = WL[s];
+      CW.key[at] = WK[s];
+      CW.foam[at] = FO[s];
+      CW.color[at] = f.wdeep[CELL[s]];
+    }
+  for (let y = 0; y < ch; y++)
+    for (let x = 0; x < cw; x++) {
+      const gx = cx0 + x - f.x0;
+      const gy = cy0 + y - f.y0;
+      if (gx < 0 || gy < 0 || gx >= CW.cells || gy >= CW.cellRows) continue;
+      for (let q = 0; q < 4; q++) CW.corner[(gy * CW.cells + gx) * 4 + q] = CORNER[(y * cw + x) * 4 + q];
     }
   // The level of column s's top at the middle of its edge toward d (east, south, west, north).
   const edgeLevel = (s: number, i: number, j: number, d: number): number => {
@@ -1149,6 +1103,8 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
         const next = !Number.isNaN(WL[t]) ? edgeLevel(t, i + DX[d], j + DY[d], (d + 2) & 3) : CELL[t] < 0 ? -Infinity : H[t] * Q;
         const lo = Math.max(floor, next);
         if (top - lo < 0.02) continue;
+        const at = (sy0 + j - CW.y0) * CW.w + (sx0 + i - CW.x0);
+        if (at >= 0 && at < CW.n) CW.side[at] |= 1 << d;
         const X = (sx0 + i) * Q + ox;
         const Z = (sy0 + j) * Q + oz;
         // Darker and less clear with depth, by height, so the sides of two columns meet in one tone.
@@ -1160,6 +1116,155 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
       }
     }
   out.e0 = 0;
+}
+
+// The water's tops of the chunk being built, column by column (NaN level: no water), with each
+// column's sides (a bit for each way) and each cell's four corner levels.
+const CW = {
+  x0: 0,
+  y0: 0,
+  w: 0,
+  n: 0,
+  cells: 0,
+  cellRows: 0,
+  level: new Float32Array(0),
+  key: new Float64Array(0),
+  foam: new Uint8Array(0),
+  color: new Uint32Array(0),
+  side: new Uint8Array(0),
+  corner: new Float32Array(0),
+  rid: new Int32Array(0),
+  done: new Uint8Array(0),
+};
+
+// Before a chunk's first tile: its arrays sized and emptied.
+export function beginFineWater(f: FineCells, sub: number): void {
+  CW.x0 = f.x0 * sub;
+  CW.y0 = f.y0 * sub;
+  CW.w = (f.x1 - f.x0) * sub;
+  CW.n = CW.w * (f.y1 - f.y0) * sub;
+  CW.cells = f.x1 - f.x0;
+  CW.cellRows = f.y1 - f.y0;
+  if (CW.level.length < CW.n) {
+    CW.level = new Float32Array(CW.n);
+    CW.key = new Float64Array(CW.n);
+    CW.foam = new Uint8Array(CW.n);
+    CW.color = new Uint32Array(CW.n);
+    CW.side = new Uint8Array(CW.n);
+    CW.rid = new Int32Array(CW.n);
+    CW.done = new Uint8Array(CW.n);
+  }
+  if (CW.corner.length < CW.cells * CW.cellRows * 4) CW.corner = new Float32Array(CW.cells * CW.cellRows * 4);
+  CW.level.fill(NaN, 0, CW.n);
+  CW.side.fill(0, 0, CW.n);
+  CW.corner.fill(NaN);
+}
+
+// The water's tops of the whole chunk, after its last tile: merged into rectangles where the surface
+// is level (or within a cell where it slopes), each drawn with a corner wherever a neighbour's
+// corner, a side of the water or the chunk's edge meets its own edges, so no corner of one lies
+// partway along another's edge. Such T-junctions opened hairline cracks, and a hair of overlap drew
+// lines of doubled water (the review of 17 November). Drawn per chunk, not per tile, so only the
+// chunk's edges need a corner at every column.
+export function fineWaterTops(out: Writer, sub: number, ox: number, oz: number): void {
+  const { w, n, x0: X0, y0: Y0 } = CW;
+  if (n === 0) return;
+  const rows = n / w;
+  const Q = 1 / sub;
+  const level = CW.level;
+  const key = CW.key;
+  const foam = CW.foam;
+  const color = CW.color;
+  const rid = CW.rid;
+  const done = CW.done;
+  rid.fill(-1, 0, n);
+  done.fill(0, 0, n);
+  RECTS.length = 0;
+  for (let j = 0; j < rows; j++)
+    for (let i = 0; i < w; i++) {
+      const s = j * w + i;
+      if (done[s] || Number.isNaN(level[s])) continue;
+      const k0 = key[s];
+      const fo = foam[s];
+      const col = color[s];
+      // A sloping surface merges within its one cell (its key): the surface is bilinear there.
+      const same = (t: number) => !done[t] && !Number.isNaN(level[t]) && key[t] === k0 && foam[t] === fo && color[t] === col;
+      let ie = i + 1;
+      while (ie < w && same(j * w + ie)) ie++;
+      let je = j + 1;
+      grow: while (je < rows) {
+        for (let q = i; q < ie; q++) if (!same(je * w + q)) break grow;
+        je++;
+      }
+      const r = RECTS.length / 5;
+      for (let jj = j; jj < je; jj++) {
+        done.fill(1, jj * w + i, jj * w + ie);
+        rid.fill(r, jj * w + i, jj * w + ie);
+      }
+      RECTS.push(i, ie, j, je, s);
+    }
+  // -2 past the chunk's edge, -1 no water.
+  const nb = (ii: number, jj: number) => (ii < 0 || jj < 0 || ii >= w || jj >= rows ? -2 : rid[jj * w + ii]);
+  // Whether an edge needs a corner between two columns a and b of the rectangle, whose neighbours
+  // that way (d) are na and nb.
+  const need = (na: number, nb2: number, a: number, b: number, d: number) =>
+    na !== nb2 || na === -2 || nb2 === -2 || ((na === -1 || nb2 === -1) && ((CW.side[a] | CW.side[b]) & (1 << d)) !== 0);
+  for (let r = 0; r < RECTS.length; r += 5) {
+    const i = RECTS[r];
+    const ie = RECTS[r + 1];
+    const j = RECTS[r + 2];
+    const je = RECTS[r + 3];
+    const s = RECTS[r + 4];
+    const k0 = key[s];
+    const col = color[s];
+    const cx = Math.floor((X0 + i) / sub);
+    const cy = Math.floor((Y0 + j) / sub);
+    const kc = ((cy - Y0 / sub) * CW.cells + (cx - X0 / sub)) * 4;
+    const C4 = CW.corner;
+    const yAt = (x: number, z: number) => {
+      if (k0 >= 0) return k0;
+      const u = (X0 + x) * Q - cx;
+      const v = (Y0 + z) * Q - cy;
+      return C4[kc] * (1 - u) * (1 - v) + C4[kc + 1] * u * (1 - v) + C4[kc + 2] * (1 - u) * v + C4[kc + 3] * u * v;
+    };
+    // The outline, wound as the tops are: down the west side, east along the south, up the east
+    // side, west along the north.
+    PTS.length = 0;
+    PTS.push(i, j);
+    for (let q = j + 1; q < je; q++) if (need(nb(i - 1, q - 1), nb(i - 1, q), (q - 1) * w + i, q * w + i, 2)) PTS.push(i, q);
+    PTS.push(i, je);
+    for (let q = i + 1; q < ie; q++) if (need(nb(q - 1, je), nb(q, je), (je - 1) * w + q - 1, (je - 1) * w + q, 1)) PTS.push(q, je);
+    PTS.push(ie, je);
+    for (let q = je - 1; q > j; q--) if (need(nb(ie, q - 1), nb(ie, q), (q - 1) * w + ie - 1, q * w + ie - 1, 0)) PTS.push(ie, q);
+    PTS.push(ie, j);
+    for (let q = ie - 1; q > i; q--) if (need(nb(q - 1, j - 1), nb(q, j - 1), j * w + q - 1, j * w + q, 3)) PTS.push(q, j);
+    out.e0 = 1;
+    out.e1 = foam[s] / FOAM_LEVELS;
+    const X = (x: number) => (X0 + x) * Q + ox;
+    const Z = (z: number) => (Y0 + z) * Q + oz;
+    const m = PTS.length / 2;
+    if (m === 4) {
+      out.quad(X(i), yAt(i, j), Z(j), X(i), yAt(i, je), Z(je), X(ie), yAt(ie, je), Z(je), X(ie), yAt(ie, j), Z(j), col, 1, col, 1, 1, 0, false);
+      continue;
+    }
+    // A fan round the middle, two triangles a quad (the second empty when the count is odd).
+    const mx = (i + ie) / 2;
+    const mz = (j + je) / 2;
+    const my = yAt(mx, mz);
+    for (let a = 0; a < m; a += 2) {
+      const b = (a + 1) % m;
+      const c = a + 2 < m ? a + 2 : (a + 2) % m === 0 ? 0 : b;
+      const ax = PTS[a * 2];
+      const az = PTS[a * 2 + 1];
+      const bx = PTS[b * 2];
+      const bz = PTS[b * 2 + 1];
+      const cx2 = PTS[c * 2];
+      const cz2 = PTS[c * 2 + 1];
+      out.quad(X(mx), my, Z(mz), X(ax), yAt(ax, az), Z(az), X(bx), yAt(bx, bz), Z(bz), X(cx2), yAt(cx2, cz2), Z(cz2), col, 1, col, 1, 1, 0, false);
+    }
+  }
+  out.e0 = 0;
+  out.e1 = 0;
 }
 
 // The depth over which a water side darkens, scene units, and the colour of its top.
