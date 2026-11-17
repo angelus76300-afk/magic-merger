@@ -825,9 +825,9 @@ export class Terrain {
   // A spell's ground in soft patches (16 November, the owner: Big Bang's ground was "a busy
   // camouflage patchwork of purples, lilac and sand"). Where most of the land round a cell (5 by 5,
   // weighted to the middle) is a spell's own natural ground or crystal, the cell is drawn in the
-  // weighted mean colour of the dry land round it, eased between cells (terrain-fine.ts softColor):
-  // stardust, the crystal it turns into and the sand it left read as one ground in soft shades,
-  // still the spell's colour, instead of cell sized blots.
+  // weighted mean colour of the spell's cells round it, eased between cells (terrain-fine.ts
+  // softColor): stardust, the crystal it turns into and the land it left among them read as one
+  // ground in soft shades of the spell's colour, instead of cell sized blots.
   private readSoft(f: FineCells): void {
     const { world } = this;
     const ax = f.x0 - 5;
@@ -876,8 +876,10 @@ export class Terrain {
             const q = own + dy * aw + dx;
             const wgt = SOFT_KERNEL[dx + 2] * SOFT_KERNEL[dy + 2];
             all += wgt;
-            if (SOFT_FAM[q] === 0) continue;
-            if (SOFT_FAM[q] === 2) spell += wgt;
+            // The colour from the spell's own cells only: the land it left among them takes its
+            // shades too, so the ground reads as the spell's in soft patches, not grey mud.
+            if (SOFT_FAM[q] !== 2) continue;
+            spell += wgt;
             if (SOFT_COL[q] < 0) SOFT_COL[q] = this.fineTopColor((y + dy) * world.w + x + dx);
             const col = SOFT_COL[q];
             r += ((col >> 16) & 255) * wgt;
@@ -1505,7 +1507,8 @@ export class Writer {
   // How much a vertex rides the waves (water tops, 4.4).
   private wave = new Float32Array(6 * 4096);
   // Two more numbers a vertex, set before writing (16 November): the fine land's night glow (e0,
-  // terrain-fine.ts GLOW_LEVELS); the water in eighths (e0 1, e1 its foam).
+  // terrain-fine.ts GLOW_LEVELS) and whether it lies under water (e1); the water in eighths (e0 1,
+  // e1 its foam).
   private extra = new Float32Array(2 * 6 * 4096);
   e0 = 0;
   e1 = 0;
@@ -1777,6 +1780,7 @@ export class Writer {
     const col = new Uint8Array(quads * 12);
     const mask = new Uint8Array(quads * 4);
     const glow = new Uint8Array(quads * 4);
+    const wet = new Uint8Array(quads * 4);
     const index = new Uint32Array(quads * 6);
     const byte = (v: number) => Math.max(0, Math.min(255, Math.round(v * 255)));
     // Each face's way, from its winding (outward, as three's front side): the index buffer holds
@@ -1830,6 +1834,7 @@ export class Writer {
         col[to * 3 + 2] = byte(this.col[from * 4 + 2]);
         mask[to] = byte(this.mask[from]);
         glow[to] = byte(this.extra[from * 2]);
+        wet[to] = byte(this.extra[from * 2 + 1]);
       }
       const v = q * 4;
       index.set([v, v + 1, v + 2, v, v + 2, v + 3], next[way[q]]++ * 6);
@@ -1840,6 +1845,8 @@ export class Writer {
     g.setAttribute("decalMask", new BufferAttribute(mask, 1, true));
     // The night glow of the land round lava and houses (terrain-fine.ts, warmlight).
     g.setAttribute("landGlow", new BufferAttribute(glow, 1, true));
+    // A water bed under the water (terrain-fine.ts WET): lit as the water lights it, not by the sun.
+    g.setAttribute("landWet", new BufferAttribute(wet, 1, true));
     g.setIndex(new BufferAttribute(index, 1));
     g.computeBoundingSphere();
     g.userData.faces = { first, counts, planes };

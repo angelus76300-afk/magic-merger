@@ -160,8 +160,8 @@ const WARM_SHADE = new Vector3(0.9, 0.95, 1.07);
 export const WARM_K = 0.85;
 // The land round lava and lit houses at night (terrain-fine.ts glow levels): its own colour again,
 // in this warm light, at GLOW_K of the night.
-const GLOW_COLOR = "vec3(1.0, 0.55, 0.22)";
-export const GLOW_K = 1.0;
+const GLOW_COLOR = "vec3(1.0, 0.42, 0.12)";
+export const GLOW_K = 0.8;
 
 export class Looks {
   readonly sun = new DirectionalLight(0xffffff, 0);
@@ -237,7 +237,10 @@ export class Looks {
       if (!GRAPHICS.shadows && !GRAPHICS.warmlight) return;
       Object.assign(shader.uniforms, uniforms);
       shader.vertexShader = shader.vertexShader
-        .replace("#include <common>", "#include <common>\nvarying vec3 vSunWorld;\nattribute float landGlow;\nvarying float vLandGlow;")
+        .replace(
+          "#include <common>",
+          "#include <common>\nvarying vec3 vSunWorld;\nattribute float landGlow;\nvarying float vLandGlow;\nattribute float landWet;\nvarying float vLandWet;",
+        )
         .replace(
           "#include <begin_vertex>",
           `#include <begin_vertex>
@@ -246,7 +249,8 @@ vec4 sunW = vec4(transformed, 1.0);
 sunW = instanceMatrix * sunW;
 #endif
 vSunWorld = (modelMatrix * sunW).xyz;
-vLandGlow = landGlow;`,
+vLandGlow = landGlow;
+vLandWet = landWet;`,
         );
       shader.fragmentShader = shader.fragmentShader
         .replace(
@@ -266,6 +270,7 @@ uniform vec3 warmLit;
 uniform vec3 warmShade;
 uniform float nightGlow;
 varying float vLandGlow;
+varying float vLandWet;
 float sunDepth(vec2 uv) { return dot(texture2D(sunMap, uv), vec4(255. / 256., 255. / 65536., 255. / 16777216., 1. / 16777216.)); }
 // Soft: four taps a texel apart, each a comparison mixed by where the point
 // falls between texels.
@@ -285,7 +290,9 @@ float sunLight(vec3 n) {
         )
         .replace(
           "#include <opaque_fragment>",
-          `if (sunStrength > 0.001 || sunWarm > 0.001) {
+          `// A water bed under the water is lit as the water lights it (its colour by depth), not by the
+// sun's shadows and sides: its small steps read as blue bars through the water.
+if ((sunStrength > 0.001 || sunWarm > 0.001) && vLandWet < 0.5) {
   vec3 sunN = normalize(cross(dFdx(vSunWorld), dFdy(vSunWorld)));
   if (dot(sunN, cameraPosition - vSunWorld) < 0.0) sunN = -sunN;
   float ndl = dot(sunN, sunDir);
@@ -304,7 +311,9 @@ if (nightGlow > 0.001 && vLandGlow > 0.001) {
 #else
   vec3 glowBase = diffuseColor.rgb;
 #endif
-  outgoingLight += glowBase * vLandGlow * nightGlow * ${GLOW_COLOR};
+  // Warm light by the face's brightness more than its hue: lava's light on grass reads orange, not lime.
+  vec3 glowLit = glowBase * 0.25 + vec3(dot(glowBase, vec3(0.3, 0.59, 0.11))) * 0.9;
+  outgoingLight += glowLit * vLandGlow * nightGlow * ${GLOW_COLOR};
 }
 #include <opaque_fragment>`,
         );

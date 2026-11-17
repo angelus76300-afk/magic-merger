@@ -114,6 +114,56 @@ export function waterLightChecks(check: Check): void {
           tallest = Math.max(tallest, hi - lo);
         }
     }
+    // No wall inside the water: a side between two columns whose tops meet (a slope, level water)
+    // showed as small pale blocks across the sea (fine water, first build).
+    const tops = new Map<number, number>();
+    const col = (x: number, z: number) => (Math.round(x * 8) + 4096) * 8192 + Math.round(z * 8) + 4096;
+    for (const m of fine) {
+      const p = m.geometry.getAttribute("position").array as Float32Array;
+      const wf = m.geometry.getAttribute("waterFine").array as Float32Array;
+      for (let q = 0; q < p.length / 18; q++) {
+        if (wf[q * 12] < 0.8) continue;
+        let x0 = Infinity;
+        let x1 = -Infinity;
+        let z0 = Infinity;
+        let z1 = -Infinity;
+        let y = 0;
+        for (let k = 0; k < 6; k++) {
+          const v = (q * 6 + k) * 3;
+          x0 = Math.min(x0, p[v]);
+          x1 = Math.max(x1, p[v]);
+          z0 = Math.min(z0, p[v + 2]);
+          z1 = Math.max(z1, p[v + 2]);
+          y += p[v + 1] / 6;
+        }
+        for (let x = Math.round(x0 * 8); x < Math.round(x1 * 8); x++)
+          for (let z = Math.round(z0 * 8); z < Math.round(z1 * 8); z++) tops.set(col(x / 8, z / 8), y);
+      }
+    }
+    let inner = 0;
+    let sides = 0;
+    for (const m of fine) {
+      const p = m.geometry.getAttribute("position").array as Float32Array;
+      const wf = m.geometry.getAttribute("waterFine").array as Float32Array;
+      for (let q = 0; q < p.length / 18; q++) {
+        if (wf[q * 12] > 0.8) continue;
+        sides++;
+        const v = q * 18;
+        let hi = -Infinity;
+        for (let k = 0; k < 6; k++) hi = Math.max(hi, p[v + k * 3 + 1]);
+        const alongX = Math.abs(p[v] - p[v + 3]) > 1e-6 || Math.abs(p[v] - p[v + 6]) > 1e-6;
+        const x = Math.min(p[v], p[v + 3], p[v + 6]);
+        const z = Math.min(p[v + 2], p[v + 5], p[v + 8]);
+        const a = alongX ? tops.get(col(x, z - 0.125)) : tops.get(col(x - 0.125, z));
+        const b = alongX ? tops.get(col(x, z)) : tops.get(col(x, z));
+        if (a !== undefined && b !== undefined && a >= hi - 0.02 && b >= hi - 0.02) inner++;
+      }
+    }
+    check(
+      "no wall inside the water: a side only where the surface breaks (a fall, the shore, the island's edge)",
+      sides > 0 && inner === 0,
+      `${inner} of ${sides} sides stand between two water tops that meet`,
+    );
     let deepest = 0;
     for (let i = 0; i < world.n; i++) if (world.fluid[i] === F.WATER) deepest = Math.max(deepest, world.depth[i] * 0.5);
     check(

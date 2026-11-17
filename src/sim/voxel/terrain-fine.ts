@@ -410,6 +410,12 @@ export function fieldFine(f: FineCells, px: number, py: number): number {
   return h + swell(px, py);
 }
 
+// A water bed's height in columns, in eighths, without the land's dither: seen through water, its
+// lone columns read as scattered blocks, and steps of a whole voxel as fins.
+function bedStep(h: number, sub: number): number {
+  return Math.round(h * sub);
+}
+
 // A water bed: natural ground under water (not lava, not another fluid).
 export function isBed(f: FineCells, c: number): boolean {
   return f.inside[c] === 1 && f.wet[c] === 1 && f.water[c] > -1e8 && f.lava[c] === 0 && f.natural[c] === 1;
@@ -428,6 +434,8 @@ let SUM = new Float64Array(0);
 let CELL = new Int32Array(0);
 let RS = new Uint8Array(0);
 let GL = new Uint8Array(0);
+// 1 where a column is a water bed under the water's surface (its faces are lit as the water lights them).
+let WET = new Uint8Array(0);
 let WL = new Float32Array(0);
 // The nearest lava (cells away and its surface) and house (cells away and its floor) to a column.
 let LAVA_D = new Float32Array(0);
@@ -480,6 +488,7 @@ export function buildFineTile(
     CELL = new Int32Array(SW * SH);
     RS = new Uint8Array(SW * SH);
     GL = new Uint8Array(SW * SH);
+    WET = new Uint8Array(SW * SH);
     WL = new Float32Array(SW * SH);
     LAVA_D = new Float32Array(SW * SH);
     LAVA_Y = new Float32Array(SW * SH);
@@ -522,7 +531,8 @@ export function buildFineTile(
       const ly = sy - cy * sub;
       if (f.natural[c]) {
         // The secondary terrain map: slopes where the land rises one voxel, and water beds.
-        if (steps && (!f.wet[c] || isBed(f, c))) hgt = fieldStep(fieldFine(f, px, py), px, py, sub);
+        if (steps && !f.wet[c]) hgt = fieldStep(fieldFine(f, px, py), px, py, sub);
+        else if (steps && isBed(f, c)) hgt = bedStep(fieldFine(f, px, py), sub);
         let border = Infinity;
         let shore = false;
         let foot = -1; // the cliff this column stands at the foot of
@@ -631,6 +641,8 @@ export function buildFineTile(
   // With relief, a slope of one voxel a cell is lit almost as a wall facing that way, the light
   // and dark sides that made height easy to read with whole steps (pass 1).
   const slopeK = relief ? 0.45 : 0.15;
+  // The columns of a water bed under the water's surface.
+  for (let s = 0; s < SW * SH; s++) WET[s] = CELL[s] >= 0 && isBed(f, CELL[s]) && H[s] < f.water[CELL[s]] * sub ? 1 : 0;
   const gentle = (d: number) => (d > 2 * RISER ? 2 * RISER : d < -2 * RISER ? -2 * RISER : d);
   for (let j = 2; j < SH - 2; j++)
     for (let k = 2; k < SW - 2; k++) {
@@ -640,6 +652,9 @@ export function buildFineTile(
       const w = h0 - H[s - 1];
       const so = H[s + SW] - h0;
       const no = h0 - H[s - SW];
+      // A bed under the water keeps its colour: the water over it shades it by depth, and its tops
+      // merge.
+      if (WET[s]) continue;
       const riser = RS[s];
       if (e > riser || -w > riser || so > riser || -no > riser) {
         C[s] = scaleColor(C[s], 0.88);
@@ -703,13 +718,23 @@ export function buildFineTile(
       const c0 = C[s];
       const d0 = D[s];
       const g0 = GL[s];
+      const w0 = WET[s];
       let ke = k + 1;
-      while (ke < k1 && !DONE[j * SW + ke] && H[j * SW + ke] === h0 && C[j * SW + ke] === c0 && D[j * SW + ke] === d0 && GL[j * SW + ke] === g0) ke++;
+      while (
+        ke < k1 &&
+        !DONE[j * SW + ke] &&
+        H[j * SW + ke] === h0 &&
+        C[j * SW + ke] === c0 &&
+        D[j * SW + ke] === d0 &&
+        GL[j * SW + ke] === g0 &&
+        WET[j * SW + ke] === w0
+      )
+        ke++;
       let je = j + 1;
       grow: while (je < j1) {
         for (let q = k; q < ke; q++) {
           const t = je * SW + q;
-          if (DONE[t] || H[t] !== h0 || C[t] !== c0 || D[t] !== d0 || GL[t] !== g0) break grow;
+          if (DONE[t] || H[t] !== h0 || C[t] !== c0 || D[t] !== d0 || GL[t] !== g0 || WET[t] !== w0) break grow;
         }
         je++;
       }
@@ -717,10 +742,12 @@ export function buildFineTile(
       const x0 = (sx0 + k) * Q + ox;
       const z0 = (sy0 + j) * Q + oz;
       out.e0 = g0 / GLOW_LEVELS;
+      out.e1 = w0;
       out.rect(4, x0, x0 + (ke - k) * Q, h0 * Q, h0 * Q, z0, z0 + (je - j) * Q, c0, topLight, 1, d0);
     }
   }
   out.e0 = 0;
+  out.e1 = 0;
 
   // Walls toward lower neighbours, in layers, merged along each line into runs.
   const runs = RUNS;
@@ -748,7 +775,8 @@ export function buildFineTile(
               r.color === face.color &&
               r.light === face.light &&
               r.foot === face.foot &&
-              r.glow === face.glow,
+              r.glow === face.glow &&
+              r.wet === face.wet,
           );
           if (open) {
             open.until = p + 1;
@@ -761,6 +789,7 @@ export function buildFineTile(
               light: face.light,
               foot: face.foot,
               glow: face.glow,
+              wet: face.wet,
               start: face.at,
               end: face.at + 1,
               line: face.line,
@@ -778,6 +807,7 @@ export function buildFineTile(
     }
   }
   out.e0 = 0;
+  out.e1 = 0;
 
   // The water in eighths (16 November) takes the place of the line of foam on the land.
   if (water) fineWater(f, water, sub, sx0, sy0, SW, SH, ox, oz);
@@ -1023,8 +1053,10 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
       const level = WL[s];
       const fo = FO[s];
       const col = f.wdeep[CELL[s]];
-      // A sloping surface a column at a time, so its quads meet corner to corner, with no crack.
-      const same = (t: number) => key >= 0 && !DONE[t] && !Number.isNaN(WL[t]) && WK[t] === key && FO[t] === fo && f.wdeep[CELL[t]] === col;
+      // A sloping surface merged within its one cell (its key): the surface is bilinear in the cell,
+      // so straight along every rectangle's edges, and a corner of a smaller quad on a larger one's
+      // edge lies on it, with no crack.
+      const same = (t: number) => !DONE[t] && !Number.isNaN(WL[t]) && WK[t] === key && FO[t] === fo && f.wdeep[CELL[t]] === col;
       let ie = i + 1;
       while (ie < SW - B && same(j * SW + ie)) ie++;
       let je = j + 1;
@@ -1079,6 +1111,18 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
         false,
       );
     }
+  // The level of column s's top at the middle of its edge toward d (east, south, west, north).
+  const edgeLevel = (s: number, i: number, j: number, d: number): number => {
+    if (WK[s] >= 0) return WK[s];
+    const sx = sx0 + i;
+    const sy = sy0 + j;
+    const x = Math.floor(sx / sub);
+    const y = Math.floor(sy / sub);
+    const k = ((y - cy0) * cw + (x - cx0)) * 4;
+    const u = (sx - x * sub + (d === 0 ? 1 : d === 2 ? 0 : 0.5)) / sub;
+    const v = (sy - y * sub + (d === 1 ? 1 : d === 3 ? 0 : 0.5)) / sub;
+    return levelAt(k, u, v);
+  };
   // Sides where the water stands above what is next to it.
   out.e0 = SIDE_MARK;
   out.e1 = 0;
@@ -1091,17 +1135,20 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
       const deep = f.wdeep[CELL[s]];
       for (let d = 0; d < 4; d++) {
         const t = s + DX[d] + DY[d] * SW;
-        const next = !Number.isNaN(WL[t]) ? WL[t] : CELL[t] < 0 ? -Infinity : H[t] * Q;
+        // Between two columns of water, by the levels of their tops at the edge they share: equal
+        // wherever the surface is whole (a slope, level water), apart only at a fall.
+        const top = edgeLevel(s, i, j, d);
+        const next = !Number.isNaN(WL[t]) ? edgeLevel(t, i + DX[d], j + DY[d], (d + 2) & 3) : CELL[t] < 0 ? -Infinity : H[t] * Q;
         const lo = Math.max(floor, next);
-        if (level - lo < 0.02) continue;
+        if (top - lo < 0.02) continue;
         const X = (sx0 + i) * Q + ox;
         const Z = (sy0 + j) * Q + oz;
         // Darker and less clear with depth, by height, so the sides of two columns meet in one tone.
         const split = level - WALL_DEEP;
         if (lo < split) {
           waterSide(out, d, X, Z, Q, lo, split, deep, level);
-          waterSide(out, d, X, Z, Q, split, level, deep, level);
-        } else waterSide(out, d, X, Z, Q, lo, level, deep, level);
+          waterSide(out, d, X, Z, Q, split, top, deep, level);
+        } else waterSide(out, d, X, Z, Q, lo, top, deep, level);
       }
     }
   out.e0 = 0;
@@ -1134,6 +1181,7 @@ interface Face {
   light: number;
   foot: number;
   glow: number;
+  wet: number;
   at: number; // the column's place along the wall's line
   line: number; // the line: the column's other coordinate, the wall's side taken in
 }
@@ -1144,13 +1192,14 @@ interface Run {
   light: number;
   foot: number;
   glow: number;
+  wet: number;
   start: number;
   end: number;
   line: number;
   until: number;
 }
 const RUNS: Run[] = [];
-const FACES: Face[] = Array.from({ length: 32 }, () => ({ lo: 0, hi: 0, color: 0, light: 0, foot: 1, glow: 0, at: 0, line: 0 }));
+const FACES: Face[] = Array.from({ length: 32 }, () => ({ lo: 0, hi: 0, color: 0, light: 0, foot: 1, glow: 0, wet: 0, at: 0, line: 0 }));
 const WALL_LIGHT = [FACE_LIGHT.east, FACE_LIGHT.south, FACE_LIGHT.west, FACE_LIGHT.north];
 
 function emitRun(out: Writer, d: number, run: Run, sub: number, ox: number, oz: number): void {
@@ -1158,6 +1207,7 @@ function emitRun(out: Writer, d: number, run: Run, sub: number, ox: number, oz: 
   const lo = run.lo * Q;
   const hi = run.hi * Q;
   out.e0 = run.glow / GLOW_LEVELS;
+  out.e1 = run.wet;
   if (d === 1 || d === 3) {
     const z = run.line * Q + oz;
     out.rect(d, run.start * Q + ox, run.end * Q + ox, lo, hi, z, z, run.color, run.light, 1, 0, run.foot);
@@ -1165,6 +1215,9 @@ function emitRun(out: Writer, d: number, run: Run, sub: number, ox: number, oz: 
     const x = run.line * Q + ox;
     out.rect(d, x, x, lo, hi, run.start * Q + oz, run.end * Q + oz, run.color, run.light, 1, 0, run.foot);
   }
+  // Whatever is written straight to `out` next (overhanging grass, a ledge) is dry and unlit.
+  out.e0 = 0;
+  out.e1 = 0;
 }
 
 // The faces of column (sx, sy)'s wall on side d, into FACES; returns how many. Overhanging grass
@@ -1218,6 +1271,8 @@ function wallFaces(
     F.light = light * (1 - Math.min(0.25, Math.floor((T - hi) / sub) * 0.03));
     F.foot = lo === low ? foot : 1;
     F.glow = glow ? glowLevel(s, (lo + hi) / (2 * sub)) : 0;
+    // Under the water only between two columns of the bed: the island's side below the sea is earth.
+    F.wet = WET[s] & WET[s + DX[d] + DY[d] * SW];
     F.at = at;
     F.line = line;
   };
