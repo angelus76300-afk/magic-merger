@@ -108,8 +108,9 @@ const QUIET = 10_000;
 const FAILED = 60_000;
 const WAIT_MAX = 240_000;
 // A spike every 15 to 30 s must not flip a notch for good (review of #167: 123 changes in 30 min at
-// a 30 s period), so a notch given up within a minute of being taken back did not hold.
-const BOUNCE = 60_000;
+// a 30 s period): a notch taken back lands about 12 s after a spike, so the next spike comes within
+// 30 s of it and counts as a bounce. A busy spell every 90 s (the unfolded Fold) does not.
+const BOUNCE = 30_000;
 const HELD = 120_000;
 
 // How the view spends a slow second (view.ts adapt): extras first, then pixels down to the

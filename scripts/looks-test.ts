@@ -219,15 +219,21 @@ function reliefChecks(check: Check): void {
     run.every((p) => p.ratio === 2 || p.trim === TRIMS.length - 1),
     run.map((p) => `${p.ratio}/${p.trim}`).join(" "),
   );
-  // Only after the first spell: a spell every 90 s is a periodic spike, and the second one comes
-  // within a minute of the climb back, so the wait is longer after it (the review of #167).
-  const back = [89].map((s) => run[s]);
+  const back = [89, 179].map((s) => run[s]);
   check(
     "it comes back to full after each busy spell",
     back.every((p) => p.ratio === 2 && p.trim === 0),
     JSON.stringify(back),
   );
   // Steady at 45 ms after a long slow start: back to full, not stuck.
+  // Over 30 minutes the Fold is degraded no longer than main left it (740 s), not for good (review of #176).
+  const long = foldSession(1800, foldFrames);
+  const downFor = long.filter((p) => p.ratio !== 2 || p.trim !== 0).length;
+  check(
+    "a Fold with a busy spell every 90 s ends at full and is not down for most of 30 minutes",
+    downFor <= 800 && long[1799].ratio === 2 && long[1799].trim === 0,
+    `${downFor} s down, ends ${JSON.stringify(long[1799])}`,
+  );
   const stuck = foldSession(120, (s) => (s < 15 ? 70 : 45));
   check("frames at 45 ms after a slow start climb back", stuck[119].ratio === 2 && stuck[119].trim === 0, JSON.stringify(stuck[119]));
   check("a slow start goes down to the floor and no lower", Math.min(...stuck.map((p) => p.ratio)) === 1.5);
