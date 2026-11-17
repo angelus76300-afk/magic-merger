@@ -120,6 +120,21 @@ export function looksGainChecks(check: Check): void {
   };
   check("an artifact placed in a loop: the model stands at the cast's point, at the start of cast", atCenter(looped));
   check("an artifact placed at a random point: the model does not read the random number again", atCenter(random));
+  // The review of #177: the body of a braceless for or if is not a statement of the cast's block,
+  // whatever a comment or a long run of spaces before it holds. After the loop its names are not
+  // defined (the program would throw before what follows); after the if it would be drawn always.
+  const artifactLine = "    const a = w.artifact(w.x + 2, w.y - 1, 'Dusk Lantern');";
+  const forComment = LANTERN.replace(artifactLine, "    for (let i = 0; i < 3; i++) // each;\n      w.artifact(w.x + i, w.y, 'Dusk Lantern');");
+  const forOf = LANTERN.replace(artifactLine, "    for (const d of [1, 2]) // one;\n      w.artifact(w.x + d, w.y, 'Dusk Lantern');");
+  const ifSpaces = LANTERN.replace(artifactLine, `    if (w.x > 99)${" ".repeat(90)}w.artifact(w.x + 2, w.y, 'Dusk Lantern');`);
+  check("a braceless for's body after a comment: the model stands at the cast's point, not after the loop", atCenter(forComment));
+  check("a braceless for...of's body after a comment: the model stands at the cast's point", atCenter(forOf));
+  check("a braceless if's body after 90 spaces: the model is not added unconditionally after it", atCenter(ifSpaces));
+  const forGrown = spliceLooks(forComment, [{ call: 0, parts: LOOK }], PROGRAM_ADD)?.code ?? "";
+  check(
+    "the grown braceless for runs to its end on the island (no name used out of its scope)",
+    runIsland(forGrown).digest === runIsland(forComment).digest && runIsland(forGrown).props.some((p) => p.key === "gain:lantern"),
+  );
   const site = addSite(random, "w", "artifact", random.indexOf("{", random.indexOf("*cast")) + 1);
   check("addSite: a place with a call falls back to the cast's point", !site.artifact && site.x === "w.x");
   // A program written on one line, with code after the cast: the model goes inside the cast.

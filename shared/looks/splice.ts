@@ -487,9 +487,14 @@ export function addSite(code: string, receiver: string, mode: AddOptions["at"], 
   for (const c of callsOf(code, "artifact") ?? []) {
     if (c.call.start < castOpen || c.call.start >= castEnd || c.receiver !== receiver || c.args.length < 2) continue;
     if (depthAt[c.call.start] !== 0) continue;
-    // A statement of its own: after ; { or }, or a declaration (const a = w.artifact(...)).
-    const before = code.slice(Math.max(castOpen, c.call.start - 80), c.call.start);
-    if (!/(?:[;{}]|^)\s*$/.test(before) && !/[;{}]\s*(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*$/.test(before)) continue;
+    // A statement of its own: the code before it, from the cast's own brace with comments and
+    // strings blanked, ends in ; { or }, or in a declaration after one (const a = w.artifact(...)).
+    // Not the body of a braceless for, if, while or else (its last code token is ")" or a word):
+    // there the model would stand outside the loop, where its names are not defined, or be added
+    // when the artifact is not.
+    let before = "";
+    for (let i = castOpen - 1; i < c.call.start; i++) before += isCode[i] ? code[i] : " ";
+    if (!/[;{}]\s*$/.test(before) && !/[;{}]\s*(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*$/.test(before)) continue;
     const semi = /^[ \t]*;/.exec(code.slice(c.call.end));
     if (!semi) continue;
     const x = code.slice(c.args[0].start, c.args[0].end).trim();
