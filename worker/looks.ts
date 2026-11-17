@@ -7,8 +7,11 @@
 //    cosmic one. Each item's estimate is held in its row while it is pending.
 // 2. pollLooks collects the answers, records what each cost in the ledger (`spend`, invite
 //    'looks'), and splices each new look into its program (shared/looks/splice.ts): only the
-//    parts argument of each call changes, every other line stays byte for byte as it was. A wonder
-//    with no model may gain one, as a new line. The result waits as a candidate.
+//    parts argument of each call changes, every other line stays byte for byte as it was. A
+//    program with no model may gain one (a wonder two), inserted and nothing else changed: where
+//    its artifact is placed, or at the cast's point. Not a creature (its body is its look) and,
+//    unless asked (spells: true), not a spell (each cast would leave one, and a full island gives
+//    the oldest looks away for them). The result waits as a candidate.
 // 3. The runner (scripts/looks-runner.ts) tests the candidate as any program is tested, frames
 //    the old look and the new one alike, and asks judgeLooks: Sonnet scores both on four points.
 // 4. looksVerdict puts the new look live only when its test passed and the judge scored it higher.
@@ -21,9 +24,9 @@
 // nothing but these calls counts against it. LOOKS ("off" by default) turns it on: "pilot" lets
 // the admin start a pilot by name, "bulk" lets the nightly cron start the night's share too.
 import { elementKey } from "../shared/elements";
-import { syntaxError } from "../shared/spellcode";
+import { FIRST_PROGRAM_VERSION, syntaxError } from "../shared/spellcode";
 import { isTier, TIERS, type Tier } from "../shared/tiers";
-import { modelCalls, numberedProgram, spliceLooks } from "../shared/looks/splice";
+import { PROGRAM_ADD, WONDER_ADD, mayGainModel, modelCalls, numberedProgram, spliceLooks } from "../shared/looks/splice";
 import type { LooksVerdict, Oracle } from "./oracle";
 import { getProgram, insertProgram, liveProgram, promote } from "./programs";
 
@@ -215,6 +218,8 @@ export interface StartBody {
   keys?: unknown;
   wonders?: unknown;
   limit?: unknown;
+  // true: a spell with no model may gain one too (mayGainModel).
+  spells?: unknown;
 }
 
 // Starts a batch of looks: the keys and wonders asked (wonders: ids, or a count of the pool's
@@ -255,12 +260,14 @@ export async function startLooks(env: LooksEnv, oracle: Oracle, body: StartBody,
   for (const p of picked) {
     if (queued.length >= limit) break;
     const calls = modelCalls(p.code);
-    const mayAdd = p.target === "wonder";
-    // Nothing to redraw: no model call (a wonder may gain one), or code the splice cannot read.
+    // A program with no model may gain one, unless it is a creature or (not asked) a spell.
+    const notAdded = p.target === "wonder" ? null : mayGainModel(p.kind, body.spells === true);
+    const mayAdd = !notAdded;
+    // Nothing to redraw: no model call and none to add, or code the splice cannot read.
     if (!calls || (!calls.length && !mayAdd)) {
       await db
         .prepare("INSERT INTO looks (target, key, wonder_id, from_pid, status, pilot, reason, at) VALUES (?, ?, ?, ?, 'skipped', ?, ?, ?)")
-        .bind(p.target, p.key, p.wonderId, p.fromPid, pilot ? 1 : 0, calls ? "no model call to redraw" : "its code could not be read", at)
+        .bind(p.target, p.key, p.wonderId, p.fromPid, pilot ? 1 : 0, calls ? `no model call to redraw (${notAdded})` : "its code could not be read", at)
         .run();
       skipped.push(p.name);
       continue;
@@ -327,7 +334,8 @@ export async function pollLooks(env: LooksEnv, oracle: Oracle): Promise<{ done: 
       let code: string | null = null;
       let refused: string | null = null;
       if (o?.answer) {
-        const r = spliceLooks(row.old_code, o.answer.models, row.target === "wonder");
+        // Who may gain a model was settled when it was asked: a writer told it may not sends no call 0.
+        const r = spliceLooks(row.old_code, o.answer.models, row.target === "wonder" ? WONDER_ADD : PROGRAM_ADD);
         refused = r?.refused.length ? JSON.stringify(r.refused).slice(0, 1000) : null;
         if (!r) reason = "its code could not be read";
         else if (!r.replaced.length && !r.added) reason = r.refused.length ? `every look was refused: ${r.refused[0].why}` : "the writer redrew nothing";
@@ -359,6 +367,30 @@ export async function pollLooks(env: LooksEnv, oracle: Oracle): Promise<{ done: 
     }
   }
   return out;
+}
+
+// For the runner's pilot (scripts/looks-runner.ts start --pilot): the library's live programs not
+// asked yet, with their code, how many players cast them and how many w.model calls they have, so
+// the runner picks the pilot itself. Read only: one SELECT, whatever LOOKS is.
+export async function looksPool(env: LooksEnv, limit: number) {
+  const rows = await env.DB.prepare(
+    `SELECT s.key, e.name, e.kind, e.form, e.tier, s.spec, (SELECT COUNT(*) FROM casts c WHERE c.pid = s.pid) AS casts
+     FROM spells s JOIN elements e ON e.key = s.key
+     WHERE s.pid IS NOT NULL AND s.version >= ? AND NOT EXISTS (${ASKED_KEY})
+     ORDER BY casts DESC, s.key LIMIT ?`,
+  )
+    .bind(FIRST_PROGRAM_VERSION, Math.min(1000, Math.max(1, limit)))
+    .all<{ key: string; name: string; kind: string; form: string | null; tier: string | null; spec: string; casts: number }>();
+  return rows.results.map((r) => {
+    let code = "";
+    try {
+      code = String((JSON.parse(r.spec) as { code?: unknown }).code ?? "");
+    } catch {
+      code = "";
+    }
+    const form = r.form ?? (r.kind === "artifact" ? "object" : "spell");
+    return { key: r.key, name: r.name, form, tier: isTier(r.tier) ? r.tier : "minor", casts: r.casts, models: modelCalls(code)?.length ?? null, code };
+  });
 }
 
 // For the runner: candidates with the old code and the new, and what to test them as.

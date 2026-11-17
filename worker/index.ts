@@ -130,7 +130,7 @@ import {
   type Payer,
 } from "./ledger";
 
-import { LooksError, judgeLooks, looksBusy, looksCandidates, looksMode, looksReport, looksVerdict, pollLooks, startLooks } from "./looks";
+import { LooksError, judgeLooks, looksBusy, looksCandidates, looksMode, looksPool, looksReport, looksVerdict, pollLooks, startLooks } from "./looks";
 
 export interface Env {
   DB: D1Database;
@@ -1831,6 +1831,7 @@ async function handleLooks(request: Request, path: string, post: boolean, url: U
     if (post && path === "looks-judge") return json(await judgeLooks(env, makeOracle(env, {}), await readBody(request, MAX_ADMIN_BODY)));
     if (post && path === "looks-verdict") return json(await looksVerdict(env, await readBody(request)));
     if (!post && path === "looks-report") return json(await looksReport(env));
+    if (!post && path === "looks-pool") return json(await looksPool(env, Number(url.searchParams.get("limit")) || 500));
   } catch (err) {
     if (err instanceof LooksError) throw new HttpError(err.status, err.message);
     throw err;

@@ -895,7 +895,7 @@ export const LOOKS_SYSTEM = `You draw the looks of Magic Merger, a crafting game
 
 ${LOOK_GUIDE}
 
-What you are given: the item's name, kind, tier and grimoire entry, three hand-made reference looks, and its program, with a comment /* MODEL CALL n */ above the line of each w.model call. What you send back, for each call you redraw: {call: n, parts: <the call's new parts list, written out as plain data>}. It replaces only the call's third argument: the call stays where it is, at the same position, with the same options, and every other line of the program stays as it is. The parts are data and nothing else: a list of parts, each a list [x, y, z, width, depth, height, "color", ...] or an object {x, y, z, w, d, h, color, ...}, made only of numbers (written out: 0.125, -1.5), strings in quotes, true, false, null, lists and objects. No name, no call, no arithmetic, no loop, no Math, no comment, no template: anything else is refused and the old look stays. The references use loops to stay short; you write every part out, its numbers on the grid of eighths. A call inside a loop draws the same parts every time round, so leave it out if its look must change with the loop. Leave a call out to keep its look. When the message says the program may gain a model (a wonder that draws none), send call 0 with the parts of a model that stands at its center: one or two such models at most, drawn over what its program raises. plan: one or two sentences on the silhouette and the palette, before the parts.`;
+What you are given: the item's name, kind, tier and grimoire entry, three hand-made reference looks, and its program, with a comment /* MODEL CALL n */ above the line of each w.model call. What you send back, for each call you redraw: {call: n, parts: <the call's new parts list, written out as plain data>}. It replaces only the call's third argument: the call stays where it is, at the same position, with the same options, and every other line of the program stays as it is. The parts are data and nothing else: a list of parts, each a list [x, y, z, width, depth, height, "color", ...] or an object {x, y, z, w, d, h, color, ...}, made only of numbers (written out: 0.125, -1.5), strings in quotes, true, false, null, lists and objects. No name, no call, no arithmetic, no loop, no Math, no comment, no template: anything else is refused and the old look stays. The references use loops to stay short; you write every part out, its numbers on the grid of eighths. A call inside a loop draws the same parts every time round, so leave it out if its look must change with the loop. Leave a call out to keep its look. When the message says the program may gain a model (an item that draws none), send call 0 with the parts of a new model, as many as the message allows: the code places it, you write only its parts, centred on 0, 0 and standing on the ground (z from 0). Draw the item itself where its program draws nothing of it yet; what the program already raises (its blocks, a tree, a creature it spawns) stays, so never draw a second one of that. When the program already draws the whole item, send no call 0. plan: one or two sentences on the silhouette and the palette, before the parts.`;
 
 export const LOOKS_SCHEMA = {
   type: "object",
@@ -925,9 +925,13 @@ export function looksUserMessage(r: LooksPrompt): string {
   const what = r.kind === "wonder" ? "Wonder (raised with the island)" : r.kind === "spell" ? "Spell" : `Artifact, ${FORM_NOUN[r.kind as Form] ?? r.kind}`;
   const calls = r.calls
     ? `Its program draws with ${r.calls} w.model call${r.calls > 1 ? "s" : ""}: redraw each one whose look is plainer than the references.`
-    : r.mayAdd
-      ? "Its program draws no model: it may gain one or two (call 0), standing at its center over what it raises."
-      : "Its program draws no model.";
+    : !r.mayAdd
+      ? "Its program draws no model."
+      : r.kind === "wonder"
+        ? "Its program draws no model: it may gain one or two (call 0), standing at its center over what it raises."
+        : r.kind === "spell"
+          ? "Its program draws no model: it may gain one (call 0), the lasting mark the spell leaves where it was cast (a rune stone, a scorched ring, a crystal), small, standing at the cast's point. It stays on the island after the spell's effects end."
+          : `Its program draws no model: it may gain one (call 0), the ${r.name} itself at its real size, standing where its program places it.`;
   return `${what}: ${r.name}\nTier: ${r.tier}\nGrimoire entry: ${r.description}\n\n${referencesText(referencesFor(r.kind))}\n\n${calls}\n\nThe program:\n${r.program}`;
 }
 

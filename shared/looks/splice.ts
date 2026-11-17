@@ -5,8 +5,10 @@ import { syntaxError } from "../spellcode";
 // back, for each call, a new parts list as plain data (readLiteral: lists, objects, numbers,
 // strings, true, false, null; no name, call or operator, so it can only draw); the Worker splices
 // each one in place of the call's third argument, and only when the whole program still parses. Every character outside those arguments stays as it was, so every line that is
-// not a look stays byte for byte the same (scripts/looks-refs-test.ts proves it). A wonder with no
-// model at all may gain one, as new lines at the start of its cast, its other lines untouched.
+// not a look stays byte for byte the same (scripts/looks-refs-test.ts proves it). A program with no
+// model at all may gain one (a wonder two), inserted at the start of its cast and nothing else
+// changed: take the inserted text out and the old program is back, byte for byte (insertedText).
+// A placed artifact's model stands where the artifact is placed (addPoint), so it is carried with it.
 
 export interface Span {
   start: number;
@@ -24,7 +26,7 @@ export interface ModelCall {
   receiver: string;
 }
 
-// A new look for one call: `call` is the call's index, or 0 for a model added to a wonder that
+// A new look for one call: `call` is the call's index, or 0 for a model added to a program that
 // has none; `parts` is the parts list written out as plain data.
 export interface LookPatch {
   call: number;
@@ -34,8 +36,27 @@ export interface LookPatch {
 
 // The longest parts list taken: 160 parts written out are about 9,000 characters.
 export const MAX_PARTS_TEXT = 24_000;
-// A wonder with no model gains at most this many.
+// A wonder with no model gains at most this many; any other program one (AddOptions).
 export const MAX_ADDED_MODELS = 2;
+
+// How a program with no model may gain one: how many at most, and where it stands: "center", the
+// cast's point (a wonder, as before); "artifact", where the cast places its artifact when that
+// place is written from the cast's point alone (w.x + 2), else the cast's point.
+export interface AddOptions {
+  max: number;
+  at: "center" | "artifact";
+}
+// Whether an item of this kind (its form) with no model may gain one, or why not. A creature's look
+// is its body (spell.creatures): a model beside it would draw it twice. A spell's model would stay
+// where each cast fell, and the island keeps 60 models (src/sim/props.ts MAX_PROPS): casting it
+// often would push placed items' looks off, so a spell gains one only when the admin asks.
+export function mayGainModel(form: string, spells = false): string | null {
+  if (form === "creature") return "a creature is drawn by its body";
+  if (form === "spell" && !spells) return "a spell would leave a model at every cast";
+  return null;
+}
+export const WONDER_ADD: AddOptions = { max: MAX_ADDED_MODELS, at: "center" };
+export const PROGRAM_ADD: AddOptions = { max: 1, at: "artifact" };
 
 // Characters after which a "/" starts a regular expression rather than a division.
 const REGEX_AFTER = new Set(["(", ",", "=", ":", "[", "!", "&", "|", "?", "{", "}", ";", "+", "-", "*", "%", "<", ">", "~", "^", ""]);
@@ -161,10 +182,15 @@ function scan(code: string, at: (i: number) => void): boolean {
 // Every w.model( call in the code (the receiver may be any name: a program's act(self, w, target)
 // may call it world). Null when the code cannot be read (a string or a comment that never ends).
 export function modelCalls(code: string): ModelCall[] | null {
+  return callsOf(code, "model");
+}
+
+// Every call of `method` on a name in the code, as modelCalls.
+function callsOf(code: string, method: "model" | "artifact"): ModelCall[] | null {
   const isCode = new Uint8Array(code.length);
   if (!scan(code, (i) => (isCode[i] = 1))) return null;
   const calls: ModelCall[] = [];
-  const re = /([A-Za-z_$][\w$]*)\s*\.\s*model\s*\(/g;
+  const re = new RegExp(`([A-Za-z_$][\\w$]*)\\s*\\.\\s*${method}\\s*\\(`, "g");
   for (let m = re.exec(code); m; m = re.exec(code)) {
     const start = m.index;
     if (!isCode[start] || (start > 0 && /[\w$.]/.test(code[start - 1]))) continue;
@@ -408,15 +434,69 @@ export interface SpliceResult {
   refused: { call: number; why: string }[];
 }
 
-// The cast's opening brace, for a model added to a wonder: `*cast(w) {`.
+// The cast's opening brace, for a model added to a program that has none: `*cast(w) {`.
 const CAST_OPEN = /\*\s*cast\s*\(\s*([A-Za-z_$][\w$]*)\s*\)\s*\{/;
 
+// Where an added model goes in the code (`at`, just after the brace that opens cast or just after
+// the statement that places the artifact) and where it stands on the island (x and y, as code).
+export interface AddSite {
+  at: number;
+  x: string;
+  y: string;
+  artifact: boolean;
+}
+
+// With "center", the start of the cast and the cast's point. With "artifact", right after the
+// first `w.artifact(x, y, ...);` that stands as a statement of the cast's own block (not in a
+// loop, a branch or a function of it) and whose x and y do nothing when read again (no call, no
+// assignment: oldPartsProblem): the model stands where the artifact is placed, appears when it
+// does, and a hand that takes the artifact takes its model (src/sim/held.ts propsOf, within 2
+// cells). Else the start of the cast and the cast's point. Reading x and y again changes nothing,
+// and w.model draws no random number, so what the program does is the same.
+export function addSite(code: string, receiver: string, mode: AddOptions["at"], castOpen: number): AddSite {
+  const center = { at: castOpen, x: `${receiver}.x`, y: `${receiver}.y`, artifact: false };
+  if (mode !== "artifact") return center;
+  const isCode = new Uint8Array(code.length);
+  if (!scan(code, (i) => (isCode[i] = 1))) return center;
+  // Bracket depth from the cast's brace, at every point of code after it.
+  const depthAt = new Int32Array(code.length + 1);
+  let depth = 0;
+  let castEnd = code.length;
+  for (let i = castOpen; i < code.length; i++) {
+    depthAt[i] = depth;
+    if (!isCode[i]) continue;
+    const c = code[i];
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    // The cast's own closing brace: nothing after it is the cast.
+    if (depth < 0) {
+      castEnd = i;
+      break;
+    }
+  }
+  for (const c of callsOf(code, "artifact") ?? []) {
+    if (c.call.start < castOpen || c.call.start >= castEnd || c.receiver !== receiver || c.args.length < 2) continue;
+    if (depthAt[c.call.start] !== 0) continue;
+    // A statement of its own: after ; { or }, or a declaration (const a = w.artifact(...)).
+    const before = code.slice(Math.max(castOpen, c.call.start - 80), c.call.start);
+    if (!/(?:[;{}]|^)\s*$/.test(before) && !/[;{}]\s*(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*$/.test(before)) continue;
+    const semi = /^[ \t]*;/.exec(code.slice(c.call.end));
+    if (!semi) continue;
+    const x = code.slice(c.args[0].start, c.args[0].end).trim();
+    const y = code.slice(c.args[1].start, c.args[1].end).trim();
+    if (x.length > 80 || y.length > 80 || oldPartsProblem(x) || oldPartsProblem(y)) continue;
+    return { at: c.call.end + semi[0].length, x, y, artifact: true };
+  }
+  return center;
+}
+
 // Splices each patch in: the parts argument of an existing call is replaced in place; a patch for
-// call 0 (only when `mayAdd`, a wonder with no model) is added as a new line after the line that
-// opens cast. Nothing else in the code changes.
-export function spliceLooks(code: string, patches: LookPatch[], mayAdd = false): SpliceResult | null {
+// call 0 (only with `mayAdd`, a program with no model) is added after the brace that opens cast.
+// Nothing else in the code changes. `mayAdd` true is a wonder's (WONDER_ADD).
+export function spliceLooks(code: string, patches: LookPatch[], mayAdd: boolean | AddOptions = false): SpliceResult | null {
   const calls = modelCalls(code);
   if (!calls) return null;
+  const add: AddOptions | null = mayAdd === true ? WONDER_ADD : mayAdd ? mayAdd : null;
   const refused: { call: number; why: string }[] = [];
   const edits: { span: Span; text: string }[] = [];
   const replaced: number[] = [];
@@ -425,8 +505,8 @@ export function spliceLooks(code: string, patches: LookPatch[], mayAdd = false):
   for (const p of patches) {
     if (!Number.isInteger(p.call) || typeof p.parts !== "string") continue;
     if (p.call === 0) {
-      if (!mayAdd || calls.length) refused.push({ call: 0, why: "only a wonder with no model may gain one" });
-      else if (added.length >= MAX_ADDED_MODELS) refused.push({ call: 0, why: `at most ${MAX_ADDED_MODELS} models are added` });
+      if (!add || calls.length) refused.push({ call: 0, why: "only a program with no model may gain one" });
+      else if (added.length >= add.max) refused.push({ call: 0, why: `at most ${add.max} model${add.max > 1 ? "s are" : " is"} added` });
       else {
         const why = partsProblem(p.parts);
         if (why) refused.push({ call: 0, why });
@@ -469,27 +549,52 @@ export function spliceLooks(code: string, patches: LookPatch[], mayAdd = false):
   }
   let out = code;
   for (const e of edits.sort((a, b) => b.span.start - a.span.start)) out = out.slice(0, e.span.start) + e.text + out.slice(e.span.end);
-  if (added.length) {
-    const m = CAST_OPEN.exec(out);
+  if (added.length && add) {
+    // The cast's brace in code, not in a string or a comment.
+    const isCode = new Uint8Array(out.length);
+    scan(out, (i) => (isCode[i] = 1));
+    const re = new RegExp(CAST_OPEN.source, "g");
+    let m = re.exec(out);
+    while (m && !isCode[m.index]) m = re.exec(out);
     if (!m) {
       for (let k = 0; k < added.length; k++) refused.push({ call: 0, why: "the program has no cast(w) to add a model to" });
       added.length = 0;
     } else {
       const w = m[1];
       const open = m.index + m[0].length;
-      const nl = out.indexOf("\n", open);
-      const lines = added.map((parts, k) => `${w}.model(${w}.x, ${w}.y, ${parts}, { name: "look ${k + 1}" });`);
-      // As whole new lines after the line that opens cast; in a one line program, right after the brace.
+      const site = addSite(out, w, add.at, open);
+      // A wonder's model is named, as before; a program's takes the item's name (w.model's default).
+      const named = add === WONDER_ADD;
+      const lines = added.map((parts, k) => `${w}.model(${site.x}, ${site.y}, ${parts}${named ? `, { name: "look ${k + 1}" }` : ""});`);
+      // As whole new lines when nothing follows on the line, indented as the cast's lines are.
+      // Otherwise on the same line: a program written on one line, whose next line is outside the
+      // cast (`};\n;const lib = {`), where w is not defined (before, a wonder's model went there and
+      // its program could not run).
+      const rest = out.slice(site.at);
+      const nl = rest.indexOf("\n");
+      const lineStart = out.lastIndexOf("\n", site.at - 1) + 1;
+      const indent = site.artifact ? /^[ \t]*/.exec(out.slice(lineStart))![0] : "    ";
       out =
-        nl < 0
-          ? out.slice(0, open) + " " + lines.join(" ") + out.slice(open)
-          : out.slice(0, nl + 1) + lines.map((l) => `    ${l}\n`).join("") + out.slice(nl + 1);
+        nl >= 0 && rest.slice(0, nl).trim() === ""
+          ? out.slice(0, site.at) + rest.slice(0, nl + 1) + lines.map((l) => `${indent}${l}\n`).join("") + rest.slice(nl + 1)
+          : out.slice(0, site.at) + " " + lines.join(" ") + rest;
     }
   }
   // The whole program must still parse; if it does not, nothing is spliced.
   const broken = syntaxError(out);
   if (broken) return { code, replaced: [], added: 0, refused: [...refused, { call: -1, why: `the spliced program does not parse: ${broken}` }] };
   return { code: out, replaced, added: added.length, refused };
+}
+
+// The text `after` adds to `before` when that is all it does (one run of characters inserted,
+// nothing else changed), or null: the proof that a model added to a program left every other
+// character of it, and so everything it does, as it was.
+export function insertedText(before: string, after: string): string | null {
+  if (after.length <= before.length) return null;
+  let i = 0;
+  while (i < before.length && before[i] === after[i]) i++;
+  const tail = before.length - i;
+  return after.slice(after.length - tail) === before.slice(i) ? after.slice(i, after.length - tail) : null;
 }
 
 // The lines of `after` that are not lines of `before`, in order, with the lines of `before` it
