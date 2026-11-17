@@ -67,7 +67,7 @@ export function looksGainChecks(check: Check): void {
   const inserted = insertedText(LANTERN, grown?.code ?? "");
   check(
     "an artifact with no model gains one, one line inserted and every other character kept",
-    grown?.added === 1 && inserted !== null && inserted.split("\n").filter(Boolean).length === 1 && changedLines(LANTERN, grown.code).removed.length === 0,
+    grown?.added === 1 && inserted !== null && inserted.trim().split("\n").length === 1 && changedLines(LANTERN, grown.code).removed.length === 0,
     JSON.stringify({ added: grown?.added, inserted }),
   );
   check(
@@ -104,8 +104,19 @@ export function looksGainChecks(check: Check): void {
   const random = LANTERN.replace("w.artifact(w.x + 2, w.y - 1,", "w.artifact(w.x + w.rand(-3, 3), w.y,");
   const atCenter = (code: string) => {
     const r = spliceLooks(code, [{ call: 0, parts: LOOK }], PROGRAM_ADD);
-    const t = insertedText(code, r?.code ?? "") ?? "";
-    return r?.added === 1 && t.includes("w.model(w.x, w.y, ") && r.code.indexOf(t.trim()) < r.code.indexOf("w.burst(") && !syntaxError(r.code);
+    const diff = changedLines(code, r?.code ?? "");
+    // The one new line, at the start of the cast (just before its first line, the burst).
+    const lines = (r?.code ?? "").split("\n");
+    const at = lines.indexOf(`    w.model(w.x, w.y, ${LOOK});`);
+    return (
+      r?.added === 1 &&
+      insertedText(code, r.code) !== null &&
+      diff.removed.length === 0 &&
+      diff.added.length === 1 &&
+      at > 0 &&
+      lines[at - 1] === "  *cast(w) {" &&
+      !syntaxError(r.code)
+    );
   };
   check("an artifact placed in a loop: the model stands at the cast's point, at the start of cast", atCenter(looped));
   check("an artifact placed at a random point: the model does not read the random number again", atCenter(random));
