@@ -16,6 +16,7 @@ import {
   PIXEL_CAPS,
   PIXEL_FLOORS,
   Relief,
+  RELIEF_TUNING,
   TRIMS,
   applyLooks,
   readLooksChoice,
@@ -218,7 +219,9 @@ function reliefChecks(check: Check): void {
     run.every((p) => p.ratio === 2 || p.trim === TRIMS.length - 1),
     run.map((p) => `${p.ratio}/${p.trim}`).join(" "),
   );
-  const back = [89, 179].map((s) => run[s]);
+  // Only after the first spell: a spell every 90 s is a periodic spike, and the second one comes
+  // within a minute of the climb back, so the wait is longer after it (the review of #167).
+  const back = [89].map((s) => run[s]);
   check(
     "it comes back to full after each busy spell",
     back.every((p) => p.ratio === 2 && p.trim === 0),
@@ -290,4 +293,19 @@ function reliefChecks(check: Check): void {
   check("the wait comes back to 10 s once the looks have held", settled.relief.wait === 10_000, `${settled.relief.wait} ms`);
   const notYet = changesOf(330, (w, r) => w < 300 && r.ratio === 2 && r.trim === 0);
   check("but not while it is still waiting", notYet.relief.wait > 10_000, `${notYet.relief.wait} ms`);
+  // The review of #167: a spike every 30 s (3 s of slow frames) flipped the shadow map 123 times in
+  // 30 minutes. Taking a notch back must wait out a minute before a give-up counts as a bounce.
+  const spiky = changesOf(1800, (w) => w % 30 < 3);
+  check("a spike every 30 s over 30 minutes changes the looks at most 24 times (main: 123)", spiky.changes.length <= 24, `${spiky.changes.length} changes`);
+  // ON_TIME_OF: 4 of the last 5 windows on time are needed to take a notch back; with 1 a single
+  // quiet window is enough, and a device slow on and off climbs back at once.
+  const strict = changesOf(300, (w) => w % 4 === 0 || w % 4 === 1);
+  RELIEF_TUNING.onTimeOf = 1;
+  const loose = changesOf(300, (w) => w % 4 === 0 || w % 4 === 1);
+  RELIEF_TUNING.onTimeOf = 4;
+  check(
+    "taking a notch back needs 4 of the last 5 windows on time",
+    strict.climbs.length < loose.climbs.length,
+    `${strict.climbs.length} climbs at 4 of 5, ${loose.climbs.length} at 1`,
+  );
 }

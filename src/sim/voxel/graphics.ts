@@ -98,6 +98,8 @@ const BUSY = 30;
 const WINDOWS = 5;
 const SLOW_OF = 2;
 const ON_TIME_OF = 4;
+// The same, as a knob the tests turn to show it matters.
+export const RELIEF_TUNING = { onTimeOf: ON_TIME_OF };
 // The wait before a notch is taken back, after the last change. When one taken back is given up
 // again within BOUNCE ms, the wait is at least FAILED and doubles each time after, up to WAIT_MAX:
 // at most one try a minute, then fewer. It goes back to QUIET only once a notch taken back has held
@@ -105,7 +107,9 @@ const ON_TIME_OF = 4;
 const QUIET = 10_000;
 const FAILED = 60_000;
 const WAIT_MAX = 240_000;
-const BOUNCE = 15_000;
+// A spike every 15 to 30 s must not flip a notch for good (review of #167: 123 changes in 30 min at
+// a 30 s period), so a notch given up within a minute of being taken back did not hold.
+const BOUNCE = 60_000;
 const HELD = 120_000;
 
 // How the view spends a slow second (view.ts adapt): extras first, then pixels down to the
@@ -146,7 +150,7 @@ export class Relief {
       if (this.ratio * 16 + this.trim !== was) this.droppedAt = o.now;
       // The next notch needs slow windows of its own.
       this.slow.length = 0;
-    } else if (onTime >= ON_TIME_OF && o.now - Math.max(this.droppedAt, this.climbedAt) > this.wait) {
+    } else if (onTime >= RELIEF_TUNING.onTimeOf && o.now - Math.max(this.droppedAt, this.climbedAt) > this.wait) {
       if (this.ratio < o.max) this.ratio = Math.min(o.max, this.ratio + 0.25);
       else if (this.trim > 0) {
         this.trim--;

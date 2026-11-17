@@ -1249,9 +1249,11 @@ function drawFacing(g: BufferGeometry, low: boolean, x: number, y: number, z: nu
 // voxels above its neighbours does), and natural ground with a built word in its name.
 // Whole words (the review of 16 November: "plankton", "wallow" and "fertile" are not built), or a
 // built word at the end of a compound ("rootwall", "stonefloor", "mudbrick", "stone-brick",
-// "floorboards") or at its start before work, wood or boards ("brickwork", "plankwood").
+// "floorboards") or at its start before work, wood or boards ("brickwork", "plankwood"). "Board" counts
+// only as floorboards, a boardwalk or a hyphenated "plank-board" ("seaboard", "mossboard" and
+// "clipboard" are not built).
 const BUILT_PART =
-  /\b\w*(wall|floor)s?\b|\b(floor|brick|plank|board)(work|wood|boards?)\b|\b[\w-]*(bricks?|planks?|boards?)\b|\b(cobbles?|cobblestones?|paved|paving|pavement|masonry|concrete|cement|asphalt|tarmac|flagstones?|mosaic)\b/;
+  /\b\w*(wall|floor)s?\b|\b(floor|brick|plank|board)(work|wood|boards?)\b|\bboardwalks?\b|\b[\w-]*(bricks?|planks?)\b|\b(?:plank|stone|wood|timber|oak|pine|deck)-boards?\b|\b(cobbles?|cobblestones?|paved|paving|pavement|masonry|concrete|cement|asphalt|tarmac|flagstones?|mosaic)\b/;
 const BUILT_WORD =
   /\b(road|path|street|tiles?|slabs?|blocks?|deck|bridge|tower|rampart|fort|castle|keep|plaza|courtyard|court|stairs?|steps|pillar|column|platform|foundation|plinth|altar|dais|boards?|terrace)\b/;
 const builtNames = new Map<string, boolean>();

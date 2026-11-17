@@ -392,6 +392,9 @@ export function movementChecks(check: Check): void {
       "wallow mud",
       "swallow nest",
       "fertile soil",
+      "seaboard",
+      "mossboard",
+      "clipboard",
     ];
     const built = [
       "stone wall",
@@ -413,6 +416,8 @@ export function movementChecks(check: Check): void {
       "plankwood",
       "clay tile",
       "stone paving",
+      "boardwalk",
+      "plank-board",
     ];
     const wrong = [...natural.filter((n) => builtGround(n)), ...built.filter((n) => !builtGround(n))];
     check("a spell's ground is built only when its name says so", wrong.length === 0, wrong.join(", "));
