@@ -7,7 +7,7 @@ import { MeshBasicMaterial, ShaderLib, type BufferGeometry, type Mesh } from "th
 import { generateWorld, type World } from "../src/sim/world";
 import { DEFAULT_LAND } from "../src/sim/land-options";
 import { BOTTOM, columnTop, type Terrain } from "../src/sim/voxel/terrain";
-import { GRAPHICS } from "../src/sim/voxel/graphics";
+import { GRAPHICS, PRESETS } from "../src/sim/voxel/graphics";
 import { Looks } from "../src/sim/voxel/looks";
 import { WaterLight } from "../src/sim/voxel/water-light";
 import { C, F, G } from "../src/sim/materials";
@@ -284,7 +284,12 @@ export function waterLightChecks(check: Check): void {
     );
   });
 
-  // 2. The water's light: in the water's shader, on the water in eighths only.
+  // 2. The water's light: in the water's shader, on the water in eighths only; on high only.
+  check(
+    "the water's light is on at high only, off at medium and low",
+    PRESETS.high.waterlight && !PRESETS.medium.waterlight && !PRESETS.low.waterlight,
+    `low ${PRESETS.low.waterlight}, medium ${PRESETS.medium.waterlight}, high ${PRESETS.high.waterlight}`,
+  );
   {
     const world = generateWorld(64, 64, 3, DEFAULT_LAND);
     const terrainMap = { image: { data: new Uint8Array(world.n * 4) } } as never;

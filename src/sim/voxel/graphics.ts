@@ -50,6 +50,7 @@ export const GRAPHICS = {
   // of the sun (the moon at night) that moves with the camera, more sky at a low angle and more
   // depth looking down, the soft foam at the shore moving, and lava and lit windows reflected
   // faintly at night. In the water's own shader (water-light.ts), on the water in eighths only.
+  // On high only: medium is the weaker devices' level (the lead, 17 November).
   waterlight: false,
   // Warm sun and cool shade on the land, buildings and creatures by the way each face turns to the
   // sun, in the eye view and under cloud too, warmer as the sun goes down; and at night the land
@@ -69,7 +70,7 @@ export const QUALITIES = ["low", "medium", "high"] as const;
 export type Quality = (typeof QUALITIES)[number];
 export const PRESETS: Record<Quality, Record<LooksFlag, boolean>> = {
   low: { shadows: false, grade: false, bloom: false, tilt: false, aa: false, cubes: false, fine: false, waterlight: false, warmlight: false },
-  medium: { shadows: true, grade: true, bloom: false, tilt: false, aa: false, cubes: true, fine: true, waterlight: true, warmlight: true },
+  medium: { shadows: true, grade: true, bloom: false, tilt: false, aa: false, cubes: true, fine: true, waterlight: false, warmlight: true },
   high: { shadows: true, grade: true, bloom: true, tilt: true, aa: true, cubes: true, fine: true, waterlight: true, warmlight: true },
 };
 
