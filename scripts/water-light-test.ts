@@ -245,25 +245,33 @@ export function waterLightChecks(check: Check): void {
         }
       }
     // A wet cell's ground stays under its water: risen toward the shore, barely wet cells stood out
-    // of the sea as sand islets (the lead's review, 17 November).
+    // of the sea as sand islets (the lead's review, 17 November). Since the waterline in eighths (18
+    // November) a water cell's columns on the land's side of the line are the shore's sand: each is
+    // joined to a dry cell's land through such columns, never alone in the water.
     const levels = (terrain as unknown as { fluidLevel: Float32Array }).fluidLevel;
     let above = 0;
+    let alone = 0;
     let wetCols = 0;
     for (let y = 2; y < world.h - 2; y++)
       for (let x = 2; x < world.w - 2; x++) {
         const i = y * world.w + x;
         if (world.fluid[i] !== F.WATER || !(levels[i] > -1e8)) continue;
-        for (let k = 0; k < 64; k += 9) {
+        let up = false;
+        for (let k = 0; k < 64; k++) {
           const h = columnTopAt(terrain, x + ((k % 8) + 0.5) / 8, y + (Math.floor(k / 8) + 0.5) / 8);
           if (Number.isNaN(h)) continue;
           wetCols++;
-          if (h >= levels[i]) above++;
+          if (h >= levels[i]) {
+            above++;
+            up = true;
+          }
         }
+        if (up) alone += isletColumns(world, terrain, levels, x, y);
       }
     check(
-      "no islet: the ground of a cell under water is drawn under the water's surface",
-      wetCols > 1000 && above === 0,
-      `${above} of ${wetCols} columns of wet cells at or above their water`,
+      "no islet: the ground of a cell under water is drawn under the water's surface, but for the shore's sand joined to the land",
+      wetCols > 10000 && alone === 0,
+      `${alone} of ${wetCols} columns of wet cells above their water and not joined to land (${above} above it, the shore's)`,
     );
     check(
       "the sea floor curves in eighths (no flat squares a cell wide)",
@@ -283,6 +291,42 @@ export function waterLightChecks(check: Check): void {
       `${tape} white foam vertices on the land, foam levels ${[...foam].sort((a, b) => a - b).join(", ")}`,
     );
     riverChecks(check, world, terrain, fine);
+    coastChecks(check, world, terrain, fine, "the temperate island of seed 7");
+  });
+  withFine(() => {
+    const world = generateWorld(152, 152, 7, { ...DEFAULT_LAND, biome: "desert" });
+    const { terrain, meshes } = landOf(world);
+    const fine = waterMeshes(terrain, meshes).filter((m) => m.geometry.getAttribute("waterFine"));
+    coastChecks(check, world, terrain, fine, "the desert island of seed 7");
+    // Sand's small steps (18 November, the owner: dark wavy contour lines across flat sand): their
+    // risers lit as the slope is (landWet one half), not as a wall's dark side turned from the sun.
+    let risers = 0;
+    let walls = 0;
+    for (const m of meshes) {
+      const g = m.geometry as BufferGeometry;
+      const wet = g.getAttribute("landWet");
+      if (!m.visible || !wet || !g.index) continue;
+      const p = g.getAttribute("position").array as Float32Array;
+      const col = g.getAttribute("color").array as Uint8Array;
+      for (let q = 0; q < p.length / 12; q++) {
+        const xs = [0, 1, 2, 3].map((k) => p[q * 12 + k * 3]);
+        const ys = [0, 1, 2, 3].map((k) => p[q * 12 + k * 3 + 1]);
+        const zs = [0, 1, 2, 3].map((k) => p[q * 12 + k * 3 + 2]);
+        const flat = (a: number[]) => a.every((v) => Math.abs(v - a[0]) < 1e-6);
+        const tall = Math.max(...ys) - Math.min(...ys);
+        if (!(flat(xs) || flat(zs)) || tall <= 0 || tall > 0.26) continue;
+        const [r, gg, b] = [col[q * 12], col[q * 12 + 1], col[q * 12 + 2]];
+        // Sand's colour (warm, not grey pebbles, green grass or brown soil).
+        if (!(r > gg && gg > b && r - b > 50 && gg - b > 30 && r > 150)) continue;
+        risers++;
+        if (wet.getX(q * 4) < 0.25) walls++;
+      }
+    }
+    check(
+      "sand's small steps are lit as its slope, not as walls: no dark riser lines across sand",
+      risers > 1000 && walls / risers < 0.05,
+      `${walls} of ${risers} small risers of sand lit as walls`,
+    );
   });
 
   // 2. The water's light: in the water's shader, on the water in eighths only; on high only.
@@ -608,5 +652,145 @@ function riverChecks(check: Check, world: World, terrain: Terrain, fine: Mesh[])
     "a river's small falls are its own blue, not pale outlines",
     steps > 20 && pale === 0,
     `${pale} of ${steps} side triangles under a cell tall on narrow rivers pale`,
+  );
+}
+
+// The columns of wet cell (x, y) at or above its water that no path of such columns (in the cell and
+// the eight round it, through other wet cells' such columns) joins to a dry cell's land.
+function isletColumns(world: World, terrain: Terrain, levels: Float32Array, x: number, y: number): number {
+  const sub = 8;
+  const n = 3 * sub;
+  const x0 = (x - 1) * sub;
+  const y0 = (y - 1) * sub;
+  // 0: water or not drawn, 1: land of a wet cell, 2: land of a dry cell.
+  const kind = new Uint8Array(n * n);
+  for (let j = 0; j < n; j++)
+    for (let i = 0; i < n; i++) {
+      const px = (x0 + i + 0.5) / sub;
+      const py = (y0 + j + 0.5) / sub;
+      const c = Math.floor(py) * world.w + Math.floor(px);
+      const h = columnTopAt(terrain, px, py);
+      if (Number.isNaN(h)) continue;
+      if (levels[c] > -1e8) kind[j * n + i] = h >= levels[c] ? 1 : 0;
+      else kind[j * n + i] = h >= levels[y * world.w + x] - 0.001 ? 2 : 0;
+    }
+  const seen = new Uint8Array(n * n);
+  const queue: number[] = [];
+  for (let k = 0; k < n * n; k++)
+    if (kind[k] === 2) {
+      seen[k] = 1;
+      queue.push(k);
+    }
+  while (queue.length) {
+    const k = queue.pop()!;
+    const i = k % n;
+    const j = (k - i) / n;
+    for (const [di, dj] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ]) {
+      const a = i + di;
+      const b = j + dj;
+      if (a < 0 || b < 0 || a >= n || b >= n) continue;
+      const t = b * n + a;
+      if (seen[t] || !kind[t]) continue;
+      seen[t] = 1;
+      queue.push(t);
+    }
+  }
+  let alone = 0;
+  for (let j = sub; j < 2 * sub; j++) for (let i = sub; i < 2 * sub; i++) if (kind[j * n + i] === 1 && !seen[j * n + i]) alone++;
+  return alone;
+}
+
+// The columns of the island the water's tops cover, as a set of (column x, column z) on the eighth
+// grid, from the fine water meshes' top triangles.
+function waterColumns(world: World, fine: Mesh[]): Set<number> {
+  const out = new Set<number>();
+  const key = (i: number, j: number) => (i + 4096) * 8192 + j + 4096;
+  for (const m of fine) {
+    const p = m.geometry.getAttribute("position").array as Float32Array;
+    const wf = m.geometry.getAttribute("waterFine").array as Float32Array;
+    for (let t = 0; t < p.length / 9; t++) {
+      if (wf[t * 6] < 0.8) continue;
+      const v = t * 9;
+      const ax = (p[v] + world.w / 2) * 8;
+      const az = (p[v + 2] + world.h / 2) * 8;
+      const bx = (p[v + 3] + world.w / 2) * 8;
+      const bz = (p[v + 5] + world.h / 2) * 8;
+      const cx = (p[v + 6] + world.w / 2) * 8;
+      const cz = (p[v + 8] + world.h / 2) * 8;
+      const area = (bx - ax) * (cz - az) - (bz - az) * (cx - ax);
+      if (Math.abs(area) < 1e-9) continue;
+      for (let i = Math.floor(Math.min(ax, bx, cx)); i < Math.ceil(Math.max(ax, bx, cx)); i++)
+        for (let j = Math.floor(Math.min(az, bz, cz)); j < Math.ceil(Math.max(az, bz, cz)); j++) {
+          const px = i + 0.5;
+          const pz = j + 0.5;
+          const e0 = (bx - ax) * (pz - az) - (bz - az) * (px - ax);
+          const e1 = (cx - bx) * (pz - bz) - (cz - bz) * (px - bx);
+          const e2 = (ax - cx) * (pz - cz) - (az - cz) * (px - cx);
+          if ((e0 >= 0 && e1 >= 0 && e2 >= 0) || (e0 <= 0 && e1 <= 0 && e2 <= 0)) out.add(key(i, j));
+        }
+    }
+  }
+  return out;
+}
+
+// Coasts (18 November, the owner on the Fold: "Actually coasts are bad too"): on a diagonal shore
+// the water stepped in whole-cell teeth, the waterline along the cells' edges. A tooth: a dry cell
+// of a low shore (at most a voxel above the water) with water on one x side, one y side and the
+// diagonal between them, whose corner column toward them is drawn as land (the step's corner); a
+// notch: the same with water and land swapped, its corner column drawn as water. The line cut
+// across the step leaves neither. And the dark line along the shore: the water's side where it
+// stood over the dry ground next to it, counted as side triangles along a low shore.
+function coastChecks(check: Check, world: World, terrain: Terrain, fine: Mesh[], where: string): void {
+  const levels = (terrain as unknown as { fluidLevel: Float32Array }).fluidLevel;
+  const covered = waterColumns(world, fine);
+  const isWater = (x: number, y: number) =>
+    x >= 0 && y >= 0 && x < world.w && y < world.h && levels[y * world.w + x] > -1e8 && world.fluid[y * world.w + x] === F.WATER;
+  const isDry = (x: number, y: number) => x >= 0 && y >= 0 && x < world.w && y < world.h && !(levels[y * world.w + x] > -1e8);
+  let corners = 0;
+  let teeth = 0;
+  let notches = 0;
+  let wetCorners = 0;
+  for (let y = 2; y < world.h - 2; y++)
+    for (let x = 2; x < world.w - 2; x++) {
+      const i = y * world.w + x;
+      for (const [dx, dy] of [
+        [1, 1],
+        [1, -1],
+        [-1, 1],
+        [-1, -1],
+      ]) {
+        // The corner column toward (dx, dy), and whether the fine land is drawn there.
+        const cx = dx > 0 ? x * 8 + 7 : x * 8;
+        const cy = dy > 0 ? y * 8 + 7 : y * 8;
+        if (Number.isNaN(columnTopAt(terrain, (cx + 0.5) / 8, (cy + 0.5) / 8))) continue;
+        const k = (cx + 4096) * 8192 + cy + 4096;
+        if (
+          isDry(x, y) &&
+          world.fluid[i] === F.NONE &&
+          isWater(x + dx, y) &&
+          isWater(x, y + dy) &&
+          isWater(x + dx, y + dy) &&
+          isDry(x - dx, y) &&
+          isDry(x, y - dy)
+        ) {
+          if (columnTop(world, i) - levels[(y + dy) * world.w + x] > 1) continue;
+          corners++;
+          if (!covered.has(k)) teeth++;
+        } else if (isWater(x, y) && isDry(x + dx, y) && isDry(x, y + dy) && isDry(x + dx, y + dy) && isWater(x - dx, y) && isWater(x, y - dy)) {
+          if (columnTop(world, (y + dy) * world.w + x) - levels[i] > 1) continue;
+          wetCorners++;
+          if (covered.has(k)) notches++;
+        }
+      }
+    }
+  check(
+    `a diagonal coast's waterline cuts across its cells, not in whole-cell teeth (${where})`,
+    corners > 40 && wetCorners > 40 && teeth / corners < 0.15 && notches / wetCorners < 0.15,
+    `${teeth} of ${corners} land corners of a step drawn as a tooth, ${notches} of ${wetCorners} water corners as a notch`,
   );
 }

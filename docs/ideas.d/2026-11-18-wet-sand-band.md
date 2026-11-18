@@ -1,0 +1,3 @@
+section: Backlog
+
+- **Wet sand at the waterline** (the designer's idea, 2026-11-18; lens: what the player feels). The shore now meets the water in a smooth curve, but the sand right beside it is as dry and pale as the dunes. A band a few eighths wide just above the waterline, a shade darker and a little glossier, that widens for a moment after a rain or flood spell and dries back over a minute, would make a beach read as a beach and show the weather at a glance. What the player feels: the coast is alive, and a water spell visibly soaks the land it touches. Cost: one more colour step in the shore's columns (the map the waterline already uses says where), no new meshes; the drying needs a slow timer per chunk that rebuilds the shore's tops now and then. Claude.

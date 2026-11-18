@@ -1,0 +1,78 @@
+{
+  "high": {
+    "desert": {
+      "beach-wide": {
+        "at": {
+          "x": 25,
+          "y": 14
+        },
+        "dist": 40,
+        "sand": 248248,
+        "median": 174,
+        "p5": 0.6,
+        "darkShare": 0.2807
+      },
+      "sand-slope": {
+        "at": {
+          "x": 47,
+          "y": 85
+        },
+        "dist": 18,
+        "sand": 725905,
+        "median": 172,
+        "p5": 0.872,
+        "darkShare": 0.0336
+      },
+      "sand-flat": {
+        "at": {
+          "x": 23,
+          "y": 46
+        },
+        "dist": 18,
+        "sand": 731112,
+        "median": 181,
+        "p5": 0.684,
+        "darkShare": 0.1361
+      }
+    },
+    "temperate": {}
+  },
+  "medium": {
+    "desert": {
+      "beach-wide": {
+        "at": {
+          "x": 25,
+          "y": 14
+        },
+        "dist": 40,
+        "sand": 250412,
+        "median": 174,
+        "p5": 0.6,
+        "darkShare": 0.2756
+      },
+      "sand-slope": {
+        "at": {
+          "x": 47,
+          "y": 85
+        },
+        "dist": 18,
+        "sand": 727054,
+        "median": 172,
+        "p5": 0.872,
+        "darkShare": 0.0304
+      },
+      "sand-flat": {
+        "at": {
+          "x": 23,
+          "y": 46
+        },
+        "dist": 18,
+        "sand": 734040,
+        "median": 181,
+        "p5": 0.699,
+        "darkShare": 0.1326
+      }
+    },
+    "temperate": {}
+  }
+}
