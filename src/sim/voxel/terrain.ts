@@ -1837,6 +1837,9 @@ export class Terrain {
         const X = x + ox;
         const Z = y + oz;
         if (GRAPHICS.water && f === F.WATER) this.waterTop(out, x, y, X, Z, top, color, alpha);
+        // With the fine land, a lava top is marked (wave -1) for its crust and glowing cracks
+        // (view.ts withWaves, 18 November); on low it stays one flat colour.
+        else if (GRAPHICS.water && GRAPHICS.fine && f === F.LAVA) out.top(X, Z, top, color, ONES, ONES, 1, LAVA_TOP);
         else out.face(TOP, X, Z, top, top, color, 1, alpha, 1);
         const floor = columnTop(world, i);
         for (let d = 0; d < 4; d++) {
@@ -2069,6 +2072,8 @@ const SQUARE = [0, 1, 2, 0, 2, 3];
 const FLIPPED = [1, 2, 3, 1, 3, 0];
 
 const ONES = [1, 1, 1, 1];
+// The wave weight that marks a lava top for the fluid's shader (view.ts withWaves).
+const LAVA_TOP = [-1, -1, -1, -1];
 const FOAMS = [0, 0, 0, 0];
 const WAVES = [0, 0, 0, 0];
 const ALPHAS = [1, 1, 1, 1];
