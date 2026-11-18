@@ -23,7 +23,7 @@ import {
   setLooksChoice,
   type Quality,
 } from "../src/sim/voxel/graphics";
-import { BLOOM_STRENGTH, FOCUS_FULL, FOCUS_MAX, SHARP_BAND, bloomAt, focusBlur, gradeColor } from "../src/sim/voxel/looks";
+import { BLOOM_STRENGTH, FOCUS_FROM, FOCUS_FULL, FOCUS_MAX, SHARP_BAND, bloomAt, focusBlur, gradeColor } from "../src/sim/voxel/looks";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
@@ -129,13 +129,18 @@ export function looksChecks(check: Check): void {
   check("no depth of field over the whole island", focusBlur(83, false) === 0);
   check("no depth of field at a mid zoom", focusBlur(55, false) === 0 && focusBlur(28, false) === 0);
   check("the depth of field is whole at the closest sky zoom", focusBlur(FOCUS_FULL, false) === 1 && focusBlur(8, false) === 1);
-  check("the depth of field grows as the camera comes closer", focusBlur(20, false) > 0 && focusBlur(20, false) < focusBlur(14, false));
+  check("the depth of field grows as the camera comes closer", focusBlur(18, false) > 0 && focusBlur(18, false) < focusBlur(14, false));
   check("no depth of field in the eye view", focusBlur(8, true) === 0);
   // The owner's close frames on the Fold, 15 November: most of the frame blurred. The middle third
   // of the screen stays sharp.
   check("the middle third of the screen stays sharp", Math.abs(SHARP_BAND - 1 / 6) < 1e-9, `${SHARP_BAND}`);
-  // The owner, after the closest frame: "a bit strong". At most two thirds of the blurred frame.
-  check("the depth of field shows at most two thirds of the blur", FOCUS_MAX > 0.6 && FOCUS_MAX < 0.7, `${FOCUS_MAX}`);
+  // The owner, after the closest frame: "a bit strong" (two thirds then); 18 November, on the
+  // Fold: the far land smeared into big blurry blocks, "a soft distance, not a smear". At most
+  // 0.45 of the blurred frame, none from 20 cells out, and at a close zoom (12 cells, the Perf
+  // Lab's close frame) about half of what showed before (0.63 then).
+  check("the depth of field shows at most 0.45 of the blur", FOCUS_MAX > 0.4 && FOCUS_MAX <= 0.45, `${FOCUS_MAX}`);
+  check("the depth of field begins at 20 cells", FOCUS_FROM === 20 && focusBlur(20, false) === 0 && focusBlur(19, false) > 0);
+  check("a close zoom shows at most 0.35 of the blur", focusBlur(12, false) * FOCUS_MAX <= 0.35, `${focusBlur(12, false) * FOCUS_MAX}`);
 
   // Finer pixels (the owner: "the render is finer"): high draws up to 2 device pixels a CSS pixel
   // at every level, and high smooths edges and lowers its pixels only when frames are late.

@@ -119,12 +119,15 @@ export interface LooksFrame {
 }
 
 // The depth of field begins when the camera is this close to what it looks at (cells), and is
-// whole at FOCUS_FULL (the sky view's closest is 8). None at a mid zoom (about 28) and farther
-// (16 November, the owner: "the quality decreasing ... this blurry look unzoomed").
-export const FOCUS_FROM = 24;
-export const FOCUS_FULL = 10;
-// The most of the blurred frame shown, at the closest zoom: two thirds (the owner found the whole of it a bit strong).
-export const FOCUS_MAX = 0.67;
+// whole at FOCUS_FULL, the sky view's closest. None at a mid zoom (about 28) and farther
+// (16 November, the owner: "the quality decreasing ... this blurry look unzoomed"). Since 18
+// November it begins at 20, not 24, and grows over the last 12 cells, not 14 (the owner on the
+// Fold: the far land smeared into big blurry blocks; a soft distance, not a smear).
+export const FOCUS_FROM = 20;
+export const FOCUS_FULL = 8;
+// The most of the blurred frame shown, at the closest zoom: 0.45 since 18 November (two thirds
+// before, the owner found the whole of it a bit strong; then the far land smeared at two thirds).
+export const FOCUS_MAX = 0.45;
 // Half the height of the band across the middle of the screen that the depth of field leaves
 // sharp, as a share of the screen: the middle third.
 export const SHARP_BAND = 1 / 6;
@@ -646,8 +649,11 @@ class Post {
     const bloom = o.bloom > 0.01;
     const tilt = o.tilt > 0.01;
     if (tilt) {
+      // The same reach both ways, 2.2 pixels of the frame between taps: the pass down the frame
+      // reads the half sized one, so its spread is half (until 18 November it was 2.2 there too,
+      // twice the reach across, and the far land smeared down the screen).
       this.step(renderer, this.blur, this.full, this.halfA, 1, 0, 2.2);
-      this.step(renderer, this.blur, this.halfA, this.halfB, 0, 1, 2.2);
+      this.step(renderer, this.blur, this.halfA, this.halfB, 0, 1, 1.1);
       passes += 2;
     }
     if (bloom) {
