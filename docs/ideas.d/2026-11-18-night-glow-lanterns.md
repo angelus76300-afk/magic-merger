@@ -1,0 +1,3 @@
+section: Backlog
+
+- **Lanterns that light the paths at night** (the designer's idea, 2026-11-18; lens: what the player feels). The glow at night now costs almost nothing beyond the glowing things themselves, so a few dozen more small lights are cheap. Villages could hang a lantern by each door and along their busiest path once it is dark, lit one by one at dusk. What the player feels: the island settles into evening, villages read as homes from far away, and a player who built roads sees them traced in light. Cost: small glowing boxes on the instanced decor already drawn, no new pass; a few thousand triangles on a large island. Claude.

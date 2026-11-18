@@ -1,4 +1,5 @@
 import {
+  AlwaysDepth,
   BasicShadowMap,
   Camera,
   Color,
@@ -470,8 +471,6 @@ if (nightGlow > 0.001 && vLandGlow > 0.001) {
   private glowing = new Set<Material>();
   private lavaFrom: Material | null = null;
   private lavaMask = lavaMaskMaterial();
-  private occluder = new MeshBasicMaterial({ color: 0x000000, fog: false });
-  private clear = new Color();
   private hidden: Object3D[] = [];
   private swapped: { o: Mesh; m: Material | Material[] }[] = [];
   glows(materials: Material[], lava: Material): void {
@@ -486,8 +485,11 @@ if (nightGlow > 0.001 && vLandGlow > 0.001) {
     return false;
   }
 
-  // The glow mask, at a quarter of the width: the scene again with what glows in its own colours,
-  // lava in its own, and everything else black, so a wall still hides the window behind it.
+  // The glow mask, at a quarter of the width: what glows in its own colours and lava in its own,
+  // over black. Post has already laid the scene's own depth into the mask (Post.depthDown), so a
+  // hill, a house or a wall still hides the window behind it, and nothing else is drawn again.
+  // Until 18 November every other solid thing was drawn again here in black, as many triangles as
+  // the frame itself: at night on high the frame cost twice its triangles.
   private drawGlowMask = (target: WebGLRenderTarget, camera: Camera): void => {
     const { renderer, scene } = this;
     const list: Object3D[] = [];
@@ -498,29 +500,23 @@ if (nightGlow > 0.001 && vLandGlow > 0.001) {
       if (!drawn) continue;
       let sky = false;
       for (let a: Object3D | null = o; a; a = a.parent) if (a.name === "sky") sky = true;
-      if (sky) {
-        o.visible = false;
-        this.hidden.push(o);
-      } else if (this.isGlowing(o)) continue;
-      else if (mesh.material === this.lavaFrom) {
+      if (!sky && this.isGlowing(o)) continue;
+      if (!sky && mesh.material === this.lavaFrom) {
         this.swapped.push({ o: mesh, m: mesh.material });
         mesh.material = this.lavaMask;
-      } else if (!(mesh as { isMesh?: boolean }).isMesh || (mesh.material as Material).transparent) {
+      } else {
         o.visible = false;
         this.hidden.push(o);
-      } else {
-        this.swapped.push({ o: mesh, m: mesh.material });
-        mesh.material = this.occluder;
       }
     }
     const background = scene.background;
     scene.background = null;
-    renderer.getClearColor(this.clear);
-    const alpha = renderer.getClearAlpha();
-    renderer.setClearColor(0x000000, 1);
+    // Drawn over the depth and the black laid by Post, so not cleared first.
+    const autoClear = renderer.autoClear;
+    renderer.autoClear = false;
     renderer.setRenderTarget(target);
     renderer.render(scene, camera);
-    renderer.setClearColor(this.clear, alpha);
+    renderer.autoClear = autoClear;
     scene.background = background;
     for (const o of this.hidden) o.visible = true;
     for (const { o, m } of this.swapped) o.material = m;
@@ -591,6 +587,7 @@ class Post {
   private mask: WebGLRenderTarget;
   private size = new Vector2();
   private blur = blurMaterial();
+  private depthDown = depthDownMaterial();
   private mixers = new Map<string, ShaderMaterial>();
 
   constructor() {
@@ -657,7 +654,9 @@ class Post {
       passes += 2;
     }
     if (bloom) {
-      // What glows, alone (the scene again at a quarter of the width), then a short blur.
+      // What glows, alone, at a quarter of the width, behind the scene's own depth, then a short blur.
+      this.depthDown.uniforms.tDepth.value = this.full.depthTexture;
+      this.pass(renderer, this.depthDown, this.mask);
       o.mask(this.mask, camera);
       this.step(renderer, this.blur, this.mask, this.quarterB, 1, 0, 1.2);
       this.step(renderer, this.blur, this.quarterB, this.quarterA, 0, 1, 1.2);
@@ -798,7 +797,7 @@ void main() {
 
   dispose(): void {
     for (const t of [this.full, this.halfA, this.halfB, this.quarterA, this.quarterB, this.mask]) t.dispose();
-    for (const m of [this.blur, ...this.mixers.values()]) m.dispose();
+    for (const m of [this.blur, this.depthDown, ...this.mixers.values()]) m.dispose();
     this.quad.geometry.dispose();
   }
 }
@@ -831,6 +830,37 @@ void main() {
 }`,
     depthTest: false,
     depthWrite: false,
+    toneMapped: false,
+  });
+}
+
+// The scene's depth, laid into the glow mask at a quarter of the width with black over its colour:
+// for each pixel of the mask, the farthest of the four pixels of the frame round its middle. A
+// glowing thing is drawn in the mask where it is in front of that or on it (a window on its wall),
+// so what hides it in the frame hides it in the mask, whatever its thickness. The farthest of the
+// four, and a few steps of the depth's own precision (24 bits) more, so a surface that glows is
+// never hidden by itself.
+function depthDownMaterial(): ShaderMaterial {
+  return new ShaderMaterial({
+    uniforms: { tDepth: { value: null } },
+    vertexShader: QUAD_VERTEX,
+    fragmentShader: `
+uniform highp sampler2D tDepth;
+varying vec2 vUv;
+void main() {
+  ivec2 size = textureSize(tDepth, 0);
+  ivec2 p = ivec2(floor(vUv * vec2(size) - 0.5));
+  ivec2 top = size - 1;
+  float d = texelFetch(tDepth, clamp(p, ivec2(0), top), 0).x;
+  d = max(d, texelFetch(tDepth, clamp(p + ivec2(1, 0), ivec2(0), top), 0).x);
+  d = max(d, texelFetch(tDepth, clamp(p + ivec2(0, 1), ivec2(0), top), 0).x);
+  d = max(d, texelFetch(tDepth, clamp(p + ivec2(1, 1), ivec2(0), top), 0).x);
+  gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+  gl_FragDepth = min(1.0, d + 4.0 / 16777215.0);
+}`,
+    depthTest: true,
+    depthWrite: true,
+    depthFunc: AlwaysDepth,
     toneMapped: false,
   });
 }

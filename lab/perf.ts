@@ -12,6 +12,7 @@ import { LAB_SKY, LAB_WEATHER } from "../src/sim/voxel/sky";
 import type { SavedWorld } from "../src/sim/save";
 import { firstLook } from "../src/sim/firstlook";
 import { readDef, type WonderDef } from "../src/sim/wonders";
+import * as THREE from "three";
 
 const q = new URLSearchParams(location.search);
 const canvas = document.getElementById("world") as HTMLCanvasElement;
@@ -84,6 +85,8 @@ if (!restored) engine.start();
 (window as unknown as { __labSky: typeof LAB_SKY }).__labSky = LAB_SKY;
 // The switches, for the measures that turn one on and off on the same island (looks-shadow-flicker.mjs).
 (window as unknown as { __graphics: typeof GRAPHICS }).__graphics = GRAPHICS;
+// three itself, for the checks that lay a thing of their own in the scene (night-glow-proof.mjs).
+(window as unknown as { __three: typeof THREE }).__three = THREE;
 
 declare global {
   interface Window {
