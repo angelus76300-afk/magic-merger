@@ -21,8 +21,12 @@ const BASE = process.env.LAB_URL ?? "http://localhost:5191/lab/perf.html";
 const [W, H] = (process.env.SIZE ?? "700x830").split("x").map(Number);
 const FRAMES = Number(process.env.FRAMES ?? 140);
 const SHOTS = Number(process.env.SHOTS ?? 24);
-// A blast of 7 cells and a fire beside it, as a Fireball's landing does (lab/spells/fireball.js).
-const CRATER = "const spell = { *cast(w) { w.explode(w.x, w.y, 7, 1); w.ignite(w.x + 4, w.y + 2, 6, 0.7); } };";
+// A blast of 7 cells and a fire beside it, as a Fireball's landing does (lab/spells/fireball.js);
+// SPELL=blast for the blast alone (no flames over the crater's edge in the crops).
+const CRATER =
+  process.env.SPELL === "blast"
+    ? "const spell = { *cast(w) { w.explode(w.x, w.y, 7, 1.6); } };"
+    : "const spell = { *cast(w) { w.explode(w.x, w.y, 7, 1); w.ignite(w.x + 4, w.y + 2, 6, 0.7); } };";
 
 const dir = join(OUT, `${W}x${H}`, TAG);
 mkdirSync(dir, { recursive: true });
@@ -93,7 +97,9 @@ try {
         return s;
       };
       e.cast({ key: "land-lag", name: "Crater", tier: "major", code }, spot.x, spot.y);
-      window.__lag = { frame: 0, landSum: sum(), fine: t.fine.slice(), out: [] };
+      const o = e.view.orbit;
+      const hold = { tx: o.tx, ty: o.ty, dist: o.dist, phi: o.phi, theta: o.theta };
+      window.__lag = { frame: 0, landSum: sum(), fine: t.fine.slice(), out: [], hold };
       return frames;
     },
     { code: CRATER, spot, frames: FRAMES },
@@ -116,6 +122,8 @@ try {
       const landChanged = s !== lag.landSum;
       lag.landSum = s;
       e.view.profile = {};
+      // The camera held where it was (a cast may move it), so the crops stay on the crater's edge.
+      Object.assign(e.view.orbit, lag.hold);
       const t0 = performance.now();
       e.render(1 / 60);
       const ms = performance.now() - t0;

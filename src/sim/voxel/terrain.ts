@@ -226,6 +226,7 @@ export class Terrain {
         if ((land & LAND_LOOK) !== (was & LAND_LOOK)) {
           this.markAround(flowOnly ? this.slowLand : this.dirtyLand, i % w, Math.floor(i / w));
           if (!flowOnly) this.fineMark(i % w, Math.floor(i / w));
+          else this.flowCells.push(i);
         }
         if (((land >>> 16) & 0xff) !== ((this.landSig[i] >>> 16) & 0xff) || (land & 0xff) !== (this.landSig[i] & 0xff)) this.coversChanged = true;
         // Water sits on the land: only a new floor height moves its walls.
@@ -243,7 +244,22 @@ export class Terrain {
         if (!flowOnly) this.fineMark(i % w, Math.floor(i / w));
       }
     }
+    // Water that came or went in many cells at once is a spell's (a flood, water drained), not a
+    // river's edge: drawn at once as any change (17 November: a flood waited for the slow queue, up
+    // to FLOW_STALE_MS, under the fine water of before).
+    const cells = this.flowCells;
+    if (cells.length >= FLOW_BURST) {
+      for (const i of cells) {
+        const x = i % w;
+        const y = Math.floor(i / w);
+        this.markAround(this.dirtyLand, x, y);
+        this.markAround(this.dirtyFluid, x, y);
+        this.fineMark(x, y);
+      }
+    }
+    cells.length = 0;
   }
+  private flowCells: number[] = [];
 
   // A changed cell, for the fine land (17 November, the owner: "when a spell destroys land or starts
   // fires [the change] takes a bit to appear and we have visible chunks"). The fine mesher reads
@@ -2066,6 +2082,9 @@ export function builtGround(name: string): boolean {
 // built at once, in groups: updateFine). Among such chunks, one that flowed a second earlier counts
 // as STALE_AGE scene units nearer, up to STALE_AGE_MAX seconds.
 const FLOW_STALE_MS = 10000;
+// Cells turned wet or dry in one scan from which it is a spell's water, not a river's edge (a
+// river's edge turns a few cells a tick).
+const FLOW_BURST = 16;
 const STALE_AGE = 4;
 const STALE_AGE_MAX = 60;
 // How far a changed cell reaches into the fine land, in cells: a column reads the cells up to three

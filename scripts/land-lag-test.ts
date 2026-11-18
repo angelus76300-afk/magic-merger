@@ -102,6 +102,21 @@ export function lava(cx: number, cy: number): Change {
   };
 }
 
+// A pond poured on dry land, five cells across: new water, drawn in eighths with its tops and sides.
+export function pond(cx: number, cy: number): Change {
+  return {
+    name: `pond at ${cx},${cy}`,
+    apply: (world) => {
+      for (let y = cy - 2; y <= cy + 2; y++)
+        for (let x = cx - 2; x <= cx + 2; x++) {
+          const i = y * world.w + x;
+          world.fluid[i] = F.WATER;
+          world.depth[i] = 0.8;
+        }
+    },
+  };
+}
+
 // One cell raised, on the corner of four chunks.
 export function bump(x: number, y: number): Change {
   return {
@@ -150,6 +165,17 @@ function tilesHash(t: { h: Int16Array } | undefined): string {
   return (h >>> 0).toString(16);
 }
 
+// Meshes of the fine land or its water with a position that is not a number.
+function nanIn(terrain: Terrain): number {
+  const t = terrain as unknown as Inside;
+  let n = 0;
+  for (const m of [...t.fine, ...t.fineWater]) {
+    const p = m?.geometry.getAttribute("position").array;
+    if (p && p.some((v) => Number.isNaN(v))) n++;
+  }
+  return n;
+}
+
 // Each chunk's fine land, its water in eighths and the tops creatures stand on.
 function drawn(terrain: Terrain): string[] {
   const t = terrain as unknown as Inside;
@@ -195,6 +221,7 @@ export interface Played {
   order: number[];
   same: boolean; // drawn as the island built whole
   differ: number; // chunks drawn otherwise
+  nan: number; // meshes with a position that is not a number
 }
 
 // Plays the frames after each change, one after the other on the same island, and compares the
@@ -232,6 +259,7 @@ export function playChanges(k: number, changes: (world: World) => Change[], reac
         order: terrain.redraw.order.slice(),
         same: differ === 0,
         differ,
+        nan: nanIn(terrain),
       });
     }
     return { world, runs };
@@ -247,6 +275,7 @@ const CHANGES = (world: World): Change[] => {
     burn(mid + 9, mid + 4, 12),
     crystal(mid - 12, mid + 10, 7),
     lava(mid - 20, mid + 6),
+    pond(mid + 14, mid - 12),
     bump(CHUNK * 2, CHUNK * 2),
   ];
 };
@@ -258,6 +287,11 @@ export function landLagChecks(check: Check): void {
     "a spell's change to the land is drawn in part, and the land is the same, byte for byte, as the island drawn whole after it (no seam, no hole)",
     runs.every((r) => r.same),
     runs.map((r) => `${r.island}, ${r.name}: ${r.same ? "same" : `${r.differ} chunks differ`}, ${r.tiles} tiles`).join("; "),
+  );
+  check(
+    "no mesh of the fine land or its water has a position that is not a number after a change",
+    runs.every((r) => r.nan === 0),
+    runs.map((r) => `${r.name}: ${r.nan}`).join("; "),
   );
   // The reach is what keeps it so: lava's glow needs 4 cells (a spell's soft ground 5, terrain.ts
   // FINE_REACH); with 3 some chunk keeps a stale edge, and the check above sees it.
