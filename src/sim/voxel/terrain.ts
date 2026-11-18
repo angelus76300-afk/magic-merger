@@ -1241,7 +1241,7 @@ export class Terrain {
     let idx: number[] | null = null;
     if (
       part &&
-      this.fine[c] !== undefined &&
+      !!this.fine[c] &&
       this.fineLevel[c] === sub &&
       this.fineTileQ[c]?.length === all.length + 1 &&
       this.fineWith[c] === (this.fineWaterOn ? 1 : 0) &&
