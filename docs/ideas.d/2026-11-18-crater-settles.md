@@ -1,0 +1,3 @@
+section: Backlog
+
+- **The land settles after a blast** (the designer's idea, 2026-11-18; lens: what the player feels). The fine land now redraws a crater in the frame its last piece is ready, so a change can be timed: a crater could open in two or three steps over half a second (the rim first, then the bowl sinking, with a puff of dust per step), the way a real impact settles, instead of the island jumping from before to after in one frame. What the player feels: weight and consequence; the blast pushes the ground, it does not swap it. Cost: the spell's crater written in steps by the runtime over a few ticks (no new drawing code: each step is one redraw group); it doubles or triples the redraw work of a crater, which the share of the frame now absorbs. Claude.

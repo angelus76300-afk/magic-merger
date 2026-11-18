@@ -111,6 +111,7 @@ import { heldChecks } from "./held-test";
 import { pacingChecks } from "./pacing-test";
 import { fogChecks } from "./fog-test";
 import { terrainLooksChecks } from "./terrain-looks-test";
+import { landLagChecks } from "./land-lag-test";
 import { waterLightChecks } from "./water-light-test";
 import { movementChecks } from "./movement-test";
 import { peaksChecks } from "./peaks-test";
@@ -2476,6 +2477,7 @@ fogChecks(check);
 
 // The land's looks (5.2.5): scripts/terrain-looks-test.ts.
 terrainLooksChecks(check);
+landLagChecks(check);
 // Water and light (16 November): scripts/water-light-test.ts.
 waterLightChecks(check);
 

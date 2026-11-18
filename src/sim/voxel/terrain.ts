@@ -1,4 +1,4 @@
-import { BufferAttribute, BufferGeometry, DataTexture, FrontSide, LinearFilter, Mesh, RGBAFormat, type Material } from "three";
+import { Box3, BufferAttribute, BufferGeometry, DataTexture, FrontSide, LinearFilter, Mesh, RGBAFormat, Vector3, type Frustum, type Material } from "three";
 import { BUILTIN, C, F, G, type Material as LandMaterial } from "../materials";
 import type { World } from "../world";
 import { FACE_LIGHT } from "./models";
@@ -17,10 +17,15 @@ import {
   fineAt,
   joins,
   makeFineCells,
+  putWaterCorners,
+  putWaterTile,
+  takeWaterCorners,
+  takeWaterTile,
   sizeFineCells,
   type FineCells,
   type FineTops,
   type LandRead,
+  type WaterTile,
 } from "./terrain-fine";
 
 // The island as voxel columns. Each cell is one column whose top sits at its
@@ -218,7 +223,10 @@ export class Terrain {
         // Only the wet bit changed: water flowing at a river's edge, redrawn
         // in the slow queue; anything else at once.
         const flowOnly = (land ^ was) === 1 << 24 && was !== 0xffffffff;
-        if ((land & LAND_LOOK) !== (was & LAND_LOOK)) this.markAround(flowOnly ? this.slowLand : this.dirtyLand, i % w, Math.floor(i / w));
+        if ((land & LAND_LOOK) !== (was & LAND_LOOK)) {
+          this.markAround(flowOnly ? this.slowLand : this.dirtyLand, i % w, Math.floor(i / w));
+          if (!flowOnly) this.fineMark(i % w, Math.floor(i / w));
+        }
         if (((land >>> 16) & 0xff) !== ((this.landSig[i] >>> 16) & 0xff) || (land & 0xff) !== (this.landSig[i] & 0xff)) this.coversChanged = true;
         // Water sits on the land: only a new floor height moves its walls.
         if ((land & 0xff) !== (this.landSig[i] & 0xff)) this.markAround(this.dirtyFluid, i % w, Math.floor(i / w));
@@ -232,8 +240,47 @@ export class Terrain {
         this.fluidSig[i] = fluid;
         this.fluidLevel[i] = wet ? surfaceY(world, i) : -1e9;
         this.markAround(flowOnly ? this.slowFluid : this.dirtyFluid, i % w, Math.floor(i / w));
+        if (!flowOnly) this.fineMark(i % w, Math.floor(i / w));
       }
     }
+  }
+
+  // A changed cell, for the fine land (17 November, the owner: "when a spell destroys land or starts
+  // fires [the change] takes a bit to appear and we have visible chunks"). The fine mesher reads
+  // the cells round a column, so a change reaches the columns up to FINE_REACH cells away, in this
+  // chunk and the next: each chunk it reaches is marked, with the part of it to draw again.
+  private fineMark(x: number, y: number): void {
+    if (this.fine.length !== this.chunks.length) return;
+    const R = this.fineReach;
+    const cx0 = Math.max(0, Math.floor((x - R) / CHUNK));
+    const cx1 = Math.min(this.cols - 1, Math.floor((x + R) / CHUNK));
+    const cy0 = Math.max(0, Math.floor((y - R) / CHUNK));
+    const cy1 = Math.min(this.rows - 1, Math.floor((y + R) / CHUNK));
+    for (let cy = cy0; cy <= cy1; cy++)
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const c = cy * this.cols + cx;
+        // Not built yet: it is built whole when its turn comes.
+        if (this.fine[c] === undefined && !this.fineBusy[c]) continue;
+        const { x0, y0, x1, y1 } = this.bounds(c);
+        const b = c * 4;
+        const box = this.fineBox;
+        if (box[b] >= box[b + 2]) {
+          box[b] = x1;
+          box[b + 1] = y1;
+          box[b + 2] = x0;
+          box[b + 3] = y0;
+        }
+        box[b] = Math.min(box[b], Math.max(x0, x - R));
+        box[b + 1] = Math.min(box[b + 1], Math.max(y0, y - R));
+        box[b + 2] = Math.max(box[b + 2], Math.min(x1, x + R + 1));
+        box[b + 3] = Math.max(box[b + 3], Math.min(y1, y + R + 1));
+        if (this.fineStale[c] !== 1) {
+          if (!this.fineStale[c]) this.staleAt[c] = this.clock();
+          this.staleFrame[c] = this.redraw.frame + 1;
+          this.fineStale[c] = 1;
+        }
+      }
+    this.marked++;
   }
 
   // A column's walls depend on its neighbors, so a change near a chunk border dirties both chunks.
@@ -253,6 +300,32 @@ export class Terrain {
   // one of each kind), so a big fire never stalls a frame; everything when
   // `all` (first frame).
   rebuild(all = false): void {
+    // The water in eighths turned on or off (the quality level): every chunk's fluids drawn again,
+    // its water with them or apart, and every fine chunk with its water or without.
+    if (this.fluidSplit !== this.fineWaterOn) {
+      this.fluidSplit = this.fineWaterOn;
+      for (let c = 0; c < this.chunks.length; c++) {
+        this.dirtyFluid.add(c);
+        if (this.fine[c] !== undefined) this.staleFine(c);
+      }
+    }
+    // A chunk drawn finely hides its whole cells, and its water in whole cells where its water is
+    // drawn in eighths: they are drawn again only with time to spare (17 November: on high a big
+    // spell's first frame spent 20 to 70 ms on land no one sees). The water's map is written now.
+    const hidden = (c: number) => !all && GRAPHICS.fine && this.fineShown[c] === 1 && !!this.fine[c];
+    for (const c of this.dirtyLand) {
+      if (!hidden(c)) continue;
+      this.dirtyLand.delete(c);
+      this.slowLand.delete(c);
+      this.hiddenLand.add(c);
+    }
+    for (const c of this.dirtyFluid) {
+      if (!hidden(c) || !this.fineWater[c] || this.chunks[c].fluid || !this.onlyWater(c)) continue;
+      this.dirtyFluid.delete(c);
+      this.slowFluid.delete(c);
+      this.writeWaterMap(c);
+      this.hiddenFluid.add(c);
+    }
     // A big spell changes the whole island at once (the owner's report, 11 November: "the
     // rendering is bad, like by sections, and doesn't update all at once"). Three milliseconds a
     // frame redraws it a few chunks at a time, for seconds. When many chunks changed in one go,
@@ -260,12 +333,14 @@ export class Terrain {
     // land that changes piece by piece. Not twice within a second, and with a larger share of
     // each frame while a backlog lasts, so a fire that spreads everywhere never stalls every frame.
     const now = performance.now();
+    const frameAt = this.clock();
     const backlog = this.dirtyLand.size + this.dirtyFluid.size;
     const burst = !all && LAND_REDRAW.burst && backlog >= BURST_CHUNKS && now - this.burstAt > 1000;
     if (burst) this.burstAt = now;
     const until = all || burst ? Infinity : now + (LAND_REDRAW.burst && backlog >= BURST_CHUNKS ? 8 : 3);
     // How many frames in a row the land had chunks left to redraw: what "by sections" is, counted.
-    if (backlog > 0) this.lag++;
+    // With the fine land, its changed chunks waiting count too (they are what is seen).
+    if (backlog > 0 || this.fineWaiting()) this.lag++;
     else {
       if (this.lag > 0) LAND_REDRAW.lastLag = this.lag;
       this.lag = 0;
@@ -277,14 +352,8 @@ export class Terrain {
       first = false;
       this.dirtyLand.delete(c);
       this.slowLand.delete(c);
+      this.hiddenLand.delete(c);
       this.swap(c, "land", this.buildLand(c));
-      this.staleFine(c);
-    }
-    // The water in eighths turned on or off (the quality level): every chunk's fluids drawn again,
-    // its water with them or apart.
-    if (this.fluidSplit !== this.fineWaterOn) {
-      this.fluidSplit = this.fineWaterOn;
-      for (let c = 0; c < this.chunks.length; c++) this.dirtyFluid.add(c);
     }
     first = true;
     for (const c of this.dirtyFluid) {
@@ -292,13 +361,31 @@ export class Terrain {
       first = false;
       this.dirtyFluid.delete(c);
       this.slowFluid.delete(c);
+      this.hiddenFluid.delete(c);
       this.fluidBuilt(c, false);
     }
-    if (GRAPHICS.fine) this.updateFine(until);
+    if (GRAPHICS.fine) {
+      this.frameAt = frameAt;
+      this.updateFine(until);
+    }
     // Turned off (the low quality level): every chunk back to whole cells.
-    else if (this.fine.some((m) => m !== undefined)) {
-      this.job = null;
+    else if (this.fine.some((m) => m !== undefined) || this.group) {
+      this.dropGroup();
       for (let c = 0; c < this.fine.length; c++) this.dropFine(c);
+    }
+    // The hidden whole cells, one chunk a frame with time to spare.
+    if ((this.hiddenLand.size || this.hiddenFluid.size) && performance.now() < until) {
+      const land = this.hiddenLand.size > 0;
+      for (const c of land ? this.hiddenLand : this.hiddenFluid) {
+        if (land) {
+          this.hiddenLand.delete(c);
+          this.swap(c, "land", this.buildLand(c));
+        } else {
+          this.hiddenFluid.delete(c);
+          this.fluidBuilt(c, false);
+        }
+        break;
+      }
     }
     // One chunk of the slow queue every third frame, land and water in turn,
     // if time is left.
@@ -309,12 +396,25 @@ export class Terrain {
       queue.delete(c);
       if (land) {
         if (!this.dirtyLand.has(c)) {
-          this.swap(c, "land", this.buildLand(c));
+          if (hidden(c)) this.hiddenLand.add(c);
+          else this.swap(c, "land", this.buildLand(c));
           this.staleFine(c, true);
         }
       } else if (!this.dirtyFluid.has(c)) this.fluidBuilt(c, true);
       break;
     }
+  }
+
+  // Whether the only fluid of chunk c is water (drawn in eighths with its fine land).
+  private onlyWater(c: number): boolean {
+    const { world } = this;
+    const { x0, y0, x1, y1 } = this.bounds(c);
+    for (let y = y0; y < y1; y++)
+      for (let x = x0; x < x1; x++) {
+        const i = y * world.w + x;
+        if (this.wet[i] && world.fluid[i] !== F.WATER) return false;
+      }
+    return true;
   }
 
   private fluidSplit = false;
@@ -326,7 +426,8 @@ export class Terrain {
     this.swap(c, "water", this.fluidSplit ? FLUID_W.geometry(4, GRAPHICS.water) : null);
     if (!this.fluidSplit) return;
     this.writeWaterMap(c);
-    if (this.fine[c]) this.staleFine(c, flow);
+    // A real change is marked where it is (scan, fineMark); water flowing marks the whole chunk.
+    if (flow && this.fine[c]) this.staleFine(c, true);
   }
 
   private swap(c: number, kind: "land" | "fluid" | "water", geometry: BufferGeometry | null): void {
@@ -367,25 +468,59 @@ export class Terrain {
   // When each chunk's land changed after its fine mesh was built (the first change since), and when
   // its fine mesh was last built, performance.now() ms.
   private staleAt = new Float64Array(0);
+  // The frame (redraw.frame) whose drawing first showed the change: the first after it was marked.
+  private staleFrame = new Int32Array(0);
   private fineBuiltAt = new Float64Array(0);
   private chunkOn = new Uint8Array(0);
   // The top of each column each chunk's fine mesh draws (terrain-fine.ts FineTops): creatures stand
   // on it (footAt). One spare, for the next build.
   private fineTops: (FineTops | undefined)[] = [];
   private spareTops: Int16Array | null = null;
-  // `redo`: the chunk's land changed while it was being built (1, or 2 for water flowing alone): it
-  // is finished all the same, and stays stale for its next build.
-  private job: {
-    c: number;
-    sub: number;
-    tiles: [number, number, number, number][];
-    next: number;
-    again: boolean;
-    tops: FineTops;
-    redo: number;
-    at: number;
-    water: boolean;
-  } | null = null;
+  // The fine chunks being built (FineGroup): shown all at once when the last is done. A chunk whose
+  // land changes while it is built is finished all the same, and stays stale for the next group.
+  private group: FineGroup | null = null;
+  // 1 while a chunk is in the group being built.
+  private fineBusy = new Uint8Array(0);
+  // The part of each chunk changed since its fine mesh was read, in cells (x0, y0, x1, y1, empty
+  // when x0 >= x1): only the tiles that reach it are built again (17 November).
+  private fineBox = new Int32Array(0);
+  // Each fine mesh's quads by tile (where each tile's run starts, and one past the last), the tiles
+  // that drew water, whether it was built with the water in eighths, and the looks it was built with:
+  // what a chunk built again in part must keep.
+  private fineTileQ: (Int32Array | null)[] = [];
+  private fineTileWet: (Uint8Array | null)[] = [];
+  // Where each tile's water sides start in its water mesh (vertices), its water tops (terrain-fine.ts
+  // WaterTile, null for a tile with none) and its cells' corner levels.
+  private fineTileWQ: (Int32Array | null)[] = [];
+  private fineWaterTiles: ((WaterTile | null)[] | null)[] = [];
+  private fineCorners: (Float32Array | null)[] = [];
+  private fineWith = new Uint8Array(0);
+  private fineSig: string[] = [];
+  // Cells marked changed since the last group of changed land began: a chunk being built for
+  // another reason is finished sooner (CHANGE_BUDGET_MS) when a change waits.
+  private marked = 0;
+  // Milliseconds past FINE_BUDGET_MS that changed land may still take (CREDIT_MAX_MS at most).
+  private credit = CREDIT_MAX_MS;
+  private creditAt = 0;
+  // When this frame's redraw began (rebuild), for updateFine's share; -1 when called alone.
+  private frameAt = -1;
+  // The time to make a fine chunk's mesh from its tiles, ms a quad (about 0.2 ms for 1000 quads on
+  // the machine of 17 November), followed as chunks are made.
+  private finishRate = 0.0002;
+  // Whole cells of chunks drawn finely, drawn again with time to spare.
+  private hiddenLand = new Set<number>();
+  private hiddenFluid = new Set<number>();
+  private cellsPool: FineCells[] = [];
+  // The camera's view, set by the view each frame: chunks wholly outside it are built after those
+  // in it. null: every chunk counts as seen (the checks).
+  frustum: Frustum | null = null;
+  // How far a changed cell reaches into the fine land (FINE_REACH; the checks try less).
+  fineReach = FINE_REACH;
+  // The time, ms; the checks set their own, to count frames without the machine's speed.
+  clock: () => number = () => performance.now();
+  // For the measures and the checks: the last group of changed chunks shown, and the frames from the
+  // first change it drew to the frame it was shown in.
+  readonly redraw = { groups: 0, frames: 0, chunks: 0, tiles: 0, order: [] as number[], firstAt: -1, frame: 0 };
   // The longest a frame spent on the fine land, ms (for the measures).
   readonly fineStats = { maxFrameMs: 0, maxTileMs: 0, tiles: 0, tileMs: [] as number[] };
   private eye = { x: 0, y: 0, z: 0, tx: 0, tz: 0, reach: 0, known: false };
@@ -612,16 +747,30 @@ export class Terrain {
   // A chunk being built when its land changes is finished, not dropped (the playtest of 15 November:
   // Big Bang's stardust turning to crystal changed every chunk every few ticks, each build was
   // dropped before it ended, and chunks showed the land of before the spell for two minutes). It
-  // stays stale, and is built again in turn.
+  // stays stale, and is built again in turn. The whole chunk: water that flowed, or the water in
+  // eighths turned on or off.
   private staleFine(c: number, flow = false): void {
+    if (this.fine.length !== this.chunks.length) return;
     // Water flowing at a river's edge (`flow`) waits longer than a real change.
     const was = this.fineStale[c];
-    if (this.fine[c] !== undefined) {
-      this.fineStale[c] = flow && was !== 1 ? 2 : 1;
-      if (!was) this.staleAt[c] = performance.now();
-    }
-    const job = this.job;
-    if (job?.c === c) job.redo = flow && job.redo !== 1 ? 2 : 1;
+    if (this.fine[c] === undefined && !this.fineBusy[c]) return;
+    this.fineStale[c] = flow && was !== 1 ? 2 : 1;
+    if (!was) this.staleAt[c] = this.clock();
+    if (this.fineStale[c] === 1 && was !== 1) this.staleFrame[c] = this.redraw.frame + 1;
+    const { x0, y0, x1, y1 } = this.bounds(c);
+    this.fineBox.set([x0, y0, x1, y1], c * 4);
+  }
+
+  // Whether changed land is waiting to be drawn finely.
+  private fineWaiting(): boolean {
+    if (this.group?.kind === "change") return true;
+    for (let c = 0; c < this.fineStale.length; c++) if (this.fineStale[c] === 1) return true;
+    return false;
+  }
+
+  private dropGroup(): void {
+    this.group = null;
+    this.fineBusy.fill(0);
   }
 
   private dropFine(c: number): void {
@@ -634,7 +783,18 @@ export class Terrain {
     this.dropFineWater(c);
     this.fineLevel[c] = 0;
     this.fineStale[c] = 0;
+    if (this.fineBox.length) this.fineBox.fill(0, c * 4, c * 4 + 4);
+    if (this.fineTileQ.length) {
+      this.fineTileQ[c] = null;
+      this.fineTileWQ[c] = null;
+      this.fineWaterTiles[c] = null;
+      this.fineCorners[c] = null;
+      this.fineTileWet[c] = null;
+    }
     this.spare(c);
+    // Its whole cells are seen again: drawn now if they waited.
+    if (this.hiddenLand.delete(c)) this.dirtyLand.add(c);
+    if (this.hiddenFluid.delete(c)) this.dirtyFluid.add(c);
     if (this.fineShown[c]) {
       this.fineShown[c] = 0;
       const land = this.chunks[c].land;
@@ -680,97 +840,19 @@ export class Terrain {
     return Math.hypot(dx, dy, dz);
   }
 
-  // Picks each chunk's level, shows each chunk one way or the other, and builds tiles of the
-  // nearest chunk that needs it for up to FINE_BUDGET_MS (everything when `all`).
-  updateFine(until: number, all = false): void {
-    const n = this.chunks.length;
-    if (this.fine.length !== n) {
-      this.fine = new Array(n).fill(undefined);
-      this.fineLevel = new Uint8Array(n);
-      this.fineShown = new Uint8Array(n);
-      this.fineStale = new Uint8Array(n);
-      this.staleAt = new Float64Array(n);
-      this.fineBuiltAt = new Float64Array(n).fill(-1e9);
-      this.fineTops = new Array(n).fill(undefined);
-      this.chunkOn = new Uint8Array(n).fill(1);
-      this.fineWater = new Array(n).fill(undefined);
-    }
-    if (!this.eye.known) return;
-    void until;
-    const start = performance.now();
-    for (;;) {
-      let best = -1;
-      let bestRank = Infinity;
-      let bestSub = 0;
-      let keep = false;
-      for (let c = 0; c < n; c++) {
-        const d = this.chunkDistance(c);
-        const want = this.wantLevel(c);
-        if (this.job?.c === c && want === this.job.sub) keep = true;
-        // Missing or at the wrong level first, nearest first; then a changed chunk, each at most once
-        // in STALE_MS, nearest first, and one changed long ago before a nearer one (STALE_AGE), so
-        // a chunk that keeps changing is built again within a few seconds and none waits for ever.
-        const stale = this.fineStale[c];
-        const rank =
-          want === 0
-            ? Infinity
-            : this.fine[c] === undefined || this.fineLevel[c] !== want
-              ? d
-              : stale && (all || start - this.fineBuiltAt[c] > (stale === 2 ? FLOW_STALE_MS : STALE_MS))
-                ? d + 1000 - Math.min(STALE_AGE_MAX, (start - this.staleAt[c]) / 1000) * STALE_AGE
-                : Infinity;
-        // A chunk whose whole cells wait to be redrawn is built finely all the same when it has a
-        // fine mesh already (its land keeps changing: it would wait for ever).
-        if ((stale || !this.dirtyLand.has(c)) && rank < bestRank) {
-          best = c;
-          bestRank = rank;
-          bestSub = want;
-        }
-        const show = want > 0 && !!this.fine[c] ? 1 : 0;
-        if (show !== this.fineShown[c]) {
-          this.fineShown[c] = show;
-          const land = this.chunks[c].land;
-          if (land) land.visible = this.chunkOn[c] === 1 && !show;
-          const fine = this.fine[c];
-          if (fine) fine.visible = this.chunkOn[c] === 1 && show === 1;
-          this.showParts(c);
-        }
-      }
-      // A started chunk is finished first while it still wants that level: turning the camera
-      // changes which chunk is nearest, and starting over each time wasted every build.
-      if (!keep) {
-        if (best < 0) this.job = null;
-        else if (!this.job || this.job.c !== best || this.job.sub !== bestSub) this.startFine(best, bestSub);
-      }
-      if (!this.job) break;
-      const job = this.job;
-      while (job.next < job.tiles.length) {
-        const t0 = performance.now();
-        const [tx0, ty0, tx1, ty1] = job.tiles[job.next++];
-        buildFineTile(this.fineCells, FINE_OUT, -this.world.w / 2, -this.world.h / 2, job.sub, tx0, ty0, tx1, ty1, job.tops, job.water ? FINE_WATER : null);
-        const t1 = performance.now();
-        this.fineStats.maxTileMs = Math.max(this.fineStats.maxTileMs, t1 - t0);
-        this.fineStats.tiles++;
-        if (this.fineStats.tileMs.length < 4096) this.fineStats.tileMs.push(t1 - t0);
-        // A chunk built again because water flowed at its edge takes a smaller share of the frame.
-        if (!all && t1 - start > (job.again && this.fineStale[job.c] === 2 ? FINE_AGAIN_MS : FINE_BUDGET_MS)) break;
-      }
-      if (job.next >= job.tiles.length) this.finishFine(job.c, job.sub);
-      if (!all) break;
-    }
-    this.fineStats.maxFrameMs = Math.max(this.fineStats.maxFrameMs, performance.now() - start);
-  }
-
-  // The cells of chunk c and a border of three as the fine mesher reads them (this.fineCells).
-  // Public for the checks (scripts/terrain-looks-test.ts): the mesher's heights are groundAt's.
-  readFine(c: number): FineCells {
+  // The cells of chunk c and a border of three as the fine mesher reads them (this.fineCells, or
+  // `into`), only those in `region` (x0, y0, x1, y1 in cells) when given: a chunk built again in part
+  // reads the cells its tiles reach. Public for the checks (scripts/terrain-looks-test.ts): the
+  // mesher's heights are groundAt's.
+  readFine(c: number, into: FineCells = this.fineCells, region?: readonly number[]): FineCells {
     const { world } = this;
     const { w, h } = world;
     const { x0, y0, x1, y1 } = this.bounds(c);
-    const f = this.fineCells;
+    const f = into;
     sizeFineCells(f, x0, y0, x1, y1, w, h, BOTTOM);
-    for (let y = y0 - 3; y < y1 + 3; y++) {
-      for (let x = x0 - 3; x < x1 + 3; x++) {
+    const [rx0, ry0, rx1, ry1] = region ?? [x0 - 3, y0 - 3, x1 + 3, y1 + 3];
+    for (let y = Math.max(y0 - 3, ry0); y < Math.min(y1 + 3, ry1); y++) {
+      for (let x = Math.max(x0 - 3, rx0); x < Math.min(x1 + 3, rx1); x++) {
         const k = fineAt(f, x, y);
         const inside = x >= 0 && y >= 0 && x < w && y < h;
         f.inside[k] = inside ? 1 : 0;
@@ -820,7 +902,7 @@ export class Terrain {
         f.wdeep[k] = this.waterAt(i)[1];
       }
     }
-    this.readSoft(f);
+    this.readSoft(f, rx0, ry0, rx1, ry1);
     return f;
   }
 
@@ -830,7 +912,7 @@ export class Terrain {
   // weighted mean colour of the spell's cells round it, eased between cells (terrain-fine.ts
   // softColor): stardust, the crystal it turns into and the land it left among them read as one
   // ground in soft shades of the spell's colour, instead of cell sized blots.
-  private readSoft(f: FineCells): void {
+  private readSoft(f: FineCells, rx0: number, ry0: number, rx1: number, ry1: number): void {
     const { world } = this;
     const ax = f.x0 - 5;
     const ay = f.y0 - 5;
@@ -861,8 +943,8 @@ export class Terrain {
       f.softOn.fill(0, 0, n);
       return;
     }
-    for (let y = f.y0 - 3; y < f.y1 + 3; y++)
-      for (let x = f.x0 - 3; x < f.x1 + 3; x++) {
+    for (let y = Math.max(f.y0 - 3, ry0); y < Math.min(f.y1 + 3, ry1); y++)
+      for (let x = Math.max(f.x0 - 3, rx0); x < Math.min(f.x1 + 3, rx1); x++) {
         const k = fineAt(f, x, y);
         f.softOn[k] = 0;
         const own = (y - ay) * aw + (x - ax);
@@ -904,41 +986,527 @@ export class Terrain {
     return fieldHeight(this.landRead, px, py);
   }
 
-  // Reads the chunk's cells and lists its tiles.
-  private startFine(c: number, sub: number): void {
+  // Picks each chunk's level, shows each chunk one way or the other, and builds the fine chunks
+  // that need it, for a share of the frame (everything when `all`). Changed land first (17
+  // November, the owner: a spell's change "takes a bit to appear and we have visible chunks"; each
+  // chunk took some twenty frames, one after the other): every chunk the change reached that the
+  // camera sees is built again in one group, only the tiles the change reaches, nearest the change
+  // and the camera first, and the group is shown in the frame its last tile is done, so the old land
+  // and the new never meet (no seam). Then a chunk not built yet, nearest first, and water that
+  // flowed, a chunk at a time.
+  updateFine(until: number, all = false): void {
+    const n = this.chunks.length;
+    if (this.fine.length !== n) {
+      this.fine = new Array(n).fill(undefined);
+      this.fineLevel = new Uint8Array(n);
+      this.fineShown = new Uint8Array(n);
+      this.fineStale = new Uint8Array(n);
+      this.staleAt = new Float64Array(n);
+      this.staleFrame = new Int32Array(n);
+      this.fineBuiltAt = new Float64Array(n).fill(-1e9);
+      this.fineTops = new Array(n).fill(undefined);
+      this.chunkOn = new Uint8Array(n).fill(1);
+      this.fineWater = new Array(n).fill(undefined);
+      this.fineBusy = new Uint8Array(n);
+      this.fineBox = new Int32Array(n * 4);
+      this.fineTileQ = new Array(n).fill(null);
+      this.fineTileWet = new Array(n).fill(null);
+      this.fineTileWQ = new Array(n).fill(null);
+      this.fineWaterTiles = new Array(n).fill(null);
+      this.fineCorners = new Array(n).fill(null);
+      this.fineWith = new Uint8Array(n);
+      this.fineSig = new Array(n).fill("");
+    }
+    if (!this.eye.known) return;
+    void until;
+    // From the start of the frame's redraw (rebuild): the whole cells drawn first count against the share.
+    const start = this.frameAt >= 0 ? this.frameAt : this.clock();
+    this.frameAt = -1;
+    this.redraw.frame++;
+    this.syncShown();
+    // The credit for changed land: refilled with the time, spent by every millisecond past
+    // FINE_BUDGET_MS.
+    this.credit = Math.min(CREDIT_MAX_MS, this.credit + Math.max(0, start - this.creditAt) * CREDIT_REFILL);
+    this.creditAt = start;
+    const boosted = FINE_BUDGET_MS + Math.max(0, Math.min(CHANGE_BUDGET_MS - FINE_BUDGET_MS, this.credit));
+    let built = false;
+    for (;;) {
+      if (!this.group) this.group = this.pickGroup(start, all);
+      const g = this.group;
+      if (!g) break;
+      // Changed land takes a larger share while the credit lasts; a chunk not built yet or water
+      // that flowed too, to be done sooner, when a change waits.
+      const budget = all ? Infinity : g.kind === "change" || this.marked > 0 ? boosted : g.budget;
+      let done = true;
+      jobs: while (g.at < g.jobs.length) {
+        const job = g.jobs[g.at];
+        if (!job.begun) this.beginJob(job, g.at);
+        while (job.next < job.tiles.length) {
+          if (built && this.clock() - start > budget) {
+            done = false;
+            break jobs;
+          }
+          const t0 = this.clock();
+          const [tx0, ty0, tx1, ty1] = job.tiles[job.next];
+          job.q[job.next] = FINE_OUT.quads;
+          job.wq[job.next] = FINE_WATER.vertices;
+          const wet = buildFineTile(
+            job.cells!,
+            FINE_OUT,
+            -this.world.w / 2,
+            -this.world.h / 2,
+            job.sub,
+            tx0,
+            ty0,
+            tx1,
+            ty1,
+            job.tops,
+            job.water ? FINE_WATER : null,
+          );
+          job.wet[job.next] = wet ? 1 : 0;
+          job.next++;
+          built = true;
+          const t1 = this.clock();
+          this.fineStats.maxTileMs = Math.max(this.fineStats.maxTileMs, t1 - t0);
+          this.fineStats.tiles++;
+          g.tiles++;
+          if (this.fineStats.tileMs.length < 4096) this.fineStats.tileMs.push(t1 - t0);
+        }
+        // Making a chunk's mesh takes a few milliseconds, about in proportion to its quads (measured
+        // as it goes): in the next frame when it would not fit in this one.
+        const quads = (job.idx ? this.fineTileQ[job.c]![job.all.length] : 0) + FINE_OUT.quads;
+        const at = this.clock();
+        if (built && at - start + quads * this.finishRate > budget) {
+          done = false;
+          break;
+        }
+        this.finishJob(job, g);
+        if (quads > 1000) this.finishRate = this.finishRate * 0.7 + ((this.clock() - at) / quads) * 0.3;
+        built = true;
+        g.at++;
+      }
+      if (!done) break;
+      this.showGroup(g);
+      this.group = null;
+      if (!all && this.clock() - start > budget) break;
+    }
+    const spent = this.clock() - start;
+    if (!all) this.credit -= Math.max(0, spent - FINE_BUDGET_MS);
+    this.fineStats.maxFrameMs = Math.max(this.fineStats.maxFrameMs, spent);
+    // A chunk built in this frame is shown in it.
+    this.syncShown();
+  }
+
+  // Each chunk shown finely or in whole cells, as its fine mesh is there or not.
+  private syncShown(): void {
+    for (let c = 0; c < this.chunks.length; c++) {
+      const show = this.wantLevel(c) > 0 && !!this.fine[c] ? 1 : 0;
+      if (show !== this.fineShown[c]) {
+        this.fineShown[c] = show;
+        const land = this.chunks[c].land;
+        if (land) land.visible = this.chunkOn[c] === 1 && !show;
+        const fine = this.fine[c];
+        if (fine) fine.visible = this.chunkOn[c] === 1 && show === 1;
+        this.showParts(c);
+      }
+    }
+  }
+
+  // Whether the camera may see chunk c (its land from the bottom to a little over its top).
+  private seen(c: number): boolean {
+    if (this.chunkOn[c] !== 1) return false;
+    if (!this.frustum) return true;
     const { x0, y0, x1, y1 } = this.bounds(c);
-    this.readFine(c);
+    const ox = -this.world.w / 2;
+    const oz = -this.world.h / 2;
+    SEEN_BOX.min.set(x0 + ox, BOTTOM - 5, y0 + oz);
+    SEEN_BOX.max.set(x1 + ox, (this.chunkTop[c] ?? FINE_TOP) + 8, y1 + oz);
+    return this.frustum.intersectsBox(SEEN_BOX);
+  }
+
+  // The next group to build: the changed chunks the camera sees (all changed chunks when it sees
+  // none), else the nearest chunk not built yet, else the chunk whose water flowed longest ago.
+  private pickGroup(now: number, all: boolean): FineGroup | null {
+    const n = this.chunks.length;
+    const changed: number[] = [];
+    for (let c = 0; c < n; c++)
+      if (this.fineStale[c] === 1 && !this.fineBusy[c] && this.fine[c] !== undefined && this.fineLevel[c] === this.wantLevel(c)) changed.push(c);
+    if (changed.length) {
+      const seen = changed.filter((c) => this.seen(c));
+      const take = seen.length ? seen : changed;
+      // The change's middle: of the changed parts, by their size.
+      let mx = 0;
+      let my = 0;
+      let mw = 0;
+      for (const c of take) {
+        const b = c * 4;
+        const box = this.fineBox;
+        const area = Math.max(1, (box[b + 2] - box[b]) * (box[b + 3] - box[b + 1]));
+        mx += ((box[b] + box[b + 2]) / 2) * area;
+        my += ((box[b + 1] + box[b + 3]) / 2) * area;
+        mw += area;
+      }
+      mx /= mw;
+      my /= mw;
+      // Nearest the change, then the camera.
+      const near = (c: number) => {
+        const { x0, y0, x1, y1 } = this.bounds(c);
+        return Math.hypot(Math.max(x0 - mx, 0, mx - x1), Math.max(y0 - my, 0, my - y1)) + this.chunkDistance(c) * 0.25;
+      };
+      const key = new Map(take.map((c) => [c, near(c)]));
+      take.sort((a, b) => key.get(a)! - key.get(b)! || a - b);
+      this.marked = 0;
+      const g: FineGroup = { kind: "change", jobs: [], at: 0, done: [], tiles: 0, budget: FINE_BUDGET_MS, firstFrame: Infinity };
+      for (const c of take) {
+        const b = c * 4;
+        const box = this.fineBox;
+        const part = box[b] < box[b + 2] ? [box[b], box[b + 1], box[b + 2], box[b + 3]] : null;
+        g.firstFrame = Math.min(g.firstFrame, this.staleFrame[c]);
+        g.jobs.push(this.takeChunk(c, this.fineLevel[c], part));
+      }
+      // The cells of every chunk read now, so the group is drawn from one moment (no seam between
+      // two chunks read a tick apart); past SNAPSHOT_MS, each as its turn comes.
+      for (let k = 0; k < g.jobs.length; k++) {
+        if (!all && this.clock() - now > SNAPSHOT_MS) break;
+        this.readJob(g.jobs[k], k);
+      }
+      return g;
+    }
+    let best = -1;
+    let bestRank = Infinity;
+    let flow = false;
+    for (let c = 0; c < n; c++) {
+      if (this.fineBusy[c]) continue;
+      const want = this.wantLevel(c);
+      if (want === 0) continue;
+      const d = this.chunkDistance(c);
+      const stale = this.fineStale[c];
+      // Missing or at the wrong level first, nearest first (its whole cells drawn first); then water
+      // that flowed, each at most once in FLOW_STALE_MS, one that flowed long ago before a nearer one
+      // (STALE_AGE), so none waits for ever.
+      const rank =
+        this.fine[c] === undefined || this.fineLevel[c] !== want
+          ? this.dirtyLand.has(c)
+            ? Infinity
+            : d
+          : stale === 2 && (all || now - this.fineBuiltAt[c] > FLOW_STALE_MS)
+            ? d + 1000 - Math.min(STALE_AGE_MAX, (now - this.staleAt[c]) / 1000) * STALE_AGE
+            : Infinity;
+      if (rank < bestRank) {
+        best = c;
+        bestRank = rank;
+        flow = this.fine[c] !== undefined && this.fineLevel[c] === want;
+      }
+    }
+    if (best < 0) return null;
+    const job = this.takeChunk(best, this.wantLevel(best), null);
+    return { kind: flow ? "flow" : "new", jobs: [job], at: 0, done: [], tiles: 0, budget: flow ? FINE_AGAIN_MS : FINE_BUDGET_MS, firstFrame: Infinity };
+  }
+
+  // The looks a fine mesh is drawn with: a chunk built with others is built again whole.
+  private looksSig(): string {
+    const g = GRAPHICS;
+    return [g.steps, g.blend, g.grain, g.foam, g.bits, g.relief, g.rocks, g.warmlight, g.water].map(Number).join("");
+  }
+
+  // Chunk c's tiles, row by row: 2 cells a side in eighths (4 in quarters), the same work a tile.
+  private tilesOf(c: number, sub: number): [number, number, number, number][] {
+    const { x0, y0, x1, y1 } = this.bounds(c);
     const tiles: [number, number, number, number][] = [];
-    // Tiles of 2 cells a side in eighths (4 in quarters): the same work a tile.
     const side = sub === 8 ? TILE / 4 : TILE / 2;
     for (let ty = y0; ty < y1; ty += side) for (let tx = x0; tx < x1; tx += side) tiles.push([tx, ty, Math.min(x1, tx + side), Math.min(y1, ty + side)]);
-    FINE_OUT.reset();
-    FINE_WATER.reset();
-    if (this.fineWaterOn) beginFineWater(this.fineCells, sub);
-    // Room for a fine chunk's vertices from the start: growing in the middle of a tile copies
-    // megabytes, a spike of tens of milliseconds.
-    FINE_OUT.reserve(FINE_VERTICES);
-    const stride = CHUNK * sub;
-    const h = this.spareTops?.length === stride * stride ? this.spareTops : new Int16Array(stride * stride);
-    this.spareTops = null;
-    this.job = {
+    return tiles;
+  }
+
+  // Chunk c taken into a group: whole, or only the tiles that reach `part` when its fine mesh can
+  // keep the rest (the same level, looks and water).
+  private takeChunk(c: number, sub: number, part: number[] | null): FineJob {
+    const all = this.tilesOf(c, sub);
+    let idx: number[] | null = null;
+    if (
+      part &&
+      this.fine[c] !== undefined &&
+      this.fineLevel[c] === sub &&
+      this.fineTileQ[c]?.length === all.length + 1 &&
+      this.fineWith[c] === (this.fineWaterOn ? 1 : 0) &&
+      (!this.fineWaterOn || (this.fineTileWQ[c] && this.fineWaterTiles[c] && this.fineCorners[c])) &&
+      this.fineSig[c] === this.looksSig()
+    ) {
+      idx = [];
+      for (let t = 0; t < all.length; t++) {
+        const [tx0, ty0, tx1, ty1] = all[t];
+        if (tx0 < part[2] && tx1 > part[0] && ty0 < part[3] && ty1 > part[1]) idx.push(t);
+      }
+      if (idx.length === all.length) idx = null;
+    }
+    this.fineStale[c] = 0;
+    this.fineBox.fill(0, c * 4, c * 4 + 4);
+    this.fineBusy[c] = 1;
+    const tiles = idx ? idx.map((t) => all[t]) : all;
+    return {
       c,
       sub,
+      all,
+      idx,
+      part: idx ? part : null,
       tiles,
       next: 0,
-      again: this.fine[c] !== undefined && this.fineLevel[c] === sub,
-      tops: { h, x0, y0, stride },
-      redo: 0,
-      at: performance.now(),
+      begun: false,
+      cells: null,
+      q: new Int32Array(tiles.length + 1),
+      wet: new Uint8Array(tiles.length),
+      wq: new Int32Array(tiles.length + 1),
+      tops: null,
       water: this.fineWaterOn,
+      sig: this.looksSig(),
     };
   }
 
-  // The chunk's tiles are all written: its new fine mesh takes the place of the old one.
-  private finishFine(c: number, sub: number): void {
-    const job = this.job!;
-    this.job = null;
+  // The job's cells, into the k-th buffer of the pool: those its tiles reach (FINE_READ cells past
+  // the changed tiles), or the whole chunk.
+  private readJob(job: FineJob, k: number): void {
+    while (this.cellsPool.length <= k) this.cellsPool.push(makeFineCells());
+    const f = this.cellsPool[k];
+    if (job.idx) {
+      let rx0 = Infinity;
+      let ry0 = Infinity;
+      let rx1 = -Infinity;
+      let ry1 = -Infinity;
+      for (const [tx0, ty0, tx1, ty1] of job.tiles) {
+        rx0 = Math.min(rx0, tx0);
+        ry0 = Math.min(ry0, ty0);
+        rx1 = Math.max(rx1, tx1);
+        ry1 = Math.max(ry1, ty1);
+      }
+      this.readFine(job.c, f, [rx0 - FINE_READ, ry0 - FINE_READ, rx1 + FINE_READ, ry1 + FINE_READ]);
+    } else this.readFine(job.c, f);
+    job.cells = f;
+  }
+
+  // Before a job's first tile: its cells read if they were not, the writers emptied, its tops.
+  private beginJob(job: FineJob, k: number): void {
+    if (!job.cells) this.readJob(job, k);
+    const { x0, y0 } = this.bounds(job.c);
+    FINE_OUT.reset();
+    FINE_WATER.reset();
+    if (job.water) {
+      beginFineWater(job.cells!, job.sub);
+      // In part: the water's tops of the tiles kept, and the cells' corners, as they were drawn.
+      if (job.idx) {
+        putWaterCorners(this.fineCorners[job.c]!);
+        const kept = this.fineWaterTiles[job.c]!;
+        for (let t = 0, k = 0; t < job.all.length; t++) {
+          if (k < job.idx.length && job.idx[k] === t) k++;
+          else if (kept[t]) putWaterTile(kept[t]!);
+        }
+      }
+    }
+    // Room for a fine chunk's vertices from the start: growing in the middle of a tile copies
+    // megabytes, a spike of tens of milliseconds.
+    if (!job.idx) FINE_OUT.reserve(FINE_VERTICES);
+    const stride = CHUNK * job.sub;
+    const old = this.fineTops[job.c];
+    let h: Int16Array;
+    if (job.idx && old && old.stride === stride) {
+      // In part: the tops of the tiles kept, the others written again.
+      h = this.spareTops?.length === old.h.length ? this.spareTops : new Int16Array(old.h.length);
+      h.set(old.h);
+    } else h = this.spareTops?.length === stride * stride ? this.spareTops : new Int16Array(stride * stride);
+    this.spareTops = null;
+    job.tops = { h, x0, y0, stride };
+    job.begun = true;
+  }
+
+  // A job's tiles are all written: its fine mesh made, to be shown with its group. In part, the
+  // tiles written take the place of theirs among the tiles kept, their water's sides too, and the
+  // water's tops are drawn for the whole chunk from the tiles' tops kept and written.
+  private finishJob(job: FineJob, g: FineGroup): void {
+    const end = job.tiles.length;
+    job.q[end] = FINE_OUT.quads;
+    job.wq[end] = FINE_WATER.vertices;
+    const ox = -this.world.w / 2;
+    const oz = -this.world.h / 2;
+    // Its water's tops drawn for the whole chunk at once (terrain-fine.ts fineWaterTops), after its sides.
+    if (job.water) fineWaterTops(FINE_WATER, job.sub, ox, oz);
+    const c = job.c;
+    const sides = (t: number) => job.all[t];
+    if (job.idx) {
+      const idx = job.idx;
+      const { geometry, tileQ } = this.spliceFine(job);
+      const tileWet = this.fineTileWet[c]!.slice();
+      for (let k = 0; k < idx.length; k++) tileWet[idx[k]] = job.wet[k];
+      let water: BufferGeometry | null = null;
+      let tileWQ: Int32Array = new Int32Array(job.all.length + 1);
+      let waterTiles: (WaterTile | null)[] = [];
+      if (job.water) {
+        ({ water, tileWQ } = this.spliceWater(job));
+        waterTiles = this.fineWaterTiles[c]!.slice();
+        for (let k = 0; k < idx.length; k++) {
+          const [tx0, ty0, tx1, ty1] = sides(idx[k]);
+          waterTiles[idx[k]] = job.wet[k] ? takeWaterTile(tx0, ty0, tx1, ty1, job.sub) : null;
+        }
+      }
+      g.done.push({
+        c,
+        sub: job.sub,
+        geometry,
+        water,
+        tops: job.tops!,
+        tileQ,
+        tileWet,
+        tileWQ,
+        waterTiles,
+        corners: job.water ? takeWaterCorners() : null,
+        with: job.water,
+        sig: job.sig,
+      });
+      return;
+    }
     const geometry = FINE_OUT.quadGeometry();
+    const water = job.water ? FINE_WATER.waterGeometry() : null;
+    const waterTiles: (WaterTile | null)[] = [];
+    if (job.water)
+      for (let t = 0; t < job.all.length; t++) {
+        const [tx0, ty0, tx1, ty1] = sides(t);
+        waterTiles.push(job.wet[t] ? takeWaterTile(tx0, ty0, tx1, ty1, job.sub) : null);
+      }
+    g.done.push({
+      c,
+      sub: job.sub,
+      geometry,
+      water,
+      tops: job.tops!,
+      tileQ: job.q,
+      tileWet: job.wet,
+      tileWQ: job.wq,
+      waterTiles,
+      corners: job.water ? takeWaterCorners() : null,
+      with: job.water,
+      sig: job.sig,
+    });
+  }
+
+  // A chunk's water built in part: the sides of its tiles kept, from its water mesh, and of the
+  // tiles written again, from FINE_WATER, in the order of the tiles, then its tops drawn whole
+  // (FINE_WATER past the last side): the same mesh as a build of the whole chunk.
+  private spliceWater(job: FineJob): { water: BufferGeometry | null; tileWQ: Int32Array } {
+    const c = job.c;
+    const idx = job.idx!;
+    const tiles = job.all.length;
+    const oldWQ = this.fineTileWQ[c]!;
+    const old = this.fineWater[c]?.geometry ?? null;
+    const fresh = FINE_WATER.vertexArrays();
+    const end = job.tiles.length;
+    const tileWQ = new Int32Array(tiles + 1);
+    let total = fresh.n - job.wq[end];
+    for (let t = 0, k = 0; t < tiles; t++) {
+      if (k < idx.length && idx[k] === t) {
+        total += job.wq[k + 1] - job.wq[k];
+        k++;
+      } else total += oldWQ[t + 1] - oldWQ[t];
+    }
+    if (total === 0) return { water: null, tileWQ };
+    const out = vertexArrays(total);
+    const from: VertexArrays | null = old
+      ? {
+          n: old.getAttribute("position").count,
+          pos: old.getAttribute("position").array as Float32Array,
+          col: old.getAttribute("color").array as Float32Array,
+          mask: old.getAttribute("decalMask").array as Float32Array,
+          wave: old.getAttribute("wave").array as Float32Array,
+          extra: old.getAttribute("waterFine").array as Float32Array,
+        }
+      : null;
+    let at = 0;
+    for (let t = 0, k = 0; t < tiles; t++) {
+      tileWQ[t] = at;
+      if (k < idx.length && idx[k] === t) {
+        const count = job.wq[k + 1] - job.wq[k];
+        copyVertices(out, at, fresh, job.wq[k], count);
+        at += count;
+        k++;
+      } else {
+        const count = oldWQ[t + 1] - oldWQ[t];
+        if (count && from) copyVertices(out, at, from, oldWQ[t], count);
+        at += count;
+      }
+    }
+    tileWQ[tiles] = at;
+    copyVertices(out, at, fresh, job.wq[end], fresh.n - job.wq[end]);
+    const g = new BufferGeometry();
+    g.setAttribute("position", new BufferAttribute(out.pos, 3));
+    g.setAttribute("color", new BufferAttribute(out.col, 4));
+    g.setAttribute("decalMask", new BufferAttribute(out.mask, 1));
+    g.setAttribute("wave", new BufferAttribute(out.wave, 1));
+    g.setAttribute("waterFine", new BufferAttribute(out.extra, 2));
+    g.computeBoundingSphere();
+    return { water: g, tileWQ };
+  }
+
+  // A chunk built in part: the quads of its tiles kept, from its fine mesh, and of the tiles
+  // written again, from FINE_OUT, in the order of the tiles: the same mesh as a build of the whole
+  // chunk (the checks compare them byte for byte).
+  private spliceFine(job: FineJob): { geometry: BufferGeometry | null; tileQ: Int32Array } {
+    const c = job.c;
+    const oldQ = this.fineTileQ[c]!;
+    const old = this.fine[c]?.geometry ?? null;
+    const fresh = FINE_OUT.quadArrays();
+    const idx = job.idx!;
+    const tiles = job.all.length;
+    const tileQ = new Int32Array(tiles + 1);
+    let total = 0;
+    for (let t = 0, k = 0; t < tiles; t++) {
+      if (k < idx.length && idx[k] === t) {
+        total += job.q[k + 1] - job.q[k];
+        k++;
+      } else total += oldQ[t + 1] - oldQ[t];
+    }
+    const out = quadArrays(total);
+    const from: QuadArrays | null = old
+      ? {
+          quads: oldQ[tiles],
+          pos: old.getAttribute("position").array as Float32Array,
+          col: old.getAttribute("color").array as Uint8Array,
+          mask: old.getAttribute("decalMask").array as Uint8Array,
+          glow: old.getAttribute("landGlow").array as Uint8Array,
+          wet: old.getAttribute("landWet").array as Uint8Array,
+        }
+      : null;
+    let at = 0;
+    for (let t = 0, k = 0; t < tiles; t++) {
+      tileQ[t] = at;
+      if (k < idx.length && idx[k] === t) {
+        const count = job.q[k + 1] - job.q[k];
+        copyQuads(out, at, fresh, job.q[k], count);
+        at += count;
+        k++;
+      } else {
+        const count = oldQ[t + 1] - oldQ[t];
+        if (count && from) copyQuads(out, at, from, oldQ[t], count);
+        at += count;
+      }
+    }
+    tileQ[tiles] = at;
+    return { geometry: quadsGeometry(out), tileQ };
+  }
+
+  // Every chunk of the group shown, in the same frame.
+  private showGroup(g: FineGroup): void {
+    for (const h of g.done) this.showFine(h);
+    if (g.kind !== "change") return;
+    const r = this.redraw;
+    r.groups++;
+    r.frames = Number.isFinite(g.firstFrame) ? r.frame - g.firstFrame + 1 : 1;
+    r.chunks = g.jobs.length;
+    r.tiles = g.tiles;
+    r.order = g.jobs.map((j) => j.c);
+  }
+
+  // A chunk's new fine mesh takes the place of the old one.
+  private showFine(h: FineDone): void {
+    const c = h.c;
+    const sub = h.sub;
+    const geometry = h.geometry;
     const old = this.fine[c];
     const shown = this.fineShown[c];
     if (old) {
@@ -947,29 +1515,31 @@ export class Terrain {
     }
     // Its water in eighths: drawn after the land, as the water in whole cells is.
     this.dropFineWater(c);
-    // Its tops drawn for the whole chunk at once (terrain-fine.ts fineWaterTops), after its sides.
-    if (job.water) fineWaterTops(FINE_WATER, sub, -this.world.w / 2, -this.world.h / 2);
-    const waterGeometry = job.water ? FINE_WATER.waterGeometry() : null;
-    if (waterGeometry) {
-      const w = new Mesh(waterGeometry, this.fluidMaterial);
+    if (h.water) {
+      const w = new Mesh(h.water, this.fluidMaterial);
       w.matrixAutoUpdate = false;
       w.renderOrder = 2;
       this.fineWater[c] = w;
       this.add(w);
     } else this.fineWater[c] = null;
-    const now = performance.now();
-    this.fineBuiltAt[c] = now;
-    // Changed again while it was built: still stale, since the moment the build began.
-    this.fineStale[c] = job.redo;
-    if (job.redo) this.staleAt[c] = job.at;
+    this.fineBusy[c] = 0;
+    this.fineBuiltAt[c] = this.clock();
     this.fineLevel[c] = sub;
+    this.fineTileQ[c] = h.tileQ;
+    this.fineTileWet[c] = h.tileWet;
+    this.fineTileWQ[c] = h.tileWQ;
+    this.fineWaterTiles[c] = h.waterTiles;
+    this.fineCorners[c] = h.corners;
+    this.fineWith[c] = h.with ? 1 : 0;
+    this.fineSig[c] = h.sig;
     this.spare(c);
-    if (geometry) this.fineTops[c] = job.tops;
-    else this.spareTops = job.tops.h;
+    if (geometry) this.fineTops[c] = h.tops;
+    else this.spareTops = h.tops.h;
     if (!geometry) {
       this.fine[c] = null;
       if (shown) {
         this.fineShown[c] = 0;
+        if (this.hiddenLand.delete(c)) this.swap(c, "land", this.buildLand(c));
         const land = this.chunks[c].land;
         if (land) land.visible = this.chunkOn[c] === 1;
       }
@@ -1392,6 +1962,7 @@ const CORNERS = [1, 1, 1, 1];
 // along the other diagonal.
 const SQUARE = [0, 1, 2, 0, 2, 3];
 const FLIPPED = [1, 2, 3, 1, 3, 0];
+
 const ONES = [1, 1, 1, 1];
 const FOAMS = [0, 0, 0, 0];
 const WAVES = [0, 0, 0, 0];
@@ -1491,12 +2062,197 @@ export function builtGround(name: string): boolean {
   return built;
 }
 
-// A changed fine chunk is built again at most once in STALE_MS. Among changed chunks, one changed
-// a second earlier counts as STALE_AGE scene units nearer, up to STALE_AGE_MAX seconds.
-const STALE_MS = 1000;
+// A fine chunk whose water flowed is built again at most once in FLOW_STALE_MS (changed land is
+// built at once, in groups: updateFine). Among such chunks, one that flowed a second earlier counts
+// as STALE_AGE scene units nearer, up to STALE_AGE_MAX seconds.
 const FLOW_STALE_MS = 10000;
 const STALE_AGE = 4;
 const STALE_AGE_MAX = 60;
+// How far a changed cell reaches into the fine land, in cells: a column reads the cells up to three
+// away (its slopes, the glow of lava and houses), and each of those reads the cells up to two away
+// (their soft height, their soft colour). The checks (scripts/land-lag-test.ts) build changed
+// islands in part and whole and compare the meshes byte for byte: lava's glow alone needs 4, and
+// with 3 they differ.
+export const FINE_REACH = 5;
+// The cells read round the tiles built again: the three a column reads, and one to spare.
+const FINE_READ = 4;
+// A frame's share for changed land: up to CHANGE_BUDGET_MS while the credit lasts. The credit holds
+// CREDIT_MAX_MS past FINE_BUDGET_MS (about a second of frames at the larger share) and refills by
+// CREDIT_REFILL of the time: a spell's change takes the larger share at once, and Big Bang's ground
+// that keeps changing for minutes comes back to FINE_BUDGET_MS a frame and some 2 ms more on average.
+const CHANGE_BUDGET_MS = 16;
+const CREDIT_MAX_MS = 600;
+const CREDIT_REFILL = 0.1;
+// The longest the first frame of a group spends reading its chunks' cells at once.
+const SNAPSHOT_MS = 6;
+const SEEN_BOX = new Box3(new Vector3(), new Vector3());
+
+// A fine chunk being built (Terrain.updateFine): whole, or only the tiles `idx` of `all` (the tiles
+// that reach `part`, the cells changed). q: where each tile's quads start in FINE_OUT, and one past
+// the last; wet: whether each tile drew water.
+interface FineJob {
+  c: number;
+  sub: number;
+  all: [number, number, number, number][];
+  idx: number[] | null;
+  part: number[] | null;
+  tiles: [number, number, number, number][];
+  next: number;
+  begun: boolean;
+  cells: FineCells | null;
+  q: Int32Array;
+  wet: Uint8Array;
+  wq: Int32Array;
+  tops: FineTops | null;
+  water: boolean;
+  sig: string;
+}
+// A fine chunk built, waiting for the rest of its group. water: its water in eighths, or "keep" the
+// one it has (built in part away from water).
+interface FineDone {
+  c: number;
+  sub: number;
+  geometry: BufferGeometry | null;
+  water: BufferGeometry | null;
+  tops: FineTops;
+  tileQ: Int32Array;
+  tileWet: Uint8Array;
+  tileWQ: Int32Array;
+  waterTiles: (WaterTile | null)[];
+  corners: Float32Array | null;
+  with: boolean;
+  sig: string;
+}
+// Chunks shown together: the land a change reached ("change"), a chunk not built yet ("new"), or
+// water that flowed ("flow"). firstFrame: the frame the change was first drawn in.
+interface FineGroup {
+  kind: "change" | "new" | "flow";
+  jobs: FineJob[];
+  at: number;
+  done: FineDone[];
+  tiles: number;
+  budget: number;
+  firstFrame: number;
+}
+
+// A fine mesh's quads in the order they were written, as its geometry holds them: four corners a
+// quad (position, colour), and per corner the spell drawing mask, the night glow and the wet flag.
+interface QuadArrays {
+  quads: number;
+  pos: Float32Array;
+  col: Uint8Array;
+  mask: Uint8Array;
+  glow: Uint8Array;
+  wet: Uint8Array;
+}
+
+function quadArrays(quads: number): QuadArrays {
+  return {
+    quads,
+    pos: new Float32Array(quads * 12),
+    col: new Uint8Array(quads * 12),
+    mask: new Uint8Array(quads * 4),
+    glow: new Uint8Array(quads * 4),
+    wet: new Uint8Array(quads * 4),
+  };
+}
+
+// The water in eighths' vertices (Writer.waterGeometry): six a quad, not indexed.
+interface VertexArrays {
+  n: number;
+  pos: Float32Array;
+  col: Float32Array;
+  mask: Float32Array;
+  wave: Float32Array;
+  extra: Float32Array;
+}
+
+function vertexArrays(n: number): VertexArrays {
+  return {
+    n,
+    pos: new Float32Array(n * 3),
+    col: new Float32Array(n * 4),
+    mask: new Float32Array(n),
+    wave: new Float32Array(n),
+    extra: new Float32Array(n * 2),
+  };
+}
+
+function copyVertices(to: VertexArrays, at: number, from: VertexArrays, start: number, count: number): void {
+  to.pos.set(from.pos.subarray(start * 3, (start + count) * 3), at * 3);
+  to.col.set(from.col.subarray(start * 4, (start + count) * 4), at * 4);
+  to.mask.set(from.mask.subarray(start, start + count), at);
+  to.wave.set(from.wave.subarray(start, start + count), at);
+  to.extra.set(from.extra.subarray(start * 2, (start + count) * 2), at * 2);
+}
+
+function copyQuads(to: QuadArrays, at: number, from: QuadArrays, start: number, count: number): void {
+  to.pos.set(from.pos.subarray(start * 12, (start + count) * 12), at * 12);
+  to.col.set(from.col.subarray(start * 12, (start + count) * 12), at * 12);
+  to.mask.set(from.mask.subarray(start * 4, (start + count) * 4), at * 4);
+  to.glow.set(from.glow.subarray(start * 4, (start + count) * 4), at * 4);
+  to.wet.set(from.wet.subarray(start * 4, (start + count) * 4), at * 4);
+}
+
+// The fine land's geometry from its quads: each face's way, from its winding (outward, as three's
+// front side), and the index buffer holding them in the order FACE_ORDER, so a pass draws only the
+// ways that can show (drawFacing). The planes: the lowest east and south wall, the highest west and
+// north one, the highest bottom.
+function quadsGeometry(a: QuadArrays): BufferGeometry | null {
+  const quads = a.quads;
+  if (quads === 0) return null;
+  const way = new Uint8Array(quads);
+  const counts = [0, 0, 0, 0, 0, 0];
+  const planes = { e: Infinity, s: Infinity, w: -Infinity, n: -Infinity, b: -Infinity };
+  const p = a.pos;
+  for (let q = 0; q < quads; q++) {
+    const o = q * 12;
+    const ux = p[o + 3] - p[o];
+    const uy = p[o + 4] - p[o + 1];
+    const uz = p[o + 5] - p[o + 2];
+    const vx = p[o + 6] - p[o];
+    const vy = p[o + 7] - p[o + 1];
+    const vz = p[o + 8] - p[o + 2];
+    const nx = uy * vz - uz * vy;
+    const ny = uz * vx - ux * vz;
+    const nz = ux * vy - uy * vx;
+    let k = FACE_TOP;
+    if (Math.abs(nx) > Math.abs(ny) && Math.abs(nx) >= Math.abs(nz)) {
+      k = nx > 0 ? FACE_EAST : FACE_WEST;
+      if (nx > 0) planes.e = Math.min(planes.e, p[o]);
+      else planes.w = Math.max(planes.w, p[o]);
+    } else if (Math.abs(nz) > Math.abs(ny)) {
+      k = nz > 0 ? FACE_SOUTH : FACE_NORTH;
+      if (nz > 0) planes.s = Math.min(planes.s, p[o + 2]);
+      else planes.n = Math.max(planes.n, p[o + 2]);
+    } else if (ny < 0) {
+      k = FACE_BOTTOM;
+      planes.b = Math.max(planes.b, p[o + 1]);
+    }
+    way[q] = k;
+    counts[k]++;
+  }
+  const first = [0, 0, 0, 0, 0, 0];
+  for (let k = 1; k < 6; k++) first[k] = first[k - 1] + counts[k - 1];
+  const next = [...first];
+  const index = new Uint32Array(quads * 6);
+  for (let q = 0; q < quads; q++) {
+    const v = q * 4;
+    index.set([v, v + 1, v + 2, v, v + 2, v + 3], next[way[q]]++ * 6);
+  }
+  const g = new BufferGeometry();
+  g.setAttribute("position", new BufferAttribute(a.pos, 3));
+  g.setAttribute("color", new BufferAttribute(a.col, 3, true));
+  g.setAttribute("decalMask", new BufferAttribute(a.mask, 1, true));
+  // The night glow of the land round lava and houses (terrain-fine.ts, warmlight).
+  g.setAttribute("landGlow", new BufferAttribute(a.glow, 1, true));
+  // A water bed under the water (terrain-fine.ts WET): lit as the water lights it, not by the sun.
+  g.setAttribute("landWet", new BufferAttribute(a.wet, 1, true));
+  g.setIndex(new BufferAttribute(index, 1));
+  g.computeBoundingSphere();
+  g.userData.faces = { first, counts, planes };
+  return g;
+}
 // The tallest step between two drawn columns that feet glide over (footAt), scene units.
 const FOOT_JOIN = 0.6;
 // How far a waterfall hangs in front of the island's cut side, in cells.
@@ -1780,52 +2536,38 @@ export class Writer {
   // drawn finely now, and its vertices were most of the view's memory.
   quadGeometry(): BufferGeometry | null {
     if (this.n === 0) return null;
+    return quadsGeometry(this.quadArrays());
+  }
+
+  // Quads written so far (each six vertices).
+  get quads(): number {
+    return this.n / 6;
+  }
+
+  // Vertices written so far.
+  get vertices(): number {
+    return this.n;
+  }
+
+  // What was written, as views (not copies) of the writer's arrays.
+  vertexArrays(): VertexArrays {
+    const n = this.n;
+    return {
+      n,
+      pos: this.pos.subarray(0, n * 3),
+      col: this.col.subarray(0, n * 4),
+      mask: this.mask.subarray(0, n),
+      wave: this.wave.subarray(0, n),
+      extra: this.extra.subarray(0, n * 2),
+    };
+  }
+
+  // The quads written, in order, as the fine land's geometry holds them (quadsGeometry).
+  quadArrays(): QuadArrays {
     const quads = this.n / 6;
-    const pos = new Float32Array(quads * 12);
-    const col = new Uint8Array(quads * 12);
-    const mask = new Uint8Array(quads * 4);
-    const glow = new Uint8Array(quads * 4);
-    const wet = new Uint8Array(quads * 4);
-    const index = new Uint32Array(quads * 6);
+    const out = quadArrays(quads);
+    const { pos, col, mask, glow, wet } = out;
     const byte = (v: number) => Math.max(0, Math.min(255, Math.round(v * 255)));
-    // Each face's way, from its winding (outward, as three's front side): the index buffer holds
-    // them in the order FACE_ORDER, so a pass draws only the ways that can show (terrain.ts
-    // drawFacing). The planes: the lowest east and south wall, the highest west and north one, the
-    // highest bottom.
-    const way = new Uint8Array(quads);
-    const counts = [0, 0, 0, 0, 0, 0];
-    const planes = { e: Infinity, s: Infinity, w: -Infinity, n: -Infinity, b: -Infinity };
-    for (let q = 0; q < quads; q++) {
-      const a = q * 18;
-      const p = this.pos;
-      const ux = p[a + 3] - p[a];
-      const uy = p[a + 4] - p[a + 1];
-      const uz = p[a + 5] - p[a + 2];
-      const vx = p[a + 6] - p[a];
-      const vy = p[a + 7] - p[a + 1];
-      const vz = p[a + 8] - p[a + 2];
-      const nx = uy * vz - uz * vy;
-      const ny = uz * vx - ux * vz;
-      const nz = ux * vy - uy * vx;
-      let k = FACE_TOP;
-      if (Math.abs(nx) > Math.abs(ny) && Math.abs(nx) >= Math.abs(nz)) {
-        k = nx > 0 ? FACE_EAST : FACE_WEST;
-        if (nx > 0) planes.e = Math.min(planes.e, p[a]);
-        else planes.w = Math.max(planes.w, p[a]);
-      } else if (Math.abs(nz) > Math.abs(ny)) {
-        k = nz > 0 ? FACE_SOUTH : FACE_NORTH;
-        if (nz > 0) planes.s = Math.min(planes.s, p[a + 2]);
-        else planes.n = Math.max(planes.n, p[a + 2]);
-      } else if (ny < 0) {
-        k = FACE_BOTTOM;
-        planes.b = Math.max(planes.b, p[a + 1]);
-      }
-      way[q] = k;
-      counts[k]++;
-    }
-    const first = [0, 0, 0, 0, 0, 0];
-    for (let k = 1; k < 6; k++) first[k] = first[k - 1] + counts[k - 1];
-    const next = [...first];
     for (let q = 0; q < quads; q++) {
       for (let k = 0; k < 4; k++) {
         // a, b, c from the first three vertices, d from the sixth.
@@ -1841,21 +2583,8 @@ export class Writer {
         glow[to] = byte(this.extra[from * 2]);
         wet[to] = byte(this.extra[from * 2 + 1]);
       }
-      const v = q * 4;
-      index.set([v, v + 1, v + 2, v, v + 2, v + 3], next[way[q]]++ * 6);
     }
-    const g = new BufferGeometry();
-    g.setAttribute("position", new BufferAttribute(pos, 3));
-    g.setAttribute("color", new BufferAttribute(col, 3, true));
-    g.setAttribute("decalMask", new BufferAttribute(mask, 1, true));
-    // The night glow of the land round lava and houses (terrain-fine.ts, warmlight).
-    g.setAttribute("landGlow", new BufferAttribute(glow, 1, true));
-    // A water bed under the water (terrain-fine.ts WET): lit as the water lights it, not by the sun.
-    g.setAttribute("landWet", new BufferAttribute(wet, 1, true));
-    g.setIndex(new BufferAttribute(index, 1));
-    g.computeBoundingSphere();
-    g.userData.faces = { first, counts, planes };
-    return g;
+    return out;
   }
 
   geometry(colorSize: 3 | 4, waves = false): BufferGeometry | null {

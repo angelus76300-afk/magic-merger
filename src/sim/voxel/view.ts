@@ -483,6 +483,10 @@ export class VoxelView {
     // How big a land cube is on the screen, for the fine land's level (terrain.ts wantLevel).
     const lens = this.orbit.camera;
     this.terrain.lod.perUnit = (this.cssH * this.pixelRatio) / (2 * Math.tan((lens.fov * Math.PI) / 360));
+    // What the camera sees: changed land in view is drawn first (terrain.ts updateFine).
+    lens.updateMatrixWorld();
+    this.landMatrix.multiplyMatrices(lens.projectionMatrix, lens.matrixWorldInverse);
+    this.terrain.frustum = this.landFrustum.setFromProjectionMatrix(this.landMatrix);
     this.terrain.rebuild(this.firstBuild);
     this.firstBuild = false;
     // In the eye view the land past the mist is not drawn (fog.ts EYE_DRAW).
@@ -891,6 +895,8 @@ export class VoxelView {
   private sunFrustum = new Frustum();
   private cullSphere = new Sphere();
   private cullMatrix = new Matrix4();
+  private landMatrix = new Matrix4();
+  private landFrustum = new Frustum();
   private cullDown = new Vector3();
   private cullAt = new Vector3();
   private cullAt2 = new Vector3();
