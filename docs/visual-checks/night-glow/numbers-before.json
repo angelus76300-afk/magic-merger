@@ -1,0 +1,96 @@
+[
+  {
+    "camera": "village",
+    "size": "832x1000",
+    "tag": "before",
+    "bloom": 1,
+    "trisOn": 2774508,
+    "trisOff": 1392786,
+    "mask": 1381718,
+    "extra": "99.2%",
+    "calls": [153, 79],
+    "msOn": 653,
+    "msOff": 553,
+    "probe": {
+      "deepest": 5.5,
+      "empty": {
+        "open": 0,
+        "wall": 0,
+        "buried": 0,
+        "hill": 0
+      },
+      "seen": {
+        "open": 255,
+        "wall": 0,
+        "buried": 0,
+        "hill": 0
+      },
+      "through": {
+        "open": 255,
+        "wall": 255,
+        "buried": 255,
+        "hill": 247
+      }
+    }
+  },
+  {
+    "camera": "mid",
+    "size": "832x1000",
+    "tag": "before",
+    "bloom": 1,
+    "trisOn": 2416216,
+    "trisOff": 1213206,
+    "mask": 1202574,
+    "extra": "99.2%",
+    "calls": [169, 86],
+    "msOn": 630,
+    "msOff": 440
+  },
+  {
+    "camera": "village",
+    "size": "344x882",
+    "tag": "before",
+    "bloom": 1,
+    "trisOn": 2437432,
+    "trisOff": 1224248,
+    "mask": 1213180,
+    "extra": "99.1%",
+    "calls": [135, 70],
+    "msOn": 415,
+    "msOff": 282,
+    "probe": {
+      "deepest": 1.25,
+      "empty": {
+        "open": 0,
+        "wall": 0,
+        "buried": 0,
+        "hill": 0
+      },
+      "seen": {
+        "open": 255,
+        "wall": 0,
+        "buried": 0,
+        "hill": 0
+      },
+      "through": {
+        "open": 255,
+        "wall": 255,
+        "buried": 255,
+        "hill": 247
+      }
+    }
+  },
+  {
+    "camera": "mid",
+    "size": "344x882",
+    "tag": "before",
+    "bloom": 1,
+    "trisOn": 1904352,
+    "trisOff": 957706,
+    "mask": 946642,
+    "extra": "98.8%",
+    "calls": [153, 78],
+    "msOn": 347,
+    "msOff": 223
+  }
+]
