@@ -468,7 +468,7 @@ export function buildFineTile(
   ty1: number,
   tops: FineTops | null = null,
   water: Writer | null = null,
-): void {
+): boolean {
   const steps = GRAPHICS.steps;
   const blend = GRAPHICS.blend;
   const grain = GRAPHICS.grain;
@@ -815,8 +815,9 @@ export function buildFineTile(
   out.e1 = 0;
 
   // The water in eighths (16 November) takes the place of the line of foam on the land.
-  if (water) fineWater(f, water, sub, sx0, sy0, SW, SH, ox, oz);
-  else if (GRAPHICS.foam) foam(f, out, sub, sx0, sy0, SW, SH, ox, oz);
+  if (water) return fineWater(f, water, sub, sx0, sy0, SW, SH, ox, oz);
+  if (GRAPHICS.foam) foam(f, out, sub, sx0, sy0, SW, SH, ox, oz);
+  return false;
 }
 
 // The land shader's flag (landWet) for a face lit as its slope is: half way to a bed's (1).
@@ -968,7 +969,7 @@ function isWater(f: FineCells, c: number): boolean {
   return f.inside[c] === 1 && f.wet[c] === 1 && f.water[c] > -1e8 && f.lava[c] === 0;
 }
 
-function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: number, SW: number, SH: number, ox: number, oz: number): void {
+function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: number, SW: number, SH: number, ox: number, oz: number): boolean {
   const Q = 1 / sub;
   const n = SW * SH;
   if (WK.length < n) {
@@ -1000,7 +1001,7 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
       CORNER[k + 2] = cornerLevel(f, gx, gy + 1, own);
       CORNER[k + 3] = cornerLevel(f, gx + 1, gy + 1, own);
     }
-  if (!any) return;
+  if (!any) return false;
   const levelAt = (k: number, u: number, v: number) =>
     CORNER[k] * (1 - u) * (1 - v) + CORNER[k + 1] * u * (1 - v) + CORNER[k + 2] * (1 - u) * v + CORNER[k + 3] * u * v;
   // The level over each column, NaN where no water covers it.
@@ -1054,6 +1055,7 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
     }
   // The tops are drawn for the whole chunk at once when its last tile is built (fineWaterTops): each
   // column's level, key, foam and colour into the chunk's own arrays, and its cells' corners.
+  let own = false;
   for (let j = B; j < SH - B; j++)
     for (let i = B; i < SW - B; i++) {
       const s = j * SW + i;
@@ -1061,6 +1063,7 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
       if (at < 0 || at >= CW.n || sx0 + i < CW.x0 || sx0 + i >= CW.x0 + CW.w) continue;
       CW.side[at] = 0;
       if (Number.isNaN(WL[s])) continue;
+      own = true;
       CW.level[at] = WL[s];
       CW.key[at] = WK[s];
       CW.foam[at] = FO[s];
@@ -1116,6 +1119,7 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
       }
     }
   out.e0 = 0;
+  return own;
 }
 
 // The water's tops of the chunk being built, column by column (NaN level: no water), with each
@@ -1158,6 +1162,68 @@ export function beginFineWater(f: FineCells, sub: number): void {
   CW.level.fill(NaN, 0, CW.n);
   CW.side.fill(0, 0, CW.n);
   CW.corner.fill(NaN);
+}
+
+// The water's tops a tile wrote for its own columns (level, key, foam, colour, sides), kept with its
+// chunk (17 November): a chunk built again in part draws its water's tops whole without building
+// the tiles it keeps. Taken after the tile is built, put back after beginFineWater.
+export interface WaterTile {
+  i0: number;
+  j0: number;
+  w: number;
+  h: number;
+  level: Float32Array;
+  key: Float64Array;
+  foam: Uint8Array;
+  color: Uint32Array;
+  side: Uint8Array;
+}
+
+export function takeWaterTile(tx0: number, ty0: number, tx1: number, ty1: number, sub: number): WaterTile {
+  const i0 = tx0 * sub - CW.x0;
+  const j0 = ty0 * sub - CW.y0;
+  const w = (tx1 - tx0) * sub;
+  const h = (ty1 - ty0) * sub;
+  const t: WaterTile = {
+    i0,
+    j0,
+    w,
+    h,
+    level: new Float32Array(w * h),
+    key: new Float64Array(w * h),
+    foam: new Uint8Array(w * h),
+    color: new Uint32Array(w * h),
+    side: new Uint8Array(w * h),
+  };
+  for (let j = 0; j < h; j++) {
+    const a = (j0 + j) * CW.w + i0;
+    t.level.set(CW.level.subarray(a, a + w), j * w);
+    t.key.set(CW.key.subarray(a, a + w), j * w);
+    t.foam.set(CW.foam.subarray(a, a + w), j * w);
+    t.color.set(CW.color.subarray(a, a + w), j * w);
+    t.side.set(CW.side.subarray(a, a + w), j * w);
+  }
+  return t;
+}
+
+export function putWaterTile(t: WaterTile): void {
+  for (let j = 0; j < t.h; j++) {
+    const a = (t.j0 + j) * CW.w + t.i0;
+    CW.level.set(t.level.subarray(j * t.w, (j + 1) * t.w), a);
+    CW.key.set(t.key.subarray(j * t.w, (j + 1) * t.w), a);
+    CW.foam.set(t.foam.subarray(j * t.w, (j + 1) * t.w), a);
+    CW.color.set(t.color.subarray(j * t.w, (j + 1) * t.w), a);
+    CW.side.set(t.side.subarray(j * t.w, (j + 1) * t.w), a);
+  }
+}
+
+// The cells' corner levels of the chunk being built, to keep, and to put back.
+export function takeWaterCorners(): Float32Array {
+  return CW.corner.slice(0, CW.cells * CW.cellRows * 4);
+}
+
+export function putWaterCorners(a: Float32Array): void {
+  CW.corner.set(a);
 }
 
 // The water's tops of the whole chunk, after its last tile: merged into rectangles where the surface
