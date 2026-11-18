@@ -111,21 +111,25 @@ float wlHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5
       wlFoam *= mix(0.45, 1.0, 0.5 + 0.5 * sin(wlTime * 1.6 + wlH * 6.2832));
       vec3 wlV = normalize(cameraPosition - vWlPos);
       vec2 p = wlCube * 0.125;
+      // The ripples tilt the surface by 5 degrees at most (10 before 18 November: wide glints).
       vec3 wlN = normalize(vec3(
-        0.07 * sin(p.x * 2.3 + p.y * 1.1 + wlTime * 1.2) + 0.05 * sin(p.y * 3.7 - p.x * 1.3 - wlTime * 0.9 + wlH * 2.0),
+        0.035 * sin(p.x * 2.3 + p.y * 1.1 + wlTime * 1.2) + 0.025 * sin(p.y * 3.7 - p.x * 1.3 - wlTime * 0.9 + wlH * 2.0),
         1.0,
-        0.07 * sin(p.y * 2.1 - p.x * 0.9 + wlTime * 1.0) + 0.05 * sin(p.x * 3.3 + p.y * 1.7 + wlTime * 1.1 + wlH * 2.0)));
+        0.035 * sin(p.y * 2.1 - p.x * 0.9 + wlTime * 1.0) + 0.025 * sin(p.x * 3.3 + p.y * 1.7 + wlTime * 1.1 + wlH * 2.0)));
       // Fresnel: the sky at a low angle, the depth looking down; from the still surface mostly, so
       // the open water does not turn to cloud.
       float wlNV = clamp(mix(wlV.y, dot(wlN, wlV), 0.3), 0.0, 1.0);
       float wlF = 0.85 * pow(1.0 - wlNV, 3.0);
       outgoingLight = mix(outgoingLight, wlSky * diffuse, wlF);
       wlAlpha = mix(wlAlpha * mix(0.85, 1.0, 1.0 - wlNV), 1.0, wlF);
-      // The sun's glint and the moon's, on the ripples, moving with the camera.
-      float wlSpec = pow(max(dot(wlN, normalize(wlSunDir + wlV)), 0.0), 260.0) * wlSun;
-      float wlMoonSpec = pow(max(dot(wlN, normalize(wlMoonDir + wlV)), 0.0), 320.0) * wlMoon;
-      outgoingLight += wlSpec * wlSunCol * 1.6 + wlMoonSpec * vec3(0.7, 0.82, 1.0);
-      wlAlpha = max(wlAlpha, min(1.0, (wlSpec + wlMoonSpec) * 1.5));
+      // The sun's glint and the moon's, on the ripples, moving with the camera: one eighth in ten
+      // sparkle at a time, changing twice a second, soft and small (the owner, 18 November: every
+      // eighth lit in white blotches that looked like noise).
+      float wlSparkle = step(0.9, wlHash(wlCube + floor(wlTime * 2.0) * 7.31));
+      float wlSpec = pow(max(dot(wlN, normalize(wlSunDir + wlV)), 0.0), 600.0) * wlSun * wlSparkle;
+      float wlMoonSpec = pow(max(dot(wlN, normalize(wlMoonDir + wlV)), 0.0), 320.0) * wlMoon * wlSparkle;
+      outgoingLight += wlSpec * wlSunCol * 0.6 + wlMoonSpec * vec3(0.7, 0.82, 1.0);
+      wlAlpha = max(wlAlpha, min(wlAlpha + 0.3, (wlSpec + wlMoonSpec) * 1.5));
       // Lava and lit windows near the water, reflected faintly at night.
       if (wlNight > 0.01) {
         vec3 wlR = reflect(-wlV, wlN);
@@ -153,7 +157,7 @@ float wlHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5
 #include <opaque_fragment>`,
         );
     };
-    material.customProgramCacheKey = () => `water-light-1:${beforeKey()}`;
+    material.customProgramCacheKey = () => `water-light-2:${beforeKey()}`;
     return material;
   }
 }
