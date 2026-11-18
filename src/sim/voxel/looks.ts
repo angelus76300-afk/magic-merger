@@ -12,6 +12,7 @@ import {
   Mesh,
   MeshBasicMaterial,
   NoToneMapping,
+  OneFactor,
   OrthographicCamera,
   PerspectiveCamera,
   PlaneGeometry,
@@ -22,6 +23,7 @@ import {
   Vector2,
   Vector3,
   WebGLRenderTarget,
+  ZeroFactor,
   type Material,
   type Object3D,
   type Texture,
@@ -224,6 +226,16 @@ export class Looks {
     const sun = this.sun;
     Object.defineProperty(this.uniforms.sunMap, "value", { get: () => sun.shadow.map?.texture ?? null });
     this.uniforms.sunMatrix.value = sun.shadow.matrix;
+  }
+
+  // Drawn sharp through the depth of field (18 November, the owner on the unfolded Fold: rain fell
+  // as large blurry bars): rain and snow. Through the passes, such a material leaves an alpha of 0
+  // in the frame's texture, and the last pass keeps those pixels as drawn, out of the depth of
+  // field and the edge smoothing. Straight to the screen it keeps the alpha as it was.
+  private sharps: Material[] = [];
+  sharp<T extends Material>(material: T): T {
+    this.sharps.push(material);
+    return material;
   }
 
   // Adds the sun's light and shade to a material that receives it (the land,
@@ -527,6 +539,7 @@ if (nightGlow > 0.001 && vLandGlow > 0.001) {
       this.fogRaw.copy(fog.color);
       fog.color.copy(gradeColor(this.fogRaw, this.fogGraded));
     }
+    for (const m of this.sharps) m.blendDstAlpha = posting ? ZeroFactor : OneFactor;
     if (!posting) {
       renderer.render(scene, camera);
       if (grading) fog.color.copy(this.fogRaw);
@@ -739,8 +752,13 @@ float viewDepth(vec2 uv) {
 }
 ${GRADE_GLSL}
 void main() {
+  // A streak of rain is a line about one pixel wide (alpha 0 there, Looks.sharp): the edge
+  // smoothing and the depth of field would spread it into a bar, so it and the pixels on either
+  // side of it are kept as drawn.
+  vec4 raw = texture2D(tScene, vUv);
+  float rain = 1.0 - step(0.002, min(raw.a, min(texture2D(tScene, vUv + vec2(texel.x, 0.0)).a, texture2D(tScene, vUv - vec2(texel.x, 0.0)).a)));
 #ifdef FXAA
-  vec3 c = fxaa(vUv);
+  vec3 c = rain > 0.5 ? raw.rgb : fxaa(vUv);
 #else
   vec3 c = texture2D(tScene, vUv).rgb;
 #endif
@@ -753,6 +771,7 @@ void main() {
   // close frames: most of the frame was blurred); the blur grows past it.
   float band = smoothstep(SHARP_BAND, SHARP_BAND + 0.12, abs(vUv.y - 0.5));
   float k = smoothstep(sharp, sharp * 3.0 + 0.12, rel) * band * tilt;
+  k *= 1.0 - rain;
   c = mix(c, texture2D(tBlur, vUv).rgb, k);
 #endif
 #ifdef BLOOM

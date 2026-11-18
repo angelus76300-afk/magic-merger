@@ -3,22 +3,27 @@ import {
   BufferAttribute,
   BufferGeometry,
   Color,
+  CustomBlending,
   Group,
+  OneFactor,
+  OneMinusSrcAlphaFactor,
   Points,
   ShaderMaterial,
   Sprite,
   SpriteMaterial,
+  SrcAlphaFactor,
   type CanvasTexture,
   type PerspectiveCamera,
   type Scene,
   Vector3,
+  ZeroFactor,
 } from "three";
 import { DAY_LENGTH, MOON_DAYS, dayOf } from "../daylight";
 import { LOOKS, biomeAt, type Weather } from "../land";
 import { fallingAt } from "../weather";
 import { seeded } from "../noise";
 import type { World } from "../world";
-import { DROP_SHADER, dropShare } from "./drops";
+import { DROP_SHADER, RAIN_WIDTH, dropShare } from "./drops";
 import { GRAPHICS } from "./graphics";
 
 // The sky of 4.4: a sun and a moon that cross it with the day, stars at
@@ -95,7 +100,7 @@ export class Sky {
   private moon: Sprite;
   private stars: Points;
   private drops: Points;
-  private dropMaterial: ShaderMaterial;
+  readonly dropMaterial: ShaderMaterial;
   private starMaterial: ShaderMaterial;
   weather: WeatherNow = { kind: "clear", amount: 0 };
   private lastTime = 0;
@@ -159,16 +164,27 @@ export class Sky {
         grain: { value: 1 },
       },
       vertexShader: DROP_SHADER,
-      fragmentShader: `uniform float snow; uniform vec3 tint; varying float vShow;
+      // A raindrop is a streak RAIN_WIDTH device pixels across at any size (drops.ts rainCover),
+      // so it reads as rain, not as a bar; a snowflake stays a round flake.
+      fragmentShader: `uniform float snow; uniform vec3 tint; varying float vShow; varying float vSize;
         void main() {
           if (vShow < 0.5) discard;
           vec2 d = gl_PointCoord - 0.5;
-          float a = snow > 0.5 ? 1.0 - smoothstep(0.15, 0.25, length(d)) : (1.0 - smoothstep(0.04, 0.1, abs(d.x))) * (1.0 - smoothstep(0.25, 0.5, abs(d.y)));
+          float across = clamp(${(RAIN_WIDTH / 2 + 0.5).toFixed(3)} - abs(d.x) * vSize, 0.0, ${Math.min(1, RAIN_WIDTH).toFixed(3)});
+          float a = snow > 0.5 ? 1.0 - smoothstep(0.15, 0.25, length(d)) : across * (1.0 - smoothstep(0.25, 0.5, abs(d.y)));
           if (a < 0.02) discard;
-          gl_FragColor = vec4(tint, a * mix(0.6, 0.9, snow));
+          // A thin streak a little stronger than the wide one was, so the rain still shows.
+          gl_FragColor = vec4(tint, a * mix(0.75, 0.9, snow));
         }`,
       transparent: true,
       depthWrite: false,
+      // The colour blends as usual and the alpha below is kept; with the depth of field on, Looks
+      // (looks.ts sharp) makes a drop leave an alpha of 0 there, which keeps that pixel sharp.
+      blending: CustomBlending,
+      blendSrc: SrcAlphaFactor,
+      blendDst: OneMinusSrcAlphaFactor,
+      blendSrcAlpha: ZeroFactor,
+      blendDstAlpha: OneFactor,
     });
     this.drops = new Points(dropGeometry, this.dropMaterial);
     this.drops.frustumCulled = false;
