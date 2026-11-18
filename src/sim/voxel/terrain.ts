@@ -18,6 +18,8 @@ import {
   joins,
   makeFineCells,
   putWaterCorners,
+  riverNarrow,
+  NARROW_SEEN,
   putWaterTile,
   takeWaterCorners,
   takeWaterTile,
@@ -132,26 +134,63 @@ export class Terrain {
   }
   // The water's colour by depth, a texel a cell, read by the water's shader (water-light.ts) and
   // filtered between cells, so depth shades smoothly under the water in eighths: rgb the shallow
-  // colour of the cell's water, alpha its depth over WATER_MAP_DEPTH (height units). Dry cells take
-  // the colour of their land's water and no depth, so the shallows fade toward the shore.
+  // colour of the cell's water (mixed toward a pale turquoise, less so on a narrow river), alpha its
+  // depth over WATER_MAP_DEPTH (height units). Dry cells take the colour of their land's water and
+  // no depth, so the shallows fade toward the shore.
+  //
+  // A narrow river (18 November, the owner on the Fold: rivers one or two cells wide read as "pale
+  // translucent blocky bands with hard light borders") is drawn as if at least NARROW_DEPTH deep,
+  // by how narrow it is (waterNarrow): bluer, clearer of the turquoise, nearly opaque, with waves.
+  // The land beside it takes some of that, so its banks stay blue. Wide water is drawn as before.
   readonly waterMap: DataTexture;
   private waterData: Uint8Array<ArrayBuffer>;
   private writeWaterMap(c: number): void {
     const { world } = this;
-    const { x0, y0, x1, y1 } = this.bounds(c);
+    const b = this.bounds(c);
+    // How narrow a cell's water is depends on the cells up to NARROW_SEEN away, one more for a bank.
+    const m = NARROW_SEEN + 1;
+    const x0 = Math.max(0, b.x0 - m);
+    const y0 = Math.max(0, b.y0 - m);
+    const x1 = Math.min(world.w, b.x1 + m);
+    const y1 = Math.min(world.h, b.y1 + m);
     const data = this.waterData;
     for (let y = y0; y < y1; y++)
       for (let x = x0; x < x1; x++) {
         const i = y * world.w + x;
         const water = this.waterAt(i);
         const k = i * 4;
-        data[k] = (water[0] >> 16) & 255;
-        data[k + 1] = (water[0] >> 8) & 255;
-        data[k + 2] = water[0] & 255;
-        const wet = this.wet[i] === 1 && world.fluid[i] === F.WATER;
-        data[k + 3] = wet ? Math.max(1, Math.min(255, Math.round((world.depth[i] / WATER_MAP_DEPTH) * 255))) : 0;
+        const wet = this.waterWet(i);
+        let narrow = wet ? this.waterNarrow(x, y) : 0;
+        if (!wet)
+          for (let d = 0; d < 4; d++) {
+            const nx = x + (d === 0 ? 1 : d === 2 ? -1 : 0);
+            const ny = y + (d === 1 ? 1 : d === 3 ? -1 : 0);
+            if (nx >= 0 && ny >= 0 && nx < world.w && ny < world.h && this.waterWet(ny * world.w + nx))
+              narrow = Math.max(narrow, this.waterNarrow(nx, ny) * NARROW_BANK);
+          }
+        const rgb = mixColor(water[0], SHALLOW_TINT, SHALLOW_MIX * (1 - narrow));
+        data[k] = (rgb >> 16) & 255;
+        data[k + 1] = (rgb >> 8) & 255;
+        data[k + 2] = rgb & 255;
+        const depth = Math.max(wet ? world.depth[i] : 0, narrow * NARROW_DEPTH);
+        data[k + 3] = wet || narrow > 0 ? Math.max(1, Math.min(255, Math.round((depth / WATER_MAP_DEPTH) * 255))) : 0;
       }
     this.waterMap.needsUpdate = true;
+  }
+  private waterWet(i: number): boolean {
+    return this.wet[i] === 1 && this.world.fluid[i] === F.WATER;
+  }
+  // How narrow the water of cell (x, y) is, by the fewest cells of water in a row through it along x
+  // or y (past the island counts as water): 1 for one or two cells, 0 from five (riverNarrow).
+  private waterNarrow(x: number, y: number): number {
+    const { world } = this;
+    const wet = (a: number, b: number) => a < 0 || b < 0 || a >= world.w || b >= world.h || this.waterWet(b * world.w + a);
+    const run = (dx: number, dy: number) => {
+      let n = 1;
+      for (const s of [-1, 1]) for (let k = 1; k <= NARROW_SEEN && wet(x + s * k * dx, y + s * k * dy); k++) n++;
+      return n;
+    };
+    return riverNarrow(Math.min(run(1, 0), run(0, 1)));
   }
 
   // Shows or hides a chunk's meshes: within the eye's reach (chunkOn), fine or in whole cells.
@@ -916,6 +955,8 @@ export class Terrain {
         f.anchored[k] = this.anchoredAt(i) ? 1 : 0;
         f.steep[k] = this.steepAt(i) ? 1 : 0;
         f.wdeep[k] = this.waterAt(i)[1];
+        f.wshallow[k] = this.waterAt(i)[0];
+        f.wnarrow[k] = this.waterWet(i) ? this.waterNarrow(x, y) : 0;
       }
     }
     this.readSoft(f, rx0, ry0, rx1, ry1);
@@ -2690,6 +2731,12 @@ const FLUID_W = new Writer();
 const FINE_WATER = new Writer();
 // The deepest water the water's map tells apart, height units.
 const WATER_MAP_DEPTH = 8;
+// The shallow water's pale turquoise and how much of it the shallows take (water-light.ts used to mix
+// it in the shader); a narrow river drawn as if this deep at the least, its banks a part of that.
+const SHALLOW_TINT = 0x86eadc;
+const SHALLOW_MIX = 0.45;
+const NARROW_DEPTH = 2;
+const NARROW_BANK = 0.7;
 
 // The mean of a list of colours.
 function meanColor(colors: number[]): number {

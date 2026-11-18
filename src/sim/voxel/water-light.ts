@@ -3,8 +3,8 @@ import { Color, Vector3, Vector4, type DataTexture, type Material } from "three"
 // The water's light (16 November, the owner: "even water would need a light shader, I really hope
 // we can continue to improve visual appearance"), in the water's own material, on the water in
 // eighths only (terrain-fine.ts fineWater: its vertices carry `waterFine`, 1 on a top and
-// SIDE_MARK on a side, then the foam). The water in whole cells (the low level, a chunk not built
-// finely yet) has no `waterFine` and is drawn exactly as before.
+// SIDE_MARK on a side, then the foam). The water in whole cells (the low level, a chunk not
+// built finely yet) has no `waterFine` and is drawn exactly as before.
 //
 //   colour   by the real depth under each point (Terrain.waterMap, a texel a cell, filtered
 //            between cells): lighter and clearer in the shallows, darker and less clear deep down
@@ -98,7 +98,9 @@ float wlHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5
     // A top: its colour by the depth under it, from the map, filtered between cells.
     vec4 wlTex = texture2D(wlMap, (vWlPos.xz + wlWorld * 0.5) / wlWorld);
     float wlDepth = wlTex.a * 8.0;
-    vec3 wlShallow = mix(wlTex.rgb, vec3(0.525, 0.918, 0.863), 0.45);
+    // The shallow colour comes mixed toward a pale turquoise, less so on a narrow river, and a narrow
+    // river's depth is at least NARROW_DEPTH (Terrain.writeWaterMap, 18 November).
+    vec3 wlShallow = wlTex.rgb;
     outgoingLight = mix(wlShallow, vColor.rgb, sqrt(clamp(wlDepth / 5.0, 0.0, 1.0))) * diffuse;
     wlAlpha = 0.4 + 0.56 * sqrt(clamp(wlDepth / 4.5, 0.0, 1.0));
     // Each eighth of a cell, for the foam's breaks and the ripples' glints.
@@ -157,7 +159,7 @@ float wlHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5
 #include <opaque_fragment>`,
         );
     };
-    material.customProgramCacheKey = () => `water-light-2:${beforeKey()}`;
+    material.customProgramCacheKey = () => `water-light-3:${beforeKey()}`;
     return material;
   }
 }

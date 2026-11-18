@@ -63,6 +63,10 @@ export interface FineCells {
   steep: Uint8Array;
   // The deep colour of the water over the cell (its region's), for the water in eighths.
   wdeep: Uint32Array;
+  // Its shallow colour, for the short sides of the water in eighths (a river's small falls).
+  wshallow: Uint32Array;
+  // How narrow the cell's water is (riverNarrow), 0 where it is dry.
+  wnarrow: Float32Array;
   // A spell's ground (Big Bang's stardust and the crystal it becomes) and what lies among it:
   // its colour drawn as soft patches (`soft`, the 5 by 5 mean round the cell) where softOn is 1.
   soft: Uint32Array;
@@ -100,6 +104,8 @@ export function makeFineCells(): FineCells {
     anchored: new Uint8Array(0),
     steep: new Uint8Array(0),
     wdeep: new Uint32Array(0),
+    wshallow: new Uint32Array(0),
+    wnarrow: new Float32Array(0),
     soft: new Uint32Array(0),
     softOn: new Uint8Array(0),
   };
@@ -138,6 +144,8 @@ export function sizeFineCells(f: FineCells, x0: number, y0: number, x1: number, 
     f.anchored = new Uint8Array(n);
     f.steep = new Uint8Array(n);
     f.wdeep = new Uint32Array(n);
+    f.wshallow = new Uint32Array(n);
+    f.wnarrow = new Float32Array(n);
     f.soft = new Uint32Array(n);
     f.softOn = new Uint8Array(n);
   }
@@ -935,6 +943,16 @@ function softColor(f: FineCells, px: number, py: number): number {
 // meets land. The colour by depth is the shader's (water-light.ts, from Terrain.waterMap); the
 // vertices carry the deep colour (for the sides), the foam and how much the waves move.
 const FOAM_LEVELS = 3;
+// How narrow water is (18 November, the owner on the Fold: rivers one or two cells wide read as
+// "pale translucent blocky bands with hard light borders", not as water), by the fewest cells of
+// water in a row through a cell, along x or y: 1 for one or two cells, then less, 0 from five.
+// A narrow river has no foam (the bands from its two banks met in the middle), and less as it
+// widens; Terrain.writeWaterMap draws it bluer and less clear by the same measure, so the change is
+// graded, not a hard line where a river opens into a lake.
+export const NARROW_SEEN = 4;
+export function riverNarrow(across: number): number {
+  return across <= 2 ? 1 : across === 3 ? 0.6 : across === 4 ? 0.3 : 0;
+}
 // Water cells whose levels are at most LEVEL_JOIN apart (scene units) share their corners' level.
 const LEVEL_JOIN = 1.2;
 let WK = new Float64Array(0);
@@ -1023,7 +1041,7 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
       WK[s] = flat ? level : -1 - CELL[s];
     }
   // Foam and waves.
-  const reach = Math.min(B, Math.max(1, Math.round((sub * 3) / 8)));
+  const wide = Math.min(B, Math.max(1, Math.round((sub * 3) / 8)));
   const foamOn = GRAPHICS.foam;
   for (let j = B; j < SH - B; j++)
     for (let i = B; i < SW - B; i++) {
@@ -1032,6 +1050,10 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
       if (Number.isNaN(WL[s])) continue;
       const px = (sx0 + i + 0.5) / sub;
       const py = (sy0 + j + 0.5) / sub;
+      // A river one or two cells wide has no foam; wider, a band that grows with it.
+      const narrow = f.wnarrow[CELL[s]];
+      if (narrow >= 1) continue;
+      const reach = narrow > 0 ? Math.max(1, Math.round(wide * (1 - narrow))) : wide;
       let near = Infinity;
       if (foamOn)
         for (let dy = -reach; dy <= reach && near > 1; dy++)
@@ -1098,6 +1120,7 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
       if (Number.isNaN(level)) continue;
       const floor = H[s] * Q;
       const deep = f.wdeep[CELL[s]];
+      const shallow = f.wshallow[CELL[s]];
       for (let d = 0; d < 4; d++) {
         const t = s + DX[d] + DY[d] * SW;
         // Between two columns of water, by the levels of their tops at the edge they share: equal
@@ -1112,7 +1135,8 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
         const Z = (sy0 + j) * Q + oz;
         // Darker and less clear with depth, by height, so the sides of two columns meet in one tone.
         const split = level - WALL_DEEP;
-        if (lo < split) {
+        if (top - lo < 1) waterStep(out, d, X, Z, Q, lo, top, shallow, deep);
+        else if (lo < split) {
           waterSide(out, d, X, Z, Q, lo, split, deep, level);
           waterSide(out, d, X, Z, Q, split, top, deep, level);
         } else waterSide(out, d, X, Z, Q, lo, top, deep, level);
@@ -1340,8 +1364,17 @@ function waterSide(out: Writer, d: number, X: number, Z: number, Q: number, lo: 
   const k = (y: number) => Math.min(1, Math.max(0, (level - y) / WALL_DEEP));
   const cl = mixColor(SIDE_TOP, deep, 0.25 + 0.55 * k(lo));
   const ch = mixColor(SIDE_TOP, deep, 0.25 + 0.55 * k(hi));
-  const al = 0.38 + 0.4 * k(lo);
-  const ah = 0.38 + 0.4 * k(hi);
+  sideQuad(out, d, X, Z, Q, lo, hi, cl, 0.38 + 0.4 * k(lo), ch, 0.38 + 0.4 * k(hi));
+}
+// A side less than a cell tall (a river stepping down, a shallow edge): the water's own blue, a
+// little darker than its top, nearly as clear, so a small fall does not draw a pale outline (it was
+// SIDE_TOP, 0x8fd8e6, before 18 November).
+const STEP_SHADE = 0.86;
+function waterStep(out: Writer, d: number, X: number, Z: number, Q: number, lo: number, hi: number, shallow: number, deep: number): void {
+  const c = scaleColor(mixColor(shallow, deep, 0.45), STEP_SHADE);
+  sideQuad(out, d, X, Z, Q, lo, hi, c, 0.82, c, 0.82);
+}
+function sideQuad(out: Writer, d: number, X: number, Z: number, Q: number, lo: number, hi: number, cl: number, al: number, ch: number, ah: number): void {
   const x0 = X;
   const x1 = X + Q;
   const z0 = Z;
