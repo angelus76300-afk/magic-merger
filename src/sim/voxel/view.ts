@@ -389,6 +389,7 @@ export class VoxelView {
       new Set([this.farRoads, this.markMesh, this.windows, this.flames, ...this.cubeFlames.meshes, this.boltCore, this.decorGlow, this.rainShafts]),
     );
     for (const m of [land, basic, figureMats.lit]) this.looks.receive(m);
+    this.looks.sharp(this.sky.dropMaterial);
     // What blooms at night: what shines by itself, and lava (looks.ts glow mask).
     this.looks.glows(
       [

@@ -39,11 +39,36 @@ export function dropShare(amount: number, dist: number): number {
   return amount * (30 / view) ** 2;
 }
 
+// How big a drop's square is on screen, in device pixels, `depth` scene units from the camera.
+// Capped (18 November, the owner on the unfolded Fold: rain fell as large blurry bars): a raindrop
+// 12 cells away was a square of 107 device pixels at two pixels a CSS pixel, its streak 15 wide.
+export const DROP_MAX = 40;
+export function dropSize(depth: number, pixels: number, snow: number, grain = 1): number {
+  const size = ((16 + (6 - 16) * snow) * pixels * grain * 40) / Math.max(4, depth);
+  return Math.min(size, DROP_MAX * pixels);
+}
+
+// A raindrop is a thin streak whatever its size: this many device pixels across, the same near
+// and far. Its length still grows as it comes close.
+export const RAIN_WIDTH = 1.25;
+// How much of a pixel `off` device pixels from the streak's middle is covered (the fragment shader
+// in sky.ts does the same sum).
+export function rainCover(off: number): number {
+  return Math.max(0, Math.min(1, RAIN_WIDTH / 2 + 0.5 - Math.abs(off), RAIN_WIDTH));
+}
+// The streak's width on screen, in device pixels: the pixels it covers, added up across.
+export function rainWidth(size: number): number {
+  let sum = 0;
+  for (let x = Math.floor(-size / 2); x <= Math.ceil(size / 2); x++) sum += Math.abs(x) <= size / 2 ? rainCover(x) : 0;
+  return sum;
+}
+
 // The same placement for the vertex shader. `position` is the seed, `rank`
 // a random number per drop deciding when it shows.
 export const DROP_SHADER = `uniform float time; uniform vec3 center; uniform float share; uniform float snow; uniform float pixels; uniform float nearest; uniform float grain;
   attribute float rank;
   varying float vShow;
+  varying float vSize;
   float wrapped(float v, float size, float below) { return v - size * floor(v / size + below); }
   void main() {
     vec3 p = position;
@@ -60,6 +85,7 @@ export const DROP_SHADER = `uniform float time; uniform vec3 center; uniform flo
     vec4 mv = modelViewMatrix * vec4(w, 1.0);
     // Not in the eye of the one seen from (eyes.ts): a drop a hand away fills the screen.
     if (-mv.z < nearest) { vShow = 0.0; gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; return; }
-    gl_PointSize = mix(16.0, 6.0, snow) * pixels * grain * 40.0 / max(4.0, -mv.z);
+    gl_PointSize = min(mix(16.0, 6.0, snow) * pixels * grain * 40.0 / max(4.0, -mv.z), ${DROP_MAX.toFixed(1)} * pixels);
+    vSize = gl_PointSize;
     gl_Position = projectionMatrix * mv;
   }`;

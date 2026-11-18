@@ -65,7 +65,7 @@ import { FORMS } from "../shared/forms";
 import { pickExamples, words } from "../worker/programs";
 import { readingChecks } from "./reading-test";
 import { verdict, type LinkedPull } from "../worker/feedback";
-import { DROP_TILE, dropAt, dropShare } from "../src/sim/voxel/drops";
+import { DROP_MAX, DROP_TILE, dropAt, dropShare, dropSize, rainWidth } from "../src/sim/voxel/drops";
 import { cronJobs } from "../worker/cron";
 import { draftBrief } from "../shared/feedback";
 import { programToFetch } from "../shared/sync";
@@ -2520,6 +2520,25 @@ peaksChecks(check);
     "rain shows about as thick on screen close up and far out",
     dropShare(1, 20) === 1 && Math.abs(dropShare(1, 200) - 1 / 9) < 1e-9,
     `${dropShare(1, 20)} ${dropShare(1, 200)}`,
+  );
+  // 18 November, the owner on the unfolded Fold: rain fell as large blurry bars. A drop 12 cells
+  // away was 107 device pixels at two a CSS pixel, its streak 15 wide. Now its square is capped and
+  // the streak stays thin at every distance; a snowflake stays round (its size alone is capped).
+  // The frames: scripts/looks-rain.mjs.
+  const sizes = [4, 8, 12, 30, 60, 120].map((d) => dropSize(d, 2, 0));
+  const widths = sizes.map(rainWidth);
+  check(
+    "a raindrop is a thin streak near and far: no taller than 40 CSS px, 1 to 2 device px wide",
+    sizes.every((s) => s <= DROP_MAX * 2 + 1e-9) &&
+      widths.every((x) => x >= 1 && x <= 2) &&
+      dropSize(12, 2, 0) === DROP_MAX * 2 &&
+      dropSize(120, 2, 0) < DROP_MAX,
+    `sizes ${sizes.map((s) => s.toFixed(1))}, widths ${widths.map((x) => x.toFixed(2))}`,
+  );
+  check(
+    "a snowflake keeps its size from afar, capped close up",
+    dropSize(60, 2, 1) === (6 * 2 * 40) / 60 && dropSize(4, 2, 1) === DROP_MAX * 2,
+    `${dropSize(60, 2, 1)} ${dropSize(4, 2, 1)}`,
   );
 }
 
