@@ -309,6 +309,42 @@ export function waterLightChecks(check: Check): void {
         "wlSunDir" in shader.uniforms,
       `${f.length} characters of fragment shader`,
     );
+    // Glints are rare sparkles, not blotches (18 November, the owner on the Fold: "big bright white
+    // blotches" on lakes on high). The sun's glint as the shader computes it, with its numbers read
+    // from the shader, over a lake of 40 by 40 cells in eighths, the sun reflected straight at the
+    // camera (the worst case), at 20 moments: the share of eighths it makes brighter than half white.
+    // It was 64% (nearly every eighth lit, in cell-wide blobs); scripts/water-glints-frames.mjs
+    // measures the bright share of the water on a real frame.
+    const num = (re: RegExp) => Number(re.exec(f)?.[1] ?? NaN);
+    const tilt = [...f.matchAll(/(0\.\d+) \* sin\(p\./g)].map((m) => Number(m[1]));
+    const power = num(/normalize\(wlSunDir \+ wlV\)\), 0\.0\), ([\d.]+)\)/);
+    const gain = num(/wlSpec \* wlSunCol \* ([\d.]+)/);
+    const sparkle = /wlSpec = [^;]*\* wlSparkle;/.test(f) ? num(/wlSparkle = step\(([\d.]+), wlHash/) : 0;
+    const hash = (x: number, y: number) => {
+      const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+      return s - Math.floor(s);
+    };
+    let lit = 0;
+    let all = 0;
+    for (let t = 0; t < 20; t++) {
+      const time = t * 0.37;
+      for (let cy = 0; cy < 320; cy++)
+        for (let cx = 0; cx < 320; cx++) {
+          const h = hash(cx, cy);
+          const [px, py] = [cx * 0.125, cy * 0.125];
+          const nx = tilt[0] * Math.sin(px * 2.3 + py * 1.1 + time * 1.2) + tilt[1] * Math.sin(py * 3.7 - px * 1.3 - time * 0.9 + h * 2.0);
+          const nz = tilt[2] * Math.sin(py * 2.1 - px * 0.9 + time * 1.0) + tilt[3] * Math.sin(px * 3.3 + py * 1.7 + time * 1.1 + h * 2.0);
+          const ny = 1 / Math.hypot(nx, 1, nz);
+          const on = sparkle > 0 ? (hash(cx + Math.floor(time * 2) * 7.31, cy + Math.floor(time * 2) * 7.31) >= sparkle ? 1 : 0) : 1;
+          all++;
+          if (Math.pow(ny, power) * gain * on > 0.5) lit++;
+        }
+    }
+    check(
+      "the sun's glints on water are rare sparkles: under 3% of the eighths lit brighter than half white with the sun straight in the water, the opacity raised by 0.3 at most",
+      tilt.length === 4 && Number.isFinite(power) && Number.isFinite(gain) && lit / all < 0.03 && f.includes("min(wlAlpha + 0.3,"),
+      `${((100 * lit) / all).toFixed(1)}% of eighths lit (ripple tilt ${tilt.join(", ")}, power ${power}, gain ${gain}, sparkle above ${sparkle})`,
+    );
   }
 
   // 3. Warm sun and cool shade, in the eye view too, warmer as the sun sets; the night's glow.
