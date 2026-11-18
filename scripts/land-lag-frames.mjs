@@ -9,7 +9,7 @@
 //
 //   npx vite --port 5191 &
 //   NODE_PATH=$(npm root -g) node scripts/land-lag-frames.mjs <out dir> [tag]
-//   SIZE=344x882 LAB_URL=http://localhost:5191/lab/perf.html ...
+//   SIZE=344x882 LAB_URL=http://localhost:5191/lab/perf.html SPOT=96,64 EDGE=0 SPELL=blast ...
 import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -44,8 +44,10 @@ try {
   await page.waitForFunction(() => window.perfReady === true, null, { timeout: 180_000 });
   if (process.env.READY_FILE) writeFileSync(process.env.READY_FILE, "ready");
   await page.evaluate(() => document.querySelectorAll("div").forEach((d) => (d.style.display = "none")));
-  // The spot: dry land nearest the island's middle, the camera at a mid zoom over it.
-  const spot = await page.evaluate(() => {
+  // The spot: dry land nearest the island's middle (or SPOT=x,y, such as a corner of four chunks,
+  // 32 cells a side), the camera at a mid zoom over it.
+  const at = process.env.SPOT ? process.env.SPOT.split(",").map(Number) : null;
+  const spot = await page.evaluate((at) => {
     const e = window.__engine;
     const w = e.world;
     let best = null;
@@ -56,6 +58,7 @@ try {
         const d = Math.hypot(x - w.w / 2, y - w.h / 2);
         if (dry === 289 && (!best || d < best.d)) best = { x: x + 0.5, y: y + 0.5, d };
       }
+    if (at) best = { x: at[0] + 0.5, y: at[1] + 0.5, d: 0 };
     const o = e.view.orbit;
     o.tx = best.x;
     o.ty = best.y;
@@ -66,17 +69,21 @@ try {
     e.view.terrain.updateFine(0, true);
     for (let k = 0; k < 20; k++) e.render(1 / 60);
     return best;
-  });
+  }, at);
   // Where the crater's east edge is on the screen, for the crops.
-  const edge = await page.evaluate((spot) => {
-    const e = window.__engine;
-    const w = e.world;
-    const cam = e.view.orbit.camera;
-    const x = spot.x + 7;
-    const i = Math.floor(spot.y) * w.w + Math.floor(x);
-    const p = new cam.position.constructor(x - w.w / 2, Math.round(w.height[i] * 0.5), spot.y - w.h / 2).project(cam);
-    return { x: Math.round(((p.x + 1) / 2) * innerWidth), y: Math.round(((1 - p.y) / 2) * innerHeight) };
-  }, spot);
+  const edge = await page.evaluate(
+    ({ spot, off }) => {
+      const e = window.__engine;
+      const w = e.world;
+      const cam = e.view.orbit.camera;
+      // EDGE=0: the crater's middle.
+      const x = spot.x + off;
+      const i = Math.floor(spot.y) * w.w + Math.floor(x);
+      const p = new cam.position.constructor(x - w.w / 2, Math.round(w.height[i] * 0.5), spot.y - w.h / 2).project(cam);
+      return { x: Math.round(((p.x + 1) / 2) * innerWidth), y: Math.round(((1 - p.y) / 2) * innerHeight) };
+    },
+    { spot, off: Number(process.env.EDGE ?? 7) },
+  );
   const shot = async (name) => {
     writeFileSync(join(dir, `${name}.png`), await page.screenshot());
     const cw = 120;
