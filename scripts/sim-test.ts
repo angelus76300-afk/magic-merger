@@ -24,6 +24,7 @@ import { reactionChecks } from "./reactions-test";
 import { looksChecks } from "./looks-test";
 import { cubesChecks } from "./cubes-test";
 import { coverCubesChecks } from "./cover-cubes-test";
+import { leftoversChecks } from "./leftovers-test";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
 import { logDeeds, mindOf, remember } from "../src/sim/kin";
@@ -2563,6 +2564,8 @@ looksChecks(check);
 cubesChecks(check);
 // Rocks, shrubs, cacti, crystals, stumps, flames and clouds in small cubes: scripts/cover-cubes-test.ts.
 coverCubesChecks(check);
+// What spells leave (voxels and covers) in small cubes: scripts/leftovers-test.ts.
+leftoversChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);
