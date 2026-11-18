@@ -2,7 +2,7 @@ import { InstancedMesh, Matrix4, MeshBasicMaterial, type Material, type Scene } 
 import { G } from "../materials";
 import { Rng } from "../noise";
 import { CUBE, Vox, geometryOfMesh, h3, mix, tone } from "./cubes";
-import type { LocalMesh } from "./shapes";
+import { EDGE_DARK, EDGE_LIGHT, PATCH_TONES, type LocalMesh } from "./shapes";
 
 // What stands on the land, in small cubes (16 November, the owner's screenshots of 15 November:
 // boulders as grey two-tier boxes, shrubs as one green cube, cacti as stacked boxes, flames as tall
@@ -57,6 +57,11 @@ const made = new Map<string, LocalMesh>();
 // a model this module does not draw.
 export function coverInCubes(key: string): LocalMesh | null {
   const [name, rest] = key.split("#");
+  if (name.startsWith("sp:")) {
+    let m = made.get(key);
+    if (!m) made.set(key, (m = spellCoverInCubes(name, parseInt(rest ?? "0", 10) || 0)));
+    return m;
+  }
   if (rest === undefined || !(name in COVER_SHAPES)) return null;
   let m = made.get(key);
   if (m) return m;
@@ -133,7 +138,7 @@ function moss(v: Vox, seed: number): void {
   }
 }
 
-function boulder(rng: Rng, seed: number, shape: number, mossy: boolean): Vox {
+function boulder(rng: Rng, seed: number, shape: number, mossy: boolean, tones = ROCK): Vox {
   const v = new Vox(8, 14, 3);
   const r = [3.6, 2.8, 4.3, 3.2][shape];
   const h = [2.8, 2.2, 3.4, 2.4][shape];
@@ -142,7 +147,7 @@ function boulder(rng: Rng, seed: number, shape: number, mossy: boolean): Vox {
   parts.push([4 + rng.range(-1.6, 1.6), 4 + rng.range(-1.6, 1.6), r * 0.62, r * 0.55, h * rng.range(1.05, 1.3)]);
   if (shape === 3) parts.push([7.5, 6.5, 1.6, 1.4, 1.2]);
   lumps(v, seed, parts);
-  shadeBy(v, ROCK, seed, SINK.rock);
+  shadeBy(v, tones, seed, SINK.rock);
   if (mossy) moss(v, seed);
   return v;
 }
@@ -159,7 +164,7 @@ function scree(rng: Rng, seed: number, mossy: boolean): Vox {
 
 // A leafy clump: two or three round clumps of leaves, lighter on top, a few leaves out of the rim;
 // berries red and blue on its sides, or on one shape small white flowers.
-function bush(rng: Rng, seed: number, berries: boolean, shape: number): Vox {
+function bush(rng: Rng, seed: number, berries: boolean, shape: number, tones = LEAF): Vox {
   const v = new Vox(8, 10, 2);
   const S = SINK.plant;
   const clumps = 2 + (shape % 2);
@@ -179,7 +184,7 @@ function bush(rng: Rng, seed: number, berries: boolean, shape: number): Vox {
           if (dx * dx + dy * dy + dz * dz <= 1 + (h3(x, y, z, seed) - 0.5) * 0.4) v.set(x, y, z, LEAF[1]);
         }
   }
-  shadeBy(v, LEAF, seed, S);
+  shadeBy(v, tones, seed, S);
   const dots: number[] = berries ? [0xc0233a, 0xc0233a, 0x3a3a9a] : shape === 2 ? [0xf4f0ea, 0xf2d65a] : [];
   if (dots.length) {
     let n = 0;
@@ -252,7 +257,7 @@ function cactus(rng: Rng, seed: number, shape: number): Vox {
 
 // Crystals: a cluster of prisms, each square, leaning a little, its tip drawn to a point, its faces
 // in three tones (the shaded side, the lit side, and a light edge up one corner) and a pale tip.
-function crystals(rng: Rng, seed: number, shape: number): Vox {
+function crystals(rng: Rng, seed: number, shape: number, tones = CRYSTAL): Vox {
   const v = new Vox(8, 16, 2);
   const n = 3 + (shape % 2) + (shape === 2 ? 1 : 0);
   const S = SINK.plant;
@@ -267,7 +272,7 @@ function crystals(rng: Rng, seed: number, shape: number): Vox {
     const lx = k === 0 ? 0 : Math.sign(Math.round(Math.cos(a) * 2));
     const ly = k === 0 ? 0 : Math.sign(Math.round(Math.sin(a) * 2));
     const every = 3 + Math.floor(rng.next() * 2);
-    const base = CRYSTAL[k % 2];
+    const base = tones[k % 2];
     for (let z = 0; z < h; z++) {
       const off = Math.floor(Math.max(0, z - S) / every);
       const tip = h - z;
@@ -277,7 +282,7 @@ function crystals(rng: Rng, seed: number, shape: number): Vox {
       for (let j = 0; j < ww; j++)
         for (let i = 0; i < ww; i++) {
           const edge = i === ww - 1 && j === 0;
-          const c = tip <= 2 ? CRYSTAL[2] : edge ? mix(base, 0xffffff, 0.45) : (i + j) % 2 && ww > 1 ? tone(base, 0.84) : base;
+          const c = tip <= 2 ? tones[2] : edge ? mix(base, 0xffffff, 0.45) : (i + j) % 2 && ww > 1 ? tone(base, 0.84) : base;
           v.set(sx + i, sy + j, z, c);
         }
     }
@@ -312,6 +317,142 @@ function embers(seed: number, shape: number): Vox {
   v.set(at[0], at[1] + 1, SINK.plant, hot[1], true);
   if (h3(shape, 0, 0, seed) < 0.6) v.set(at[0] + 2, at[1] + 2, SINK.plant, hot[2], true);
   return v;
+}
+
+// ---------------------------------------------------------------------------------------------
+// What spells leave (18 November, the owner on the Fold: spells' covers drawn as flat tinted slabs
+// and blocks, their voxels as big plain grey cubes, the only things on the island not in small
+// textured cubes). A cover a spell registers is drawn by its name as one of the island's own looks,
+// in its own colours: "mossy stone" as a boulder, "silverroot" as a thicket, "dry leaf" as leaf
+// litter; a name that says none of them as a block (solid) or a slab, in cubes. Drawing only: the
+// cover's rules, its name and its colours stay what the spell said.
+
+export type SpellLook = "rock" | "crystal" | "litter" | "plant" | "block" | "slab";
+// The first that matches wins: "crystal moss" is a crystal, "dry leaf" litter, not a bush.
+const LOOK_WORDS: [SpellLook, RegExp][] = [
+  ["crystal", /crystal|gem|shard|quartz|amethyst|prism|diamond|glass|ice|frost|pearl|geode/],
+  ["rock", /stone|rock|boulder|pebble|rubble|ore|basalt|granite|marble|obsidian|slate|cobble|flint|bone|salt|cairn/],
+  ["litter", /leaf|leaves|petal|moss|lichen|dust|ash|litter|carpet|needle|straw|seed|spore/],
+  [
+    "plant",
+    /root|bush|shrub|thorn|bramble|briar|vine|ivy|reed|grass|fern|weed|herb|bloom|blossom|flower|wheat|crop|mushroom|fung|sprout|lotus|lily|thicket|hedge/,
+  ],
+];
+export const SPELL_SHAPES: Record<SpellLook, number> = { rock: 4, crystal: 3, litter: 3, plant: 2, block: 2, slab: 2 };
+
+export function spellLook(name: string, solid: boolean): SpellLook {
+  const n = name.toLowerCase();
+  for (const [look, words] of LOOK_WORDS) if (words.test(n)) return look;
+  return solid ? "block" : "slab";
+}
+
+// The model's key for a spell's cover in a cell: "sp:rock:8c8a80.7a7669#2", its look, its colours
+// and a shape picked by the cell's hash.
+export function spellCoverKey(name: string, solid: boolean, colors: readonly number[], hash: number): string {
+  const look = spellLook(name, solid);
+  const hex = colors
+    .slice(0, 6)
+    .map((c) => c.toString(16).padStart(6, "0"))
+    .join(".");
+  return `sp:${look}:${hex}#${(hash >>> 7) % SPELL_SHAPES[look]}`;
+}
+
+const lum = (c: number) => 0.299 * ((c >> 16) & 255) + 0.587 * ((c >> 8) & 255) + 0.114 * (c & 255);
+
+// A material's colours as tones, dark to light, for shadeBy: one colour gets a darker and a lighter
+// of its own; several get a darker of the darkest under them, so a side is not as light as a top.
+export function spellTones(colors: readonly number[]): number[] {
+  const own = [...new Set(colors.length ? colors : [0xff00ff])].sort((a, b) => lum(a) - lum(b));
+  if (own.length === 1) return [tone(own[0], 0.78), tone(own[0], 0.9), own[0], tone(own[0], 1.1)];
+  return [tone(own[0], 0.84), ...own];
+}
+
+function spellCover(look: SpellLook, tones: number[], shape: number, seed: number): { v: Vox; sink: number } {
+  const rng = new Rng(seed);
+  if (look === "rock") return { v: boulder(rng, seed, shape, false, tones), sink: SINK.rock };
+  if (look === "plant") return { v: bush(rng, seed, false, shape, tones), sink: SINK.plant };
+  if (look === "crystal") {
+    const n = tones.length;
+    return { v: crystals(rng, seed, shape, [tones[Math.max(0, n - 3)], tones[n - 2], mix(tones[n - 1], 0xffffff, 0.45)]), sink: SINK.plant };
+  }
+  if (look === "litter") {
+    // Leaves, petals or moss strewn in soft patches, a cube thick, two where they pile up.
+    const v = new Vox(8, 4, 0);
+    const S = SINK.plant;
+    for (let y = 0; y < 8; y++)
+      for (let x = 0; x < 8; x++) {
+        const n = h3(Math.floor((x + shape * 3) / 2), Math.floor((y + shape) / 2), shape, seed) * 0.7 + h3(x, y, 1, seed) * 0.3;
+        if (n > 0.62) continue;
+        for (let z = 0; z <= S; z++) v.set(x, y, z, tones[1]);
+        if (n < 0.2) v.set(x, y, S + 1, tones[1]);
+      }
+    shadeBy(v, tones, seed, S);
+    return { v, sink: S };
+  }
+  // A block (solid) or a slab, as the old box (0.8 cells wide, 0.8 or 0.3 tall), its top corners
+  // worn off and its top a little ragged, in the material's tones.
+  const v = new Vox(8, 10, 0);
+  const S = 2;
+  const H = S + (look === "block" ? 6 : 2);
+  v.box(1, 1, 0, 7, 7, H, tones[1]);
+  for (const [x, y] of [
+    [1, 1],
+    [6, 1],
+    [1, 6],
+    [6, 6],
+  ])
+    v.clear(x, y, H - 1);
+  for (let y = 1; y < 7; y++) for (let x = 1; x < 7; x++) if (h3(x, y, shape, seed ^ 0x77) < 0.12) v.clear(x, y, H - 1);
+  shadeBy(v, tones, seed, S);
+  return { v, sink: S };
+}
+
+function spellCoverInCubes(name: string, shape: number): LocalMesh {
+  const [, look, hex] = name.split(":");
+  const colors = (hex ?? "")
+    .split(".")
+    .map((h) => parseInt(h, 16))
+    .filter((c) => Number.isFinite(c));
+  const kind = (look in SPELL_SHAPES ? look : "slab") as SpellLook;
+  let seed = 0x5bd1 + shape * 7919;
+  for (let k = 0; k < name.length; k++) seed = Math.imul(seed ^ name.charCodeAt(k), 0x01000193) >>> 0;
+  const { v, sink } = spellCover(kind, spellTones(colors), shape % SPELL_SHAPES[kind], seed);
+  return lowered(v.mesh(true), sink * CUBE);
+}
+
+// A spell's voxel (w.voxel, w.box, w.sphere: world.decor) as one cell of CUBE cubes, as the land's:
+// soft patches of tone a few cubes across, lighter top edges and darker bottom ones. Its colour is
+// the voxel's, given per instance: the model is VOXEL_BASE grey so its lightest cube stays under
+// white, and the instance's colour is times VOXEL_GAIN to make the middle tone the voxel's own. Made
+// once; centred on (0, 0, 0) as the plain box it replaces, its foot at -0.5.
+export const VOXEL_BASE = 0xc8;
+export const VOXEL_GAIN = 255 / VOXEL_BASE;
+let voxelModel: LocalMesh | null = null;
+export function voxelCube(): LocalMesh {
+  if (voxelModel) return voxelModel;
+  const v = new Vox(8, 8, 0);
+  const c = VOXEL_BASE * 0x010101;
+  v.box(0, 0, 0, 8, 8, 8, c);
+  const seed = 0x3a71;
+  const k: number[] = [];
+  v.each((x, y, z) => {
+    const n = h3(Math.floor((x + 1) / 3), Math.floor((y + 2) / 3), Math.floor((z + 1) / 3), seed);
+    let t = PATCH_TONES[Math.min(PATCH_TONES.length - 1, Math.floor(n * PATCH_TONES.length))];
+    const side = x === 0 || x === 7 || y === 0 || y === 7;
+    if (side && z === 7) t *= EDGE_LIGHT;
+    else if (side && z === 0) t *= EDGE_DARK;
+    k.push(x, y, z, t);
+  });
+  for (let n = 0; n < k.length; n += 4) v.set(k[n], k[n + 1], k[n + 2], tone(c, k[n + 3]));
+  const m = v.mesh(true);
+  for (const a of [m.lit, m.glow])
+    for (let n = 0; n < a.pos.length; n += 3) {
+      a.pos[n] -= 0.5;
+      a.pos[n + 1] -= 0.5;
+      a.pos[n + 2] -= 0.5;
+    }
+  voxelModel = m;
+  return m;
 }
 
 // ---------------------------------------------------------------------------------------------

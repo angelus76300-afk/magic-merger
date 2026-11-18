@@ -1,12 +1,14 @@
 import { Color, Matrix4, type InstancedMesh } from "three";
 import type { DecorStore } from "../decor";
-import { keyLevel, keyX, keyY } from "../voxelkey";
+import { FACE_STEPS, keyLevel, keyX, keyY } from "../voxelkey";
 import { shines, voxelColor, voxelKind } from "../voxels";
 
 const FLAME = [0xffd36a, 0xffa43a, 0xff6a1a, 0xe8420f];
 const LOOK = 0; // plain voxels, tinted by the time of day
 const GLOW = 1; // burning or shining voxels, never darkened
 const REBUILD_AT = 2000;
+// The brightest channel a voxel in cubes is given at most (times its model's tones, 0.6 to 0.97).
+const PEAK = 1.12;
 
 // Keeps the two decor meshes in step with the world's voxels by touching only
 // the instances whose voxel changed. A burning forest used to rewrite all its
@@ -26,6 +28,12 @@ export class DecorInstances {
   private fresh = true;
   private m = new Matrix4();
   private col = new Color();
+  // How the voxels are drawn (18 November): in small cubes, each instance a quarter turn of its own
+  // so a wall is not one pattern repeated, its colour times `gain` (cover-cubes.ts VOXEL_GAIN), and
+  // lifted by `seat` (cells, up) onto the fine land drawn under it. Plain boxes: none of it.
+  private spin = false;
+  private gain = 1;
+  private seat: ((key: number) => number) | null = null;
 
   constructor(
     private meshes: [InstancedMesh, InstancedMesh],
@@ -34,6 +42,19 @@ export class DecorInstances {
     private halfH: number,
   ) {
     this.keyAt = [new Uint32Array(capacity), new Uint32Array(capacity)];
+  }
+
+  // A new way of drawing them: every instance placed again at the next update.
+  restyle(spin: boolean, gain: number, seat: ((key: number) => number) | null): void {
+    this.spin = spin;
+    this.gain = gain;
+    this.seat = seat;
+    this.fresh = true;
+  }
+
+  // The land under them was drawn again: every instance seated again at the next update.
+  reseat(): void {
+    this.fresh = true;
   }
 
   // Applies what changed since the last call. `burning` maps burning keys to
@@ -46,13 +67,21 @@ export class DecorInstances {
     // change at the same time (a forest set alight at once).
     let moves = changes === "all" ? 0 : changes.size;
     if (changes !== "all") for (const key of burning.keys()) if (moves <= REBUILD_AT && (this.where.get(key) ?? 0) >>> 16 !== GLOW) moves++;
-    if (changes === "all" || moves > REBUILD_AT) this.rebuild(decor, burning, time);
+    // A voxel shut in on every side and from above is not drawn (its bottom never was): a voxel put
+    // or taken away shows or hides the ones next to it, so they are placed again with it.
+    let near: Set<number> | null = null;
+    if (changes !== "all") {
+      near = new Set<number>(changes);
+      for (const key of changes) for (let s = 0; s < FACE_STEPS.length; s++) near.add((key + FACE_STEPS[s]) >>> 0);
+      moves += near.size - changes.size;
+    }
+    if (!near || moves > REBUILD_AT) this.rebuild(decor, burning, time);
     else {
-      for (const key of changes) this.refresh(decor, burning, key, time);
+      for (const key of near) this.refresh(decor, burning, key, time);
       // Voxels that stopped burning go back to their own color and mesh.
-      for (const key of this.burningShown) if (!burning.has(key) && !changes.has(key)) this.refresh(decor, burning, key, time);
+      for (const key of this.burningShown) if (!burning.has(key) && !near.has(key)) this.refresh(decor, burning, key, time);
       for (const key of burning.keys()) {
-        if (changes.has(key)) continue;
+        if (near.has(key)) continue;
         const at = this.where.get(key);
         if (at === undefined) {
           if (decor.has(key)) this.refresh(decor, burning, key, time);
@@ -72,7 +101,7 @@ export class DecorInstances {
     for (let slot = 0; slot < decor.slots; slot++) {
       if (!decor.isLive(slot)) continue;
       const key = decor.keyOf(slot);
-      this.add(key, decor.valueOf(slot), burning, time);
+      if (!shut(decor, key)) this.add(key, decor.valueOf(slot), burning, time);
     }
     for (const t of this.touched) {
       t[0] = 0;
@@ -84,7 +113,7 @@ export class DecorInstances {
   private refresh(decor: DecorStore, burning: Map<number, number>, key: number, time: number): void {
     this.remove(key);
     const v = decor.get(key);
-    if (v !== undefined) this.add(key, v, burning, time);
+    if (v !== undefined && !shut(decor, key)) this.add(key, v, burning, time);
   }
 
   private add(key: number, v: number, burning: Map<number, number>, time: number): void {
@@ -95,7 +124,10 @@ export class DecorInstances {
     this.count[mesh]++;
     this.keyAt[mesh][index] = key;
     this.where.set(key, mesh * 65536 + index);
-    this.m.makeTranslation(keyX(key) - this.halfW + 0.5, keyLevel(key) + 0.5, keyY(key) - this.halfH + 0.5);
+    const lift = this.seat ? this.seat(key) : 0;
+    if (this.spin) this.m.makeRotationY((Math.imul(key, 0x9e3779b1) >>> 30) * (Math.PI / 2));
+    else this.m.identity();
+    this.m.setPosition(keyX(key) - this.halfW + 0.5, keyLevel(key) + 0.5 + lift, keyY(key) - this.halfH + 0.5);
     this.meshes[mesh].setMatrixAt(index, this.m);
     this.paint(mesh, index, fire ? flame(key, time) : voxelColor(v));
   }
@@ -123,7 +155,11 @@ export class DecorInstances {
   }
 
   private paint(mesh: number, index: number, color: number): void {
-    this.meshes[mesh].setColorAt(index, this.col.setHex(color));
+    this.col.setHex(color);
+    // A bright colour is given back less, so its lighter cubes are not all clipped to one colour
+    // (a flame, an orange ember): its middle tone a little under its own, its patches kept.
+    if (this.gain !== 1) this.col.multiplyScalar(Math.min(this.gain, PEAK / Math.max(1e-6, this.col.r, this.col.g, this.col.b)));
+    this.meshes[mesh].setColorAt(index, this.col);
     this.touch(mesh, index);
   }
 
@@ -162,6 +198,17 @@ export class DecorInstances {
       this.touched[mesh][1] = -1;
     }
   }
+}
+
+// Voxels above and on all four sides: nothing of it can be seen (FACE_STEPS: up, down, the sides).
+function shut(decor: DecorStore, key: number): boolean {
+  return (
+    decor.has(key + FACE_STEPS[0]) &&
+    decor.has(key + FACE_STEPS[2]) &&
+    decor.has(key + FACE_STEPS[3]) &&
+    decor.has(key + FACE_STEPS[4]) &&
+    decor.has(key + FACE_STEPS[5])
+  );
 }
 
 function flame(key: number, time: number): number {

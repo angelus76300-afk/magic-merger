@@ -63,7 +63,19 @@ import { GLOWING, VARIANTS, floraModels } from "./flora";
 import { Buildings } from "./buildings";
 import { FINE_VARIANTS, OLD_TREES, cubeTree, fineFocus, geometryOfMesh, refocus, treeSize, type FineFocus } from "./cubes";
 import { WonderModels } from "./wonders";
-import { CLOUD_CUBE, CubeFlames, cloudMaterial, coverCubeGlows, coverCubeKeys, coverInCubes, nearestFlames, puffyCloud } from "./cover-cubes";
+import {
+  CLOUD_CUBE,
+  CubeFlames,
+  VOXEL_GAIN,
+  cloudMaterial,
+  coverCubeGlows,
+  coverCubeKeys,
+  coverInCubes,
+  nearestFlames,
+  puffyCloud,
+  spellCoverKey,
+  voxelCube,
+} from "./cover-cubes";
 import { PropModels } from "./props";
 import { valueNoise } from "../noise";
 import { LAB_SKY, Sky, skyBodies } from "./sky";
@@ -99,6 +111,11 @@ const SKY_TOP = "#5fa8e8";
 const SKY_LOW = "#cfe8f7";
 const DECAL_SCALE = 4; // decal pixels per cell
 const MOOD_COLORS: Record<string, number> = { inspected: 0xffffff, fear: 0xffe066, lured: 0xffc23d, angry: 0xff4d4d, hunt: 0xb3123b, asleep: 0xa9c8ff };
+
+// Spells' voxels drawn in small cubes up to this many on the island (placeDecor), plain boxes past
+// it until they are fewer than VOXEL_CUBES_BACK again: 6000 in cubes are about 830,000 triangles.
+const VOXEL_CUBES_MAX = 6000;
+const VOXEL_CUBES_BACK = 5000;
 
 // Draws the world as a floating voxel island. Built for phones: unlit
 // materials with lighting baked into colors, terrain rebuilt only where it
@@ -230,6 +247,12 @@ export class VoxelView {
   // Voxels that shine (crystal, magic, fire) are not darkened at night.
   private decorGlow: InstancedMesh;
   private decorVersion = -1;
+  // How the voxels are drawn now (placeDecor): in small cubes (true), as plain boxes, or not yet.
+  private decorCubes: boolean | null = null;
+  private decorBox: BufferGeometry | null = null;
+  private decorCubeGeometry: BufferGeometry | null = null;
+  // Each cell's lift onto the fine land, while one placing of the voxels lasts (decorSeat).
+  private seatOf = new Map<number, number>();
   private decorInstances: DecorInstances;
   private darkness = new Darkness();
   // The water's light (water-light.ts), and when its lights near the camera were last looked for.
@@ -518,6 +541,11 @@ export class VoxelView {
       this.terrain.coversChanged = false;
       this.lastCovers = time;
       this.placeCovers();
+      // The fine land under the voxels may be drawn otherwise now: they are seated again.
+      if (world.decor.size && this.decorCubes) {
+        this.decorInstances.reseat();
+        this.decorVersion = -1;
+      }
       // Houses in small cubes still to make: a few more at the next placing (buildings.ts).
       if (this.buildings.pending) this.terrain.coversChanged = true;
     }
@@ -815,7 +843,12 @@ export class VoxelView {
   // The model a cover is drawn with in this cell.
   private coverKey(i: number, c: number, trees: [string, string] | null, builtinCovers: number): string {
     const { world } = this;
-    if (c >= builtinCovers) return world.materials.get("cover", c).solid ? "block" : "slab";
+    if (c >= builtinCovers) {
+      const mat = world.materials.get("cover", c);
+      // In small cubes (18 November): one of the island's own looks by the cover's name, in its colours.
+      if (GRAPHICS.cubes) return spellCoverKey(mat.name, mat.solid, mat.colors, cellHash(i));
+      return mat.solid ? "block" : "slab";
+    }
     if (c === C.TREE) {
       // 4.4.5: the cell's own tree, one of its style's shapes.
       const style = world.flora ? TREE_STYLES[world.flora[i] & STYLE_BITS] : "";
@@ -1315,8 +1348,58 @@ export class VoxelView {
   }
 
   private placeDecor(time: number): void {
+    // Spells' voxels in small cubes with the rest of the island (18 November, the owner: "big plain
+    // untextured grey cubes"), seated on the fine land; on the low preset plain boxes, as before.
+    // An island with more than VOXEL_CUBES_MAX voxels draws them as plain boxes too (a voxel in
+    // cubes is 138 triangles, a box 10), and in cubes again under VOXEL_CUBES_BACK.
+    const many = this.world.decor.size > (this.decorCubes ? VOXEL_CUBES_MAX : VOXEL_CUBES_BACK);
+    const cubes = GRAPHICS.cubes && !many;
+    if (this.decorCubes !== cubes) {
+      this.decorCubes = cubes;
+      this.decorBox ??= this.decorMesh.geometry;
+      if (cubes) this.decorCubeGeometry ??= geometryOfMesh(voxelCube());
+      const geometry = cubes && this.decorCubeGeometry ? this.decorCubeGeometry : this.decorBox;
+      for (const mesh of [this.decorMesh, this.decorGlow]) {
+        if (mesh.geometry !== geometry && mesh.geometry !== this.decorBox && mesh.geometry !== this.decorCubeGeometry) mesh.geometry.dispose();
+        mesh.geometry = geometry;
+      }
+      this.decorInstances.restyle(cubes, cubes ? VOXEL_GAIN : 1, cubes ? this.decorSeat : null);
+    }
+    this.seatOf.clear();
     this.decorInstances.update(this.world.decor, this.world.voxels.burning, time);
   }
+
+  // How far up a voxel is drawn (cells): one standing on the land, or on a stack of voxels that
+  // does, is put down on the lowest top of the fine land drawn under its cell (terrain.ts
+  // drawnTop), as a rock is seated, instead of the cell's own level, which floated or sank it by up
+  // to half a cell on a slope. A voxel in the air keeps its level. At most a cell either way.
+  private decorSeat = (key: number): number => {
+    const { world } = this;
+    const x = keyX(key);
+    const y = keyY(key);
+    if (x >= world.w || y >= world.h) return 0;
+    const i = y * world.w + x;
+    // The level of the land as the voxels see it (voxels.ts top, runtime.ts voxel).
+    const ground = Math.round(world.height[i] * 0.5);
+    let below = key;
+    for (let l = keyLevel(key); l > ground; l--) {
+      if (!world.decor.has(below - 1)) return 0;
+      below--;
+    }
+    if (keyLevel(below) !== ground) return 0;
+    let lift = this.seatOf.get(i);
+    if (lift === undefined) {
+      let low = Infinity;
+      for (let j = 0; j < 8; j++)
+        for (let k = 0; k < 8; k++) {
+          const t = this.terrain.drawnTop(x + (k + 0.5) / 8, y + (j + 0.5) / 8);
+          if (t < low) low = t;
+        }
+      lift = Number.isFinite(low) ? Math.max(-1, Math.min(1, low - ground)) : 0;
+      this.seatOf.set(i, lift);
+    }
+    return lift;
+  };
 
   // Tints the land, the sky and the fog for the time of day; lights the
   // windows at night and lets chimneys smoke.

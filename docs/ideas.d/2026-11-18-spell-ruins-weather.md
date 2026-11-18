@@ -1,0 +1,3 @@
+section: Backlog
+
+- **Spell stones that weather** (the designer's idea, 2026-11-18; lens: what the player feels). A tower or wall a spell raised now reads as built of small stone cubes, but it looks the same on its first minute and its hundredth. Over game days, voxels of stone kind on the land could take moss on their top cubes where the ground around is grass, and lose a cube or two on their top edge, drawn only, from the voxel's age and its cell. What the player feels: the island remembers what they did, and an old Last Stand reads as a ruin that belongs there, not a fresh prop. Cost: an age per voxel kept in the view (not saved), two or three variants of the voxel model picked by age, no new draw calls. Claude.
