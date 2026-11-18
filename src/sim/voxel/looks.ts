@@ -98,6 +98,9 @@ export interface LooksFrame {
   // bearing, as sky.ts draws it.
   sunHeight: number;
   sunAz: number;
+  // The moon's, the same way (sky.ts skyBodies); none when not given.
+  moonHeight?: number;
+  moonAz?: number;
   eye: boolean;
   // How much of the island the camera holds (1 whole, map.ts), and the
   // camera's tilt (0 straight down).
@@ -148,6 +151,17 @@ export const BLOOM_STRENGTH = 0.9;
 // The tint of the land in shade and in the sun.
 const SHADE = new Vector3(0.58, 0.64, 0.86);
 const LIT = new Vector3(1.03, 0.99, 0.92);
+// Warm sun and cool shade by the way a face turns (warmlight, 16 November): a face turned to the
+// sun takes WARM_LIT (WARM_DUSK as the sun goes down), one turned away WARM_SHADE, at WARM_K of
+// the day's light (less where the sun's shadows already tint it).
+const WARM_LIT = new Vector3(1.05, 1.0, 0.92);
+const WARM_DUSK = new Vector3(1.12, 0.97, 0.82);
+const WARM_SHADE = new Vector3(0.9, 0.95, 1.07);
+export const WARM_K = 0.85;
+// The land round lava and lit houses at night (terrain-fine.ts glow levels): its own colour again,
+// in this warm light, at GLOW_K of the night.
+const GLOW_COLOR = "vec3(1.0, 0.42, 0.12)";
+export const GLOW_K = 0.8;
 
 export class Looks {
   readonly sun = new DirectionalLight(0xffffff, 0);
@@ -161,12 +175,22 @@ export class Looks {
     sunOffset: { value: 0.2 },
     sunShade: { value: SHADE },
     sunLit: { value: LIT },
+    sunWarm: { value: 0 },
+    warmLit: { value: new Vector3().copy(WARM_LIT) },
+    warmShade: { value: WARM_SHADE },
+    nightGlow: { value: 0 },
   };
+  // The way toward the sun and the moon (as the shadows take it), and how bright each is on the
+  // water (water-light.ts): set every frame.
+  readonly sunVector = new Vector3(0, 1, 0);
+  readonly moonVector = new Vector3(0, 1, 0);
+  sunBright = 0;
+  moonBright = 0;
   private receivers: Material[] = [];
   // Draw calls into the shadow map and through the passes after the scene, last frame.
   passes = 0;
   // The switches the materials were compiled for.
-  private built = { shadows: false, grade: false };
+  private built = { shadows: false, grade: false, warm: false };
   private shadowOn = false;
   // Whether the sun casts this frame (the view culls what casts by it).
   get casting(): boolean {
@@ -210,17 +234,24 @@ export class Looks {
     const uniforms = this.uniforms;
     material.onBeforeCompile = (shader, renderer) => {
       before.call(material, shader, renderer);
-      if (!GRAPHICS.shadows) return;
+      if (!GRAPHICS.shadows && !GRAPHICS.warmlight) return;
       Object.assign(shader.uniforms, uniforms);
-      shader.vertexShader = shader.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 vSunWorld;").replace(
-        "#include <begin_vertex>",
-        `#include <begin_vertex>
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          "#include <common>",
+          "#include <common>\nvarying vec3 vSunWorld;\nattribute float landGlow;\nvarying float vLandGlow;\nattribute float landWet;\nvarying float vLandWet;",
+        )
+        .replace(
+          "#include <begin_vertex>",
+          `#include <begin_vertex>
 vec4 sunW = vec4(transformed, 1.0);
 #ifdef USE_INSTANCING
 sunW = instanceMatrix * sunW;
 #endif
-vSunWorld = (modelMatrix * sunW).xyz;`,
-      );
+vSunWorld = (modelMatrix * sunW).xyz;
+vLandGlow = landGlow;
+vLandWet = landWet;`,
+        );
       shader.fragmentShader = shader.fragmentShader
         .replace(
           "#include <common>",
@@ -234,6 +265,12 @@ uniform float sunTexel;
 uniform float sunOffset;
 uniform vec3 sunShade;
 uniform vec3 sunLit;
+uniform float sunWarm;
+uniform vec3 warmLit;
+uniform vec3 warmShade;
+uniform float nightGlow;
+varying float vLandGlow;
+varying float vLandWet;
 float sunDepth(vec2 uv) { return dot(texture2D(sunMap, uv), vec4(255. / 256., 255. / 65536., 255. / 16777216., 1. / 16777216.)); }
 // Soft: four taps a texel apart, each a comparison mixed by where the point
 // falls between texels.
@@ -253,18 +290,38 @@ float sunLight(vec3 n) {
         )
         .replace(
           "#include <opaque_fragment>",
-          `if (sunStrength > 0.001) {
+          `// A water bed under the water is lit as the water lights it (its colour by depth), not by the
+// sun's shadows and sides: its small steps read as blue bars through the water.
+if ((sunStrength > 0.001 || sunWarm > 0.001) && vLandWet < 0.75) {
   vec3 sunN = normalize(cross(dFdx(vSunWorld), dFdy(vSunWorld)));
   if (dot(sunN, cameraPosition - vSunWorld) < 0.0) sunN = -sunN;
+  // The small steps of a snowy or rocky slope (terrain-fine.ts SLOPE_LIT): lit as the slope's tops.
+  if (vLandWet > 0.25) sunN = vec3(0.0, 1.0, 0.0);
   float ndl = dot(sunN, sunDir);
-  // Sides turned from the sun are already shaded in their baked colours: half the shade.
-  float lit = ndl > 0.02 ? sunLight(sunN) * smoothstep(0.02, 0.25, ndl) : 0.45;
-  outgoingLight *= mix(vec3(1.0), mix(sunShade, sunLit, lit), sunStrength);
+  if (sunStrength > 0.001) {
+    // Sides turned from the sun are already shaded in their baked colours: half the shade.
+    float lit = ndl > 0.02 ? sunLight(sunN) * smoothstep(0.02, 0.25, ndl) : 0.45;
+    outgoingLight *= mix(vec3(1.0), mix(sunShade, sunLit, lit), sunStrength);
+  }
+  if (sunWarm > 0.001) outgoingLight *= mix(vec3(1.0), mix(warmShade, warmLit, smoothstep(-0.15, 0.45, ndl)), sunWarm);
+}
+if (nightGlow > 0.001 && vLandGlow > 0.001) {
+#if defined( USE_COLOR_ALPHA )
+  vec3 glowBase = vColor.rgb;
+#elif defined( USE_COLOR )
+  vec3 glowBase = vColor;
+#else
+  vec3 glowBase = diffuseColor.rgb;
+#endif
+  // The face's own colour in lava's light, as a surface lit by it: grass turns orange-brown, not lime.
+  // The night's blue light gives way to it, so green under orange does not add up to yellow.
+  float glowK = vLandGlow * nightGlow;
+  outgoingLight = outgoingLight * (1.0 - 0.7 * glowK) + glowBase * 1.3 * glowK * ${GLOW_COLOR};
 }
 #include <opaque_fragment>`,
         );
     };
-    material.customProgramCacheKey = () => `sun${GRAPHICS.shadows ? 1 : 0}:${beforeKey()}`;
+    material.customProgramCacheKey = () => `sun${GRAPHICS.shadows || GRAPHICS.warmlight ? 1 : 0}:${beforeKey()}`;
     this.receivers.push(material);
     return material;
   }
@@ -273,9 +330,10 @@ float sunLight(vec3 n) {
   frame(f: LooksFrame): void {
     const { renderer } = this;
     // Switches changed: materials compiled again (once), the shadow pass on or off.
-    if (this.built.shadows !== GRAPHICS.shadows || this.built.grade !== GRAPHICS.grade) {
-      if (this.built.shadows !== GRAPHICS.shadows) for (const m of this.receivers) m.needsUpdate = true;
-      this.built = { shadows: GRAPHICS.shadows, grade: GRAPHICS.grade };
+    const warm = GRAPHICS.shadows || GRAPHICS.warmlight;
+    if (this.built.shadows !== GRAPHICS.shadows || this.built.grade !== GRAPHICS.grade || this.built.warm !== warm) {
+      if (this.built.warm !== warm) for (const m of this.receivers) m.needsUpdate = true;
+      this.built = { shadows: GRAPHICS.shadows, grade: GRAPHICS.grade, warm };
       renderer.shadowMap.enabled = GRAPHICS.shadows;
       this.sun.visible = GRAPHICS.shadows;
     }
@@ -293,6 +351,18 @@ float sunLight(vec3 n) {
     const strength = GRAPHICS.shadows && !f.eye && TRIM.level < 2 ? rise * (1 - f.night) * (1 - 0.75 * f.overcast) * (1 - f.dark) : 0;
     this.uniforms.sunStrength.value = strength;
     this.shadowOn = strength > 0.01;
+    // The ways toward the sun and the moon, every frame (the shadows, the warm light, the water).
+    this.uniforms.sunDir.value.copy(this.towardSky(f.sunHeight, f.sunAz, this.sunVector));
+    this.towardSky(f.moonHeight ?? -1, f.moonAz ?? 0, this.moonVector);
+    const day = rise * (1 - f.night) * (1 - f.dark);
+    this.sunBright = day * (1 - 0.85 * f.overcast);
+    this.moonBright = Math.min(1, Math.max(0, (f.moonHeight ?? -1) / 0.18)) * f.night * (1 - 0.85 * f.overcast) * (1 - f.dark);
+    // Warm sun and cool shade: by day, gentler under cloud and where the sun's shadows tint already;
+    // warmer as the sun goes down. The night's glow round lava and lit houses.
+    this.uniforms.sunWarm.value = GRAPHICS.warmlight ? WARM_K * day * (1 - 0.6 * f.overcast) * (1 - 0.5 * strength) : 0;
+    const dusk = 1 - Math.min(1, Math.max(0, f.sunHeight / 0.5));
+    this.uniforms.warmLit.value.copy(WARM_LIT).lerp(WARM_DUSK, dusk);
+    this.uniforms.nightGlow.value = GRAPHICS.warmlight ? GLOW_K * Math.max(Math.min(1, Math.max(0, (f.night - 0.1) / 0.6)), f.dark) : 0;
     if (this.shadowOn) this.placeSun(f);
 
     // Glow at night, and in a spell's darkness.
@@ -315,21 +385,26 @@ float sunLight(vec3 n) {
   // November (the sun turning every frame, its size in steps of 8 cells).
   sunSteps = true;
 
-  private placeSun(f: LooksFrame): void {
-    const h = Math.max(0, Math.min(1, f.sunHeight));
+  // The way toward a body of the sky at `height` (0 the horizon, 1 overhead) and bearing `az`, as the
+  // sun's shadows take it: never lower than about 18 degrees, so shadows stay short enough to read.
+  private towardSky(height: number, az: number, out: Vector3): Vector3 {
+    const h = Math.max(0, Math.min(1, height));
     // The sun turns in steps of SUN_STEP, not a little every frame (15 November, the owner:
     // "shadows ... flicker a lot"): a shadow map that turns every frame lays its texels across
     // the small cubes differently each time, and their shadows flicker. Between two steps the
     // map is the same; a step moves every shadow by about a cube.
     const step = (a: number) => (this.sunSteps ? Math.round(a / SUN_STEP) * SUN_STEP : a);
     const el = step(0.32 + 0.5 * h);
-    let hx = Math.cos(step(f.sunAz));
+    let hx = Math.cos(step(az));
     let hz = -0.6;
     const hl = Math.hypot(hx, hz);
     hx /= hl;
     hz /= hl;
-    const dir = this.axisZ.set(hx * Math.cos(el), Math.sin(el), hz * Math.cos(el)).normalize();
-    this.uniforms.sunDir.value.copy(dir);
+    return out.set(hx * Math.cos(el), Math.sin(el), hz * Math.cos(el)).normalize();
+  }
+
+  private placeSun(f: LooksFrame): void {
+    const dir = this.axisZ.copy(this.sunVector);
     // The light's own axes, as three's lookAt makes them.
     const x = this.axisX.set(0, 1, 0).cross(dir).normalize();
     const y = this.axisY.copy(dir).cross(x).normalize();

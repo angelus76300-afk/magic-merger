@@ -19,9 +19,10 @@
 // over frames); tops of the same height and colour are merged into rectangles, walls into runs.
 import { GRAPHICS } from "./graphics";
 import { FACE_LIGHT } from "./models";
-import { scaleColor } from "../colors";
+import { mixColor, scaleColor } from "../colors";
 import { G } from "../materials";
 import type { Writer } from "./terrain";
+import { SIDE_MARK } from "./water-light";
 
 // Cells a side of the piece of a chunk built at once.
 export const TILE = 8;
@@ -58,6 +59,14 @@ export interface FineCells {
   // The cell's continuous height (scene units), and whether something stands on it.
   value: Float32Array;
   anchored: Uint8Array;
+  // Snow or bare rock: steps of up to STEEP_LINK voxels to such a neighbour curve (16 November).
+  steep: Uint8Array;
+  // The deep colour of the water over the cell (its region's), for the water in eighths.
+  wdeep: Uint32Array;
+  // A spell's ground (Big Bang's stardust and the crystal it becomes) and what lies among it:
+  // its colour drawn as soft patches (`soft`, the 5 by 5 mean round the cell) where softOn is 1.
+  soft: Uint32Array;
+  softOn: Uint8Array;
 }
 
 export function makeFineCells(): FineCells {
@@ -89,6 +98,10 @@ export function makeFineCells(): FineCells {
     flat: new Uint8Array(0),
     value: new Float32Array(0),
     anchored: new Uint8Array(0),
+    steep: new Uint8Array(0),
+    wdeep: new Uint32Array(0),
+    soft: new Uint32Array(0),
+    softOn: new Uint8Array(0),
   };
 }
 
@@ -123,6 +136,10 @@ export function sizeFineCells(f: FineCells, x0: number, y0: number, x1: number, 
     f.flat = new Uint8Array(n);
     f.value = new Float32Array(n);
     f.anchored = new Uint8Array(n);
+    f.steep = new Uint8Array(n);
+    f.wdeep = new Uint32Array(n);
+    f.soft = new Uint32Array(n);
+    f.softOn = new Uint8Array(n);
   }
 }
 
@@ -222,6 +239,13 @@ export interface LandRead {
   flat(x: number, y: number): boolean;
   // Whether the land of two cells joins without a cliff.
   linked(ax: number, ay: number, bx: number, by: number): boolean;
+  // Snow or bare rock (a steep step to such a neighbour curves), and a water bed: natural ground
+  // under water (the bed curves as the land does, 16 November). Both false off the island.
+  steep(x: number, y: number): boolean;
+  bed(x: number, y: number): boolean;
+  // Wet with any fluid, and natural ground (not built), on the island.
+  wet(x: number, y: number): boolean;
+  natural(x: number, y: number): boolean;
 }
 // Catmull-Rom weights for t in [0, 1], for the samples at -1, 0, 1, 2.
 function cr(t: number, w: number[]): void {
@@ -238,18 +262,44 @@ const WY = [0, 0, 0, 0];
 // ANCHOR_OUT.
 const ANCHOR = 0.16;
 const ANCHOR_OUT = 0.44;
+// Snow and bare rock (16 November, the owner's peaks: "big white-topped cubes with dark sides"):
+// a step of up to STEEP_LINK voxels between two such cells curves as a slope instead of standing
+// as a wall, the field kept within STEEP_SPAN of the cell's height (a step of three meets at its
+// middle, a voxel and a half from either side). Taller steps stay cliffs, their lip bevelled.
+export const STEEP_LINK = 8;
+const STEEP_SPAN = 4;
+// A water bed follows the beds round it up to BED_LINK voxels, and rises toward dry land up to
+// BED_SHORE above it, so the shallows climb to the shore in small cubes instead of per cell steps.
+const BED_LINK = 4;
+const BED_SHORE = 2;
+const BED_SPAN = 2;
 export function fieldHeight(land: LandRead, px: number, py: number): number {
   const cx = Math.floor(px);
   const cy = Math.floor(py);
   const t = land.top(cx, cy);
   if (land.flat(cx, cy)) return t;
-  const own = land.anchored(cx, cy) ? t : land.value(cx, cy);
   const gx = px - 0.5;
   const gy = py - 0.5;
   const ix = Math.floor(gx);
   const iy = Math.floor(gy);
   cr(gx - ix, WX);
   cr(gy - iy, WY);
+  if (land.bed(cx, cy)) {
+    let h = 0;
+    for (let j = 0; j < 4; j++) {
+      const ny = iy - 1 + j;
+      let row = 0;
+      for (let i = 0; i < 4; i++) {
+        const nx = ix - 1 + i;
+        let v = t;
+        if (nx !== cx || ny !== cy) v = bedLink(t, land.top(nx, ny), land.natural(nx, ny), land.bed(nx, ny), land.wet(nx, ny));
+        row += WX[i] * v;
+      }
+      h += WY[j] * row;
+    }
+    return Math.max(t - BED_SPAN, Math.min(t + BED_SPAN, h));
+  }
+  const own = land.anchored(cx, cy) ? t : land.value(cx, cy);
   let h = 0;
   for (let j = 0; j < 4; j++) {
     const ny = iy - 1 + j;
@@ -262,8 +312,10 @@ export function fieldHeight(land: LandRead, px: number, py: number): number {
     }
     h += WY[j] * row;
   }
-  // Never more than a voxel from the cell's own height: the bicubic overshoots a little.
-  h = Math.max(t - 1, Math.min(t + 1, h));
+  // Never more than a voxel from the cell's own height (two on snow and rock): the bicubic
+  // overshoots a little.
+  const span = land.steep(cx, cy) ? STEEP_SPAN : 1;
+  h = Math.max(t - span, Math.min(t + span, h));
   const fx = Math.abs(px - cx - 0.5);
   const fy = Math.abs(py - cy - 0.5);
   if (land.anchored(cx, cy)) {
@@ -272,6 +324,20 @@ export function fieldHeight(land: LandRead, px: number, py: number): number {
   }
   // Open ground: a gentle swell over several cells.
   return h + swell(px, py);
+}
+
+// The height a water bed (own height t) takes from a neighbour of height n: another bed's, dry land
+// a little above it (the shore), its own otherwise.
+function bedLink(t: number, n: number, natural: boolean, bed: boolean, wet: boolean): number {
+  if (!natural) return t;
+  if (bed) return Math.abs(n - t) <= BED_LINK ? n : t;
+  return !wet && n > t && n - t <= BED_SHORE ? n : t;
+}
+
+// Whether two dry cells' land joins (the field follows the neighbour): a voxel apart, or up to
+// STEEP_LINK between two cells of snow or bare rock.
+export function joins(dt: number, steepA: boolean, steepB: boolean): boolean {
+  return Math.abs(dt) <= 1 || (steepA && steepB && Math.abs(dt) <= STEEP_LINK);
 }
 
 // The gentle swell of open ground: about a tenth of a voxel either way, over patches several
@@ -299,26 +365,42 @@ export function fieldFine(f: FineCells, px: number, py: number): number {
   const c = fineAt(f, cx, cy);
   const t = f.top[c];
   if (f.flat[c]) return t;
-  const own = f.anchored[c] ? t : f.value[c];
-  const mine = f.natural[c] && !f.wet[c];
   const gx = px - 0.5;
   const gy = py - 0.5;
   const ix = Math.floor(gx);
   const iy = Math.floor(gy);
   cr(gx - ix, WX);
   cr(gy - iy, WY);
+  if (isBed(f, c)) {
+    let h = 0;
+    for (let j = 0; j < 4; j++) {
+      let n = fineAt(f, ix - 1, iy - 1 + j);
+      let row = 0;
+      for (let i = 0; i < 4; i++, n++) {
+        const v = n === c || !f.inside[n] ? t : bedLink(t, f.top[n], f.natural[n] === 1, isBed(f, n), f.wet[n] === 1);
+        row += WX[i] * v;
+      }
+      h += WY[j] * row;
+    }
+    return Math.max(t - BED_SPAN, Math.min(t + BED_SPAN, h));
+  }
+  const own = f.anchored[c] ? t : f.value[c];
+  const mine = f.natural[c] && !f.wet[c];
+  const steep = f.steep[c] === 1;
   let h = 0;
   for (let j = 0; j < 4; j++) {
     let n = fineAt(f, ix - 1, iy - 1 + j);
     let row = 0;
     for (let i = 0; i < 4; i++, n++) {
       let v = own;
-      if (n !== c && mine && f.inside[n] && f.natural[n] && !f.wet[n] && !f.flat[n] && Math.abs(f.top[n] - t) <= 1) v = f.anchored[n] ? f.top[n] : f.value[n];
+      if (n !== c && mine && f.inside[n] && f.natural[n] && !f.wet[n] && !f.flat[n] && joins(f.top[n] - t, steep, f.steep[n] === 1))
+        v = f.anchored[n] ? f.top[n] : f.value[n];
       row += WX[i] * v;
     }
     h += WY[j] * row;
   }
-  h = Math.max(t - 1, Math.min(t + 1, h));
+  const span = steep ? STEEP_SPAN : 1;
+  h = Math.max(t - span, Math.min(t + span, h));
   if (f.anchored[c]) {
     const fx = Math.abs(px - cx - 0.5);
     const fy = Math.abs(py - cy - 0.5);
@@ -326,6 +408,19 @@ export function fieldFine(f: FineCells, px: number, py: number): number {
     return h * (1 - a) + t * a;
   }
   return h + swell(px, py);
+}
+
+// A water bed's height in columns, in eighths, without the land's dither: seen through water, its
+// lone columns read as scattered blocks, and steps of a whole voxel as fins.
+// Never above the water: a cell the simulation counts as wet is shallow ground seen through it,
+// at least an eighth under its surface (risen toward the shore, it stood out as a sand islet).
+function bedStep(h: number, level: number, sub: number): number {
+  return Math.min(Math.round(h * sub), Math.ceil(level * sub) - 1);
+}
+
+// A water bed: natural ground under water (not lava, not another fluid).
+export function isBed(f: FineCells, c: number): boolean {
+  return f.inside[c] === 1 && f.wet[c] === 1 && f.water[c] > -1e8 && f.lava[c] === 0 && f.natural[c] === 1;
 }
 
 // Reused between builds: heights and colours of a tile's columns with a border of B.
@@ -336,6 +431,19 @@ let DONE = new Uint8Array(0);
 // 1 on open dry ground (not a flower, a tuft or a boulder), 2 where that ground is bare rock.
 let LAND = new Uint8Array(0);
 let SUM = new Float64Array(0);
+// Each column's cell (fineAt), its riser (the tallest step drawn as part of a slope), its night glow
+// level (0 to GLOW_LEVELS), and the surface of the water over it (NaN where it is not under water).
+let CELL = new Int32Array(0);
+let RS = new Uint8Array(0);
+let GL = new Uint8Array(0);
+// 1 where a column is a water bed under the water's surface (its faces are lit as the water lights them).
+let WET = new Uint8Array(0);
+let WL = new Float32Array(0);
+// The nearest lava (cells away and its surface) and house (cells away and its floor) to a column.
+let LAVA_D = new Float32Array(0);
+let LAVA_Y = new Float32Array(0);
+let HOUSE_D = new Float32Array(0);
+let HOUSE_Y = new Float32Array(0);
 
 // Writes one tile of the chunk's fine land, cells [tx0, tx1) by [ty0, ty1) in island
 // coordinates, in columns of 1 / sub. ox, oz: the scene's offset of cell (0, 0).
@@ -359,6 +467,7 @@ export function buildFineTile(
   tx1: number,
   ty1: number,
   tops: FineTops | null = null,
+  water: Writer | null = null,
 ): void {
   const steps = GRAPHICS.steps;
   const blend = GRAPHICS.blend;
@@ -378,8 +487,21 @@ export function buildFineTile(
     DONE = new Uint8Array(SW * SH);
     LAND = new Uint8Array(SW * SH);
     SUM = new Float64Array((SW + 1) * (SH + 1));
+    CELL = new Int32Array(SW * SH);
+    RS = new Uint8Array(SW * SH);
+    GL = new Uint8Array(SW * SH);
+    WET = new Uint8Array(SW * SH);
+    WL = new Float32Array(SW * SH);
+    LAVA_D = new Float32Array(SW * SH);
+    LAVA_Y = new Float32Array(SW * SH);
+    HOUSE_D = new Float32Array(SW * SH);
+    HOUSE_Y = new Float32Array(SW * SH);
   }
   const bottom = f.bottom * sub;
+  // The tallest small step of a slope drawn in the ground's own colour: a quarter voxel, two whole
+  // ones on snow and rock, whose slopes (STEEP_LINK) climb up to three voxels a cell and meet a
+  // neighbour's in steps of a voxel or more where three cells of different heights meet.
+  const steepRiser = Math.max(RISER, 2 * sub);
 
   for (let j = 0; j < SH; j++) {
     for (let k = 0; k < SW; k++) {
@@ -393,8 +515,12 @@ export function buildFineTile(
         H[s] = bottom;
         C[s] = 0;
         D[s] = 0;
+        CELL[s] = -1;
+        RS[s] = RISER;
         continue;
       }
+      CELL[s] = c;
+      RS[s] = f.steep[c] ? steepRiser : RISER;
       // The column's middle, in cells.
       const px = (sx + 0.5) / sub;
       const py = (sy + 0.5) / sub;
@@ -406,8 +532,9 @@ export function buildFineTile(
       const lx = sx - cx * sub;
       const ly = sy - cy * sub;
       if (f.natural[c]) {
-        // The secondary terrain map: slopes where the land rises one voxel.
+        // The secondary terrain map: slopes where the land rises one voxel, and water beds.
         if (steps && !f.wet[c]) hgt = fieldStep(fieldFine(f, px, py), px, py, sub);
+        else if (steps && isBed(f, c)) hgt = bedStep(fieldFine(f, px, py), f.water[c], sub);
         let border = Infinity;
         let shore = false;
         let foot = -1; // the cliff this column stands at the foot of
@@ -421,8 +548,13 @@ export function buildFineTile(
           const dt = f.top[n] - t;
           // A cliff's lip, broken in short runs.
           if (steps && dt <= -2 && away === 0 && !f.wet[c] && !f.wet[n] && noise(px, py, 0.7, 2) > 0.62) hgt = Math.min(hgt, t * sub - Math.max(1, sub >> 3));
+          // On snow and rock a cliff too tall to curve has its lip bevelled: three eighths down at
+          // the edge, one the column after, so a peak's step reads as worn stone, not a block.
+          if (steps && f.steep[c] && dt <= -2 && !joins(dt, true, f.steep[n] === 1) && !f.wet[c] && !f.wet[n] && !f.anchored[c] && away < BEVEL.length)
+            hgt = Math.min(hgt, t * sub - Math.round((BEVEL[away] * sub) / 8));
           if (f.wet[n] && !f.wet[c] && af < 0.3) shore = true;
-          if (dt >= 2 && af < 0.2 && !f.wet[n]) foot = n;
+          // At the foot of a cliff (not of a slope of snow or rock, which curves).
+          if (dt >= 2 && af < 0.2 && !f.wet[n] && !(steps && joins(dt, f.steep[c] === 1, f.steep[n] === 1))) foot = n;
           if (!blend) continue;
           if (f.wet[c] && !f.wet[n] && f.water[c] > -1e8 && f.top[n] >= f.water[c] - 0.5) {
             // The shore: sand reaches into the shallows in a wavy line, just above the water.
@@ -431,7 +563,15 @@ export function buildFineTile(
               hgt = Math.max(hgt, above, f.top[n] * sub);
               src = n;
             }
-          } else if (!f.wet[c] && !f.wet[n] && f.blends[c] && f.blends[n] && f.ground[n] !== f.ground[c] && Math.abs(dt) <= 1) {
+          } else if (
+            !f.wet[c] &&
+            !f.wet[n] &&
+            f.blends[c] &&
+            f.blends[n] &&
+            f.ground[n] !== f.ground[c] &&
+            Math.abs(dt) <= 1 &&
+            !(f.softOn[c] && f.softOn[n])
+          ) {
             // Two grounds that meet: their border wanders up to almost half a cell either way,
             // the same line seen from both sides.
             const shift = Math.max(-0.45, Math.min(0.45, (noise(px, py, 0.6, 13) - 0.5) * 1.6)) * (f.ground[c] > f.ground[n] ? 1 : -1);
@@ -461,6 +601,9 @@ export function buildFineTile(
           }
         }
       }
+      // With the water in eighths, a cell the simulation counts as under water is drawn under it,
+      // an eighth at least (the shore's sand reaching into the shallows stood out as islets).
+      if (water && f.wet[c] && f.water[c] > -1e8 && !f.lava[c]) hgt = Math.min(hgt, Math.ceil(f.water[c] * sub) - 1 - raise);
       H[s] = hgt + raise;
       if (tops && sx >= tx0 * sub && sy >= ty0 * sub && sx < tx1 * sub && sy < ty1 * sub)
         tops.h[(sy - tops.y0 * sub) * tops.stride + (sx - tops.x0 * sub)] = hgt;
@@ -468,9 +611,16 @@ export function buildFineTile(
       LAND[s] = f.natural[c] && !f.wet[c] && !bit ? (rock ? 2 : 1) : 0;
       D[s] = f.wet[c] || src !== c ? 0 : 1;
       let col = bit || f.color[src];
-      // Bare rock takes half the patches' contrast (the owner's hill read as light and dark
-      // checks): its slopes' light carries its form.
-      if (grain && f.natural[c] && !bit) col = scaleColor(col, rock ? 1 + (shadeAt(px, py) - 1) * ROCK_CALM : shadeAt(px, py));
+      if (f.softOn[c] && !bit && src === c && !f.wet[c]) {
+        // A spell's ground in soft patches (16 November, the owner: Big Bang's ground "a busy
+        // camouflage patchwork"): the colour of the neighbourhood round the column, eased between
+        // cells' middles and kept to a few shades.
+        col = softColor(f, px, py);
+      } else if (grain && f.natural[c] && !bit) {
+        // Bare rock takes half the patches' contrast (the owner's hill read as light and dark
+        // checks): its slopes' light carries its form.
+        col = scaleColor(col, rock ? 1 + (shadeAt(px, py) - 1) * ROCK_CALM : shadeAt(px, py));
+      }
       C[s] = col;
     }
   }
@@ -496,6 +646,8 @@ export function buildFineTile(
   // With relief, a slope of one voxel a cell is lit almost as a wall facing that way, the light
   // and dark sides that made height easy to read with whole steps (pass 1).
   const slopeK = relief ? 0.45 : 0.15;
+  // The columns of a water bed under the water's surface.
+  for (let s = 0; s < SW * SH; s++) WET[s] = CELL[s] >= 0 && isBed(f, CELL[s]) && H[s] < f.water[CELL[s]] * sub ? 1 : 0;
   const gentle = (d: number) => (d > 2 * RISER ? 2 * RISER : d < -2 * RISER ? -2 * RISER : d);
   for (let j = 2; j < SH - 2; j++)
     for (let k = 2; k < SW - 2; k++) {
@@ -505,7 +657,11 @@ export function buildFineTile(
       const w = h0 - H[s - 1];
       const so = H[s + SW] - h0;
       const no = h0 - H[s - SW];
-      if (e > RISER || -w > RISER || so > RISER || -no > RISER) {
+      // A bed under the water keeps its colour: the water over it shades it by depth, and its tops
+      // merge.
+      if (WET[s]) continue;
+      const riser = RS[s];
+      if (e > riser || -w > riser || so > riser || -no > riser) {
         C[s] = scaleColor(C[s], 0.88);
         continue;
       }
@@ -539,11 +695,24 @@ export function buildFineTile(
       if (light !== 1) C[s] = scaleColor(C[s], Math.round(light * 20) / 20);
     }
 
-  // Tops, merged into rectangles of one height and colour.
   const k0 = B;
   const k1 = SW - B;
   const j0 = B;
   const j1 = SH - B;
+  // Night glow (warmlight): how near lava and houses each column is, and its glow on its top.
+  const glowing = GRAPHICS.warmlight && glowSources(f, tx0, ty0, tx1, ty1);
+  for (let j = j0; j < j1; j++)
+    for (let k = k0; k < k1; k++) {
+      const s = j * SW + k;
+      GL[s] = 0;
+      LAVA_D[s] = Infinity;
+      HOUSE_D[s] = Infinity;
+      if (!glowing || CELL[s] < 0) continue;
+      nearestGlow(s, (sx0 + k + 0.5) / sub, (sy0 + j + 0.5) / sub);
+      GL[s] = glowLevel(s, H[s] / sub);
+    }
+
+  // Tops, merged into rectangles of one height, colour and glow.
   for (let j = j0; j < j1; j++) DONE.fill(0, j * SW + k0, j * SW + k1);
   const topLight = FACE_LIGHT.top;
   for (let j = j0; j < j1; j++) {
@@ -553,22 +722,37 @@ export function buildFineTile(
       const h0 = H[s];
       const c0 = C[s];
       const d0 = D[s];
+      const g0 = GL[s];
+      const w0 = WET[s];
       let ke = k + 1;
-      while (ke < k1 && !DONE[j * SW + ke] && H[j * SW + ke] === h0 && C[j * SW + ke] === c0 && D[j * SW + ke] === d0) ke++;
+      while (
+        ke < k1 &&
+        !DONE[j * SW + ke] &&
+        H[j * SW + ke] === h0 &&
+        C[j * SW + ke] === c0 &&
+        D[j * SW + ke] === d0 &&
+        GL[j * SW + ke] === g0 &&
+        WET[j * SW + ke] === w0
+      )
+        ke++;
       let je = j + 1;
       grow: while (je < j1) {
         for (let q = k; q < ke; q++) {
           const t = je * SW + q;
-          if (DONE[t] || H[t] !== h0 || C[t] !== c0 || D[t] !== d0) break grow;
+          if (DONE[t] || H[t] !== h0 || C[t] !== c0 || D[t] !== d0 || GL[t] !== g0 || WET[t] !== w0) break grow;
         }
         je++;
       }
       for (let jj = j; jj < je; jj++) DONE.fill(1, jj * SW + k, jj * SW + ke);
       const x0 = (sx0 + k) * Q + ox;
       const z0 = (sy0 + j) * Q + oz;
+      out.e0 = g0 / GLOW_LEVELS;
+      out.e1 = w0;
       out.rect(4, x0, x0 + (ke - k) * Q, h0 * Q, h0 * Q, z0, z0 + (je - j) * Q, c0, topLight, 1, d0);
     }
   }
+  out.e0 = 0;
+  out.e1 = 0;
 
   // Walls toward lower neighbours, in layers, merged along each line into runs.
   const runs = RUNS;
@@ -589,7 +773,15 @@ export function buildFineTile(
         for (let q = 0; q < faces; q++) {
           const face = FACES[q];
           const open = runs.find(
-            (r) => r.until === p && r.lo === face.lo && r.hi === face.hi && r.color === face.color && r.light === face.light && r.foot === face.foot,
+            (r) =>
+              r.until === p &&
+              r.lo === face.lo &&
+              r.hi === face.hi &&
+              r.color === face.color &&
+              r.light === face.light &&
+              r.foot === face.foot &&
+              r.glow === face.glow &&
+              r.wet === face.wet,
           );
           if (open) {
             open.until = p + 1;
@@ -601,6 +793,8 @@ export function buildFineTile(
               color: face.color,
               light: face.light,
               foot: face.foot,
+              glow: face.glow,
+              wet: face.wet,
               start: face.at,
               end: face.at + 1,
               line: face.line,
@@ -617,8 +811,480 @@ export function buildFineTile(
       for (const run of runs) emitRun(out, d, run, sub, ox, oz);
     }
   }
+  out.e0 = 0;
+  out.e1 = 0;
 
-  if (GRAPHICS.foam) foam(f, out, sub, sx0, sy0, SW, SH, ox, oz);
+  // The water in eighths (16 November) takes the place of the line of foam on the land.
+  if (water) fineWater(f, water, sub, sx0, sy0, SW, SH, ox, oz);
+  else if (GRAPHICS.foam) foam(f, out, sub, sx0, sy0, SW, SH, ox, oz);
+}
+
+// The land shader's flag (landWet) for a face lit as its slope is: half way to a bed's (1).
+const SLOPE_LIT = 0.5;
+
+// The bevel of a cliff's lip on snow and rock, eighths of a voxel down by columns from the edge.
+const BEVEL = [3, 1];
+
+// Night glow (16 November, warmlight): lava and houses' lit windows warm the land round them at
+// night, baked in each face as a level (0 to GLOW_LEVELS) the land's shader lights by the night.
+// Lava reaches GLOW_REACH cells and climbs the walls above it; a house reaches HOUSE_REACH at its
+// own height.
+export const GLOW_LEVELS = 6;
+const GLOW_REACH = 3;
+const HOUSE_REACH = 2.5;
+const SRC_X: number[] = [];
+const SRC_Y: number[] = [];
+const SRC_LAVA: boolean[] = [];
+const SRC_LEVEL: number[] = [];
+
+// The lava and house cells within GLOW_REACH of tile [tx0, tx1) by [ty0, ty1); whether there are any.
+function glowSources(f: FineCells, tx0: number, ty0: number, tx1: number, ty1: number): boolean {
+  SRC_X.length = SRC_Y.length = SRC_LAVA.length = SRC_LEVEL.length = 0;
+  for (let y = ty0 - GLOW_REACH; y < ty1 + GLOW_REACH; y++)
+    for (let x = tx0 - GLOW_REACH; x < tx1 + GLOW_REACH; x++) {
+      if (x < f.x0 - 3 || y < f.y0 - 3 || x >= f.x1 + 3 || y >= f.y1 + 3) continue;
+      const c = fineAt(f, x, y);
+      if (!f.inside[c]) continue;
+      const lava = f.wet[c] === 1 && f.lava[c] === 1 && f.water[c] > -1e8;
+      if (!lava && !f.flat[c]) continue;
+      SRC_X.push(x);
+      SRC_Y.push(y);
+      SRC_LAVA.push(lava);
+      SRC_LEVEL.push(lava ? f.water[c] : f.top[c]);
+    }
+  return SRC_X.length > 0;
+}
+
+// The nearest lava and house to the column at (px, py) in cells, into LAVA_D, LAVA_Y, HOUSE_D, HOUSE_Y.
+function nearestGlow(s: number, px: number, py: number): void {
+  let lava = Infinity;
+  let house = Infinity;
+  for (let k = 0; k < SRC_X.length; k++) {
+    const dx = Math.max(SRC_X[k] - px, 0, px - SRC_X[k] - 1);
+    const dy = Math.max(SRC_Y[k] - py, 0, py - SRC_Y[k] - 1);
+    const d = Math.hypot(dx, dy);
+    if (SRC_LAVA[k]) {
+      if (d < lava) {
+        lava = d;
+        LAVA_Y[s] = SRC_LEVEL[k];
+      }
+    } else if (d < house) {
+      house = d;
+      HOUSE_Y[s] = SRC_LEVEL[k];
+    }
+  }
+  LAVA_D[s] = lava;
+  HOUSE_D[s] = house;
+}
+
+// The glow level of column s at height y (scene units).
+function glowLevel(s: number, y: number): number {
+  let g = 0;
+  if (LAVA_D[s] < GLOW_REACH) {
+    const near = 1 - LAVA_D[s] / GLOW_REACH;
+    const above = y - LAVA_Y[s];
+    // Up the walls over the lava, fading over six voxels; under its surface, gone within one.
+    const up = above >= 0 ? Math.max(0, 1 - above / 6) : Math.max(0, 1 + above);
+    g += near * near * up;
+  }
+  if (HOUSE_D[s] < HOUSE_REACH) {
+    const near = 1 - HOUSE_D[s] / HOUSE_REACH;
+    g += 0.35 * near * near * Math.max(0, 1 - Math.abs(y - HOUSE_Y[s] - 0.5) / 2.5);
+  }
+  return Math.round(Math.min(1, g) * GLOW_LEVELS);
+}
+
+// A spell's ground in soft patches: the cells' soft colours eased between their middles, in steps
+// of SOFT_STEP a channel so the columns still merge.
+const SOFT_STEP = 9;
+function softColor(f: FineCells, px: number, py: number): number {
+  const gx = px - 0.5;
+  const gy = py - 0.5;
+  const ix = Math.floor(gx);
+  const iy = Math.floor(gy);
+  const u = gx - ix;
+  const v = gy - iy;
+  const own = f.soft[fineAt(f, Math.floor(px), Math.floor(py))];
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  for (let k = 0; k < 4; k++) {
+    const x = ix + (k & 1);
+    const y = iy + (k >> 1);
+    const w = (k & 1 ? u : 1 - u) * (k >> 1 ? v : 1 - v);
+    const inRange = x >= f.x0 - 3 && y >= f.y0 - 3 && x < f.x1 + 3 && y < f.y1 + 3;
+    const n = inRange ? fineAt(f, x, y) : -1;
+    const col = n >= 0 && f.softOn[n] ? f.soft[n] : own;
+    r += ((col >> 16) & 255) * w;
+    g += ((col >> 8) & 255) * w;
+    b += (col & 255) * w;
+  }
+  const q = (x: number) => Math.min(255, Math.round(x / SOFT_STEP) * SOFT_STEP);
+  return (q(r) << 16) | (q(g) << 8) | q(b);
+}
+
+// The water in eighths (16 November, the owner: water "seen from the side is huge flat walls with
+// grid lines", "the sea floor and depth steps ... big pale squares", "a white foam outline like
+// thick tape"). Over every column of a water cell whose bed lies below the surface: a top at the
+// surface, merged into rectangles where the surface is level (within a cell where it slopes); its
+// edge follows the fine land. The surface's corners take the mean level of the water cells round
+// them, so a river slopes instead of stepping. Sides only where the water stands above what is
+// next to it (the island's edge, lower land), from the bed up, darker with depth by height, never a
+// slab down to the island's foot. A soft band of foam a few columns wide, broken, where the water
+// meets land. The colour by depth is the shader's (water-light.ts, from Terrain.waterMap); the
+// vertices carry the deep colour (for the sides), the foam and how much the waves move.
+const FOAM_LEVELS = 3;
+// Water cells whose levels are at most LEVEL_JOIN apart (scene units) share their corners' level.
+const LEVEL_JOIN = 1.2;
+let WK = new Float64Array(0);
+let FO = new Uint8Array(0);
+// The rectangles of water top (i, ie, j, je, first column) and an outline's points.
+const RECTS: number[] = [];
+const PTS: number[] = [];
+// The four corner levels of each water cell of a tile and its border: (x0, y0), (x1, y0),
+// (x0, y1), (x1, y1); NaN for a cell not under water.
+let CORNER = new Float32Array(0);
+function cornerLevel(f: FineCells, gx: number, gy: number, own: number): number {
+  let lo = Infinity;
+  let hi = -Infinity;
+  let sum = 0;
+  let n = 0;
+  for (let k = 0; k < 4; k++) {
+    const x = gx - 1 + (k & 1);
+    const y = gy - 1 + (k >> 1);
+    if (x < f.x0 - 3 || y < f.y0 - 3 || x >= f.x1 + 3 || y >= f.y1 + 3) continue;
+    const c = fineAt(f, x, y);
+    if (!isWater(f, c)) continue;
+    const l = f.water[c];
+    lo = Math.min(lo, l);
+    hi = Math.max(hi, l);
+    sum += l;
+    n++;
+  }
+  // Cells far apart (a fall) keep their own levels at the corner; nearer, the water slopes.
+  return n && hi - lo <= LEVEL_JOIN ? sum / n : own;
+}
+function isWater(f: FineCells, c: number): boolean {
+  return f.inside[c] === 1 && f.wet[c] === 1 && f.water[c] > -1e8 && f.lava[c] === 0;
+}
+
+function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: number, SW: number, SH: number, ox: number, oz: number): void {
+  const Q = 1 / sub;
+  const n = SW * SH;
+  if (WK.length < n) {
+    WK = new Float64Array(n);
+    FO = new Uint8Array(n);
+  }
+  // The cells the columns of the tile and its border fall in, and their corners.
+  const cx0 = Math.floor(sx0 / sub);
+  const cy0 = Math.floor(sy0 / sub);
+  const cw = Math.floor((sx0 + SW - 1) / sub) - cx0 + 1;
+  const ch = Math.floor((sy0 + SH - 1) / sub) - cy0 + 1;
+  if (CORNER.length < cw * ch * 4) CORNER = new Float32Array(cw * ch * 4);
+  let any = false;
+  for (let y = 0; y < ch; y++)
+    for (let x = 0; x < cw; x++) {
+      const k = (y * cw + x) * 4;
+      const gx = cx0 + x;
+      const gy = cy0 + y;
+      const inRange = gx >= f.x0 - 3 && gy >= f.y0 - 3 && gx < f.x1 + 3 && gy < f.y1 + 3;
+      const c = inRange ? fineAt(f, gx, gy) : -1;
+      if (c < 0 || !isWater(f, c)) {
+        CORNER[k] = CORNER[k + 1] = CORNER[k + 2] = CORNER[k + 3] = NaN;
+        continue;
+      }
+      any = true;
+      const own = f.water[c];
+      CORNER[k] = cornerLevel(f, gx, gy, own);
+      CORNER[k + 1] = cornerLevel(f, gx + 1, gy, own);
+      CORNER[k + 2] = cornerLevel(f, gx, gy + 1, own);
+      CORNER[k + 3] = cornerLevel(f, gx + 1, gy + 1, own);
+    }
+  if (!any) return;
+  const levelAt = (k: number, u: number, v: number) =>
+    CORNER[k] * (1 - u) * (1 - v) + CORNER[k + 1] * u * (1 - v) + CORNER[k + 2] * (1 - u) * v + CORNER[k + 3] * u * v;
+  // The level over each column, NaN where no water covers it.
+  for (let j = 0; j < SH; j++)
+    for (let i = 0; i < SW; i++) {
+      const s = j * SW + i;
+      WL[s] = NaN;
+      if (CELL[s] < 0) continue;
+      const sx = sx0 + i;
+      const sy = sy0 + j;
+      const x = Math.floor(sx / sub);
+      const y = Math.floor(sy / sub);
+      const k = ((y - cy0) * cw + (x - cx0)) * 4;
+      if (Number.isNaN(CORNER[k])) continue;
+      const flat = CORNER[k] === CORNER[k + 1] && CORNER[k] === CORNER[k + 2] && CORNER[k] === CORNER[k + 3];
+      const level = flat ? CORNER[k] : levelAt(k, (sx - x * sub + 0.5) / sub, (sy - y * sub + 0.5) / sub);
+      if (H[s] * Q >= level - 0.001) continue;
+      WL[s] = level;
+      WK[s] = flat ? level : -1 - CELL[s];
+    }
+  // Foam and waves.
+  const reach = Math.min(B, Math.max(1, Math.round((sub * 3) / 8)));
+  const foamOn = GRAPHICS.foam;
+  for (let j = B; j < SH - B; j++)
+    for (let i = B; i < SW - B; i++) {
+      const s = j * SW + i;
+      FO[s] = 0;
+      if (Number.isNaN(WL[s])) continue;
+      const px = (sx0 + i + 0.5) / sub;
+      const py = (sy0 + j + 0.5) / sub;
+      let near = Infinity;
+      if (foamOn)
+        for (let dy = -reach; dy <= reach && near > 1; dy++)
+          for (let dx = -reach; dx <= reach; dx++) {
+            const r = Math.max(Math.abs(dx), Math.abs(dy));
+            if (r === 0 || r >= near) continue;
+            const t = s + dx + dy * SW;
+            // Land at or above the water: dry ground, or a bed that rises out of it.
+            if (CELL[t] >= 0 && Number.isNaN(WL[t])) near = r;
+          }
+      if (near <= reach) {
+        // A band one to `reach` columns wide by the shore, wavy, thinning away from the land and
+        // broken in places, never a solid line.
+        const width = 1 + noise(px, py, 0.9, 81) * reach;
+        if (near <= width) {
+          let level = near <= 1 ? 3 : near <= 2 ? 2 : 1;
+          if (noise(px, py, 0.45, 83) < 0.32) level--;
+          FO[s] = Math.max(0, level);
+        }
+      }
+    }
+  // The tops are drawn for the whole chunk at once when its last tile is built (fineWaterTops): each
+  // column's level, key, foam and colour into the chunk's own arrays, and its cells' corners.
+  for (let j = B; j < SH - B; j++)
+    for (let i = B; i < SW - B; i++) {
+      const s = j * SW + i;
+      const at = (sy0 + j - CW.y0) * CW.w + (sx0 + i - CW.x0);
+      if (at < 0 || at >= CW.n || sx0 + i < CW.x0 || sx0 + i >= CW.x0 + CW.w) continue;
+      CW.side[at] = 0;
+      if (Number.isNaN(WL[s])) continue;
+      CW.level[at] = WL[s];
+      CW.key[at] = WK[s];
+      CW.foam[at] = FO[s];
+      CW.color[at] = f.wdeep[CELL[s]];
+    }
+  for (let y = 0; y < ch; y++)
+    for (let x = 0; x < cw; x++) {
+      const gx = cx0 + x - f.x0;
+      const gy = cy0 + y - f.y0;
+      if (gx < 0 || gy < 0 || gx >= CW.cells || gy >= CW.cellRows) continue;
+      for (let q = 0; q < 4; q++) CW.corner[(gy * CW.cells + gx) * 4 + q] = CORNER[(y * cw + x) * 4 + q];
+    }
+  // The level of column s's top at the middle of its edge toward d (east, south, west, north).
+  const edgeLevel = (s: number, i: number, j: number, d: number): number => {
+    if (WK[s] >= 0) return WK[s];
+    const sx = sx0 + i;
+    const sy = sy0 + j;
+    const x = Math.floor(sx / sub);
+    const y = Math.floor(sy / sub);
+    const k = ((y - cy0) * cw + (x - cx0)) * 4;
+    const u = (sx - x * sub + (d === 0 ? 1 : d === 2 ? 0 : 0.5)) / sub;
+    const v = (sy - y * sub + (d === 1 ? 1 : d === 3 ? 0 : 0.5)) / sub;
+    return levelAt(k, u, v);
+  };
+  // Sides where the water stands above what is next to it.
+  out.e0 = SIDE_MARK;
+  out.e1 = 0;
+  for (let j = B; j < SH - B; j++)
+    for (let i = B; i < SW - B; i++) {
+      const s = j * SW + i;
+      const level = WL[s];
+      if (Number.isNaN(level)) continue;
+      const floor = H[s] * Q;
+      const deep = f.wdeep[CELL[s]];
+      for (let d = 0; d < 4; d++) {
+        const t = s + DX[d] + DY[d] * SW;
+        // Between two columns of water, by the levels of their tops at the edge they share: equal
+        // wherever the surface is whole (a slope, level water), apart only at a fall.
+        const top = edgeLevel(s, i, j, d);
+        const next = !Number.isNaN(WL[t]) ? edgeLevel(t, i + DX[d], j + DY[d], (d + 2) & 3) : CELL[t] < 0 ? -Infinity : H[t] * Q;
+        const lo = Math.max(floor, next);
+        if (top - lo < 0.02) continue;
+        const at = (sy0 + j - CW.y0) * CW.w + (sx0 + i - CW.x0);
+        if (at >= 0 && at < CW.n) CW.side[at] |= 1 << d;
+        const X = (sx0 + i) * Q + ox;
+        const Z = (sy0 + j) * Q + oz;
+        // Darker and less clear with depth, by height, so the sides of two columns meet in one tone.
+        const split = level - WALL_DEEP;
+        if (lo < split) {
+          waterSide(out, d, X, Z, Q, lo, split, deep, level);
+          waterSide(out, d, X, Z, Q, split, top, deep, level);
+        } else waterSide(out, d, X, Z, Q, lo, top, deep, level);
+      }
+    }
+  out.e0 = 0;
+}
+
+// The water's tops of the chunk being built, column by column (NaN level: no water), with each
+// column's sides (a bit for each way) and each cell's four corner levels.
+const CW = {
+  x0: 0,
+  y0: 0,
+  w: 0,
+  n: 0,
+  cells: 0,
+  cellRows: 0,
+  level: new Float32Array(0),
+  key: new Float64Array(0),
+  foam: new Uint8Array(0),
+  color: new Uint32Array(0),
+  side: new Uint8Array(0),
+  corner: new Float32Array(0),
+  rid: new Int32Array(0),
+  done: new Uint8Array(0),
+};
+
+// Before a chunk's first tile: its arrays sized and emptied.
+export function beginFineWater(f: FineCells, sub: number): void {
+  CW.x0 = f.x0 * sub;
+  CW.y0 = f.y0 * sub;
+  CW.w = (f.x1 - f.x0) * sub;
+  CW.n = CW.w * (f.y1 - f.y0) * sub;
+  CW.cells = f.x1 - f.x0;
+  CW.cellRows = f.y1 - f.y0;
+  if (CW.level.length < CW.n) {
+    CW.level = new Float32Array(CW.n);
+    CW.key = new Float64Array(CW.n);
+    CW.foam = new Uint8Array(CW.n);
+    CW.color = new Uint32Array(CW.n);
+    CW.side = new Uint8Array(CW.n);
+    CW.rid = new Int32Array(CW.n);
+    CW.done = new Uint8Array(CW.n);
+  }
+  if (CW.corner.length < CW.cells * CW.cellRows * 4) CW.corner = new Float32Array(CW.cells * CW.cellRows * 4);
+  CW.level.fill(NaN, 0, CW.n);
+  CW.side.fill(0, 0, CW.n);
+  CW.corner.fill(NaN);
+}
+
+// The water's tops of the whole chunk, after its last tile: merged into rectangles where the surface
+// is level (or within a cell where it slopes), each drawn with a corner wherever a neighbour's
+// corner, a side of the water or the chunk's edge meets its own edges, so no corner of one lies
+// partway along another's edge. Such T-junctions opened hairline cracks, and a hair of overlap drew
+// lines of doubled water (the review of 17 November). Drawn per chunk, not per tile, so only the
+// chunk's edges need a corner at every column.
+export function fineWaterTops(out: Writer, sub: number, ox: number, oz: number): void {
+  const { w, n, x0: X0, y0: Y0 } = CW;
+  if (n === 0) return;
+  const rows = n / w;
+  const Q = 1 / sub;
+  const level = CW.level;
+  const key = CW.key;
+  const foam = CW.foam;
+  const color = CW.color;
+  const rid = CW.rid;
+  const done = CW.done;
+  rid.fill(-1, 0, n);
+  done.fill(0, 0, n);
+  RECTS.length = 0;
+  for (let j = 0; j < rows; j++)
+    for (let i = 0; i < w; i++) {
+      const s = j * w + i;
+      if (done[s] || Number.isNaN(level[s])) continue;
+      const k0 = key[s];
+      const fo = foam[s];
+      const col = color[s];
+      // A sloping surface merges within its one cell (its key): the surface is bilinear there.
+      const same = (t: number) => !done[t] && !Number.isNaN(level[t]) && key[t] === k0 && foam[t] === fo && color[t] === col;
+      let ie = i + 1;
+      while (ie < w && same(j * w + ie)) ie++;
+      let je = j + 1;
+      grow: while (je < rows) {
+        for (let q = i; q < ie; q++) if (!same(je * w + q)) break grow;
+        je++;
+      }
+      const r = RECTS.length / 5;
+      for (let jj = j; jj < je; jj++) {
+        done.fill(1, jj * w + i, jj * w + ie);
+        rid.fill(r, jj * w + i, jj * w + ie);
+      }
+      RECTS.push(i, ie, j, je, s);
+    }
+  // -2 past the chunk's edge, -1 no water.
+  const nb = (ii: number, jj: number) => (ii < 0 || jj < 0 || ii >= w || jj >= rows ? -2 : rid[jj * w + ii]);
+  // Whether an edge needs a corner between two columns a and b of the rectangle, whose neighbours
+  // that way (d) are na and nb.
+  const need = (na: number, nb2: number, a: number, b: number, d: number) =>
+    na !== nb2 || na === -2 || nb2 === -2 || ((na === -1 || nb2 === -1) && ((CW.side[a] | CW.side[b]) & (1 << d)) !== 0);
+  for (let r = 0; r < RECTS.length; r += 5) {
+    const i = RECTS[r];
+    const ie = RECTS[r + 1];
+    const j = RECTS[r + 2];
+    const je = RECTS[r + 3];
+    const s = RECTS[r + 4];
+    const k0 = key[s];
+    const col = color[s];
+    const cx = Math.floor((X0 + i) / sub);
+    const cy = Math.floor((Y0 + j) / sub);
+    const kc = ((cy - Y0 / sub) * CW.cells + (cx - X0 / sub)) * 4;
+    const C4 = CW.corner;
+    const yAt = (x: number, z: number) => {
+      if (k0 >= 0) return k0;
+      const u = (X0 + x) * Q - cx;
+      const v = (Y0 + z) * Q - cy;
+      return C4[kc] * (1 - u) * (1 - v) + C4[kc + 1] * u * (1 - v) + C4[kc + 2] * (1 - u) * v + C4[kc + 3] * u * v;
+    };
+    // The outline, wound as the tops are: down the west side, east along the south, up the east
+    // side, west along the north.
+    PTS.length = 0;
+    PTS.push(i, j);
+    for (let q = j + 1; q < je; q++) if (need(nb(i - 1, q - 1), nb(i - 1, q), (q - 1) * w + i, q * w + i, 2)) PTS.push(i, q);
+    PTS.push(i, je);
+    for (let q = i + 1; q < ie; q++) if (need(nb(q - 1, je), nb(q, je), (je - 1) * w + q - 1, (je - 1) * w + q, 1)) PTS.push(q, je);
+    PTS.push(ie, je);
+    for (let q = je - 1; q > j; q--) if (need(nb(ie, q - 1), nb(ie, q), (q - 1) * w + ie - 1, q * w + ie - 1, 0)) PTS.push(ie, q);
+    PTS.push(ie, j);
+    for (let q = ie - 1; q > i; q--) if (need(nb(q - 1, j - 1), nb(q, j - 1), j * w + q - 1, j * w + q, 3)) PTS.push(q, j);
+    out.e0 = 1;
+    out.e1 = foam[s] / FOAM_LEVELS;
+    const X = (x: number) => (X0 + x) * Q + ox;
+    const Z = (z: number) => (Y0 + z) * Q + oz;
+    const m = PTS.length / 2;
+    if (m === 4) {
+      out.quad(X(i), yAt(i, j), Z(j), X(i), yAt(i, je), Z(je), X(ie), yAt(ie, je), Z(je), X(ie), yAt(ie, j), Z(j), col, 1, col, 1, 1, 0, false);
+      continue;
+    }
+    // A fan round the middle, two triangles a quad (the second empty when the count is odd).
+    const mx = (i + ie) / 2;
+    const mz = (j + je) / 2;
+    const my = yAt(mx, mz);
+    for (let a = 0; a < m; a += 2) {
+      const b = (a + 1) % m;
+      const c = a + 2 < m ? a + 2 : (a + 2) % m === 0 ? 0 : b;
+      const ax = PTS[a * 2];
+      const az = PTS[a * 2 + 1];
+      const bx = PTS[b * 2];
+      const bz = PTS[b * 2 + 1];
+      const cx2 = PTS[c * 2];
+      const cz2 = PTS[c * 2 + 1];
+      out.quad(X(mx), my, Z(mz), X(ax), yAt(ax, az), Z(az), X(bx), yAt(bx, bz), Z(bz), X(cx2), yAt(cx2, cz2), Z(cz2), col, 1, col, 1, 1, 0, false);
+    }
+  }
+  out.e0 = 0;
+  out.e1 = 0;
+}
+
+// The depth over which a water side darkens, scene units, and the colour of its top.
+const WALL_DEEP = 3;
+const SIDE_TOP = 0x8fd8e6;
+function waterSide(out: Writer, d: number, X: number, Z: number, Q: number, lo: number, hi: number, deep: number, level: number): void {
+  const k = (y: number) => Math.min(1, Math.max(0, (level - y) / WALL_DEEP));
+  const cl = mixColor(SIDE_TOP, deep, 0.25 + 0.55 * k(lo));
+  const ch = mixColor(SIDE_TOP, deep, 0.25 + 0.55 * k(hi));
+  const al = 0.38 + 0.4 * k(lo);
+  const ah = 0.38 + 0.4 * k(hi);
+  const x0 = X;
+  const x1 = X + Q;
+  const z0 = Z;
+  const z1 = Z + Q;
+  // Wound as Writer.rect winds each side.
+  if (d === 0) out.quad(x1, lo, z0, x1, hi, z0, x1, hi, z1, x1, lo, z1, cl, al, ch, ah, 0, 0, true);
+  else if (d === 1) out.quad(x0, lo, z1, x1, lo, z1, x1, hi, z1, x0, hi, z1, cl, al, ch, ah, 0, 0, true);
+  else if (d === 2) out.quad(x0, lo, z0, x0, lo, z1, x0, hi, z1, x0, hi, z0, cl, al, ch, ah, 0, 0, true);
+  else out.quad(x0, lo, z0, x0, hi, z0, x1, hi, z0, x1, lo, z0, cl, al, ch, ah, 0, 0, true);
 }
 
 interface Face {
@@ -627,6 +1293,8 @@ interface Face {
   color: number;
   light: number;
   foot: number;
+  glow: number;
+  wet: number;
   at: number; // the column's place along the wall's line
   line: number; // the line: the column's other coordinate, the wall's side taken in
 }
@@ -636,19 +1304,23 @@ interface Run {
   color: number;
   light: number;
   foot: number;
+  glow: number;
+  wet: number;
   start: number;
   end: number;
   line: number;
   until: number;
 }
 const RUNS: Run[] = [];
-const FACES: Face[] = Array.from({ length: 32 }, () => ({ lo: 0, hi: 0, color: 0, light: 0, foot: 1, at: 0, line: 0 }));
+const FACES: Face[] = Array.from({ length: 32 }, () => ({ lo: 0, hi: 0, color: 0, light: 0, foot: 1, glow: 0, wet: 0, at: 0, line: 0 }));
 const WALL_LIGHT = [FACE_LIGHT.east, FACE_LIGHT.south, FACE_LIGHT.west, FACE_LIGHT.north];
 
 function emitRun(out: Writer, d: number, run: Run, sub: number, ox: number, oz: number): void {
   const Q = 1 / sub;
   const lo = run.lo * Q;
   const hi = run.hi * Q;
+  out.e0 = run.glow / GLOW_LEVELS;
+  out.e1 = run.wet;
   if (d === 1 || d === 3) {
     const z = run.line * Q + oz;
     out.rect(d, run.start * Q + ox, run.end * Q + ox, lo, hi, z, z, run.color, run.light, 1, 0, run.foot);
@@ -656,6 +1328,9 @@ function emitRun(out: Writer, d: number, run: Run, sub: number, ox: number, oz: 
     const x = run.line * Q + ox;
     out.rect(d, x, x, lo, hi, run.start * Q + oz, run.end * Q + oz, run.color, run.light, 1, 0, run.foot);
   }
+  // Whatever is written straight to `out` next (overhanging grass, a ledge) is dry and unlit.
+  out.e0 = 0;
+  out.e1 = 0;
 }
 
 // The faces of column (sx, sy)'s wall on side d, into FACES; returns how many. Overhanging grass
@@ -695,6 +1370,7 @@ function wallFaces(
   const foot = low > bottom ? CREASE : 1;
   const alongX = d === 1 || d === 3;
   const at = alongX ? sx : sy;
+  const glow = GL[s] > 0 || LAVA_D[s] < GLOW_REACH || HOUSE_D[s] < GLOW_REACH;
   // The wall's plane: the far side of the column for east and south.
   const line = alongX ? sy + (d === 1 ? 1 : 0) : sx + (d === 0 ? 1 : 0);
   let n = 0;
@@ -707,6 +1383,9 @@ function wallFaces(
     // A bit darker the deeper below the column's top, in steps of a voxel so runs still merge.
     F.light = light * (1 - Math.min(0.25, Math.floor((T - hi) / sub) * 0.03));
     F.foot = lo === low ? foot : 1;
+    F.glow = glow ? glowLevel(s, (lo + hi) / (2 * sub)) : 0;
+    // Under the water only between two columns of the bed: the island's side below the sea is earth.
+    F.wet = WET[s] & WET[s + DX[d] + DY[d] * SW];
     F.at = at;
     F.line = line;
   };
@@ -716,12 +1395,23 @@ function wallFaces(
   }
   // The riser of a slope's tiny step: the ground's own colour (its slope light, hollows and tint
   // included), a little darker on its side, so every small cube's edge still shows.
-  if (T - low <= RISER && !f.wet[c] && low > bottom) {
+  if (T - low <= RS[s] && !f.wet[c] && low > bottom) {
     face(low, T, C[s]);
+    // On snow and rock the steps of a slope are lit as the slope is, not as walls: one turned from
+    // the sun read as a lone blue face, in checkers across a snowy peak (17 November).
+    if (f.steep[c]) FACES[n - 1].wet = SLOPE_LIT;
     // Bright ground (sand, snow) takes half the dark side: on sand every small step's shadow read
     // as a washboard (15 November).
     const bright = f.ground[c] === G.SAND || f.ground[c] === G.SNOW;
     FACES[n - 1].light = 1 - RISER_SIDE * (LAND[s] === 2 ? ROCK_CALM : 1) * (bright ? BRIGHT_CALM : 1) * (1 - light);
+    FACES[n - 1].foot = 1;
+    return n;
+  }
+  // The small steps of a water bed: its own colour and nearly its top's light, so the bed under the
+  // water reads as one smooth floor and not as lines of darker steps.
+  if (T - low <= 2 * sub && isBed(f, c) && low > bottom) {
+    face(low, T, C[s]);
+    FACES[n - 1].light = 1 - 0.25 * (1 - light);
     FACES[n - 1].foot = 1;
     return n;
   }
