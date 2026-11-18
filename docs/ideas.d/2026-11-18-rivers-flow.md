@@ -1,0 +1,3 @@
+section: Backlog
+
+- **Rivers that visibly flow downhill** (the designer's idea, 2026-11-18; lens: what the player feels). Narrow rivers now read as blue water with ripples, but the ripples drift the same way everywhere. The simulation already knows which way water moves between cells; a small flow direction per cell in the water's map would let the ripples and a few flecks of foam travel downstream, faster where the river drops. What the player feels: the island is alive, and a river they dug or a dam they cast changes where the water runs, which they can now see at a glance. Cost: one more texture channel or a second small texture, a few shader operations, no new meshes; it is how a dam or a canal spell would show it works. Claude.

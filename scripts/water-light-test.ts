@@ -282,6 +282,7 @@ export function waterLightChecks(check: Check): void {
       tape === 0 && foam.size >= 2,
       `${tape} white foam vertices on the land, foam levels ${[...foam].sort((a, b) => a - b).join(", ")}`,
     );
+    riverChecks(check, world, terrain, fine);
   });
 
   // 2. The water's light: in the water's shader, on the water in eighths only; on high only.
@@ -502,4 +503,110 @@ export function waterLightChecks(check: Check): void {
       `${((sharp / Math.max(1, pairs)) * 100).toFixed(1)}% of ${pairs} neighbouring cells sharply apart in colour; mean colour ${mean.map((v) => Math.round(v)).join(",")}`,
     );
   });
+}
+
+// Narrow rivers read as water (18 November, the owner on the Fold: rivers one or two cells wide
+// were "pale translucent blocky bands with hard light borders"). Measured on the fine water's mesh
+// of the first island: the cells of water at most two cells across (along x or y) and those at
+// least eight across both ways. Before the fix the foam, reaching three eighths from each bank,
+// covered most of a narrow river's top; the small falls of a river had pale sides (0x8fd8e6 mixed
+// a quarter toward the deep colour).
+function riverChecks(check: Check, world: World, terrain: Terrain, fine: Mesh[]): void {
+  const levels = (terrain as unknown as { fluidLevel: Float32Array }).fluidLevel;
+  const wet = (x: number, y: number) => x < 0 || y < 0 || x >= world.w || y >= world.h || levels[y * world.w + x] > -1e8;
+  const run = (x: number, y: number, dx: number, dy: number, most: number) => {
+    let n = 1;
+    for (const s of [-1, 1]) for (let k = 1; k <= most && wet(x + s * k * dx, y + s * k * dy); k++) n++;
+    return n;
+  };
+  const kind = new Int8Array(world.n);
+  for (let y = 0; y < world.h; y++)
+    for (let x = 0; x < world.w; x++) {
+      if (!(levels[y * world.w + x] > -1e8)) continue;
+      const across = Math.min(run(x, y, 1, 0, 8), run(x, y, 0, 1, 8));
+      kind[y * world.w + x] = across <= 2 ? 1 : across >= 8 ? 2 : 0;
+    }
+  // The share of top area (in eighths) with foam, over narrow and over wide water; the sides less
+  // than a cell tall over narrow water and how many are pale.
+  const area = [0, 0, 0];
+  const foamy = [0, 0, 0];
+  let steps = 0;
+  let pale = 0;
+  for (const m of fine) {
+    const p = m.geometry.getAttribute("position").array as Float32Array;
+    const wf = m.geometry.getAttribute("waterFine").array as Float32Array;
+    const col = m.geometry.getAttribute("color").array as Float32Array;
+    const cs = m.geometry.getAttribute("color").itemSize;
+    for (let t = 0; t < p.length / 9; t++) {
+      const v = t * 3;
+      const cx = Math.floor((p[v * 3] + p[v * 3 + 3] + p[v * 3 + 6]) / 3 + world.w / 2);
+      const cz = Math.floor((p[v * 3 + 2] + p[v * 3 + 5] + p[v * 3 + 8]) / 3 + world.h / 2);
+      if (cx < 0 || cz < 0 || cx >= world.w || cz >= world.h) continue;
+      const k = kind[cz * world.w + cx];
+      if (wf[v * 2] > 0.8) {
+        // The triangle's area, in eighths squared.
+        const ax = p[v * 3 + 3] - p[v * 3];
+        const az = p[v * 3 + 5] - p[v * 3 + 2];
+        const bx = p[v * 3 + 6] - p[v * 3];
+        const bz = p[v * 3 + 8] - p[v * 3 + 2];
+        const a = (Math.abs(ax * bz - az * bx) / 2) * 64;
+        area[k] += a;
+        if (wf[v * 2 + 1] > 0) foamy[k] += a;
+      } else if (k === 1) {
+        let lo = Infinity;
+        let hi = -Infinity;
+        for (let q = 0; q < 3; q++) {
+          lo = Math.min(lo, p[(v + q) * 3 + 1]);
+          hi = Math.max(hi, p[(v + q) * 3 + 1]);
+        }
+        if (hi - lo >= 1 || hi - lo < 0.01) continue;
+        steps++;
+        const r = col[v * cs] * 255;
+        const g = col[v * cs + 1] * 255;
+        const b = col[v * cs + 2] * 255;
+        // Pale: light and grey-blue, as 0x8fd8e6 mixed toward the deep colour was.
+        if ((Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(1, Math.max(r, g, b)) < 0.55 || r + g + b > 420) pale++;
+      }
+    }
+  }
+  // The water's map the shader reads: a narrow river drawn as deep water, bluer; wide water as
+  // before (its depth, its shallow colour mixed 45% toward the pale turquoise).
+  const map = (terrain as unknown as { waterData: Uint8Array }).waterData;
+  let narrowCells = 0;
+  let shallowLook = 0;
+  let wideCells = 0;
+  let wideChanged = 0;
+  for (let i = 0; i < world.n; i++) {
+    if (kind[i] === 1) {
+      narrowCells++;
+      if ((map[i * 4 + 3] / 255) * 8 < 1.9) shallowLook++;
+    } else if (kind[i] === 2 && world.fluid[i] === F.WATER) {
+      wideCells++;
+      const t = [0x86, 0xea, 0xdc];
+      const w = [0x4a, 0xa0, 0xdc];
+      const want = Math.max(1, Math.min(255, Math.round((world.depth[i] / 8) * 255)));
+      if (Math.abs(map[i * 4 + 3] - want) > 0 || [0, 1, 2].some((c) => Math.abs(map[i * 4 + c] - (w[c] * 0.55 + t[c] * 0.45)) > 1)) wideChanged++;
+    }
+  }
+  check(
+    "the shader draws a narrow river as deep blue water and wide water as before",
+    narrowCells > 200 && shallowLook === 0 && wideCells > 2000 && wideChanged === 0,
+    `${shallowLook} of ${narrowCells} narrow river cells drawn shallower than 1.9, ${wideChanged} of ${wideCells} wide water cells drawn otherwise than before`,
+  );
+  const share = (k: number) => foamy[k] / Math.max(1, area[k]);
+  check(
+    "a narrow river has no foam: rivers one or two cells wide are water, not a band of white",
+    area[1] > 500 && share(1) < 0.02,
+    `${(share(1) * 100).toFixed(1)}% of ${area[1].toFixed(0)} eighths of narrow river tops foamy`,
+  );
+  check(
+    "a lake's and the sea's shore keep their foam",
+    area[2] > 20000 && foamy[2] > 2000,
+    `${foamy[2].toFixed(0)} eighths foamy of ${area[2].toFixed(0)} of wide water (${(share(2) * 100).toFixed(1)}%)`,
+  );
+  check(
+    "a river's small falls are its own blue, not pale outlines",
+    steps > 20 && pale === 0,
+    `${pale} of ${steps} side triangles under a cell tall on narrow rivers pale`,
+  );
 }
