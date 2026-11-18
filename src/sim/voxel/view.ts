@@ -54,6 +54,7 @@ import { hexColor, mixColor } from "../colors";
 import { DecorInstances } from "./decor-instances";
 import { Darkness } from "./darkness";
 import { WaterLight } from "./water-light";
+import { LAVA_CRUST, LAVA_TOP_FRAGMENT } from "./lava";
 import { Domes } from "./domes";
 import { keyLevel, keyX, keyY } from "../voxelkey";
 import { LOOKS, biomeAt } from "../land";
@@ -2567,7 +2568,12 @@ if (wave > 0.0) {
 }`,
       );
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nuniform float waveTime;\nvarying float vWave;\nvarying vec2 vSea;\nfloat mmWaveK = -1.0;")
+      .replace(
+        "#include <common>",
+        `#include <common>\nuniform float waveTime;\nvarying float vWave;\nvarying vec2 vSea;\nfloat mmWaveK = -1.0;\n${LAVA_CRUST}`,
+      )
+      // A lava top (wave -1, terrain.ts): its crust and cracks (lava.ts).
+      .replace("#include <opaque_fragment>", LAVA_TOP_FRAGMENT)
       .replace(
         "#include <dithering_fragment>",
         `#include <dithering_fragment>
@@ -2587,7 +2593,7 @@ if (mmWave > 0.01) {
   };
   // Three caches programs by onBeforeCompile's source, which the darkness
   // wrapper makes the same for land and water: name this one apart.
-  material.customProgramCacheKey = () => "water-waves-2";
+  material.customProgramCacheKey = () => "water-waves-lava-1";
   return material;
 }
 

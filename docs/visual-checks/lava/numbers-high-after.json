@@ -1,0 +1,55 @@
+{
+  "quality": "high",
+  "spreadLimit": 0.06,
+  "motionLimit": 0.01,
+  "results": [
+    {
+      "scene": "volcano",
+      "when": "day",
+      "judged": true,
+      "points": 208,
+      "mean": 0.247,
+      "spread": 0.137,
+      "motion": 0.1389
+    },
+    {
+      "scene": "volcano",
+      "when": "night",
+      "judged": true,
+      "points": 144,
+      "mean": 0.59,
+      "spread": 0.118,
+      "motion": 0.077
+    },
+    {
+      "scene": "volcano",
+      "bench": {
+        "frames": 40,
+        "tick": [2.5, 6.2],
+        "draw": [9.1, 24.4],
+        "raster": [484.5, 615.6],
+        "calls": 141,
+        "triangles": 1912276,
+        "pixelRatio": 1
+      }
+    },
+    {
+      "scene": "spell",
+      "when": "day",
+      "judged": false,
+      "points": 1680,
+      "mean": 0.276,
+      "spread": 0.131,
+      "motion": 0.1364
+    },
+    {
+      "scene": "spell",
+      "when": "night",
+      "judged": false,
+      "points": 326,
+      "mean": 0.371,
+      "spread": 0.222,
+      "motion": 0.2665
+    }
+  ]
+}

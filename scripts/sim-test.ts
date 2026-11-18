@@ -114,6 +114,7 @@ import { fogChecks } from "./fog-test";
 import { terrainLooksChecks } from "./terrain-looks-test";
 import { landLagChecks } from "./land-lag-test";
 import { waterLightChecks } from "./water-light-test";
+import { lavaChecks } from "./lava-test";
 import { movementChecks } from "./movement-test";
 import { peaksChecks } from "./peaks-test";
 
@@ -2481,6 +2482,8 @@ terrainLooksChecks(check);
 landLagChecks(check);
 // Water and light (16 November): scripts/water-light-test.ts.
 waterLightChecks(check);
+// Lava's crust and cracks (18 November): scripts/lava-test.ts.
+lavaChecks(check);
 
 // Movement and the fine land, 15 November: feet on the drawn land, even frames, the watch, Big
 // Bang's ground (scripts/movement-test.ts).

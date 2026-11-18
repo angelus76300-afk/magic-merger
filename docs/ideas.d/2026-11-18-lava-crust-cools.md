@@ -1,0 +1,3 @@
+section: Backlog
+
+- **Lava that cools as it spreads** (the designer's idea, 2026-11-18; lens: the promise an item's name makes). Lava now shows dark crust and glowing cracks, but a fresh flood from a spell looks the same as the volcano's old lake. The crust could cover more of the pool as the lava gets older and shallower: mostly bright cracks when a spell pours it, almost black just before it turns to basalt. What the player feels: they can tell at a glance which lava is fresh and dangerous and which is about to set, and a lava spell has a visible life of its own. Cost: the lava's age or depth per cell as one more vertex weight, one more term in the crust's shader, no new draw calls. Claude.
