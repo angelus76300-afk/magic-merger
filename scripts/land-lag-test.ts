@@ -320,6 +320,20 @@ export function landLagChecks(check: Check): void {
     small.every((r) => r.frames > 0 && r.frames <= 3),
     small.map((r) => `${r.island}, ${r.name}: ${r.frames} frames, ${r.tiles} tiles`).join("; "),
   );
+  // A spell's crater by the middle and, in the same tick, a small crater at the island's far corner
+  // (the island's own life changes land anywhere): the crater's chunks are one group, shown without
+  // waiting for the corner's, which are drawn after it (terrain.ts touching).
+  const both = playChanges(0, (world) => {
+    const mid = world.w >> 1;
+    const a = crater(mid - 5, mid - 7, 10, 6);
+    const b = crater(CHUNK * 4 + 10, CHUNK * 4 + 10, 6, 3);
+    return [{ name: "a crater and a far crater", apply: (w) => (a.apply(w), b.apply(w)) }];
+  }).runs[0];
+  check(
+    "a crater and a far change in the same tick: the crater's chunks shown first, in one frame, the far ones after, and the land the same as built whole",
+    both.same && both.shown.length === 2 && both.shown[0].length === 4 && both.shown[1].length >= 1 && !both.shown[1].some((c) => both.shown[0].includes(c)),
+    `${both.shown.map((s) => `[${s.join(",")}]`).join(" then ")}, ${both.same ? "same" : `${both.differ} chunks differ`}`,
+  );
   // Nearest the change first: the chunk the crater's middle is in leads its group.
   const first = islands.map((i) => {
     const mid = i.world.w >> 1;

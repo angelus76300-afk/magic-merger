@@ -1149,7 +1149,7 @@ export class Terrain {
       if (this.fineStale[c] === 1 && !this.fineBusy[c] && this.fine[c] !== undefined && this.fineLevel[c] === this.wantLevel(c)) changed.push(c);
     if (changed.length) {
       const seen = changed.filter((c) => this.seen(c));
-      const take = seen.length ? seen : changed;
+      const take = this.touching(seen.length ? seen : changed);
       // The change's middle: of the changed parts, by their size.
       let mx = 0;
       let my = 0;
@@ -1217,6 +1217,51 @@ export class Terrain {
     if (best < 0) return null;
     const job = this.takeChunk(best, this.wantLevel(best), null);
     return { kind: flow ? "flow" : "new", jobs: [job], at: 0, done: [], tiles: 0, budget: flow ? FINE_AGAIN_MS : FINE_BUDGET_MS, firstFrame: Infinity };
+  }
+
+  // Of the changed chunks, those that touch one another (side or corner) as one group: chunks that
+  // do not touch share no edge, so a group apart leaves no seam between them. The island's own life
+  // changes land anywhere while a spell lands (18 November, the Perf Lab: a dozen chunks a tick);
+  // a spell's chunks then wait for no far chunk (scripts/land-lag-test.ts, a crater and a far
+  // crater). The group nearest the camera's target first (the player looks at the spell), unless
+  // another has waited GROUP_WAIT frames.
+  private touching(changed: number[]): number[] {
+    if (changed.length < 2) return changed;
+    const left = new Set(changed);
+    const groups: number[][] = [];
+    for (const c of changed) {
+      if (!left.delete(c)) continue;
+      const g = [c];
+      for (let k = 0; k < g.length; k++) {
+        const x = g[k] % this.cols;
+        const y = Math.floor(g[k] / this.cols);
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= this.cols || ny >= this.rows) continue;
+            const d = ny * this.cols + nx;
+            if (left.delete(d)) g.push(d);
+          }
+      }
+      groups.push(g);
+    }
+    if (groups.length === 1) return changed;
+    const frame = this.redraw.frame;
+    let best = groups[0];
+    let bestWait = -1;
+    let bestNear = Infinity;
+    for (const g of groups) {
+      const wait = frame - Math.min(...g.map((c) => this.staleFrame[c]));
+      const near = Math.min(...g.map((c) => this.chunkDistance(c)));
+      const late = wait > GROUP_WAIT ? wait : -1;
+      if (late > bestWait || (late === bestWait && near < bestNear)) {
+        best = g;
+        bestWait = late;
+        bestNear = near;
+      }
+    }
+    return best;
   }
 
   // The looks a fine mesh is drawn with: a chunk built with others is built again whole.
@@ -2102,6 +2147,9 @@ const FINE_READ = 4;
 const CHANGE_BUDGET_MS = 16;
 const CREDIT_MAX_MS = 600;
 const CREDIT_REFILL = 0.1;
+// Frames a group of changed chunks may wait for a nearer one (Terrain.touching): past it, the
+// longest waiting goes first, so land changed far from the camera is drawn within about a second.
+const GROUP_WAIT = 60;
 // The longest the first frame of a group spends reading its chunks' cells at once.
 const SNAPSHOT_MS = 6;
 const SEEN_BOX = new Box3(new Vector3(), new Vector3());
