@@ -1040,9 +1040,12 @@ export class Terrain {
     this.frameAt = -1;
     this.redraw.frame++;
     this.syncShown();
-    // The credit for changed land: refilled with the time, spent by every millisecond past
-    // FINE_BUDGET_MS.
-    this.credit = Math.min(CREDIT_MAX_MS, this.credit + Math.max(0, start - this.creditAt) * CREDIT_REFILL);
+    // The credit for changed land: refilled with the time, at most a frame's worth a frame, spent by
+    // every millisecond past FINE_BUDGET_MS. Counted by the time alone, a slow device's long frames
+    // refilled it in full each frame, and the island's own life (land changed somewhere every few
+    // ticks) took the larger share in every frame: twice the view's time in the Fold's eye view
+    // (scripts/eyes-perf.mjs, 18 November).
+    this.credit = Math.min(CREDIT_MAX_MS, this.credit + Math.min(CREDIT_FRAME_MS, Math.max(0, start - this.creditAt)) * CREDIT_REFILL);
     this.creditAt = start;
     const boosted = FINE_BUDGET_MS + Math.max(0, Math.min(CHANGE_BUDGET_MS - FINE_BUDGET_MS, this.credit));
     let built = false;
@@ -2147,6 +2150,8 @@ const FINE_READ = 4;
 const CHANGE_BUDGET_MS = 16;
 const CREDIT_MAX_MS = 600;
 const CREDIT_REFILL = 0.1;
+// The most time a frame counts for the refill: a frame at 60 a second.
+const CREDIT_FRAME_MS = 1000 / 60;
 // Frames a group of changed chunks may wait for a nearer one (Terrain.touching): past it, the
 // longest waiting goes first, so land changed far from the camera is drawn within about a second.
 const GROUP_WAIT = 60;

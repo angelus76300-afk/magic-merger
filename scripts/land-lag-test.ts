@@ -236,7 +236,12 @@ export function playChanges(k: number, changes: (world: World) => Change[], reac
     const inside = terrain as unknown as Inside;
     const runs: (Played & { name: string })[] = [];
     for (const change of changes(world)) {
-      now += 5000;
+      // Some seconds of frames at 60 a second with nothing changed: the credit for changed land
+      // refills (terrain.ts CREDIT_FRAME_MS).
+      for (let k = 0; k < 400; k++) {
+        now += 1000 / 60;
+        terrain.rebuild(false);
+      }
       change.apply(world);
       terrain.scan();
       const shown: number[][] = [];
