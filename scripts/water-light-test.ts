@@ -10,6 +10,7 @@ import { BOTTOM, columnTop, type Terrain } from "../src/sim/voxel/terrain";
 import { GRAPHICS, PRESETS } from "../src/sim/voxel/graphics";
 import { Looks } from "../src/sim/voxel/looks";
 import { WaterLight } from "../src/sim/voxel/water-light";
+import { lakeShare } from "../src/sim/voxel/terrain-fine";
 import { C, F, G } from "../src/sim/materials";
 import { landOf, withFine } from "./movement-test";
 
@@ -79,6 +80,7 @@ function chroma(a: [number, number, number], b: [number, number, number]): numbe
 }
 
 export function waterLightChecks(check: Check): void {
+  lakeChecks(check);
   // 1. The water in eighths, on the usual first island.
   withFine(() => {
     const world = generateWorld(152, 152, 7, DEFAULT_LAND);
@@ -549,6 +551,81 @@ export function waterLightChecks(check: Check): void {
   });
 }
 
+// Lakes with a floor (19 November, the owner: "not having a bottom for some lakes looks weird"). On
+// the temperate island of lakes of seed 7, as the water's shader (water-light.ts) reads its map:
+// opacity 0.4 + 0.56 * sqrt(depth / 4.5), colour from the map's shallow colour toward the deep one
+// by sqrt(depth / 5). Before, a lake 13 deep was as opaque as the open sea (0.96), so its floor
+// vanished, and the bed under a lake kept the colour of a shallow shelf however deep it lay.
+function lakeChecks(check: Check): void {
+  withFine(() => {
+    const world = generateWorld(152, 152, 7, { ...DEFAULT_LAND, shape: "lakes" });
+    const { terrain, meshes } = landOf(world);
+    const t = terrain as unknown as { waterData: Uint8Array; wet: Uint8Array; waterAt(i: number): [number, number] };
+    const data = t.waterData;
+    const look = (i: number) => (data[i * 4 + 3] / 255) * 8;
+    const opacity = (d: number) => 0.4 + 0.56 * Math.sqrt(Math.min(1, d / 4.5));
+    const channels = (c: number) => [(c >> 16) & 255, (c >> 8) & 255, c & 255];
+    // The colour the shader draws a cell's water in, from its map, and as it would from its depth.
+    const drawn = (i: number) => {
+      const deep = channels(t.waterAt(i)[1]);
+      const k = Math.sqrt(Math.min(1, look(i) / 5));
+      return [0, 1, 2].map((c) => data[i * 4 + c] + (deep[c] - data[i * 4 + c]) * k);
+    };
+    const byDepth = (i: number) => {
+      const deep = channels(t.waterAt(i)[1]);
+      const shallow = channels(t.waterAt(i)[0]).map((v, c) => v * 0.55 + [0x86, 0xea, 0xdc][c] * 0.45);
+      const k = Math.sqrt(Math.min(1, Math.min(8, world.depth[i]) / 5));
+      return [0, 1, 2].map((c) => shallow[c] + (deep[c] - shallow[c]) * k);
+    };
+    let lakes = 0;
+    let clearest = 1;
+    let murkiest = 0;
+    let colourOff = 0;
+    let sea = 0;
+    let seaOff = 0;
+    const land = meshes.find((m) => m.geometry.index)?.material;
+    const tops = topColors(world, meshes, land);
+    const light = (c: [number, number, number]) => 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2];
+    const shelf: number[] = [];
+    const deep: number[] = [];
+    for (let i = 0; i < world.n; i++) {
+      if (t.wet[i] !== 1 || world.fluid[i] !== F.WATER) continue;
+      const surface = world.height[i] + world.depth[i];
+      const d = world.depth[i];
+      if (surface < world.seaLevel + 0.05 && d > 1) {
+        // The sea, away from narrow water: its look is its depth, as before.
+        sea++;
+        if (data[i * 4 + 3] !== Math.max(1, Math.min(255, Math.round((d / 8) * 255)))) seaOff++;
+      }
+      if (surface < world.seaLevel + 1.5) continue;
+      if (d > 12.5) {
+        lakes++;
+        clearest = Math.min(clearest, opacity(look(i)));
+        murkiest = Math.max(murkiest, opacity(look(i)));
+        const a = drawn(i);
+        const b = byDepth(i);
+        colourOff = Math.max(colourOff, ...[0, 1, 2].map((c) => Math.abs(a[c] - b[c])));
+      }
+      const c = tops.get(i);
+      if (!c) continue;
+      const bed = surface - columnTop(world, i) / 0.5;
+      if (bed > 1 && bed < 3) shelf.push(light(c));
+      else if (bed > 13) deep.push(light(c));
+    }
+    check(
+      "a lake deeper than 12.5 is still a little clear, unlike the open sea, in its deep blue; the sea as before",
+      lakes > 50 && murkiest < 0.9 && clearest > 0.75 && colourOff < 6 && sea > 500 && seaOff === 0,
+      `${lakes} lake cells deeper than 12.5, opaque ${clearest.toFixed(2)} to ${murkiest.toFixed(2)} (the sea 0.96), colour ${colourOff.toFixed(1)} off its depth's at most; ${seaOff} of ${sea} sea cells off their depth`,
+    );
+    const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / Math.max(1, a.length);
+    check(
+      "a lake's floor darkens with depth: 13 deep is clearly darker than a shelf 1 to 3 deep",
+      shelf.length > 20 && deep.length > 20 && mean(deep) < mean(shelf) * 0.6,
+      `the floor's light ${mean(deep).toFixed(0)} over ${deep.length} cells deeper than 13, ${mean(shelf).toFixed(0)} over ${shelf.length} cells 1 to 3 deep`,
+    );
+  });
+}
+
 // Narrow rivers read as water (18 November, the owner on the Fold: rivers one or two cells wide
 // were "pale translucent blocky bands with hard light borders"). Measured on the fine water's mesh
 // of the first island: the cells of water at most two cells across (along x or y) and those at
@@ -625,6 +702,8 @@ function riverChecks(check: Check, world: World, terrain: Terrain, fine: Mesh[])
       narrowCells++;
       if ((map[i * 4 + 3] / 255) * 8 < 1.9) shallowLook++;
     } else if (kind[i] === 2 && world.fluid[i] === F.WATER) {
+      // A lake deeper than a unit is drawn clearer since 19 November (lakeChecks).
+      if (world.depth[i] > 1 && lakeShare(world.height[i] + world.depth[i], world.seaLevel) > 0) continue;
       wideCells++;
       const t = [0x86, 0xea, 0xdc];
       const w = [0x4a, 0xa0, 0xdc];
