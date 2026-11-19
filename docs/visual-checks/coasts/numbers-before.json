@@ -1,0 +1,220 @@
+{
+  "high": {
+    "desert": {
+      "beach-close": {
+        "at": {
+          "x": 25,
+          "y": 14
+        },
+        "dist": 14,
+        "sand": 131025,
+        "median": 183,
+        "p5": 0.715,
+        "darkShare": 0.0926
+      },
+      "beach-wide": {
+        "at": {
+          "x": 25,
+          "y": 14
+        },
+        "dist": 40,
+        "sand": 231298,
+        "median": 161,
+        "p5": 0.615,
+        "darkShare": 0.2651
+      },
+      "sand-slope": {
+        "at": {
+          "x": 47,
+          "y": 85
+        },
+        "dist": 18,
+        "sand": 650320,
+        "median": 167,
+        "p5": 0.807,
+        "darkShare": 0.0783
+      },
+      "sand-flat": {
+        "at": {
+          "x": 23,
+          "y": 46
+        },
+        "dist": 18,
+        "sand": 672146,
+        "median": 177,
+        "p5": 0.69,
+        "darkShare": 0.1659
+      },
+      "bench": {
+        "frames": 40,
+        "tick": [2.2, 4.8],
+        "draw": [8.8, 15.8],
+        "raster": [364.4, 437.4],
+        "calls": 106,
+        "triangles": 843626,
+        "pixelRatio": 1
+      }
+    },
+    "temperate": {
+      "coast-close": {
+        "at": {
+          "x": 84,
+          "y": 87
+        },
+        "dist": 14,
+        "sand": 550
+      },
+      "coast-wide": {
+        "at": {
+          "x": 84,
+          "y": 87
+        },
+        "dist": 40,
+        "sand": 80058,
+        "median": 109,
+        "p5": 0.772,
+        "darkShare": 0.204
+      },
+      "grass-slope": {
+        "at": {
+          "x": 73,
+          "y": 121
+        },
+        "dist": 16,
+        "sand": 3193,
+        "median": 113,
+        "p5": 0.672,
+        "darkShare": 0.3094
+      },
+      "river-bank": {
+        "at": {
+          "x": 121,
+          "y": 47
+        },
+        "dist": 14,
+        "sand": 3847,
+        "median": 104,
+        "p5": 0.762,
+        "darkShare": 0.2332
+      },
+      "bench": {
+        "frames": 40,
+        "tick": [2.8, 4.6],
+        "draw": [10, 31],
+        "raster": [455.7, 544.7],
+        "calls": 141,
+        "triangles": 1683176,
+        "pixelRatio": 1
+      }
+    }
+  },
+  "medium": {
+    "desert": {
+      "beach-close": {
+        "at": {
+          "x": 25,
+          "y": 14
+        },
+        "dist": 14,
+        "sand": 130650,
+        "median": 183,
+        "p5": 0.723,
+        "darkShare": 0.0847
+      },
+      "beach-wide": {
+        "at": {
+          "x": 25,
+          "y": 14
+        },
+        "dist": 40,
+        "sand": 228676,
+        "median": 164,
+        "p5": 0.617,
+        "darkShare": 0.2654
+      },
+      "sand-slope": {
+        "at": {
+          "x": 47,
+          "y": 85
+        },
+        "dist": 18,
+        "sand": 622716,
+        "median": 167,
+        "p5": 0.869,
+        "darkShare": 0.0374
+      },
+      "sand-flat": {
+        "at": {
+          "x": 23,
+          "y": 46
+        },
+        "dist": 18,
+        "sand": 659475,
+        "median": 177,
+        "p5": 0.693,
+        "darkShare": 0.1484
+      },
+      "bench": {
+        "frames": 40,
+        "tick": [2.2, 3.9],
+        "draw": [8.7, 23.7],
+        "raster": [304.5, 354],
+        "calls": 105,
+        "triangles": 837080,
+        "pixelRatio": 1
+      }
+    },
+    "temperate": {
+      "coast-close": {
+        "at": {
+          "x": 84,
+          "y": 87
+        },
+        "dist": 14,
+        "sand": 609
+      },
+      "coast-wide": {
+        "at": {
+          "x": 84,
+          "y": 87
+        },
+        "dist": 40,
+        "sand": 75099,
+        "median": 111,
+        "p5": 0.772,
+        "darkShare": 0.2059
+      },
+      "grass-slope": {
+        "at": {
+          "x": 73,
+          "y": 121
+        },
+        "dist": 16,
+        "sand": 1742,
+        "median": 160,
+        "p5": 0.445,
+        "darkShare": 0.4076
+      },
+      "river-bank": {
+        "at": {
+          "x": 121,
+          "y": 47
+        },
+        "dist": 14,
+        "sand": 4640,
+        "median": 100,
+        "p5": 0.844,
+        "darkShare": 0.2043
+      },
+      "bench": {
+        "frames": 40,
+        "tick": [2.3, 3.9],
+        "draw": [8.2, 17.5],
+        "raster": [366.1, 444.5],
+        "calls": 135,
+        "triangles": 1679248,
+        "pixelRatio": 1
+      }
+    }
+  }
+}

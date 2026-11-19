@@ -431,6 +431,108 @@ export function isBed(f: FineCells, c: number): boolean {
   return f.inside[c] === 1 && f.wet[c] === 1 && f.water[c] > -1e8 && f.lava[c] === 0 && f.natural[c] === 1;
 }
 
+// The waterline in eighths (18 November). Which side of the line where water meets land a column
+// is on, by a smooth map of which cells are water (shoreMask): 1 at a water cell's middle, 0 at a dry
+// one's, in between a Catmull-Rom curve over the 4 by 4 cells round the column, plus a little wobble
+// (SHORE_WAVE). Its half-way line runs along a straight coast's cell edges, a little wavy, and cuts
+// across a diagonal coast's steps instead of following them. Only at a low shore: water (not lava)
+// on one side, natural ground (not a house) on the other at most SHORE_LOW above it; a cliff into
+// the water keeps its wall at the cell's edge. Every cell's middle keeps its own side, so a cell
+// under water still has its water, and the land over a water cell is always beside a dry cell.
+const SHORE_LOW = 1;
+const SHORE_WAVE = 0.1;
+// How far into the dry side (in the map's values) the ground ramps down to the water's edge, and
+// where pebbles lie.
+const SHORE_RAMP = 0.4;
+const SHORE_PEBBLE = 0.3;
+export const SHORE_NONE = 0;
+export const SHORE_FLOOD = 1; // a column of a dry cell under the neighbouring water (SHORE_N)
+export const SHORE_LAND = 2; // a column of a water cell drawn as its shore's land (SHORE_N's)
+export const SHORE_RAISE = 3; // a column of a dry shore cell, ramped to the water's edge
+// What shoreLine found: the new height (columns), the cell named, the map's value.
+let SHORE_H = 0;
+let SHORE_N = -1;
+let SHORE_W = 0;
+const SX = [0, 0, 0, 0];
+const SY = [0, 0, 0, 0];
+export function shoreMask(f: FineCells, own: number, px: number, py: number): number {
+  const gx = px - 0.5;
+  const gy = py - 0.5;
+  const ix = Math.floor(gx);
+  const iy = Math.floor(gy);
+  cr(gx - ix, SX);
+  cr(gy - iy, SY);
+  const mine = isWater(f, own) ? 1 : 0;
+  let w = 0;
+  for (let j = 0; j < 4; j++) {
+    let n = fineAt(f, ix - 1, iy - 1 + j);
+    let row = 0;
+    for (let i = 0; i < 4; i++, n++) row += SX[i] * (!f.inside[n] ? mine : isWater(f, n) ? 1 : 0);
+    w += SY[j] * row;
+  }
+  return w + (noise(px, py, 0.8, 131) - 0.5) * 2 * SHORE_WAVE;
+}
+// Distance from (px, py) to cell (x, y)'s square, squared.
+function toCell(px: number, py: number, x: number, y: number): number {
+  const dx = Math.max(x - px, 0, px - x - 1);
+  const dy = Math.max(y - py, 0, py - y - 1);
+  return dx * dx + dy * dy;
+}
+// For the column at (px, py) of cell c (cx, cy), natural ground of height hgt (columns): SHORE_NONE
+// away from a low shore, else what it becomes (SHORE_H, SHORE_N, SHORE_W).
+export function shoreLine(f: FineCells, c: number, cx: number, cy: number, px: number, py: number, hgt: number, sub: number): number {
+  const wet = isBed(f, c);
+  if (!wet && (f.wet[c] || f.flat[c] || !f.natural[c])) return SHORE_NONE;
+  // The nearest neighbour across the shore (a water cell from dry ground, low dry ground from water).
+  let best = -1;
+  let far = Infinity;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let dy = -1; dy <= 1; dy++)
+    for (let dx = -1; dx <= 1; dx++) {
+      if (!dx && !dy) continue;
+      const n = fineAt(f, cx + dx, cy + dy);
+      if (!f.inside[n]) continue;
+      if (f.wet[n] && f.lava[n]) return SHORE_NONE;
+      if (wet) {
+        if (f.wet[n] || f.flat[n] || !f.natural[n] || f.top[n] - f.water[c] > SHORE_LOW) continue;
+      } else {
+        if (!isBed(f, n)) continue;
+        lo = Math.min(lo, f.water[n]);
+        hi = Math.max(hi, f.water[n]);
+      }
+      const d = toCell(px, py, cx + dx, cy + dy);
+      if (d < far) {
+        far = d;
+        best = n;
+      }
+    }
+  if (best < 0) return SHORE_NONE;
+  // Dry ground by water of one level (not a fall), low enough.
+  if (!wet && (hi - lo > LEVEL_JOIN || f.top[c] - hi > SHORE_LOW)) return SHORE_NONE;
+  const level = wet ? f.water[c] : f.water[best];
+  // The first column at or above the water's surface.
+  const edge = Math.ceil(level * sub);
+  const w = shoreMask(f, c, px, py);
+  SHORE_N = best;
+  SHORE_W = w;
+  if (wet) {
+    if (w > 0.5) return SHORE_NONE;
+    SHORE_H = Math.max(hgt, edge);
+    return SHORE_LAND;
+  }
+  if (w > 0.5) {
+    SHORE_H = Math.min(hgt, edge - 1);
+    return SHORE_FLOOD;
+  }
+  // The dry side: down to the water's edge near the line, and never under the water there (it drew
+  // the water's side as a dark line along the shore).
+  const k = Math.min(1, (0.5 - w) / SHORE_RAMP);
+  if (k >= 1 || hgt < edge - sub) return SHORE_NONE;
+  SHORE_H = hgt > edge ? edge + Math.round((hgt - edge) * k) : edge;
+  return SHORE_RAISE;
+}
+
 // Reused between builds: heights and colours of a tile's columns with a border of B.
 let H = new Int32Array(0);
 let C = new Uint32Array(0);
@@ -447,6 +549,10 @@ let GL = new Uint8Array(0);
 // 1 where a column is a water bed under the water's surface (its faces are lit as the water lights them).
 let WET = new Uint8Array(0);
 let WL = new Float32Array(0);
+// 1 where a column's top is sand (its colour's ground): its small steps are lit as its slope.
+let SANDY = new Uint8Array(0);
+// The water cell whose surface covers a column of a dry cell (shoreLine), -1 elsewhere.
+let FLOOD = new Int32Array(0);
 // The nearest lava (cells away and its surface) and house (cells away and its floor) to a column.
 let LAVA_D = new Float32Array(0);
 let LAVA_Y = new Float32Array(0);
@@ -500,6 +606,8 @@ export function buildFineTile(
     GL = new Uint8Array(SW * SH);
     WET = new Uint8Array(SW * SH);
     WL = new Float32Array(SW * SH);
+    SANDY = new Uint8Array(SW * SH);
+    FLOOD = new Int32Array(SW * SH);
     LAVA_D = new Float32Array(SW * SH);
     LAVA_Y = new Float32Array(SW * SH);
     HOUSE_D = new Float32Array(SW * SH);
@@ -525,6 +633,8 @@ export function buildFineTile(
         D[s] = 0;
         CELL[s] = -1;
         RS[s] = RISER;
+        SANDY[s] = 0;
+        FLOOD[s] = -1;
         continue;
       }
       CELL[s] = c;
@@ -537,6 +647,8 @@ export function buildFineTile(
       let src = c;
       let bit = 0;
       let raise = 0;
+      let lifted = false;
+      FLOOD[s] = -1;
       const lx = sx - cx * sub;
       const ly = sy - cy * sub;
       if (f.natural[c]) {
@@ -589,11 +701,26 @@ export function buildFineTile(
             }
           }
         }
-        if (rocks && foot >= 0 && !f.wet[c] && !f.anchored[c] && noise(px, py, 0.9, 57) > 0.76 && hash(sx, sy, 58) < 0.22) {
+        // The waterline in eighths (18 November, the owner: "coasts are bad too", a diagonal shore
+        // stepped in whole-cell teeth): near a low shore the line where water meets land follows a
+        // smooth curve through the cells (shoreLine), the ground under it lowered into the water
+        // and the ground beside it ramped down to the water's edge.
+        if (water && steps && blend) {
+          const k = shoreLine(f, c, cx, cy, px, py, hgt, sub);
+          if (k !== SHORE_NONE) {
+            hgt = SHORE_H;
+            if (k === SHORE_FLOOD) FLOOD[s] = SHORE_N;
+            else if (k === SHORE_LAND) {
+              lifted = true;
+              src = SHORE_N;
+            } else shore = SHORE_W > SHORE_PEBBLE;
+          }
+        }
+        if (rocks && foot >= 0 && !f.wet[c] && FLOOD[s] < 0 && !f.anchored[c] && noise(px, py, 0.9, 57) > 0.76 && hash(sx, sy, 58) < 0.22) {
           // A few boulders fallen at the foot of a cliff, of its stone.
           bit = scaleColor(f.stone[foot], 0.92 + hash(sx, sy, 59) * 0.16);
           raise = 1 + (hash(sx, sy, 60) < 0.35 ? 1 : 0);
-        } else if (bits && !f.wet[c] && src === c) {
+        } else if (bits && !f.wet[c] && src === c && FLOOD[s] < 0) {
           // A few small clusters, not a sprinkle.
           if (f.flowers[c] && noise(px, py, 3.2, 21) > 0.8 && hash(sx, sy, 22) < 0.28) {
             bit = FLOWERS[Math.floor(hash(Math.floor(px / 3), Math.floor(py / 3), 23) * FLOWERS.length)];
@@ -611,13 +738,16 @@ export function buildFineTile(
       }
       // With the water in eighths, a cell the simulation counts as under water is drawn under it,
       // an eighth at least (the shore's sand reaching into the shallows stood out as islets).
-      if (water && f.wet[c] && f.water[c] > -1e8 && !f.lava[c]) hgt = Math.min(hgt, Math.ceil(f.water[c] * sub) - 1 - raise);
+      // A column of the shore's land drawn over a water cell (shoreLine) stays above the water: it is
+      // joined to the land beside it.
+      if (water && f.wet[c] && f.water[c] > -1e8 && !f.lava[c] && !lifted) hgt = Math.min(hgt, Math.ceil(f.water[c] * sub) - 1 - raise);
       H[s] = hgt + raise;
       if (tops && sx >= tx0 * sub && sy >= ty0 * sub && sx < tx1 * sub && sy < ty1 * sub)
         tops.h[(sy - tops.y0 * sub) * tops.stride + (sx - tops.x0 * sub)] = hgt;
       const rock = f.ground[src] === G.ROCK;
-      LAND[s] = f.natural[c] && !f.wet[c] && !bit ? (rock ? 2 : 1) : 0;
-      D[s] = f.wet[c] || src !== c ? 0 : 1;
+      SANDY[s] = f.natural[c] && !bit && FLOOD[s] < 0 && f.ground[src] === G.SAND ? 1 : 0;
+      LAND[s] = f.natural[c] && (!f.wet[c] || lifted) && FLOOD[s] < 0 && !bit ? (rock ? 2 : 1) : 0;
+      D[s] = f.wet[c] || src !== c || FLOOD[s] >= 0 ? 0 : 1;
       let col = bit || f.color[src];
       if (f.softOn[c] && !bit && src === c && !f.wet[c]) {
         // A spell's ground in soft patches (16 November, the owner: Big Bang's ground "a busy
@@ -655,7 +785,7 @@ export function buildFineTile(
   // and dark sides that made height easy to read with whole steps (pass 1).
   const slopeK = relief ? 0.45 : 0.15;
   // The columns of a water bed under the water's surface.
-  for (let s = 0; s < SW * SH; s++) WET[s] = CELL[s] >= 0 && isBed(f, CELL[s]) && H[s] < f.water[CELL[s]] * sub ? 1 : 0;
+  for (let s = 0; s < SW * SH; s++) WET[s] = FLOOD[s] >= 0 || (CELL[s] >= 0 && isBed(f, CELL[s]) && H[s] < f.water[CELL[s]] * sub) ? 1 : 0;
   const gentle = (d: number) => (d > 2 * RISER ? 2 * RISER : d < -2 * RISER ? -2 * RISER : d);
   for (let j = 2; j < SH - 2; j++)
     for (let k = 2; k < SW - 2; k++) {
@@ -669,7 +799,9 @@ export function buildFineTile(
       // merge.
       if (WET[s]) continue;
       const riser = RS[s];
-      if (e > riser || -w > riser || so > riser || -no > riser) {
+      // The top below a step steeper than a slope's sits in its shade; not on sand, where the steps
+      // of a dune's foot drew dark wavy lines across flat ground (18 November).
+      if ((e > riser || -w > riser || so > riser || -no > riser) && !SANDY[s]) {
         C[s] = scaleColor(C[s], 0.88);
         continue;
       }
@@ -685,8 +817,11 @@ export function buildFineTile(
       gz /= 6;
       let light = 1;
       if (gx || gz) {
-        const kx = Math.min(0.9, Math.abs(gx) * slopeK);
-        const kz = Math.min(0.9, Math.abs(gz) * slopeK);
+        // On sand a tilt under a voxel a cell is lit in proportion to itself (SAND_TILT): a lone step
+        // of an eighth on flat sand drew a dark band four columns wide, a contour line (18 November);
+        // a dune's slope (a voxel a cell or more) is lit as before.
+        const kx = Math.min(0.9, Math.abs(gx) * slopeK * (SANDY[s] ? Math.min(1, Math.abs(gx) / SAND_TILT) : 1));
+        const kz = Math.min(0.9, Math.abs(gz) * slopeK * (SANDY[s] ? Math.min(1, Math.abs(gz) / SAND_TILT) : 1));
         // Rising toward +x, the ground faces west; toward +z, north.
         const lx = gx > 0 ? FACE_LIGHT.west : FACE_LIGHT.east;
         const lz = gz > 0 ? FACE_LIGHT.north : FACE_LIGHT.south;
@@ -830,6 +965,8 @@ export function buildFineTile(
 
 // The land shader's flag (landWet) for a face lit as its slope is: half way to a bed's (1).
 const SLOPE_LIT = 0.5;
+// The tilt (twice the rise a column, in columns) from which sand is lit fully by its slope.
+const SAND_TILT = 1;
 
 // The bevel of a cliff's lip on snow and rock, eighths of a voxel down by columns from the edge.
 const BEVEL = [3, 1];
@@ -957,12 +1094,16 @@ export function riverNarrow(across: number): number {
 const LEVEL_JOIN = 1.2;
 let WK = new Float64Array(0);
 let FO = new Uint8Array(0);
+// The water cell each column's water is (its own cell, or the one a shore's column takes).
+let WC = new Int32Array(0);
 // The rectangles of water top (i, ie, j, je, first column) and an outline's points.
 const RECTS: number[] = [];
 const PTS: number[] = [];
 // The four corner levels of each water cell of a tile and its border: (x0, y0), (x1, y0),
 // (x0, y1), (x1, y1); NaN for a cell not under water.
 let CORNER = new Float32Array(0);
+// The same for a dry cell by water (NaN elsewhere): the surface of the water over its shore's columns.
+let DRY = new Float32Array(0);
 function cornerLevel(f: FineCells, gx: number, gy: number, own: number): number {
   let lo = Infinity;
   let hi = -Infinity;
@@ -993,13 +1134,18 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
   if (WK.length < n) {
     WK = new Float64Array(n);
     FO = new Uint8Array(n);
+    WC = new Int32Array(n);
   }
-  // The cells the columns of the tile and its border fall in, and their corners.
-  const cx0 = Math.floor(sx0 / sub);
-  const cy0 = Math.floor(sy0 / sub);
-  const cw = Math.floor((sx0 + SW - 1) / sub) - cx0 + 1;
-  const ch = Math.floor((sy0 + SH - 1) / sub) - cy0 + 1;
-  if (CORNER.length < cw * ch * 4) CORNER = new Float32Array(cw * ch * 4);
+  // The cells the columns of the tile and its border fall in and one more round (the water a shore's
+  // columns take, shoreLine), and their corners.
+  const cx0 = Math.floor(sx0 / sub) - 1;
+  const cy0 = Math.floor(sy0 / sub) - 1;
+  const cw = Math.floor((sx0 + SW - 1) / sub) - cx0 + 2;
+  const ch = Math.floor((sy0 + SH - 1) / sub) - cy0 + 2;
+  if (CORNER.length < cw * ch * 4) {
+    CORNER = new Float32Array(cw * ch * 4);
+    DRY = new Float32Array(cw * ch * 4);
+  }
   let any = false;
   for (let y = 0; y < ch; y++)
     for (let x = 0; x < cw; x++) {
@@ -1008,8 +1154,25 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
       const gy = cy0 + y;
       const inRange = gx >= f.x0 - 3 && gy >= f.y0 - 3 && gx < f.x1 + 3 && gy < f.y1 + 3;
       const c = inRange ? fineAt(f, gx, gy) : -1;
+      DRY[k] = DRY[k + 1] = DRY[k + 2] = DRY[k + 3] = NaN;
       if (c < 0 || !isWater(f, c)) {
         CORNER[k] = CORNER[k + 1] = CORNER[k + 2] = CORNER[k + 3] = NaN;
+        // A dry cell by water: the levels its water's corners take where they touch it, the others
+        // their mean, for the columns of it under that water (shoreLine). Its surface meets its
+        // neighbours' along every edge they share.
+        if (c >= 0 && f.inside[c] && !f.wet[c]) {
+          let sum = 0;
+          let m = 0;
+          for (let q = 0; q < 4; q++) {
+            const l = cornerLevel(f, gx + (q & 1), gy + (q >> 1), NaN);
+            DRY[k + q] = l;
+            if (!Number.isNaN(l)) {
+              sum += l;
+              m++;
+            }
+          }
+          if (m) for (let q = 0; q < 4; q++) if (Number.isNaN(DRY[k + q])) DRY[k + q] = sum / m;
+        }
         continue;
       }
       any = true;
@@ -1020,8 +1183,12 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
       CORNER[k + 3] = cornerLevel(f, gx + 1, gy + 1, own);
     }
   if (!any) return false;
-  const levelAt = (k: number, u: number, v: number) =>
-    CORNER[k] * (1 - u) * (1 - v) + CORNER[k + 1] * u * (1 - v) + CORNER[k + 2] * (1 - u) * v + CORNER[k + 3] * u * v;
+  // The surface at (u, v) of the cell whose corners start at k: a water cell's, or a dry cell's by
+  // water (DRY).
+  const levelAt = (k: number, u: number, v: number) => {
+    const a = Number.isNaN(CORNER[k]) ? DRY : CORNER;
+    return a[k] * (1 - u) * (1 - v) + a[k + 1] * u * (1 - v) + a[k + 2] * (1 - u) * v + a[k + 3] * u * v;
+  };
   // The level over each column, NaN where no water covers it.
   for (let j = 0; j < SH; j++)
     for (let i = 0; i < SW; i++) {
@@ -1033,9 +1200,23 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
       const x = Math.floor(sx / sub);
       const y = Math.floor(sy / sub);
       const k = ((y - cy0) * cw + (x - cx0)) * 4;
-      if (Number.isNaN(CORNER[k])) continue;
+      const u = (sx - x * sub + 0.5) / sub;
+      const v = (sy - y * sub + 0.5) / sub;
+      WC[s] = CELL[s];
+      if (Number.isNaN(CORNER[k])) {
+        // A dry cell's column under its neighbour's water (shoreLine): the surface over the dry
+        // cell (DRY), which meets its neighbours' along their edges.
+        if (FLOOD[s] < 0 || Number.isNaN(DRY[k])) continue;
+        const even = DRY[k] === DRY[k + 1] && DRY[k] === DRY[k + 2] && DRY[k] === DRY[k + 3];
+        const level = even ? DRY[k] : levelAt(k, u, v);
+        if (H[s] * Q >= level - 0.001) continue;
+        WL[s] = level;
+        WK[s] = even ? level : -1 - CELL[s];
+        WC[s] = FLOOD[s];
+        continue;
+      }
       const flat = CORNER[k] === CORNER[k + 1] && CORNER[k] === CORNER[k + 2] && CORNER[k] === CORNER[k + 3];
-      const level = flat ? CORNER[k] : levelAt(k, (sx - x * sub + 0.5) / sub, (sy - y * sub + 0.5) / sub);
+      const level = flat ? CORNER[k] : levelAt(k, u, v);
       if (H[s] * Q >= level - 0.001) continue;
       WL[s] = level;
       WK[s] = flat ? level : -1 - CELL[s];
@@ -1051,7 +1232,7 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
       const px = (sx0 + i + 0.5) / sub;
       const py = (sy0 + j + 0.5) / sub;
       // A river one or two cells wide has no foam; wider, a band that grows with it.
-      const narrow = f.wnarrow[CELL[s]];
+      const narrow = f.wnarrow[WC[s]];
       if (narrow >= 1) continue;
       const reach = narrow > 0 ? Math.max(1, Math.round(wide * (1 - narrow))) : wide;
       let near = Infinity;
@@ -1089,14 +1270,16 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
       CW.level[at] = WL[s];
       CW.key[at] = WK[s];
       CW.foam[at] = FO[s];
-      CW.color[at] = f.wdeep[CELL[s]];
+      CW.color[at] = f.wdeep[WC[s]];
     }
   for (let y = 0; y < ch; y++)
     for (let x = 0; x < cw; x++) {
       const gx = cx0 + x - f.x0;
       const gy = cy0 + y - f.y0;
       if (gx < 0 || gy < 0 || gx >= CW.cells || gy >= CW.cellRows) continue;
-      for (let q = 0; q < 4; q++) CW.corner[(gy * CW.cells + gx) * 4 + q] = CORNER[(y * cw + x) * 4 + q];
+      const k = (y * cw + x) * 4;
+      const dry = Number.isNaN(CORNER[k]);
+      for (let q = 0; q < 4; q++) CW.corner[(gy * CW.cells + gx) * 4 + q] = dry ? DRY[k + q] : CORNER[k + q];
     }
   // The level of column s's top at the middle of its edge toward d (east, south, west, north).
   const edgeLevel = (s: number, i: number, j: number, d: number): number => {
@@ -1119,8 +1302,8 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
       const level = WL[s];
       if (Number.isNaN(level)) continue;
       const floor = H[s] * Q;
-      const deep = f.wdeep[CELL[s]];
-      const shallow = f.wshallow[CELL[s]];
+      const deep = f.wdeep[WC[s]];
+      const shallow = f.wshallow[WC[s]];
       for (let d = 0; d < 4; d++) {
         const t = s + DX[d] + DY[d] * SW;
         // Between two columns of water, by the levels of their tops at the edge they share: equal
@@ -1498,7 +1681,9 @@ function wallFaces(
     face(low, T, C[s]);
     // On snow and rock the steps of a slope are lit as the slope is, not as walls: one turned from
     // the sun read as a lone blue face, in checkers across a snowy peak (17 November).
-    if (f.steep[c]) FACES[n - 1].wet = SLOPE_LIT;
+    // On sand too (18 November, the owner: dark wavy contour lines across flat sand, a step's riser
+    // lit as a wall's dark side): its slopes' risers take the slope's light, as its tops do.
+    if (f.steep[c] || SANDY[s]) FACES[n - 1].wet = SLOPE_LIT;
     // Bright ground (sand, snow) takes half the dark side: on sand every small step's shadow read
     // as a washboard (15 November).
     const bright = f.ground[c] === G.SAND || f.ground[c] === G.SNOW;
@@ -1508,7 +1693,7 @@ function wallFaces(
   }
   // The small steps of a water bed: its own colour and nearly its top's light, so the bed under the
   // water reads as one smooth floor and not as lines of darker steps.
-  if (T - low <= 2 * sub && isBed(f, c) && low > bottom) {
+  if (T - low <= 2 * sub && (isBed(f, c) || FLOOD[s] >= 0) && low > bottom) {
     face(low, T, C[s]);
     FACES[n - 1].light = 1 - 0.25 * (1 - light);
     FACES[n - 1].foot = 1;
