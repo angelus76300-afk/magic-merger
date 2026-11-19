@@ -1118,14 +1118,16 @@ export function riverNarrow(across: number): number {
 // The water's look is at its most opaque from 4.5 height units, set for the sea so the seabed's
 // steps do not show through it as a grid (4.4.5 part C); lakes are 14 to 20 deep, so their middles
 // drew as an opaque sheet with no floor. Water whose surface stands above the sea is drawn as
-// clearer: its first LAKE_SHALLOW units as they are, the rest eased toward LAKE_LOOK more, so a
-// lake 14 deep is still a little clear (0.85 opaque, the sea's 0.96). Its colour stays its depth's
-// (lakeTint), and its bed darkens toward the deep colour with depth (lakeBedDark), so the floor
-// fades into the dark instead of vanishing. The sea (lakeShare 0) is drawn exactly as before.
+// clearer: its first LAKE_SHALLOW units as they are, then as if never deeper than LAKE_LOOK, so a
+// lake 14 deep is 0.64 opaque (the sea's 0.96) and its floor's slope and its sand and rock show.
+// Its colour stays its depth's (lakeTint), and its bed is muted toward a blue with depth
+// (lakeBedDark), so the floor reads as deeper and bluer instead of vanishing. Variants tried on
+// the same cameras (docs/visual-checks/lake-floors/variants): 0.70 opaque with the bed mixed 0.55
+// toward the deep colour at 55% light, 0.62 with 0.45 (the deep middle turned grey), this one.
+// The sea (lakeShare 0) is drawn exactly as before.
 export const HEIGHT_V = 0.5; // scene units per height unit (terrain.ts V)
-const LAKE_SHALLOW = 1;
-const LAKE_LOOK = 2.2;
-const LAKE_EASE = 6;
+const LAKE_SHALLOW = 0.4;
+const LAKE_LOOK = 0.8;
 // How much water whose surface is at `surface` (height units) is a lake's: 0 at the sea's level
 // and up to LAKE_FROM above it (a river's mouth, a lagoon), 1 a unit higher, graded between.
 const LAKE_FROM = 0.35;
@@ -1135,7 +1137,8 @@ export function lakeShare(surface: number, sea: number): number {
 // The depth whose clearness water `d` deep (height units) takes, by its lakeShare.
 export function lakeDepth(d: number, share: number): number {
   if (share <= 0 || d <= LAKE_SHALLOW) return d;
-  const look = LAKE_SHALLOW + LAKE_LOOK * (1 - Math.exp(-(d - LAKE_SHALLOW) / LAKE_EASE));
+  const k = LAKE_LOOK - LAKE_SHALLOW;
+  const look = LAKE_SHALLOW + k * (1 - Math.exp(-(d - LAKE_SHALLOW) / k));
   return d + (look - d) * share;
 }
 // How far the shallow colour the water's map holds is mixed toward the deep colour, for water
@@ -1147,14 +1150,14 @@ export function lakeTint(real: number, look: number): number {
   return got >= want || got >= 1 ? 0 : (want - got) / (1 - got);
 }
 // How far a lake's bed `d` under its surface (height units) is mixed toward its water's deep
-// colour darkened by LAKE_BED_DEEP: none on the shelf to LAKE_BED_CLEAR, then more, eased toward
-// LAKE_BED_DARK over LAKE_BED_EASE units (a quarter at 2 deep, a half at 4, 0.85 at 14), in
+// colour at LAKE_BED_DEEP of its light: none on the shelf to LAKE_BED_CLEAR, then more, eased
+// toward LAKE_BED_DARK over LAKE_BED_EASE units (0.13 at 2 deep, 0.3 at 4, 0.6 at 14), in
 // sixteenths so the bed's tops still merge. A lake's floor is mostly grass and sand, green and
 // yellow through clear water without it.
 const LAKE_BED_CLEAR = 0.5;
-const LAKE_BED_EASE = 4;
-const LAKE_BED_DARK = 0.9;
-export const LAKE_BED_DEEP = 0.55;
+const LAKE_BED_EASE = 7;
+const LAKE_BED_DARK = 0.7;
+export const LAKE_BED_DEEP = 0.7;
 export function lakeBedDark(d: number, share: number): number {
   if (share <= 0 || d <= LAKE_BED_CLEAR) return 0;
   return Math.round((1 - Math.exp(-(d - LAKE_BED_CLEAR) / LAKE_BED_EASE)) * LAKE_BED_DARK * share * 16) / 16;

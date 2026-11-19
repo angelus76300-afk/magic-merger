@@ -7,6 +7,8 @@
 // With BENCH=1, the frame's cost on high at the temperate lake's deepest cell (perfBench, 40 frames);
 // with BENCH_ONLY=1 too, that alone.
 //
+// SHOTS=island:shot,... draws only those.
+//
 //   npx vite --port 5174 &
 //   NODE_PATH=$(npm root -g) node scripts/lake-frames.mjs <out dir> [tag]
 import { createRequire } from "node:module";
@@ -19,6 +21,8 @@ const OUT = process.argv[2] ?? "lake-frames";
 const TAG = process.argv[3] ?? "frame";
 const BASE = process.env.LAB_URL ?? "http://localhost:5174/lab/perf.html";
 const QUALITIES = (process.env.QUALITIES ?? "high,medium").split(",");
+// SHOTS=island:shot,...: only those frames (and only their islands loaded).
+const SHOTS = process.env.SHOTS ? process.env.SHOTS.split(",") : null;
 // Each island and its cameras: [name, centre cell x, y, distance, angle from straight down]. The
 // lakes' cells were found by bodies() (below) on main: on the temperate island the big lake's cell
 // about 2.5 deep and its deepest (14.6), on the tundra island two lakes' (15.1 and 19.6 deep).
@@ -160,7 +164,9 @@ const browser = await chromium.launch({ args: ["--enable-unsafe-swiftshader", "-
 const rows = [];
 try {
   for (const quality of QUALITIES) {
-    for (const [name, q, views] of ISLANDS) {
+    for (const [name, q, all] of ISLANDS) {
+      const views = SHOTS ? all.filter(([shot]) => SHOTS.includes(`${name}:${shot}`)) : all;
+      if (!views.length) continue;
       const ctx = await browser.newContext({ viewport: SIZE, deviceScaleFactor: 1 });
       const page = await ctx.newPage();
       page.on("pageerror", (err) => console.error("page error:", err.message));
@@ -192,7 +198,7 @@ try {
         console.log(JSON.stringify(rows.at(-1)));
       }
       if (process.env.BENCH && quality === "high" && name === ISLANDS[0][0]) {
-        const [, x, y] = views[1];
+        const [, x, y] = all[1];
         await page.evaluate(
           ([x, y]) => {
             const o = window.__engine.view.orbit;

@@ -586,8 +586,9 @@ function lakeChecks(check: Check): void {
     const land = meshes.find((m) => m.geometry.index)?.material;
     const tops = topColors(world, meshes, land);
     const light = (c: [number, number, number]) => 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2];
-    const shelf: number[] = [];
-    const deep: number[] = [];
+    const blue = (c: [number, number, number]) => c[2] / Math.max(1, c[0] + c[1] + c[2]);
+    const shelf: [number, number, number][] = [];
+    const deep: [number, number, number][] = [];
     for (let i = 0; i < world.n; i++) {
       if (t.wet[i] !== 1 || world.fluid[i] !== F.WATER) continue;
       const surface = world.height[i] + world.depth[i];
@@ -609,19 +610,19 @@ function lakeChecks(check: Check): void {
       const c = tops.get(i);
       if (!c) continue;
       const bed = surface - columnTop(world, i) / 0.5;
-      if (bed > 1 && bed < 3) shelf.push(light(c));
-      else if (bed > 13) deep.push(light(c));
+      if (bed > 1 && bed < 3) shelf.push(c);
+      else if (bed > 13) deep.push(c);
     }
     check(
-      "a lake deeper than 12.5 is still a little clear, unlike the open sea, in its deep blue; the sea as before",
-      lakes > 50 && murkiest < 0.9 && clearest > 0.75 && colourOff < 6 && sea > 500 && seaOff === 0,
+      "a lake deeper than 12.5 is about two thirds opaque (the open sea 0.96), in its deep blue; the sea as before",
+      lakes > 50 && murkiest < 0.72 && clearest > 0.58 && colourOff < 6 && sea > 500 && seaOff === 0,
       `${lakes} lake cells deeper than 12.5, opaque ${clearest.toFixed(2)} to ${murkiest.toFixed(2)} (the sea 0.96), colour ${colourOff.toFixed(1)} off its depth's at most; ${seaOff} of ${sea} sea cells off their depth`,
     );
     const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / Math.max(1, a.length);
     check(
-      "a lake's floor darkens with depth: 13 deep is clearly darker than a shelf 1 to 3 deep",
-      shelf.length > 20 && deep.length > 20 && mean(deep) < mean(shelf) * 0.6,
-      `the floor's light ${mean(deep).toFixed(0)} over ${deep.length} cells deeper than 13, ${mean(shelf).toFixed(0)} over ${shelf.length} cells 1 to 3 deep`,
+      "a lake's floor is muted and bluer with depth: 13 deep, darker and bluer than a shelf 1 to 3 deep",
+      shelf.length > 20 && deep.length > 20 && mean(deep.map(light)) < mean(shelf.map(light)) * 0.95 && mean(deep.map(blue)) > mean(shelf.map(blue)) + 0.08,
+      `the floor deeper than 13 (${deep.length} cells): light ${mean(deep.map(light)).toFixed(0)}, blue share ${mean(deep.map(blue)).toFixed(2)}; 1 to 3 deep (${shelf.length} cells): light ${mean(shelf.map(light)).toFixed(0)}, blue share ${mean(shelf.map(blue)).toFixed(2)}`,
     );
   });
 }
@@ -702,8 +703,8 @@ function riverChecks(check: Check, world: World, terrain: Terrain, fine: Mesh[])
       narrowCells++;
       if ((map[i * 4 + 3] / 255) * 8 < 1.9) shallowLook++;
     } else if (kind[i] === 2 && world.fluid[i] === F.WATER) {
-      // A lake deeper than a unit is drawn clearer since 19 November (lakeChecks).
-      if (world.depth[i] > 1 && lakeShare(world.height[i] + world.depth[i], world.seaLevel) > 0) continue;
+      // A lake deeper than 0.4 is drawn clearer since 19 November (lakeChecks).
+      if (world.depth[i] > 0.4 && lakeShare(world.height[i] + world.depth[i], world.seaLevel) > 0) continue;
       wideCells++;
       const t = [0x86, 0xea, 0xdc];
       const w = [0x4a, 0xa0, 0xdc];
