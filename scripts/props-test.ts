@@ -11,6 +11,7 @@ import { LOOK_VOXEL, propLocal, propTriangles, voxelize } from "../src/sim/voxel
 import { benchProps } from "./looks-bench";
 import { lookMeshes, type Look } from "./looks-golden";
 import { looksRefChecks } from "./looks-refs-test";
+import { turnedPartsChecks } from "./turned-parts-test";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
@@ -84,6 +85,7 @@ function lookToolChecks(check: Check): void {
   check("a turned box is a staircased block of about its volume", Math.abs(turned.count * LOOK_VOXEL ** 3 - 2) < 0.4, `${turned.count} voxels`);
   const thin = voxelize([readBox([0, 0, 0, 1, 0.05, 1, "#fff"]) as PropBox], LOOK_VOXEL);
   check("a part thinner than a voxel is drawn one voxel thick, not lost", thin.count === 64, `${thin.count}`);
+  turnedPartsChecks(check);
   const over = voxelize(
     [readBox([0, 0, 0, 1, 1, 1, "#ffffff"]) as PropBox, readBox([0.25, 0, 0.25, 0.5, 0.05, 0.5, "#ff0000", "glow"]) as PropBox],
     LOOK_VOXEL,
