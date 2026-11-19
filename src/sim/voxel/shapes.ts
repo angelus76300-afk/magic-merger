@@ -118,12 +118,20 @@ function rotation(b: PropBox): number[] {
 
 // Every part, in the program's order (a later part paints over an earlier one: a window over its
 // wall). A part thinner than a voxel is drawn a voxel thick, so a window or a rib is not lost.
+// A turned part is drawn thicker still where it is thin (19 November, the owner's Moraine: thin
+// tilted slabs drawn as stacks of strips): a part one voxel thick, once turned, fills a staircase
+// whose rows touch only at their edges, and each row draws as its own strip, with gaps between. Its
+// thickness along each of its own axes is at least side * (|x| + |y| + |z|) of that axis in the
+// model (at most side * sqrt(3)), the least that keeps the cubes across it touching face to face.
+// An unturned part keeps side, so every look without a turn draws as before.
 export function voxelize(boxes: PropBox[], side: number): VoxelGrid {
   const parts = boxes.map((b) => {
     const R = rotation(b);
-    const W = Math.max(b.w, side);
-    const D = Math.max(b.d, side);
-    const H = Math.max(b.h, side);
+    const turned = !!(b.rx || b.ry || b.rz);
+    const least = (c: number) => (turned ? side * (Math.abs(R[c]) + Math.abs(R[3 + c]) + Math.abs(R[6 + c])) : side);
+    const W = Math.max(b.w, least(0));
+    const D = Math.max(b.d, least(1));
+    const H = Math.max(b.h, least(2));
     const C: V = [b.x + b.w / 2, b.y + b.d / 2, b.z + b.h / 2];
     const lo: V = [Infinity, Infinity, Infinity];
     const hi: V = [-Infinity, -Infinity, -Infinity];
