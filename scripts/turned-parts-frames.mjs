@@ -2,7 +2,7 @@
 // close, mid and the side: for the before and after of turned parts drawn whole (19 November).
 // The Lab's 540 square is widened in the browser only. Offline: Vite on 5174, stopped at the end.
 //   node scripts/turned-parts-frames.mjs <out dir> <spell file> <tag>
-//   node scripts/turned-parts-frames.mjs docs/visual-checks/turned-parts scripts/fixtures/turned-slabs-ring.js after
+//   node scripts/turned-parts-frames.mjs docs/visual-checks/turned-parts scripts/fixtures/turned-slabs-ring.spell.txt after
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";

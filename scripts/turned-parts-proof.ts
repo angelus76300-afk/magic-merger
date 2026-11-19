@@ -51,5 +51,5 @@ const unturned = (parts: unknown[]) =>
   parts.filter((q) => !(Array.isArray(q) ? q : []).some((f) => f && typeof f === "object" && ("rx" in f || "ry" in f || "rz" in f)));
 out.referencesUnturned = REFERENCES.map((r) => measure(r.name, unturned(drawnBy(r.code).calls[0]?.parts ?? [])));
 out.stored = lookMeshes(JSON.parse(readFileSync("scripts/fixtures/looks-20.json", "utf8")) as Look[]);
-out.heavy = [measure("turned slabs ring (stand-in)", spellParts(readFileSync("scripts/fixtures/turned-slabs-ring.js", "utf8")))];
+out.heavy = [measure("turned slabs ring (stand-in)", spellParts(readFileSync("scripts/fixtures/turned-slabs-ring.spell.txt", "utf8")))];
 console.log(JSON.stringify(out, null, 1));
