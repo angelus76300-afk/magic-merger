@@ -9,7 +9,7 @@ import { VoxelState, packVoxel, VK } from "./voxels";
 import { keyX, keyY, voxelKey } from "./voxelkey";
 import { DecorStore } from "./decor";
 import { fluidsMeet } from "./cells";
-import { BIOMES, buildLand, drainage, type LandOptions, type Spring } from "./land";
+import { BIOMES, buildLand, drainage, habitatKinds, keepHabitats, type LandOptions, type Spring } from "./land";
 import { dressSettlements, ecology, growSettlements, markRefuges, type Refuge, type Settlement } from "./ecology";
 import { SPECIES } from "./wildlife";
 import { placeWonders, settleWonders, type Wonder, type WonderDef } from "./wonders";
@@ -429,6 +429,7 @@ function generateLand(w: number, h: number, seed: number, land: LandOptions, rec
   const world = new World(w, h, seed);
   const rng = world.rng;
   const { peak } = buildLand(world, land);
+  const had = habitatKinds(world);
   placeVillages(world, rng, world.seaLevel + Math.max(10, peak * 0.62));
   // 4.4.5 part B: wonders shape the land before the plants grow round them.
   placeWonders(world, BIOMES, peak, recent, defs);
@@ -438,6 +439,7 @@ function generateLand(w: number, h: number, seed: number, land: LandOptions, rec
   dressSettlements(world, BIOMES);
   growSettlements(world, true);
   layOutVillages(world, BIOMES);
+  keepHabitats(world, had);
   markRefuges(
     world,
     SPECIES.map((s) => ({ name: s.kind.name, habitat: s.habitat })),

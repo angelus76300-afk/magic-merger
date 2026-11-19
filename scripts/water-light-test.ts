@@ -751,6 +751,10 @@ function coastChecks(check: Check, world: World, terrain: Terrain, fine: Mesh[],
   const isWater = (x: number, y: number) =>
     x >= 0 && y >= 0 && x < world.w && y < world.h && levels[y * world.w + x] > -1e8 && world.fluid[y * world.w + x] === F.WATER;
   const isDry = (x: number, y: number) => x >= 0 && y >= 0 && x < world.w && y < world.h && !(levels[y * world.w + x] > -1e8);
+  // A coast of still water, the sea's or a lake's: its three cells at one level. A river's banks,
+  // whose water falls from cell to cell, are a waterline of their own (19 November: rivers on new
+  // islands are curves in bands one to three cells wide, and their low banks came into this count).
+  const still = (a: number, b: number, c: number) => Math.max(levels[a], levels[b], levels[c]) - Math.min(levels[a], levels[b], levels[c]) < 0.01;
   let corners = 0;
   let teeth = 0;
   let notches = 0;
@@ -779,10 +783,12 @@ function coastChecks(check: Check, world: World, terrain: Terrain, fine: Mesh[],
           isDry(x, y - dy)
         ) {
           if (columnTop(world, i) - levels[(y + dy) * world.w + x] > 1) continue;
+          if (!still((y + dy) * world.w + x, y * world.w + x + dx, (y + dy) * world.w + x + dx)) continue;
           corners++;
           if (!covered.has(k)) teeth++;
         } else if (isWater(x, y) && isDry(x + dx, y) && isDry(x, y + dy) && isDry(x + dx, y + dy) && isWater(x - dx, y) && isWater(x, y - dy)) {
           if (columnTop(world, (y + dy) * world.w + x) - levels[i] > 1) continue;
+          if (!still(i, y * world.w + x - dx, (y - dy) * world.w + x)) continue;
           wetCorners++;
           if (covered.has(k)) notches++;
         }

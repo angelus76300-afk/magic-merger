@@ -229,8 +229,9 @@ function troubleChecksSeeded(check: Check): void {
   }
   // 5. No woods with a way to the houses: no wildfire. A cast far away is not its answer.
   {
-    const { world } = island(7);
-    check("troubles: an island of sand has no wildfire", startWildfire(world, seeded(7)) === null && world.trouble === null && world.troubles === 0);
+    // Island 1 since the rivers in curves (19 November); island 7 was the sandy one before.
+    const { world } = island(1);
+    check("troubles: an island of sand has no wildfire", startWildfire(world, seeded(1)) === null && world.trouble === null && world.troubles === 0);
     const w2 = island(21).world;
     const t = startWildfire(w2, seeded(21))!;
     noteCast(w2, "far", "Far", "", (t.vx + 76) % 152, (t.vy + 76) % 152);
@@ -410,16 +411,19 @@ export function highWaterChecks(check: Check): void {
   }
 }
 
-// The islands the checks play on: a village (Vaelis, from the sea) and a hamlet (Vaelwywick, from the sea).
+// The islands the checks play on: a village (Vaelis, from the sea) and a hamlet (Mesera, from the sea).
+// Since the rivers in curves (19 November) the hamlet is Mesera on island 10 (Vaelwywick, island 4,
+// was before), the hill is played on island 19 (12 before), and the turns of wildfire and high water on
+// island 9 (Vaelis has no woods with a way to its houses any more).
 const M = 5;
-const H = 4;
+const H = 10;
 const CRUSH = P("w.terraform(w.x, w.y, 2, 8);");
 const CRUSH_WIDE = P("w.terraform(w.x, w.y, 4, 10);");
 // What answers it, each on an island where it does (the families' run, docs/DESIGN.md "High water"). A hill on the
 // water's way is a weak answer on some islands (seeds 5, 9 and 27 lose a house to it), so it has its own.
 const FAMILIES: [string, number, Cast][] = [
   ["earth raised round the village", 9, { key: "dike", code: DIKE, at: "village" }],
-  ["a hill raised on its way", 12, { key: "hill", code: HILL, at: "mid" }],
+  ["a hill raised on its way", 19, { key: "hill", code: HILL, at: "mid" }],
   ["cold at its source", M, { key: "frost", code: FROST, at: "source" }],
   ["its source dammed", M, { key: "dam", code: DAM, at: "source" }],
   ["a channel dug round the village", 10, { key: "moat", code: MOAT, at: "village" }],
@@ -627,10 +631,11 @@ function highWater(check: Check): void {
       `${told(c1)} / ${told(c2)}`,
     );
     // Two that change its way: a hill that does not hold it here, then a dam that does. Held only once
-    // the dam came, so the dam (the later of two held from the same moment).
-    const d = flow(M, [at("hill", HILL, "mid", 50), at("dam", DAM, "source", 60)]);
+    // the dam came, so the dam (the later of two held from the same moment). Island 27 since the
+    // rivers in curves (19 November): on island 5 a hill alone holds it now.
+    const d = flow(27, [at("hill", HILL, "mid", 50), at("dam", DAM, "source", 60)]);
     check("high water: of two items that changed its way, the one after which it was held is thanked", by(d, "dam") && d.t!.casts.every((c) => c.hit), told(d));
-    const e = flow(M, [at("earth", EARTH, "mid", 50), at("flash", NOTHING, "front", 55), at("dam", DAM, "source", 60)]);
+    const e = flow(27, [at("earth", EARTH, "mid", 50), at("flash", NOTHING, "front", 55), at("dam", DAM, "source", 60)]);
     check("high water: an item that did nothing between two that did is not thanked", by(e, "dam") && !e.t!.casts[1].hit, told(e));
     const f2 = flow(M, [at("frost", FROST, "source", 50), at("frost", FROST, "source", 60)]);
     check("high water: the same item cast twice is thanked by its name", by(f2, "frost"), told(f2));
@@ -706,7 +711,7 @@ function highWater(check: Check): void {
   }
   // 12. A wildfire and a high water take turns, a wildfire first.
   {
-    const { world, rt } = waterIsland(M);
+    const { world, rt } = waterIsland(9);
     const kinds: string[] = [];
     for (let n = 0; n < 3; n++) {
       const t = startTrouble(world, seeded(n + 1));

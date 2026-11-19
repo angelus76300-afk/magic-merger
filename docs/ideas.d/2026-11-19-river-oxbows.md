@@ -1,0 +1,3 @@
+section: Backlog
+
+- **Oxbow ponds and sandbars** (the designer's idea, 2026-11-19; lens: what the player feels). Now that rivers on new islands bend in curves, the tightest bends could leave a small still pond beside the river (an old bend cut off) and a strip of sand on the inside of each big bend, where the water slows. What the player feels: the river has a history, and a walk along it finds quiet spots for fish and for a village's fields. Cost: in generation only, a pass over the river's curve that marks bends sharper than a set radius; no new materials, nothing saved beyond the land. Claude.

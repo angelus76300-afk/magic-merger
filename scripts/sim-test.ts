@@ -98,7 +98,7 @@ import { landProblems, type LandLife } from "./land-life";
 import type { Balance } from "./balance-run";
 import { wonderChecks } from "./wonders-test";
 import { programWonderChecks } from "./wonders-c-test";
-import { riverShape, riverTrenches } from "./river-metrics";
+import { riverCorners, riverFalls, riverMask, riverShape, riverTrenches } from "./river-metrics";
 import { projectedSim, sizesOffered, SIM_BUDGET_MS } from "../src/headroom";
 import { skyBodies, weatherAt } from "../src/sim/voxel/sky";
 import { Terrain } from "../src/sim/voxel/terrain";
@@ -1154,11 +1154,52 @@ for (const scenario of SCENARIOS) {
   let trenches = 0;
   let riverCells = 0;
   let islands = 0;
+  let square = 0;
+  let corners = 0;
+  let uneven = 0;
+  let walked = 0;
+  let reach = 0;
+  let heads = 0;
   for (const shape of SHAPES)
     for (const s of [61, 62]) {
       const world = generateWorld(152, 152, s, { ...DEFAULT_LAND, biome: BIOMES[(s + SHAPES.indexOf(shape)) % BIOMES.length], shape });
       const r = riverShape(world);
       const t = riverTrenches(world);
+      const c = riverCorners(world, riverMask(world));
+      square += c.square;
+      corners += c.corners;
+      const f = riverFalls(world);
+      uneven += f.uneven;
+      walked += f.steps;
+      // Every river's water reaches the sea: from each head, side by side
+      // wet cells lead down to the sea's level (or over the island's edge).
+      for (const sp of world.springs) {
+        if (sp.lava || sp.rate !== undefined) continue;
+        heads++;
+        const seen = new Uint8Array(world.n);
+        const stack = [sp.i];
+        seen[sp.i] = 1;
+        let found = false;
+        while (stack.length && !found) {
+          const i = stack.pop()!;
+          const x = i % world.w;
+          const y = (i / world.w) | 0;
+          if (world.height[i] + world.depth[i] <= world.seaLevel + 0.05 || x === 0 || y === 0 || x === world.w - 1 || y === world.h - 1) found = true;
+          for (const [dx, dy] of [
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1],
+          ]) {
+            if (!world.inside(x + dx, y + dy)) continue;
+            const j = (y + dy) * world.w + x + dx;
+            if (seen[j] || world.fluid[j] !== F.WATER || world.depth[j] <= 0) continue;
+            seen[j] = 1;
+            stack.push(j);
+          }
+        }
+        if (found) reach++;
+      }
       trenches += t.trenches;
       riverCells += t.cells;
       if (!r.steps) continue;
@@ -1171,6 +1212,17 @@ for (const scenario of SCENARIOS) {
     "rivers wind, and every bank can be climbed",
     longest <= 20 && inRuns / islands < 0.1 && trenches <= riverCells * 0.01,
     `${islands} islands: longest straight run ${longest}, ${((inRuns / islands) * 100).toFixed(0)}% of steps in runs of 8+, winding ${(winding / islands).toFixed(2)} (printed, not checked), ${trenches} of ${riverCells} river cells in a trench`,
+  );
+  // 19 November (the owner: "Why are rivers so angular compared to sea
+  // shores?"): rivers laid along a smooth curve turn a little at a time,
+  // their water falls evenly instead of in terraces, and still reaches the
+  // sea. Before, these islands had 23.1% of the banks' corners square, 6.5
+  // uneven falls in 100 steps (river-metrics.ts), and 96 of 133 heads joined
+  // to the sea by water (the others stop a cell or two short, on the beach).
+  check(
+    "rivers bend in curves and fall evenly to the sea",
+    square / corners < 0.2 && uneven / walked < 0.05 && reach >= heads * 0.8,
+    `${((square / corners) * 100).toFixed(1)}% of ${corners} bank corners square, ${((uneven / walked) * 100).toFixed(1)} uneven falls in 100 of ${walked} steps, ${reach} of ${heads} heads reach the sea`,
   );
 }
 
