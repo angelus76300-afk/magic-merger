@@ -83,14 +83,16 @@ const push = (world: World, x: number, y: number) => steerBy(world, x, y, 0);
 // (the line and a third of a cell to each side of it), and inside the ridden step's rim, three cells in from
 // the world's edge (creatures.ts). A line one cell thin, or one that ran to the rim, failed the walk
 // check about one run in twenty: the body brushed a cover beside the line, or the rim stopped it.
-function open(world: World, x: number, y: number, dx: number, dy: number, cells: number): boolean {
+// `plants`: plants on the way are allowed (the caller clears them).
+function open(world: World, x: number, y: number, dx: number, dy: number, cells: number, plants = false): boolean {
   for (let s = 1; s <= cells; s += 0.5)
     for (const side of [-0.35, 0, 0.35]) {
       const px = x + dx * s - dy * side;
       const py = y + dy * s + dx * side;
       if (px < 3.5 || py < 3.5 || px > world.w - 4.5 || py > world.h - 4.5) return false;
       const i = world.idx(px, py);
-      if (world.depth[i] > 0.2 || world.cover[i] !== C.NONE) return false;
+      const plant = world.cover[i] === C.TREE || world.cover[i] === C.BUSH || world.cover[i] === C.FLOWER;
+      if (world.depth[i] > 0.2 || (world.cover[i] !== C.NONE && !(plants && plant))) return false;
       if (Math.abs(world.walkLevel(i) - world.walkLevel(world.idx(x, y))) > 1.2) return false;
     }
   return true;
@@ -952,7 +954,9 @@ function driveChecks(check: Check, world: World, rt: Runtime): void {
       if (crossed < 0 && v.x > at.x0 + 10.5) crossed = world.time;
       px = v.x;
     });
-    const up = world.walkLevel(world.idx(v.x, v.y)) - world.walkLevel(world.idx(at.x0 + 2, at.b));
+    // The land's rise, not the walk level: a film of water that crept onto the lane from a river
+    // beside the test ground (19 November, island 21's rivers in curves) lifted it by a hundredth.
+    const up = world.height[world.idx(v.x, v.y)] - world.height[world.idx(at.x0 + 2, at.b)];
     check(
       "drive: a one cell ledge is stepped up at a run without stopping",
       crossed > 0 && up === 1 && slowest > driveSpeeds(kindOf(v)).run * 0.7,
@@ -1317,10 +1321,16 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
     for (let y = 20; y < world.h - 20 && !found; y += 2)
       for (let x = 20; x < world.w - 20 && !found; x += 2) {
         const i = world.idx(x, y);
-        if (world.ground[i] !== G.GRASS || world.cover[i] !== C.NONE || world.depth[i] > 0 || !open(world, x + 0.5, y + 0.5, 1, 0, 12)) continue;
+        if (world.ground[i] !== G.GRASS || world.cover[i] !== C.NONE || world.depth[i] > 0 || !open(world, x + 0.5, y + 0.5, 1, 0, 12, true)) continue;
         v.x = x + 0.5;
         v.y = y + 0.5;
         found = true;
+        // The plants on the way cleared (19 November: island 21 in curves had no way of 12 cells
+        // without a bush or a flower on it).
+        for (let s = 0; s <= 13; s++)
+          for (let dy = -1; dy <= 1; dy++)
+            if (world.inside(x + s, y + dy) && world.cover[world.idx(x + s, y + dy)] !== C.HOUSE && world.cover[world.idx(x + s, y + dy)] !== C.BRIDGE)
+              world.setCover(world.idx(x + s, y + dy), C.NONE);
       }
     // Facing up the map: the camera settles behind it with screen right along +x, the open way.
     v.hd = -Math.PI / 2;
@@ -1354,7 +1364,7 @@ function eyesChecks(check: Check, world: World, rt: Runtime): void {
     check(
       "become: from behind, the camera keeps the player's turn, and the stick held right keeps going right on screen",
       found && turned < 0.01 && lateRight > 0.95 && Math.hypot(v.x - from.x, v.y - from.y) > 4 && Math.abs(dragged + 0.6) < 1e-6,
-      `the camera turned ${turned.toFixed(3)} rad by itself in 2.5 s of walking; the last 1.8 s went ${(Math.acos(Math.max(-1, Math.min(1, lateRight))) * 57.3).toFixed(0)} degrees off screen right; a drag of 100 px turned it ${dragged.toFixed(2)}`,
+      `the camera turned ${turned.toFixed(3)} rad by itself in 2.5 s of walking (${Math.hypot(v.x - from.x, v.y - from.y).toFixed(1)} cells from ${from.x},${from.y}); the last 1.8 s went ${(Math.acos(Math.max(-1, Math.min(1, lateRight))) * 57.3).toFixed(0)} degrees off screen right; a drag of 100 px turned it ${dragged.toFixed(2)}`,
     );
     release(world);
     v.hp = 0;

@@ -257,13 +257,18 @@ export function wonderChecks(check: Check): void {
     const thief = put(w, "villager", (gold % w.w) + 0.5, Math.floor(gold / w.w) + 0.5);
     run(w, 2);
     const awake = w.creatures.filter((c) => !c.dead && c.kind === DRAGON).length;
-    // The thief gone, the dragon sleeps again.
+    // The thief gone, the dragon sleeps again. Asleep at any moment of the two minutes: a
+    // villager of the island may sneak up on the gold afterwards and wake it once more (19
+    // November: on the island the rivers' new shape gave, one did).
     thief.dead = true;
-    run(w, 120);
+    let slept = false;
+    run(w, 120, () => {
+      if (!w.creatures.some((c) => !c.dead && c.kind === DRAGON)) slept = true;
+    });
     const after = w.creatures.filter((c) => !c.dead && c.kind === DRAGON).length;
-    return awake === 1 && (after === 0 || x.state === 2) && KINDS.get(DRAGON)?.tags.includes("dragon")
+    return awake === 1 && (slept || x.state === 2) && KINDS.get(DRAGON)?.tags.includes("dragon")
       ? null
-      : `awake ${awake}, after two minutes ${after}, state ${x.state}`;
+      : `awake ${awake}, after two minutes ${after}, asleep in between ${slept}, state ${x.state}`;
   });
   tryKind("frozen waterfall", (w, x) => {
     daytime(w);

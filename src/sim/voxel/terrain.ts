@@ -952,6 +952,7 @@ export class Terrain {
         f.pebbles[k] = g === G.SAND ? 1 : 0;
         f.flat[k] = world.cover[i] === C.HOUSE ? 1 : 0;
         f.value[k] = this.softValue(x, y);
+        f.raw[k] = world.height[i] * V;
         f.anchored[k] = this.anchoredAt(i) ? 1 : 0;
         f.steep[k] = this.steepAt(i) ? 1 : 0;
         f.wdeep[k] = this.waterAt(i)[1];
@@ -1917,7 +1918,9 @@ export class Terrain {
         wetCells++;
         calm = Math.min(calm, Math.min(1, Math.max(0, (world.depth[j] - 0.3) / 1.2)));
       }
-      if (hi - lo > 0.02) calm = 0;
+      // The same 0.01 a wall is drawn from (buildFluid): a top beside a wall never waves at the
+      // corner the wall shares (19 November: smooth rivers drop 0.01 to 0.02 a cell).
+      if (hi - lo > 0.01) calm = 0;
       foam[k] = shore;
       wave[k] = calm;
       // 5.2.5 (bands): each top its own band's colour, so depth steps as voxels do.
