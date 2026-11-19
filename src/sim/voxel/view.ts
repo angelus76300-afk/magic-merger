@@ -427,6 +427,7 @@ export class VoxelView {
         this.glowPoints.material as Material,
       ],
       fluid,
+      this.waveTime,
     );
     // The draw calls of a frame are counted over all its passes (the shadow map, bloom, blur).
     this.renderer.info.autoReset = false;

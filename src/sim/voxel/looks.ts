@@ -31,6 +31,7 @@ import {
   type WebGLRenderer,
 } from "three";
 import { GRAPHICS, TRIM } from "./graphics";
+import { LAVA_CRUST, LAVA_MASK_FRAGMENT } from "./lava";
 
 // The looks of 5.2.5, render side: what makes the owner's reference dioramas
 // beautiful and can run on a phone. Each part has its own switch in
@@ -470,12 +471,17 @@ if (nightGlow > 0.001 && vLandGlow > 0.001) {
   // surface such as snow, sand or moonlit ground.
   private glowing = new Set<Material>();
   private lavaFrom: Material | null = null;
-  private lavaMask = lavaMaskMaterial();
+  private lavaLit = { value: new Color(1, 1, 1) };
+  private lavaMask = lavaMaskMaterial({ value: 0 }, this.lavaLit);
   private hidden: Object3D[] = [];
   private swapped: { o: Mesh; m: Material | Material[] }[] = [];
-  glows(materials: Material[], lava: Material): void {
+  // `time` is the fluid's clock (view.ts waveTime): the mask's crust moves with the frame's.
+  glows(materials: Material[], lava: MeshBasicMaterial, time: { value: number }): void {
     for (const m of materials) this.glowing.add(m);
     this.lavaFrom = lava;
+    this.lavaLit.value = lava.color;
+    this.lavaMask.dispose();
+    this.lavaMask = lavaMaskMaterial(time, this.lavaLit);
   }
 
   private isGlowing(o: Object3D): boolean {
@@ -866,15 +872,25 @@ void main() {
 }
 
 // Lava in the glow mask: the fluid's own colour where it is lava's (bright, far redder than blue),
-// black elsewhere (water, and any fluid that does not glow).
-function lavaMaskMaterial(): MeshBasicMaterial {
+// black elsewhere (water, and any fluid that does not glow). A lava top (wave -1, terrain.ts) is
+// drawn with the frame's own crust and cracks (lava.ts LAVA_MASK_FRAGMENT), with the same clock
+// and day colour as the fluid, so only its cracks glow. Until 19 November the mask took the flat
+// colour there, and the pool glowed as one even orange sheet over its dark crust.
+export function lavaMaskMaterial(time: { value: number }, lit: { value: Color }): MeshBasicMaterial {
   const m = new MeshBasicMaterial({ vertexColors: true, fog: false });
   m.onBeforeCompile = (shader) => {
-    shader.fragmentShader = shader.fragmentShader.replace(
-      "#include <opaque_fragment>",
-      "outgoingLight *= smoothstep(0.12, 0.3, outgoingLight.r - outgoingLight.b) * step(0.55, outgoingLight.r);\n#include <opaque_fragment>",
-    );
+    shader.uniforms.waveTime = time;
+    shader.uniforms.lavaLit = lit;
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nattribute float wave;\nvarying float vWave;\nvarying vec2 vSea;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvWave = wave;\nvSea = (modelMatrix * vec4(position, 1.0)).xz;");
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        `#include <common>\nuniform float waveTime;\nuniform vec3 lavaLit;\nvarying float vWave;\nvarying vec2 vSea;\n${LAVA_CRUST}`,
+      )
+      .replace("#include <opaque_fragment>", LAVA_MASK_FRAGMENT);
   };
-  m.customProgramCacheKey = () => "lava-glow-mask";
+  m.customProgramCacheKey = () => "lava-glow-mask-crust";
   return m;
 }

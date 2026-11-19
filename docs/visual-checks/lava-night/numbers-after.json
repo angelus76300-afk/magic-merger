@@ -1,0 +1,21 @@
+{
+  "size": "832x1000",
+  "quality": "high",
+  "time": 264,
+  "spreadLimit": 0.1,
+  "followsLimit": 0.5,
+  "bloom": 1,
+  "points": 208,
+  "frameMean": 0.259,
+  "maskMean": 0.091,
+  "maskSpread": 0.225,
+  "follows": 0.7,
+  "lit": 0.144,
+  "frameMs": 341.4,
+  "frameMsRounds": [341.4, 333.5, 350.8, 332.1, 341.1, 344.5, 337, 336.4, 344.8, 343.6, 345.3, 337.8],
+  "maskMs": 10.4,
+  "flatFrameMs": 342.1,
+  "flatFrameMsRounds": [343.1, 341.2, 336.8, 329.9, 343.3, 352.7, 342.1, 348, 331.5, 341.2, 330.7, 344.6],
+  "flatMaskMs": 9.3,
+  "frameVsFlat": -0.002
+}
