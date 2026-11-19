@@ -58,6 +58,8 @@ export interface FineCells {
   flat: Uint8Array;
   // The cell's continuous height (scene units), and whether something stands on it.
   value: Float32Array;
+  // The cell's own height (scene units), not rounded and not eased with its neighbours'.
+  raw: Float32Array;
   anchored: Uint8Array;
   // Snow or bare rock: steps of up to STEEP_LINK voxels to such a neighbour curve (16 November).
   steep: Uint8Array;
@@ -101,6 +103,7 @@ export function makeFineCells(): FineCells {
     pebbles: new Uint8Array(0),
     flat: new Uint8Array(0),
     value: new Float32Array(0),
+    raw: new Float32Array(0),
     anchored: new Uint8Array(0),
     steep: new Uint8Array(0),
     wdeep: new Uint32Array(0),
@@ -141,6 +144,7 @@ export function sizeFineCells(f: FineCells, x0: number, y0: number, x1: number, 
     f.pebbles = new Uint8Array(n);
     f.flat = new Uint8Array(n);
     f.value = new Float32Array(n);
+    f.raw = new Float32Array(n);
     f.anchored = new Uint8Array(n);
     f.steep = new Uint8Array(n);
     f.wdeep = new Uint32Array(n);
@@ -440,6 +444,9 @@ export function isBed(f: FineCells, c: number): boolean {
 // the water keeps its wall at the cell's edge. Every cell's middle keeps its own side, so a cell
 // under water still has its water, and the land over a water cell is always beside a dry cell.
 const SHORE_LOW = 1;
+// How far under a water cell's surface (scene units) the nearest dry neighbour's own height may lie
+// and still be its shore: a beach's sand lies a little under the water drawn over it.
+const RAW_UNDER = 0.3;
 const SHORE_WAVE = 0.1;
 // How far into the dry side (in the map's values) the ground ramps down to the water's edge, and
 // where pebbles lie.
@@ -508,6 +515,10 @@ export function shoreLine(f: FineCells, c: number, cx: number, cy: number, px: n
       }
     }
   if (best < 0) return SHORE_NONE;
+  // The nearest dry ground lies under this water by its own height (not its rounded top), a hole
+  // by a river's mouth: no shore here. Raised toward it, or toward the next nearest farther off, a
+  // column stood above the water, joined to nothing (19 November).
+  if (wet && f.raw[best] < f.water[c] - RAW_UNDER) return SHORE_NONE;
   // Dry ground by water of one level (not a fall), low enough.
   if (!wet && (hi - lo > LEVEL_JOIN || f.top[c] - hi > SHORE_LOW)) return SHORE_NONE;
   const level = wet ? f.water[c] : f.water[best];

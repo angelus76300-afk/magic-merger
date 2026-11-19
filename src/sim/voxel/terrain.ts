@@ -952,6 +952,7 @@ export class Terrain {
         f.pebbles[k] = g === G.SAND ? 1 : 0;
         f.flat[k] = world.cover[i] === C.HOUSE ? 1 : 0;
         f.value[k] = this.softValue(x, y);
+        f.raw[k] = world.height[i] * V;
         f.anchored[k] = this.anchoredAt(i) ? 1 : 0;
         f.steep[k] = this.steepAt(i) ? 1 : 0;
         f.wdeep[k] = this.waterAt(i)[1];
