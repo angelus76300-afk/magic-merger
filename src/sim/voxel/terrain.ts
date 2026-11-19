@@ -16,6 +16,11 @@ import {
   fieldStep,
   fineAt,
   joins,
+  LAKE_BED_DEEP,
+  lakeBedDark,
+  lakeDepth,
+  lakeShare,
+  lakeTint,
   makeFineCells,
   putWaterCorners,
   riverNarrow,
@@ -168,14 +173,23 @@ export class Terrain {
             if (nx >= 0 && ny >= 0 && nx < world.w && ny < world.h && this.waterWet(ny * world.w + nx))
               narrow = Math.max(narrow, this.waterNarrow(nx, ny) * NARROW_BANK);
           }
-        const rgb = mixColor(water[0], SHALLOW_TINT, SHALLOW_MIX * (1 - narrow));
+        let rgb = mixColor(water[0], SHALLOW_TINT, SHALLOW_MIX * (1 - narrow));
+        // A lake is drawn clearer than its depth (lakeDepth), so its floor shows past the sea's 4.5
+        // units, and its shallow colour toward the deep, so it is as blue as its depth (lakeTint).
+        const real = Math.max(wet ? world.depth[i] : 0, narrow * NARROW_DEPTH);
+        const depth = Math.max(wet ? lakeDepth(world.depth[i], this.lakeAt(i)) : 0, narrow * NARROW_DEPTH);
+        if (depth < real) rgb = mixColor(rgb, water[1], lakeTint(real, depth));
         data[k] = (rgb >> 16) & 255;
         data[k + 1] = (rgb >> 8) & 255;
         data[k + 2] = rgb & 255;
-        const depth = Math.max(wet ? world.depth[i] : 0, narrow * NARROW_DEPTH);
         data[k + 3] = wet || narrow > 0 ? Math.max(1, Math.min(255, Math.round((depth / WATER_MAP_DEPTH) * 255))) : 0;
       }
     this.waterMap.needsUpdate = true;
+  }
+  // How much a cell's water is a lake's, its surface above the sea (lakeShare): 0 for the sea.
+  private lakeAt(i: number): number {
+    const { world } = this;
+    return lakeShare(world.height[i] + world.depth[i], world.seaLevel);
   }
   private waterWet(i: number): boolean {
     return this.wet[i] === 1 && this.world.fluid[i] === F.WATER;
@@ -958,6 +972,7 @@ export class Terrain {
         f.wdeep[k] = this.waterAt(i)[1];
         f.wshallow[k] = this.waterAt(i)[0];
         f.wnarrow[k] = this.waterWet(i) ? this.waterNarrow(x, y) : 0;
+        f.wlake[k] = this.waterWet(i) ? this.lakeAt(i) : 0;
       }
     }
     this.readSoft(f, rx0, ry0, rx1, ry1);
@@ -1750,8 +1765,13 @@ export class Terrain {
         if (top > highest) highest = top;
         const X = x + ox;
         const Z = y + oz;
-        const surface = this.topColor(i);
+        let surface = this.topColor(i);
         const decal = this.wet[i] ? 0 : 1;
+        // A lake's bed darkens with depth, as in the fine land (lakeBedDark).
+        if (this.waterWet(i)) {
+          const dark = lakeBedDark(world.height[i] + world.depth[i] - top / V, this.lakeAt(i));
+          if (dark > 0) surface = mixColor(surface, scaleColor(this.waterAt(i)[1], LAKE_BED_DEEP), dark);
+        }
         if (GRAPHICS.ao) {
           // Ambient occlusion per corner (4.4): (x, y) is the corner shared
           // with the cells up and left of it, and so on round the top.
@@ -2022,14 +2042,16 @@ export class Terrain {
     const { world } = this;
     const f = world.fluid[i];
     const d = world.depth[i];
+    // A lake is drawn clearer than its depth (lakeDepth), still coloured by it; the sea as it is.
+    const clear = f === F.WATER ? lakeDepth(d, this.lakeAt(i)) : d;
     if (f === F.WATER) {
       if (GRAPHICS.water && GRAPHICS.bands) {
         // 5.2.5: light turquoise in the shallows, darker in steps further out, clear enough in
         // the shallows for the bed to show.
-        const band = d < 0.45 ? 0 : d < 1.3 ? 1 : d < 2.6 ? 2 : d < 4.5 ? 3 : 4;
+        const bandOf = (v: number) => (v < 0.45 ? 0 : v < 1.3 ? 1 : v < 2.6 ? 2 : v < 4.5 ? 3 : 4);
         const water = this.waterAt(i);
         const shallow = mixColor(water[0], 0x86eadc, 0.45);
-        return { color: mixColor(shallow, water[1], BAND_MIX[band]), alpha: BAND_ALPHA[band] };
+        return { color: mixColor(shallow, water[1], BAND_MIX[bandOf(d)]), alpha: BAND_ALPHA[bandOf(clear)] };
       }
       if (GRAPHICS.water) {
         // Clear and light in the shallows, darker quickly with depth (4.4).
@@ -2037,7 +2059,7 @@ export class Terrain {
         // no longer show through the open sea as a grid.
         const k = Math.sqrt(Math.min(1, d / 6));
         const water = this.waterAt(i);
-        return { color: mixColor(water[0], water[1], k), alpha: Math.min(0.97, 0.58 + Math.sqrt(Math.min(1, d / 4)) * 0.4) };
+        return { color: mixColor(water[0], water[1], k), alpha: Math.min(0.97, 0.58 + Math.sqrt(Math.min(1, clear / 4)) * 0.4) };
       }
       const k = Math.min(1, d / 5);
       return { color: mixColor(0x5cc0f0, 0x1d5d9e, k), alpha: 0.72 + k * 0.2 };

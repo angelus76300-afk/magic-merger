@@ -24,11 +24,14 @@ export const LOOK_ISLANDS: { name: string; cells: number; seed: number; land: La
 
 // What main drew, before 5.2.5: land and water hashes of each island, in the order above. Taken
 // again on 19 November: the islands' rivers are curves now (land.ts water()), and a water top beside a
-// wall a hundredth high no longer waves at the corner the wall shares (terrain.ts waterTop).
+// wall a hundredth high no longer waves at the corner the wall shares (terrain.ts waterTop). And again
+// the same day: a lake (water above the sea) is drawn clearer and its bed muted and bluer with depth
+// (terrain-fine.ts lakeShare); with lakeShare held at 0 the islands draw the hashes before it
+// (9c62c152/f4c767b5, afdc1f22/a6282c07, 86d5accc/f8ce9657), so nothing else changed.
 const MAIN = [
-  ["9c62c152", "f4c767b5"],
-  ["afdc1f22", "a6282c07"],
-  ["86d5accc", "f8ce9657"],
+  ["2101d537", "364efaf7"],
+  ["8888c254", "0140ccb6"],
+  ["6198274b", "b57f817c"],
 ];
 
 export const LOOK_SWITCHES = Object.keys(LAND_LOOKS) as (keyof typeof LAND_LOOKS)[];
