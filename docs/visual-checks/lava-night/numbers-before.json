@@ -1,0 +1,17 @@
+{
+  "size": "832x1000",
+  "quality": "high",
+  "time": 264,
+  "spreadLimit": 0.1,
+  "followsLimit": 0.5,
+  "bloom": 1,
+  "points": 208,
+  "frameMean": 0.607,
+  "maskMean": 0.525,
+  "maskSpread": 0,
+  "follows": 0,
+  "lit": 1,
+  "frameMs": 339.9,
+  "frameMsRounds": [334.7, 332.6, 340.4, 344.7, 349.9, 339.9, 337.7, 335.2, 346.2, 338.8, 354.3, 335.5],
+  "maskMs": 9.4
+}

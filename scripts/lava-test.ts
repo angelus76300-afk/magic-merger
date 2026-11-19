@@ -3,11 +3,12 @@
 // fluid's shader draws as dark crust plates and glowing cracks (src/sim/voxel/lava.ts); on low no
 // vertex does, so low draws lava as before. Before the change no lava top was marked (0 of them).
 // scripts/lava-frames.mjs reads the pixels back from the view: their spread and their motion.
-import { ShaderLib, type Mesh } from "three";
+import { Color, ShaderLib, type Mesh, type WebGLProgramParametersWithUniforms, type WebGLRenderer } from "three";
 import { generateWorld } from "../src/sim/world";
 import { DEFAULT_LAND } from "../src/sim/land-options";
 import { GRAPHICS } from "../src/sim/voxel/graphics";
-import { LAVA_CRUST, LAVA_TOP_FRAGMENT } from "../src/sim/voxel/lava";
+import { LAVA_CRUST, LAVA_MASK_FRAGMENT, LAVA_TOP_FRAGMENT } from "../src/sim/voxel/lava";
+import { lavaMaskMaterial } from "../src/sim/voxel/looks";
 import { F } from "../src/sim/materials";
 import { landOf, withFine } from "./movement-test";
 
@@ -75,5 +76,39 @@ export function lavaChecks(check: Check): void {
       into.includes("mmLava(vSea") &&
       into.indexOf("mmLava(") < into.indexOf("#include <opaque_fragment>") &&
       LAVA_CRUST.includes("vec3 mmLava("),
+  );
+  // 4. The glow mask (19 November, the owner: at night on high the pool glowed as one flat orange
+  // sheet). Its program, as three builds it from the basic material: a lava top (wave -1) takes the
+  // frame's own mmLava, with the fluid's clock and day colour, before the test of what glows, so
+  // the cracks glow and the crust does not. Before the change the mask had no mmLava, no wave and
+  // no clock: the flat colour everywhere.
+  const time = { value: 12.5 };
+  const lit = { value: new Color(0.2, 0.25, 0.4) };
+  const mask = lavaMaskMaterial(time, lit);
+  const shader = {
+    vertexShader: ShaderLib.basic.vertexShader,
+    fragmentShader: ShaderLib.basic.fragmentShader,
+    uniforms: {},
+  } as unknown as WebGLProgramParametersWithUniforms;
+  mask.onBeforeCompile(shader, {} as WebGLRenderer);
+  const f = shader.fragmentShader;
+  const v = shader.vertexShader;
+  const u = shader.uniforms as Record<string, unknown>;
+  const call = f.indexOf("mmLava(vSea, outgoingLight * lavaLit, outgoingLight, waveTime)");
+  const glows = f.indexOf("outgoingLight *= smoothstep(0.12, 0.3, outgoingLight.r - outgoingLight.b)");
+  check(
+    "lava: the glow mask draws a lava top with the frame's crust and cracks (mmLava), not the flat colour",
+    f.includes("vec3 mmLava(") &&
+      f.includes("if (vWave < -0.5) outgoingLight = mmLava(") &&
+      call > 0 &&
+      glows > call &&
+      glows < f.indexOf("#include <opaque_fragment>") &&
+      v.includes("attribute float wave;") &&
+      v.includes("vWave = wave;") &&
+      v.includes("vSea = (modelMatrix * vec4(position, 1.0)).xz;") &&
+      u.waveTime === time &&
+      u.lavaLit === lit &&
+      LAVA_MASK_FRAGMENT.includes("mmLava("),
+    `mmLava at ${call}, glow test at ${glows}, clock shared ${u.waveTime === time}, day colour shared ${u.lavaLit === lit}`,
   );
 }
