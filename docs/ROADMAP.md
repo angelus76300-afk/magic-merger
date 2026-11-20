@@ -392,6 +392,17 @@ The lead session (`CLAUDE.md`, "Who leads") shipped five updates on 11 and 12 No
 
 The order from here (13 November): 4.12 step 2 (the engine's reactions), then 4.12's rewrite of the 143 items found wrong, then 5.2.5 (looks), whose measurement and new tools run alongside because they touch other files; 4.9.5 (wonders review) folds into 5.2.5's wonder batch. Nothing already open is dropped: 4.11.3, 5.0, 5.3, 5.4 and 5.5 keep their places after.
 
+### The owner's go of 20 November
+
+The owner, typed in the lead session on 20 November 2026 (about 21:20 UTC), after the lead's list of the major updates (4.12 spell reactions then the rewrite of 143 spells, 5.2.5 looks revamp, 5.0, 5.3, 4.11.3, 5.4 then 5.5): "I am ok with the roadmap by the way, you can mark each as go."
+
+What this go covers, as each concept is written here:
+
+1. **4.12**: the engine's reactions, and the rewrite of the 143 items found wrong within November's $4.46 ("two passes"), with no bump of `PROGRAM_VERSION`. Back to the owner past twice that ($8.92).
+2. **5.2.5 Looks revamp**: the concept below as written: up to $25 under its own `LOOKS_BUDGET_USD`, Sonnet as the look writer and judge, stored items' looks rewritten in bulk with behaviour untouched, no `PROGRAM_VERSION` bump. The pilot's frames and measured cost still go to the owner; the bulk pass waits only if the cost per item is over twice the estimate ($0.035).
+3. **5.0, 5.3 and 4.11.3**: go. No money, data or public part is written in them; any that appears goes back to the owner.
+4. **5.4 Ready for strangers and 5.5 Items worth showing a friend**: go to plan and build. Neither states a running cost yet, and both make something public. Before anything goes public or a running cost starts, the lead brings the owner one line with the cost and what goes public. This go does not cover that line.
+
 ### 4.11.3 A drought, reworked
 
 Not built. The lead session's first draft was challenged by the game designer on 12 November and lost to high water as the second trouble: a drought's answers are the fire's (water, rain), so the measure the troubles are held to (the share answered by an item first made after the trouble began) would fail by construction; paling soil does not read from the sky on a folded phone; and the engine has no thirst (crops grow on any field). Its conditions when it is built: the answer is one cast that keeps the fields wet for about a minute, and recasting by hand scores "held"; it starts only when no rain front will reach the village for some minutes and never at a village a standing item already waters; dust off the fields, the pond draining and crops yellowing in a wave within ten seconds; people walk to water and come back when the fields green; and before tuning, the library is run against a drought fixture: if a starting element answers it, or under 5% of items do, retune.
