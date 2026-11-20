@@ -619,10 +619,20 @@ function lakeChecks(check: Check): void {
       `${lakes} lake cells deeper than 12.5, opaque ${clearest.toFixed(2)} to ${murkiest.toFixed(2)} (the sea 0.96), colour ${colourOff.toFixed(1)} off its depth's at most; ${seaOff} of ${sea} sea cells off their depth`,
     );
     const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / Math.max(1, a.length);
+    // 20 November, the owner: "The lake floors should be much darker". On main the floor deeper
+    // than 13 was 0.92 of the shelf's light (111 to 121); now under 0.55 of it, the shelf still
+    // light (over 90) and the deep floor not black (over 30), so its shape still faintly shows.
+    const deepLight = mean(deep.map(light));
+    const shelfLight = mean(shelf.map(light));
     check(
-      "a lake's floor is muted and bluer with depth: 13 deep, darker and bluer than a shelf 1 to 3 deep",
-      shelf.length > 20 && deep.length > 20 && mean(deep.map(light)) < mean(shelf.map(light)) * 0.95 && mean(deep.map(blue)) > mean(shelf.map(blue)) + 0.08,
-      `the floor deeper than 13 (${deep.length} cells): light ${mean(deep.map(light)).toFixed(0)}, blue share ${mean(deep.map(blue)).toFixed(2)}; 1 to 3 deep (${shelf.length} cells): light ${mean(shelf.map(light)).toFixed(0)}, blue share ${mean(shelf.map(blue)).toFixed(2)}`,
+      "a lake's floor is much darker and bluer with depth: 13 deep, under 0.55 of a shelf 1 to 3 deep's light, and bluer",
+      shelf.length > 20 &&
+        deep.length > 20 &&
+        deepLight < shelfLight * 0.55 &&
+        shelfLight > 90 &&
+        deepLight > 30 &&
+        mean(deep.map(blue)) > mean(shelf.map(blue)) + 0.08,
+      `the floor deeper than 13 (${deep.length} cells): light ${deepLight.toFixed(0)}, blue share ${mean(deep.map(blue)).toFixed(2)}; 1 to 3 deep (${shelf.length} cells): light ${shelfLight.toFixed(0)}, blue share ${mean(shelf.map(blue)).toFixed(2)}`,
     );
   });
 }
