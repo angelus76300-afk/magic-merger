@@ -396,12 +396,12 @@ The order from here (13 November): 4.12 step 2 (the engine's reactions), then 4.
 
 The owner, typed in the lead session on 20 November 2026 (about 21:20 UTC), after the lead's list of the major updates (4.12 spell reactions then the rewrite of 143 spells, 5.2.5 looks revamp, 5.0, 5.3, 4.11.3, 5.4 then 5.5): "I am ok with the roadmap by the way, you can mark each as go."
 
-What this go covers, as each concept is written here:
+What this go covers, no more than each concept already states:
 
-1. **4.12**: the engine's reactions, and the rewrite of the 143 items found wrong within November's $4.46 ("two passes"), with no bump of `PROGRAM_VERSION`. Back to the owner past twice that ($8.92).
-2. **5.2.5 Looks revamp**: the concept below as written: up to $25 under its own `LOOKS_BUDGET_USD`, Sonnet as the look writer and judge, stored items' looks rewritten in bulk with behaviour untouched, no `PROGRAM_VERSION` bump. The pilot's frames and measured cost still go to the owner; the bulk pass waits only if the cost per item is over twice the estimate ($0.035).
-3. **5.0, 5.3 and 4.11.3**: go. No money, data or public part is written in them; any that appears goes back to the owner.
-4. **5.4 Ready for strangers and 5.5 Items worth showing a friend**: go to plan and build. Neither states a running cost yet, and both make something public. Before anything goes public or a running cost starts, the lead brings the owner one line with the cost and what goes public. This go does not cover that line.
+1. **4.12**: the engine's reactions are live (#146). The rewrite of the items found wrong stays as the owner approved it on 12 November: "spells: both", up to $7, and "budget: rewrite first" (`docs/HANDOVER.md`). This go adds no money to it.
+2. **5.2.5 Looks revamp**: this go is the yes the concept asks for before the pilot, up to $25 as written below. The concept's other owner gates stay: the 10 reference models are approved by the owner on frames, and the bulk pass waits for "looks: go" after the pilot's frames and measured cost.
+3. **5.0, 5.3 and 4.11.3**: go. Their concepts state no money, players' data or public part. If one appears, it goes back to the owner first.
+4. **5.4 Ready for strangers and 5.5 Items worth showing a friend**: nothing goes public and no running cost starts on this go. It covers planning only. 5.5 has no concept text yet. Each comes back to the owner as a concept with its cost and what goes public before anything is built on it.
 
 ### 4.11.3 A drought, reworked
 
