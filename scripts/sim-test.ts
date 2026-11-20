@@ -114,6 +114,7 @@ import { fogChecks } from "./fog-test";
 import { terrainLooksChecks } from "./terrain-looks-test";
 import { lakeWeedChecks } from "./lake-weed-test";
 import { landLagChecks } from "./land-lag-test";
+import { waterLeftoversChecks } from "./water-leftovers-test";
 import { waterLightChecks } from "./water-light-test";
 import { lavaChecks } from "./lava-test";
 import { movementChecks } from "./movement-test";
@@ -2537,6 +2538,8 @@ landLagChecks(check);
 waterLightChecks(check);
 // Weed and stones on lake beds (20 November): scripts/lake-weed-test.ts.
 lakeWeedChecks(check);
+// Water leftovers (20 November): beds under thin ice, feet at a dry shore, the rim's side: scripts/water-leftovers-test.ts.
+waterLeftoversChecks(check);
 // Lava's crust and cracks (18 November): scripts/lava-test.ts.
 lavaChecks(check);
 

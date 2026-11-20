@@ -765,6 +765,7 @@ export function buildFineTile(
     WEED_K = new Float32Array(SW * SH);
     BEDC = new Uint32Array(SW * SH);
   }
+  LEVEL_CELL = -1;
   // Weed in eighths only, with the water in eighths (its surface caps the stalks).
   const weedOn = GRAPHICS.weed && sub === 8 && water !== null;
   const bottom = f.bottom * sub;
@@ -898,7 +899,11 @@ export function buildFineTile(
       // an eighth at least (the shore's sand reaching into the shallows stood out as islets).
       // A column of the shore's land drawn over a water cell (shoreLine) stays above the water: it is
       // joined to the land beside it.
-      if (water && f.wet[c] && f.water[c] > -1e8 && !f.lava[c] && !lifted) hgt = Math.min(hgt, Math.ceil(f.water[c] * sub) - 1 - raise);
+      // Under the surface as drawn over the column (drawnLevel), not only the cell's own level: where
+      // ice or water slopes to lower neighbours, a bed at its own level rose through it as strips of
+      // grass across thin shore ice (20 November, water leftovers).
+      if (water && f.wet[c] && f.water[c] > -1e8 && !f.lava[c] && !lifted)
+        hgt = Math.min(hgt, Math.ceil(f.water[c] * sub) - 1 - raise, Math.ceil((drawnLevel(f, c, cx, cy, lx, ly, sub) - BED_UNDER) * sub) - 1 - raise);
       H[s] = hgt + raise;
       if (tops && sx >= tx0 * sub && sy >= ty0 * sub && sx < tx1 * sub && sy < ty1 * sub)
         tops.h[(sy - tops.y0 * sub) * tops.stride + (sx - tops.x0 * sub)] = hgt;
@@ -1146,7 +1151,21 @@ export function buildFineTile(
   out.e1 = 0;
 
   // The water in eighths (16 November) takes the place of the line of foam on the land.
-  if (water) return fineWater(f, water, sub, sx0, sy0, SW, SH, ox, oz);
+  if (water) {
+    const any = fineWater(f, water, sub, sx0, sy0, SW, SH, ox, oz);
+    // A dry cell's column drawn under its neighbour's water (shoreLine's SHORE_FLOOD): what stands
+    // there stands on the water's surface, not on the land lowered under it (20 November: feet
+    // dipped up to an eighth under water at a dry shore, more by a fall).
+    if (tops)
+      for (let j = B; j < SH - B; j++)
+        for (let k = B; k < SW - B; k++) {
+          const s = j * SW + k;
+          if (FLOOD[s] < 0 || Number.isNaN(WL[s])) continue;
+          const t = (sy0 + j - tops.y0 * sub) * tops.stride + (sx0 + k - tops.x0 * sub);
+          tops.h[t] = Math.max(tops.h[t], Math.ceil(WL[s] * sub - 0.001));
+        }
+    return any;
+  }
   if (GRAPHICS.foam) foam(f, out, sub, sx0, sy0, SW, SH, ox, oz);
   return false;
 }
@@ -1369,6 +1388,32 @@ function cornerLevel(f: FineCells, gx: number, gy: number, own: number): number 
   // Cells far apart (a fall) keep their own levels at the corner; nearer, the water slopes.
   return n && hi - lo <= (iced ? ICE_JOIN : LEVEL_JOIN) ? sum / n : own;
 }
+// The surface fineWater draws over column (lx, ly) of water cell c (cx, cy): its corners' levels
+// (cornerLevel, kept as fineWater keeps them, in 32 bits) eased across the cell. Lower than the
+// cell's own level where it slopes toward lower water or ice round it. BED_UNDER: how far under it
+// a bed stays at least, past fineWater's own margin (a column within 0.001 of the surface has none).
+const BED_UNDER = 0.002;
+// The cell whose corners LEVEL_C holds, -1 at each tile's start (the cells are read again between).
+let LEVEL_CELL = -1;
+const LEVEL_C = [0, 0, 0, 0];
+function drawnLevel(f: FineCells, c: number, cx: number, cy: number, lx: number, ly: number, sub: number): number {
+  if (c !== LEVEL_CELL) {
+    const own = f.water[c];
+    for (let q = 0; q < 4; q++) LEVEL_C[q] = Math.fround(cornerLevel(f, cx + (q & 1), cy + (q >> 1), own));
+    LEVEL_CELL = c;
+  }
+  const [a, b, d, e] = LEVEL_C;
+  if (a === b && a === d && a === e) return a;
+  // The lowest over the column's square: the surface is drawn in flat triangles between points on
+  // it, so at the column's middle only, its corner could still rise through a sloping sheet.
+  let lo = Infinity;
+  for (let q = 0; q < 4; q++) {
+    const u = (lx + (q & 1)) / sub;
+    const v = (ly + (q >> 1)) / sub;
+    lo = Math.min(lo, a * (1 - u) * (1 - v) + b * u * (1 - v) + d * (1 - u) * v + e * u * v);
+  }
+  return lo;
+}
 function isWater(f: FineCells, c: number): boolean {
   return f.inside[c] === 1 && f.wet[c] === 1 && f.water[c] > -1e8 && f.lava[c] === 0;
 }
@@ -1575,9 +1620,9 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
         const split = level - WALL_DEEP;
         if (top - lo < 1) waterStep(out, d, X, Z, Q, lo, top, shallow, deep);
         else if (lo < split) {
-          waterSide(out, d, X, Z, Q, lo, split, deep, level);
-          waterSide(out, d, X, Z, Q, split, top, deep, level);
-        } else waterSide(out, d, X, Z, Q, lo, top, deep, level);
+          waterSide(out, d, X, Z, Q, lo, split, shallow, deep, level);
+          waterSide(out, d, X, Z, Q, split, top, shallow, deep, level);
+        } else waterSide(out, d, X, Z, Q, lo, top, shallow, deep, level);
       }
     }
   out.e0 = 0;
@@ -1818,22 +1863,31 @@ export function iceTone(px: number, py: number): number {
   return drift > 0.66 ? ICE_DRIFT : drift < 0.3 ? ICE_BLUE : ICE_BASE;
 }
 
-// The depth over which a water side darkens, scene units, and the colour of its top.
+// The depth over which a water side darkens, scene units.
 const WALL_DEEP = 3;
-const SIDE_TOP = 0x8fd8e6;
-function waterSide(out: Writer, d: number, X: number, Z: number, Q: number, lo: number, hi: number, deep: number, level: number): void {
+// A side a cell or more tall (in the water in eighths, the island's rim, where the water is cut down
+// to its bed): from its top in the water's own blue, as a small step's (waterStep), to the deep
+// colour, and from nearly to wholly opaque. Its top was a pale cyan (0x8fd8e6) a third opaque until
+// 20 November: with the light sand of the bed seen through it, it drew a bright line along the rim.
+const SIDE_ALPHA = 0.82;
+const SIDE_ALPHA_DEEP = 0.96;
+function waterSide(out: Writer, d: number, X: number, Z: number, Q: number, lo: number, hi: number, shallow: number, deep: number, level: number): void {
   const k = (y: number) => Math.min(1, Math.max(0, (level - y) / WALL_DEEP));
-  const cl = mixColor(SIDE_TOP, deep, 0.25 + 0.55 * k(lo));
-  const ch = mixColor(SIDE_TOP, deep, 0.25 + 0.55 * k(hi));
-  sideQuad(out, d, X, Z, Q, lo, hi, cl, 0.38 + 0.4 * k(lo), ch, 0.38 + 0.4 * k(hi));
+  const top = stepColor(shallow, deep);
+  const cl = mixColor(top, deep, 0.6 * k(lo));
+  const ch = mixColor(top, deep, 0.6 * k(hi));
+  sideQuad(out, d, X, Z, Q, lo, hi, cl, SIDE_ALPHA + (SIDE_ALPHA_DEEP - SIDE_ALPHA) * k(lo), ch, SIDE_ALPHA + (SIDE_ALPHA_DEEP - SIDE_ALPHA) * k(hi));
 }
 // A side less than a cell tall (a river stepping down, a shallow edge): the water's own blue, a
 // little darker than its top, nearly as clear, so a small fall does not draw a pale outline (it was
 // SIDE_TOP, 0x8fd8e6, before 18 November).
 const STEP_SHADE = 0.86;
+function stepColor(shallow: number, deep: number): number {
+  return scaleColor(mixColor(shallow, deep, 0.45), STEP_SHADE);
+}
 function waterStep(out: Writer, d: number, X: number, Z: number, Q: number, lo: number, hi: number, shallow: number, deep: number): void {
-  const c = scaleColor(mixColor(shallow, deep, 0.45), STEP_SHADE);
-  sideQuad(out, d, X, Z, Q, lo, hi, c, 0.82, c, 0.82);
+  const c = stepColor(shallow, deep);
+  sideQuad(out, d, X, Z, Q, lo, hi, c, SIDE_ALPHA, c, SIDE_ALPHA);
 }
 function sideQuad(out: Writer, d: number, X: number, Z: number, Q: number, lo: number, hi: number, cl: number, al: number, ch: number, ah: number): void {
   const x0 = X;
