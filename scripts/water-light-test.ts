@@ -81,6 +81,7 @@ function chroma(a: [number, number, number], b: [number, number, number]): numbe
 
 export function waterLightChecks(check: Check): void {
   lakeChecks(check);
+  iceChecks(check);
   // 1. The water in eighths, on the usual first island.
   withFine(() => {
     const world = generateWorld(152, 152, 7, DEFAULT_LAND);
@@ -633,6 +634,180 @@ function lakeChecks(check: Check): void {
         deepLight > 30 &&
         mean(deep.map(blue)) > mean(shelf.map(blue)) + 0.08,
       `the floor deeper than 13 (${deep.length} cells): light ${deepLight.toFixed(0)}, blue share ${mean(deep.map(blue)).toFixed(2)}; 1 to 3 deep (${shelf.length} cells): light ${shelfLight.toFixed(0)}, blue share ${mean(shelf.map(blue)).toFixed(2)}`,
+    );
+  });
+}
+
+// Ice in eighths (20 November): on tundra lakes the ice was drawn in whole cells at 0.95 opacity,
+// flat pale slabs with grid lines beside the water in eighths. On the tundra island of seed 5, its
+// lakes' ice grown three cells out from the shore ice it starts with (as a minute of play does),
+// on high: no ice drawn in whole cells; the ice drawn as tops in eighths (ICE_MARK) that follow
+// the smooth waterline (cells partly covered, eighths over dry shore cells), opaque, in a few
+// tones; where ice meets open water the two surfaces share their edge's heights, with no side
+// between them, and no side inside the ice (water frozen at uneven levels tore into wedges).
+function iceChecks(check: Check): void {
+  withFine(() => {
+    const world = generateWorld(152, 152, 5, { ...DEFAULT_LAND, biome: "tundra", shape: "lakes" });
+    const lake = (i: number) => world.fluid[i] === F.WATER && world.depth[i] > 0.05 && world.height[i] + world.depth[i] > world.seaLevel + 1;
+    let start = 0;
+    for (let i = 0; i < world.n; i++) if (world.fluid[i] === F.ICE && world.depth[i] > 0.05) start++;
+    // The island drawn before the lakes freeze, to be drawn again as the game does when they do.
+    const played = landOf(world);
+    for (let ring = 0; ring < 4; ring++) {
+      const grow: number[] = [];
+      for (let i = 0; i < world.n; i++) {
+        if (!lake(i)) continue;
+        const near = [i - 1, i + 1, i - world.w, i + world.w].some(
+          (j, k) =>
+            j >= 0 &&
+            j < world.n &&
+            (k > 1 || Math.floor(j / world.w) === Math.floor(i / world.w)) &&
+            (world.fluid[j] === F.ICE || (ring === 0 && (world.fluid[j] === F.NONE || world.depth[j] <= 0.05))),
+        );
+        if (near) grow.push(i);
+      }
+      for (const i of grow) world.fluid[i] = F.ICE;
+    }
+    const iceCells: number[] = [];
+    for (let i = 0; i < world.n; i++) if (world.fluid[i] === F.ICE && world.depth[i] > 0.05) iceCells.push(i);
+    played.terrain.scan();
+    played.terrain.rebuild();
+    played.terrain.updateFine(0, true);
+    const { terrain, meshes } = landOf(world);
+    const water = waterMeshes(terrain, meshes);
+    const fine = water.filter((m) => m.geometry.getAttribute("waterFine"));
+    const whole = water.filter((m) => !m.geometry.getAttribute("waterFine"));
+    const isIce = new Uint8Array(world.n);
+    for (const i of iceCells) isIce[i] = 1;
+    // Whole-cell tops shown over ice cells.
+    let slabs = 0;
+    for (const m of [...whole, ...meshes.filter((m) => m.visible && m.material !== (terrain as unknown as { fluidMaterial: unknown }).fluidMaterial && !m.geometry.index && m.geometry.getAttribute("wave"))]) {
+      const p = m.geometry.getAttribute("position").array as Float32Array;
+      for (let v = 0; v < p.length / 3; v++) {
+        const x = Math.floor(p[v * 3] + world.w / 2 - 0.001);
+        const z = Math.floor(p[v * 3 + 2] + world.h / 2 - 0.001);
+        if (x >= 0 && z >= 0 && x < world.w && z < world.h && isIce[z * world.w + x]) slabs++;
+      }
+    }
+    // The fine tops: each eighth column covered by an ice top or a water top, and the heights of
+    // their corners on the eighth grid.
+    const cols = (mark: (x: number) => boolean, from = fine) => {
+      const out = new Set<number>();
+      const ys = new Map<number, number>();
+      let alpha = 1;
+      const tones = new Set<number>();
+      for (const m of from) {
+        const p = m.geometry.getAttribute("position").array as Float32Array;
+        const wf = m.geometry.getAttribute("waterFine").array as Float32Array;
+        const col = m.geometry.getAttribute("color").array as Float32Array;
+        for (let t = 0; t < p.length / 9; t++) {
+          if (!mark(wf[t * 6])) continue;
+          const v = t * 9;
+          for (let k = 0; k < 3; k++) {
+            const a = (t * 3 + k) * 4;
+            alpha = Math.min(alpha, col[a + 3]);
+            tones.add(Math.round(col[a] * 255) * 65536 + Math.round(col[a + 1] * 255) * 256 + Math.round(col[a + 2] * 255));
+            const gx = (p[v + k * 3] + world.w / 2) * 8;
+            const gz = (p[v + k * 3 + 2] + world.h / 2) * 8;
+            if (Math.abs(gx - Math.round(gx)) < 1e-3 && Math.abs(gz - Math.round(gz)) < 1e-3) ys.set(Math.round(gx) * 8192 + Math.round(gz), p[v + k * 3 + 1]);
+          }
+          const ax = (p[v] + world.w / 2) * 8;
+          const az = (p[v + 2] + world.h / 2) * 8;
+          const bx = (p[v + 3] + world.w / 2) * 8;
+          const bz = (p[v + 5] + world.h / 2) * 8;
+          const cx = (p[v + 6] + world.w / 2) * 8;
+          const cz = (p[v + 8] + world.h / 2) * 8;
+          if (Math.abs((bx - ax) * (cz - az) - (bz - az) * (cx - ax)) < 1e-9) continue;
+          for (let i = Math.floor(Math.min(ax, bx, cx)); i < Math.ceil(Math.max(ax, bx, cx)); i++)
+            for (let j = Math.floor(Math.min(az, bz, cz)); j < Math.ceil(Math.max(az, bz, cz)); j++) {
+              const px = i + 0.5;
+              const pz = j + 0.5;
+              const e0 = (bx - ax) * (pz - az) - (bz - az) * (px - ax);
+              const e1 = (cx - bx) * (pz - bz) - (cz - bz) * (px - bx);
+              const e2 = (ax - cx) * (pz - cz) - (az - cz) * (px - cx);
+              if ((e0 >= 0 && e1 >= 0 && e2 >= 0) || (e0 <= 0 && e1 <= 0 && e2 <= 0)) out.add(i * 8192 + j);
+            }
+        }
+      }
+      return { out, ys, alpha, tones };
+    };
+    const ice = cols((x) => x > 1.5);
+    const open = cols((x) => x > 0.8 && x < 1.5);
+    // The island drawn before, after the freeze: its chunks built again in part, as in play.
+    const later = cols((x) => x > 1.5, waterMeshes(played.terrain, played.meshes).filter((m) => m.geometry.getAttribute("waterFine")));
+    let differ = 0;
+    for (const k of ice.out) if (!later.out.has(k)) differ++;
+    for (const k of later.out) if (!ice.out.has(k)) differ++;
+    // Of the ice cells drawn finely (a fine chunk's), how many eighths each has under ice.
+    const per = new Map<number, number>();
+    let overDry = 0;
+    for (const k of ice.out) {
+      const x = Math.floor(Math.floor(k / 8192) / 8);
+      const z = Math.floor((k % 8192) / 8);
+      const i = z * world.w + x;
+      if (isIce[i]) per.set(i, (per.get(i) ?? 0) + 1);
+      else if ((terrain as unknown as { wet: Uint8Array }).wet[i] !== 1) overDry++;
+    }
+    let full = 0;
+    let part = 0;
+    for (const n of per.values()) {
+      if (n >= 64) full++;
+      else part++;
+    }
+    // Where ice meets open water: corners both draw, and their heights.
+    let shared = 0;
+    let step = 0;
+    for (const [k, y] of ice.ys) {
+      const o = open.ys.get(k);
+      if (o === undefined) continue;
+      shared++;
+      step = Math.max(step, Math.abs(o - y));
+    }
+    // Sides between an ice column and an open water column (a side quad standing on their edge).
+    let walls = 0;
+    let torn = 0;
+    for (const m of fine) {
+      const p = m.geometry.getAttribute("position").array as Float32Array;
+      const wf = m.geometry.getAttribute("waterFine").array as Float32Array;
+      for (let q = 0; q < p.length / 18; q++) {
+        const w0 = wf[q * 12];
+        if (w0 < 0.5 || w0 > 0.8) continue;
+        const v = q * 18;
+        const xs = [0, 1, 2, 3, 4, 5].map((k) => (p[v + k * 3] + world.w / 2) * 8);
+        const zs = [0, 1, 2, 3, 4, 5].map((k) => (p[v + k * 3 + 2] + world.h / 2) * 8);
+        const flatX = Math.max(...xs) - Math.min(...xs) < 1e-6;
+        const at = flatX ? xs[0] : zs[0];
+        const along = (flatX ? Math.min(...zs) + Math.max(...zs) : Math.min(...xs) + Math.max(...xs)) / 2;
+        const a = flatX ? Math.floor(at - 0.5) * 8192 + Math.floor(along) : Math.floor(along) * 8192 + Math.floor(at - 0.5);
+        const b = flatX ? Math.floor(at + 0.5) * 8192 + Math.floor(along) : Math.floor(along) * 8192 + Math.floor(at + 0.5);
+        if ((ice.out.has(a) && open.out.has(b)) || (ice.out.has(b) && open.out.has(a))) walls++;
+        if (ice.out.has(a) && ice.out.has(b)) torn++;
+      }
+    }
+    check(
+      "ice is drawn in eighths on high, not in whole cells: no whole-cell ice shown, its tops in eighths",
+      iceCells.length > start + 100 && slabs === 0 && full > 100,
+      `${start} ice cells at the start, ${iceCells.length} grown; ${slabs} whole-cell ice vertices shown; ${full} ice cells wholly under fine ice tops`,
+    );
+    check(
+      "the ice follows the water's smooth waterline: shore cells partly under ice, and ice over the dry shore's edge",
+      part > 30 && overDry > 30,
+      `${part} ice cells partly covered, ${overDry} ice eighths over dry cells`,
+    );
+    check(
+      "ice meets open water at the same height, with no side between them, and is one sheet (no side inside the ice)",
+      shared > 100 && step < 1e-4 && walls === 0 && torn === 0,
+      `${shared} corners shared by ice and open water, ${step.toFixed(5)} apart at most; ${walls} sides between ice and open water, ${torn} between two columns of ice`,
+    );
+    check(
+      "ice that forms in play is drawn in eighths as the island's chunks are built again, as on a fresh island",
+      later.out.size > 1000 && differ === 0,
+      `${later.out.size} eighths under ice after the freeze in play, ${differ} differ from the island drawn afresh`,
+    );
+    check(
+      "the ice is opaque (hides the water under it) and matte in a few tones",
+      ice.alpha >= 0.95 && ice.tones.size >= 3,
+      `alpha at least ${ice.alpha.toFixed(2)}, ${ice.tones.size} tones`,
     );
   });
 }

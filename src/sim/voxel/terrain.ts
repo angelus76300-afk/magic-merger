@@ -192,7 +192,12 @@ export class Terrain {
     return lakeShare(world.height[i] + world.depth[i], world.seaLevel);
   }
   private waterWet(i: number): boolean {
-    return this.wet[i] === 1 && this.world.fluid[i] === F.WATER;
+    return this.wet[i] === 1 && (this.world.fluid[i] === F.WATER || this.iceFine(i));
+  }
+  // Ice drawn with the water in eighths (20 November, terrain-fine.ts iceTone): frozen water is the
+  // water's surface there, its map, its waterline and its bed; in whole cells it stays as it was.
+  private iceFine(i: number): boolean {
+    return this.world.fluid[i] === F.ICE && this.fineWaterOn;
   }
   // How narrow the water of cell (x, y) is, by the fewest cells of water in a row through it along x
   // or y (past the island counts as water): 1 for one or two cells, 0 from five (riverNarrow).
@@ -481,7 +486,7 @@ export class Terrain {
     for (let y = y0; y < y1; y++)
       for (let x = x0; x < x1; x++) {
         const i = y * world.w + x;
-        if (this.wet[i] && world.fluid[i] !== F.WATER) return false;
+        if (this.wet[i] && world.fluid[i] !== F.WATER && !this.iceFine(i)) return false;
       }
     return true;
   }
@@ -714,7 +719,7 @@ export class Terrain {
       const { world } = this;
       if (x < 0 || y < 0 || x >= world.w || y >= world.h) return false;
       const i = y * world.w + x;
-      return this.wet[i] === 1 && world.fluid[i] === F.WATER && this.naturalAt(i);
+      return this.wet[i] === 1 && (world.fluid[i] === F.WATER || this.iceFine(i)) && this.naturalAt(i);
     },
     wet: (x, y) => {
       const { world } = this;
@@ -935,8 +940,10 @@ export class Terrain {
         // Water and lava: the fine land's edge meets them in a wavy line of small cubes (lava since
         // 15 November: its cell-shaped edge read as big cubes on the volcano).
         const lava = world.fluid[i] === F.LAVA;
-        f.water[k] = this.wet[i] && (world.fluid[i] === F.WATER || lava) ? Math.max(surfaceY(world, i), top + FLUID_LIFT) : -1e9;
+        const ice = this.iceFine(i);
+        f.water[k] = this.wet[i] && (world.fluid[i] === F.WATER || lava || ice) ? Math.max(surfaceY(world, i), top + FLUID_LIFT) : -1e9;
         f.lava[k] = lava ? 1 : 0;
+        f.ice[k] = ice ? 1 : 0;
         const surface = this.fineTopColor(i);
         f.color[k] = surface;
         const built = this.fineBuilt(i);
@@ -1851,7 +1858,8 @@ export class Terrain {
         const f = world.fluid[i];
         if (f === F.NONE || !this.wet[i]) continue;
         // With the water in eighths, water in whole cells goes apart (ChunkMeshes.water).
-        const out = this.fluidSplit && f === F.WATER ? FLUID_W : FLUID;
+        // Ice too, drawn in eighths with the water (terrain-fine.ts iceTone).
+        const out = this.fluidSplit && (f === F.WATER || f === F.ICE) ? FLUID_W : FLUID;
         const top = Math.max(surfaceY(world, i), columnTop(world, i) + FLUID_LIFT);
         this.fluidLevel[i] = top;
         const { color, alpha } = this.fluidColor(i);

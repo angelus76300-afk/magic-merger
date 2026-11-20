@@ -1,0 +1,3 @@
+section: Backlog
+
+- **Ice you can slide on** (the designer's idea, 2026-11-20; lens: the promise a thing makes). Frozen lakes now read as one sheet of ice, and a sheet of ice promises that you can walk out onto it and that it is slippery. Creatures already cross ice as ground (paths.ts treats it as land). A small glide would keep that promise: a creature on ice keeps a little of its speed when it turns or stops, a skid of a quarter cell, and villagers' children sometimes go out to slide in winter. What the player feels: a frozen lake is a place, not a texture. Cost: a few lines in the movement step for cells whose fluid is ice (keep a share of the last tick's velocity), one idle behaviour for villagers near ice; nothing saved, no new material, no cost per spell. Claude.
