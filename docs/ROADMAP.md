@@ -399,7 +399,7 @@ The owner, typed in the lead session on 20 November 2026 (about 21:20 UTC), afte
 What this go covers, no more than each concept already states:
 
 1. **4.12**: the engine's reactions are live (#146). The rewrite of the items found wrong stays as the owner approved it on 12 November: "spells: both", up to $7, and "budget: rewrite first" (`docs/HANDOVER.md`). This go adds no money to it.
-2. **5.2.5 Looks revamp**: this go is the yes the concept asks for before the pilot, up to $25 as written below. The concept's other owner gates stay: the 10 reference models are approved by the owner on frames, and the bulk pass waits for "looks: go" after the pilot's frames and measured cost.
+2. **5.2.5 Looks revamp**: the lead's list named it as "5.2.5 looks revamp, up to $25, pilot first, then \"looks: go\"". It did not name Sonnet as the look writer and judge, or stored looks rewritten in bulk. So this go covers the free work (measuring, tools, the writer's and judge's prompts, the reference models). The yes before the pilot is still the owner's exact "looks: yes, up to $25", asked when the pilot is ready. The other gates stay: reference models approved on frames, and "looks: go" after the pilot.
 3. **5.0, 5.3 and 4.11.3**: go. Their concepts state no money, players' data or public part. If one appears, it goes back to the owner first.
 4. **5.4 Ready for strangers and 5.5 Items worth showing a friend**: nothing goes public and no running cost starts on this go. It covers planning only. 5.5 has no concept text yet. Each comes back to the owner as a concept with its cost and what goes public before anything is built on it.
 
