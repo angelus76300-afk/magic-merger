@@ -18,6 +18,9 @@ import { Color, Vector3, Vector4, type DataTexture, type Material } from "three"
 export const WATER_LIGHTS = 8;
 // A side of the water in eighths, in `waterFine`'s first number (a top is 1).
 export const SIDE_MARK = 0.6;
+// A top of ice, drawn with the water in eighths (terrain-fine.ts iceTone): its colour and alpha its
+// vertices', matte, with no waves, glints or foam.
+export const ICE_MARK = 2;
 
 export class WaterLight {
   readonly uniforms = {
@@ -94,7 +97,12 @@ float wlHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5
           "#include <opaque_fragment>",
           `if (vWaterFine.x > 0.5) {
   float wlAlpha;
-  if (vWaterFine.x > 0.8) {
+  if (vWaterFine.x > ${((ICE_MARK + 1) / 2).toFixed(1)}) {
+    // Ice: matte, as its vertices say; still, so the waves leave it alone.
+    outgoingLight = vColor.rgb * diffuse;
+    wlAlpha = vColor.a;
+    mmWaveK = 0.0;
+  } else if (vWaterFine.x > 0.8) {
     // A top: its colour by the depth under it, from the map, filtered between cells.
     vec4 wlTex = texture2D(wlMap, (vWlPos.xz + wlWorld * 0.5) / wlWorld);
     float wlDepth = wlTex.a * 8.0;
@@ -159,7 +167,7 @@ float wlHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5
 #include <opaque_fragment>`,
         );
     };
-    material.customProgramCacheKey = () => `water-light-3:${beforeKey()}`;
+    material.customProgramCacheKey = () => `water-light-4:${beforeKey()}`;
     return material;
   }
 }

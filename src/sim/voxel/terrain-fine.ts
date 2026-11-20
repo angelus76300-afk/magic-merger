@@ -22,7 +22,7 @@ import { FACE_LIGHT } from "./models";
 import { mixColor, scaleColor } from "../colors";
 import { G } from "../materials";
 import type { Writer } from "./terrain";
-import { SIDE_MARK } from "./water-light";
+import { ICE_MARK, SIDE_MARK } from "./water-light";
 
 // Cells a side of the piece of a chunk built at once.
 export const TILE = 8;
@@ -44,6 +44,7 @@ export interface FineCells {
   wet: Uint8Array;
   water: Float32Array; // the surface over a wet water or lava cell, or -1e9
   lava: Uint8Array; // 1 where that is lava (no foam)
+  ice: Uint8Array; // 1 where that is water frozen to ice, drawn with the water in eighths (iceTone)
   color: Uint32Array; // the top's colour
   edge: Uint32Array; // the first voxel of a wall
   soil: Uint32Array;
@@ -94,6 +95,7 @@ export function makeFineCells(): FineCells {
     wet: new Uint8Array(0),
     water: new Float32Array(0),
     lava: new Uint8Array(0),
+    ice: new Uint8Array(0),
     color: new Uint32Array(0),
     edge: new Uint32Array(0),
     soil: new Uint32Array(0),
@@ -136,6 +138,7 @@ export function sizeFineCells(f: FineCells, x0: number, y0: number, x1: number, 
     f.wet = new Uint8Array(n);
     f.water = new Float32Array(n);
     f.lava = new Uint8Array(n);
+    f.ice = new Uint8Array(n);
     f.color = new Uint32Array(n);
     f.edge = new Uint32Array(n);
     f.soil = new Uint32Array(n);
@@ -1166,6 +1169,10 @@ export function lakeBedDark(d: number, share: number): number {
 }
 // Water cells whose levels are at most LEVEL_JOIN apart (scene units) share their corners' level.
 const LEVEL_JOIN = 1.2;
+// Where ice is among them, whatever their levels: water that froze before it settled (a lake still
+// levelling, a flood) slopes as one sheet of ice. A fall's corners apart drew it torn, in wedges of
+// side tapering from a corner apart to the next one joined, thin slivers once opaque.
+const ICE_JOIN = Infinity;
 let WK = new Float64Array(0);
 let FO = new Uint8Array(0);
 // The water cell each column's water is (its own cell, or the one a shore's column takes).
@@ -1183,6 +1190,7 @@ function cornerLevel(f: FineCells, gx: number, gy: number, own: number): number 
   let hi = -Infinity;
   let sum = 0;
   let n = 0;
+  let iced = false;
   for (let k = 0; k < 4; k++) {
     const x = gx - 1 + (k & 1);
     const y = gy - 1 + (k >> 1);
@@ -1190,13 +1198,14 @@ function cornerLevel(f: FineCells, gx: number, gy: number, own: number): number 
     const c = fineAt(f, x, y);
     if (!isWater(f, c)) continue;
     const l = f.water[c];
+    if (f.ice[c]) iced = true;
     lo = Math.min(lo, l);
     hi = Math.max(hi, l);
     sum += l;
     n++;
   }
   // Cells far apart (a fall) keep their own levels at the corner; nearer, the water slopes.
-  return n && hi - lo <= LEVEL_JOIN ? sum / n : own;
+  return n && hi - lo <= (iced ? ICE_JOIN : LEVEL_JOIN) ? sum / n : own;
 }
 function isWater(f: FineCells, c: number): boolean {
   return f.inside[c] === 1 && f.wet[c] === 1 && f.water[c] > -1e8 && f.lava[c] === 0;
@@ -1303,6 +1312,11 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
       const s = j * SW + i;
       FO[s] = 0;
       if (Number.isNaN(WL[s])) continue;
+      // Ice: no foam, its own tops (ICE_FOAM keeps them apart from the water's).
+      if (f.ice[WC[s]]) {
+        FO[s] = ICE_FOAM;
+        continue;
+      }
       const px = (sx0 + i + 0.5) / sub;
       const py = (sy0 + j + 0.5) / sub;
       // A river one or two cells wide has no foam; wider, a band that grows with it.
@@ -1344,7 +1358,7 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
       CW.level[at] = WL[s];
       CW.key[at] = WK[s];
       CW.foam[at] = FO[s];
-      CW.color[at] = f.wdeep[WC[s]];
+      CW.color[at] = f.ice[WC[s]] ? iceTone((sx0 + i + 0.5) / sub, (sy0 + j + 0.5) / sub) : f.wdeep[WC[s]];
     }
   for (let y = 0; y < ch; y++)
     for (let x = 0; x < cw; x++) {
@@ -1390,6 +1404,11 @@ function fineWater(f: FineCells, out: Writer, sub: number, sx0: number, sy0: num
         if (at >= 0 && at < CW.n) CW.side[at] |= 1 << d;
         const X = (sx0 + i) * Q + ox;
         const Z = (sy0 + j) * Q + oz;
+        // Ice: its own matte side, a little darker than its top, as opaque.
+        if (f.ice[WC[s]]) {
+          sideQuad(out, d, X, Z, Q, lo, top, ICE_SIDE_LOW, ICE_ALPHA, ICE_SIDE, ICE_ALPHA);
+          continue;
+        }
         // Darker and less clear with depth, by height, so the sides of two columns meet in one tone.
         const split = level - WALL_DEEP;
         if (top - lo < 1) waterStep(out, d, X, Z, Q, lo, top, shallow, deep);
@@ -1585,13 +1604,15 @@ export function fineWaterTops(out: Writer, sub: number, ox: number, oz: number):
     for (let q = je - 1; q > j; q--) if (need(nb(ie, q - 1), nb(ie, q), (q - 1) * w + ie - 1, q * w + ie - 1, 0)) PTS.push(ie, q);
     PTS.push(ie, j);
     for (let q = ie - 1; q > i; q--) if (need(nb(q - 1, j - 1), nb(q, j - 1), j * w + q - 1, j * w + q, 3)) PTS.push(q, j);
-    out.e0 = 1;
-    out.e1 = foam[s] / FOAM_LEVELS;
+    const frozen = foam[s] === ICE_FOAM;
+    out.e0 = frozen ? ICE_MARK : 1;
+    out.e1 = frozen ? 0 : foam[s] / FOAM_LEVELS;
+    const alpha = frozen ? ICE_ALPHA : 1;
     const X = (x: number) => (X0 + x) * Q + ox;
     const Z = (z: number) => (Y0 + z) * Q + oz;
     const m = PTS.length / 2;
     if (m === 4) {
-      out.quad(X(i), yAt(i, j), Z(j), X(i), yAt(i, je), Z(je), X(ie), yAt(ie, je), Z(je), X(ie), yAt(ie, j), Z(j), col, 1, col, 1, 1, 0, false);
+      out.quad(X(i), yAt(i, j), Z(j), X(i), yAt(i, je), Z(je), X(ie), yAt(ie, je), Z(je), X(ie), yAt(ie, j), Z(j), col, alpha, col, alpha, 1, 0, false);
       continue;
     }
     // A fan round the middle, two triangles a quad (the second empty when the count is odd).
@@ -1607,11 +1628,32 @@ export function fineWaterTops(out: Writer, sub: number, ox: number, oz: number):
       const bz = PTS[b * 2 + 1];
       const cx2 = PTS[c * 2];
       const cz2 = PTS[c * 2 + 1];
-      out.quad(X(mx), my, Z(mz), X(ax), yAt(ax, az), Z(az), X(bx), yAt(bx, bz), Z(bz), X(cx2), yAt(cx2, cz2), Z(cz2), col, 1, col, 1, 1, 0, false);
+      out.quad(X(mx), my, Z(mz), X(ax), yAt(ax, az), Z(az), X(bx), yAt(bx, bz), Z(bz), X(cx2), yAt(cx2, cz2), Z(cz2), col, alpha, col, alpha, 1, 0, false);
     }
   }
   out.e0 = 0;
   out.e1 = 0;
+}
+
+// Ice (20 November: on tundra lakes it was drawn in whole cells, flat pale slabs with grid lines
+// beside the water in eighths). Frozen water is drawn with the water in eighths, its surface the
+// same (the same corners, the same waterline at the shore), so it meets the shore and the open
+// water with no step; its tops apart (their foam ICE_FOAM, marked ICE_MARK for the shader: matte,
+// no waves, no glints) in a whitish blue with drifts of snow, bluer patches and thin cracks, baked
+// per column in a few tones so the tops still merge, and nearly opaque (ICE_ALPHA), so the water
+// under it does not show.
+const ICE_FOAM = 255;
+const ICE_ALPHA = 0.97;
+const ICE_BASE = 0xc8e4f2;
+const ICE_DRIFT = 0xd8ecf5;
+const ICE_BLUE = 0xb9daeb;
+const ICE_CRACK = 0xa3c8de;
+const ICE_SIDE = 0xa9cde2;
+const ICE_SIDE_LOW = 0x8fb6cf;
+export function iceTone(px: number, py: number): number {
+  if (Math.abs(noise(px, py, 1.6, 203) - 0.5) < 0.012) return ICE_CRACK;
+  const drift = noise(px, py, 3.2, 201);
+  return drift > 0.66 ? ICE_DRIFT : drift < 0.3 ? ICE_BLUE : ICE_BASE;
 }
 
 // The depth over which a water side darkens, scene units, and the colour of its top.
