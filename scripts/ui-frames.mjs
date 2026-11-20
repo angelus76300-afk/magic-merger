@@ -269,8 +269,14 @@ async function run(width, height, touch = false) {
     // On a wide screen the island may not reach the stage's edge: tap nearer in.
     const [fx, fy] = width > height ? (height > 500 ? [0.3, 0.75] : [0.15, 0.8]) : [0.5, 0.45];
     await page.mouse.click(stage.x + stage.width * fx, stage.y + stage.height * fy);
-    await page.waitForTimeout(500);
-    await page.mouse.click(stage.x + stage.width * fx, stage.y + stage.height * fy);
+    // The first tap may only end the island's tour (firstlook.ts): the camera then flies for 1.6 s
+    // to a village, at the middle of the view. The second tap waits for it and lands there, on the
+    // island. On a phone on its side the point beside the card was past the island's edge, in the
+    // sky, whenever the village lay near the edge: the 844x390 "vote missing" (1 run in 3 or 4,
+    // 20 November; the tour still ran in every failing run, and no cast was sent).
+    await page.waitForTimeout(2000);
+    const [gx, gy] = width > height ? [0.5, 0.5] : [fx, fy];
+    await page.mouse.click(stage.x + stage.width * gx, stage.y + stage.height * gy);
     for (let i = 0; i < 30 && !(await page.locator(".vote").count()); i++) await page.waitForTimeout(500);
     await shot("07-world-vote");
     // The vote is answered from the drawer, never over the island.
