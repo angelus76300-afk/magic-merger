@@ -681,7 +681,13 @@ function iceChecks(check: Check): void {
     for (const i of iceCells) isIce[i] = 1;
     // Whole-cell tops shown over ice cells.
     let slabs = 0;
-    for (const m of [...whole, ...meshes.filter((m) => m.visible && m.material !== (terrain as unknown as { fluidMaterial: unknown }).fluidMaterial && !m.geometry.index && m.geometry.getAttribute("wave"))]) {
+    for (const m of [
+      ...whole,
+      ...meshes.filter(
+        (m) =>
+          m.visible && m.material !== (terrain as unknown as { fluidMaterial: unknown }).fluidMaterial && !m.geometry.index && m.geometry.getAttribute("wave"),
+      ),
+    ]) {
       const p = m.geometry.getAttribute("position").array as Float32Array;
       for (let v = 0; v < p.length / 3; v++) {
         const x = Math.floor(p[v * 3] + world.w / 2 - 0.001);
@@ -734,7 +740,10 @@ function iceChecks(check: Check): void {
     const ice = cols((x) => x > 1.5);
     const open = cols((x) => x > 0.8 && x < 1.5);
     // The island drawn before, after the freeze: its chunks built again in part, as in play.
-    const later = cols((x) => x > 1.5, waterMeshes(played.terrain, played.meshes).filter((m) => m.geometry.getAttribute("waterFine")));
+    const later = cols(
+      (x) => x > 1.5,
+      waterMeshes(played.terrain, played.meshes).filter((m) => m.geometry.getAttribute("waterFine")),
+    );
     let differ = 0;
     for (const k of ice.out) if (!later.out.has(k)) differ++;
     for (const k of later.out) if (!ice.out.has(k)) differ++;
