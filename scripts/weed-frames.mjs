@@ -2,7 +2,8 @@
 // over a lake's shelf where weed grows, on a temperate, a swamp and a tundra island of lakes, the
 // tundra lake also frozen. "before" is the land with the weed's switch off (off=weed), drawn byte
 // for byte as main (scripts/lake-weed-test.ts); "after" with it on. With BENCH=1, the frame's cost
-// on medium over the temperate lake, weed on and off (perfBench, 60 frames).
+// on medium over the temperate lake, weed on and off (perfBench, 60 frames). The tundra lake is
+// drawn open (its ice thawed) and frozen (all of it ice).
 //   npx vite --port 5174 &
 //   node scripts/weed-frames.mjs <out dir>
 import { createRequire } from "node:module";
@@ -27,9 +28,12 @@ async function frame(page, at, dist, phi, freeze) {
     async ({ at, dist, phi, freeze }) => {
       const e = window.__engine;
       const w = e.world;
-      if (freeze) {
-        // Every lake's water (above the sea) frozen, as a cold night does.
-        for (let i = 0; i < w.w * w.h; i++) if (w.fluid[i] === 1 && w.height[i] + w.depth[i] > w.seaLevel + 0.5) w.fluid[i] = 2;
+      // Held still: a tundra lake freezes on its own, so its open frame thaws it and its frozen one
+      // freezes it whole (every lake's water above the sea), and nothing moves after.
+      e.stop();
+      if (freeze !== null) {
+        const from = freeze ? 1 : 2;
+        for (let i = 0; i < w.w * w.h; i++) if (w.fluid[i] === from && w.height[i] + w.depth[i] > w.seaLevel + 0.5) w.fluid[i] = 3 - from;
       }
       const o = e.view.orbit;
       o.tx = at.x;
@@ -38,11 +42,12 @@ async function frame(page, at, dist, phi, freeze) {
       o.phi = phi;
       o.theta = 0.6;
       const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-      for (let k = 0; k < 3; k++) {
-        await wait(1200);
+      for (let k = 0; k < 4; k++) {
+        e.view.landChanged = true;
+        e.render(0);
         e.view.terrain.updateFine(0, true);
+        await wait(400);
       }
-      e.stop();
       e.render(0);
       e.render(0);
       e.render(0);
@@ -60,7 +65,7 @@ try {
   for (const quality of QUALITIES)
     for (const [name, q, x, y] of ISLANDS)
       for (const tag of ["before", "after"])
-        for (const freeze of name.startsWith("tundra") ? [false, true] : [false]) {
+        for (const freeze of name.startsWith("tundra") ? [false, true] : [null]) {
           const ctx = await browser.newContext({ viewport: SIZE, deviceScaleFactor: 1 });
           const page = await ctx.newPage();
           page.on("pageerror", (err) => console.error("page error:", err.message));
@@ -68,7 +73,7 @@ try {
           await page.waitForFunction(() => window.perfReady === true, null, { timeout: 240_000 });
           await page.evaluate(() => document.querySelectorAll("div").forEach((d) => (d.style.display = "none")));
           const png = await frame(page, { x, y }, 12, 0.85, freeze);
-          const file = join(OUT, `${name}${freeze ? "-frozen" : ""}-${quality}-${tag}.png`);
+          const file = join(OUT, `${name}${freeze ? "-frozen" : freeze === false ? "-open" : ""}-${quality}-${tag}.png`);
           writeFileSync(file, Buffer.from(png.split(",")[1], "base64"));
           rows.push({ quality, name, tag, freeze, file });
           console.log(JSON.stringify(rows.at(-1)));
