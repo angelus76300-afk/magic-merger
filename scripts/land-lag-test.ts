@@ -196,7 +196,8 @@ function withHigh<T>(run: () => T): T {
 }
 
 // The island drawn whole, as its first frame and the camera at a mid zoom over its middle have it.
-function build(world: World, clock?: () => number): Terrain {
+// `like`: the island played, whose water's ages (Terrain.wetSince, for weed) the whole one takes.
+function build(world: World, clock?: () => number, like?: Terrain): Terrain {
   const mat = new MeshBasicMaterial();
   const terrain = new Terrain(
     world,
@@ -207,6 +208,11 @@ function build(world: World, clock?: () => number): Terrain {
   );
   if (clock) terrain.clock = clock;
   terrain.scan();
+  if (like) {
+    const now = like.clock();
+    terrain.clock = () => now;
+    (terrain as unknown as { wetSince: Float64Array }).wetSince.set((like as unknown as { wetSince: Float64Array }).wetSince);
+  }
   terrain.rebuild(true);
   const dist = 45;
   terrain.focus(dist * 0.81 * Math.SQRT1_2, dist * 0.58 + 8, dist * 0.81 * Math.SQRT1_2, 0, 0);
@@ -253,7 +259,7 @@ export function playChanges(k: number, changes: (world: World) => Change[], reac
         shown.push(inside.fine.map((m, c) => (m !== was[c] ? c : -1)).filter((c) => c >= 0));
         if (!inside.group && !inside.fineStale.some((s) => s === 1)) break;
       }
-      const whole = drawn(build(world));
+      const whole = drawn(build(world, undefined, terrain));
       const part = drawn(terrain);
       const differ = part.filter((h, c) => h !== whole[c]).length;
       runs.push({
