@@ -2,7 +2,7 @@
 // baked in the fine land in eighths (terrain-fine.ts weedAt, GRAPHICS.weed). Each check is measured
 // on generated islands as the fine land draws them, by comparing the land with weed on and off:
 // a column drawn higher with it on holds weed or a stone.
-//   Standalone: npx esbuild scripts/lake-weed-test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/lake-weed.mjs --log-level=warning && node node_modules/.cache/lake-weed.mjs
+// Run with the other checks (npm test, scripts/sim-test.ts).
 import { createHash } from "node:crypto";
 import { MeshBasicMaterial, type Mesh } from "three";
 import { generateWorld, type World } from "../src/sim/world";
@@ -357,14 +357,4 @@ export function lakeWeedChecks(check: Check): void {
       `worst ${(worstShare * 100).toFixed(2)}% (seed ${worstSeed}), all ${((weedT / total) * 100).toFixed(2)}%, ${weedT} of ${total}; ${CHUNK}-cell chunks`,
     );
   }
-}
-
-// Standalone.
-if (process.argv[1]?.endsWith("lake-weed.mjs")) {
-  let failed = 0;
-  lakeWeedChecks((name, ok, detail) => {
-    if (!ok) failed++;
-    console.log(`${ok ? "ok  " : "FAIL"} ${name}${detail ? ` (${detail})` : ""}`);
-  });
-  process.exit(failed ? 1 : 0);
 }
