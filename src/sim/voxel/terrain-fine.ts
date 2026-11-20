@@ -230,7 +230,7 @@ export const WEED_MIN = 4;
 export const WEED_MAX = 12;
 export const WEED_TALL = 6;
 // At most this many clumps a chunk (Terrain.readFine keeps those of the lowest ranks).
-export const WEED_CAP_CHUNK = 128;
+export const WEED_CAP_CHUNK = 256;
 const WEED_PERIOD = 3.5;
 const WEED_PATCH = 0.6;
 const WEED_MIX = 0.55;

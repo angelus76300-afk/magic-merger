@@ -209,7 +209,7 @@ export function lakeWeedChecks(check: Check): void {
     for (const r of rs) if (r.ratio < WEED_LIGHT_LO - 0.02 || r.ratio > WEED_LIGHT_HI + 0.02) band++;
     check(
       `lake weed (${name}): weed and stones grow on its lakes' beds`,
-      weed.length > 50 && cells.size > 30,
+      weed.length > 100 && cells.size > 30,
       `${rs.length} columns raised, ${weed.length} of them weed two eighths tall or more, in ${cells.size} cells`,
     );
     check(
@@ -346,23 +346,37 @@ export function lakeWeedChecks(check: Check): void {
     const world = make();
     const b = withLevel("high", true, () => build(world));
     const t = b.terrain;
+    // The chunk over the cap (its cells' clumps, every cell counted, as the cap ranks them) with the
+    // most cells of weed, and how many of its weed cells' clumps the cap leaves out: the check is
+    // void unless the cap leaves some out.
     let best = -1;
     let most = 0;
+    let dropped = 0;
+    let all = 0;
     let cells: number[] = [];
     for (let c = 0; c < t.cols * t.rows; c++) {
       const f = withLevel("high", true, () => t.readFine(c));
-      let n = 0;
       const grows: number[] = [];
+      let land = -1;
+      let out = 0;
       for (let y = f.y0; y < f.y1; y++)
         for (let x = f.x0; x < f.x1; x++) {
           const k = fineAt(f, x, y);
           if (!(f.weed[k] & WEED_GROWS)) continue;
-          n += weedClumps(x, y, f.weedLand[k]);
+          land = f.weedLand[k];
+          const ranks: number[] = [];
+          weedClumps(x, y, land, ranks);
+          for (const r of ranks) if (r >= f.weedKeep[k]) out++;
           grows.push(y * world.w + x);
         }
-      if (n > most) {
-        most = n;
+      if (land < 0) continue;
+      let n = 0;
+      for (let y = f.y0; y < f.y1; y++) for (let x = f.x0; x < f.x1; x++) n += weedClumps(x, y, land);
+      if (n > WEED_CAP_CHUNK && out > 0 && grows.length > most) {
+        most = grows.length;
         best = c;
+        dropped = out;
+        all = n;
         cells = grows;
       }
     }
@@ -375,8 +389,8 @@ export function lakeWeedChecks(check: Check): void {
     const whole = withLevel("high", true, () => build(world));
     check(
       "lake weed: a chunk at the cap drawn again in part after its lake freezes in part is the island drawn whole",
-      most > WEED_CAP_CHUNK && hashOf(b, "land") === hashOf(whole, "land"),
-      `chunk ${best}, ${most} clumps in its weed's cells; drawn in part ${hashOf(b, "land")}, whole ${hashOf(whole, "land")}`,
+      best >= 0 && cells.length >= 12 && hashOf(b, "land") === hashOf(whole, "land"),
+      `chunk ${best}: ${all} clumps over its cells (cap ${WEED_CAP_CHUNK}), ${most} cells of weed, ${dropped} of their clumps left out by the cap; drawn in part ${hashOf(b, "land")}, whole ${hashOf(whole, "land")}`,
     );
   }
 
