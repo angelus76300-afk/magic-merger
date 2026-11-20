@@ -27,11 +27,13 @@ export const LOOK_ISLANDS: { name: string; cells: number; seed: number; land: La
 // wall a hundredth high no longer waves at the corner the wall shares (terrain.ts waterTop). And again
 // the same day: a lake (water above the sea) is drawn clearer and its bed muted and bluer with depth
 // (terrain-fine.ts lakeShare); with lakeShare held at 0 the islands draw the hashes before it
-// (9c62c152/f4c767b5, afdc1f22/a6282c07, 86d5accc/f8ce9657), so nothing else changed.
+// (9c62c152/f4c767b5, afdc1f22/a6282c07, 86d5accc/f8ce9657), so nothing else changed. And again on
+// 20 November: a lake's deep floor is much darker (terrain-fine.ts lakeBedDark), the land only;
+// with lakeShare held at 0 the islands still draw those same hashes.
 const MAIN = [
-  ["2101d537", "364efaf7"],
-  ["8888c254", "0140ccb6"],
-  ["6198274b", "b57f817c"],
+  ["e22c8abe", "364efaf7"],
+  ["aee65f86", "0140ccb6"],
+  ["d1b752eb", "b57f817c"],
 ];
 
 export const LOOK_SWITCHES = Object.keys(LAND_LOOKS) as (keyof typeof LAND_LOOKS)[];

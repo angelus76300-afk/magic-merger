@@ -1151,13 +1151,15 @@ export function lakeTint(real: number, look: number): number {
 }
 // How far a lake's bed `d` under its surface (height units) is mixed toward its water's deep
 // colour at LAKE_BED_DEEP of its light: none on the shelf to LAKE_BED_CLEAR, then more, eased
-// toward LAKE_BED_DARK over LAKE_BED_EASE units (0.13 at 2 deep, 0.3 at 4, 0.6 at 14), in
+// toward LAKE_BED_DARK over LAKE_BED_EASE units (0.34 at 2 deep, 0.6 at 4, 0.86 at 14), in
 // sixteenths so the bed's tops still merge. A lake's floor is mostly grass and sand, green and
-// yellow through clear water without it.
+// yellow through clear water without it. 20 November, the owner: "The lake floors should be much
+// darker". Before, 0.13 at 2 deep, 0.3 at 4 and 0.6 at 14 toward 70% light; the deep colour at
+// 20% light was also tried (docs/visual-checks/lake-floors-darker).
 const LAKE_BED_CLEAR = 0.5;
-const LAKE_BED_EASE = 7;
-const LAKE_BED_DARK = 0.7;
-export const LAKE_BED_DEEP = 0.7;
+const LAKE_BED_EASE = 3;
+const LAKE_BED_DARK = 0.87;
+export const LAKE_BED_DEEP = 0.32;
 export function lakeBedDark(d: number, share: number): number {
   if (share <= 0 || d <= LAKE_BED_CLEAR) return 0;
   return Math.round((1 - Math.exp(-(d - LAKE_BED_CLEAR) / LAKE_BED_EASE)) * LAKE_BED_DARK * share * 16) / 16;
