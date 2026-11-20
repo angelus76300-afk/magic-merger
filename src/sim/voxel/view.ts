@@ -928,12 +928,12 @@ export class VoxelView {
   // Off only for the before and after (scripts/looks-cull-proof.mjs).
   cullCovers = true;
   private viewFrustum = new Frustum();
-  private sunFrustum = new Frustum();
+  private sunFrustums = [new Frustum(), new Frustum()];
   private cullSphere = new Sphere();
   private cullMatrix = new Matrix4();
   private landMatrix = new Matrix4();
   private landFrustum = new Frustum();
-  private cullDown = new Vector3();
+  private cullDowns = [new Vector3(), new Vector3()];
   private cullAt = new Vector3();
   private cullAt2 = new Vector3();
   private cullLand: Mesh[] = [];
@@ -948,37 +948,39 @@ export class VoxelView {
     camera.updateMatrixWorld();
     this.cullMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     this.viewFrustum.setFromProjectionMatrix(this.cullMatrix);
-    const sun = GRAPHICS.shadows && this.looks.casting ? this.looks.sun : null;
-    if (sun) {
+    // The suns of the two shadow maps (looks.ts placeSun), a step of the sun's way apart. A sun's
+    // matrices change only where it was laid again this frame, so they match what its map holds.
+    const suns = GRAPHICS.shadows && this.looks.casting ? this.looks.suns : [];
+    const sphere = this.cullSphere;
+    // Each sun's way down, and how far a shadow can fall: from a caster's top to the island's
+    // floor (BOTTOM), slanting with the sun.
+    const reach = [0, 0];
+    suns.forEach((sun, i) => {
       sun.updateMatrixWorld();
       sun.target.updateMatrixWorld();
       sun.shadow.updateMatrices(sun);
-      this.sunFrustum.copy(sun.shadow.getFrustum());
-    }
-    const sphere = this.cullSphere;
-    // The sun's way down, and how far a shadow can fall: from a caster's top to the island's
-    // floor (BOTTOM), slanting with the sun.
-    const down = this.cullDown;
-    let reach = 0;
-    if (sun) {
-      down.copy(sun.target.position).sub(sun.position).normalize();
-      reach = -down.y > 0.05 ? 1 / -down.y : 0;
-    }
-    // Whether a caster's shadow can fall inside the view: its sphere moved down the sun's ray
-    // in steps of its radius, to the island's floor. Only what the shadow map holds casts.
+      this.sunFrustums[i].copy(sun.shadow.getFrustum());
+      const down = this.cullDowns[i].copy(sun.target.position).sub(sun.position).normalize();
+      reach[i] = -down.y > 0.05 ? 1 / -down.y : 0;
+    });
+    // Whether a caster's shadow can fall inside the view, by either sun: its sphere moved down the
+    // sun's ray in steps of its radius, to the island's floor. Only what a shadow map holds casts.
     const shades = (c: Vector3, r: number): boolean => {
-      if (!sun || !all || !this.sunFrustum.intersectsSphere(sphere.set(c, r))) return false;
-      const len = (c.y + r - BOTTOM) * reach;
-      for (let t = 0; t <= len + r; t += r) {
-        sphere.center.copy(c).addScaledVector(down, t);
-        sphere.radius = r;
-        if (this.viewFrustum.intersectsSphere(sphere)) return true;
+      if (!all) return false;
+      for (let i = 0; i < suns.length; i++) {
+        if (!this.sunFrustums[i].intersectsSphere(sphere.set(c, r))) continue;
+        const len = (c.y + r - BOTTOM) * reach[i];
+        for (let t = 0; t <= len + r; t += r) {
+          sphere.center.copy(c).addScaledVector(this.cullDowns[i], t);
+          sphere.radius = r;
+          if (this.viewFrustum.intersectsSphere(sphere)) return true;
+        }
       }
       return false;
     };
     const seen = (c: Vector3, r: number): boolean => this.viewFrustum.intersectsSphere(sphere.set(c, r));
     // The land: a chunk out of the view casts into the shadow map only if its shadow can reach it.
-    if (sun && all)
+    if (suns.length && all)
       for (const mesh of this.terrain.landMeshes(this.cullLand)) {
         const b = mesh.geometry.boundingSphere;
         if (!b || !mesh.castShadow) continue;

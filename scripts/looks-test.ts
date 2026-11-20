@@ -3,7 +3,9 @@
 // colour grade matches in GLSL and in JavaScript. The frames that prove the
 // looks on screen are in docs/measurements/looks-render/; this guards the
 // logic that turns each one on and off.
-import { Color } from "three";
+import { Color, Vector3 } from "three";
+import { DAY_LENGTH } from "../src/sim/daylight";
+import { skyBodies } from "../src/sim/voxel/sky";
 import {
   AUTO_CHOICE,
   usefulTrims,
@@ -23,12 +25,89 @@ import {
   setLooksChoice,
   type Quality,
 } from "../src/sim/voxel/graphics";
-import { BLOOM_STRENGTH, FOCUS_FROM, FOCUS_FULL, FOCUS_MAX, SHARP_BAND, bloomAt, focusBlur, gradeColor } from "../src/sim/voxel/looks";
+import {
+  BLOOM_STRENGTH,
+  FOCUS_FROM,
+  FOCUS_FULL,
+  FOCUS_MAX,
+  SHADOW_SIZE,
+  SHARP_BAND,
+  bloomAt,
+  focusBlur,
+  gradeColor,
+  sunSteps,
+  towardSky,
+} from "../src/sim/voxel/looks";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
+// Where the shadow of the top of a tall tree (5.2 cells, cubes.ts TALL) falls, seen from above, at
+// each frame of 3 seconds at 60 frames a second from `start` (island seconds): as the two shadow
+// maps mix it now, or from one map laid from the sun in steps (15 to 20 November).
+function shadowTips(start: number, stepped: boolean): { x: number; z: number }[] {
+  const tall = 5.2;
+  const dirs = [new Vector3(), new Vector3()];
+  const one = new Vector3();
+  const tip = (d: Vector3) => ({ x: (-tall * d.x) / d.y, z: (-tall * d.z) / d.y });
+  const out: { x: number; z: number }[] = [];
+  for (let n = 0; n <= 180; n++) {
+    const sky = skyBodies(start + n / 60);
+    if (stepped) {
+      out.push(tip(towardSky(sky.sun, sky.sunAz, one, true)));
+      continue;
+    }
+    // A shadow's edge is where its shade is half: between the two maps' edges, by the mix.
+    const { mix } = sunSteps(sky.sun, sky.sunAz, dirs);
+    const [a, b] = dirs.map(tip);
+    out.push({ x: a.x + (b.x - a.x) * mix, z: a.z + (b.z - a.z) * mix });
+  }
+  return out;
+}
+
+function shadowMotion(start: number, stepped: boolean): { jump: number; moving: number } {
+  const tips = shadowTips(start, stepped);
+  let jump = 0;
+  let moving = 0;
+  for (let n = 1; n < tips.length; n++) {
+    const d = Math.hypot(tips[n].x - tips[n - 1].x, tips[n].z - tips[n - 1].z);
+    jump = Math.max(jump, d);
+    if (d > 1e-6) moving++;
+  }
+  return { jump, moving: moving / (tips.length - 1) };
+}
+
 export function looksChecks(check: Check): void {
   const was = Object.fromEntries(LOOKS_FLAGS.map((f) => [f, GRAPHICS[f]]));
+
+  // Shadows move with the sun every frame (20 November, the owner: "Shadows are super slow like
+  // 1fps updates compared to the rest of the game"). The finest shadow texel is 64 cells over
+  // SHADOW_SIZE (looks.ts placeSun). Morning, noon and afternoon of a day.
+  {
+    const texel = 64 / SHADOW_SIZE;
+    const starts = [0.15, 0.4, 0.6].map((f) => DAY_LENGTH * f);
+    const now = starts.map((t) => shadowMotion(t, false));
+    const before = starts.map((t) => shadowMotion(t, true));
+    const fmt = (m: { jump: number; moving: number }[]) =>
+      m.map((x) => `${(x.jump / texel).toFixed(2)} texel, ${Math.round(x.moving * 100)}% of frames`).join("; ");
+    check(
+      "a tall tree's shadow moves less than a shadow texel a frame, and on more than 90% of frames",
+      now.every((m) => m.jump < texel && m.moving > 0.9),
+      fmt(now),
+    );
+    check(
+      "the measure catches the sun in steps of 15 to 20 November (a jump of a texel or more, on few frames)",
+      before.every((m) => m.jump >= texel && m.moving < 0.1),
+      fmt(before),
+    );
+    // The two maps' mix runs 0 to 1 and back, and turns at a step: the even step is always first.
+    const dirs = [new Vector3(), new Vector3()];
+    let ok = true;
+    for (let az = 0.01; az < Math.PI; az += 0.0013) {
+      const { steps, mix } = sunSteps(0.5, az, dirs);
+      if (!(mix >= 0 && mix <= 1) || steps[0] % 2 !== 0 || Math.abs(steps[0] - steps[1]) !== 1) ok = false;
+    }
+    check("the two shadow maps hold the even and the odd step around the sun, mixed 0 to 1", ok);
+  }
 
   // Low is the island as it was before 5.2.5: every look off.
   check(
