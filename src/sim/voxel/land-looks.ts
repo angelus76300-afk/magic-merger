@@ -29,4 +29,8 @@ export const LAND_LOOKS = {
   rocks: true,
   // Water in bands of colour by depth, clearer in the shallows so the bed shows (everywhere).
   bands: true,
+  // In the fine land in eighths, with the water in eighths: clumps of weed on a lake's shelf and a
+  // few stones on its bed, in the land's own mesh (no draw call, nothing a frame). Off, the land is
+  // drawn exactly as before it.
+  weed: true,
 };

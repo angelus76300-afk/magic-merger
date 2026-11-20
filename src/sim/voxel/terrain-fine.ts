@@ -23,6 +23,7 @@ import { mixColor, scaleColor } from "../colors";
 import { G } from "../materials";
 import type { Writer } from "./terrain";
 import { ICE_MARK, SIDE_MARK } from "./water-light";
+import { BIOMES, type Biome } from "../land-options";
 
 // Cells a side of the piece of a chunk built at once.
 export const TILE = 8;
@@ -76,6 +77,12 @@ export interface FineCells {
   // its colour drawn as soft patches (`soft`, the 5 by 5 mean round the cell) where softOn is 1.
   soft: Uint32Array;
   softOn: Uint8Array;
+  // Life under water (20 November, weed): WEED_STONE where stones may lie on the bed, WEED_GROWS
+  // where weed may grow too (Terrain.weedCell), the cell's land (WEED_LANDS) and the rank under
+  // which its chunk keeps a clump (weedKeep, WEED_CAP_CHUNK).
+  weed: Uint8Array;
+  weedLand: Uint8Array;
+  weedKeep: Float32Array;
 }
 
 export function makeFineCells(): FineCells {
@@ -116,6 +123,9 @@ export function makeFineCells(): FineCells {
     wlake: new Float32Array(0),
     soft: new Uint32Array(0),
     softOn: new Uint8Array(0),
+    weed: new Uint8Array(0),
+    weedLand: new Uint8Array(0),
+    weedKeep: new Float32Array(0),
   };
 }
 
@@ -159,6 +169,9 @@ export function sizeFineCells(f: FineCells, x0: number, y0: number, x1: number, 
     f.wlake = new Float32Array(n);
     f.soft = new Uint32Array(n);
     f.softOn = new Uint8Array(n);
+    f.weed = new Uint8Array(n);
+    f.weedLand = new Uint8Array(n);
+    f.weedKeep = new Float32Array(n);
   }
 }
 
@@ -203,6 +216,61 @@ const SHADES = [0.96, 1, 1.04];
 const SHADE_PERIOD = 6.5;
 const FLOWERS = [0xe8505b, 0xf4d35e, 0xf6f2ea, 0xd987e0, 0xf08a3c];
 const PEBBLES = [0xbdb6a6, 0x9a958a, 0xd8d2c4];
+// Life under water (20 November, the first of it): clumps of weed and a few stones on a lake's
+// bed, in the fine land in eighths only (GRAPHICS.weed), baked in its mesh like the flowers. Weed
+// grows in patches (WEED_PATCH, cells WEED_PERIOD across), one or two clumps a cell of 3 by 3
+// stalks, shorter at their edge; never nearer the surface than WEED_UNDER eighths (no foam, no
+// stalk through the water) and only where the bed is WEED_MIN to WEED_MAX eighths under it: the
+// shelf, not the deep middle, which stays bare and dark. Its colour is the bed's, darkened by its
+// depth as the bed is, mixed toward its land's weed, so depth still reads through it.
+export const WEED_STONE = 1;
+export const WEED_GROWS = 2;
+export const WEED_UNDER = 2;
+export const WEED_MIN = 4;
+export const WEED_MAX = 12;
+export const WEED_TALL = 6;
+// At most this many clumps a chunk (Terrain.readFine keeps those of the lowest ranks).
+export const WEED_CAP_CHUNK = 128;
+const WEED_PERIOD = 3.5;
+const WEED_PATCH = 0.6;
+const WEED_MIX = 0.55;
+export const WEED_LIGHT_LO = 0.65;
+export const WEED_LIGHT_HI = 1.08;
+const WEED_STALK = 0.55;
+// A stone in WEED_STONES of the cells; 2 by 1 eighths in WEED_STONE_LONG of them, else 2 by 2.
+const WEED_STONES = 0.05;
+const WEED_STONE_LONG = 0.4;
+const WEED_TINT: Record<Biome, number> = {
+  temperate: 0x3d7a3a,
+  swamp: 0x4a5a2a,
+  jungle: 0x2f7a45,
+  tundra: 0x5a6a4a,
+  desert: 0x6a7a3a,
+  mesa: 0x6a7a3a,
+  volcanic: 0x3a4a30,
+};
+const WEED_DENSITY: Record<Biome, number> = { temperate: 1, swamp: 1.4, jungle: 1.2, tundra: 0.5, desert: 0.5, mesa: 0.5, volcanic: 0.3 };
+// The lands by index (FineCells.weedLand).
+export const WEED_LANDS: readonly Biome[] = BIOMES;
+// The clumps of weed cell (cx, cy) of land `land` has (0, 1 or 2), their ranks pushed to `ranks`.
+export function weedClumps(cx: number, cy: number, land: number, ranks: number[] | null = null): number {
+  if (noise(cx, cy, WEED_PERIOD, 141) <= WEED_PATCH) return 0;
+  const dense = WEED_DENSITY[WEED_LANDS[land] ?? "temperate"];
+  let n = 0;
+  for (let k = 0; k < 2; k++) {
+    if (!weedClump(cx, cy, k, dense)) continue;
+    n++;
+    if (ranks) ranks.push(hash(cx, cy, 150 + k));
+  }
+  return n;
+}
+function weedClump(cx: number, cy: number, k: number, dense: number): boolean {
+  return hash(cx, cy, 142 + k) < (k ? 0.25 : 0.7) * dense;
+}
+// The luminance of a colour, 0 to 255.
+function luma(c: number): number {
+  return 0.2126 * ((c >> 16) & 255) + 0.7152 * ((c >> 8) & 255) + 0.0722 * (c & 255);
+}
 const FOAM = 0xf4f9fc;
 const FOAM_SOFT = 0xd9eef6;
 const CREASE = 0.74;
@@ -576,6 +644,68 @@ let LAVA_D = new Float32Array(0);
 let LAVA_Y = new Float32Array(0);
 let HOUSE_D = new Float32Array(0);
 let HOUSE_Y = new Float32Array(0);
+// Weed and stones on a lake's bed (weed): what stands on each column (WEED_NONE...), how many
+// eighths above the bed, the clump's tone, and the bed's colour under it once darkened by depth.
+const WEED_NONE = 0;
+const WEED_STALKS = 1;
+const WEED_TOP = 2; // a clump's middle, its tallest
+const WEED_ROCK = 3;
+let WEEDS = new Uint8Array(0);
+let RAISE = new Uint8Array(0);
+let WEED_K = new Float32Array(0);
+let BEDC = new Uint32Array(0);
+
+// What stands on column s of bed (lx, ly the column in its cell c, sx, sy in the island, `hgt` the
+// bed's height, in eighths): its WEEDS, tone and height above the bed (the return).
+function weedAt(f: FineCells, c: number, cx: number, cy: number, lx: number, ly: number, sx: number, sy: number, hgt: number, s: number): number {
+  // The lowest surface over the cell and the cells round it (all water, Terrain.weedCell): the
+  // water drawn over any part of the cell is at least that high.
+  let level = Infinity;
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) level = Math.min(level, f.water[fineAt(f, cx + dx, cy + dy)]);
+  const avail = Math.floor(level * 8) - hgt;
+  if (f.weed[c] & WEED_GROWS && avail >= WEED_MIN && avail <= WEED_MAX) {
+    const dense = WEED_DENSITY[WEED_LANDS[f.weedLand[c]] ?? "temperate"];
+    if (noise(cx, cy, WEED_PERIOD, 141) > WEED_PATCH) {
+      let best = 0;
+      let kind = WEED_NONE;
+      let tone = 1;
+      for (let k = 0; k < 2; k++) {
+        if (!weedClump(cx, cy, k, dense) || hash(cx, cy, 150 + k) >= f.weedKeep[c]) continue;
+        // The clump's middle, so its 3 by 3 stays in the cell.
+        const mx = 1 + Math.floor(hash(cx, cy, 144 + 2 * k) * 6);
+        const my = 1 + Math.floor(hash(cx, cy, 145 + 2 * k) * 6);
+        if (Math.abs(lx - mx) > 1 || Math.abs(ly - my) > 1) continue;
+        const top = Math.max(2, Math.round(Math.min(WEED_TALL, avail - WEED_UNDER, Math.ceil(avail * 0.55)) * (0.6 + 0.4 * hash(cx, cy, 152 + k))));
+        const middle = lx === mx && ly === my;
+        if (!middle && hash(sx, sy, 156 + k) >= WEED_STALK) continue;
+        const h = middle ? top : Math.max(1, top - 1 - (hash(sx, sy, 158 + k) < 0.5 ? 1 : 0));
+        if (h <= best) continue;
+        best = h;
+        kind = middle ? WEED_TOP : WEED_STALKS;
+        tone = 0.9 + 0.14 * hash(cx, cy, 154 + k);
+      }
+      if (best) {
+        WEEDS[s] = kind;
+        WEED_K[s] = tone;
+        RAISE[s] = best;
+        return best;
+      }
+    }
+  }
+  // A stone now and then, on any bed with room for it, the deep one too.
+  if (f.weed[c] & WEED_STONE && avail >= 2 && hash(cx, cy, 160) < WEED_STONES) {
+    const mx = Math.floor(hash(cx, cy, 161) * 7);
+    const my = Math.floor(hash(cx, cy, 162) * 7);
+    const long = hash(cx, cy, 163) < WEED_STONE_LONG;
+    if (lx >= mx && lx <= mx + 1 && ly >= my && ly <= my + (long ? 0 : 1)) {
+      WEEDS[s] = WEED_ROCK;
+      WEED_K[s] = 0.85 + 0.15 * hash(cx, cy, 164);
+      RAISE[s] = 1;
+      return 1;
+    }
+  }
+  return 0;
+}
 
 // Writes one tile of the chunk's fine land, cells [tx0, tx1) by [ty0, ty1) in island
 // coordinates, in columns of 1 / sub. ox, oz: the scene's offset of cell (0, 0).
@@ -630,7 +760,13 @@ export function buildFineTile(
     LAVA_Y = new Float32Array(SW * SH);
     HOUSE_D = new Float32Array(SW * SH);
     HOUSE_Y = new Float32Array(SW * SH);
+    WEEDS = new Uint8Array(SW * SH);
+    RAISE = new Uint8Array(SW * SH);
+    WEED_K = new Float32Array(SW * SH);
+    BEDC = new Uint32Array(SW * SH);
   }
+  // Weed in eighths only, with the water in eighths (its surface caps the stalks).
+  const weedOn = GRAPHICS.weed && sub === 8 && water !== null;
   const bottom = f.bottom * sub;
   // The tallest small step of a slope drawn in the ground's own colour: a quarter voxel, two whole
   // ones on snow and rock, whose slopes (STEEP_LINK) climb up to three voxels a cell and meet a
@@ -653,8 +789,10 @@ export function buildFineTile(
         RS[s] = RISER;
         SANDY[s] = 0;
         FLOOD[s] = -1;
+        WEEDS[s] = WEED_NONE;
         continue;
       }
+      WEEDS[s] = WEED_NONE;
       CELL[s] = c;
       RS[s] = f.steep[c] ? steepRiser : RISER;
       // The column's middle, in cells.
@@ -752,6 +890,8 @@ export function buildFineTile(
             bit = PEBBLES[Math.floor(hash(sx, sy, 26) * PEBBLES.length)];
             raise = 1;
           }
+        } else if (weedOn && f.weed[c] && isBed(f, c) && src === c && FLOOD[s] < 0 && !lifted) {
+          raise = weedAt(f, c, cx, cy, lx, ly, sx, sy, hgt, s);
         }
       }
       // With the water in eighths, a cell the simulation counts as under water is drawn under it,
@@ -818,9 +958,31 @@ export function buildFineTile(
       // steps, so its tops still merge and the deep floor fades into the dark.
       if (WET[s]) {
         const c = CELL[s];
+        const weed = WEEDS[s];
+        // Weed and stones take the bed's colour under them (darkened by the bed's depth, not by their
+        // own top's), mixed toward their own.
+        const bedTop = weed ? h0 - RAISE[s] : h0;
         if (FLOOD[s] < 0 && c >= 0 && f.wlake[c] > 0) {
-          const dark = lakeBedDark((f.water[c] - h0 * Q) / HEIGHT_V, f.wlake[c]);
+          const dark = lakeBedDark((f.water[c] - bedTop * Q) / HEIGHT_V, f.wlake[c]);
           if (dark > 0) C[s] = mixColor(C[s], scaleColor(f.wdeep[c], LAKE_BED_DEEP), dark);
+        }
+        if (weed) {
+          const bed = C[s];
+          BEDC[s] = bed;
+          const col =
+            weed === WEED_ROCK
+              ? scaleColor(mixColor(bed, f.stone[c], 0.5), WEED_K[s])
+              : scaleColor(mixColor(bed, WEED_TINT[WEED_LANDS[f.weedLand[c]] ?? "temperate"], WEED_MIX), WEED_K[s] * (weed === WEED_TOP ? 1.06 : 1));
+          // Kept within a band of the bed's own light: weed and stones read as lying on the bed, never
+          // as a hole or a lamp in it, and the deep bed stays dark (a grey stone there read as a light).
+          const lb = Math.max(1, luma(bed));
+          const k = luma(col) / lb;
+          C[s] =
+            k < WEED_LIGHT_LO
+              ? scaleColor(col, (WEED_LIGHT_LO * lb) / Math.max(1, luma(col)))
+              : k > WEED_LIGHT_HI
+                ? scaleColor(col, (WEED_LIGHT_HI * lb) / luma(col))
+                : col;
         }
         continue;
       }
@@ -1805,6 +1967,20 @@ function wallFaces(
     const bright = f.ground[c] === G.SAND || f.ground[c] === G.SNOW;
     FACES[n - 1].light = 1 - RISER_SIDE * (LAND[s] === 2 ? ROCK_CALM : 1) * (bright ? BRIGHT_CALM : 1) * (1 - light);
     FACES[n - 1].foot = 1;
+    return n;
+  }
+  // Weed and stones on a lake's bed (weed): one face in their own colour, lit as a dry riser so each
+  // stalk's cube shows; below the bed's top (a step of the bed beside it), one face of the bed's.
+  if (WEEDS[s] && low > bottom) {
+    const base = T - RAISE[s];
+    face(Math.max(low, base), T, C[s]);
+    FACES[n - 1].light = 1 - RISER_SIDE * (1 - light);
+    FACES[n - 1].foot = 1;
+    if (low < base) {
+      face(low, base, BEDC[s]);
+      FACES[n - 1].light = 1 - 0.25 * (1 - light);
+      FACES[n - 1].foot = 1;
+    }
     return n;
   }
   // The small steps of a water bed: its own colour and nearly its top's light, so the bed under the

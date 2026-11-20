@@ -112,6 +112,7 @@ import { heldChecks } from "./held-test";
 import { pacingChecks } from "./pacing-test";
 import { fogChecks } from "./fog-test";
 import { terrainLooksChecks } from "./terrain-looks-test";
+import { lakeWeedChecks } from "./lake-weed-test";
 import { landLagChecks } from "./land-lag-test";
 import { waterLightChecks } from "./water-light-test";
 import { lavaChecks } from "./lava-test";
@@ -2534,6 +2535,8 @@ terrainLooksChecks(check);
 landLagChecks(check);
 // Water and light (16 November): scripts/water-light-test.ts.
 waterLightChecks(check);
+// Weed and stones on lake beds (20 November): scripts/lake-weed-test.ts.
+lakeWeedChecks(check);
 // Lava's crust and cracks (18 November): scripts/lava-test.ts.
 lavaChecks(check);
 

@@ -5,6 +5,7 @@ import { FACE_LIGHT } from "./models";
 import { mixColor, scaleColor } from "../colors";
 import { GRAPHICS } from "./graphics";
 import { LOOKS, biomeAt } from "../land";
+import { BIOMES } from "../land-options";
 import { DAMP, R as RARE } from "../ecology";
 import { eyeKeepsChunk } from "./fog";
 import {
@@ -33,6 +34,10 @@ import {
   type FineTops,
   type LandRead,
   type WaterTile,
+  WEED_CAP_CHUNK,
+  WEED_GROWS,
+  WEED_STONE,
+  weedClumps,
 } from "./terrain-fine";
 
 // The island as voxel columns. Each cell is one column whose top sits at its
@@ -95,6 +100,13 @@ export class Terrain {
   // Each wet cell's surface as last drawn, and which cells are drawn wet (4.4).
   private fluidLevel: Float32Array;
   private wet: Uint8Array;
+  // When each cell last became wet (this.clock, ms): -Infinity for a cell wet at the first scan,
+  // NaN while dry. In memory only, never saved: weed grows only in water WEED_AGE_MS old, so a
+  // flood or a spell's water does not sprout it at once. The cells still too young, to look at
+  // again when they come of age.
+  private wetSince: Float64Array;
+  private young: number[] = [];
+  private youngAt = Infinity;
   private burstAt = -1e9;
   private lag = 0;
   private dirtyLand = new Set<number>();
@@ -123,6 +135,7 @@ export class Terrain {
     this.fluidSig = new Uint32Array(world.n).fill(0xffffffff);
     this.fluidLevel = new Float32Array(world.n).fill(-1e9);
     this.wet = new Uint8Array(world.n);
+    this.wetSince = new Float64Array(world.n).fill(NaN);
     if (world.land) {
       this.strata = LOOKS[world.land.biome].strata;
       this.water = LOOKS[world.land.biome].water;
@@ -268,6 +281,16 @@ export class Terrain {
       // Wet with a margin (4.4): a thin film at a river's edge used to flip
       // wet and dry every tick, and rebuild its chunks each time.
       const wet = f !== F.NONE && world.depth[i] > (this.wet[i] ? WET_OFF : WET_ON);
+      if (wet !== (this.wet[i] === 1) || this.landSig[i] === 0xffffffff) {
+        if (!wet) this.wetSince[i] = NaN;
+        else if (this.landSig[i] === 0xffffffff) this.wetSince[i] = -Infinity;
+        else {
+          const now = this.clock();
+          this.wetSince[i] = now;
+          this.young.push(i);
+          this.youngAt = Math.min(this.youngAt, now + WEED_AGE_MS);
+        }
+      }
       this.wet[i] = wet ? 1 : 0;
       // Bit 24: under fluid, where the land top takes no spell drawing (the fluid's top does).
       const land = (((columnTop(world, i) + 64) & 0xff) | (world.ground[i] << 8) | (world.cover[i] << 16) | (wet ? 1 << 24 : 0)) >>> 0;
@@ -291,6 +314,9 @@ export class Terrain {
         if ((land & 0xff) !== (this.landSig[i] & 0xff)) this.markAround(this.dirtyFluid, i % w, Math.floor(i / w));
         this.landSig[i] = land;
       }
+      // Water that froze or thawed (or turned to another fluid): what floats on it is placed again
+      // (lily pads stayed on a lake that froze: the land's signature does not change with it).
+      if (wet && fluid !== this.fluidSig[i] && this.fluidSig[i] !== 0 && this.fluidSig[i] !== 0xffffffff) this.coversChanged = true;
       if (fluid !== this.fluidSig[i] || moved) {
         // A new fluid (a spell's lava, a flood) is drawn at once; the same
         // fluid moving, or a film coming and going, in the slow queue.
@@ -316,8 +342,38 @@ export class Terrain {
       }
     }
     cells.length = 0;
+    if (this.young.length && this.clock() >= this.youngAt) this.comeOfAge();
   }
   private flowCells: number[] = [];
+
+  // Water old enough for weed (WEED_AGE_MS): its fine chunks are built again, in the slow queue
+  // (it does not matter to the second when weed appears).
+  private comeOfAge(): void {
+    const now = this.clock();
+    const { w } = this.world;
+    const marks = new Set<number>();
+    let next = Infinity;
+    let keep = 0;
+    for (const i of this.young) {
+      const since = this.wetSince[i];
+      if (!this.wet[i] || Number.isNaN(since) || since === -Infinity) continue;
+      if (now - since < WEED_AGE_MS) {
+        this.young[keep++] = i;
+        next = Math.min(next, since + WEED_AGE_MS);
+        continue;
+      }
+      // Weed reads the cells round it: a cell at a chunk's edge reaches the next chunk.
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          const x = (i % w) + dx;
+          const y = Math.floor(i / w) + dy;
+          if (x >= 0 && y >= 0 && x < w && y < this.world.h) this.markAround(marks, x, y);
+        }
+    }
+    this.young.length = keep;
+    this.youngAt = next;
+    for (const c of marks) this.staleFine(c, true);
+  }
 
   // A changed cell, for the fine land (17 November, the owner: "when a spell destroys land or starts
   // fires [the change] takes a bit to appear and we have visible chunks"). The fine mesher reads
@@ -925,6 +981,9 @@ export class Terrain {
     const f = into;
     sizeFineCells(f, x0, y0, x1, y1, w, h, BOTTOM);
     const [rx0, ry0, rx1, ry1] = region ?? [x0 - 3, y0 - 3, x1 + 3, y1 + 3];
+    const weedOn = GRAPHICS.weed && this.fineWaterOn;
+    const now = this.clock();
+    const keeps = new Map<number, number>();
     for (let y = Math.max(y0 - 3, ry0); y < Math.min(y1 + 3, ry1); y++) {
       for (let x = Math.max(x0 - 3, rx0); x < Math.min(x1 + 3, rx1); x++) {
         const k = fineAt(f, x, y);
@@ -980,10 +1039,62 @@ export class Terrain {
         f.wshallow[k] = this.waterAt(i)[0];
         f.wnarrow[k] = this.waterWet(i) ? this.waterNarrow(x, y) : 0;
         f.wlake[k] = this.waterWet(i) ? this.lakeAt(i) : 0;
+        const weed = weedOn ? this.weedCell(i, now) : 0;
+        f.weed[k] = weed;
+        f.weedLand[k] = weed ? this.weedLand(i) : 0;
+        f.weedKeep[k] = weed & WEED_GROWS ? this.weedKeep(x, y, keeps, now) : 0;
       }
     }
     this.readSoft(f, rx0, ry0, rx1, ry1);
     return f;
+  }
+
+  // Life under water (lake-weed, terrain-fine.ts weedAt): whether stones (WEED_STONE) and weed
+  // (WEED_GROWS too) may be on cell i's bed. Fresh water (a lake's, not the sea's), not frozen, round
+  // the cell too (its stalks stay under the lowest surface drawn over it, and no shore's sand
+  // reaches in); natural ground, not a field, a path or a road; water that has stood WEED_AGE_MS.
+  // Weed only on a shelf of WEED_DEPTH_MIN to WEED_DEPTH_MAX height units.
+  private weedCell(i: number, now: number): number {
+    const { world } = this;
+    const { w, h } = world;
+    if (!this.wet[i] || world.fluid[i] !== F.WATER || world.cover[i] !== C.NONE || this.lakeAt(i) <= 0) return 0;
+    const g = world.ground[i];
+    if (g === G.FIELD || g === G.PATH || g === G.ROAD || this.fineBuilt(i) !== null) return 0;
+    if (!(now - this.wetSince[i] >= WEED_AGE_MS)) return 0;
+    const x = i % w;
+    const y = (i - x) / w;
+    if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) return 0;
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        const n = i + dy * w + dx;
+        if (!this.wet[n] || world.fluid[n] !== F.WATER) return 0;
+      }
+    const d = world.depth[i];
+    return d >= WEED_DEPTH_MIN && d <= WEED_DEPTH_MAX ? WEED_STONE | WEED_GROWS : WEED_STONE;
+  }
+  private weedLand(i: number): number {
+    return BIOME_AT.get(biomeAt(this.world, i)) ?? 0;
+  }
+  // The rank under which the clumps of cell (x, y)'s chunk are kept: the lowest WEED_CAP_CHUNK of
+  // its cells' (weedClumps), so a chunk never has more, whatever part of it is built.
+  private weedKeep(x: number, y: number, keeps: Map<number, number>, now: number): number {
+    const c = Math.floor(y / CHUNK) * this.cols + Math.floor(x / CHUNK);
+    const known = keeps.get(c);
+    if (known !== undefined) return known;
+    const { x0, y0, x1, y1 } = this.bounds(c);
+    const ranks: number[] = [];
+    for (let cy = y0; cy < y1; cy++)
+      for (let cx = x0; cx < x1; cx++) {
+        const i = cy * this.world.w + cx;
+        if (this.weedCell(i, now) & WEED_GROWS) weedClumps(cx, cy, this.weedLand(i), ranks);
+      }
+    let keep = 1;
+    if (ranks.length > WEED_CAP_CHUNK) {
+      ranks.sort((a, b) => a - b);
+      keep = ranks[WEED_CAP_CHUNK];
+    }
+    keeps.set(c, keep);
+    return keep;
   }
 
   // A spell's ground in soft patches (16 November, the owner: Big Bang's ground was "a busy
@@ -1334,7 +1445,7 @@ export class Terrain {
   // The looks a fine mesh is drawn with: a chunk built with others is built again whole.
   private looksSig(): string {
     const g = GRAPHICS;
-    return [g.steps, g.blend, g.grain, g.foam, g.bits, g.relief, g.rocks, g.warmlight, g.water].map(Number).join("");
+    return [g.steps, g.blend, g.grain, g.foam, g.bits, g.relief, g.rocks, g.warmlight, g.water, g.weed].map(Number).join("");
   }
 
   // Chunk c's tiles, row by row: 2 cells a side in eighths (4 in quarters), the same work a tile.
@@ -2128,6 +2239,12 @@ const LAND_LOOK = 0x100ffff;
 const LEVEL_STEP = 0.15;
 // Depths at which a cell starts and stops being drawn wet.
 const WET_ON = 0.06;
+// How long water must have stood before weed grows in it (lake-weed), ms.
+export const WEED_AGE_MS = 600_000;
+// The depth of water (height units) weed grows in: the bed of the shelf, not the deep middle.
+const WEED_DEPTH_MIN = 0.5;
+const WEED_DEPTH_MAX = 3;
+const BIOME_AT = new Map(BIOMES.map((b, k) => [b, k]));
 const WET_OFF = 0.005;
 // The fine land (5.2.5): every chunk drawn in columns of 1 / FINE_SUB of a cell, nearest the
 // camera first (15 November: one size at every distance). The camera's height counts above
