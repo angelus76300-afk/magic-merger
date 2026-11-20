@@ -48,7 +48,7 @@ function build(world: World, clock = { t: 0 }, before?: (t: Terrain) => void): B
     (m) => meshes.push(m),
     (m) => meshes.splice(meshes.indexOf(m), 1),
   );
-  terrain.clock = () => clock.t;
+  terrain.wetClock = () => clock.t;
   terrain.scan();
   before?.(terrain);
   terrain.rebuild(true);
@@ -317,6 +317,8 @@ export function lakeWeedChecks(check: Check): void {
     const before = raised(world, b, off);
     const frozen = new Set<number>();
     for (const r of before) frozen.add(r.i);
+    // As the view does once it has placed the covers (lily pads among them).
+    b.terrain.coversChanged = false;
     for (const i of frozen) world.fluid[i] = F.ICE;
     withLevel("high", true, () => {
       b.terrain.scan();

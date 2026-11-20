@@ -285,7 +285,7 @@ export class Terrain {
         if (!wet) this.wetSince[i] = NaN;
         else if (this.landSig[i] === 0xffffffff) this.wetSince[i] = -Infinity;
         else {
-          const now = this.clock();
+          const now = this.wetClock();
           this.wetSince[i] = now;
           this.young.push(i);
           this.youngAt = Math.min(this.youngAt, now + WEED_AGE_MS);
@@ -342,14 +342,14 @@ export class Terrain {
       }
     }
     cells.length = 0;
-    if (this.young.length && this.clock() >= this.youngAt) this.comeOfAge();
+    if (this.young.length && this.wetClock() >= this.youngAt) this.comeOfAge();
   }
   private flowCells: number[] = [];
 
   // Water old enough for weed (WEED_AGE_MS): its fine chunks are built again, in the slow queue
   // (it does not matter to the second when weed appears).
   private comeOfAge(): void {
-    const now = this.clock();
+    const now = this.wetClock();
     const { w } = this.world;
     const marks = new Set<number>();
     let next = Infinity;
@@ -648,6 +648,9 @@ export class Terrain {
   fineReach = FINE_REACH;
   // The time, ms; the checks set their own, to count frames without the machine's speed.
   clock: () => number = () => performance.now();
+  // The time water's age is told by (wetSince, ms): its own, so reading it never spends the time of
+  // the checks' clock above.
+  wetClock: () => number = () => performance.now();
   // For the measures and the checks: the last group of changed chunks shown, and the frames from the
   // first change it drew to the frame it was shown in.
   readonly redraw = { groups: 0, frames: 0, chunks: 0, tiles: 0, order: [] as number[], firstAt: -1, frame: 0 };
@@ -982,7 +985,7 @@ export class Terrain {
     sizeFineCells(f, x0, y0, x1, y1, w, h, BOTTOM);
     const [rx0, ry0, rx1, ry1] = region ?? [x0 - 3, y0 - 3, x1 + 3, y1 + 3];
     const weedOn = GRAPHICS.weed && this.fineWaterOn;
-    const now = this.clock();
+    const now = this.wetClock();
     const keeps = new Map<number, number>();
     for (let y = Math.max(y0 - 3, ry0); y < Math.min(y1 + 3, ry1); y++) {
       for (let x = Math.max(x0 - 3, rx0); x < Math.min(x1 + 3, rx1); x++) {

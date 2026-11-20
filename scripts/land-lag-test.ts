@@ -209,8 +209,8 @@ function build(world: World, clock?: () => number, like?: Terrain): Terrain {
   if (clock) terrain.clock = clock;
   terrain.scan();
   if (like) {
-    const now = like.clock();
-    terrain.clock = () => now;
+    const now = like.wetClock();
+    terrain.wetClock = () => now;
     (terrain as unknown as { wetSince: Float64Array }).wetSince.set((like as unknown as { wetSince: Float64Array }).wetSince);
   }
   terrain.rebuild(true);
