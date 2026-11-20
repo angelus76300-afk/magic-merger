@@ -57,18 +57,21 @@ function build(world: World, clock = { t: 0 }, before?: (t: Terrain) => void): B
   return { terrain, meshes, land, fluid };
 }
 
+// A hash of the shown meshes, whatever their order (a chunk built again is added last).
 function hashOf(b: Built, which: "land" | "water"): string {
-  const h = createHash("sha256");
+  const each: string[] = [];
   for (const m of b.meshes) {
     if (!m.visible) continue;
     if ((m.material === b.fluid) !== (which === "water")) continue;
+    const h = createHash("sha256");
     for (const a of ["position", "color", "waterFine", "wave"]) {
       const at = m.geometry.getAttribute(a);
       if (at) h.update(Buffer.from((at.array as ArrayLike<number> & { buffer: ArrayBuffer }).buffer));
     }
     if (m.geometry.index) h.update(Buffer.from((m.geometry.index.array as Uint32Array).buffer));
+    each.push(h.digest("hex"));
   }
-  return h.digest("hex").slice(0, 12);
+  return createHash("sha256").update(each.sort().join("")).digest("hex").slice(0, 12);
 }
 
 function landTriangles(b: Built): number {
@@ -206,7 +209,7 @@ export function lakeWeedChecks(check: Check): void {
     for (const r of rs) if (r.ratio < WEED_LIGHT_LO - 0.02 || r.ratio > WEED_LIGHT_HI + 0.02) band++;
     check(
       `lake weed (${name}): weed and stones grow on its lakes' beds`,
-      weed.length > 100 && cells.size > 30,
+      weed.length > 50 && cells.size > 30,
       `${rs.length} columns raised, ${weed.length} of them weed two eighths tall or more, in ${cells.size} cells`,
     );
     check(
@@ -332,6 +335,49 @@ export function lakeWeedChecks(check: Check): void {
       `${before.length} columns before, ${after.length} on the ice after`,
     );
     check("lily pads are placed again when the water under them freezes", b.terrain.coversChanged, `coversChanged ${b.terrain.coversChanged}`);
+  }
+
+  // A chunk at the cap, its lake frozen in part and drawn again in part (the box round the
+  // change), is drawn as the same island built whole: which clumps a chunk keeps never depends on
+  // what part of it was built (the review of 20 November: a rank over the cells eligible now kept
+  // other clumps in the tiles left as they were).
+  {
+    const make = () => generateWorld(152, 152, 9, readLand({ biome: "swamp", shape: "lakes" }));
+    const world = make();
+    const b = withLevel("high", true, () => build(world));
+    const t = b.terrain;
+    let best = -1;
+    let most = 0;
+    let cells: number[] = [];
+    for (let c = 0; c < t.cols * t.rows; c++) {
+      const f = withLevel("high", true, () => t.readFine(c));
+      let n = 0;
+      const grows: number[] = [];
+      for (let y = f.y0; y < f.y1; y++)
+        for (let x = f.x0; x < f.x1; x++) {
+          const k = fineAt(f, x, y);
+          if (!(f.weed[k] & WEED_GROWS)) continue;
+          n += weedClumps(x, y, f.weedLand[k]);
+          grows.push(y * world.w + x);
+        }
+      if (n > most) {
+        most = n;
+        best = c;
+        cells = grows;
+      }
+    }
+    for (const i of cells.slice(0, 12)) world.fluid[i] = F.ICE;
+    withLevel("high", true, () => {
+      t.scan();
+      t.rebuild();
+      t.updateFine(0, true);
+    });
+    const whole = withLevel("high", true, () => build(world));
+    check(
+      "lake weed: a chunk at the cap drawn again in part after its lake freezes in part is the island drawn whole",
+      most > WEED_CAP_CHUNK && hashOf(b, "land") === hashOf(whole, "land"),
+      `chunk ${best}, ${most} clumps in its weed's cells; drawn in part ${hashOf(b, "land")}, whole ${hashOf(whole, "land")}`,
+    );
   }
 
   // Cost: on medium islands of seeds 7 to 18, the weed's triangles against the land shown.

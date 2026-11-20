@@ -287,8 +287,11 @@ export class Terrain {
         else {
           const now = this.wetClock();
           this.wetSince[i] = now;
-          this.young.push(i);
-          this.youngAt = Math.min(this.youngAt, now + WEED_AGE_MS);
+          // Only a lake's water grows weed: no rebuild ten minutes on for lava, the sea or a river.
+          if (f === F.WATER && this.lakeAt(i) > 0) {
+            this.young.push(i);
+            this.youngAt = Math.min(this.youngAt, now + WEED_AGE_MS);
+          }
         }
       }
       this.wet[i] = wet ? 1 : 0;
@@ -986,7 +989,6 @@ export class Terrain {
     const [rx0, ry0, rx1, ry1] = region ?? [x0 - 3, y0 - 3, x1 + 3, y1 + 3];
     const weedOn = GRAPHICS.weed && this.fineWaterOn;
     const now = this.wetClock();
-    const keeps = new Map<number, number>();
     for (let y = Math.max(y0 - 3, ry0); y < Math.min(y1 + 3, ry1); y++) {
       for (let x = Math.max(x0 - 3, rx0); x < Math.min(x1 + 3, rx1); x++) {
         const k = fineAt(f, x, y);
@@ -1045,7 +1047,7 @@ export class Terrain {
         const weed = weedOn ? this.weedCell(i, now) : 0;
         f.weed[k] = weed;
         f.weedLand[k] = weed ? this.weedLand(i) : 0;
-        f.weedKeep[k] = weed & WEED_GROWS ? this.weedKeep(x, y, keeps, now) : 0;
+        f.weedKeep[k] = weed & WEED_GROWS ? this.weedKeep(x, y) : 0;
       }
     }
     this.readSoft(f, rx0, ry0, rx1, ry1);
@@ -1079,24 +1081,24 @@ export class Terrain {
     return BIOME_AT.get(biomeAt(this.world, i)) ?? 0;
   }
   // The rank under which the clumps of cell (x, y)'s chunk are kept: the lowest WEED_CAP_CHUNK of
-  // its cells' (weedClumps), so a chunk never has more, whatever part of it is built.
-  private weedKeep(x: number, y: number, keeps: Map<number, number>, now: number): number {
+  // the clumps every cell of the chunk would have (weedClumps), whatever its water, its age or the
+  // ice round it, so a chunk never has more and the set it keeps never changes: a chunk built again
+  // in part keeps the same clumps as one built whole (review, 20 November).
+  private weedKeeps: Float32Array | null = null;
+  private weedKeep(x: number, y: number): number {
     const c = Math.floor(y / CHUNK) * this.cols + Math.floor(x / CHUNK);
-    const known = keeps.get(c);
-    if (known !== undefined) return known;
+    if (!this.weedKeeps) this.weedKeeps = new Float32Array(this.chunks.length).fill(NaN);
+    const known = this.weedKeeps[c];
+    if (!Number.isNaN(known)) return known;
     const { x0, y0, x1, y1 } = this.bounds(c);
     const ranks: number[] = [];
-    for (let cy = y0; cy < y1; cy++)
-      for (let cx = x0; cx < x1; cx++) {
-        const i = cy * this.world.w + cx;
-        if (this.weedCell(i, now) & WEED_GROWS) weedClumps(cx, cy, this.weedLand(i), ranks);
-      }
+    for (let cy = y0; cy < y1; cy++) for (let cx = x0; cx < x1; cx++) weedClumps(cx, cy, this.weedLand(cy * this.world.w + cx), ranks);
     let keep = 1;
     if (ranks.length > WEED_CAP_CHUNK) {
       ranks.sort((a, b) => a - b);
       keep = ranks[WEED_CAP_CHUNK];
     }
-    keeps.set(c, keep);
+    this.weedKeeps[c] = keep;
     return keep;
   }
 
