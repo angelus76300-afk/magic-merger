@@ -21,7 +21,7 @@ const SPOTS = [
   ["meadow-swamp", "warmth=0.4&water=0.6&seed=2", 114, 114],
 ];
 const ZOOMS = [
-  ["close", 18, 0.95],
+  ["close", 30, 0.95],
   ["out", 110, 0.95],
 ];
 mkdirSync(OUT, { recursive: true });
