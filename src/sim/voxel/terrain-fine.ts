@@ -47,6 +47,9 @@ export interface FineCells {
   lava: Uint8Array; // 1 where that is lava (no foam)
   ice: Uint8Array; // 1 where that is water frozen to ice, drawn with the water in eighths (iceTone)
   color: Uint32Array; // the top's colour
+  // A natural ground's tone in its region (Terrain.toneAt), NO_TONE (0x1000000) for any other: where two
+  // cells of one ground have two tones, their border wanders as two grounds' does.
+  tone: Uint32Array;
   edge: Uint32Array; // the first voxel of a wall
   soil: Uint32Array;
   stone: Uint32Array;
@@ -104,6 +107,7 @@ export function makeFineCells(): FineCells {
     lava: new Uint8Array(0),
     ice: new Uint8Array(0),
     color: new Uint32Array(0),
+    tone: new Uint32Array(0),
     edge: new Uint32Array(0),
     soil: new Uint32Array(0),
     stone: new Uint32Array(0),
@@ -150,6 +154,7 @@ export function sizeFineCells(f: FineCells, x0: number, y0: number, x1: number, 
     f.lava = new Uint8Array(n);
     f.ice = new Uint8Array(n);
     f.color = new Uint32Array(n);
+    f.tone = new Uint32Array(n);
     f.edge = new Uint32Array(n);
     f.soil = new Uint32Array(n);
     f.stone = new Uint32Array(n);
@@ -291,7 +296,7 @@ const ROCK_TONE = [1, 0.86, 0.94];
 
 // The ground's tint by its height in voxels (relief): low ground a touch warmer and darker, high
 // ground lighter and cooler, in six bands so tops still merge.
-function tint(color: number, height: number): number {
+export function tint(color: number, height: number): number {
   const t = Math.round(Math.max(0, Math.min(1, (height - 2) / 12)) * 5) / 5;
   const k = 0.93 + 0.12 * t;
   const warm = (0.5 - t) * 0.07;
@@ -304,6 +309,13 @@ function tint(color: number, height: number): number {
 function shadeAt(px: number, py: number): number {
   const n = noise(px, py, SHADE_PERIOD, 31);
   return SHADES[n < 0.36 ? 0 : n < 0.64 ? 1 : 2];
+}
+
+// The tone patches' shade at (px, py) in cells as the fine land draws a natural ground (grain), half
+// of it on bare rock: for the land in whole cells, so from afar it reads as the fine land does.
+export function grainShade(px: number, py: number, rock: boolean): number {
+  const k = shadeAt(px, py);
+  return rock ? 1 + (k - 1) * ROCK_CALM : k;
 }
 
 // The secondary terrain map (steps): the land drawn from the island's own continuous heights
@@ -845,13 +857,16 @@ export function buildFineTile(
             !f.wet[n] &&
             f.blends[c] &&
             f.blends[n] &&
-            f.ground[n] !== f.ground[c] &&
+            (f.ground[n] !== f.ground[c] || f.tone[n] !== f.tone[c]) &&
             Math.abs(dt) <= 1 &&
             !(f.softOn[c] && f.softOn[n])
           ) {
             // Two grounds that meet: their border wanders up to almost half a cell either way,
-            // the same line seen from both sides.
-            const shift = Math.max(-0.45, Math.min(0.45, (noise(px, py, 0.6, 13) - 0.5) * 1.6)) * (f.ground[c] > f.ground[n] ? 1 : -1);
+            // the same line seen from both sides. One ground in two tones too (21 November, the
+            // owner: "still some squares that do not meld together"), the mesa's sand beside the
+            // desert's, a swamp's grass beside a meadow's.
+            const over = f.ground[c] !== f.ground[n] ? f.ground[c] > f.ground[n] : f.tone[c] > f.tone[n];
+            const shift = Math.max(-0.45, Math.min(0.45, (noise(px, py, 0.6, 13) - 0.5) * 1.6)) * (over ? 1 : -1);
             if (af < shift && af - shift < border) {
               border = af - shift;
               src = n;

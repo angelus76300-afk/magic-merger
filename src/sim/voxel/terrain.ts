@@ -31,6 +31,8 @@ import {
   takeWaterTile,
   sizeFineCells,
   type FineCells,
+  grainShade,
+  tint,
   type FineTops,
   type LandRead,
   type WaterTile,
@@ -1010,6 +1012,7 @@ export class Terrain {
         f.ice[k] = ice ? 1 : 0;
         const surface = this.fineTopColor(i);
         f.color[k] = surface;
+        f.tone[k] = this.toneAt(i);
         const built = this.fineBuilt(i);
         // A trodden path is ground too: its border with the grass wanders (a road keeps its kerb).
         f.natural[k] = built === null || g === G.PATH ? 1 : 0;
@@ -1888,7 +1891,19 @@ export class Terrain {
         if (top > highest) highest = top;
         const X = x + ox;
         const Z = y + oz;
-        let surface = this.topColor(i);
+        // With the fine land on, the colour it is drawn in, tinted by height as it is (relief), not
+        // a colour picked cell by cell (21 November, the owner: "I don't like things looking
+        // different when zooming out": the land not built finely yet was a checkerboard of cells).
+        let surface = GRAPHICS.fine ? this.fineTopColor(i) : this.topColor(i);
+        if (GRAPHICS.fine && this.naturalAt(i)) {
+          // Its tone patches, a cell at a time, and its tint by height (relief), as the fine land's.
+          if (GRAPHICS.grain) surface = scaleColor(surface, grainShade(x + 0.5, y + 0.5, world.ground[i] === G.ROCK));
+          if (GRAPHICS.relief && !this.wet[i]) {
+            surface = tint(surface, top);
+            // The mean light of the fine land's small steps and hollows, which whole cells have not.
+            if (GRAPHICS.steps) surface = scaleColor(surface, world.ground[i] === G.SAND || world.ground[i] === G.SNOW ? FAR_STEPS_BRIGHT : FAR_STEPS);
+          }
+        }
         const decal = this.wet[i] ? 0 : 1;
         // A lake's bed darkens with depth, as in the fine land (lakeBedDark).
         if (this.waterWet(i)) {
@@ -2093,7 +2108,18 @@ export class Terrain {
     const { world } = this;
     const g = world.ground[i];
     if (this.fineBuilt(i) !== null && g !== G.PATH) return this.topColor(i);
-    const colors = this.colorsAt(i, g, world.materials.get("ground", g));
+    const tone = this.toneAt(i);
+    const mean = tone !== NO_TONE ? tone : this.meanOf(this.colorsAt(i, g, world.materials.get("ground", g)));
+    if (GRAPHICS.relief) return scaleColor(mean, 0.96);
+    // Without relief, higher land a touch lighter as topColor has it, in steps of 4%.
+    return scaleColor(mean, Math.round((0.92 + Math.min(0.16, Math.max(0, world.height[i] - 8) * 0.006)) * 25) / 25);
+  }
+
+  // The mean of a ground's colours, kept by its table (a biome's palette, the salt's, a material's).
+  private means = new Map<readonly number[], number>();
+  private meanOf(colors: readonly number[]): number {
+    const known = this.means.get(colors);
+    if (known !== undefined) return known;
     let r = 0;
     let gr = 0;
     let b = 0;
@@ -2104,9 +2130,62 @@ export class Terrain {
     }
     const n = colors.length;
     const mean = (Math.round(r / n) << 16) | (Math.round(gr / n) << 8) | Math.round(b / n);
-    if (GRAPHICS.relief) return scaleColor(mean, 0.96);
-    // Without relief, higher land a touch lighter as topColor has it, in steps of 4%.
-    return scaleColor(mean, Math.round((0.92 + Math.min(0.16, Math.max(0, world.height[i] - 8) * 0.006)) * 25) / 25);
+    this.means.set(colors, mean);
+    return mean;
+  }
+
+  // The tone of a natural ground (grass, sand, dirt, rock, snow, ash) in its cell's region, before
+  // any neighbour is looked at: its colours' mean. NO_TONE for any other ground (a path, a field, a
+  // road, crystal, basalt, a spell's ground), which keeps its colour as it was.
+  private rawTone(i: number): number {
+    const g = this.world.ground[i];
+    if (g !== G.GRASS && g !== G.SAND && g !== G.DIRT && g !== G.ROCK && g !== G.SNOW && g !== G.ASH) return NO_TONE;
+    return this.meanOf(this.colorsAt(i, g, this.world.materials.get("ground", g)));
+  }
+
+  // The tone a natural ground is drawn in (21 November, the owner: "still some squares that do not
+  // meld together"). Regions' borders are grainy (land.ts regions), so a single cell of pale desert
+  // sand stood in the mesa's orange sand, or a cell of swamp grass in a meadow, as a square of its
+  // own. A cell whose neighbours of its own ground (two at least) all have another tone takes the
+  // one most of them have; the rest of a border between two tones wanders in eighths in the fine
+  // land (terrain-fine.ts, the same line as two grounds'). Drawing only: the cell's region is kept.
+  // Public for the checks (scripts/ground-blend-test.ts).
+  toneAt(i: number): number {
+    const own = this.rawTone(i);
+    if (own === NO_TONE) return own;
+    const { world } = this;
+    const { w, h } = world;
+    const g = world.ground[i];
+    const x = i % w;
+    const y = (i - x) / w;
+    let same = 0;
+    let best = NO_TONE;
+    let bestN = 0;
+    const seen = TONE_SEEN;
+    const counts = TONE_COUNT;
+    let kinds = 0;
+    for (let d = 0; d < 4; d++) {
+      const nx = x + DX[d];
+      const ny = y + DY[d];
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+      const n = ny * w + nx;
+      if (world.ground[n] !== g) continue;
+      const t = this.rawTone(n);
+      if (t === own) return own;
+      same++;
+      let k = 0;
+      while (k < kinds && seen[k] !== t) k++;
+      if (k === kinds) {
+        seen[kinds] = t;
+        counts[kinds++] = 0;
+      }
+      const c = ++counts[k];
+      if (c > bestN || (c === bestN && t < best)) {
+        best = t;
+        bestN = c;
+      }
+    }
+    return same >= 2 ? best : own;
   }
 
   // A built-in ground's colors in this cell's region on a mixed island
@@ -2236,6 +2315,18 @@ const NORTH = 3;
 const TOP = 4;
 const DX = [1, 0, -1, 0];
 const DY = [0, 1, 0, -1];
+// How much lighter whole cells of natural ground are than the fine land drawn over them, on the
+// mean, with steps and relief on (the fine land's small steps and hollows in shade): measured on two
+// mixed islands (scripts/ground-blend-test.ts), the median cell of grass 0.954, dirt 0.946, sand
+// 0.978 (its steps keep half their shade, BRIGHT_CALM). Whole cells take it, so the land keeps its
+// colour as the camera pulls back.
+const FAR_STEPS = 0.955;
+const FAR_STEPS_BRIGHT = 0.978;
+// No tone (Terrain.rawTone): above every colour, so a tone of a ground always sorts before it.
+export const NO_TONE = 0x1000000;
+// Scratch for Terrain.toneAt: the other tones round a cell and how many of each.
+const TONE_SEEN = new Int32Array(4);
+const TONE_COUNT = new Int32Array(4);
 const WALL_LIGHT = [FACE_LIGHT.east, FACE_LIGHT.south, FACE_LIGHT.west, FACE_LIGHT.north];
 // Height, ground and the wet bit of a column's land signature: what its faces look like.
 const LAND_LOOK = 0x100ffff;
