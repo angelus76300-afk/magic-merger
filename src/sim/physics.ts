@@ -462,9 +462,9 @@ function stepTemperature(world: World, dt: number): void {
     if (g === G.SNOW && t > 2 && rng.next() < dt * 0.3) {
       world.ground[i] = G.GRASS;
       world.place(i, "water", 0.12);
-    } else if ((g === G.GRASS || g === G.DIRT || g === G.FIELD) && t < -6 && world.depth[i] === 0 && rng.next() < dt * 0.4 && freezes(world, i, t, was)) {
-      // 21 November (nature.ts): above generation's snow line or in a spell's sudden cold, not
-      // just because the air up there is cold; high grass under the line had turned to pale squares.
+    } else if ((g === G.GRASS || g === G.DIRT || g === G.FIELD) && t < -6 && world.depth[i] === 0 && rng.next() < dt * 0.4 && freezes(world, t, was)) {
+      // 21 November (nature.ts): only in a spell's sudden cold, not just because the air up
+      // there is cold; high grass had turned to pale squares.
       world.ground[i] = G.SNOW;
     }
     if (t > 280 && world.fire[i] === 0 && !warded(world, i, WARD.fire)) {
@@ -582,7 +582,7 @@ function floraGrowth(world: World, i: number, j: number, g: number): void {
       if (niche(world, i) === cj) world.setCover(i, cj);
     } else if (r < NATURE.SPROUT) {
       const s = niche(world, i);
-      if (s !== C.NONE && (!sparse(world, i) || rng.next() < NATURE.SPARSE)) world.setCover(i, s);
+      if (s !== C.NONE && (s !== C.FLOWER || !sparse(world, i) || rng.next() < NATURE.SPARSE)) world.setCover(i, s);
     }
   } else if (c === C.STUMP) {
     if (r < 0.01) world.setCover(i, C.TREE);

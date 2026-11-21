@@ -15,25 +15,27 @@
 // overgrown save holds, a reed whose water went. Trees seed only where the forest around
 // is thinner than generation made it there, and thin out slowly where it is far thicker.
 // Bare ground greens back only where generation laid grass, in the wet lands, slowly.
-// Grass freezes to snow above the snow line generation used, or in a sudden cold (a spell's),
-// never just because the air up there is cold.
+// Grass freezes to snow only in a sudden cold (a spell's), never just because the air up there
+// is cold: generation laid the snow where it belongs, and laid grass where it meant grass (a
+// grove it made for the deer on a cold plateau froze within two minutes).
 //
 // Every number of it is here.
 import { C, F, G } from "./materials";
 import { fbm, valueNoise } from "./noise";
 import { cellHash, isFresh } from "./cellhash";
-import { bareByNature, biomeAt, snowLine, treeChance } from "./genrules";
+import { bareByNature, biomeAt, treeChance } from "./genrules";
 import type { World } from "./world";
 
 export const NATURE = {
   // Per sample (each cell is sampled about 7 times a minute): undergrowth creeping from a
   // neighbour of its kind, springing up on its own, and wilting outside its niche.
   SPREAD: 0.03,
-  SPROUT: 0.003,
+  SPROUT: 0.01,
   WILT: 0.002,
   // The scattered bushes of the open (generation rolled 2.5% and lost some under what came after).
-  BUSHES: 0.018,
-  // Of the sprouts in the dry and cold lands (desert, mesa, tundra), the share that happen.
+  BUSHES: 0.022,
+  // Of the flower sprouts in the dry and cold lands (desert, mesa, tundra), the share that happen
+  // (what animals graze, bushes and berries, grows back at the usual pace).
   SPARSE: 0.1,
   // Bare dirt greening beside grass where generation laid grass (it was 0.5, everywhere).
   GREEN: 0.02,
@@ -249,10 +251,9 @@ export function greensBack(world: World, i: number): boolean {
   return (b === "temperate" || b === "swamp" || b === "jungle") && !bareByMaking(world, i);
 }
 
-// Does grass (or dirt, or a field) at temperature t (under -6) freeze to snow? Above generation's
-// snow line, or in a sudden cold, well under its usual temperature. An island with no land of its
-// own (a challenge, a lab) keeps the old rule: under -6 is enough.
-export function freezes(world: World, i: number, t: number, usual: number): boolean {
-  if (!world.land) return true;
-  return t < usual - NATURE.SNOW_DROP || world.height[i] > snowLine(world, i);
+// Does grass (or dirt, or a field) at temperature t (under -6) freeze to snow? Only in a sudden
+// cold, well under its usual temperature. An island with no land of its own (a challenge, a lab)
+// keeps the old rule: under -6 is enough.
+export function freezes(world: World, t: number, usual: number): boolean {
+  return !world.land || t < usual - NATURE.SNOW_DROP;
 }
