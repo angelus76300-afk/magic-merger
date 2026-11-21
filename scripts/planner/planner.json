@@ -1,23 +1,24 @@
 {
-  "mode": "One lead session builds (the experiment, since 11 November)",
+  "mode": "One lead session builds; looks revamp in progress (14 November)",
   "usage": {
     "fiveHour": "ok",
     "weekly": "warning",
     "weeklyResets": "Tuesday 17 November, 5 PM Toronto"
   },
   "working": [
-    "High water, the second trouble: second round of fixes after its playtest",
-    "The island as a map: names, roads that read, lights, carts",
-    "Spells smart, varied, answering each other: measuring the live library"
+    "The land drawn from the generator's own curves, in little cubes (and taller mountains, separately)",
+    "Village houses and trees in small cubes: in review",
+    "A fix so the flood check no longer depends on test order: in review",
+    "The land in small cubes, first version: waits for that fix"
   ],
   "next": [
-    "Ship high water, then the island as a map",
-    "The spells' three numbers and twenty filmed pairs, then a proposal",
-    "Wonders review (approved, $3 to $6)",
-    "A drought, reworked",
-    "A cheaper way of working for next week"
+    "Merge the land, then houses and trees; owner checks frame rate on the Fold",
+    "Rewrite of the 143 wrong spells with the smarter writer (November budget)",
+    "Target scene: one cottage, tree and shore to match the reference picture",
+    "Looks pilot ($1 to $2), after the owner's \"looks: yes, up to $25\"",
+    "A fresh lead session to cut the cost of each wake-up"
   ],
-  "parked": [],
+  "parked": ["Nightly rebuild of 20 items (paused: budget goes to the spell rewrite)"],
   "roadmap": [
     {
       "v": "1",
@@ -30,18 +31,18 @@
     {
       "v": "2",
       "name": "One game instead of two (the island needs you)",
-      "state": "Wildfire live; high water in its second round",
-      "done": 1,
+      "state": "Wildfire and high water live",
+      "done": 2,
       "total": 3,
-      "eta": "this week"
+      "eta": "12 November"
     },
     {
       "v": "3",
       "name": "Become anything",
-      "state": "Live, with the eye view and the ground art",
+      "state": "Live; second pass and trees fix live",
       "done": 1,
       "total": 1,
-      "eta": "12 November"
+      "eta": "13 November"
     },
     {
       "v": "4",
@@ -54,35 +55,51 @@
     {
       "v": "5",
       "name": "Towns you can read from the sky",
-      "state": "Being built as \"The island as a map\"",
-      "done": 0,
+      "state": "Live as the island as a map",
+      "done": 1,
       "total": 1,
-      "eta": "this week"
+      "eta": "12 November"
     },
     {
       "v": "6",
       "name": "It runs beautifully on the Fold",
-      "state": "In passing: weather fronts live",
-      "done": 0,
-      "total": 1,
+      "state": "Light, shadows, blur, glow, quality levels live; 59 fps on high",
+      "done": 1,
+      "total": 2,
       "eta": ""
+    },
+    {
+      "v": "7",
+      "name": "Spells smart, varied, answering each other",
+      "state": "Reactions and smarter writer live; rewrite of 143 next",
+      "done": 2,
+      "total": 3,
+      "eta": "this week"
+    },
+    {
+      "v": "8",
+      "name": "Looks revamp: finer voxel art",
+      "state": "Light live; shapes live; land, houses, trees in review",
+      "done": 2,
+      "total": 5,
+      "eta": "next week"
     }
   ],
   "updates": [
     {
-      "name": "Updates live (lead session)",
-      "done": 5,
-      "total": 5
+      "name": "Updates live (lead session, 12 to 14 November)",
+      "done": 15,
+      "total": 15
     },
     {
       "name": "Pull requests merged that needed a later fix",
-      "done": 1,
-      "total": 14
+      "done": 2,
+      "total": 25
     },
     {
       "name": "Reviewer sessions started",
-      "done": 10,
-      "total": 10
+      "done": 24,
+      "total": 24
     }
   ]
 }
