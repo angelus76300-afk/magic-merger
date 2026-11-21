@@ -65,6 +65,8 @@ function bounds(m: LocalMesh): { lo: number[]; hi: number[] } {
 }
 
 const SPREAD = 0.1;
+// How far the fine land falls across a cell on a steep slope, in cells (the review of 21 November).
+const SLOPE = 0.5;
 
 // The levels of the faces looking up, in cubes above the land (model y 0), and the share of the
 // model's footprint its highest level covers. A plain box: one level, all of it. The old spell
@@ -105,6 +107,32 @@ function spellCoverInCubesOld(): LocalMesh {
   const m = v.mesh(true);
   for (const a of [m.lit, m.glow]) for (let k = 1; k < a.pos.length; k += 3) a.pos[k] -= 2 * CUBE;
   return m;
+}
+
+// How far a model hangs over land that falls `drop` cells across its cell (x or z from 0 to 1,
+// either way): at each place of its faces' corners, its lowest point less the land there, the
+// worst of the four ways. Over 0: some of it floats on that slope (the review of 21 November:
+// footings on a foot of two hung up to four cubes over the fine land of a slope).
+// Its feet: the corners on its lowest level (every column of these models starts there), and the
+// corners of any face looking down (a cube with nothing under it, hanging if the land is lower).
+export function hangOnSlope(m: LocalMesh, drop: number): number {
+  let foot = Infinity;
+  for (const a of [m.lit, m.glow]) for (let k = 1; k < a.pos.length; k += 3) foot = Math.min(foot, a.pos[k]);
+  const feet: [number, number, number][] = [];
+  for (const a of [m.lit, m.glow])
+    for (let t = 0; t < a.pos.length; t += 9) {
+      const p = a.pos;
+      const ny = (p[t + 5] - p[t + 2]) * (p[t + 6] - p[t]) - (p[t + 3] - p[t]) * (p[t + 8] - p[t + 2]);
+      const flat = Math.abs(p[t + 1] - p[t + 4]) < 1e-6 && Math.abs(p[t + 1] - p[t + 7]) < 1e-6;
+      for (let k = 0; k < 3; k++) {
+        const c = t + k * 3;
+        if (Math.abs(p[c + 1] - foot) < 1e-6 || (flat && ny < 0)) feet.push([p[c], p[c + 1], p[c + 2]]);
+      }
+    }
+  let worst = -Infinity;
+  for (const land of [(x: number) => -drop * x, (x: number) => -drop * (1 - x)])
+    for (const [x, y, z] of feet) worst = Math.max(worst, y - land(x), y - land(z));
+  return worst;
 }
 
 // The same of a box model (the low preset): its boxes' top heights.
@@ -224,6 +252,17 @@ export function leftoversChecks(check: Check): void {
   }
   console.log("  no plain cubes:", shown.join("; "));
   check(`no cover with no look drawn as a plain cube in cubes (${fallbacks.length} shapes)`, flat.length === 0, flat.join(" | "));
+  // Seated on a slope: the fine land falls up to half a cell across a cell (four cubes); none of
+  // them hangs over it, whichever way it falls. On 783932e the footings hung up to 0.25 here.
+  const hangs = new Map<string, number>();
+  for (const [, key] of fallbacks) {
+    const m = coverInCubes(key);
+    if (!m) continue;
+    const look = key.split(":")[1];
+    hangs.set(look, Math.max(hangs.get(look) ?? -Infinity, hangOnSlope(m, SLOPE)));
+  }
+  console.log("  on a slope of half a cell, the worst hang:", [...hangs].map(([k, h]) => `${k} ${h.toFixed(3)}`).join(", "));
+  for (const [look, h] of hangs) check(`${look}: seated on a slope of ${SLOPE} cells, nothing over the land (worst ${h.toFixed(3)})`, h <= 1e-6);
   // A row of cells: more than one shape, so a row of them is not regular.
   const row = new Set(Array.from({ length: 8 }, (_, k) => fallbackCoverKey(false, [0xc8c8cc], Math.imul(k + 1, 0x9e3779b1) >>> 0)));
   check("a row of eight rubble cells: more than two shapes", row.size > 2, `${row.size}`);

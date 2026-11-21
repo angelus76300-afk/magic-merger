@@ -1,0 +1,112 @@
+{
+  "quality": "high",
+  "slope": 2.664361000061035,
+  "spot": {
+    "X": 16,
+    "Y": 48
+  },
+  "field": [
+    {
+      "key": "sp:rubble:c8c8cc.b9b9be#1",
+      "cells": 8,
+      "levels": 4,
+      "highest": 0.05,
+      "top": 0.5,
+      "foot": -0.88
+    },
+    {
+      "key": "sp:gravel:d0ccc4#1",
+      "cells": 4,
+      "levels": 3,
+      "highest": 0.29,
+      "top": 0.375,
+      "foot": -0.88
+    },
+    {
+      "key": "sp:gravel:d0ccc4#0",
+      "cells": 6,
+      "levels": 4,
+      "highest": 0.07,
+      "top": 0.5,
+      "foot": -0.88
+    },
+    {
+      "key": "sp:rubble:c8c8cc.b9b9be#0",
+      "cells": 3,
+      "levels": 3,
+      "highest": 0.1,
+      "top": 0.375,
+      "foot": -0.88
+    },
+    {
+      "key": "sp:rubble:c8c8cc.b9b9be#2",
+      "cells": 3,
+      "levels": 4,
+      "highest": 0.04,
+      "top": 0.5,
+      "foot": -0.88
+    },
+    {
+      "key": "sp:gravel:d0ccc4#2",
+      "cells": 6,
+      "levels": 4,
+      "highest": 0.06,
+      "top": 0.5,
+      "foot": -0.88
+    },
+    {
+      "key": "sp:rubble:c8c8cc.b9b9be#3",
+      "cells": 2,
+      "levels": 3,
+      "highest": 0.05,
+      "top": 0.375,
+      "foot": -0.88
+    }
+  ],
+  "site": [
+    {
+      "key": "sp:footing:e0dcd0.d0ccc0#1",
+      "cells": 5,
+      "levels": 4,
+      "highest": 0.18,
+      "top": 0.5,
+      "foot": -0.75
+    },
+    {
+      "key": "sp:footing:e0dcd0.d0ccc0#0",
+      "cells": 8,
+      "levels": 4,
+      "highest": 0.13,
+      "top": 0.5,
+      "foot": -0.75
+    },
+    {
+      "key": "sp:footing:e0dcd0.d0ccc0#2",
+      "cells": 3,
+      "levels": 4,
+      "highest": 0.22,
+      "top": 0.5,
+      "foot": -0.75
+    }
+  ],
+  "hangs": {
+    "sp:footing": {
+      "drawn": 16,
+      "hanging": 0,
+      "worst": -0.375,
+      "cellWorst": -0.375
+    },
+    "sp:rubble": {
+      "drawn": 16,
+      "hanging": 0,
+      "worst": -0.5,
+      "cellWorst": -0.625
+    },
+    "sp:gravel": {
+      "drawn": 16,
+      "hanging": 0,
+      "worst": -0.5,
+      "cellWorst": -0.375
+    }
+  }
+}

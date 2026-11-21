@@ -413,8 +413,32 @@ function spellCover(look: SpellLook, tones: number[], shape: number, seed: numbe
     shadeBy(v, tones, seed, S);
     return { v, sink: S };
   }
-  if (look === "footing") return { v: footing(seed, shape, tones), sink: FOOT };
-  return { v: look === "rubble" ? rubble(rng, seed, shape, tones) : gravel(rng, seed, shape, tones), sink: SINK.rock };
+  if (look === "footing") return { v: deepen(footing(seed, shape, tones), ROOT), sink: FOOT + ROOT };
+  return { v: deepen(look === "rubble" ? rubble(rng, seed, shape, tones) : gravel(rng, seed, shape, tones), ROOT), sink: SINK.rock + ROOT };
+}
+
+// How much deeper than its sink a heap, a spill or a footing goes under the land, in cubes. The
+// land is drawn finer than its cells: on a slope it falls up to half a cell (four cubes) under the
+// cell's own top within the cell, and a footing filling its cell edge to edge on a foot of two
+// hung over it (the review of 21 November: 12 of 48 up to four cubes over the land on a slope of
+// 6). Each column of cubes goes on down instead, as a seated rock's foot: unseen on flat ground.
+export const ROOT = 4;
+
+// The model `by` cubes deeper, each column of cubes solid from the new foot up to its top: a gap
+// in a column filled in the colour of the cube above it, the column carried on down from its lowest
+// cube in that cube's colour. Nothing is left with empty space under it to hang over the land.
+function deepen(v: Vox, by: number): Vox {
+  const out = new Vox(v.nx - v.pad * 2, v.nz + by, v.pad);
+  for (let y = -v.pad; y < v.ny - v.pad; y++)
+    for (let x = -v.pad; x < v.nx - v.pad; x++) {
+      let c = -1;
+      for (let z = v.nz - 1; z >= 0; z--) {
+        if (v.has(x, y, z)) c = v.get(x, y, z);
+        if (c >= 0) out.set(x, y, z + by, c);
+      }
+      if (c >= 0) for (let d = 0; d < by; d++) out.set(x, y, d, c);
+    }
+  return out;
 }
 
 // A heap of rubble: a low broken mound off the cell's middle, a taller chunk leaning in it and a few
