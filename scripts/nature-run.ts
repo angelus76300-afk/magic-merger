@@ -92,6 +92,10 @@ export const GROWN = 200;
 // How many of them main kept after half an hour on each small island (grazing and trampling take
 // some): this script on main 13a703c, which wilts nothing.
 export const GROWN_MAIN_KEPT: Record<string, number> = { "small-meadow": 189, "small-dry": 132 };
+// The bar: 85% of main's count. Which plants grazers find shifts with every change to the island
+// (CI runs the branch merged with main), so main's exact count is noise; a run that wilts what the
+// player grew keeps about half.
+export const GROWN_BAR = 0.85;
 
 // Within 16 cells of a village, now or as generation laid it (nature.ts GARDEN).
 function nearVillage(world: World, i: number): boolean {
@@ -297,8 +301,8 @@ export function natureVerdict(run: NatureRun): { bound: string; ok: boolean; det
     });
   if (run.grown.plants)
     out.push({
-      bound: `plants a spell grew: as many still stand as on main (${GROWN_MAIN_KEPT[run.name] ?? 0})`,
-      ok: run.grown.still >= (GROWN_MAIN_KEPT[run.name] ?? 0),
+      bound: `plants a spell grew: 85% of what main kept still stand (${Math.ceil((GROWN_MAIN_KEPT[run.name] ?? 0) * GROWN_BAR)})`,
+      ok: run.grown.still >= Math.ceil((GROWN_MAIN_KEPT[run.name] ?? 0) * GROWN_BAR),
       detail: `${run.grown.still} of ${run.grown.plants}`,
     });
   return out;

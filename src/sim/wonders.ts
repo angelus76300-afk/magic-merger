@@ -10,6 +10,7 @@ import { sendTo } from "./goals";
 import { SPECIES, habitatCells } from "./wildlife";
 import { calmDown } from "./flight";
 import { islandName, wonderName } from "./names";
+import { niche } from "./nature";
 
 // Wonders (4.4.5 part B): a catalog of natural wonders, each with a rarity,
 // a place it needs, a shape it gives the land, and something it does (the
@@ -1203,7 +1204,15 @@ export function stepWonders(world: World, spawn: Spawn, life: WonderLife): void 
         disc(world, p.x, p.y, 2.5, (i) => {
           world.fire[i] = 0;
           if (world.ground[i] === G.ASH || (world.ground[i] === G.DIRT && world.cover[i] === C.NONE && Math.random() < 0.3)) world.ground[i] = G.GRASS;
-          else if (world.ground[i] === G.GRASS && world.cover[i] === C.NONE && dryAt(world, i) && Math.random() < 0.01) world.setCover(i, C.FLOWER);
+          // Flowers where the land would grow them (nature.ts: no trail of them across the island).
+          else if (
+            world.ground[i] === G.GRASS &&
+            world.cover[i] === C.NONE &&
+            dryAt(world, i) &&
+            Math.random() < 0.01 &&
+            (!world.flora || niche(world, i) === C.FLOWER)
+          )
+            world.setCover(i, C.FLOWER);
         });
         break;
       }
