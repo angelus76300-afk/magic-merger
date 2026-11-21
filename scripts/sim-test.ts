@@ -65,6 +65,7 @@ import {
 import { FORMS } from "../shared/forms";
 import { pickExamples, words } from "../worker/programs";
 import { readingChecks } from "./reading-test";
+import { groundBlendChecks } from "./ground-blend-test";
 import { verdict, type LinkedPull } from "../worker/feedback";
 import { DROP_MAX, DROP_TILE, dropAt, dropShare, dropSize, rainWidth } from "../src/sim/voxel/drops";
 import { cronJobs } from "../worker/cron";
@@ -2534,6 +2535,8 @@ fogChecks(check);
 // The land's looks (5.2.5): scripts/terrain-looks-test.ts.
 terrainLooksChecks(check);
 landLagChecks(check);
+// Ground tones that blend, near and from afar (21 November): scripts/ground-blend-test.ts.
+groundBlendChecks(check);
 // Water and light (16 November): scripts/water-light-test.ts.
 waterLightChecks(check);
 // Weed and stones on lake beds (20 November): scripts/lake-weed-test.ts.
