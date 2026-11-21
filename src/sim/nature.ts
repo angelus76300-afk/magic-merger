@@ -37,7 +37,7 @@ export const NATURE = {
   SPREAD: 0.03,
   SPROUT: 0.01,
   // A plant eaten or picked grows back from its roots on its own cell (World.eaten).
-  REGROW: 0.08,
+  REGROW: 0.03,
   WILT: 0.002,
   // The scattered bushes and flowers of the open (land.ts covers: generation rolled 2.5% bushes and
   // lost some under what came after, and 1% flowers).
@@ -46,7 +46,7 @@ export const NATURE = {
   // A plant wilts where its kind stands thicker in the 5 by 5 round it than OVER times
   // generation's share and SLACK plants more.
   OVER: 1.5,
-  SLACK: 2,
+  SLACK: 3,
   // Undergrowth springs up only while the 5 by 5 round it holds under UNDER times generation's
   // share of its kind: every box filled to its share would end thicker than generation made the
   // land as a whole (its boxes scatter round that share), as for the trees (SEED_BELOW).
