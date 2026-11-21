@@ -366,6 +366,9 @@ const ANCHOR_OUT = 0.44;
 // as a wall, the field kept within STEEP_SPAN of the cell's height (a step of three meets at its
 // middle, a voxel and a half from either side). Taller steps stay cliffs, their lip bevelled.
 export const STEEP_LINK = 8;
+// How far a dirt road's edge wanders into the grass or out of it, in cells (21 November): a few
+// eighths either way, so a road one cell wide keeps most of its width and has no straight kerb.
+export const ROAD_WANDER = 0.22;
 const STEEP_SPAN = 4;
 // A water bed follows the beds round it up to BED_LINK voxels, and rises toward dry land up to
 // BED_SHORE above it, so the shallows climb to the shore in small cubes instead of per cell steps.
@@ -866,7 +869,9 @@ export function buildFineTile(
             // owner: "still some squares that do not meld together"), the mesa's sand beside the
             // desert's, a swamp's grass beside a meadow's.
             const over = f.ground[c] !== f.ground[n] ? f.ground[c] > f.ground[n] : f.tone[c] > f.tone[n];
-            const shift = Math.max(-0.45, Math.min(0.45, (noise(px, py, 0.6, 13) - 0.5) * 1.6)) * (over ? 1 : -1);
+            // A road's edge wanders less (ROAD_WANDER): softened, never so far it pinches the road.
+            const reach = f.ground[c] === G.ROAD || f.ground[n] === G.ROAD ? ROAD_WANDER : 0.45;
+            const shift = Math.max(-reach, Math.min(reach, (noise(px, py, 0.6, 13) - 0.5) * 1.6 * (reach / 0.45))) * (over ? 1 : -1);
             if (af < shift && af - shift < border) {
               border = af - shift;
               src = n;

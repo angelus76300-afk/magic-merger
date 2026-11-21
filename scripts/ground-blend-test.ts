@@ -102,7 +102,7 @@ function build(world: World, cx: number, cy: number, coded: boolean, quarters = 
 
 // The colour (r, g, b, 0 to 1) of the highest top of `meshes` over points of the island, `res` a
 // cell, at each point's middle, for the cells x0 <= x < x1, y0 <= y < y1; NaN where none.
-function topColours(world: World, meshes: Mesh[], res: number, x0: number, y0: number, x1: number, y1: number): { rgb: Float32Array; w: number } {
+export function topColours(world: World, meshes: Mesh[], res: number, x0: number, y0: number, x1: number, y1: number): { rgb: Float32Array; w: number } {
   const W = (x1 - x0) * res;
   const H = (y1 - y0) * res;
   const top = new Float32Array(W * H).fill(-Infinity);

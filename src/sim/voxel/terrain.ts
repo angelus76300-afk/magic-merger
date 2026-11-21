@@ -425,10 +425,12 @@ export class Terrain {
     set.add(cy * this.cols + cx);
     const lx = x % CHUNK;
     const ly = y % CHUNK;
-    if (lx === 0 && cx > 0) set.add(cy * this.cols + cx - 1);
-    if (lx === CHUNK - 1 && cx < this.cols - 1) set.add(cy * this.cols + cx + 1);
-    if (ly === 0 && cy > 0) set.add((cy - 1) * this.cols + cx);
-    if (ly === CHUNK - 1 && cy < this.rows - 1) set.add((cy + 1) * this.cols + cx);
+    // Two cells deep: a cell's tone (toneAt) reads its neighbours, so a change one cell from a seam
+    // changes the tone of the seam's cell, which the next chunk reads (review of #200).
+    if (lx <= 1 && cx > 0) set.add(cy * this.cols + cx - 1);
+    if (lx >= CHUNK - 2 && cx < this.cols - 1) set.add(cy * this.cols + cx + 1);
+    if (ly <= 1 && cy > 0) set.add((cy - 1) * this.cols + cx);
+    if (ly >= CHUNK - 2 && cy < this.rows - 1) set.add((cy + 1) * this.cols + cx);
   }
 
   // Rebuilds dirty chunks for up to a few milliseconds per frame (at least
@@ -719,7 +721,8 @@ export class Terrain {
   // next to water (the water's edge stays where the water is drawn).
   private anchoredAt(i: number): boolean {
     const { world } = this;
-    if (world.cover[i] !== C.NONE || world.ground[i] === G.PATH || this.fineBuilt(i) !== null || this.wet[i]) return true;
+    // A road is not held at its cell's height: it follows the slope as the ground round it does.
+    if (world.cover[i] !== C.NONE || world.ground[i] === G.PATH || (this.fineBuilt(i) !== null && world.ground[i] !== G.ROAD) || this.wet[i]) return true;
     const x = i % world.w;
     const y = (i - x) / world.w;
     return (
@@ -772,8 +775,7 @@ export class Terrain {
       const a = ay * world.w + ax;
       const b = by * world.w + bx;
       if (this.wet[a] || this.wet[b] || world.cover[a] === C.HOUSE || world.cover[b] === C.HOUSE) return false;
-      const ground = (i: number) => this.fineBuilt(i) === null || world.ground[i] === G.PATH;
-      return ground(a) && ground(b) && joins(columnTop(world, b) - columnTop(world, a), this.steepAt(a), this.steepAt(b));
+      return this.naturalAt(a) && this.naturalAt(b) && joins(columnTop(world, b) - columnTop(world, a), this.steepAt(a), this.steepAt(b));
     },
     steep: (x, y) => {
       const { world } = this;
@@ -806,9 +808,11 @@ export class Terrain {
     const biome = biomeAt(world, i);
     return biome !== "mesa" && biome !== "desert";
   }
-  // Natural ground, as the fine land draws it (a path counts).
+  // Natural ground, as the fine land draws it: a path and a dirt road count (21 November, the owner:
+  // "Roads look too blocky"; a road drawn as built stood in whole-cell columns with a step at every
+  // cell). A spell's laid ground (a paving, a floor) keeps its kerb.
   private naturalAt(i: number): boolean {
-    return this.fineBuilt(i) === null || this.world.ground[i] === G.PATH;
+    return this.fineBuilt(i) === null || wayGround(this.world.ground[i]);
   }
 
   // The height of the land as drawn under (x, y) in cells, in scene units: the secondary terrain
@@ -823,7 +827,7 @@ export class Terrain {
     if (!GRAPHICS.fine || !GRAPHICS.steps || !this.fine.length || this.wet[i]) return base;
     const c = Math.floor(cy / CHUNK) * this.cols + Math.floor(cx / CHUNK);
     if (!this.fineShown[c] || !this.fine[c]) return base;
-    if (this.fineBuilt(i) !== null && world.ground[i] !== G.PATH) return base;
+    if (!this.naturalAt(i)) return base;
     const sub = this.fineLevel[c];
     // The middle of the column drawn there.
     const px = (Math.floor(Math.min(cx + 0.999, Math.max(cx, x)) * sub) + 0.5) / sub;
@@ -1014,8 +1018,9 @@ export class Terrain {
         f.color[k] = surface;
         f.tone[k] = this.toneAt(i);
         const built = this.fineBuilt(i);
-        // A trodden path is ground too: its border with the grass wanders (a road keeps its kerb).
-        f.natural[k] = built === null || g === G.PATH ? 1 : 0;
+        // A trodden path and a dirt road are ground too: they follow the slopes, their border with
+        // the grass wanders (a spell's laid ground keeps its kerb).
+        f.natural[k] = built === null || wayGround(g) ? 1 : 0;
         f.edge[k] = built ?? this.sideTopColor(i, surface);
         const strata = this.strataAt(i);
         f.soil[k] = lifted(this.soilColor(i));
@@ -1031,6 +1036,7 @@ export class Terrain {
           g === G.SNOW ||
           g === G.ASH ||
           g === G.PATH ||
+          g === G.ROAD ||
           g === G.CRYSTAL ||
           (g >= BUILTIN.ground.length && built === null)
             ? 1
@@ -2107,7 +2113,7 @@ export class Terrain {
   private fineTopColor(i: number): number {
     const { world } = this;
     const g = world.ground[i];
-    if (this.fineBuilt(i) !== null && g !== G.PATH) return this.topColor(i);
+    if (this.fineBuilt(i) !== null && !wayGround(g)) return this.topColor(i);
     const tone = this.toneAt(i);
     const mean = tone !== NO_TONE ? tone : this.meanOf(this.colorsAt(i, g, world.materials.get("ground", g)));
     if (GRAPHICS.relief) return scaleColor(mean, 0.96);
@@ -2409,6 +2415,11 @@ const BUILT_PART =
 const BUILT_WORD =
   /\b(road|path|street|tiles?|slabs?|blocks?|deck|bridge|tower|rampart|fort|castle|keep|plaza|courtyard|court|stairs?|steps|pillar|column|platform|foundation|plinth|altar|dais|boards?|terrace)\b/;
 const builtNames = new Map<string, boolean>();
+/** A path or a dirt road: built by feet and carts, drawn as ground (it follows the slopes). */
+export function wayGround(g: number): boolean {
+  return g === G.PATH || g === G.ROAD;
+}
+
 export function builtGround(name: string): boolean {
   let built = builtNames.get(name);
   if (built === undefined) {
