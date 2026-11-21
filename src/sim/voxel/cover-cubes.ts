@@ -324,10 +324,16 @@ function embers(seed: number, shape: number): Vox {
 // and blocks, their voxels as big plain grey cubes, the only things on the island not in small
 // textured cubes). A cover a spell registers is drawn by its name as one of the island's own looks,
 // in its own colours: "mossy stone" as a boulder, "silverroot" as a thicket, "dry leaf" as leaf
-// litter; a name that says none of them as a block (solid) or a slab, in cubes. Drawing only: the
-// cover's rules, its name and its colours stay what the spell said.
+// litter; a name that says none of them as a low heap of rubble (solid) or a spill of stones, in
+// cubes. Drawing only: the cover's rules, its name and its colours stay what the spell said.
+//
+// Never a plain cube (21 November, the owner on a temperate grassland: "what are those big grey
+// blocks?"): the look for a name that says nothing was a box 0.75 cells wide with a flat top, and a
+// cover with no model at all (a job building or a site not drawn whole) a white box. Each is now
+// rubble, a spill of stones or a broken footing in its material's tones, lower than half a cell,
+// of several heights, in a few shapes by the cell's hash, so a row of them is not a row of blocks.
 
-export type SpellLook = "rock" | "crystal" | "litter" | "plant" | "block" | "slab";
+export type SpellLook = "rock" | "crystal" | "litter" | "plant" | "rubble" | "gravel" | "footing";
 // The first that matches wins: "crystal moss" is a crystal, "dry leaf" litter, not a bush.
 const LOOK_WORDS: [SpellLook, RegExp][] = [
   ["crystal", /crystal|gem|shard|quartz|amethyst|prism|diamond|glass|ice|frost|pearl|geode/],
@@ -338,24 +344,42 @@ const LOOK_WORDS: [SpellLook, RegExp][] = [
     /root|bush|shrub|thorn|bramble|briar|vine|ivy|reed|grass|fern|weed|herb|bloom|blossom|flower|wheat|crop|mushroom|fung|sprout|lotus|lily|thicket|hedge/,
   ],
 ];
-export const SPELL_SHAPES: Record<SpellLook, number> = { rock: 4, crystal: 3, litter: 3, plant: 2, block: 2, slab: 2 };
+export const SPELL_SHAPES: Record<SpellLook, number> = { rock: 4, crystal: 3, litter: 3, plant: 2, rubble: 4, gravel: 3, footing: 3 };
 
 export function spellLook(name: string, solid: boolean): SpellLook {
   const n = name.toLowerCase();
   for (const [look, words] of LOOK_WORDS) if (words.test(n)) return look;
-  return solid ? "block" : "slab";
+  return solid ? "rubble" : "gravel";
 }
+
+const hexOf = (colors: readonly number[]) =>
+  colors
+    .slice(0, 6)
+    .map((c) => c.toString(16).padStart(6, "0"))
+    .join(".");
 
 // The model's key for a spell's cover in a cell: "sp:rock:8c8a80.7a7669#2", its look, its colours
 // and a shape picked by the cell's hash.
 export function spellCoverKey(name: string, solid: boolean, colors: readonly number[], hash: number): string {
   const look = spellLook(name, solid);
-  const hex = colors
-    .slice(0, 6)
-    .map((c) => c.toString(16).padStart(6, "0"))
-    .join(".");
-  return `sp:${look}:${hex}#${(hash >>> 7) % SPELL_SHAPES[look]}`;
+  return `sp:${look}:${hexOf(colors)}#${(hash >>> 7) % SPELL_SHAPES[look]}`;
 }
+
+// The model's key for a cover of the island with no model of its own (view.ts coverKey): a
+// building or a site not drawn whole as a broken footing, anything else as rubble, in its colours.
+export function fallbackCoverKey(building: boolean, colors: readonly number[], hash: number): string {
+  const look: SpellLook = building ? "footing" : "rubble";
+  return `sp:${look}:${hexOf(colors)}#${(hash >>> 7) % SPELL_SHAPES[look]}`;
+}
+
+// Without the small cubes (the low preset): the box models of models.ts for the same looks, tinted
+// per instance: "heap2", "spill0", "footing1".
+export const BOX_FALLBACKS = { rubble: ["heap", 4], gravel: ["spill", 2], footing: ["footing", 2] } as const;
+export function fallbackBoxKey(look: keyof typeof BOX_FALLBACKS, hash: number): string {
+  const [name, n] = BOX_FALLBACKS[look];
+  return `${name}${(hash >>> 7) % n}`;
+}
+export const isFallbackBox = (key: string): boolean => /^(heap|spill|footing)\d$/.test(key);
 
 const lum = (c: number) => 0.299 * ((c >> 16) & 255) + 0.587 * ((c >> 8) & 255) + 0.114 * (c & 255);
 
@@ -389,22 +413,67 @@ function spellCover(look: SpellLook, tones: number[], shape: number, seed: numbe
     shadeBy(v, tones, seed, S);
     return { v, sink: S };
   }
-  // A block (solid) or a slab, as the old box (0.8 cells wide, 0.8 or 0.3 tall), its top corners
-  // worn off and its top a little ragged, in the material's tones.
-  const v = new Vox(8, 10, 0);
-  const S = 2;
-  const H = S + (look === "block" ? 6 : 2);
-  v.box(1, 1, 0, 7, 7, H, tones[1]);
-  for (const [x, y] of [
-    [1, 1],
-    [6, 1],
-    [1, 6],
-    [6, 6],
-  ])
-    v.clear(x, y, H - 1);
-  for (let y = 1; y < 7; y++) for (let x = 1; x < 7; x++) if (h3(x, y, shape, seed ^ 0x77) < 0.12) v.clear(x, y, H - 1);
-  shadeBy(v, tones, seed, S);
-  return { v, sink: S };
+  if (look === "footing") return { v: footing(seed, shape, tones), sink: FOOT };
+  return { v: look === "rubble" ? rubble(rng, seed, shape, tones) : gravel(rng, seed, shape, tones), sink: SINK.rock };
+}
+
+// A heap of rubble: a low broken mound off the cell's middle, a taller chunk leaning in it and a few
+// loose stones round it. Its top is three to five cubes up, never flat: the lumps' rims are ragged.
+function rubble(rng: Rng, seed: number, shape: number, tones: number[]): Vox {
+  const v = new Vox(8, 10, 2);
+  const cx = 4 + rng.range(-1.2, 1.2);
+  const cy = 4 + rng.range(-1.2, 1.2);
+  const parts: [number, number, number, number, number][] = [
+    [cx, cy, rng.range(2.2, 3), rng.range(1.8, 2.6), [2.2, 2.6, 1.8, 2.4][shape]],
+    [cx + rng.range(-1.6, 1.6), cy + rng.range(-1.6, 1.6), rng.range(1.1, 1.6), rng.range(1, 1.4), rng.range(3.2, 4.2)],
+  ];
+  const loose = 2 + (shape % 3);
+  for (let k = 0; k < loose; k++) {
+    const a = rng.next() * Math.PI * 2;
+    const d = rng.range(2.6, 3.6);
+    parts.push([cx + Math.cos(a) * d, cy + Math.sin(a) * d, rng.range(0.8, 1.3), rng.range(0.7, 1.1), rng.range(0.6, 1.4)]);
+  }
+  lumps(v, seed, parts);
+  shadeBy(v, tones, seed, SINK.rock);
+  return v;
+}
+
+// A spill of stones: one of two or three cubes high and four to seven small ones over the cell.
+function gravel(rng: Rng, seed: number, shape: number, tones: number[]): Vox {
+  const v = new Vox(8, 8, 1);
+  const parts: [number, number, number, number, number][] = [
+    [rng.range(2.5, 5.5), rng.range(2.5, 5.5), rng.range(1.6, 2), rng.range(1.3, 1.7), rng.range(3, 3.6)],
+  ];
+  const n = 4 + shape + Math.floor(rng.next() * 2);
+  for (let k = 0; k < n; k++) parts.push([rng.range(0.8, 7.2), rng.range(0.8, 7.2), rng.range(0.7, 1.3), rng.range(0.6, 1.1), rng.range(0.5, 1.8)]);
+  lumps(v, seed, parts);
+  shadeBy(v, tones, seed, SINK.rock);
+  return v;
+}
+
+// A broken footing: a flagged floor at the land, a low wall round the cell's edge in runs of two
+// cubes, each run its own height (one to four cubes) or gone, and a fallen stone inside.
+const FOOT = 2;
+function footing(seed: number, shape: number, tones: number[]): Vox {
+  const v = new Vox(8, 8, 0);
+  for (let y = 1; y < 7; y++) for (let x = 1; x < 7; x++) if (h3(x, y, shape, seed ^ 0x19) > 0.25) for (let z = 0; z <= FOOT; z++) v.set(x, y, z, tones[1]);
+  const ring: [number, number][] = [];
+  for (let x = 0; x < 8; x++) ring.push([x, 0]);
+  for (let y = 1; y < 8; y++) ring.push([7, y]);
+  for (let x = 6; x >= 0; x--) ring.push([x, 7]);
+  for (let y = 6; y > 0; y--) ring.push([0, y]);
+  ring.forEach(([x, y], k) => {
+    const n = h3(k >> 1, shape, 3, seed);
+    if (n < 0.22) return;
+    const h = 1 + Math.min(3, Math.floor(((n - 0.22) / 0.78) * 4));
+    for (let z = 0; z < FOOT + h; z++) v.set(x, y, z, tones[2]);
+  });
+  const fx = 2 + Math.floor(h3(shape, 1, 1, seed) * 3);
+  const fy = 2 + Math.floor(h3(shape, 2, 1, seed) * 3);
+  v.set(fx, fy, FOOT + 1, tones[2]);
+  v.set(fx + 1, fy, FOOT + 1, tones[1]);
+  shadeBy(v, tones, seed, FOOT);
+  return v;
 }
 
 function spellCoverInCubes(name: string, shape: number): LocalMesh {
@@ -413,7 +482,7 @@ function spellCoverInCubes(name: string, shape: number): LocalMesh {
     .split(".")
     .map((h) => parseInt(h, 16))
     .filter((c) => Number.isFinite(c));
-  const kind = (look in SPELL_SHAPES ? look : "slab") as SpellLook;
+  const kind = (look in SPELL_SHAPES ? look : "gravel") as SpellLook;
   let seed = 0x5bd1 + shape * 7919;
   for (let k = 0; k < name.length; k++) seed = Math.imul(seed ^ name.charCodeAt(k), 0x01000193) >>> 0;
   const { v, sink } = spellCover(kind, spellTones(colors), shape % SPELL_SHAPES[kind], seed);
