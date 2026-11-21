@@ -1,0 +1,22 @@
+[
+  {
+    "name": "desert-mesa",
+    "zoom": "close",
+    "file": "docs/visual-checks/ground-blend/desert-mesa-close-before.png"
+  },
+  {
+    "name": "desert-mesa",
+    "zoom": "out",
+    "file": "docs/visual-checks/ground-blend/desert-mesa-out-before.png"
+  },
+  {
+    "name": "meadow-swamp",
+    "zoom": "close",
+    "file": "docs/visual-checks/ground-blend/meadow-swamp-close-before.png"
+  },
+  {
+    "name": "meadow-swamp",
+    "zoom": "out",
+    "file": "docs/visual-checks/ground-blend/meadow-swamp-out-before.png"
+  }
+]
