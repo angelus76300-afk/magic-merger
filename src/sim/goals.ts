@@ -1,6 +1,7 @@
-import { C, F, G } from "./materials";
+import { C, F, G, isBuilding as isBuildingCover } from "./materials";
 import { SITE, STAGE_WORDS, canStake, handsOn, kindName, siteToWork, standBy, sitesOf, sitesOn, stageOf, stake, work as workSite, type Site } from "./sites";
-import { MIN_PEOPLE, alongRoad, claim, isWay, nextPave, noteTrip, pave, planned, type PaveJob } from "./roads";
+import { MIN_PEOPLE, alongRoad, claim, isWay, nextPave, noteTrip, pave, planned, unnoteTrip, type PaveJob } from "./roads";
+import { tolerance } from "./cold";
 import type { Wonder } from "./wonders";
 import { hasJob, housesOf, settlementNear, tavernFor, tierOf } from "./buildings";
 import { VK } from "./voxels";
@@ -1007,7 +1008,10 @@ function goToMarket(world: World, c: Creature, m: Mind, v: Village): boolean {
   if (world.time < v.market) return false;
   v.market = world.time + 70 + Math.random() * 40;
   let dest: { x: number; y: number; name: string; to: Village | Wonder } | null = null;
-  const wonders = world.wonders.filter((w) => Math.hypot(w.x - v.x, w.y - v.y) < 70 && Math.hypot(w.x - v.x, w.y - v.y) > 16);
+  // Not to a place colder than it can bear (cold.ts): it would only turn back.
+  const tol = tolerance(world, c, life.kindOf(c));
+  const warm = (x: number, y: number) => world.temp[world.idx(Math.max(0, Math.min(world.w - 1, x)), Math.max(0, Math.min(world.h - 1, y)))] >= tol;
+  const wonders = world.wonders.filter((w) => Math.hypot(w.x - v.x, w.y - v.y) < 70 && Math.hypot(w.x - v.x, w.y - v.y) > 16 && warm(w.x, w.y));
   if (wonders.length && Math.random() < 0.3) {
     const w = wonders[Math.floor(Math.random() * wonders.length)];
     // To its edge, not into it.
@@ -1017,7 +1021,7 @@ function goToMarket(world: World, c: Creature, m: Mind, v: Village): boolean {
   } else {
     // Nearer villages more often.
     let total = 0;
-    const near = world.villages.filter((o) => o !== v && o.people >= MIN_PEOPLE && Math.hypot(o.x - v.x, o.y - v.y) < 110);
+    const near = world.villages.filter((o) => o !== v && o.people >= MIN_PEOPLE && Math.hypot(o.x - v.x, o.y - v.y) < 110 && warm(o.x, o.y));
     for (const o of near) total += 1 / Math.max(20, Math.hypot(o.x - v.x, o.y - v.y));
     let pick = Math.random() * total;
     for (const o of near) {
@@ -1030,6 +1034,7 @@ function goToMarket(world: World, c: Creature, m: Mind, v: Village): boolean {
   }
   if (!dest) return false;
   c.data.trip = { from: v, to: dest.to };
+  c.data.tripRetreats = undefined;
   // Counted as it sets out: a river or a cliff that turns it back is why
   // the two lay a road, with a bridge (roads.ts).
   noteTrip(world, v, dest.to);
@@ -1151,13 +1156,34 @@ function priest(world: World, c: Creature, m: Mind, v: Village): void {
   worship(world, c, m);
 }
 
+// A merchant turned back by the cold TRIP_GIVE_UP times (creatures.ts) goes home: the trip is
+// not counted toward a road (roads.ts), and the food it carried goes back to its village.
+export function abandonTrip(world: World, c: Creature): void {
+  const trip = c.data.trip as { from: Village; to: Village | Wonder } | undefined;
+  if (!trip) return;
+  unnoteTrip(world, trip.from, trip.to);
+  c.data.trip = undefined;
+  c.data.via = undefined;
+  c.data.tripRetreats = undefined;
+  const m = mindOf(c);
+  if (m.carry === "food") {
+    trip.from.food += 2;
+    m.carry = null;
+  }
+  setTask(m, "roam", c.homeX, c.homeY, 1);
+  m.action = "going home out of the cold";
+}
+
 function trade(world: World, c: Creature, m: Mind, v: Village): void {
   let poor: Village | null = null;
-  for (const o of world.villages) if (o !== v && o.food + 4 < v.food && (!poor || o.food < poor.food)) poor = o;
+  const tol = tolerance(world, c, life.kindOf(c));
+  const warm = (o: Village) => world.temp[world.idx(Math.max(0, Math.min(world.w - 1, o.x)), Math.max(0, Math.min(world.h - 1, o.y)))] >= tol;
+  for (const o of world.villages) if (o !== v && o.food + 4 < v.food && (!poor || o.food < poor.food) && warm(o)) poor = o;
   if (poor) {
     v.food -= 2;
     m.carry = "food";
     c.data.trip = { from: v, to: poor };
+    c.data.tripRetreats = undefined;
     noteTrip(world, v, poor);
     setTask(m, "trade", poor.x, poor.y, 1);
     m.action = "taking food to a poorer village";
@@ -1257,7 +1283,12 @@ function wander(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
     const i = world.idx(x, y);
     // Open ground it can stand on (4.3: a point in the middle of a wood had
     // it pacing along the trees until it gave up).
-    if (k.aquatic ? world.fluid[i] !== F.WATER || world.depth[i] < 0.8 : !k.flying && (world.depth[i] > 0.3 || !standable(world, i))) continue;
+    if (
+      k.aquatic
+        ? world.fluid[i] !== F.WATER || world.depth[i] < 0.8
+        : !k.flying && (world.depth[i] > 0.3 || !standable(world, i) || world.temp[i] < tolerance(world, c, k))
+    )
+      continue;
     setTask(m, "roam", x, y, 0.8);
     return true;
   }
@@ -1849,6 +1880,7 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       const there = villageOf(world, c.x, c.y);
       const trip = c.data.trip as { from: Village; to: Village | Wonder } | undefined;
       c.data.trip = undefined;
+      c.data.tripRetreats = undefined;
       c.data.via = undefined;
       const food = m.carry === "food";
       m.carry = null;
@@ -2016,10 +2048,10 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
     }
     case "roam":
       if (m.goal === "explore" && Math.random() < 0.4) {
-        const mark = markAt(world, "cairn", c.x, c.y, c.kind, 8);
-        if (mark.size <= 3 && world.depth[world.idx(c.x, c.y)] < 0.05) {
-          pile(world, c.x, c.y, mark.size - 1, 0x8d8d96, VK.STONE);
-          deed(c, "left a cairn");
+        const at = cairnSpot(world, c.x, c.y);
+        if (at >= 0) {
+          const mark = markAt(world, "cairn", at % world.w, Math.floor(at / world.w), c.kind, 8);
+          if (mark.size === 1 && cairn(world, at)) deed(c, "left a cairn");
         }
       }
       return;
@@ -2057,6 +2089,61 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       deed(c, `healed a ${base(t.kind)}`);
       return;
   }
+}
+
+// A cairn (21 November): stones stacked by an explorer, a few in three greys, the top uneven.
+// Never on a field, a crop, a path, a road, a road's line or anything built: on main one light
+// grey cube landed on crops. Its cell and the one beside it, each free.
+export const CAIRN_STONES = [0x6f6e6a, 0x8a8781, 0xa5a199] as const;
+function cairnFree(world: World, i: number): boolean {
+  if (i < 0 || i >= world.n) return false;
+  if (world.cover[i] !== C.NONE || world.depth[i] > 0.05 || world.fire[i] > 0.1) return false;
+  const g = world.ground[i];
+  if (g === G.FIELD || isWay(g) || planned(world, i)) return false;
+  for (const s of world.sites) if (i === s.i || i === s.i + 1 || i === s.i + world.w || i === s.i + world.w + 1) return false;
+  // Not against a house or a crop either: its stones would read as part of them.
+  const x = i % world.w;
+  const y = Math.floor(i / world.w);
+  for (let dy = -1; dy <= 1; dy++)
+    for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= world.w || ny >= world.h) return false;
+      const cv = world.cover[ny * world.w + nx];
+      if (cv === C.CROP || isBuildingCover(cv)) return false;
+    }
+  return true;
+}
+
+// Where an explorer at (x, y) can leave a cairn: the nearest free cell within 2 with a free,
+// level cell east of it; -1 for none.
+export function cairnSpot(world: World, x: number, y: number): number {
+  const cx = Math.round(x);
+  const cy = Math.round(y);
+  for (let r = 0; r <= 2; r++)
+    for (let dy = -r; dy <= r; dy++)
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx < 2 || ny < 2 || nx >= world.w - 3 || ny >= world.h - 3) continue;
+        const i = ny * world.w + nx;
+        if (cairnFree(world, i) && cairnFree(world, i + 1) && Math.abs(world.height[i] - world.height[i + 1]) < 1) return i;
+      }
+  return -1;
+}
+
+// Three stones on two cells, the top uneven: two on the first (dark under mid), one light one beside.
+export function cairn(world: World, i: number): boolean {
+  const x = i % world.w;
+  const y = Math.floor(i / world.w);
+  const before = world.decor.size;
+  const top = Math.round(world.height[i] * 0.5);
+  const top2 = Math.round(world.height[i + 1] * 0.5);
+  world.setVoxel(x, y, top, CAIRN_STONES[0], VK.STONE);
+  world.setVoxel(x, y, top + 1, CAIRN_STONES[1], VK.STONE);
+  world.setVoxel(x + 1, y, top2, CAIRN_STONES[2], VK.STONE);
+  return world.decor.size > before;
 }
 
 function targetFor(world: World, kind: string): number {

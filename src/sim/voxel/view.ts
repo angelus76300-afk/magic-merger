@@ -32,6 +32,7 @@ import {
   type Material,
 } from "three";
 import { kindOf, type Creature, type CreatureKind } from "../creatures";
+import { COLD, hooded, person } from "../cold";
 import { F as FLUID } from "../materials";
 import { Figures, figureMaterials, type Pose } from "./figures";
 import { buildRig, drawScale, paletteOf, ROLES, variantOf, type Rig } from "./rigs";
@@ -126,6 +127,9 @@ const VOXEL_CUBES_BACK = 5000;
 // materials with lighting baked into colors, terrain rebuilt only where it
 // changed, every repeated thing drawn in one instanced call, and a pixel
 // density that drops when frames get slow.
+// A rig variant bit for a hooded person, above variantOf's bits (rigs.ts).
+const HOOD_VARIANT = 1 << 12;
+
 export class VoxelView {
   readonly renderer: WebGLRenderer;
   readonly scene = new Scene();
@@ -1671,10 +1675,12 @@ export class VoxelView {
       byVariant = new Map();
       this.rigs.set(k, byVariant);
     }
-    const variant = variantOf(k.body, c.look);
+    // A person of a cold village wears a hood (cold.ts CLOAK_AT): worked out here, never saved.
+    const hood = !c.dead && person(c, k) && hooded(this.world, c);
+    const variant = variantOf(k.body, c.look) + (hood ? HOOD_VARIANT : 0);
     let rig = byVariant.get(variant);
     if (!rig) {
-      rig = buildRig(k.body, c.look);
+      rig = buildRig(k.body, c.look, hood);
       byVariant.set(variant, rig);
     }
     return rig;
@@ -1953,16 +1959,22 @@ export class VoxelView {
       pose.offset = (c.id % 17) * 0.37;
       pose.glowAll = k.glow;
       pose.tintAmount = 0;
+      const chill = (c.data.chill as number | undefined) ?? 0;
       if (c.dead) {
         // Falls on its side (a fish turns belly up), lying on the ground and
         // not in it, then sinks into it over the 40 s before it is gone.
-        const fall = Math.min(1, c.deadFor * 3);
+        // Frozen to death (cold.ts): it stands, white with frost, for FROST_STATUE seconds, then
+        // falls and sinks in what is left of the 40 s.
+        const statue = !!c.data.frostDeath && !k.aquatic;
+        const since = statue ? Math.max(0, c.deadFor - COLD.FROST_STATUE) : c.deadFor;
+        const standing = statue && c.deadFor < COLD.FROST_STATUE;
+        const fall = standing ? 0 : Math.min(1, since * 3);
         pose.roll = (k.aquatic ? Math.PI : Math.PI / 2) * fall;
-        pose.pitch = 0;
+        if (!standing) pose.pitch = 0;
         pose.y += (k.aquatic ? rig.height : rig.halfWidth) * size * Math.sin((fall * Math.PI) / 2);
-        if (!k.aquatic) pose.y -= Math.min(1, c.deadFor / 40) * (rig.halfWidth * 2 + 0.1) * size;
-        pose.tint = 0x5a5560;
-        pose.tintAmount = 0.55;
+        if (!k.aquatic) pose.y -= Math.min(1, since / (statue ? 40 - COLD.FROST_STATUE : 40)) * (rig.halfWidth * 2 + 0.1) * size;
+        pose.tint = standing ? 0xdcefff : 0x5a5560;
+        pose.tintAmount = standing ? 0.7 : 0.55;
         pose.glowAll = false;
       } else if (c.frozen > 0) {
         pose.tint = 0xbfe6ff;
@@ -1970,6 +1982,11 @@ export class VoxelView {
       } else if (c.burning > 0 && Math.sin(time * 30 + c.id) > 0) {
         pose.tint = 0xff8c1a;
         pose.tintAmount = 0.65;
+      } else if (chill > 0) {
+        // Chilled: frost over it as the cold nears harm (cold.ts EXPOSURE_HARM).
+        pose.tint = 0xcfe8ff;
+        pose.tintAmount = 0.5 * Math.min(1, chill / COLD.EXPOSURE_HARM);
+        if (k.glow) pose.y += Math.sin(time * 2 + c.id) * 0.08 * size;
       } else if (k.glow) pose.y += Math.sin(time * 2 + c.id) * 0.08 * size;
       if (asleep && !c.dead && !pose.flying) pose.y -= size * 0.05;
       pose.detail = camPos.distanceToSquared(this.sphere.center) < (detailRange * size) ** 2;

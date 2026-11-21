@@ -881,7 +881,8 @@ const CALLING_FEATURES: Partial<Record<Calling, Feature[]>> = {
   mage: ["hat", "staff"],
 };
 
-export function buildRig(spec: BodySpec, look = 0): Rig {
+// hood: a person of a cold village (cold.ts CLOAK_AT), its hood in place of a hat or a cap.
+export function buildRig(spec: BodySpec, look = 0, hood = false): Rig {
   const B = new Builder();
   let height: number;
   let lean = 0;
@@ -898,6 +899,10 @@ export function buildRig(spec: BodySpec, look = 0): Rig {
     });
     if (villager) {
       features.push(...(CALLING_FEATURES[villager.calling ?? "none"] ?? JOB_FEATURES[villager.job] ?? []));
+      if (hood) {
+        for (let n = features.length - 1; n >= 0; n--) if (features[n] === "hat" || features[n] === "straw hat" || features[n] === "cap") features.splice(n, 1);
+        if (!features.includes("hood")) features.push("hood");
+      }
       if (villager.age === "elder") {
         lean = 0.16;
         if (!villager.long) features.push("beard");

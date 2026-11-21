@@ -1,5 +1,6 @@
 import { C, F, G } from "./materials";
 import type { World } from "./world";
+import { COLD } from "./cold";
 
 // Long trips (4.3): a flow field per destination, shared by everyone going
 // there. A field is the walking distance from every cell to the destination
@@ -34,7 +35,10 @@ export const MAX_STEPS = 64;
 // every cost is STEP times the old count of steps, so nothing else moves.
 export const STEP = 4;
 const ROAD_STEP = 3;
-const BUCKETS = STEP + 1;
+// 21 November (cold.ts): a step onto a cell colder than CHILL_AT costs COLD_STEP, so a trip goes
+// round a cold pass when the warm way is less than twice as long. The dearest step sets the buckets.
+const COLD_STEP = COLD.COLD_STEP;
+const BUCKETS = COLD_STEP + 1;
 const BLOCK = 4;
 const SHORT_STEPS = 28;
 const FAR = 0xffff;
@@ -279,6 +283,7 @@ export class Paths {
     const height = world.height;
     const depth = world.depth;
     const bridges = world.decks.size > 0;
+    const temp = world.temp;
     while (budget > 0) {
       let b = this.cost % BUCKETS;
       for (let k = 0; !tops[b] && k < BUCKETS; k++) b = ++this.cost % BUCKETS;
@@ -292,12 +297,13 @@ export class Paths {
       const x = i % w;
       const y = (i - x) / w;
       const here = !walk ? 0 : bridges ? world.walkLevel(i) : height[i] + depth[i];
+      const cold = walk && temp[i] < COLD.CHILL_AT;
       for (let k = 0; k < 4; k++) {
         const nx = k === 0 ? x + 1 : k === 1 ? x - 1 : x;
         const ny = k === 2 ? y + 1 : k === 3 ? y - 1 : y;
         if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
         const j = ny * w + nx;
-        const d = this.cost + (walk && (ground[j] === G.ROAD || cover[j] === C.BRIDGE) ? ROAD_STEP : STEP);
+        const d = this.cost + (cold ? COLD_STEP : walk && (ground[j] === G.ROAD || cover[j] === C.BRIDGE) ? ROAD_STEP : STEP);
         if (d > limit || d >= dist[j] || !openFast(world, j, f.mobility, solid)) continue;
         // From j the creature steps onto i.
         if (walk && here - (bridges ? world.walkLevel(j) : height[j] + depth[j]) > CLIMB) continue;
