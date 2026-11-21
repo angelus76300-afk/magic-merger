@@ -179,12 +179,12 @@ export function roadsGroundChecks(check: Check): void {
     JSON.stringify(r),
   );
   check(`roads: feet at a road's edges stand on the ground drawn there (within ${r.feet.toFixed(2)} eighths)`, r.feet <= 1, JSON.stringify(r));
-  check(`roads: a road's edge with the grass wanders (${r.straight} of ${r.sides} cell sides straight)`, r.sides > 20 && r.straight <= r.sides * 0.6, JSON.stringify(r));
   check(
-    "roads: a change of ground one cell from a chunk's seam rebuilds the chunk across it, as one on the seam does",
-    r.oneIn && r.onSeam,
+    `roads: a road's edge with the grass wanders (${r.straight} of ${r.sides} cell sides straight)`,
+    r.sides > 20 && r.straight <= r.sides * 0.6,
     JSON.stringify(r),
   );
+  check("roads: a change of ground one cell from a chunk's seam rebuilds the chunk across it, as one on the seam does", r.oneIn && r.onSeam, JSON.stringify(r));
 }
 
 if (/roads-ground[^/]*\.mjs$/.test(process.argv[1] ?? "")) console.log(JSON.stringify(roadGround(), null, 1));

@@ -389,8 +389,9 @@ export const BLEND_ISLANDS: { name: string; seed: number; land: LandOptions; gro
 ];
 
 // The fine land of the medium temperate coast (one land: no tone to blend) round its middle, as
-// main drew it before this change (taken on main, 21 November).
-const ONE_LAND = { cells: 152, seed: 7, hash: "eedf16d8" };
+// main drew it before this change (taken on main, 21 November). Taken again when its 38 cells of
+// dirt road were drawn as ground, following the slopes (scripts/roads-ground-test.ts; eedf16d8 before).
+const ONE_LAND = { cells: 152, seed: 7, hash: "ab52e4ef" };
 
 // An island at noon (the fine land bakes a glow round lava and lit houses at night).
 function island(cells: number, seed: number, land: LandOptions): World {

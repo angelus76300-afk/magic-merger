@@ -29,9 +29,8 @@ import {
   villagesOf,
   type MapVillage,
 } from "../src/sim/map";
-import { C, G } from "../src/sim/materials";
+import { C } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
-import { ROAD, pave, type PaveJob, type Road } from "../src/sim/roads";
 import { Runtime } from "../src/sim/runtime";
 import { stepHeadless } from "../src/sim/tick";
 import type { Trouble } from "../src/sim/troubles";
@@ -171,7 +170,9 @@ function mapChecksSeeded(check: Check): void {
   {
     const view = readFileSync("src/sim/voxel/view.ts", "utf8");
     const reads = [...view.matchAll(/this\.cover\b(?!s)[^\n]*/g)].map((m) => m[0]);
-    const allowed = reads.every((r) => /^this\.cover = /.test(r) || /^this\.cover, FAR\.(names|plumes)\)/.test(r) || /^this\.cover,$/.test(r) || /^this\.cover\)/.test(r));
+    const allowed = reads.every(
+      (r) => /^this\.cover = /.test(r) || /^this\.cover, FAR\.(names|plumes)\)/.test(r) || /^this\.cover,$/.test(r) || /^this\.cover\)/.test(r),
+    );
     check(
       "map: only the names and the plumes change with zoom; no far road mesh, a cart and a light the same size at every zoom",
       Object.keys(FAR).join(",") === "names,plumes" &&
