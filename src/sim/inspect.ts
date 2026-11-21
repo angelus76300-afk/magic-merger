@@ -138,7 +138,7 @@ function moodWords(c: Creature): string | null {
   if (c.burning > 0) return "on fire!";
   if (c.frozen > 0) return "frozen";
   // Chilled by the land (cold.ts).
-  if (((c.data.chill as number | undefined) ?? 0) > 0) return c.data.retreat ? "cold, getting out of it" : "cold";
+  if ((c.chill || 0) > 0) return c.data.retreat ? "cold, getting out of it" : "cold";
   if (c.sleep > 0) return "asleep under a spell";
   if (c.fear > 0) return "terrified";
   return null;

@@ -266,6 +266,10 @@ export interface Creature {
   levitate: number;
   stun: number;
   drowning: number;
+  // Cold (cold.ts), not saved: seconds of chill, of land freeze in a row, and of the grace after it.
+  chill: number;
+  iced: number;
+  thaw: number;
   // Who this one is among its kind (villagers.ts for villagers; a bit for
   // antlers on wild animals). Saved.
   look: number;
@@ -338,6 +342,9 @@ export function makeCreature(kindName: string, x: number, y: number): Creature {
     levitate: 0,
     stun: 0,
     drowning: 0,
+    chill: 0,
+    iced: 0,
+    thaw: 0,
     look: look ? packLook(look) : (Math.random() * 256) | 0,
     data: {},
   };

@@ -105,7 +105,8 @@ function frozenRuns(): { add: (c: Creature) => void; longest: () => number; runs
   };
 }
 
-const chillOf = (c: Creature) => (c.data.chill as number | undefined) ?? 0;
+// c.chill (main has none: 0 there).
+const chillOf = (c: Creature) => (c as { chill?: number }).chill ?? 0;
 
 export function coldChecks(check: Check): void {
   // The kinds used exist (a renamed species would make the checks pass for nothing).

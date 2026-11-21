@@ -9,7 +9,7 @@
 //   - Land freezes only where the cold is a spell's (well under the cell's own
 //     climate), for LAND_FREEZE_MAX seconds at most, then not for
 //     LAND_FREEZE_GRACE seconds, so the creature can walk out.
-//   - The land's own cold chills (c.data.chill, seconds; not saved): a chilled
+//   - The land's own cold chills (c.chill, seconds; not saved): a chilled
 //     creature walks slower, turns back toward warmth, and past
 //     EXPOSURE_HARM it is hurt and can die. Hardy kinds and people at home
 //     never chill; a fire, a house or a smithy warms quickly.
@@ -133,10 +133,10 @@ export function hearthNear(world: World, x: number, y: number): boolean {
   return false;
 }
 
-// Chill for one tick (seconds of it, c.data.chill). Fliers in the air and
+// Chill for one tick (seconds of it, c.chill). Fliers in the air and
 // fish do not chill; a ward against cold takes it all away. Returns the chill.
 export function chillTick(world: World, c: Creature, k: CreatureKind, i: number, dt: number): number {
-  let chill = (c.data.chill as number | undefined) ?? 0;
+  let chill = c.chill || 0;
   // Every tolerance is CHILL_AT or colder: on warmer ground with no chill there is nothing to do.
   if (chill === 0 && world.temp[i] >= COLD.CHILL_AT) return 0;
   if ((k.flying && c.z > 0.5) || k.aquatic || world.wardMask[i] & WARD.cold) chill = 0;
@@ -146,8 +146,7 @@ export function chillTick(world: World, c: Creature, k: CreatureKind, i: number,
     if (t < tol) chill = Math.min(COLD.CHILL_MAX, chill + dt * Math.min(COLD.CHILL_RATE_MAX, 1 + (tol - t) / 10));
     else if (chill > 0) chill = Math.max(0, chill - dt * (hearthNear(world, c.x, c.y) ? COLD.HEARTH_RECOVER : COLD.CHILL_RECOVER));
   }
-  if (chill > 0) c.data.chill = chill;
-  else if (c.data.chill !== undefined) c.data.chill = undefined;
+  c.chill = chill;
   return chill;
 }
 
@@ -160,23 +159,23 @@ export function chillPace(chill: number): number {
 // at most, then LAND_FREEZE_GRACE seconds with none. Not for the hardy or the fireproof (who never
 // froze), nor a creature of cold (reactions.ts natureTick thaws it: on main this froze it again).
 export function landFreeze(world: World, c: Creature, k: CreatureKind, i: number, dt: number): void {
-  const grace = (c.data.thaw as number | undefined) ?? 0;
+  const grace = c.thaw || 0;
   if (grace > 0) {
-    c.data.thaw = grace - dt > 0 ? grace - dt : undefined;
-    if (c.data.iced !== undefined) c.data.iced = undefined;
+    c.thaw = Math.max(0, grace - dt);
+    c.iced = 0;
     return;
   }
   if (!spellCold(world, i) || k.fireproof || hardy(world, k)) {
-    if (c.data.iced !== undefined) c.data.iced = undefined;
+    if (c.iced) c.iced = 0;
     return;
   }
-  const on = ((c.data.iced as number | undefined) ?? 0) + dt;
+  const on = (c.iced || 0) + dt;
   if (on > COLD.LAND_FREEZE_MAX + 1e-6) {
-    c.data.iced = undefined;
-    c.data.thaw = COLD.LAND_FREEZE_GRACE;
+    c.iced = 0;
+    c.thaw = COLD.LAND_FREEZE_GRACE;
     return;
   }
-  c.data.iced = on;
+  c.iced = on;
   c.frozen = Math.max(c.frozen, Math.min(0.5, COLD.LAND_FREEZE_MAX - on + dt));
 }
 

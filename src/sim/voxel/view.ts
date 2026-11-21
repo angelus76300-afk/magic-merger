@@ -1959,7 +1959,7 @@ export class VoxelView {
       pose.offset = (c.id % 17) * 0.37;
       pose.glowAll = k.glow;
       pose.tintAmount = 0;
-      const chill = (c.data.chill as number | undefined) ?? 0;
+      const chill = c.chill || 0;
       if (c.dead) {
         // Falls on its side (a fish turns belly up), lying on the ground and
         // not in it, then sinks into it over the 40 s before it is gone.
