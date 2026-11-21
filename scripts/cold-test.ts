@@ -13,17 +13,20 @@
 //      reactions.ts and frozen again the same tick);
 //   7. a polar bear on a cold peak and people at home in a cold village never chill or freeze;
 //   8. a trip's path goes round a band of cold ground when the warm way is not much longer;
-//   and the cairn an explorer leaves: never on a field, a crop or a road, and never one box.
+//   and a saved island whose creatures stood frozen on its cold uplands thaws within a second
+//   of loading; the cairn an explorer leaves: never on a field, a crop or a road, never one box.
 // The ten-minute tundra run (9) is a job of npm test's workers (scripts/cold-run.ts).
 // These read only c.frozen, c.data and the island, so the same file runs on main to show each
 // failing there (the constants of cold.ts are written out).
-import { KINDS, makeCreature, type Creature } from "../src/sim/creatures";
+import { KINDS, makeCreature, populate, type Creature } from "../src/sim/creatures";
+import { DEFAULT_LAND } from "../src/sim/land-options";
+import { loadWorld, saveWorld, type SavedWorld } from "../src/sim/save";
 import { C, G } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
 import { pathsOf, Mobility } from "../src/sim/paths";
 import { Runtime } from "../src/sim/runtime";
 import { stepHeadless } from "../src/sim/tick";
-import { TICK, World } from "../src/sim/world";
+import { TICK, World, generateWorld } from "../src/sim/world";
 import { keyX, keyY } from "../src/sim/voxelkey";
 import { voxelColor } from "../src/sim/voxels";
 
@@ -119,7 +122,8 @@ export function coldChecks(check: Check): void {
       lowest = Math.min(lowest, world.temp[world.idx(deer.x, deer.y)]);
     });
     const here = world.temp[world.idx(deer.x, deer.y)];
-    const warm = deer.dead || (here >= -6 && chillOf(deer) < 1);
+    // Warm: out of the cold it could not bear, its chill going down, not turning back any more (8 s).
+    const warm = deer.dead || (here >= -12 && chillOf(deer) < 8 && world.height[world.idx(deer.x, deer.y)] < 36);
     check(
       "cold: a deer on a temperate peak walks down, never held by the land's own cold",
       fr.longest() <= 0.6 && warm,
@@ -278,6 +282,35 @@ export function coldChecks(check: Check): void {
       if (world.temp[at] < -6) cold++;
     }
     check("cold: a trip's path goes round cold ground", !!dist && dist[at] === 0 && cold === 0, `${steps} steps to the end, ${cold} of them on cold ground`);
+  }
+
+  // A saved tundra island whose creatures stood frozen (as main left those on its uplands, 0.5 s
+  // at a time, for good): loaded, within a second nobody is frozen.
+  {
+    const was = Math.random;
+    Math.random = seeded(19);
+    let held = 0;
+    let total = 0;
+    try {
+      const world = generateWorld(112, 112, 4, { ...DEFAULT_LAND, biome: "tundra" });
+      populate(world);
+      for (const c of world.creatures) c.frozen = 0.5;
+      const save = JSON.parse(JSON.stringify(saveWorld(world, new Map()))) as SavedWorld;
+      const back = loadWorld(save, () => {});
+      if (back) {
+        const rt = new Runtime(back, () => {});
+        for (let k = 0; k < Math.round(1 / TICK); k++) stepHeadless(back, rt);
+        total = back.creatures.filter((c) => !c.dead).length;
+        held = back.creatures.filter((c) => !c.dead && c.frozen > 0).length;
+      }
+    } finally {
+      Math.random = was;
+    }
+    check(
+      "cold: a saved island whose creatures stood frozen thaws within a second of loading",
+      total > 0 && held === 0,
+      `${held} of ${total} still frozen after 1 s`,
+    );
   }
 
   // The cairn: an explorer (a beast) roams a field with a road for four minutes.
