@@ -57,11 +57,23 @@ try {
         e.render(1 / 30);
         e.view.terrain.updateFine(0, true);
       }
-      for (let f = 0; f < 4; f++) e.render(1 / 30);
+      for (let f = 0; f < 3; f++) e.render(1 / 30);
+      e.render(1 / 30);
+      // The land and the names over it (the overlay), read right after the frame is drawn.
+      const world = document.getElementById("world");
+      const over = document.getElementById("overlay");
+      const c = document.createElement("canvas");
+      c.width = world.width;
+      c.height = world.height;
+      const g = c.getContext("2d");
+      g.drawImage(world, 0, 0);
+      if (over) g.drawImage(over, 0, 0, c.width, c.height);
+      return c.toDataURL("image/png");
     }, cam);
+  let last = "";
   const shot = async (name) => {
     const file = join(out, `${name}-${tag}.png`);
-    await page.screenshot({ path: file });
+    writeFileSync(file, Buffer.from(last.split(",")[1], "base64"));
     rows.push(file);
     console.log(file);
   };
@@ -87,19 +99,23 @@ try {
     return best;
   });
   console.log("road over hills", JSON.stringify(hill));
-  await pose({ ...hill, dist: 22, clock: DAY });
+  last = await pose({ ...hill, dist: 22, clock: DAY });
   await shot("road-hills-close");
-  await pose({ ...hill, dist: "whole", clock: DAY, phi: 0.72 });
+  last = await pose({ ...hill, dist: "whole", clock: DAY, phi: 0.72 });
   await shot("road-hills-out");
+  last = await pose({ ...hill, dist: 70, clock: DAY, phi: 0.85 });
+  await shot("road-hills-mid");
 
   // A village at night, zoomed out: the largest.
   const town = await page.evaluate(() => {
     const s = [...window.__engine.world.settlements].sort((a, b) => (b.people ?? 0) - (a.people ?? 0))[0];
     return { tx: s.x, ty: s.y };
   });
-  await pose({ ...town, dist: "whole", clock: NIGHT, phi: 0.72 });
+  last = await pose({ ...town, dist: "whole", clock: NIGHT, phi: 0.72 });
   await shot("village-night-out");
-  await pose({ ...town, dist: 22, clock: NIGHT });
+  last = await pose({ ...town, dist: 70, clock: NIGHT, phi: 0.85 });
+  await shot("village-night-mid");
+  last = await pose({ ...town, dist: 22, clock: NIGHT });
   await shot("village-night-close");
 
   // On until a market trip is under way on a road out of the villages (at most four minutes).
@@ -124,10 +140,12 @@ try {
     return c ? { tx: c.x, ty: c.y } : null;
   });
   if (cart) {
-    await pose({ ...cart, dist: 9, clock: DAY, phi: 0.8 });
+    last = await pose({ ...cart, dist: 9, clock: DAY, phi: 0.8 });
     await shot("cart-close");
-    await pose({ ...cart, dist: "whole", clock: DAY, phi: 0.72 });
+    last = await pose({ ...cart, dist: "whole", clock: DAY, phi: 0.72 });
     await shot("cart-out");
+    last = await pose({ ...cart, dist: 45, clock: DAY, phi: 0.85 });
+    await shot("cart-mid");
   } else console.log("no market trip on a road within four minutes");
   await ctx.close();
 } finally {
