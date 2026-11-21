@@ -10,7 +10,7 @@
 // It starts the dev server itself and stops it at the end.
 //   node scripts/cold-frames.mjs [out dir]
 import { createRequire } from "node:module";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -182,5 +182,7 @@ try {
   stop();
 }
 writeFileSync(join(OUT, "cold-frames.json"), JSON.stringify(report, null, 2) + "\n");
+// In the repository's own format, so the format check passes on it.
+spawnSync("npx", ["prettier", "--write", join(OUT, "cold-frames.json")], { stdio: "ignore" });
 console.log(JSON.stringify(report));
 process.exit(0);
