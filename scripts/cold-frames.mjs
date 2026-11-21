@@ -4,8 +4,8 @@
 //                 printed), a few seconds later: frosted over, heading downhill (their chill and
 //                 height are printed at the start and at the frame);
 //   statue        a deer frozen to death on that peak, standing white with frost;
-//   cairn         the stones an explorer leaves (goals.ts cairn: three stones in three greys, two
-//                 cells), put on open grass;
+//   cairn         the stones an explorer leaves (the "cairn" cover, goals.ts cairn), put on open
+//                 ground;
 //   hood          people of a village on that island, colder than 2 degrees there, hooded.
 // It starts the dev server itself and stops it at the end.
 //   node scripts/cold-frames.mjs [out dir]
@@ -79,6 +79,9 @@ function setUp() {
     dead: false,
     deadFor: 0,
     frozen: 0,
+    chill: 0,
+    iced: 0,
+    thaw: 0,
     sp: 0,
     data: {},
     mind: undefined,
@@ -105,10 +108,8 @@ function setUp() {
   }
   const cx = spot % w.w;
   const cy = Math.floor(spot / w.w);
-  const lv = (k) => Math.round(w.height[k] * 0.5);
-  w.setVoxel(cx, cy, lv(spot), 0x6f6e6a, 0);
-  w.setVoxel(cx, cy, lv(spot) + 1, 0x8a8781, 0);
-  w.setVoxel(cx + 1, cy, lv(spot + 1), 0xa5a199, 0);
+  w.setCover(spot, w.materials.id("cover", "cairn"));
+  e.view.terrain.coversChanged = true;
   return { px, py, ambient: Number(w.ambient(top).toFixed(1)), height: Number(w.height[top].toFixed(1)), herd, cairn: { x: cx, y: cy } };
 }
 
@@ -167,14 +168,14 @@ try {
     const cs = ids.map((id) => w.creatures.find((o) => o.id === id)).filter(Boolean);
     return [cs.reduce((a, c) => a + c.x, 0) / cs.length, cs.reduce((a, c) => a + c.y, 0) / cs.length];
   }, s.herd);
-  await shot("peak-herd", [mid[0], mid[1], 10, 1.0, 0.9], 2500);
+  await shot("peak-herd", [mid[0], mid[1], 9, 1.0, 0.9], 4500);
   report.herdAtFrame = await page.evaluate(herdNow, s.herd);
   report.gameSeconds = await page.evaluate(() => window.__engine.world.time - 100);
   await shot("statue", [s.px + 0.5, s.py + 3.5, 7, 1.05, 0.4], 1000);
-  await shot("cairn", [s.cairn.x + 1, s.cairn.y + 0.5, 6, 1.0, 0.7], 1000);
+  await shot("cairn", [s.cairn.x + 0.5, s.cairn.y + 0.5, 4, 1.0, 0.7], 1500);
   const h = await page.evaluate(hoodSpot);
   report.hood = h;
-  await shot("hood", [h.x, h.y, 6, 1.0, 0.5], 1500);
+  await shot("hood", [h.x, h.y, 8, 0.95, 2.2], 1500);
   await ctx.close();
 } finally {
   await browser.close();

@@ -1,0 +1,112 @@
+{
+  "peak": {
+    "px": 48,
+    "py": 137,
+    "ambient": -18.7,
+    "height": 28,
+    "herd": [
+      990001,
+      990002,
+      990003,
+      990004,
+      990005
+    ],
+    "cairn": {
+      "x": 140,
+      "y": 34
+    }
+  },
+  "herdStart": [
+    {
+      "chill": 0.2,
+      "height": 27.3,
+      "temp": -18,
+      "frozen": false,
+      "retreat": false,
+      "dead": false
+    },
+    {
+      "chill": 0.2,
+      "height": 28.6,
+      "temp": -19,
+      "frozen": false,
+      "retreat": false,
+      "dead": false
+    },
+    {
+      "chill": 0.2,
+      "height": 28.2,
+      "temp": -19,
+      "frozen": false,
+      "retreat": false,
+      "dead": false
+    },
+    {
+      "chill": 0.2,
+      "height": 27.5,
+      "temp": -18,
+      "frozen": false,
+      "retreat": false,
+      "dead": false
+    },
+    {
+      "chill": 0.2,
+      "height": 26.9,
+      "temp": -17,
+      "frozen": false,
+      "retreat": false,
+      "dead": false
+    }
+  ],
+  "herdAtFrame": [
+    {
+      "chill": 9.1,
+      "height": 26.6,
+      "temp": -17,
+      "frozen": false,
+      "retreat": true,
+      "dead": false
+    },
+    {
+      "chill": 9.6,
+      "height": 27.3,
+      "temp": -18,
+      "frozen": false,
+      "retreat": true,
+      "dead": false
+    },
+    {
+      "chill": 9.4,
+      "height": 27.1,
+      "temp": -17,
+      "frozen": false,
+      "retreat": true,
+      "dead": false
+    },
+    {
+      "chill": 9.1,
+      "height": 26.7,
+      "temp": -17,
+      "frozen": false,
+      "retreat": true,
+      "dead": false
+    },
+    {
+      "chill": 8.8,
+      "height": 26.9,
+      "temp": -17,
+      "frozen": false,
+      "retreat": true,
+      "dead": false
+    }
+  ],
+  "gameSeconds": 4.199999999999761,
+  "hood": {
+    "x": 26.705254556628308,
+    "y": 51.02676774321486,
+    "id": 1,
+    "cold": 40,
+    "people": 40,
+    "homeAir": -1.4
+  }
+}
