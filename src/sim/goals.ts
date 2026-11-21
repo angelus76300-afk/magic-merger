@@ -325,6 +325,13 @@ export function pursue(world: World, c: Creature, k: CreatureKind, dt: number): 
     m.think = m.task === "hunt" || m.task === "fight" ? 0.3 + Math.random() * 0.15 : 0.5 + Math.random() * 0.35;
     decide(world, c, k, m, needs);
   }
+  // A trip ends with its task: dropped or replaced, it is no trip any more (21 November: on main
+  // people held trips for minutes after, a cart drawn behind them and a cold retreat counted
+  // against work that was not the trip).
+  if (m.task !== "trade" && c.data.trip !== undefined) {
+    c.data.trip = undefined;
+    c.data.tripRetreats = undefined;
+  }
   if (m.task === "none") {
     m.action = needs ? "looking around" : m.action;
     return null;
@@ -1161,7 +1168,8 @@ function priest(world: World, c: Creature, m: Mind, v: Village): void {
 // not counted toward a road (roads.ts), and the food it carried goes back to its village.
 export function abandonTrip(world: World, c: Creature): void {
   const trip = c.data.trip as { from: Village; to: Village | Wonder } | undefined;
-  if (!trip) return;
+  // Only the trip itself: never work the creature took up since.
+  if (!trip || c.mind?.task !== "trade") return;
   unnoteTrip(world, trip.from, trip.to);
   c.data.trip = undefined;
   c.data.via = undefined;

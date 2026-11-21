@@ -380,4 +380,75 @@ export function coldChecks(check: Check): void {
       `${cells.length} cairns, ${voxels.length} lone voxel stones; ${bad} on a field, a crop or a road; drawn in ${heights.size} heights and ${greys.size} tones of small cubes, ${boxes} boxes on low`,
     );
   }
+
+  // Review of 21 November, B1: a path field on cold land reaches as far as on temperate land. A cold
+  // step costs twice a step, and the field's limit is in cost: charged on every cell under -6, a
+  // field on a tundra flat stopped at about half the steps (2,512 cells against 9,104). The cost now
+  // starts where the destination's own people would be cold. A flat island of 160, climate 0 and -25.
+  {
+    const reach = (climate: number) => {
+      const world = new World(160, 160, 5);
+      world.climate = climate;
+      for (let i = 0; i < world.n; i++) {
+        world.height[i] = 14;
+        world.ground[i] = G.GRASS;
+        world.temp[i] = world.ambient(i);
+      }
+      const paths = pathsOf(world);
+      let f = null;
+      for (let k = 0; k < 400 && !f; k++) {
+        f = paths.toward(world, Mobility.WALK, 80, 80);
+        paths.step(world);
+      }
+      const dist = (f as unknown as { dist: Uint16Array } | null)?.dist;
+      let cells = 0;
+      if (dist) for (let i = 0; i < world.n; i++) if (dist[i] !== 0xffff) cells++;
+      return cells;
+    };
+    const warm = reach(0);
+    const cold = reach(-25);
+    check(
+      "cold: a path field on tundra land reaches as far as on temperate land",
+      warm > 0 && cold >= warm * 0.95,
+      `${cold} cells at -25 against ${warm} at 15`,
+    );
+  }
+
+  // Review, B2: a trip ends with its task. A villager with a market trip left set (as goToMarket
+  // leaves it) is carrying food home instead. Chilled twice (20 s of chill, warmed back to none in
+  // between), it turns back twice; it keeps its work: the trip is cleared, never given up against
+  // the carrying, its village's food untouched (on 617f1ea: task roam, food 5 to 7, trip unnoted).
+  {
+    const { world, rt } = island(() => 14);
+    const person = put(world, "villager", MID, MID);
+    const from = { x: MID, y: MID, people: 6, food: 5, wood: 0, gold: 0 };
+    const to = { x: 56, y: 56, people: 6, food: 5, wood: 0, gold: 0 };
+    run(world, rt, 0.5, () => {});
+    let cleared = -1;
+    let gaveUp = false;
+    let retreats = 0;
+    for (let round = 0; round < 2; round++) {
+      if (person.mind) {
+        person.mind.task = "carry";
+        person.mind.carry = "food";
+        person.mind.tx = 8;
+        person.mind.ty = 8;
+      }
+      if (round === 0) person.data.trip = { from, to };
+      person.chill = 20;
+      let was = false;
+      run(world, rt, 15, (t) => {
+        if (round === 0 && cleared < 0 && person.data.trip === undefined) cleared = t;
+        if (person.mind?.action === "going home out of the cold") gaveUp = true;
+        const on = !!person.data.retreat;
+        if (on && !was) retreats++;
+        was = on;
+      });
+    }
+    check(
+      "cold: a trip ends with its task, and the cold never gives up work that is not the trip",
+      cleared >= 0 && cleared <= 1 && !gaveUp && from.food === 5 && retreats >= 2,
+      `trip ${cleared < 0 ? "never cleared" : `cleared after ${cleared.toFixed(2)} s`}; ${retreats} retreats; ${gaveUp ? "gave the carrying up" : "kept its work"}; its village's food ${from.food} (was 5)`,
+    );
+  }
 }

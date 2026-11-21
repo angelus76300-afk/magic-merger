@@ -35,7 +35,8 @@ export const MAX_STEPS = 64;
 // every cost is STEP times the old count of steps, so nothing else moves.
 export const STEP = 4;
 const ROAD_STEP = 3;
-// 21 November (cold.ts): a step over a cell colder than CHILL_AT costs COLD_STEP, so a trip goes
+// 21 November (cold.ts): a step over a cell colder than the destination's people bear (Field
+// coldAt: CHILL_AT on temperate land, -18 in a tundra village) costs COLD_STEP, so a trip goes
 // round a cold pass when the warm way is less than about twice as long. Charged on the cell the
 // walker steps from, as a road's step is: a walk along the cold edge of a warm cell is dear too.
 // The dearest step sets the buckets.
@@ -60,6 +61,9 @@ interface Field {
   bx: number;
   by: number;
   size: number;
+  // A step over a cell colder than this costs COLD_STEP: as cold as the people of the destination's
+  // own climate can bear (cold.ts tolerance), so a tundra village's paths are not cut short.
+  coldAt: number;
 }
 
 export class Paths {
@@ -218,7 +222,7 @@ export class Paths {
   private start(world: World, key: number, mobility: Mobility, bx: number, by: number, size: number): Field {
     const n = world.w * world.h;
     let f = this.spare.pop();
-    if (!f || f.dist.length !== n) f = { key, mobility, dist: new Uint16Array(n), done: false, made: 0, used: 0, bx, by, size };
+    if (!f || f.dist.length !== n) f = { key, mobility, dist: new Uint16Array(n), done: false, made: 0, used: 0, bx, by, size, coldAt: COLD.CHILL_AT };
     f.key = key;
     f.mobility = mobility;
     f.bx = bx;
@@ -253,6 +257,8 @@ export class Paths {
     // A destination inside a wood or a lake: its nearest open cells around it.
     const cx = Math.min(world.w - 1, f.bx * B + (B >> 1));
     const cy = Math.min(world.h - 1, f.by * B + (B >> 1));
+    const air = world.ambient(cy * world.w + cx);
+    f.coldAt = Math.min(COLD.CHILL_AT - (air < COLD.CLOAK_AT ? COLD.CLOAK_WARMTH : 0), air - COLD.ACCLIMATE);
     for (let r = 1; r <= 6 && !tops[0]; r++)
       for (let y = cy - r; y <= cy + r; y++)
         for (let x = cx - r; x <= cx + r; x++) {
@@ -286,6 +292,7 @@ export class Paths {
     const depth = world.depth;
     const bridges = world.decks.size > 0;
     const temp = world.temp;
+    const coldAt = f.coldAt;
     while (budget > 0) {
       let b = this.cost % BUCKETS;
       for (let k = 0; !tops[b] && k < BUCKETS; k++) b = ++this.cost % BUCKETS;
@@ -304,7 +311,7 @@ export class Paths {
         const ny = k === 2 ? y + 1 : k === 3 ? y - 1 : y;
         if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
         const j = ny * w + nx;
-        const d = this.cost + (walk && temp[j] < COLD.CHILL_AT ? COLD_STEP : walk && (ground[j] === G.ROAD || cover[j] === C.BRIDGE) ? ROAD_STEP : STEP);
+        const d = this.cost + (walk && temp[j] < coldAt ? COLD_STEP : walk && (ground[j] === G.ROAD || cover[j] === C.BRIDGE) ? ROAD_STEP : STEP);
         if (d > limit || d >= dist[j] || !openFast(world, j, f.mobility, solid)) continue;
         // From j the creature steps onto i.
         if (walk && here - (bridges ? world.walkLevel(j) : height[j] + depth[j]) > CLIMB) continue;

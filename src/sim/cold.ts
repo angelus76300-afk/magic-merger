@@ -146,6 +146,8 @@ export function chillTick(world: World, c: Creature, k: CreatureKind, i: number,
     if (t < tol) chill = Math.min(COLD.CHILL_MAX, chill + dt * Math.min(COLD.CHILL_RATE_MAX, 1 + (tol - t) / 10));
     else if (chill > 0) chill = Math.max(0, chill - dt * (hearthNear(world, c.x, c.y) ? COLD.HEARTH_RECOVER : COLD.CHILL_RECOVER));
   }
+  // Warm again: its next retreat is a new one (creatures.ts, a merchant's count).
+  if (chill === 0 && c.chill > 0) c.data.retreatCounted = undefined;
   c.chill = chill;
   return chill;
 }

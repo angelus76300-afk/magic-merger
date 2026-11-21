@@ -736,10 +736,21 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       // stands where it is warm enough. A merchant turned back twice gives the trip up.
       if (!c.data.retreat) {
         c.data.retreat = true;
-        if (c.data.trip) {
-          const n = ((c.data.tripRetreats as number | undefined) ?? 0) + 1;
-          c.data.tripRetreats = n;
-          if (n >= COLD.TRIP_GIVE_UP) abandonTrip(world, c);
+        // Counted once a cold spell (cold.ts chillTick clears it when the chill is gone): a retreat
+        // broken by a fright or a fight and taken up again is the same one. Only while the task is
+        // still the trip's.
+        // A trip whose task is gone is over (goals.ts pursue clears it too, between retreats).
+        if (c.data.trip && c.mind?.task !== "trade") {
+          c.data.trip = undefined;
+          c.data.tripRetreats = undefined;
+        }
+        if (!c.data.retreatCounted) {
+          c.data.retreatCounted = true;
+          if (c.data.trip && c.mind?.task === "trade") {
+            const n = ((c.data.tripRetreats as number | undefined) ?? 0) + 1;
+            c.data.tripRetreats = n;
+            if (n >= COLD.TRIP_GIVE_UP) abandonTrip(world, c);
+          }
         }
       }
       let warm = c.data.warm as { x: number; y: number } | null | undefined;
