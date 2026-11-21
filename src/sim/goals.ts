@@ -1,7 +1,7 @@
 import { C, F, G, isBuilding as isBuildingCover } from "./materials";
 import { SITE, STAGE_WORDS, canStake, handsOn, kindName, siteToWork, standBy, sitesOf, sitesOn, stageOf, stake, work as workSite, type Site } from "./sites";
 import { MIN_PEOPLE, alongRoad, claim, isWay, nextPave, noteTrip, pave, planned, unnoteTrip, type PaveJob } from "./roads";
-import { tolerance } from "./cold";
+import { tolerance, tooCold } from "./cold";
 import type { Wonder } from "./wonders";
 import { hasJob, housesOf, settlementNear, tavernFor, tierOf } from "./buildings";
 import { VK, voxelColor, voxelKind } from "./voxels";
@@ -1284,11 +1284,7 @@ function wander(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
     const i = world.idx(x, y);
     // Open ground it can stand on (4.3: a point in the middle of a wood had
     // it pacing along the trees until it gave up).
-    if (
-      k.aquatic
-        ? world.fluid[i] !== F.WATER || world.depth[i] < 0.8
-        : !k.flying && (world.depth[i] > 0.3 || !standable(world, i) || world.temp[i] < tolerance(world, c, k))
-    )
+    if (k.aquatic ? world.fluid[i] !== F.WATER || world.depth[i] < 0.8 : !k.flying && (world.depth[i] > 0.3 || !standable(world, i) || tooCold(world, c, k, i)))
       continue;
     setTask(m, "roam", x, y, 0.8);
     return true;

@@ -108,7 +108,7 @@ export function homeAir(world: World, c: Creature): number {
 
 // Is cell i too cold for it to go to?
 export function tooCold(world: World, c: Creature, k: CreatureKind, i: number): boolean {
-  return world.temp[i] < tolerance(world, c, k);
+  return world.temp[i] < COLD.CHILL_AT && world.temp[i] < tolerance(world, c, k);
 }
 
 // The cold of a spell: under FREEZE_AT and well under the cell's own climate.
@@ -137,6 +137,8 @@ export function hearthNear(world: World, x: number, y: number): boolean {
 // fish do not chill; a ward against cold takes it all away. Returns the chill.
 export function chillTick(world: World, c: Creature, k: CreatureKind, i: number, dt: number): number {
   let chill = (c.data.chill as number | undefined) ?? 0;
+  // Every tolerance is CHILL_AT or colder: on warmer ground with no chill there is nothing to do.
+  if (chill === 0 && world.temp[i] >= COLD.CHILL_AT) return 0;
   if ((k.flying && c.z > 0.5) || k.aquatic || world.wardMask[i] & WARD.cold) chill = 0;
   else {
     const tol = tolerance(world, c, k);
@@ -161,11 +163,11 @@ export function landFreeze(world: World, c: Creature, k: CreatureKind, i: number
   const grace = (c.data.thaw as number | undefined) ?? 0;
   if (grace > 0) {
     c.data.thaw = grace - dt > 0 ? grace - dt : undefined;
-    c.data.iced = undefined;
+    if (c.data.iced !== undefined) c.data.iced = undefined;
     return;
   }
-  if (k.fireproof || hardy(world, k) || !spellCold(world, i)) {
-    c.data.iced = undefined;
+  if (!spellCold(world, i) || k.fireproof || hardy(world, k)) {
+    if (c.data.iced !== undefined) c.data.iced = undefined;
     return;
   }
   const on = ((c.data.iced as number | undefined) ?? 0) + dt;
@@ -180,7 +182,12 @@ export function landFreeze(world: World, c: Creature, k: CreatureKind, i: number
 
 // Out of the cold: the warmest of 8 ways PROBE_CELLS away it can stand on, a house near it worth
 // HEARTH_BONUS degrees, the lower the better. Null when none is open.
-export function warmerWay(world: World, c: Creature, blocked: (x: number, y: number) => boolean): { x: number; y: number } | null {
+export function warmerWay(
+  world: World,
+  c: Creature,
+  k: CreatureKind,
+  blocked: (world: World, x: number, y: number, c: Creature, k: CreatureKind) => boolean,
+): { x: number; y: number } | null {
   let best: { x: number; y: number } | null = null;
   let bestScore = -Infinity;
   const r = COLD.PROBE_CELLS;
@@ -190,7 +197,7 @@ export function warmerWay(world: World, c: Creature, blocked: (x: number, y: num
     const y = c.y + Math.sin(ang) * r;
     if (x < 3 || y < 3 || x > world.w - 4 || y > world.h - 4) continue;
     // Half way and there: open ground, not a wall or deep water.
-    if (blocked(c.x + Math.cos(ang) * r * 0.5, c.y + Math.sin(ang) * r * 0.5) || blocked(x, y)) continue;
+    if (blocked(world, c.x + Math.cos(ang) * r * 0.5, c.y + Math.sin(ang) * r * 0.5, c, k) || blocked(world, x, y, c, k)) continue;
     const j = world.idx(x, y);
     const score = world.temp[j] + (houseNear(world, x, y) ? COLD.HEARTH_BONUS : 0) - world.height[j] * 0.1;
     if (score > bestScore) {

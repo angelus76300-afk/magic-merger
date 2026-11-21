@@ -23,7 +23,7 @@ import { alarm, calmDown, fleeing } from "./flight";
 import { N, boldness, darkWakes, lightAt, meet, natureOf, natureTick, spellMade, strike, touch, type Meeting } from "./reactions";
 import { pathsOf, solidCovers } from "./paths";
 import { LOADS, deed, harmed, life, newMind, noteDeath, reborn, storyOn, tell, villageOf, type AbilitySpec, type Goal, type Mind } from "./kin";
-import { COLD, chillPace, chillTick, hardy, landFreeze, person, tolerance, warmerWay } from "./cold";
+import { COLD, chillPace, chillTick, hardy, landFreeze, person, tolerance, tooCold, warmerWay } from "./cold";
 import { abandonTrip } from "./goals";
 
 // What a spell-made creature does, declared rather than coded, so even a
@@ -737,7 +737,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       }
       let warm = c.data.warm as { x: number; y: number } | null | undefined;
       if (warm === undefined || (world.tick + c.id) % 3 === 0) {
-        warm = warmerWay(world, c, (x, y) => blocked(world, x, y, c, k));
+        warm = warmerWay(world, c, k, blocked);
         c.data.warm = warm;
       }
       if (warm) {
@@ -1414,7 +1414,7 @@ function plan(world: World, c: Creature, k: CreatureKind, dt: number): void {
     const ty = cy + (Math.random() - 0.5) * 2 * range;
     if (!world.inside(tx, ty)) continue;
     const j = world.idx(tx, ty);
-    if (k.aquatic ? !wet(world, j, 0.8) : !k.flying && (world.depth[j] > 0.3 || danger(world, j) || world.temp[j] < tolerance(world, c, k))) continue;
+    if (k.aquatic ? !wet(world, j, 0.8) : !k.flying && (world.depth[j] > 0.3 || danger(world, j) || tooCold(world, c, k, j))) continue;
     c.tx = tx;
     c.ty = ty;
     return;
