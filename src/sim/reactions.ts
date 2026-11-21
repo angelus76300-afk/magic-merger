@@ -4,6 +4,7 @@ import { daylight } from "./daylight";
 import type { Behavior, Creature, CreatureKind } from "./creatures";
 import { life } from "./kin";
 import { WARD } from "./wards";
+import { treeRoom } from "./nature";
 import type { World } from "./world";
 
 // Spells that answer each other (4.12 step 2). A spell cannot know the 485
@@ -844,7 +845,10 @@ export function ashGrowth(world: World, i: number, j: number, r: number): boolea
   }
   if (g === G.GRASS && c === C.NONE) {
     const cj = world.cover[j];
-    if ((cj === C.TREE || cj === C.STUMP) && r < 0.12) world.setCover(i, C.TREE);
+    if ((cj === C.TREE || cj === C.STUMP) && r < 0.12) {
+      // 21 November (nature.ts): a burnt forest comes back as thick as it was, no thicker.
+      if (treeRoom(world, i)) world.setCover(i, C.TREE);
+    }
     else if (r < 0.03) world.setCover(i, r < 0.015 ? C.FLOWER : C.BUSH);
     return true;
   }

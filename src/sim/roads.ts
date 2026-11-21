@@ -588,7 +588,8 @@ export function pave(world: World, job: PaveJob, v: Village | null): boolean {
   const c = world.cover[cell];
   if (isBuilding(c) || c === C.WONDER) return false;
   if (c === C.TREE && v) v.wood++;
-  if (c !== C.NONE && c !== C.WELL && c !== C.FENCE) world.setCover(cell, C.NONE);
+  // A fence in the way comes down too (21 November: fences stood on finished roads).
+  if (c !== C.NONE && c !== C.WELL) world.setCover(cell, C.NONE);
   world.ground[cell] = G.ROAD;
   if (road.cells.every((_, t) => laid(world, road, t)))
     tell(world, `the road from ${road.a} to ${road.b} is finished`, { x: cell % world.w, y: Math.floor(cell / world.w) });
