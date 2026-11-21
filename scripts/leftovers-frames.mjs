@@ -163,7 +163,7 @@ function measure(spot) {
   const builtin = w.materials.builtinCount ? w.materials.builtinCount("cover") : null;
   const coverKeys = [];
   for (const [key, mesh] of v.covers)
-    if (mesh.count > 0 && (key === "block" || key === "slab" || key.startsWith("sp:"))) coverKeys.push([key, spread(mesh.geometry)]);
+    if (mesh.count > 0 && (/^(heap|spill|footing)\d$/.test(key) || key.startsWith("sp:"))) coverKeys.push([key, spread(mesh.geometry)]);
   // Each voxel's drawn foot: its instance's place, less half the model's height when it is centred.
   const decor = v.decorMesh;
   decor.geometry.computeBoundingBox();

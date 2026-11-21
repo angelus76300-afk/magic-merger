@@ -164,9 +164,61 @@ export const MODELS: Record<string, Box[]> = {
   stump: [B(0.35, 0, 0.35, 0.3, 0.25, 0.3, 0x5b4128)],
   flower: [B(0.2, 0, 0.3, 0.12, 0.25, 0.12, 0xe86a9a), B(0.6, 0, 0.55, 0.12, 0.2, 0.12, 0xf2c94c), B(0.4, 0, 0.7, 0.12, 0.22, 0.12, 0xa98cf0)],
   boulder: [B(0.1, 0, 0.1, 0.8, 0.55, 0.8, 0x9a9aa0), B(0.25, 0.5, 0.2, 0.5, 0.25, 0.5, 0xa8a8ae)],
-  // Spell defined covers: a block in the material's own color (tinted per instance).
-  block: [B(0.1, 0, 0.1, 0.8, 0.8, 0.8, 0xffffff)],
-  slab: [B(0.1, 0, 0.1, 0.8, 0.3, 0.8, 0xffffff)],
+  // A cover with no look of its own (a spell's cover whose name says no rock, crystal, litter or
+  // plant, a building not drawn whole), tinted per instance in the material's colour. Never one
+  // plain box (21 November, the owner: "what are those big grey blocks?"): a low heap of rubble,
+  // a spill of stones, or a broken footing, each in a few shapes picked by the cell's hash
+  // (cover-cubes.ts fallbackBoxKey), every one under half a cell and of several heights.
+  heap0: [
+    B(0.12, 0, 0.18, 0.42, 0.3, 0.4, 0xf2f2f2),
+    B(0.48, 0, 0.42, 0.36, 0.2, 0.34, 0xd2d2d2),
+    B(0.26, 0.28, 0.28, 0.22, 0.12, 0.2, 0xffffff),
+    B(0.16, 0, 0.66, 0.2, 0.08, 0.18, 0xbcbcbc),
+  ],
+  heap1: [
+    B(0.3, 0, 0.12, 0.38, 0.36, 0.34, 0xeaeaea),
+    B(0.1, 0, 0.44, 0.34, 0.18, 0.3, 0xcacaca),
+    B(0.6, 0, 0.52, 0.22, 0.1, 0.22, 0xb8b8b8),
+    B(0.36, 0.34, 0.18, 0.18, 0.1, 0.16, 0xffffff),
+  ],
+  heap2: [
+    B(0.2, 0, 0.3, 0.5, 0.22, 0.42, 0xe4e4e4),
+    B(0.36, 0.2, 0.38, 0.26, 0.16, 0.24, 0xfafafa),
+    B(0.72, 0, 0.16, 0.16, 0.12, 0.18, 0xc4c4c4),
+    B(0.08, 0, 0.12, 0.18, 0.08, 0.16, 0xb4b4b4),
+  ],
+  heap3: [
+    B(0.42, 0, 0.36, 0.42, 0.26, 0.4, 0xececec),
+    B(0.14, 0, 0.2, 0.3, 0.16, 0.28, 0xd0d0d0),
+    B(0.5, 0.24, 0.44, 0.2, 0.14, 0.2, 0xffffff),
+    B(0.2, 0, 0.7, 0.16, 0.1, 0.14, 0xbababa),
+  ],
+  spill0: [
+    B(0.14, 0, 0.2, 0.2, 0.1, 0.16, 0xe8e8e8),
+    B(0.5, 0, 0.12, 0.16, 0.06, 0.14, 0xd0d0d0),
+    B(0.34, 0, 0.5, 0.16, 0.32, 0.14, 0xf6f6f6),
+    B(0.68, 0, 0.62, 0.14, 0.2, 0.16, 0xc0c0c0),
+  ],
+  spill1: [
+    B(0.6, 0, 0.26, 0.16, 0.36, 0.14, 0xf0f0f0),
+    B(0.2, 0, 0.36, 0.16, 0.12, 0.18, 0xc8c8c8),
+    B(0.3, 0, 0.7, 0.2, 0.2, 0.14, 0xe0e0e0),
+    B(0.72, 0, 0.7, 0.12, 0.12, 0.12, 0xbcbcbc),
+  ],
+  footing0: [
+    B(0.06, 0, 0.06, 0.88, 0.04, 0.88, 0xc8c8c8),
+    B(0.06, 0, 0.06, 0.4, 0.36, 0.12, 0xf2f2f2),
+    B(0.6, 0, 0.06, 0.34, 0.16, 0.12, 0xe0e0e0),
+    B(0.06, 0, 0.18, 0.12, 0.22, 0.46, 0xe8e8e8),
+    B(0.82, 0, 0.5, 0.12, 0.1, 0.44, 0xd8d8d8),
+  ],
+  footing1: [
+    B(0.06, 0, 0.06, 0.88, 0.04, 0.88, 0xc4c4c4),
+    B(0.06, 0, 0.82, 0.52, 0.24, 0.12, 0xeeeeee),
+    B(0.82, 0, 0.06, 0.12, 0.34, 0.36, 0xf6f6f6),
+    B(0.82, 0, 0.6, 0.12, 0.12, 0.34, 0xdadada),
+    B(0.36, 0, 0.36, 0.18, 0.1, 0.16, 0xcccccc),
+  ],
   // Creatures, centered on x and z.
   body: [B(-0.5, 0, -0.5, 1, 1, 1, 0xffffff)],
   head: [B(-0.5, 0, -0.5, 1, 1, 1, 0xf1c27d)],

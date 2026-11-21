@@ -1,0 +1,3 @@
+section: Backlog
+
+- **Ruins that tell what stood there** (the designer's idea, 2026-11-21; lens: the promise an item's name makes). A building that burns or is split by a spell now leaves a broken footing. Tapping one could show a line under it ("the smithy of Oakmere, burnt on day 12") and let villagers rebuild the same building on it, faster than on bare grass. What the player feels: the island remembers, and a disaster leaves a story, not a hole. Cost: one name and a day kept per footing cell (a small field on the cover, new saved data, so it needs the owner's yes), one line in the tap panel, and a rule in sites.ts to prefer old footings. Claude.

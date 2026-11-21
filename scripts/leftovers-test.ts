@@ -9,10 +9,25 @@ import { DecorStore } from "../src/sim/decor";
 import { VK, packVoxel } from "../src/sim/voxels";
 import { keyLevel, voxelKey } from "../src/sim/voxelkey";
 import { DecorInstances } from "../src/sim/voxel/decor-instances";
-import { CUBE } from "../src/sim/voxel/cubes";
-import { SPELL_SHAPES, VOXEL_BASE, VOXEL_GAIN, coverInCubes, spellCoverKey, spellLook, spellTones, voxelCube } from "../src/sim/voxel/cover-cubes";
+import { CUBE, Vox, h3 } from "../src/sim/voxel/cubes";
+import {
+  BOX_FALLBACKS,
+  SPELL_SHAPES,
+  VOXEL_BASE,
+  VOXEL_GAIN,
+  coverInCubes,
+  fallbackBoxKey,
+  fallbackCoverKey,
+  isFallbackBox,
+  spellCoverKey,
+  spellLook,
+  spellTones,
+  voxelCube,
+} from "../src/sim/voxel/cover-cubes";
 import { boxesInCubes, type LocalMesh } from "../src/sim/voxel/shapes";
-import { MODELS } from "../src/sim/voxel/models";
+import { MODELS, type Box } from "../src/sim/voxel/models";
+import { floraModels } from "../src/sim/voxel/flora";
+import { BUILTIN, C, isBuilding } from "../src/sim/materials";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
@@ -50,10 +65,85 @@ function bounds(m: LocalMesh): { lo: number[]; hi: number[] } {
 }
 
 const SPREAD = 0.1;
+// How far the fine land falls across a cell on a steep slope, in cells (the review of 21 November).
+const SLOPE = 0.5;
+
+// The levels of the faces looking up, in cubes above the land (model y 0), and the share of the
+// model's footprint its highest level covers. A plain box: one level, all of it. The old spell
+// block in cubes: two (its top and the worn corners), the highest over four fifths of it.
+export function topLevels(m: LocalMesh): { levels: number; highest: number; top: number } {
+  const at = new Map<number, number>();
+  for (const a of [m.lit, m.glow])
+    for (let t = 0; t < a.pos.length; t += 9) {
+      const p = a.pos;
+      if (Math.abs(p[t + 1] - p[t + 4]) > 1e-6 || Math.abs(p[t + 1] - p[t + 7]) > 1e-6) continue;
+      const e1 = [p[t + 3] - p[t], p[t + 5] - p[t + 2]];
+      const e2 = [p[t + 6] - p[t], p[t + 8] - p[t + 2]];
+      const area = (e1[1] * e2[0] - e1[0] * e2[1]) / 2;
+      if (area <= 1e-9) continue;
+      const y = Math.round(p[t + 1] / CUBE);
+      at.set(y, (at.get(y) ?? 0) + area);
+    }
+  const up = [...at.keys()].filter((y) => y > 0);
+  const top = up.length ? Math.max(...up) : 0;
+  const total = [...at.entries()].filter(([y]) => y > 0).reduce((s, [, a]) => s + a, 0);
+  return { levels: up.length, highest: total > 0 ? (at.get(top) ?? 0) / total : 1, top: top * CUBE };
+}
+
+// The old spell block in cubes, as it was drawn to 21 November (cover-cubes.ts before): a box six
+// cubes wide and tall on a foot of two under the land, its top corners worn, its top a little ragged.
+function spellCoverInCubesOld(): LocalMesh {
+  const v = new Vox(8, 10, 0);
+  const H = 8;
+  v.box(1, 1, 0, 7, 7, H, 0xb4b4ba);
+  for (const [x, y] of [
+    [1, 1],
+    [6, 1],
+    [1, 6],
+    [6, 6],
+  ])
+    v.clear(x, y, H - 1);
+  for (let y = 1; y < 7; y++) for (let x = 1; x < 7; x++) if (h3(x, y, 0, 0x77) < 0.12) v.clear(x, y, H - 1);
+  const m = v.mesh(true);
+  for (const a of [m.lit, m.glow]) for (let k = 1; k < a.pos.length; k += 3) a.pos[k] -= 2 * CUBE;
+  return m;
+}
+
+// How far a model hangs over land that falls `drop` cells across its cell (x or z from 0 to 1,
+// either way): at each place of its faces' corners, its lowest point less the land there, the
+// worst of the four ways. Over 0: some of it floats on that slope (the review of 21 November:
+// footings on a foot of two hung up to four cubes over the fine land of a slope).
+// Its feet: the corners on its lowest level (every column of these models starts there), and the
+// corners of any face looking down (a cube with nothing under it, hanging if the land is lower).
+export function hangOnSlope(m: LocalMesh, drop: number): number {
+  let foot = Infinity;
+  for (const a of [m.lit, m.glow]) for (let k = 1; k < a.pos.length; k += 3) foot = Math.min(foot, a.pos[k]);
+  const feet: [number, number, number][] = [];
+  for (const a of [m.lit, m.glow])
+    for (let t = 0; t < a.pos.length; t += 9) {
+      const p = a.pos;
+      const ny = (p[t + 5] - p[t + 2]) * (p[t + 6] - p[t]) - (p[t + 3] - p[t]) * (p[t + 8] - p[t + 2]);
+      const flat = Math.abs(p[t + 1] - p[t + 4]) < 1e-6 && Math.abs(p[t + 1] - p[t + 7]) < 1e-6;
+      for (let k = 0; k < 3; k++) {
+        const c = t + k * 3;
+        if (Math.abs(p[c + 1] - foot) < 1e-6 || (flat && ny < 0)) feet.push([p[c], p[c + 1], p[c + 2]]);
+      }
+    }
+  let worst = -Infinity;
+  for (const land of [(x: number) => -drop * x, (x: number) => -drop * (1 - x)])
+    for (const [x, y, z] of feet) worst = Math.max(worst, y - land(x), y - land(z));
+  return worst;
+}
+
+// The same of a box model (the low preset): its boxes' top heights.
+const boxTops = (boxes: Box[]) => new Set(boxes.map((b) => Math.round((b.y + b.h) * 100))).size;
+
+// The old look of a cover with no model and of a spell's cover that names nothing: one box.
+const PLAIN: Box[] = [{ x: 0.1, y: 0, z: 0.1, w: 0.8, h: 0.8, d: 0.8, color: 0xffffff }];
 
 export function leftoversChecks(check: Check): void {
   // The old block in cubes: patches on a white model, clipped above white.
-  const before = topSpread(boxesInCubes(MODELS.block));
+  const before = topSpread(boxesInCubes(PLAIN));
   const cube = voxelCube();
   const spread = topSpread(cube);
   check(`a spell's voxel: tone patches and lit edges on its top (spread ${spread.toFixed(3)}, at least ${SPREAD})`, spread >= SPREAD);
@@ -81,8 +171,9 @@ export function leftoversChecks(check: Check): void {
     ["dawnbloom", false, "plant"],
     ["golden wheat", false, "plant"],
     ["deepstone", true, "rock"],
-    ["glimmer", true, "block"],
-    ["glimmer", false, "slab"],
+    ["glimmer", true, "rubble"],
+    ["glimmer", false, "gravel"],
+    ["warding obelisk", true, "rubble"],
   ];
   for (const [name, solid, look] of named) check(`spell cover "${name}" drawn as ${look}`, spellLook(name, solid) === look, spellLook(name, solid));
   check(`the old block in cubes has a flat top (spread ${before.toFixed(3)}, under ${SPREAD})`, before < SPREAD);
@@ -125,6 +216,65 @@ export function leftoversChecks(check: Check): void {
     check(`spell cover "${name}": tones of its own colours`, tones.length >= 3 && tones.includes(colors[0]));
   }
   console.log("  spell covers in cubes:", lines.join("; "), `; voxel ${cube.tris} tris, spread ${spread.toFixed(2)}`);
+
+  // No plain cubes (21 November, the owner: "what are those big grey blocks?"). A spell's cover
+  // whose name says nothing, and a cover of the island with no model (a job building or a site not
+  // drawn whole), are rubble, stones or a broken footing: in cubes, every shape on at least three
+  // levels, its highest level at most a third of its top, under 0.6 cells tall; as boxes (the low
+  // preset), at least three heights. The old block: two levels, the highest 0.9 of its top.
+  const old = topLevels(spellCoverInCubesOld());
+  check(`the old spell block in cubes is a plain cube (levels ${old.levels}, highest ${old.highest.toFixed(2)})`, old.levels < 3 || old.highest > 1 / 3);
+  const flora = floraModels();
+  const fallbacks: [string, string][] = [];
+  for (const [solid, colors] of [
+    [true, [0xc8c8cc, 0xb4b4ba]],
+    [false, [0xc8c8cc]],
+    [true, [0x9a40c0]],
+  ] as [boolean, number[]][])
+    for (let s = 0; s < 4; s++) fallbacks.push([`spell cover "glimmer" (${solid ? "solid" : "not solid"})`, spellCoverKey("glimmer", solid, colors, s << 7)]);
+  const unmodelled: string[] = [];
+  // The view draws none (skipped), a wonder (its own model), fences and bridges (by their way).
+  for (const [id, mat] of BUILTIN.cover.entries()) {
+    if (id === C.NONE || id === C.WONDER || id === C.FENCE || id === C.BRIDGE) continue;
+    if (MODELS[mat.name] || flora[mat.name]) continue;
+    unmodelled.push(mat.name);
+    const building = isBuilding(id) || id === C.SITE;
+    for (let s = 0; s < 4; s++) fallbacks.push([`"${mat.name}" not drawn whole`, fallbackCoverKey(building, mat.colors, s << 7)]);
+  }
+  check("covers with no model: the job buildings and the building site", unmodelled.length === 11, unmodelled.join());
+  const flat: string[] = [];
+  const shown: string[] = [];
+  for (const [what, key] of fallbacks) {
+    const m = coverInCubes(key);
+    const t = m ? topLevels(m) : null;
+    if (!t || t.levels < 3 || t.highest > 1 / 3 || t.top > 0.6) flat.push(`${what} ${key}: ${JSON.stringify(t)}`);
+    else if (shown.length < 6) shown.push(`${key.split(":")[1]}#${key.split("#")[1]} ${t.levels} levels, ${t.highest.toFixed(2)}, ${t.top.toFixed(2)} tall`);
+  }
+  console.log("  no plain cubes:", shown.join("; "));
+  check(`no cover with no look drawn as a plain cube in cubes (${fallbacks.length} shapes)`, flat.length === 0, flat.join(" | "));
+  // Seated on a slope: the fine land falls up to half a cell across a cell (four cubes); none of
+  // them hangs over it, whichever way it falls. On 783932e the footings hung up to 0.25 here.
+  const hangs = new Map<string, number>();
+  for (const [, key] of fallbacks) {
+    const m = coverInCubes(key);
+    if (!m) continue;
+    const look = key.split(":")[1];
+    hangs.set(look, Math.max(hangs.get(look) ?? -Infinity, hangOnSlope(m, SLOPE)));
+  }
+  console.log("  on a slope of half a cell, the worst hang:", [...hangs].map(([k, h]) => `${k} ${h.toFixed(3)}`).join(", "));
+  for (const [look, h] of hangs) check(`${look}: seated on a slope of ${SLOPE} cells, nothing over the land (worst ${h.toFixed(3)})`, h <= 1e-6);
+  // A row of cells: more than one shape, so a row of them is not regular.
+  const row = new Set(Array.from({ length: 8 }, (_, k) => fallbackCoverKey(false, [0xc8c8cc], Math.imul(k + 1, 0x9e3779b1) >>> 0)));
+  check("a row of eight rubble cells: more than two shapes", row.size > 2, `${row.size}`);
+  const boxes: string[] = [];
+  for (const [look, [name, n]] of Object.entries(BOX_FALLBACKS))
+    for (let s = 0; s < n; s++) {
+      const key = fallbackBoxKey(look as keyof typeof BOX_FALLBACKS, s << 7);
+      const model = MODELS[key];
+      if (key !== `${name}${s}` || !isFallbackBox(key) || !model || boxTops(model) < 3 || Math.max(...model.map((b) => b.y + b.h)) > 0.6) boxes.push(key);
+    }
+  check("without the small cubes: every fallback box model on at least three heights, under 0.6 cells", boxes.length === 0, boxes.join());
+  check("no plain block or slab model left", !MODELS.block && !MODELS.slab);
 
   // The instances: a block of 3 by 3 by 3 voxels draws 25 (the middle column's two lower ones are
   // shut in), each lifted by its seat and times the gain; one taken from the top shows the one under it.

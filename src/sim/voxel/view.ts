@@ -40,7 +40,7 @@ import { leanToward } from "../director";
 import { BUILDS } from "../body";
 import { carried, carry } from "./pacing";
 import { gaitOf, hipHeight, lookAround, strideRate } from "./gait";
-import { BUILTIN, C, F, G, S } from "../materials";
+import { BUILTIN, C, F, G, S, isBuilding } from "../materials";
 import { laid } from "../roads";
 import { envelope, type Body, type Visuals } from "../visuals";
 import { TICK, type World } from "../world";
@@ -75,6 +75,9 @@ import {
   nearestFlames,
   puffyCloud,
   spellCoverKey,
+  fallbackBoxKey,
+  fallbackCoverKey,
+  isFallbackBox,
   voxelCube,
 } from "./cover-cubes";
 import { PropModels } from "./props";
@@ -817,7 +820,7 @@ export class VoxelView {
     const cube = own.startsWith("cube:") ? own.split(":") : null;
     // A rock, shrub, cactus, crystal or stump in cubes has its shape after its name: "boulder#2".
     const name = own.split("#")[0];
-    const boxes0 = MODELS[name] ?? FLORA_MODELS[name] ?? MODELS.block;
+    const boxes0 = MODELS[name] ?? FLORA_MODELS[name] ?? MODELS.heap0;
     const boxes = far ? farTreeModel(boxes0) : boxes0;
     // With the small cubes on, every other cover's model in cubes of the one size too (shapes.ts
     // boxesInCubes): shrubs, cacti, flowers, crops, fences (15 November).
@@ -849,7 +852,7 @@ export class VoxelView {
       const mat = world.materials.get("cover", c);
       // In small cubes (18 November): one of the island's own looks by the cover's name, in its colours.
       if (GRAPHICS.cubes) return spellCoverKey(mat.name, mat.solid, mat.colors, cellHash(i));
-      return mat.solid ? "block" : "slab";
+      return fallbackBoxKey(mat.solid ? "rubble" : "gravel", cellHash(i));
     }
     if (c === C.TREE) {
       // 4.4.5: the cell's own tree, one of its style's shapes.
@@ -880,7 +883,13 @@ export class VoxelView {
       const ez = (way(i - world.w) ? 1 : 0) + (way(i + world.w) ? 1 : 0);
       return ez > ex ? "bridge-z" : "bridge-x";
     }
-    return world.materials.get("cover", c).name;
+    const mat = world.materials.get("cover", c);
+    if (MODELS[mat.name] || FLORA_MODELS[mat.name]) return mat.name;
+    // No model of its own (a job building or a site not drawn whole, buildings.ts): never the
+    // plain white box it was (21 November), a broken footing or rubble in its colours.
+    const building = isBuilding(c) || c === C.SITE;
+    if (GRAPHICS.cubes) return fallbackCoverKey(building, mat.colors, cellHash(i));
+    return fallbackBoxKey(building ? "footing" : "rubble", cellHash(i));
   }
 
   // A house's look: its village's (4.4.5), the nearest one within reach.
@@ -1114,7 +1123,7 @@ export class VoxelView {
       const cube = key.startsWith("cube:");
       const tree = cube || isTree(key.startsWith("far:") ? key.slice(4) : key);
       const house = key === "house" || key.startsWith("house-");
-      const tinted = key === "block" || key === "slab" || key === "tuft" || key === "bloom";
+      const tinted = isFallbackBox(key) || key === "tuft" || key === "bloom";
       for (let k = 0; k < cells.length; k++) {
         const i = cells[k];
         const x = i % world.w;

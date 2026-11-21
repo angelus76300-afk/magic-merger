@@ -1,0 +1,128 @@
+{
+  "quality": "high",
+  "slope": 0,
+  "spot": {
+    "X": 36,
+    "Y": 68
+  },
+  "field": [
+    {
+      "key": "sp:rubble:c8c8cc.b9b9be#1",
+      "cells": 5,
+      "levels": 4,
+      "highest": 0.05,
+      "top": 0.5,
+      "foot": -0.88
+    },
+    {
+      "key": "sp:rubble:c8c8cc.b9b9be#2",
+      "cells": 1,
+      "levels": 4,
+      "highest": 0.04,
+      "top": 0.5,
+      "foot": -0.88
+    },
+    {
+      "key": "sp:rubble:c8c8cc.b9b9be#0",
+      "cells": 4,
+      "levels": 3,
+      "highest": 0.1,
+      "top": 0.375,
+      "foot": -0.88
+    },
+    {
+      "key": "sp:gravel:d0ccc4#1",
+      "cells": 2,
+      "levels": 3,
+      "highest": 0.29,
+      "top": 0.375,
+      "foot": -0.88
+    },
+    {
+      "key": "sp:rubble:c8c8cc.b9b9be#3",
+      "cells": 2,
+      "levels": 3,
+      "highest": 0.05,
+      "top": 0.375,
+      "foot": -0.88
+    },
+    {
+      "key": "sp:gravel:d0ccc4#2",
+      "cells": 2,
+      "levels": 4,
+      "highest": 0.06,
+      "top": 0.5,
+      "foot": -0.88
+    }
+  ],
+  "site": [
+    {
+      "key": "sp:footing:a08058.8a6a44#0",
+      "cells": 1,
+      "levels": 4,
+      "highest": 0.11,
+      "top": 0.5,
+      "foot": -0.75
+    },
+    {
+      "key": "sp:footing:a08058.8a6a44#1",
+      "cells": 1,
+      "levels": 4,
+      "highest": 0.12,
+      "top": 0.5,
+      "foot": -0.75
+    },
+    {
+      "key": "sp:footing:6a6a70.5a5a60#0",
+      "cells": 2,
+      "levels": 4,
+      "highest": 0.22,
+      "top": 0.5,
+      "foot": -0.75
+    },
+    {
+      "key": "sp:footing:e0dcd0.d0ccc0#0",
+      "cells": 1,
+      "levels": 4,
+      "highest": 0.13,
+      "top": 0.5,
+      "foot": -0.75
+    },
+    {
+      "key": "sp:footing:a08058.8a6a44#2",
+      "cells": 1,
+      "levels": 3,
+      "highest": 0.14,
+      "top": 0.375,
+      "foot": -0.75
+    },
+    {
+      "key": "sp:footing:6a6a70.5a5a60#2",
+      "cells": 1,
+      "levels": 4,
+      "highest": 0.04,
+      "top": 0.5,
+      "foot": -0.75
+    }
+  ],
+  "hangs": {
+    "sp:rubble": {
+      "drawn": 12,
+      "hanging": 0,
+      "worst": -0.375,
+      "cellWorst": -0.5
+    },
+    "sp:gravel": {
+      "drawn": 4,
+      "hanging": 0,
+      "worst": -0.625,
+      "cellWorst": -0.5
+    },
+    "sp:footing": {
+      "drawn": 7,
+      "hanging": 0,
+      "worst": -0.125,
+      "cellWorst": -0.125
+    }
+  }
+}

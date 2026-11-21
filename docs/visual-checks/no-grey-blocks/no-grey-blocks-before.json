@@ -1,0 +1,67 @@
+{
+  "quality": "high",
+  "spot": {
+    "X": 36,
+    "Y": 68
+  },
+  "field": [
+    {
+      "key": "sp:block:c8c8cc.b9b9be#1",
+      "cells": 7,
+      "levels": 2,
+      "highest": 0.81,
+      "top": 0.75,
+      "foot": -0.25
+    },
+    {
+      "key": "sp:block:c8c8cc.b9b9be#0",
+      "cells": 5,
+      "levels": 2,
+      "highest": 0.75,
+      "top": 0.75,
+      "foot": -0.25
+    },
+    {
+      "key": "sp:slab:d0ccc4#1",
+      "cells": 2,
+      "levels": 2,
+      "highest": 0.83,
+      "top": 0.25,
+      "foot": -0.25
+    },
+    {
+      "key": "sp:slab:d0ccc4#0",
+      "cells": 2,
+      "levels": 2,
+      "highest": 0.83,
+      "top": 0.25,
+      "foot": -0.25
+    }
+  ],
+  "site": [
+    {
+      "key": "building site",
+      "cells": 3,
+      "levels": 1,
+      "highest": 1,
+      "top": 0.75,
+      "foot": 0
+    },
+    {
+      "key": "smithy",
+      "cells": 3,
+      "levels": 1,
+      "highest": 1,
+      "top": 0.75,
+      "foot": 0
+    },
+    {
+      "key": "chapel",
+      "cells": 1,
+      "levels": 1,
+      "highest": 1,
+      "top": 0.75,
+      "foot": 0
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "quality": "low",
+  "spot": {
+    "X": 36,
+    "Y": 68
+  },
+  "field": [
+    {
+      "key": "heap1",
+      "cells": 5,
+      "levels": 3,
+      "highest": 0.09,
+      "top": 0.5,
+      "foot": 0
+    },
+    {
+      "key": "heap2",
+      "cells": 1,
+      "levels": 3,
+      "highest": 0.19,
+      "top": 0.375,
+      "foot": 0
+    },
+    {
+      "key": "heap0",
+      "cells": 4,
+      "levels": 3,
+      "highest": 0.12,
+      "top": 0.375,
+      "foot": 0
+    },
+    {
+      "key": "spill1",
+      "cells": 2,
+      "levels": 3,
+      "highest": 0.24,
+      "top": 0.375,
+      "foot": 0
+    },
+    {
+      "key": "heap3",
+      "cells": 2,
+      "levels": 3,
+      "highest": 0.13,
+      "top": 0.375,
+      "foot": 0
+    },
+    {
+      "key": "spill0",
+      "cells": 2,
+      "levels": 3,
+      "highest": 0.29,
+      "top": 0.375,
+      "foot": 0
+    }
+  ],
+  "site": [
+    {
+      "key": "footing1",
+      "cells": 3,
+      "levels": 3,
+      "highest": 0.25,
+      "top": 0.375,
+      "foot": 0
+    },
+    {
+      "key": "footing0",
+      "cells": 4,
+      "levels": 3,
+      "highest": 0.24,
+      "top": 0.375,
+      "foot": 0
+    }
+  ]
+}
