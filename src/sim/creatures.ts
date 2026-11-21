@@ -12,7 +12,7 @@ import { roadSpeed, stepRoads } from "./roads";
 import { DRAGON, stepWonders } from "./wonders";
 import { growBuildings, stepBuildings } from "./buildings";
 import { packLook, randomLook, shirtOf, sizeOf, unpackLook } from "./villagers";
-import { denDown, goalOfCreature, hasNeeds, kindGoal, needsTick, pursue, stepGoals } from "./goals";
+import { denDown, goalOfCreature, hasNeeds, kindGoal, needsTick, pursue, stepGoals, weatherCairns } from "./goals";
 import { abilitiesFromName, useAbilities } from "./abilities";
 import { stepArtifacts } from "./artifacts";
 import { meter } from "./motion";
@@ -23,6 +23,8 @@ import { alarm, calmDown, fleeing } from "./flight";
 import { N, boldness, darkWakes, lightAt, meet, natureOf, natureTick, spellMade, strike, touch, type Meeting } from "./reactions";
 import { pathsOf, solidCovers } from "./paths";
 import { LOADS, deed, harmed, life, newMind, noteDeath, reborn, storyOn, tell, villageOf, type AbilitySpec, type Goal, type Mind } from "./kin";
+import { COLD, chillPace, chillTick, hardy, landFreeze, person, tolerance, tooCold, warmerWay } from "./cold";
+import { abandonTrip } from "./goals";
 
 // What a spell-made creature does, declared rather than coded, so even a
 // short program gets a creature with a life of its own.
@@ -264,6 +266,10 @@ export interface Creature {
   levitate: number;
   stun: number;
   drowning: number;
+  // Cold (cold.ts), not saved: seconds of chill, of land freeze in a row, and of the grace after it.
+  chill: number;
+  iced: number;
+  thaw: number;
   // Who this one is among its kind (villagers.ts for villagers; a bit for
   // antlers on wild animals). Saved.
   look: number;
@@ -336,6 +342,9 @@ export function makeCreature(kindName: string, x: number, y: number): Creature {
     levitate: 0,
     stun: 0,
     drowning: 0,
+    chill: 0,
+    iced: 0,
+    thaw: 0,
     look: look ? packLook(look) : (Math.random() * 256) | 0,
     data: {},
   };
@@ -610,7 +619,32 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       c.drowning += dt;
       if (c.drowning > 4) c.hp -= 12 * dt;
     } else c.drowning = Math.max(0, c.drowning - dt);
-    if (world.temp[i] < -12 && !k.fireproof && !immune("cold")) c.frozen = Math.max(c.frozen, 0.5);
+    // A spell's cold freezes for a moment, then lets it walk out (cold.ts); the land's own cold chills.
+    if (!immune("cold")) landFreeze(world, c, k, i, dt);
+  }
+  // Cold (cold.ts): seconds of chill below its tolerance, back by a fire or a house. Past
+  // EXPOSURE_HARM it is hurt, and a death of it leaves a frozen body standing (the view).
+  const chill = chillTick(world, c, k, i, dt);
+  if (chill > COLD.EXPOSURE_HARM && (COLD.PEOPLE_DIE || !person(c, k))) {
+    c.hp -= COLD.CHILL_HURT * k.hp * c.size * dt;
+    if (c.hp <= 0 && c.burning <= 0) c.data.frostDeath = true;
+  }
+  // Breath in the cold air: a puff every BREATH seconds, one at a time.
+  if (chill > 0 && world.time - ((c.data.breath as number | undefined) ?? -1e9) >= COLD.BREATH) {
+    c.data.breath = world.time;
+    const r = k.radius * c.size;
+    world.particles.add({
+      x: c.x + Math.cos(c.hd) * r,
+      y: c.y + Math.sin(c.hd) * r,
+      z: c.z + Math.max(0.5, r * 1.1),
+      vx: Math.cos(c.hd) * 0.5,
+      vy: Math.sin(c.hd) * 0.5,
+      vz: 0.5,
+      life: 1.2,
+      color: 0xeef4f8,
+      size: 0.45,
+      drag: 1.5,
+    });
   }
   if (world.gas[i] !== S.NONE) {
     const gas = world.materials.get("gas", world.gas[i]);
@@ -697,6 +731,40 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       wantY = dangerDir.y;
       pace = 1.5;
       drive = "danger";
+    } else if (chill > 0 && (chill > COLD.RETREAT_AT || (c.data.retreat && world.temp[i] < tolerance(world, c, k)))) {
+      // Out of the cold (cold.ts): toward the warmest way near it, a house or lower ground, until it
+      // stands where it is warm enough. A merchant turned back twice gives the trip up.
+      if (!c.data.retreat) {
+        c.data.retreat = true;
+        // Counted once a cold spell (cold.ts chillTick clears it when the chill is gone): a retreat
+        // broken by a fright or a fight and taken up again is the same one. Only while the task is
+        // still the trip's.
+        // A trip whose task is gone is over (goals.ts pursue clears it too, between retreats).
+        if (c.data.trip && c.mind?.task !== "trade") {
+          c.data.trip = undefined;
+          c.data.tripRetreats = undefined;
+        }
+        if (!c.data.retreatCounted) {
+          c.data.retreatCounted = true;
+          if (c.data.trip && c.mind?.task === "trade") {
+            const n = ((c.data.tripRetreats as number | undefined) ?? 0) + 1;
+            c.data.tripRetreats = n;
+            if (n >= COLD.TRIP_GIVE_UP) abandonTrip(world, c);
+          }
+        }
+      }
+      let warm = c.data.warm as { x: number; y: number } | null | undefined;
+      if (warm === undefined || (world.tick + c.id) % 3 === 0) {
+        warm = warmerWay(world, c, k, blocked);
+        c.data.warm = warm;
+      }
+      if (warm) {
+        wantX = warm.x - c.x;
+        wantY = warm.y - c.y;
+        pace = COLD.RETREAT_PACE;
+      } else pace = 0;
+      drive = "cold";
+      if (c.mind) c.mind.action = "getting out of the cold";
     } else if (c.calm > 0) {
       pace = 0;
       drive = "calm";
@@ -809,6 +877,10 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
         pace = 0;
       }
     }
+    if (drive !== "cold" && c.data.retreat) {
+      c.data.retreat = undefined;
+      c.data.warm = undefined;
+    }
     // Frightened people run for the nearest ward instead of away into the open.
     const scared = c.fear > 0 || c.burning > 0 || !!dangerDir || mood === "fear";
     if (scared && world.wards.length && !hostile(c)) {
@@ -840,6 +912,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       if (onGround && !onDeck && world.fluid[i] === F.MUD) speed *= 0.3;
       // Faster on a path, a road or a bridge (4.9, roads.ts).
       if (onGround && !k.aquatic) speed *= roadSpeed(world, i);
+      // Chilled, it slows (cold.ts).
+      if (chill > 0) speed *= chillPace(chill);
     }
     // The end of the trip, for its flow field: the task's place, when the
     // point asked for is only a bend on the way (goals.ts roamAim).
@@ -856,7 +930,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     // same walls, and the ground's own slowing (water, mud) and a road's speed.
     // Asleep, frozen or stunned, it goes nowhere (a dead zone over any push).
     const stepped = rider
-      ? driveRidden(world, c, k, rider, busy ? 2 : DEAD_ZONE, groundPace(world, k, i, onGround, onDeck) * Math.sqrt(c.size), dt, blocked)
+      ? driveRidden(world, c, k, rider, busy ? 2 : DEAD_ZONE, groundPace(world, k, i, onGround, onDeck) * chillPace(chill) * Math.sqrt(c.size), dt, blocked)
       : steer(world, c, k, c.x + wantX, c.y + wantY, busy ? 0 : speed, arrive, hunting, dt, blocked, gx, gy);
     // Ridden, the same walls hold where it stands, not only ahead: steer.ts lets a creature move
     // freely in the cell it is in, and a player pushing into the sea for a minute walked along a
@@ -1358,7 +1432,7 @@ function plan(world: World, c: Creature, k: CreatureKind, dt: number): void {
     const ty = cy + (Math.random() - 0.5) * 2 * range;
     if (!world.inside(tx, ty)) continue;
     const j = world.idx(tx, ty);
-    if (k.aquatic ? !wet(world, j, 0.8) : !k.flying && (world.depth[j] > 0.3 || danger(world, j))) continue;
+    if (k.aquatic ? !wet(world, j, 0.8) : !k.flying && (world.depth[j] > 0.3 || danger(world, j) || tooCold(world, c, k, j))) continue;
     c.tx = tx;
     c.ty = ty;
     return;
@@ -1390,11 +1464,24 @@ export function populate(world: World, wild: readonly string[] | null = null): v
   world.wild = wild;
 }
 
+const BIRTH_TRIES = 6;
+// A wild kind's tolerance, before it has a home: no person is born wild.
+function birthTolerance(world: World, k: CreatureKind): number {
+  return hardy(world, k) ? COLD.CHILL_AT_HARDY : COLD.CHILL_AT;
+}
+
 // One wild animal born in its habitat, if there is any left.
 function birth(world: World, name: string, sure = false): boolean {
   const s = SPECIES.find((sp) => sp.kind.name === name);
   if (!s) return false;
-  const i = sure ? habitatCellSure(world, s) : habitatCell(world, s);
+  // Not where it is too cold for it (cold.ts): a few more tries. Its habitat's count is unchanged.
+  const k = KINDS.get(name);
+  let i = -1;
+  for (let tries = 0; tries < BIRTH_TRIES; tries++) {
+    i = sure ? habitatCellSure(world, s) : habitatCell(world, s);
+    if (i < 0 || !k || world.temp[i] >= birthTolerance(world, k)) break;
+    if (tries === BIRTH_TRIES - 1) i = -1;
+  }
   if (i < 0) return false;
   // world.idx rounds: a creature at x stands in cell round(x).
   const c = makeCreature(name, (i % world.w) + (Math.random() - 0.5) * 0.6, Math.floor(i / world.w) + (Math.random() - 0.5) * 0.6);
@@ -1511,6 +1598,8 @@ export function lifeCycle(world: World, dt: number): void {
   if (world.wards.length) keepOut(world);
   stepLandmarks(world, maxHp, (c) => kindOf(c).fireproof);
   stepArtifacts(world);
+  // Cairns over the island's number, or too close together, weather away (goals.ts).
+  weatherCairns(world);
   for (let k = world.creatures.length - 1; k >= 0; k--) {
     if (world.creatures[k].dead && world.creatures[k].deadFor > 40) world.creatures.splice(k, 1);
   }

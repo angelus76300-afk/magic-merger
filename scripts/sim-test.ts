@@ -67,6 +67,8 @@ import { pickExamples, words } from "../worker/programs";
 import { readingChecks } from "./reading-test";
 import { groundBlendChecks } from "./ground-blend-test";
 import { roadsGroundChecks } from "./roads-ground-test";
+import { coldChecks } from "./cold-test";
+import type { ColdRun } from "./cold-run";
 import { verdict, type LinkedPull } from "../worker/feedback";
 import { DROP_MAX, DROP_TILE, dropAt, dropShare, dropSize, rainWidth } from "../src/sim/voxel/drops";
 import { cronJobs } from "../worker/cron";
@@ -142,11 +144,15 @@ const LAND_SECONDS = 180;
 const BALANCE_SECONDS = 1800;
 const WIPE_AT = 60;
 const RECOVER_SECONDS = 600;
+const COLD_SEEDS = [1, 2, 3];
+const COLD_SECONDS = 600;
 const idle: Job[] = [
   { balance: "mixed", seed: 31, seconds: BALANCE_SECONDS, size: 208, wipeAt: -1 },
   { balance: "mixed", seed: 33, seconds: WIPE_AT + RECOVER_SECONDS, size: 208, wipeAt: WIPE_AT },
   ...BIOMES.map((balance, k) => ({ balance, seed: 51 + k, seconds: BALANCE_SECONDS, size: 112, wipeAt: -1 })),
   { balance: "temperate", seed: 3, seconds: WIPE_AT + RECOVER_SECONDS, size: 152, wipeAt: WIPE_AT },
+  // Cold is a pressure, not a trap (21 November): ten minutes on a tundra island, three seeds.
+  ...COLD_SEEDS.map((cold) => ({ cold, seconds: COLD_SECONDS })),
   // Monsters that live through their first day (2026-11-11): ten creature programs placed by the village.
   ...MONSTERS.map((_, monster) => ({ monster })),
   ...Array.from({ length: SCENE_STREAMS }, (_, n) => ({ scene: n, seconds: SCENE_SECONDS })),
@@ -173,6 +179,7 @@ const motionErrors: string[] = [];
 const lands: LandLife[] = [];
 const balances: Balance[] = [];
 const monsterRows: MonsterLife[] = [];
+const colds: ColdRun[] = [];
 const nextIdle = new Int32Array(new SharedArrayBuffer(4));
 const idleDone = Promise.all(
   Array.from({ length: Math.min(4, Math.max(2, availableParallelism() - 1)) }, () => {
@@ -190,8 +197,10 @@ const idleDone = Promise.all(
         land,
         balance,
         monster,
+        cold,
       }: {
         job: Job;
+        cold?: ColdRun;
         monster?: MonsterLife;
         land?: LandLife;
         balance?: Balance;
@@ -202,7 +211,8 @@ const idleDone = Promise.all(
         report?: SceneReport;
         verified?: { ok: boolean; wins: number; runs: number };
       }) => {
-        if (monster) monsterRows.push(monster);
+        if (cold) colds.push(cold);
+        else if (monster) monsterRows.push(monster);
         else if (balance) balances.push(balance);
         else if (land) lands.push(land);
         else if (rate && "rate" in job) challengeRates.set(job.rate, rate);
@@ -1443,6 +1453,30 @@ check(
     ) >= 1,
   [...new Set(balances.flatMap((b) => Object.keys(b.catches)))].map((k) => `${k} ${balances.reduce((n, b) => n + (b.catches[k] ?? 0), 0)}`).join(", "),
 );
+// Cairns stay rare (21 November, the owner's screenshots of grey cubes over the peaks): at the end of
+// every half hour run, at most one cairn per 2,000 cells of island (goals.ts CAIRN). On main the
+// mixed large island of seed 31 had hundreds after 45 minutes (scripts/cairn-soak.ts).
+for (const r of balances.filter((b) => !b.wipe)) {
+  const cap = Math.max(1, Math.floor(r.cells / 2000));
+  check(
+    `cairns: half an hour on a ${r.biome} island (${r.size}) leaves ${cap} cairns at most`,
+    r.cairns.cairns <= cap,
+    `${r.cairns.cairns} cairns, ${r.cairns.stones} lone grey stones (cap ${cap}), ${r.cairns.decor} voxels in all`,
+  );
+}
+// Cold is a pressure, not a trap (21 November, scripts/cold-run.ts): ten minutes on a tundra island,
+// three seeds. Nobody is held frozen more than 10 s in a row (on main: 103 to 111 an island),
+// and more than half of those there at the start are alive at the end (on main 33 to 48%: hunts and age
+// take some on any island; the cold held the rest).
+for (const r of colds.sort((a, b) => a.seed - b.seed)) {
+  check(
+    `cold: ten minutes on a tundra island (seed ${r.seed}): nobody held frozen, over 55% alive`,
+    r.heldEver === 0 && r.alive > r.start * 0.55 && !r.errors.length,
+    `${r.heldEver} held frozen over 10 s (longest ${r.longest} s), ${r.alive} of ${r.start} alive, ${r.frostDeaths} died of the cold, ${r.longArrived} of ${r.longTrips} market trips of 16 cells or more arrived (${r.arrived} of ${r.trips} in all, by ${r.traders} people)` +
+      (r.errors[0] ? `; ${r.errors[0]}` : ""),
+  );
+}
+check("cold: the three tundra runs ran", colds.length === COLD_SEEDS.length, `${colds.length} of ${COLD_SEEDS.length}`);
 for (const scenario of SCENARIOS) {
   const runs = idleResults.get(scenario.id) ?? [];
   const tally = (s: string) => runs.filter((r) => r.status === s).length;
@@ -2540,6 +2574,8 @@ landLagChecks(check);
 groundBlendChecks(check);
 // Roads that follow the ground, and a change one cell from a chunk seam (21 November): scripts/roads-ground-test.ts.
 roadsGroundChecks(check);
+// Cold is a pressure, not a trap (21 November): scripts/cold-test.ts.
+coldChecks(check);
 // Water and light (16 November): scripts/water-light-test.ts.
 waterLightChecks(check);
 // Weed and stones on lake beds (20 November): scripts/lake-weed-test.ts.

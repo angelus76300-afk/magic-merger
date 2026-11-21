@@ -124,6 +124,8 @@ export const BUILTIN: Record<Layer, Material[]> = {
     make("bridge", "cover", [0x8a6a44, 0x7a5c3a], { flammable: 0.4, fuel: 6 }),
     // 4.9 part 2 (sites.ts): a house or building going up, stakes to half walls.
     make("building site", "cover", [0xa08058, 0x8a6a44], { flammable: 0.5, fuel: 6, solid: true }),
+    // 21 November (goals.ts): a cairn an explorer stacks, a few stones on one cell, walked round.
+    make("cairn", "cover", [0x8a8781, 0x6f6e6a, 0xa5a199]),
   ],
   gas: [
     make("none", "gas", [0]),
@@ -179,6 +181,7 @@ export const C = {
   FISHERHUT: 38,
   BRIDGE: 39,
   SITE: 40,
+  CAIRN: 41,
 } as const;
 
 // Covers that are a building: a house or one with a job (4.4.5 part B).

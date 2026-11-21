@@ -507,6 +507,10 @@ export function noteDeath(world: World, c: Creature): void {
   const by = c.mind?.memory.filter((e) => e.feel < 0).sort((a, b) => a.feel - b.feel)[0]?.kind;
   const kind = c.kind.split("#")[0];
   if (kind !== "fish" && kind !== "bird")
-    tell(world, `${kind === "villager" ? "a villager" : `a ${kind}`} died${by ? `, killed by the ${by}` : ""}`, { x: c.x, y: c.y, who: c });
+    tell(world, `${kind === "villager" ? "a villager" : `a ${kind}`} ${c.data.frostDeath ? "froze to death" : `died${by ? `, killed by the ${by}` : ""}`}`, {
+      x: c.x,
+      y: c.y,
+      who: c,
+    });
   if (world.deaths.length > 48) world.deaths.splice(0, world.deaths.length - 48);
 }

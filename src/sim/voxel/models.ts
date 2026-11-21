@@ -164,6 +164,13 @@ export const MODELS: Record<string, Box[]> = {
   stump: [B(0.35, 0, 0.35, 0.3, 0.25, 0.3, 0x5b4128)],
   flower: [B(0.2, 0, 0.3, 0.12, 0.25, 0.12, 0xe86a9a), B(0.6, 0, 0.55, 0.12, 0.2, 0.12, 0xf2c94c), B(0.4, 0, 0.7, 0.12, 0.22, 0.12, 0xa98cf0)],
   boulder: [B(0.1, 0, 0.1, 0.8, 0.55, 0.8, 0x9a9aa0), B(0.25, 0.5, 0.2, 0.5, 0.25, 0.5, 0xa8a8ae)],
+  // A cairn (21 November): stones stacked smaller toward the top, three greys, the top to one side.
+  cairn: [
+    B(0.24, 0, 0.26, 0.5, 0.18, 0.46, 0x6f6e6a),
+    B(0.3, 0.18, 0.3, 0.38, 0.16, 0.36, 0x8a8781),
+    B(0.36, 0.34, 0.34, 0.26, 0.14, 0.26, 0xa5a199),
+    B(0.62, 0, 0.6, 0.2, 0.12, 0.2, 0x8a8781),
+  ],
   // A cover with no look of its own (a spell's cover whose name says no rock, crystal, litter or
   // plant, a building not drawn whole), tinted per instance in the material's colour. Never one
   // plain box (21 November, the owner: "what are those big grey blocks?"): a low heap of rubble,

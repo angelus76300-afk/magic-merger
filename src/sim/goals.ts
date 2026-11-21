@@ -1,9 +1,11 @@
-import { C, F, G } from "./materials";
+import { C, F, G, isBuilding as isBuildingCover } from "./materials";
 import { SITE, STAGE_WORDS, canStake, handsOn, kindName, siteToWork, standBy, sitesOf, sitesOn, stageOf, stake, work as workSite, type Site } from "./sites";
-import { MIN_PEOPLE, alongRoad, claim, isWay, nextPave, noteTrip, pave, planned, type PaveJob } from "./roads";
+import { MIN_PEOPLE, alongRoad, claim, isWay, nextPave, noteTrip, pave, planned, unnoteTrip, type PaveJob } from "./roads";
+import { tolerance, tooCold } from "./cold";
 import type { Wonder } from "./wonders";
 import { hasJob, housesOf, settlementNear, tavernFor, tierOf } from "./buildings";
-import { VK } from "./voxels";
+import { VK, voxelColor, voxelKind } from "./voxels";
+import { keyLevel, keyX, keyY } from "./voxelkey";
 import { daylight } from "./daylight";
 import { names, type Plan } from "./social";
 import { unpackLook, type Job } from "./villagers";
@@ -322,6 +324,13 @@ export function pursue(world: World, c: Creature, k: CreatureKind, dt: number): 
     // Two or three times a second while it hunts or fights, about once and a half otherwise.
     m.think = m.task === "hunt" || m.task === "fight" ? 0.3 + Math.random() * 0.15 : 0.5 + Math.random() * 0.35;
     decide(world, c, k, m, needs);
+  }
+  // A trip ends with its task: dropped or replaced, it is no trip any more (21 November: on main
+  // people held trips for minutes after, a cart drawn behind them and a cold retreat counted
+  // against work that was not the trip).
+  if (m.task !== "trade" && c.data.trip !== undefined) {
+    c.data.trip = undefined;
+    c.data.tripRetreats = undefined;
   }
   if (m.task === "none") {
     m.action = needs ? "looking around" : m.action;
@@ -1007,7 +1016,10 @@ function goToMarket(world: World, c: Creature, m: Mind, v: Village): boolean {
   if (world.time < v.market) return false;
   v.market = world.time + 70 + Math.random() * 40;
   let dest: { x: number; y: number; name: string; to: Village | Wonder } | null = null;
-  const wonders = world.wonders.filter((w) => Math.hypot(w.x - v.x, w.y - v.y) < 70 && Math.hypot(w.x - v.x, w.y - v.y) > 16);
+  // Not to a place colder than it can bear (cold.ts): it would only turn back.
+  const tol = tolerance(world, c, life.kindOf(c));
+  const warm = (x: number, y: number) => world.temp[world.idx(Math.max(0, Math.min(world.w - 1, x)), Math.max(0, Math.min(world.h - 1, y)))] >= tol;
+  const wonders = world.wonders.filter((w) => Math.hypot(w.x - v.x, w.y - v.y) < 70 && Math.hypot(w.x - v.x, w.y - v.y) > 16 && warm(w.x, w.y));
   if (wonders.length && Math.random() < 0.3) {
     const w = wonders[Math.floor(Math.random() * wonders.length)];
     // To its edge, not into it.
@@ -1017,7 +1029,7 @@ function goToMarket(world: World, c: Creature, m: Mind, v: Village): boolean {
   } else {
     // Nearer villages more often.
     let total = 0;
-    const near = world.villages.filter((o) => o !== v && o.people >= MIN_PEOPLE && Math.hypot(o.x - v.x, o.y - v.y) < 110);
+    const near = world.villages.filter((o) => o !== v && o.people >= MIN_PEOPLE && Math.hypot(o.x - v.x, o.y - v.y) < 110 && warm(o.x, o.y));
     for (const o of near) total += 1 / Math.max(20, Math.hypot(o.x - v.x, o.y - v.y));
     let pick = Math.random() * total;
     for (const o of near) {
@@ -1030,6 +1042,7 @@ function goToMarket(world: World, c: Creature, m: Mind, v: Village): boolean {
   }
   if (!dest) return false;
   c.data.trip = { from: v, to: dest.to };
+  c.data.tripRetreats = undefined;
   // Counted as it sets out: a river or a cliff that turns it back is why
   // the two lay a road, with a bridge (roads.ts).
   noteTrip(world, v, dest.to);
@@ -1151,13 +1164,35 @@ function priest(world: World, c: Creature, m: Mind, v: Village): void {
   worship(world, c, m);
 }
 
+// A merchant turned back by the cold TRIP_GIVE_UP times (creatures.ts) goes home: the trip is
+// not counted toward a road (roads.ts), and the food it carried goes back to its village.
+export function abandonTrip(world: World, c: Creature): void {
+  const trip = c.data.trip as { from: Village; to: Village | Wonder } | undefined;
+  // Only the trip itself: never work the creature took up since.
+  if (!trip || c.mind?.task !== "trade") return;
+  unnoteTrip(world, trip.from, trip.to);
+  c.data.trip = undefined;
+  c.data.via = undefined;
+  c.data.tripRetreats = undefined;
+  const m = mindOf(c);
+  if (m.carry === "food") {
+    trip.from.food += 2;
+    m.carry = null;
+  }
+  setTask(m, "roam", c.homeX, c.homeY, 1);
+  m.action = "going home out of the cold";
+}
+
 function trade(world: World, c: Creature, m: Mind, v: Village): void {
   let poor: Village | null = null;
-  for (const o of world.villages) if (o !== v && o.food + 4 < v.food && (!poor || o.food < poor.food)) poor = o;
+  const tol = tolerance(world, c, life.kindOf(c));
+  const warm = (o: Village) => world.temp[world.idx(Math.max(0, Math.min(world.w - 1, o.x)), Math.max(0, Math.min(world.h - 1, o.y)))] >= tol;
+  for (const o of world.villages) if (o !== v && o.food + 4 < v.food && (!poor || o.food < poor.food) && warm(o)) poor = o;
   if (poor) {
     v.food -= 2;
     m.carry = "food";
     c.data.trip = { from: v, to: poor };
+    c.data.tripRetreats = undefined;
     noteTrip(world, v, poor);
     setTask(m, "trade", poor.x, poor.y, 1);
     m.action = "taking food to a poorer village";
@@ -1257,7 +1292,8 @@ function wander(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
     const i = world.idx(x, y);
     // Open ground it can stand on (4.3: a point in the middle of a wood had
     // it pacing along the trees until it gave up).
-    if (k.aquatic ? world.fluid[i] !== F.WATER || world.depth[i] < 0.8 : !k.flying && (world.depth[i] > 0.3 || !standable(world, i))) continue;
+    if (k.aquatic ? world.fluid[i] !== F.WATER || world.depth[i] < 0.8 : !k.flying && (world.depth[i] > 0.3 || !standable(world, i) || tooCold(world, c, k, i)))
+      continue;
     setTask(m, "roam", x, y, 0.8);
     return true;
   }
@@ -1849,6 +1885,7 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       const there = villageOf(world, c.x, c.y);
       const trip = c.data.trip as { from: Village; to: Village | Wonder } | undefined;
       c.data.trip = undefined;
+      c.data.tripRetreats = undefined;
       c.data.via = undefined;
       const food = m.carry === "food";
       m.carry = null;
@@ -2015,11 +2052,16 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       return;
     }
     case "roam":
-      if (m.goal === "explore" && Math.random() < 0.4) {
-        const mark = markAt(world, "cairn", c.x, c.y, c.kind, 8);
-        if (mark.size <= 3 && world.depth[world.idx(c.x, c.y)] < 0.05) {
-          pile(world, c.x, c.y, mark.size - 1, 0x8d8d96, VK.STONE);
-          deed(c, "left a cairn");
+      // Rare by nature (21 November: on main one roam in 2.5 piled a stone, and after a while
+      // hundreds of grey cubes covered the peaks): one in CAIRN.chance, where none stands near.
+      if (m.goal === "explore" && Math.random() < CAIRN.chance) {
+        const at = cairnSpot(world, c.x, c.y);
+        if (at >= 0 && cairnRoom(world, at)) {
+          markAt(world, "cairn", at % world.w, Math.floor(at / world.w), c.kind, 8);
+          if (cairn(world, at)) {
+            cairnsOf(world).push(at);
+            deed(c, "left a cairn");
+          }
         }
       }
       return;
@@ -2057,6 +2099,162 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       deed(c, `healed a ${base(t.kind)}`);
       return;
   }
+}
+
+// A cairn (21 November): a few stones an explorer stacks on one cell, the "cairn" cover, drawn as
+// stones smaller toward a top that leans (cover-cubes.ts). On main it piled one light grey cube a
+// visit, with nothing to limit them: after a while hundreds covered the peaks. Never on a field, a
+// crop, a path, a road, a road's line or anything built, nor beside a field, a crop or a building.
+// standing: a cairn already there, asked whether it may stay (weatherCairns).
+function cairnFree(world: World, i: number, standing = false): boolean {
+  if (i < 0 || i >= world.n) return false;
+  // A fire passes over standing stones; a new cairn waits for it to go out.
+  if (world.cover[i] !== (standing ? C.CAIRN : C.NONE) || world.depth[i] > 0.05 || (!standing && world.fire[i] > 0.1)) return false;
+  const g = world.ground[i];
+  if (g === G.FIELD || isWay(g) || planned(world, i)) return false;
+  for (const s of world.sites) if (i === s.i || i === s.i + 1 || i === s.i + world.w || i === s.i + world.w + 1) return false;
+  const x = i % world.w;
+  const y = Math.floor(i / world.w);
+  for (let dy = -1; dy <= 1; dy++)
+    for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= world.w || ny >= world.h) return false;
+      const cv = world.cover[ny * world.w + nx];
+      // Nor beside a field: crops grow on it, and one would stand against the stones.
+      if (cv === C.CROP || isBuildingCover(cv) || world.ground[ny * world.w + nx] === G.FIELD) return false;
+    }
+  return true;
+}
+
+// Where an explorer at (x, y) can leave a cairn: the nearest free cell within 2; -1 for none.
+export function cairnSpot(world: World, x: number, y: number): number {
+  const cx = Math.round(x);
+  const cy = Math.round(y);
+  for (let r = 0; r <= 2; r++)
+    for (let dy = -r; dy <= r; dy++)
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx < 2 || ny < 2 || nx >= world.w - 3 || ny >= world.h - 3) continue;
+        const i = ny * world.w + nx;
+        if (cairnFree(world, i)) return i;
+      }
+  return -1;
+}
+
+// How many: rare (one roam of an explorer in 20), none within `reach` cells of another, at most one
+// per `cells` cells of island. Those over it weather away (weatherCairns), a few each `every` ticks.
+export const CAIRN = { chance: 0.05, reach: 12, cells: 2000, every: 300, weatherPerPass: 6 } as const;
+// The light grey stone main piled for a cairn, one voxel a visit.
+export const OLD_CAIRN_GREY = 0x8d8d96;
+export function cairnCap(world: World): number {
+  return Math.max(1, Math.floor(world.n / CAIRN.cells));
+}
+
+// Where the island's cairns stand (a cell each), read on the first ask and by each weathering
+// pass. Not saved: the covers and stones are, and are read again.
+const cairnList = new WeakMap<World, number[]>();
+export function cairnsOf(world: World): number[] {
+  let list = cairnList.get(world);
+  if (!list) cairnList.set(world, (list = findCairns(world).map((g) => g.at)));
+  return list;
+}
+
+// Room for one more at i: under the cap, none within reach.
+function cairnRoom(world: World, i: number): boolean {
+  const list = cairnsOf(world);
+  if (list.length >= cairnCap(world)) return false;
+  const x = i % world.w;
+  const y = Math.floor(i / world.w);
+  return !list.some((j) => Math.hypot((j % world.w) - x, Math.floor(j / world.w) - y) < CAIRN.reach);
+}
+
+// The cairns on the island: each "cairn" cover, and main's: light grey stones lying on the land
+// (no higher than three over it), grouped with those in touching cells (`keys`, their voxels). A
+// heap of more than 12 is a spell's building, not a cairn.
+export function findCairns(world: World): { at: number; keys: number[] }[] {
+  const out: { at: number; keys: number[] }[] = [];
+  for (let i = 0; i < world.n; i++) if (world.cover[i] === C.CAIRN) out.push({ at: i, keys: [] });
+  const d = world.decor;
+  const byCell = new Map<number, number[]>();
+  for (let slot = 0; slot < d.slots; slot++) {
+    if (!d.isLive(slot)) continue;
+    const v = d.valueOf(slot);
+    if (voxelKind(v) !== VK.STONE || voxelColor(v) !== OLD_CAIRN_GREY) continue;
+    const key = d.keyOf(slot);
+    const x = keyX(key);
+    const y = keyY(key);
+    if (x >= world.w || y >= world.h) continue;
+    const i = y * world.w + x;
+    if (keyLevel(key) > Math.round(world.height[i] * 0.5) + 3) continue;
+    const list = byCell.get(i);
+    if (list) list.push(key);
+    else byCell.set(i, [key]);
+  }
+  const seen = new Set<number>();
+  for (const i of [...byCell.keys()].sort((a, b) => a - b)) {
+    if (seen.has(i)) continue;
+    const keys: number[] = [];
+    const todo = [i];
+    seen.add(i);
+    while (todo.length) {
+      const j = todo.pop()!;
+      keys.push(...byCell.get(j)!);
+      for (const dj of [1, -1, world.w, -world.w, world.w + 1, world.w - 1, -world.w + 1, -world.w - 1])
+        if (byCell.has(j + dj) && !seen.has(j + dj)) {
+          seen.add(j + dj);
+          todo.push(j + dj);
+        }
+    }
+    if (keys.length <= 12) out.push({ at: i, keys });
+  }
+  return out;
+}
+
+// Weathering (a rule of the land, 21 November): a cairn within reach of one kept before it, or over
+// the island's cap, crumbles: a cover cairn goes at once, main's grey stones one a pass from the top.
+// Islands saved with main's grey cubes lose them this way within minutes; the new cairns come first,
+// so those that stand apart, under the cap, stay.
+export function weatherCairns(world: World): void {
+  if (world.tick % CAIRN.every !== 17) return;
+  const all = findCairns(world);
+  const cap = cairnCap(world);
+  const kept: number[] = [];
+  let budget = CAIRN.weatherPerPass;
+  for (const g of all) {
+    // A field, a crop, a road or a building came to it after (21 November: crops grew on the field
+    // beside one): it goes, whatever the count.
+    if (!g.keys.length && !cairnFree(world, g.at, true)) {
+      world.setCover(g.at, C.NONE);
+      continue;
+    }
+    const x = g.at % world.w;
+    const y = Math.floor(g.at / world.w);
+    const crowded = kept.length >= cap || kept.some((j) => Math.hypot((j % world.w) - x, Math.floor(j / world.w) - y) < CAIRN.reach);
+    if (!crowded) {
+      kept.push(g.at);
+      continue;
+    }
+    if (budget <= 0) continue;
+    budget--;
+    if (!g.keys.length) {
+      world.setCover(g.at, C.NONE);
+      continue;
+    }
+    let top = g.keys[0];
+    for (const k of g.keys) if (keyLevel(k) > keyLevel(top)) top = k;
+    world.setVoxel(keyX(top), keyY(top), keyLevel(top), null);
+  }
+  cairnList.set(world, kept);
+}
+
+// Stacks one at cell i.
+export function cairn(world: World, i: number): boolean {
+  if (!cairnFree(world, i)) return false;
+  world.setCover(i, C.CAIRN);
+  return true;
 }
 
 function targetFor(world: World, kind: string): number {

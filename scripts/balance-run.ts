@@ -13,6 +13,7 @@ import { Runtime } from "../src/sim/runtime";
 import { stepHeadless } from "../src/sim/tick";
 import { NATIVE_NAMES } from "../src/sim/wildlife";
 import { generateWorld, type World } from "../src/sim/world";
+import { countCairns } from "./cairn-soak";
 
 export interface Balance {
   biome: Biome | "mixed";
@@ -28,6 +29,9 @@ export interface Balance {
   wipe?: Record<string, { target: number; back: number; first: number }>;
   // Who caught whom ("fox caught a hare": 3).
   catches: Record<string, number>;
+  // The cairns at the end (21 November: on main they covered a long run's peaks), and the island's cells.
+  cairns: { stones: number; cairns: number; decor: number };
+  cells: number;
   errors: string[];
 }
 
@@ -103,7 +107,7 @@ export function balanceRun(biome: Biome | "mixed", seed: number, seconds: number
       s.end = end.get(name) ?? 0;
       if (s.min === Infinity) s.min = 0;
     }
-    return { biome, size, seconds, species, wipe, catches: Object.fromEntries(caught), errors };
+    return { biome, size, seconds, species, wipe, catches: Object.fromEntries(caught), cairns: countCairns(world), cells: world.n, errors };
   } finally {
     logCatches(false);
     Math.random = shared;

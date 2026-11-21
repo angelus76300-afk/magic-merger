@@ -12,6 +12,7 @@ import { Runtime } from "../src/sim/runtime";
 import { measureMotion } from "./motion-run";
 import { landLife } from "./land-life";
 import { balanceRun } from "./balance-run";
+import { coldRun } from "./cold-run";
 import { MONSTERS, monsterLife } from "./monsters-run";
 import type { Biome, Shape } from "../src/sim/land";
 
@@ -31,12 +32,15 @@ export type Job =
   // 4.4.5: half an hour of wild numbers, or a wipe and ten minutes after.
   | { balance: Biome | "mixed"; seed: number; seconds: number; size: number; wipeAt: number }
   // 2026-11-11: a monster placed by the village, followed five minutes (monsters-run.ts).
-  | { monster: number };
+  | { monster: number }
+  // 21 November: ten minutes on a tundra island, who the cold holds (cold-run.ts).
+  | { cold: number; seconds: number };
 
 const { jobs, next } = workerData as { jobs: Job[]; next: Int32Array };
 for (let k = Atomics.add(next, 0, 1); k < jobs.length; k = Atomics.add(next, 0, 1)) {
   const job = jobs[k];
   if ("monster" in job) parentPort!.postMessage({ job, monster: monsterLife(MONSTERS[job.monster]) });
+  else if ("cold" in job) parentPort!.postMessage({ job, cold: coldRun(job.cold, job.seconds) });
   else if ("motion" in job) parentPort!.postMessage({ job, motion: measureMotion(job.motion) });
   else if ("balance" in job) parentPort!.postMessage({ job, balance: balanceRun(job.balance, job.seed, job.seconds, job.size, job.wipeAt) });
   else if ("biome" in job) parentPort!.postMessage({ job, land: landLife(job.biome, job.shape, job.seed, job.seconds, job.size) });

@@ -213,6 +213,12 @@ export function noteTrip(world: World, from: Village, to: End): void {
   l.n++;
 }
 
+// A trip given up to the cold (cold.ts, goals.ts abandonTrip): not counted after all.
+export function unnoteTrip(world: World, from: Village, to: End): void {
+  const l = stateOf(world).links.find((k) => (k.a === from && k.b === to) || (k.a === to && k.b === from));
+  if (l && l.n > 0) l.n--;
+}
+
 // Is there a road with an end near (x, y) to near (x2, y2)?
 function roadBetween(world: World, a: End, b: End): boolean {
   const near = (x: number, y: number, e: End) => Math.hypot(x - e.x, y - e.y) < VILLAGE_REACH;
