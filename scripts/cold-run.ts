@@ -3,7 +3,7 @@
 // so every freeze is the land's. Used by npm test in its worker threads (a check per seed), and
 // run on its own to compare a branch with main:
 //   npx esbuild scripts/cold-run.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/cold-run.mjs --log-level=warning
-//   node node_modules/.cache/cold-run.mjs 3 600
+//   node node_modules/.cache/cold-run.mjs <seed> [seconds]
 // It reads only c.frozen, c.dead and c.data.trip, which main has too.
 import { populate } from "../src/sim/creatures";
 import { DEFAULT_LAND } from "../src/sim/land-options";
@@ -30,6 +30,11 @@ export interface ColdRun {
   // Market trips that set out, and arrived (cleared within 8 cells of where they went).
   trips: number;
   arrived: number;
+  // The same for trips of 16 cells or more (a village next door is "arrived" at once), and how
+  // many people made the trips.
+  longTrips: number;
+  longArrived: number;
+  traders: number;
   // The creatures' share of a tick, ms: median over the run.
   creatureP50: number;
   errors: string[];
@@ -47,9 +52,12 @@ export function coldRun(seed: number, seconds = 600, size = 152): ColdRun {
     const run = new Map<number, number>();
     const held = new Set<number>();
     let longest = 0;
-    const trips = new Map<number, { x: number; y: number }>();
+    const trips = new Map<number, { x: number; y: number; far: boolean }>();
     let started = 0;
     let arrived = 0;
+    let longTrips = 0;
+    let longArrived = 0;
+    const traders = new Set<number>();
     const frost = new Map<number, string>();
     const times: number[] = [];
     let t0 = 0;
@@ -77,9 +85,15 @@ export function coldRun(seed: number, seconds = 600, size = 152): ColdRun {
         const was = trips.get(c.id);
         if (trip && !was) {
           started++;
-          trips.set(c.id, { x: trip.to.x, y: trip.to.y });
+          traders.add(c.id);
+          const far = Math.hypot(c.x - trip.to.x, c.y - trip.to.y) >= 16;
+          if (far) longTrips++;
+          trips.set(c.id, { x: trip.to.x, y: trip.to.y, far });
         } else if (!trip && was) {
-          if (Math.hypot(c.x - was.x, c.y - was.y) < 8) arrived++;
+          if (Math.hypot(c.x - was.x, c.y - was.y) < 8) {
+            arrived++;
+            if (was.far) longArrived++;
+          }
           trips.delete(c.id);
         }
       }
@@ -100,6 +114,9 @@ export function coldRun(seed: number, seconds = 600, size = 152): ColdRun {
       frostKinds: [...frost.values()].reduce<Record<string, number>>((o, k) => ((o[k] = (o[k] ?? 0) + 1), o), {}),
       trips: started,
       arrived,
+      longTrips,
+      longArrived,
+      traders: traders.size,
       creatureP50: Math.round(times[times.length >> 1] * 1000) / 1000,
       errors: errors.slice(0, 3),
     };
@@ -108,9 +125,10 @@ export function coldRun(seed: number, seconds = 600, size = 152): ColdRun {
   }
 }
 
-// On its own: seeds 1 to n, seconds.
+// On its own: one seed a process (in one process, creature ids would carry from one seed to the
+// next, and ids feed some choices).
 if (typeof process !== "undefined" && process.argv[1]?.includes("cold-run")) {
-  const n = Number(process.argv[2] ?? 3);
+  const seed = Number(process.argv[2] ?? 1);
   const seconds = Number(process.argv[3] ?? 600);
-  for (let s = 1; s <= n; s++) console.log(JSON.stringify(coldRun(s, seconds)));
+  console.log(JSON.stringify(coldRun(seed, seconds)));
 }

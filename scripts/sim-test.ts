@@ -1472,7 +1472,7 @@ for (const r of colds.sort((a, b) => a.seed - b.seed)) {
   check(
     `cold: ten minutes on a tundra island (seed ${r.seed}): nobody held frozen, over 55% alive`,
     r.heldEver === 0 && r.alive > r.start * 0.55 && !r.errors.length,
-    `${r.heldEver} held frozen over 10 s (longest ${r.longest} s), ${r.alive} of ${r.start} alive, ${r.frostDeaths} died of the cold, ${r.arrived} of ${r.trips} market trips arrived` +
+    `${r.heldEver} held frozen over 10 s (longest ${r.longest} s), ${r.alive} of ${r.start} alive, ${r.frostDeaths} died of the cold, ${r.longArrived} of ${r.longTrips} market trips of 16 cells or more arrived (${r.arrived} of ${r.trips} in all, by ${r.traders} people)` +
       (r.errors[0] ? `; ${r.errors[0]}` : ""),
   );
 }
