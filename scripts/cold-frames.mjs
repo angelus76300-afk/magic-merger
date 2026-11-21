@@ -1,12 +1,12 @@
 // Cold is a pressure, not a trap (21 November): frames of it in the Perf Lab, at 832 by 1000 (a
 // foldable open) on high, saved to docs/visual-checks/cold/ by default:
-//   peak-herd     five deer put on the highest peak of the temperate island of seed 7 (-25 there),
-//                 after a few seconds: frosted over, heading downhill (their chill and height are
-//                 printed at the start and at the frame);
+//   peak-herd     five deer put on the highest peak of the tundra island of seed 7 (its climate is
+//                 printed), a few seconds later: frosted over, heading downhill (their chill and
+//                 height are printed at the start and at the frame);
 //   statue        a deer frozen to death on that peak, standing white with frost;
 //   cairn         the stones an explorer leaves (goals.ts cairn: three stones in three greys, two
 //                 cells), put on open grass;
-//   hood          people of a village on the tundra island of seed 7, colder than 2 degrees, hooded.
+//   hood          people of a village on that island, colder than 2 degrees there, hooded.
 // It starts the dev server itself and stops it at the end.
 //   node scripts/cold-frames.mjs [out dir]
 import { createRequire } from "node:module";
@@ -53,7 +53,12 @@ function setUp() {
   const e = window.__engine;
   const w = e.world;
   let top = 0;
-  for (let i = 0; i < w.n; i++) if (w.depth[i] < 0.05 && w.cover[i] === 0 && w.height[i] > w.height[top]) top = i;
+  for (let i = 0; i < w.n; i++) {
+    const x = i % w.w;
+    const y = Math.floor(i / w.w);
+    if (x < 14 || y < 14 || x > w.w - 15 || y > w.h - 15) continue;
+    if (w.depth[i] < 0.05 && w.cover[i] === 0 && w.height[i] > w.height[top]) top = i;
+  }
   const px = top % w.w;
   const py = Math.floor(top / w.w);
   const model = w.creatures.find((c) => c.kind === "deer");
@@ -94,7 +99,7 @@ function setUp() {
     for (let dy = -2; dy <= 2 && ok; dy++)
       for (let dx = -2; dx <= 3; dx++) {
         const k = i + dy * w.w + dx;
-        if (w.ground[k] !== 0 || w.cover[k] !== 0 || w.depth[k] > 0.01 || Math.abs(w.height[k] - w.height[i]) > 0.6) ok = false;
+        if ((w.ground[k] !== 0 && w.ground[k] !== 4) || w.cover[k] !== 0 || w.depth[k] > 0.01 || Math.abs(w.height[k] - w.height[i]) > 0.6) ok = false;
       }
     if (ok) spot = i;
   }
@@ -114,7 +119,7 @@ function herdNow(ids) {
     if (!c) return null;
     const i = w.idx(c.x, c.y);
     return {
-      chill: Number((c.data.chill ?? 0).toFixed(1)),
+      chill: Number((c.chill ?? 0).toFixed(1)),
       height: Number(w.height[i].toFixed(1)),
       temp: Number(w.temp[i].toFixed(0)),
       frozen: c.frozen > 0,
@@ -152,23 +157,21 @@ try {
     writeFileSync(join(OUT, `${name}.png`), await page.screenshot({ type: "png", timeout: 240_000 }));
   };
 
-  await open("temperate");
+  await open("tundra");
   const s = await page.evaluate(setUp);
   report.peak = s;
   report.herdStart = await page.evaluate(herdNow, s.herd);
-  await shot("statue", [s.px + 0.5, s.py + 3.5, 7, 1.05, 0.4], 1500);
-  await shot("cairn", [s.cairn.x + 1, s.cairn.y + 0.5, 6, 1.0, 0.7], 1500);
-  // The herd a while later, from the side, where they are.
+  // The herd a few seconds on, from the side, where they are.
   const mid = await page.evaluate((ids) => {
     const w = window.__engine.world;
     const cs = ids.map((id) => w.creatures.find((o) => o.id === id)).filter(Boolean);
     return [cs.reduce((a, c) => a + c.x, 0) / cs.length, cs.reduce((a, c) => a + c.y, 0) / cs.length];
   }, s.herd);
-  await shot("peak-herd", [mid[0], mid[1], 12, 1.0, 0.9], 4000);
+  await shot("peak-herd", [mid[0], mid[1], 10, 1.0, 0.9], 2500);
   report.herdAtFrame = await page.evaluate(herdNow, s.herd);
   report.gameSeconds = await page.evaluate(() => window.__engine.world.time - 100);
-
-  await open("tundra");
+  await shot("statue", [s.px + 0.5, s.py + 3.5, 7, 1.05, 0.4], 1000);
+  await shot("cairn", [s.cairn.x + 1, s.cairn.y + 0.5, 6, 1.0, 0.7], 1000);
   const h = await page.evaluate(hoodSpot);
   report.hood = h;
   await shot("hood", [h.x, h.y, 6, 1.0, 0.5], 1500);

@@ -29,7 +29,9 @@ import { Runtime } from "../src/sim/runtime";
 import { stepHeadless } from "../src/sim/tick";
 import { TICK, World, generateWorld } from "../src/sim/world";
 import { keyX, keyY } from "../src/sim/voxelkey";
-import { VK, voxelColor } from "../src/sim/voxels";
+import { VK } from "../src/sim/voxels";
+import { coverInCubes } from "../src/sim/voxel/cover-cubes";
+import { MODELS } from "../src/sim/voxel/models";
 import { countCairns } from "./cairn-soak";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
@@ -336,7 +338,10 @@ export function coldChecks(check: Check): void {
     );
   }
 
-  // The cairn: an explorer (a beast) roams a field with a road for four minutes.
+  // The cairn: four explorers (beasts) roam a field with a road for six minutes. Every cairn they
+  // leave is off the field, the crops and the road, and is drawn as stacked stones: in small cubes
+  // (the "cairn" model, several heights and greys) and as boxes on the low preset; never a lone
+  // voxel cube of one grey, as main piled.
   {
     const { world, rt } = island(() => 14);
     for (let y = 0; y < SIZE; y++)
@@ -347,39 +352,32 @@ export function coldChecks(check: Check): void {
         if (y === 20 || y === 44) world.ground[i] = G.ROAD;
       }
     for (let n = 0; n < 4; n++) put(world, "beast", 16 + n * 10, 30 + (n % 2) * 6);
-    run(world, rt, 240, () => {});
-    const stones = [...world.decor.entries()];
-    const cells = new Map<number, number[]>();
-    let bad = 0;
-    for (const [key, v] of stones) {
-      const i = keyY(key) * SIZE + keyX(key);
-      if (world.ground[i] === G.FIELD || world.ground[i] === G.ROAD || world.cover[i] === C.CROP) bad++;
-      cells.set(i, [...(cells.get(i) ?? []), voxelColor(v)]);
+    run(world, rt, 360, () => {});
+    const id = world.materials.id("cover", "cairn");
+    const cells: number[] = [];
+    for (let i = 0; i < world.n; i++) if (id > 0 && world.cover[i] === id) cells.push(i);
+    const voxels = [...world.decor.keys()].map((key) => keyY(key) * SIZE + keyX(key));
+    const crop = (i: number) => [-1, 0, 1].some((dy) => [-1, 0, 1].some((dx) => world.cover[i + dy * SIZE + dx] === C.CROP));
+    const bad = [...cells, ...voxels].filter((i) => world.ground[i] === G.FIELD || world.ground[i] === G.ROAD || crop(i)).length;
+    // Its drawing: heights of the cubes' corners and greys in the small-cube model, boxes on low.
+    const model = coverInCubes("cairn#0");
+    const heights = new Set<number>();
+    const greys = new Set<string>();
+    if (model) {
+      for (let k = 1; k < model.lit.pos.length; k += 3) heights.add(Math.round(model.lit.pos[k] * 64));
+      for (let k = 0; k < model.lit.col.length; k += 3)
+        greys.add(
+          model.lit.col
+            .slice(k, k + 3)
+            .map((v) => v.toFixed(2))
+            .join(),
+        );
     }
-    // A cairn is the stones of one place: cells that touch.
-    const groups: number[][] = [];
-    const seen = new Set<number>();
-    for (const i of cells.keys()) {
-      if (seen.has(i)) continue;
-      const g: number[] = [];
-      const todo = [i];
-      seen.add(i);
-      while (todo.length) {
-        const j = todo.pop()!;
-        g.push(...cells.get(j)!);
-        for (const d of [1, -1, SIZE, -SIZE])
-          if (cells.has(j + d) && !seen.has(j + d)) {
-            seen.add(j + d);
-            todo.push(j + d);
-          }
-      }
-      groups.push(g);
-    }
-    const single = groups.filter((g) => g.length < 3 || new Set(g).size < 2).length;
+    const boxes = MODELS.cairn?.length ?? 0;
     check(
       "cold: a cairn is stacked stones, never on a field, a crop or a road",
-      groups.length > 0 && bad === 0 && single === 0,
-      `${groups.length} cairns of ${stones.length} stones; ${bad} stones on a field, a crop or a road; ${single} a single box or of one grey`,
+      cells.length > 0 && voxels.length === 0 && bad === 0 && heights.size >= 6 && greys.size >= 3 && boxes >= 3,
+      `${cells.length} cairns, ${voxels.length} lone voxel stones; ${bad} on a field, a crop or a road; drawn in ${heights.size} heights and ${greys.size} tones of small cubes, ${boxes} boxes on low`,
     );
   }
 }

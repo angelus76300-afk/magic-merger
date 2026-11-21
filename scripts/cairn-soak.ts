@@ -15,10 +15,11 @@ import { keyLevel, keyX, keyY } from "../src/sim/voxelkey";
 import { VK, voxelColor, voxelKind } from "../src/sim/voxels";
 import { TICK, generateWorld, type World } from "../src/sim/world";
 
-// The greys of a cairn: main's one, and the three of the stacked look (goals.ts CAIRN_STONES).
-const GREYS = new Set([0x8d8d96, 0x6f6e6a, 0x8a8781, 0xa5a199]);
+// The grey stone main piled for a cairn, one voxel a visit.
+const GREYS = new Set([0x8d8d96]);
 
-// Stones lying on the land (at most three over it) in a cairn's grey, and their groups.
+// Cairns: the "cairn" covers (none on main), and main's stones lying on the land (at most three
+// over it) in its grey, grouped with those in touching cells. stones: main's voxels.
 export function countCairns(world: World): { stones: number; cairns: number; decor: number } {
   const cells = new Set<number>();
   let stones = 0;
@@ -32,7 +33,9 @@ export function countCairns(world: World): { stones: number; cairns: number; dec
     stones++;
     cells.add(i);
   }
+  const id = world.materials.id("cover", "cairn");
   let cairns = 0;
+  if (id > 0) for (let i = 0; i < world.n; i++) if (world.cover[i] === id) cairns++;
   const seen = new Set<number>();
   for (const i of cells) {
     if (seen.has(i)) continue;

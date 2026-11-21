@@ -1461,7 +1461,7 @@ for (const r of balances.filter((b) => !b.wipe)) {
   check(
     `cairns: half an hour on a ${r.biome} island (${r.size}) leaves ${cap} cairns at most`,
     r.cairns.cairns <= cap,
-    `${r.cairns.cairns} cairns of ${r.cairns.stones} stones (cap ${cap}), ${r.cairns.decor} voxels in all`,
+    `${r.cairns.cairns} cairns, ${r.cairns.stones} lone grey stones (cap ${cap}), ${r.cairns.decor} voxels in all`,
   );
 }
 // Cold is a pressure, not a trap (21 November, scripts/cold-run.ts): ten minutes on a tundra island,

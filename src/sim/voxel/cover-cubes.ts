@@ -20,7 +20,7 @@ import { EDGE_DARK, EDGE_LIGHT, PATCH_TONES, type LocalMesh } from "./shapes";
 const SINK = { rock: 3, plant: 1, stump: 2 };
 
 // Shapes of each kind, by the cover's model name.
-export const COVER_SHAPES: Record<string, number> = { boulder: 4, scree: 2, bush: 3, berries: 2, cactus: 3, crystals: 3, stump: 3, ember: 2 };
+export const COVER_SHAPES: Record<string, number> = { boulder: 4, scree: 2, bush: 3, berries: 2, cactus: 3, crystals: 3, stump: 3, ember: 2, cairn: 3 };
 // Of the stumps of a burnt forest, one in STUMP_THIN is drawn: one per cell was a checkerboard.
 export const STUMP_THIN = 3;
 // One stump on burnt ground in EMBER_EVERY has embers glowing by it.
@@ -74,6 +74,9 @@ export function coverInCubes(key: string): LocalMesh | null {
   let sink = SINK.plant;
   if (name === "boulder" || name === "scree") {
     v = name === "boulder" ? boulder(rng, seed, shape, moss) : scree(rng, seed, moss);
+    sink = SINK.rock;
+  } else if (name === "cairn") {
+    v = cairn(rng, seed, shape);
     sink = SINK.rock;
   } else if (name === "bush" || name === "berries") v = bush(rng, seed, name === "berries", shape);
   else if (name === "cactus") v = cactus(rng, seed, shape);
@@ -149,6 +152,35 @@ function boulder(rng: Rng, seed: number, shape: number, mossy: boolean, tones = 
   lumps(v, seed, parts);
   shadeBy(v, tones, seed, SINK.rock);
   if (mossy) moss(v, seed);
+  return v;
+}
+
+// A cairn (21 November): four or five flat stones stacked, each smaller and a little off the one
+// under it, so the top leans to one side; a loose stone at its foot. Three greys by height.
+function cairn(rng: Rng, seed: number, shape: number): Vox {
+  const v = new Vox(8, 16, 3);
+  const n = 4 + (shape % 2);
+  let cx = 4 + rng.range(-0.3, 0.3);
+  let cy = 4 + rng.range(-0.3, 0.3);
+  let z = SINK.rock;
+  for (let k = 0; k < n; k++) {
+    const r = 2.9 - k * 0.5 + rng.range(-0.2, 0.2);
+    const h = 1.3 + rng.range(0, 0.6);
+    for (let zz = k ? z : 0; zz < z + h; zz++)
+      for (let y = Math.floor(cy - r - 1); y <= cy + r + 1; y++)
+        for (let x = Math.floor(cx - r - 1); x <= cx + r + 1; x++) {
+          const dx = (x + 0.5 - cx) / r;
+          const dy = (y + 0.5 - cy) / (r * rng.range(0.85, 1));
+          if (dx * dx + dy * dy <= 1 + (h3(x, y, zz, seed) - 0.5) * 0.3) v.set(x, y, zz, ROCK[k % 2 ? 2 : 1]);
+        }
+    z += Math.max(1, Math.round(h));
+    cx += rng.range(-0.6, 0.6);
+    cy += rng.range(-0.6, 0.6);
+  }
+  // A loose stone at its foot.
+  const a = rng.next() * Math.PI * 2;
+  lumps(v, seed ^ 0x77, [[4 + Math.cos(a) * 3.2, 4 + Math.sin(a) * 3.2, 1.1, 0.9, 0.7]]);
+  shadeBy(v, ROCK.slice(0, 3), seed, SINK.rock);
   return v;
 }
 

@@ -2093,17 +2093,16 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
   }
 }
 
-// A cairn (21 November): stones stacked by an explorer, a few in three greys, the top uneven.
-// Never on a field, a crop, a path, a road, a road's line or anything built: on main one light
-// grey cube landed on crops. Its cell and the one beside it, each free.
-export const CAIRN_STONES = [0x6f6e6a, 0x8a8781, 0xa5a199] as const;
+// A cairn (21 November): a few stones an explorer stacks on one cell, the "cairn" cover, drawn as
+// stones smaller toward a top that leans (cover-cubes.ts). On main it piled one light grey cube a
+// visit, with nothing to limit them: after a while hundreds covered the peaks. Never on a field, a
+// crop, a path, a road, a road's line or anything built, nor beside a crop or a building.
 function cairnFree(world: World, i: number): boolean {
   if (i < 0 || i >= world.n) return false;
   if (world.cover[i] !== C.NONE || world.depth[i] > 0.05 || world.fire[i] > 0.1) return false;
   const g = world.ground[i];
   if (g === G.FIELD || isWay(g) || planned(world, i)) return false;
   for (const s of world.sites) if (i === s.i || i === s.i + 1 || i === s.i + world.w || i === s.i + world.w + 1) return false;
-  // Not against a house or a crop either: its stones would read as part of them.
   const x = i % world.w;
   const y = Math.floor(i / world.w);
   for (let dy = -1; dy <= 1; dy++)
@@ -2117,8 +2116,7 @@ function cairnFree(world: World, i: number): boolean {
   return true;
 }
 
-// Where an explorer at (x, y) can leave a cairn: the nearest free cell within 2 with a free,
-// level cell east of it; -1 for none.
+// Where an explorer at (x, y) can leave a cairn: the nearest free cell within 2; -1 for none.
 export function cairnSpot(world: World, x: number, y: number): number {
   const cx = Math.round(x);
   const cy = Math.round(y);
@@ -2130,22 +2128,22 @@ export function cairnSpot(world: World, x: number, y: number): number {
         const ny = cy + dy;
         if (nx < 2 || ny < 2 || nx >= world.w - 3 || ny >= world.h - 3) continue;
         const i = ny * world.w + nx;
-        if (cairnFree(world, i) && cairnFree(world, i + 1) && Math.abs(world.height[i] - world.height[i + 1]) < 1) return i;
+        if (cairnFree(world, i)) return i;
       }
   return -1;
 }
 
-// How many: rare, at most one within `reach` cells of another, at most one per `cells` cells of
-// island. Those over it weather away (weatherCairns), a stone every `every` ticks a pass.
+// How many: rare (one roam of an explorer in 20), none within `reach` cells of another, at most one
+// per `cells` cells of island. Those over it weather away (weatherCairns), a few each `every` ticks.
 export const CAIRN = { chance: 0.05, reach: 12, cells: 2000, every: 300, weatherPerPass: 6 } as const;
-// Grey stones of a cairn: the new greys, and the one light grey main piled one by one.
-const CAIRN_GREYS = new Set<number>([...CAIRN_STONES, 0x8d8d96]);
+// The light grey stone main piled for a cairn, one voxel a visit.
+export const OLD_CAIRN_GREY = 0x8d8d96;
 export function cairnCap(world: World): number {
   return Math.max(1, Math.floor(world.n / CAIRN.cells));
 }
 
-// Where the island's cairns stand (a cell each), read from its stones on the first ask and by each
-// weathering pass. Not saved: the stones are, and are read again.
+// Where the island's cairns stand (a cell each), read on the first ask and by each weathering
+// pass. Not saved: the covers and stones are, and are read again.
 const cairnList = new WeakMap<World, number[]>();
 export function cairnsOf(world: World): number[] {
   let list = cairnList.get(world);
@@ -2162,15 +2160,18 @@ function cairnRoom(world: World, i: number): boolean {
   return !list.some((j) => Math.hypot((j % world.w) - x, Math.floor(j / world.w) - y) < CAIRN.reach);
 }
 
-// The cairns on the island: grey stones lying on the land (no higher than three over it), grouped
-// with those in touching cells. A heap of more than 12 is a spell's building, not a cairn.
+// The cairns on the island: each "cairn" cover, and main's: light grey stones lying on the land
+// (no higher than three over it), grouped with those in touching cells (`keys`, their voxels). A
+// heap of more than 12 is a spell's building, not a cairn.
 export function findCairns(world: World): { at: number; keys: number[] }[] {
+  const out: { at: number; keys: number[] }[] = [];
+  for (let i = 0; i < world.n; i++) if (world.cover[i] === C.CAIRN) out.push({ at: i, keys: [] });
   const d = world.decor;
   const byCell = new Map<number, number[]>();
   for (let slot = 0; slot < d.slots; slot++) {
     if (!d.isLive(slot)) continue;
     const v = d.valueOf(slot);
-    if (voxelKind(v) !== VK.STONE || !CAIRN_GREYS.has(voxelColor(v))) continue;
+    if (voxelKind(v) !== VK.STONE || voxelColor(v) !== OLD_CAIRN_GREY) continue;
     const key = d.keyOf(slot);
     const x = keyX(key);
     const y = keyY(key);
@@ -2181,7 +2182,6 @@ export function findCairns(world: World): { at: number; keys: number[] }[] {
     if (list) list.push(key);
     else byCell.set(i, [key]);
   }
-  const out: { at: number; keys: number[] }[] = [];
   const seen = new Set<number>();
   for (const i of [...byCell.keys()].sort((a, b) => a - b)) {
     if (seen.has(i)) continue;
@@ -2202,9 +2202,10 @@ export function findCairns(world: World): { at: number; keys: number[] }[] {
   return out;
 }
 
-// Weathering (a rule of the land, 21 November): a cairn within reach of an older one, or over the
-// island's cap, loses its top stone every pass until it is gone. Islands saved with the grey cubes
-// of main lose them this way in a few minutes; the cairns that stand apart, under the cap, stay.
+// Weathering (a rule of the land, 21 November): a cairn within reach of one kept before it, or over
+// the island's cap, crumbles: a cover cairn goes at once, main's grey stones one a pass from the top.
+// Islands saved with main's grey cubes lose them this way within minutes; the new cairns come first,
+// so those that stand apart, under the cap, stay.
 export function weatherCairns(world: World): void {
   if (world.tick % CAIRN.every !== 17) return;
   const all = findCairns(world);
@@ -2221,7 +2222,10 @@ export function weatherCairns(world: World): void {
     }
     if (budget <= 0) continue;
     budget--;
-    // Its top stone goes.
+    if (!g.keys.length) {
+      world.setCover(g.at, C.NONE);
+      continue;
+    }
     let top = g.keys[0];
     for (const k of g.keys) if (keyLevel(k) > keyLevel(top)) top = k;
     world.setVoxel(keyX(top), keyY(top), keyLevel(top), null);
@@ -2229,17 +2233,11 @@ export function weatherCairns(world: World): void {
   cairnList.set(world, kept);
 }
 
-// Three stones on two cells, the top uneven: two on the first (dark under mid), one light one beside.
+// Stacks one at cell i.
 export function cairn(world: World, i: number): boolean {
-  const x = i % world.w;
-  const y = Math.floor(i / world.w);
-  const before = world.decor.size;
-  const top = Math.round(world.height[i] * 0.5);
-  const top2 = Math.round(world.height[i + 1] * 0.5);
-  world.setVoxel(x, y, top, CAIRN_STONES[0], VK.STONE);
-  world.setVoxel(x, y, top + 1, CAIRN_STONES[1], VK.STONE);
-  world.setVoxel(x + 1, y, top2, CAIRN_STONES[2], VK.STONE);
-  return world.decor.size > before;
+  if (!cairnFree(world, i)) return false;
+  world.setCover(i, C.CAIRN);
+  return true;
 }
 
 function targetFor(world: World, kind: string): number {
