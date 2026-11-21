@@ -40,6 +40,8 @@ export const NATURE = {
   // Flowers within this many cells of a village (its homes stand up to 8 out, and its people plant
   // within 8 of home) are its gardens and offerings: they stay.
   GARDEN: 16,
+  // A home's garden: villagers plant flowers within 8 cells of home while fewer than this stand there.
+  GARDEN_BEDS: 12,
   // Dirt within this many cells of a house is a village's square or yard: it stays bare.
   YARD: 6,
   // Trees and stumps in the 5 by 5 around a cell, against generation's share there (nature.ts
@@ -179,6 +181,18 @@ function garden(world: World, i: number): boolean {
   const y = (i / world.w) | 0;
   const r = NATURE.GARDEN;
   for (const v of world.villages) if (Math.abs(v.x - x) <= r && Math.abs(v.y - y) <= r) return true;
+  return false;
+}
+
+// A home's garden is full: GARDEN_BEDS flowers or more within 8 cells of it (where its people
+// plant). Villagers plant no more there; what they planted stays (garden above).
+export function gardenFull(world: World, hx: number, hy: number): boolean {
+  const x = Math.round(hx);
+  const y = Math.round(hy);
+  let n = 0;
+  for (let dy = -8; dy <= 8; dy++)
+    for (let dx = -8; dx <= 8; dx++)
+      if (world.inside(x + dx, y + dy) && world.cover[(y + dy) * world.w + x + dx] === C.FLOWER && ++n >= NATURE.GARDEN_BEDS) return true;
   return false;
 }
 

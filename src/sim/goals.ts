@@ -1,4 +1,6 @@
 import { C, F, G, isBuilding as isBuildingCover } from "./materials";
+import { woodland } from "./ecology";
+import { gardenFull, niche, treeRoom } from "./nature";
 import { SITE, STAGE_WORDS, canStake, handsOn, kindName, siteToWork, standBy, sitesOf, sitesOn, stageOf, stake, work as workSite, type Site } from "./sites";
 import { MIN_PEOPLE, alongRoad, claim, isWay, nextPave, noteTrip, pave, planned, unnoteTrip, type PaveJob } from "./roads";
 import { tolerance, tooCold } from "./cold";
@@ -1218,7 +1220,7 @@ function plantFlowers(world: World, c: Creature, m: Mind, surely = false): boole
     12,
     (j) => (world.ground[j] === G.GRASS || world.ground[j] === G.DIRT) && dryFree(world, j) && crowded(world, j) < 2,
   );
-  if (i < 0 || (!surely && Math.random() < 0.3)) return false;
+  if (i < 0 || (!surely && Math.random() < 0.3) || gardenFull(world, c.homeX, c.homeY)) return false;
   cellTask(world, m, "seed", i, 0.7);
   m.action = "planting flowers by the houses";
   return true;
@@ -2023,7 +2025,18 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       else if (world.ground[i] === G.FIELD) world.setCover(i, C.CROP);
       else if (world.cover[i] === C.NONE && world.depth[i] < 0.05) {
         const r = Math.random();
-        world.setCover(i, c.kind === "villager" ? C.FLOWER : r < 0.5 ? C.FLOWER : r < 0.85 ? C.BUSH : C.TREE);
+        // 21 November (nature.ts): a bird's seed grows only what the cell's niche grows (a tree
+        // where the forest is thin), so a flock does not cover the island in flowers; a
+        // villager's flowers by the houses and a spell creature's magic are their own doing.
+        if (k.native && c.kind !== "villager") {
+          const grow = woodland(world, i) && treeRoom(world, i) ? C.TREE : niche(world, i);
+          if (grow === C.NONE) return;
+          world.setCover(i, grow);
+        } else if (c.kind === "villager") {
+          // A garden by the houses, not a field of flowers: a home's garden holds a few beds.
+          if (gardenFull(world, c.homeX, c.homeY)) return;
+          world.setCover(i, C.FLOWER);
+        } else world.setCover(i, r < 0.5 ? C.FLOWER : r < 0.85 ? C.BUSH : C.TREE);
       } else return;
       deed(c, c.kind === "villager" ? "planted flowers" : m.goal === "tend" ? "made something grow" : "dropped a seed");
       return;
