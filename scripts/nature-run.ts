@@ -18,7 +18,7 @@ import { stepHeadless } from "../src/sim/tick";
 import { raiseWonders } from "../src/sim/wonderbuild";
 import { TICK, generateWorld, type World } from "../src/sim/world";
 import { railIntoField } from "../src/sim/fences";
-import { holds } from "../src/sim/nature";
+import { wilts } from "../src/sim/nature";
 
 export interface Island {
   name: string;
@@ -192,7 +192,7 @@ export function natureRun(name: string, minutes: number, every = 5, out?: string
       const c = world.cover[i];
       if (c !== C.FLOWER && c !== C.BUSH) continue;
       genCells.push(i);
-      if (holds(world, i, c)) held++;
+      if (!wilts(world, i)) held++;
     }
     // A spell's growth, as the grow ability leaves it: every open grass cell of a 5 by 5 in flower
     // or bush, far thicker than the land would hold, in patches across the island away from the

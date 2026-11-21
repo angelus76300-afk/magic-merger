@@ -46,7 +46,11 @@ export const NATURE = {
   // A plant wilts where its kind stands thicker in the 5 by 5 round it than OVER times
   // generation's share and SLACK plants more.
   OVER: 1.5,
-  SLACK: 2,
+  SLACK: 3,
+  // Undergrowth springs up only while the 5 by 5 round it holds under UNDER times generation's
+  // share of its kind: every box filled to its share would end thicker than generation made the
+  // land as a whole (its boxes scatter round that share), as for the trees (SEED_BELOW).
+  UNDER: 0.6,
   // Of the flower sprouts in the dry and cold lands (desert, mesa, tundra), the share that happen
   // (what animals graze, bushes and berries, grows back at the usual pace).
   SPARSE: 0.1,
@@ -166,8 +170,9 @@ function crowd(world: World, i: number, c: number): { n: number; room: number } 
     for (let dx = -2; dx <= 2; dx++) {
       if (!world.inside(x + dx, y + dy)) continue;
       const j = (y + dy) * world.w + x + dx;
-      // What the player planted is not the land's: it crowds out nothing.
-      if (world.cover[j] === c && !(world.planted && world.planted[j])) n++;
+      // What the player planted is not the land's: it crowds out nothing. A plant eaten to its
+      // roots still counts: it grows back there.
+      if (world.cover[j] === c ? !(world.planted && world.planted[j]) : world.eaten !== null && world.eaten[j] === c) n++;
       if (world.ground[j] === G.GRASS && world.depth[j] <= 0.02) room++;
     }
   return { n, room };
@@ -178,8 +183,20 @@ function crowd(world: World, i: number, c: number): { n: number; room: number } 
 export function holds(world: World, i: number, c: number): boolean {
   const e = share(world, i, c);
   if (e <= 0) return false;
+  // The thickness allowed is the land's round it, two cells out each way: a flower at a drift's
+  // edge stands with the drift.
+  const x = i % world.w;
+  const y = (i / world.w) | 0;
+  let most = e;
+  for (const [dx, dy] of [
+    [2, 0],
+    [-2, 0],
+    [0, 2],
+    [0, -2],
+  ])
+    if (world.inside(x + dx, y + dy)) most = Math.max(most, share(world, (y + dy) * world.w + x + dx, c));
   const k = crowd(world, i, c);
-  return k.n <= e * k.room * NATURE.OVER + NATURE.SLACK;
+  return k.n <= most * k.room * NATURE.OVER + NATURE.SLACK;
 }
 
 // What springs up on this open grass cell, if anything: the kind the cell's own roll gives it
@@ -201,7 +218,7 @@ export function niche(world: World, i: number): number {
   if (s === C.NONE) return s;
   const e = share(world, i, s);
   const k = crowd(world, i, s);
-  return k.n < e * k.room ? s : C.NONE;
+  return k.n < e * k.room * NATURE.UNDER ? s : C.NONE;
 }
 
 // Desert, mesa and tundra: little springs up on its own.
@@ -251,6 +268,7 @@ function garden(world: World, i: number): boolean {
   const y = (i / world.w) | 0;
   const r = NATURE.GARDEN;
   for (const v of world.villages) if (Math.abs(v.x - x) <= r && Math.abs(v.y - y) <= r) return true;
+  for (const v of world.settlements) if (Math.abs(v.x - x) <= r && Math.abs(v.y - y) <= r) return true;
   return false;
 }
 
@@ -271,16 +289,20 @@ export function gardenFull(world: World, hx: number, hy: number): boolean {
 // went.
 export function wither(world: World, i: number, r: number): boolean {
   const c = world.cover[i];
-  if (world.planted && world.planted[i]) return false;
   if (c === C.TREE) {
-    if (r >= NATURE.THIN || !overgrown(world, i)) return false;
-  } else {
-    if (r >= NATURE.WILT || !WILTS.has(c)) return false;
-    if (c === C.FLOWER && garden(world, i)) return false;
-    if (holds(world, i, c)) return false;
-  }
+    if (r >= NATURE.THIN || (world.planted && world.planted[i]) || !overgrown(world, i)) return false;
+  } else if (r >= NATURE.WILT || !wilts(world, i)) return false;
   world.setCover(i, C.NONE);
   return true;
+}
+
+// Would this cell's plant wilt (given the roll)? Undergrowth its land does not hold, unless the
+// player planted it or it is a village's garden flower.
+export function wilts(world: World, i: number): boolean {
+  const c = world.cover[i];
+  if (!WILTS.has(c) || (world.planted && world.planted[i])) return false;
+  if (c === C.FLOWER && garden(world, i)) return false;
+  return !holds(world, i, c);
 }
 
 // Any water within `reach` cells.

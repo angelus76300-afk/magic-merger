@@ -1,6 +1,6 @@
 import { C, F, G, isBuilding as isBuildingCover } from "./materials";
 import { woodland } from "./ecology";
-import { gardenFull, niche, treeRoom } from "./nature";
+import { bareByMaking, gardenFull, niche, treeRoom } from "./nature";
 import { SITE, STAGE_WORDS, canStake, handsOn, kindName, siteToWork, standBy, sitesOf, sitesOn, stageOf, stake, work as workSite, type Site } from "./sites";
 import { MIN_PEOPLE, alongRoad, claim, isWay, nextPave, noteTrip, pave, planned, unnoteTrip, type PaveJob } from "./roads";
 import { tolerance, tooCold } from "./cold";
@@ -2021,7 +2021,9 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
     }
     case "seed": {
       if (world.cover[i] === C.STUMP) world.setCover(i, C.TREE);
-      else if (world.ground[i] === G.DIRT || world.ground[i] === G.ASH) world.ground[i] = G.GRASS;
+      else if (world.ground[i] === G.ASH || (world.ground[i] === G.DIRT && !(world.flora && bareByMaking(world, i)))) world.ground[i] = G.GRASS;
+      // 21 November (nature.ts): the land's own dirt and a village's square and yards stay bare.
+      else if (world.ground[i] === G.DIRT) return;
       else if (world.ground[i] === G.FIELD) world.setCover(i, C.CROP);
       else if (world.cover[i] === C.NONE && world.depth[i] < 0.05) {
         const r = Math.random();
