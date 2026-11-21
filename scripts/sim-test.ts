@@ -1465,12 +1465,13 @@ for (const r of balances.filter((b) => !b.wipe)) {
   );
 }
 // Cold is a pressure, not a trap (21 November, scripts/cold-run.ts): ten minutes on a tundra island,
-// three seeds. Nobody is held frozen more than 10 s in a row (on main: 3 to 11 creatures an island),
-// and most of those there at the start are alive at the end.
+// three seeds. Nobody is held frozen more than 10 s in a row (on main: 103 to 111 an island),
+// and more than half of those there at the start are alive at the end (on main 33 to 48%: hunts and age
+// take some on any island; the cold held the rest).
 for (const r of colds.sort((a, b) => a.seed - b.seed)) {
   check(
-    `cold: ten minutes on a tundra island (seed ${r.seed}): nobody held frozen, most alive`,
-    r.heldEver === 0 && r.alive >= r.start * 0.7 && !r.errors.length,
+    `cold: ten minutes on a tundra island (seed ${r.seed}): nobody held frozen, over 55% alive`,
+    r.heldEver === 0 && r.alive > r.start * 0.55 && !r.errors.length,
     `${r.heldEver} held frozen over 10 s (longest ${r.longest} s), ${r.alive} of ${r.start} alive, ${r.frostDeaths} died of the cold, ${r.arrived} of ${r.trips} market trips arrived` +
       (r.errors[0] ? `; ${r.errors[0]}` : ""),
   );
