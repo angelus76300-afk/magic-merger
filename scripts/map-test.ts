@@ -1,17 +1,21 @@
 // The island as a map (roadmap 4.9 part 3, src/sim/map.ts): names over their
 // villages and never over each other, hidden while a trouble names the
-// village, the far roads drawn from the real road cells, a glow as large as a
-// village's people, dust and smoke only over a site or a burnt block, a cart
-// exactly while a market trip is under way, the director's whole-island shot
-// in its rotation and never over a drama that scores higher, nothing of it in
-// the eye view, and the simulation untouched by any of it.
+// village, lit windows as many as a village's people, dust and smoke only over
+// a site or a burnt block, a cart exactly while a market trip is under way, the
+// director's whole-island shot in its rotation and never over a drama that
+// scores higher, nothing of it in the eye view, the simulation untouched by any
+// of it, and nothing but the names and the plumes changing with zoom (21
+// November, the owner: "I like the smoke and names but that's about it").
+import { readFileSync } from "node:fs";
 import { makeCreature, populate, resetCreatureIds } from "../src/sim/creatures";
 import { Director, MAP_AGAIN } from "../src/sim/director";
 import { findVillages, mindOf, type Village } from "../src/sim/kin";
 import { DEFAULT_LAND, resolveLand } from "../src/sim/land";
 import {
+  CART_SIZE,
   FAR,
   cartCenter,
+  cartScale,
   towCart,
   coverOf,
   emptyMap,
@@ -22,13 +26,11 @@ import {
   placeNames,
   plumesOf,
   refreshMap,
-  roadCells,
   villagesOf,
   type MapVillage,
 } from "../src/sim/map";
-import { C, G } from "../src/sim/materials";
+import { C } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
-import { ROAD, pave, type PaveJob, type Road } from "../src/sim/roads";
 import { Runtime } from "../src/sim/runtime";
 import { stepHeadless } from "../src/sim/tick";
 import type { Trouble } from "../src/sim/troubles";
@@ -160,47 +162,29 @@ function mapChecksSeeded(check: Check): void {
       JSON.stringify([...during]),
     );
   }
-  // 3. The far roads are the real road cells, laid: a road half laid is a thin track, never the
-  // wide band of a road more than half laid (the reading test of 12 November read a road 49% laid as a join);
-  // a lane worn by a village and on no road is not drawn from far.
+  // 3. Nothing changes size or colour with zoom but the names and the plumes (21 November): the
+  // map's layers are those two, a cart is one size from close (cover 0.1) to the island whole (1),
+  // and the view reads the zoom for those two layers and nothing else: no wide pale road band from
+  // far, no cart that grows, no glow over the lights that grows (on main: five layers, a cart 3.6
+  // times larger whole, a road band 2.6 cells wide, a glow 9.5 cells across).
   {
-    const world = new World(64, 64, 5);
-    world.height.fill(10);
-    const cells = Array.from({ length: 30 }, (_, k) => 32 * 64 + 10 + k);
-    const road: Road = { ax: 10, ay: 32, bx: 39, by: 32, a: "A", b: "B", cells, decks: cells.map(() => -999), made: 0 };
-    world.roads.push(road);
-    world.roadsVersion++;
-    const before = roadCells(world);
-    const v: Village = { x: 10, y: 32, food: 9, wood: 9, gold: 0, people: 8, houses: 4 };
-    const lay = (from: number, to: number) => {
-      for (let k = from; k < to; k++) pave(world, { road, k, cell: cells[k], stand: cells[Math.max(0, k - 1)], bridge: false } as PaveJob, v);
-    };
-    // Laid from each end, as builders lay it, to exactly half (15 of 30): still a track.
-    lay(0, 8);
-    for (let k = 23; k < 30; k++) world.ground[cells[k]] = G.ROAD;
-    world.ground[20 * 64 + 20] = G.ROAD;
-    const half = roadCells(world);
-    const laidCells = [...cells.slice(0, 8), ...cells.slice(23)];
-    // One cell more than half: the road.
-    lay(8, 9);
-    const past = roadCells(world);
-    lay(9, 23);
-    const done = roadCells(world);
-    const same = (a: number[], b: number[]) => a.length === b.length && a.every((i, k) => i === b[k]);
+    const view = readFileSync("src/sim/voxel/view.ts", "utf8");
+    const reads = [...view.matchAll(/this\.cover\b(?!s)[^\n]*/g)].map((m) => m[0]);
+    const allowed = reads.every(
+      (r) => /^this\.cover = /.test(r) || /^this\.cover, FAR\.(names|plumes)\)/.test(r) || /^this\.cover,$/.test(r) || /^this\.cover\)/.test(r),
+    );
     check(
-      "map: a road half laid or less is a thin track from far, never a full join; past half, the wide band; a worn lane is not drawn",
-      before.roads.length + before.tracks.length === 0 &&
-        half.roads.length === 0 &&
-        same(half.tracks, laidCells) &&
-        past.roads.length === 16 &&
-        past.tracks.length === 0 &&
-        same(done.roads, cells) &&
-        done.tracks.length === 0 &&
-        ROAD.roadSpeed > 1,
-      `before ${before.roads.length}+${before.tracks.length}, half ${half.roads.length} wide ${half.tracks.length} thin, done ${done.roads.length} wide ${done.tracks.length} thin`,
+      "map: only the names and the plumes change with zoom; no far road mesh, a cart and a light the same size at every zoom",
+      Object.keys(FAR).join(",") === "names,plumes" &&
+        cartScale(0.1) === cartScale(1) &&
+        cartScale(0) === CART_SIZE &&
+        CART_SIZE < 1 &&
+        !/farRoad|FAR\.(roads|glows|carts)/.test(view) &&
+        allowed,
+      JSON.stringify({ layers: Object.keys(FAR), cart: [cartScale(0.1), cartScale(1)], reads }),
     );
   }
-  // 4. The glow at night follows people: as many windows lit as two to a house, never more than all.
+  // 4. The lights at night follow people: as many windows lit as two to a house, never more than all.
   {
     const world = new World(96, 64, 5);
     world.height.fill(10);
@@ -215,7 +199,7 @@ function mapChecksSeeded(check: Check): void {
     world.villages[0].people = 0;
     const gone = villagesOf(world);
     check(
-      "map: the glow's size follows people (6 and 16 people in 8 houses light 3/8 and all), an empty village has no name",
+      "map: the lit windows follow people (6 and 16 people in 8 houses light 3/8 and all), an empty village has no name",
       Math.abs(few.lit - 6 / 16) < 1e-9 && many.lit === 1 && full.lit === 1 && gone.length === 1 && gone[0].name === "Brill",
       `${few.lit} ${many.lit} ${full.lit} ${gone.length}`,
     );

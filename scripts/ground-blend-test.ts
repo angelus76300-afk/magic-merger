@@ -102,7 +102,7 @@ function build(world: World, cx: number, cy: number, coded: boolean, quarters = 
 
 // The colour (r, g, b, 0 to 1) of the highest top of `meshes` over points of the island, `res` a
 // cell, at each point's middle, for the cells x0 <= x < x1, y0 <= y < y1; NaN where none.
-function topColours(world: World, meshes: Mesh[], res: number, x0: number, y0: number, x1: number, y1: number): { rgb: Float32Array; w: number } {
+export function topColours(world: World, meshes: Mesh[], res: number, x0: number, y0: number, x1: number, y1: number): { rgb: Float32Array; w: number } {
   const W = (x1 - x0) * res;
   const H = (y1 - y0) * res;
   const top = new Float32Array(W * H).fill(-Infinity);
@@ -389,8 +389,9 @@ export const BLEND_ISLANDS: { name: string; seed: number; land: LandOptions; gro
 ];
 
 // The fine land of the medium temperate coast (one land: no tone to blend) round its middle, as
-// main drew it before this change (taken on main, 21 November).
-const ONE_LAND = { cells: 152, seed: 7, hash: "eedf16d8" };
+// main drew it before this change (taken on main, 21 November). Taken again when its 38 cells of
+// dirt road were drawn as ground, following the slopes (scripts/roads-ground-test.ts; eedf16d8 before).
+const ONE_LAND = { cells: 152, seed: 7, hash: "ab52e4ef" };
 
 // An island at noon (the fine land bakes a glow round lava and lit houses at night).
 function island(cells: number, seed: number, land: LandOptions): World {
