@@ -1,6 +1,5 @@
 import { C, F, G } from "./materials";
-import { niche, treeRoom } from "./nature";
-import { bareByNature } from "./land";
+import { bareByMaking, niche, treeRoom } from "./nature";
 import { PLANTS, PREY, sendTo } from "./goals";
 import { SPECIES, habitatCellSure, habitatCells, targetOf, type Species } from "./wildlife";
 import type { Creature } from "./creatures";
@@ -246,7 +245,7 @@ function tendRefuges(world: World): void {
       // stays dirt, and a refuge's grass grows its own niche, a tree only where the forest is thin.
       if (g === G.ASH) world.ground[i] = G.DIRT;
       else if (g === G.DIRT && world.cover[i] === C.NONE) {
-        if (!bareByNature(world, i)) world.ground[i] = G.GRASS;
+        if (!bareByMaking(world, i)) world.ground[i] = G.GRASS;
       } else if (g === G.GRASS && world.cover[i] === C.NONE && Math.random() < 0.3)
         world.setCover(i, world.flora[i] & 128 && treeRoom(world, i) ? C.TREE : niche(world, i));
       else if (world.cover[i] === C.STUMP) world.setCover(i, C.TREE);

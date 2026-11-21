@@ -54,7 +54,7 @@ export function island(name: string): Island {
 export interface NatureRow {
   minute: number;
   // Per biome: grass cells and grass in flower, away from the villages (a village's gardens and
-  // offerings are the village growing: within 12 cells of its centre, nature.ts GARDEN).
+  // offerings are the village growing: within 16 cells of its centre, nature.ts GARDEN).
   biomes: Record<string, { grass: number; flower: number }>;
   gardenFlowers: number;
   covers: { flower: number; bush: number; berries: number; fern: number; reeds: number; tree: number };
@@ -91,7 +91,7 @@ function waterWithin(world: World, i: number, r: number): boolean {
 }
 
 export function natureRow(world: World, minute: number, grass0: Uint8Array, cover0: Uint8Array): NatureRow {
-  const garden = (i: number) => world.villages.some((v) => Math.abs(v.x - (i % world.w)) <= 12 && Math.abs(v.y - ((i / world.w) | 0)) <= 12);
+  const garden = (i: number) => world.villages.some((v) => Math.abs(v.x - (i % world.w)) <= 16 && Math.abs(v.y - ((i / world.w) | 0)) <= 16);
   const row: NatureRow = {
     minute,
     biomes: {},
@@ -193,9 +193,17 @@ export function natureVerdict(run: NatureRun): { bound: string; ok: boolean; det
     if (!ok) flowersOk = false;
     flowers.push(`${b} ${(s0 * 100).toFixed(1)}% to ${(s1 * 100).toFixed(1)}%`);
   }
-  out.push({ bound: "flower share per biome within 1.5 times its start (away from villages)", ok: flowersOk, detail: `${flowers.join(", ")}; ${last.gardenFlowers} in village gardens` });
+  out.push({
+    bound: "flower share per biome within 1.5 times its start (away from villages)",
+    ok: flowersOk,
+    detail: `${flowers.join(", ")}; ${last.gardenFlowers} in village gardens`,
+  });
   // A reed the water left (a pool settling) may stand a while before it wilts; none grows far.
-  out.push({ bound: "no reed grows more than 2 cells from water", ok: last.reedsFarNew === 0, detail: `${last.reedsFarNew} new, ${last.reedsFar} in all (of ${last.covers.reeds} reeds)` });
+  out.push({
+    bound: "no reed grows more than 2 cells from water",
+    ok: last.reedsFarNew === 0,
+    detail: `${last.reedsFarNew} new, ${last.reedsFar} in all (of ${last.covers.reeds} reeds)`,
+  });
   const within = (a: number, b: number) => Math.abs(b - a) <= Math.max(10, a * 0.1);
   out.push({ bound: "dirt cells within 10%", ok: within(first.dirt, last.dirt), detail: `${first.dirt} to ${last.dirt}` });
   out.push({ bound: "sand cells within 10%", ok: within(first.sand, last.sand), detail: `${first.sand} to ${last.sand}` });

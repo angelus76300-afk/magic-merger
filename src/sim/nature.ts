@@ -21,8 +21,8 @@
 // Every number of it is here.
 import { C, F, G } from "./materials";
 import { fbm, valueNoise } from "./noise";
-import { cellHash, isFresh } from "./ecology";
-import { bareByNature, biomeAt, snowLine, treeChance } from "./land";
+import { cellHash, isFresh } from "./cellhash";
+import { bareByNature, biomeAt, snowLine, treeChance } from "./genrules";
 import type { World } from "./world";
 
 export const NATURE = {
@@ -31,14 +31,22 @@ export const NATURE = {
   SPREAD: 0.03,
   SPROUT: 0.003,
   WILT: 0.002,
+  // The scattered bushes of the open (generation rolled 2.5% and lost some under what came after).
+  BUSHES: 0.018,
   // Of the sprouts in the dry and cold lands (desert, mesa, tundra), the share that happen.
   SPARSE: 0.1,
   // Bare dirt greening beside grass where generation laid grass (it was 0.5, everywhere).
   GREEN: 0.02,
-  // Flowers within this many cells of a village are its gardens and offerings: they stay.
-  GARDEN: 12,
-  // Trees and stumps in the 5 by 5 around a cell, against generation's share there times 25:
-  // a tree seeds under it; one stands at least THIN_MIN and THIN_OVER above it, and thins.
+  // Flowers within this many cells of a village (its homes stand up to 8 out, and its people plant
+  // within 8 of home) are its gardens and offerings: they stay.
+  GARDEN: 16,
+  // Dirt within this many cells of a house is a village's square or yard: it stays bare.
+  YARD: 6,
+  // Trees and stumps in the 5 by 5 around a cell, against generation's share there (nature.ts
+  // stand): a tree seeds under it; one stands at least THIN_MIN and THIN_OVER above it, and thins.
+  // Seeding stops at this share of it: every 5 by 5 filled to its expected count would end
+  // thicker than generation made the forest as a whole (its boxes scatter round that count).
+  SEED_BELOW: 0.7,
   THIN_MIN: 16,
   THIN_OVER: 8,
   THIN: 0.0005,
@@ -79,10 +87,33 @@ export function niche(world: World, i: number): number {
   if (world.ground[i] !== G.GRASS || world.depth[i] > 0.02) return C.NONE;
   const x = i % world.w;
   const y = (i / world.w) | 0;
-  const seed = world.seed;
   const biome = biomeAt(world, i);
   const dry = biome === "desert" || biome === "mesa";
-  const h = cellHash(i, seed + 4561);
+  const h = cellHash(i, world.seed + 4561);
+  // Generation grew no undergrowth within 3 cells of a house or a field: a village keeps its ground.
+  if (!homeNear(world, x, y, 3)) {
+    const u = undergrowth(world, x, y, biome, dry, h);
+    if (u !== C.NONE) return u;
+  }
+  // The scattered bushes and flowers of land.ts covers().
+  const k = cellHash(i, world.seed + 4563);
+  return k < NATURE.BUSHES ? C.BUSH : k < NATURE.BUSHES + 0.01 ? C.FLOWER : C.NONE;
+}
+
+// A house or a field within r cells.
+function homeNear(world: World, x: number, y: number, r: number): boolean {
+  for (let dy = -r; dy <= r; dy++)
+    for (let dx = -r; dx <= r; dx++) {
+      if (!world.inside(x + dx, y + dy)) continue;
+      const j = (y + dy) * world.w + x + dx;
+      if (world.cover[j] === C.HOUSE || world.ground[j] === G.FIELD) return true;
+    }
+  return false;
+}
+
+// ecology.ts undergrowth(), in its order, h the cell's roll.
+function undergrowth(world: World, x: number, y: number, biome: string, dry: boolean, h: number): number {
+  const seed = world.seed;
   if (biome !== "tundra") {
     const swamp = biome === "swamp";
     const fresh = freshNear(world, x, y, swamp ? 2 : 1);
@@ -98,9 +129,7 @@ export function niche(world: World, i: number): number {
     // A clearing in a big forest: a meadow of flowers.
     if (shade >= 6 && valueNoise(x / 7, y / 7, seed + 4481) > 0.8 && h < 0.3) return C.FLOWER;
   } else if (valueNoise(x / 7, y / 7, seed + 4511) > 0.74 && h < (biome === "tundra" ? 0.06 : 0.15)) return C.FLOWER;
-  // The scattered bushes and flowers of land.ts covers().
-  const k = cellHash(i, seed + 4563);
-  return k < 0.025 ? C.BUSH : k < 0.035 ? C.FLOWER : C.NONE;
+  return C.NONE;
 }
 
 // Desert, mesa and tundra: little springs up on its own.
@@ -109,22 +138,39 @@ export function sparse(world: World, i: number): boolean {
   return b === "desert" || b === "mesa" || b === "tundra";
 }
 
-// Generation's share of trees here, times 25 (the 5 by 5 around): a rare grove keeps its own.
-function treeTarget(world: World, i: number): number {
-  const p = treeChance(world, i);
-  return (world.rare && world.rare[i] ? Math.max(p, 0.45) : p) * 25;
+// The trees (and stumps) in the 5 by 5 around a cell, and how many generation would have put
+// there: its share of trees at this cell (the forest noise; none in a forest clearing; a rare
+// grove keeps its own) over the cells of that 5 by 5 that are dry grass.
+function stand(world: World, i: number): { trees: number; target: number } {
+  const x = i % world.w;
+  const y = (i / world.w) | 0;
+  let trees = 0;
+  let room = 0;
+  for (let dy = -2; dy <= 2; dy++)
+    for (let dx = -2; dx <= 2; dx++) {
+      if (!world.inside(x + dx, y + dy)) continue;
+      const j = (y + dy) * world.w + x + dx;
+      const c = world.cover[j];
+      if (c === C.TREE || c === C.STUMP) trees++;
+      if (world.ground[j] === G.GRASS && world.depth[j] <= 0.02) room++;
+    }
+  let p = treeChance(world, i);
+  if (p > 0 && valueNoise(x / 7, y / 7, world.seed + 4481) > 0.8) p = 0;
+  if (world.rare && world.rare[i]) p = Math.max(p, 0.45);
+  return { trees, target: p * room };
 }
 
-// May a tree seed here? Only where the forest around is thinner than generation made it.
+// May a tree seed here? Only where the forest around is clearly thinner than generation made it.
 export function treeRoom(world: World, i: number): boolean {
-  return canopy(world, i % world.w, (i / world.w) | 0) < treeTarget(world, i);
+  const s = stand(world, i);
+  return s.trees < s.target * NATURE.SEED_BELOW;
 }
 
 // A tree in a forest far thicker than generation made it (an overgrown save).
 function overgrown(world: World, i: number): boolean {
   if (world.rare && world.rare[i]) return false;
-  const n = canopy(world, i % world.w, (i / world.w) | 0);
-  return n >= NATURE.THIN_MIN && n > treeTarget(world, i) + NATURE.THIN_OVER;
+  const s = stand(world, i);
+  return s.trees >= NATURE.THIN_MIN && s.trees > s.target + NATURE.THIN_OVER;
 }
 
 // A village's gardens: villagers plant flowers by their houses and leave them as offerings.
@@ -164,10 +210,22 @@ export function waterNear(world: World, i: number, reach: number): boolean {
   return false;
 }
 
+// Ground generation or a village left bare: a dirt patch of the land, or a village's square and
+// yards (within YARD cells of a house).
+export function bareByMaking(world: World, i: number): boolean {
+  if (bareByNature(world, i)) return true;
+  const x = i % world.w;
+  const y = (i / world.w) | 0;
+  const r = NATURE.YARD;
+  for (let dy = -r; dy <= r; dy++)
+    for (let dx = -r; dx <= r; dx++) if (world.inside(x + dx, y + dy) && world.cover[(y + dy) * world.w + x + dx] === C.HOUSE) return true;
+  return false;
+}
+
 // Bare dirt beside grass greens back only where generation laid grass, in the wet lands.
 export function greensBack(world: World, i: number): boolean {
   const b = biomeAt(world, i);
-  return (b === "temperate" || b === "swamp" || b === "jungle") && !bareByNature(world, i);
+  return (b === "temperate" || b === "swamp" || b === "jungle") && !bareByMaking(world, i);
 }
 
 // Does grass (or dirt, or a field) at temperature t freeze to snow? Above generation's snow

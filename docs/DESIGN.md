@@ -1056,6 +1056,19 @@ Balance is measured, not guessed: `npm test` plays each challenge with nothing o
 6. **Day and night** (`voxel/daylight.ts`): a six minute cycle that tints every unlit material and the sky; fire, lava and spell light are untouched, house windows light up at night and chimneys smoke.
 7. **Saving**: the iframe sends a compact save (each layer quantized to bytes) every 10 seconds; the parent keeps it in localStorage. Materials and creatures that spells defined are saved by name with the spell that owns them, and that spell's rules are loaded again before the world.
 
+## Nothing changes just because time passed (21 November)
+
+The owner's rule, after letting an island run: nothing should look different just because time passed, unless the player or the world did something visible (a spell, a fire, a flood, a village growing). An island left alone for an hour looks as it did when it was made. Every number below is in `src/sim/nature.ts` (`NATURE`).
+
+1. **Each open grass cell has a niche**: what generation would have grown on it, worked out again from the seed, its biome, the trees around it and the water beside it (reeds on a bank, ferns in damp shade, berries at a wood's edge, flowers in their drifts, a scattered bush or flower in the open). Undergrowth spreads and sprouts only into its own niche. In the desert, the mesa and the tundra one sprout in ten happens.
+2. **What stands outside its niche wilts slowly** (one sample in 500, about half in an hour): a flower a spell left, a reed whose water went, the flowers of an overgrown save. A village's gardens and offerings (within 16 cells of its centre) stay. Saves are never rewritten: an overgrown island thins by these rules.
+3. **Trees seed only where the forest is clearly thinner than generation made it** (under 70% of its share there, from the same forest noise, over the dry grass of the 5 by 5 around), and thin out slowly where it is far thicker. A rare grove keeps its own density. A burnt forest and a refuge grow back to it, no further.
+4. **Bare ground greens back only where generation laid grass**, in the wet lands (temperate, swamp, jungle), slowly, and never within 6 cells of a house (a village's square and yards). Generated dirt, desert and mesa sand stay; burnt or dug ground comes back.
+5. **Grass freezes to snow above generation's snow line, or in a spell's cold** (10 degrees under the cell's own climate). High grass under the line stays grass; snow melts as before.
+6. **Fences**: a rail runs along its field's side; a post whose run is broken stands alone without a rail. A road clears a fence where it is laid, and a fence is never put on a path.
+
+`scripts/nature-run.ts` leaves an island running and checks it (npm test runs two small islands for six minutes); `scripts/nature-test.ts` checks each rule on its own.
+
 ## Items keep the promise of their name (10 November)
 
 From the review of 10 November (`docs/REVIEW-2026-11-10.md`, section 6): 21 of 40 live items read broke or half kept their name's promise, and the test run passed 18 of them. The rules since, for programs written from then on. No stored program is rewritten, and browsers are not asked to test live programs again.

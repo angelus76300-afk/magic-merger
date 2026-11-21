@@ -4,6 +4,9 @@ import { Rng, fbm, valueNoise } from "./noise";
 import { seedRoll, type Biome } from "./land-options";
 import type { World } from "./world";
 import { tell } from "./kin";
+import { cellHash, isFresh, isSea } from "./cellhash";
+
+export { cellHash, isFresh, isSea };
 
 // Nature that is never the same twice (4.4.5). Once an island's land, water
 // and villages are made, this decides what grows where by ecology rules
@@ -137,12 +140,6 @@ const N4: readonly [number, number][] = [
   [0, -1],
 ];
 
-export function cellHash(i: number, seed: number): number {
-  let h = Math.imul(i, 0x27d4eb2d) ^ Math.imul(seed + 0x165667b1, 0x9e3779b1);
-  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
-  return ((h ^ (h >>> 13)) >>> 0) / 4294967296;
-}
-
 function biomeOf(world: World, i: number, biomes: readonly Biome[]): Biome {
   return world.biomeMap ? biomes[world.biomeMap[i]] : (world.land?.biome ?? "temperate");
 }
@@ -218,10 +215,6 @@ interface Site {
   // the first seconds of play: nothing dry-footed grows there.
   soon: Uint8Array;
 }
-
-export const isSea = (world: World, i: number) =>
-  world.fluid[i] === F.WATER && world.depth[i] > 0.05 && world.height[i] + world.depth[i] < world.seaLevel + 0.35;
-export const isFresh = (world: World, i: number) => world.fluid[i] === F.WATER && world.depth[i] > 0.05 && !isSea(world, i);
 
 function survey(world: World, biomes: readonly Biome[], peak: number, filled: Float32Array): Site {
   const seed = world.seed;
