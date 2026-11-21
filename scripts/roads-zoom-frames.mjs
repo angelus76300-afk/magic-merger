@@ -118,14 +118,14 @@ try {
   last = await pose({ ...town, dist: 22, clock: NIGHT });
   await shot("village-night-close");
 
-  // On until a market trip is under way on a road out of the villages (at most four minutes).
+  // On until a market trip is under way on a road out of the villages (at most twelve minutes).
   const cart = await page.evaluate(() => {
     const e = window.__engine;
     const w = e.world;
     const going = (c) => !c.dead && c.kind === "villager" && c.data?.trip?.to && !("seed" in c.data.trip.to) && c.mind?.task === "trade";
     const since = new Map();
     let c;
-    for (let t = 0; t < 7200 && !c; t++) {
+    for (let t = 0; t < 21600 && !c; t++) {
       e.step();
       if (t % 30) continue;
       for (const k of w.creatures) if (going(k) && !since.has(k.id)) since.set(k.id, w.time);
@@ -146,7 +146,7 @@ try {
     await shot("cart-out");
     last = await pose({ ...cart, dist: 45, clock: DAY, phi: 0.85 });
     await shot("cart-mid");
-  } else console.log("no market trip on a road within four minutes");
+  } else console.log("no market trip on a road within twelve minutes");
   await ctx.close();
 } finally {
   await browser.close();
