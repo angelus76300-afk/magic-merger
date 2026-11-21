@@ -88,8 +88,17 @@ if (ShaderChunk.tonemapping_pars_fragment.includes(HOOK))
 // The sun's shadow map: 1024 texels a side, laid over what the camera holds
 // (the whole island from afar), so a texel is a fifth of a cell or less.
 export const SHADOW_SIZE = 1024;
-// The sun's steps across the sky for its shadows, radians (0.75 degrees).
-const SUN_STEP = (0.75 * Math.PI) / 180;
+// The sun's steps across the sky for its shadow maps, radians (0.75 degrees). A shadow map laid
+// from a sun that turns a little every frame lays its texels across the small cubes differently
+// each time, and their shadows shimmer (15 November, the owner: "Shadows ... flicker a lot"). So
+// each map is laid from a step and holds still. From 15 to 20 November the shadows jumped from
+// one step to the next, every 1.15 s, about a cube at once (20 November, the owner: "Shadows are
+// super slow like 1fps updates compared to the rest of the game"). Now two maps are kept, the
+// step behind the sun and the step ahead, and each point's shade is mixed from the two by where
+// the sun is between them: shadows move with the sun, and neither map turns (Looks.placeSun).
+export const SUN_STEP = (0.75 * Math.PI) / 180;
+// How far the camera's middle may go (cells) before a map drawn a frame ago is drawn again at once.
+const MAP_SLIDE = 3;
 
 // What the view tells the looks each frame.
 export interface LooksFrame {
@@ -170,12 +179,61 @@ export const WARM_K = 0.85;
 const GLOW_COLOR = "vec3(1.0, 0.42, 0.12)";
 export const GLOW_K = 0.8;
 
+// The way toward a body of the sky at `height` (0 the horizon, 1 overhead) and bearing `az`, as the
+// sun's shadows take it: never lower than about 18 degrees, so shadows stay short enough to read.
+// `steps` rounds it to SUN_STEP, as the shadows took it from 15 to 20 November (for the measure).
+export function towardSky(height: number, az: number, out: Vector3, steps = false): Vector3 {
+  const h = Math.max(0, Math.min(1, height));
+  const step = (a: number) => (steps ? Math.round(a / SUN_STEP) * SUN_STEP : a);
+  const el = step(0.32 + 0.5 * h);
+  let hx = Math.cos(step(az));
+  let hz = -0.6;
+  const hl = Math.hypot(hx, hz);
+  hx /= hl;
+  hz /= hl;
+  return out.set(hx * Math.cos(el), Math.sin(el), hz * Math.cos(el)).normalize();
+}
+
+// The two shadow maps' suns for the sun at `height` and bearing `az`: the steps behind and ahead of
+// it, the even one first, the odd one second (`steps`), their ways (`dirs`, set), and how much of
+// the second map's shade is taken (`mix`), 0 to 1 as the sun goes from one step to the next. The
+// sun's height at a step, from its height now: sky.ts lifts it as sin(az).
+export function sunSteps(height: number, az: number, dirs: Vector3[]): { steps: [number, number]; mix: number } {
+  const s = az / SUN_STEP;
+  const k = Math.floor(s);
+  const ahead = s - k;
+  const even = k % 2 === 0;
+  const steps: [number, number] = even ? [k, k + 1] : [k + 1, k];
+  for (const i of [0, 1]) {
+    const a = steps[i] * SUN_STEP;
+    towardSky(height + Math.sin(a) - Math.sin(az), a, dirs[i]);
+  }
+  return { steps, mix: even ? ahead : 1 - ahead };
+}
+
 export class Looks {
+  // The two suns of the shadows: each lays its map from a step of the sun's way (SUN_STEP), the
+  // first from the even steps, the second from the odd ones. They light nothing (the materials
+  // are unlit; receive() adds the sun's light and shade).
   readonly sun = new DirectionalLight(0xffffff, 0);
+  readonly sun2 = new DirectionalLight(0xffffff, 0);
+  readonly suns = [this.sun, this.sun2] as const;
+  // The step each sun's map was last drawn from, and the map's half width and middle then.
+  private drawn = [
+    { step: NaN, half: 0, x: 0, z: 0 },
+    { step: NaN, half: 0, x: 0, z: 0 },
+  ];
+  // Which map is drawn again when neither has moved to a new step: one a frame, in turn.
+  private turn = 0;
+  private dirs = [new Vector3(), new Vector3()];
   // Shared by every material that receives the sun's shadow.
   private readonly uniforms = {
     sunMap: { value: null as Texture | null },
     sunMatrix: { value: new Matrix4() },
+    sunMap2: { value: null as Texture | null },
+    sunMatrix2: { value: new Matrix4() },
+    // How much of the second map's shade is taken, 0 to 1.
+    sunMix: { value: 0 },
     sunStrength: { value: 0 },
     sunDir: { value: new Vector3(0, 1, 0) },
     sunTexel: { value: 1 / SHADOW_SIZE },
@@ -221,16 +279,23 @@ export class Looks {
     // Meshes that never cast a shadow (flat roads, sparks, windows).
     private noCast: Set<Object3D>,
   ) {
-    this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(SHADOW_SIZE, SHADOW_SIZE);
-    this.sun.visible = false;
-    scene.add(this.sun, this.sun.target);
+    for (const sun of this.suns) {
+      sun.castShadow = true;
+      sun.shadow.mapSize.set(SHADOW_SIZE, SHADOW_SIZE);
+      // Drawn only when placeSun asks for it.
+      sun.shadow.autoUpdate = false;
+      sun.visible = false;
+      scene.add(sun, sun.target);
+    }
     renderer.shadowMap.type = BasicShadowMap;
     renderer.shadowMap.autoUpdate = false;
-    // The shadow map is made by three on its first pass.
-    const sun = this.sun;
+    // The shadow maps are made by three on their first pass. A map's matrix changes only when it
+    // is drawn, so it always matches what the map holds.
+    const [sun, sun2] = this.suns;
     Object.defineProperty(this.uniforms.sunMap, "value", { get: () => sun.shadow.map?.texture ?? null });
+    Object.defineProperty(this.uniforms.sunMap2, "value", { get: () => sun2.shadow.map?.texture ?? null });
     this.uniforms.sunMatrix.value = sun.shadow.matrix;
+    this.uniforms.sunMatrix2.value = sun2.shadow.matrix;
   }
 
   // Drawn sharp through the depth of field (18 November, the owner on the unfolded Fold: rain fell
@@ -276,6 +341,9 @@ vLandWet = landWet;`,
 varying vec3 vSunWorld;
 uniform sampler2D sunMap;
 uniform mat4 sunMatrix;
+uniform sampler2D sunMap2;
+uniform mat4 sunMatrix2;
+uniform float sunMix;
 uniform float sunStrength;
 uniform vec3 sunDir;
 uniform float sunTexel;
@@ -288,21 +356,27 @@ uniform vec3 warmShade;
 uniform float nightGlow;
 varying float vLandGlow;
 varying float vLandWet;
-float sunDepth(vec2 uv) { return dot(texture2D(sunMap, uv), vec4(255. / 256., 255. / 65536., 255. / 16777216., 1. / 16777216.)); }
+float sunDepth(sampler2D map, vec2 uv) { return dot(texture2D(map, uv), vec4(255. / 256., 255. / 65536., 255. / 16777216., 1. / 16777216.)); }
 // Soft: four taps a texel apart, each a comparison mixed by where the point
 // falls between texels.
-float sunLight(vec3 n) {
-  vec4 c = sunMatrix * vec4(vSunWorld + n * sunOffset, 1.0);
+float sunLightOf(sampler2D map, mat4 m, vec3 n) {
+  vec4 c = m * vec4(vSunWorld + n * sunOffset, 1.0);
   if (c.x < 0.0 || c.x > 1.0 || c.y < 0.0 || c.y > 1.0 || c.z > 1.0) return 1.0;
   vec2 t = c.xy / sunTexel - 0.5;
   vec2 f = fract(t);
   vec2 b = (floor(t) + 0.5) * sunTexel;
   float z = c.z - 0.0008;
-  float a = step(z, sunDepth(b));
-  float bx = step(z, sunDepth(b + vec2(sunTexel, 0.0)));
-  float by = step(z, sunDepth(b + vec2(0.0, sunTexel)));
-  float bb = step(z, sunDepth(b + vec2(sunTexel)));
+  float a = step(z, sunDepth(map, b));
+  float bx = step(z, sunDepth(map, b + vec2(sunTexel, 0.0)));
+  float by = step(z, sunDepth(map, b + vec2(0.0, sunTexel)));
+  float bb = step(z, sunDepth(map, b + vec2(sunTexel)));
   return mix(mix(a, bx, f.x), mix(by, bb, f.x), f.y);
+}
+// The two maps' shade, mixed by where the sun is between their steps.
+float sunLight(vec3 n) {
+  if (sunMix < 0.002) return sunLightOf(sunMap, sunMatrix, n);
+  if (sunMix > 0.998) return sunLightOf(sunMap2, sunMatrix2, n);
+  return mix(sunLightOf(sunMap, sunMatrix, n), sunLightOf(sunMap2, sunMatrix2, n), sunMix);
 }`,
         )
         .replace(
@@ -352,7 +426,7 @@ if (nightGlow > 0.001 && vLandGlow > 0.001) {
       if (this.built.warm !== warm) for (const m of this.receivers) m.needsUpdate = true;
       this.built = { shadows: GRAPHICS.shadows, grade: GRAPHICS.grade, warm };
       renderer.shadowMap.enabled = GRAPHICS.shadows;
-      this.sun.visible = GRAPHICS.shadows;
+      for (const sun of this.suns) sun.visible = GRAPHICS.shadows;
     }
     renderer.toneMapping = GRAPHICS.grade ? CustomToneMapping : NoToneMapping;
 
@@ -360,11 +434,13 @@ if (nightGlow > 0.001 && vLandGlow > 0.001) {
     const rise = Math.min(1, Math.max(0, f.sunHeight / 0.18));
     // Slow frames give up the shadow map's finest texels first, then the shadows (graphics.ts Relief).
     const size = TRIM.level >= 1 ? SHADOW_SIZE / 2 : SHADOW_SIZE;
-    if (this.sun.shadow.mapSize.x !== size) {
-      this.sun.shadow.mapSize.set(size, size);
-      this.sun.shadow.map?.dispose();
-      this.sun.shadow.map = null;
-    }
+    for (const [i, sun] of this.suns.entries())
+      if (sun.shadow.mapSize.x !== size) {
+        sun.shadow.mapSize.set(size, size);
+        sun.shadow.map?.dispose();
+        sun.shadow.map = null;
+        this.drawn[i].step = NaN;
+      }
     const strength = GRAPHICS.shadows && !f.eye && TRIM.level < 2 ? rise * (1 - f.night) * (1 - 0.75 * f.overcast) * (1 - f.dark) : 0;
     this.uniforms.sunStrength.value = strength;
     this.shadowOn = strength > 0.01;
@@ -381,6 +457,7 @@ if (nightGlow > 0.001 && vLandGlow > 0.001) {
     this.uniforms.warmLit.value.copy(WARM_LIT).lerp(WARM_DUSK, dusk);
     this.uniforms.nightGlow.value = GRAPHICS.warmlight ? GLOW_K * Math.max(Math.min(1, Math.max(0, (f.night - 0.1) / 0.6)), f.dark) : 0;
     if (this.shadowOn) this.placeSun(f);
+    else for (const d of this.drawn) d.step = NaN;
 
     // Glow at night, and in a spell's darkness.
     this.bloomAmount = GRAPHICS.bloom && TRIM.level < 3 ? bloomAt(f.night, f.dark, f.dist, f.side) : 0;
@@ -398,65 +475,53 @@ if (nightGlow > 0.001 && vLandGlow > 0.001) {
   // Lays the shadow map over what the camera holds, from the sun's side. The
   // sun follows the hour across the sky as sky.ts draws it, never lower than
   // 20 degrees, so shadows stay short enough to read.
-  // For the measure only (scripts/looks-shadow-flicker.mjs): off lays the shadow map as before 15
-  // November (the sun turning every frame, its size in steps of 8 cells).
-  sunSteps = true;
+  // For the measure only (scripts/looks-shadow-flicker.mjs): how the shadow map is laid.
+  //   fade    two maps, the steps behind and ahead of the sun, mixed (now)
+  //   steps   one map, the sun in steps of SUN_STEP (15 to 20 November)
+  //   smooth  one map, the sun turning every frame
+  //   old     one map, the sun turning every frame, its size in steps of 8 cells (before 15 November)
+  sunMode: "fade" | "steps" | "smooth" | "old" = "fade";
 
-  // The way toward a body of the sky at `height` (0 the horizon, 1 overhead) and bearing `az`, as the
-  // sun's shadows take it: never lower than about 18 degrees, so shadows stay short enough to read.
   private towardSky(height: number, az: number, out: Vector3): Vector3 {
-    const h = Math.max(0, Math.min(1, height));
-    // The sun turns in steps of SUN_STEP, not a little every frame (15 November, the owner:
-    // "shadows ... flicker a lot"): a shadow map that turns every frame lays its texels across
-    // the small cubes differently each time, and their shadows flicker. Between two steps the
-    // map is the same; a step moves every shadow by about a cube.
-    const step = (a: number) => (this.sunSteps ? Math.round(a / SUN_STEP) * SUN_STEP : a);
-    const el = step(0.32 + 0.5 * h);
-    let hx = Math.cos(step(az));
-    let hz = -0.6;
-    const hl = Math.hypot(hx, hz);
-    hx /= hl;
-    hz /= hl;
-    return out.set(hx * Math.cos(el), Math.sin(el), hz * Math.cos(el)).normalize();
+    return towardSky(height, az, out, this.sunMode === "steps");
   }
 
   private placeSun(f: LooksFrame): void {
-    const dir = this.axisZ.copy(this.sunVector);
-    // The light's own axes, as three's lookAt makes them.
-    const x = this.axisX.set(0, 1, 0).cross(dir).normalize();
-    const y = this.axisY.copy(dir).cross(x).normalize();
+    // The map's size, from the sun as it is now: the same for both maps.
+    const now = this.sunVector;
     const r = Math.min(f.side * 0.75, Math.max(24, f.radius * 1.6));
     // The ground it covers, seen from the sun: half its width, in steps of 8 so it does not swim.
-    const across = r + (f.top + 6) * Math.abs(dir.y > 0.99 ? 0 : Math.sqrt(1 - dir.y * dir.y) / Math.max(0.2, dir.y)) * 0.5;
+    const across = r + (f.top + 6) * Math.abs(now.y > 0.99 ? 0 : Math.sqrt(1 - now.y * now.y) / Math.max(0.2, now.y)) * 0.5;
     // In bands that double every two steps (32, 48, 64, 96, ...), so the texels keep their size
     // while the camera zooms within a band; it was a step of 8 cells, crossed often.
     let half = 32;
     for (let k = 0; half < Math.max(r, across); k++) half = k % 2 ? 32 * 2 ** ((k + 1) / 2) : 48 * 2 ** (k / 2);
-    if (!this.sunSteps) half = Math.ceil(Math.max(r, across) / 8) * 8;
+    if (this.sunMode === "old") half = Math.ceil(Math.max(r, across) / 8) * 8;
     const texels = this.sun.shadow.mapSize.x;
     const texel = (half * 2) / texels;
-    // The middle, snapped to the texel grid so the edges of shadows stand still while the camera moves.
-    const c = this.p.set(f.cx, 0, f.cz);
-    const cx = Math.round(c.dot(x) / texel) * texel;
-    const cy = Math.round(c.dot(y) / texel) * texel;
-    const cz = c.dot(dir);
-    c.copy(x).multiplyScalar(cx).addScaledVector(y, cy).addScaledVector(dir, cz);
-    const far = f.side * 2 + f.top + 40;
-    this.sun.target.position.copy(c);
-    this.sun.position.copy(c).addScaledVector(dir, far / 2);
-    this.sun.updateMatrixWorld();
-    this.sun.target.updateMatrixWorld();
-    const cam = this.sun.shadow.camera as OrthographicCamera;
-    cam.left = -half;
-    cam.right = half;
-    cam.bottom = -half;
-    cam.top = half;
-    cam.near = 1;
-    cam.far = far;
-    cam.updateProjectionMatrix();
     // A point is moved a texel out of its face before it is looked up, so a face does not shade itself.
     this.uniforms.sunOffset.value = texel * 1.5;
     this.uniforms.sunTexel.value = 1 / texels;
+    if (this.sunMode !== "fade") {
+      // One map, from the sun as towardSky takes it.
+      this.uniforms.sunMix.value = 0;
+      for (const d of this.drawn) d.step = NaN;
+      this.laySun(0, now, half, texel, f);
+    } else {
+      const { steps, mix } = sunSteps(f.sunHeight, f.sunAz, this.dirs);
+      this.uniforms.sunMix.value = mix;
+      // A map whose step or size changed, or that the camera has left (a jump, the sun back after
+      // the eye view or the night), is drawn now; else one of them, in turn, so a creature's shadow
+      // moves every frame and the shadow pass costs one map a frame.
+      const moved = (i: number) => Math.hypot(f.cx - this.drawn[i].x, f.cz - this.drawn[i].z) > MAP_SLIDE;
+      const stale = [0, 1].filter((i) => this.drawn[i].step !== steps[i] || this.drawn[i].half !== half || moved(i));
+      const draw = stale.length ? stale : [this.turn];
+      if (!stale.length) this.turn = 1 - this.turn;
+      for (const i of draw) {
+        this.drawn[i] = { step: steps[i], half, x: f.cx, z: f.cz };
+        this.laySun(i, this.dirs[i], half, texel, f);
+      }
+    }
     // What casts: what is solid. Looked at every frame the map is drawn; the scene holds a few hundred objects.
     this.scene.traverse((o) => {
       const mesh = o as Mesh;
@@ -464,6 +529,35 @@ if (nightGlow > 0.001 && vLandGlow > 0.001) {
       const m = mesh.material as Material;
       mesh.castShadow = !this.noCast.has(o) && !Array.isArray(m) && (m as MeshBasicMaterial).isMeshBasicMaterial === true && !m.transparent;
     });
+  }
+
+  // Lays sun `i`'s map from `dir`, `half` cells each side of the middle, and draws it this frame.
+  private laySun(i: number, dir: Vector3, half: number, texel: number, f: LooksFrame): void {
+    const sun = this.suns[i];
+    const z = this.axisZ.copy(dir);
+    // The light's own axes, as three's lookAt makes them.
+    const x = this.axisX.set(0, 1, 0).cross(z).normalize();
+    const y = this.axisY.copy(z).cross(x).normalize();
+    // The middle, snapped to the texel grid so the edges of shadows stand still while the camera moves.
+    const c = this.p.set(f.cx, 0, f.cz);
+    const cx = Math.round(c.dot(x) / texel) * texel;
+    const cy = Math.round(c.dot(y) / texel) * texel;
+    const cz = c.dot(z);
+    c.copy(x).multiplyScalar(cx).addScaledVector(y, cy).addScaledVector(z, cz);
+    const far = f.side * 2 + f.top + 40;
+    sun.target.position.copy(c);
+    sun.position.copy(c).addScaledVector(z, far / 2);
+    sun.updateMatrixWorld();
+    sun.target.updateMatrixWorld();
+    const cam = sun.shadow.camera as OrthographicCamera;
+    cam.left = -half;
+    cam.right = half;
+    cam.bottom = -half;
+    cam.top = half;
+    cam.near = 1;
+    cam.far = far;
+    cam.updateProjectionMatrix();
+    sun.shadow.needsUpdate = true;
   }
 
   // What glows (glow.ts parts, lit windows, flames, sparks, bolts, creatures' glowing parts), lava,
@@ -573,7 +667,7 @@ if (nightGlow > 0.001 && vLandGlow > 0.001) {
 
   dispose(): void {
     this.post?.dispose();
-    this.sun.shadow.map?.dispose();
+    for (const sun of this.suns) sun.shadow.map?.dispose();
   }
 }
 
