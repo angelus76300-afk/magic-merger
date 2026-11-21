@@ -26,11 +26,23 @@ const ZOOMS = [
 ];
 mkdirSync(OUT, { recursive: true });
 
+// A seeded Math.random (mulberry32), before the page's scripts run: the same island before and after.
+function seeded() {
+  let a = 20261121;
+  Math.random = () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 const browser = await chromium.launch({ args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--ignore-gpu-blocklist"] });
 const rows = [];
 try {
   for (const [name, query, x, y] of SPOTS) {
     const ctx = await browser.newContext({ viewport: SIZE, deviceScaleFactor: 1 });
+    await ctx.addInitScript(seeded);
     const page = await ctx.newPage();
     page.on("pageerror", (err) => console.error("page error:", err.message));
     await page.goto(`${BASE}?size=large&mixed=1&${query}&dpr=1&quality=high&time=720`);
@@ -47,7 +59,7 @@ try {
           o.dist = dist;
           o.phi = phi;
           o.theta = 0.6;
-          for (let k = 0; k < 3; k++) {
+          for (let k = 0; k < 6; k++) {
             e.render(0);
             e.view.terrain.updateFine(0, true);
           }
