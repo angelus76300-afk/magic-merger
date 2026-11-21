@@ -91,6 +91,7 @@ import {
   FAR,
   LETTERING,
   cartCenter,
+  cartScale,
   coverOf,
   emptyMap,
   fade,
@@ -286,13 +287,10 @@ export class VoxelView {
   private top = 0;
   private waveTime = { value: 0 };
   // The island as a map (4.9 part 3, map.ts): what the simulation holds, read every 3 s; how much
-  // of the island the camera holds (1 whole); the far roads, one mesh drawn only from far; dust
-  // and smoke over villages, one mesh; which windows are lit, by each village's people.
+  // of the island the camera holds (1 whole); dust and smoke over villages, one mesh; which
+  // windows are lit, by each village's people.
   private map = emptyMap();
   private cover = 0;
-  private farRoads: InstancedMesh;
-  private farWide = { value: 0 };
-  private roadsMapped = -1;
   private plumes: InstancedMesh;
   private litMask = new Uint8Array(0);
   private litFor: unknown = null;
@@ -390,8 +388,6 @@ export class VoxelView {
     );
     this.boltHalo.renderOrder = 3;
     this.sky = new Sky(this.scene, world, this.glowTexture);
-    this.farRoads = farRoadMesh(this.farWide);
-    this.scene.add(this.farRoads);
     this.plumes = this.instanced("puff", new MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.68, depthWrite: false }), 1200);
     this.plumes.renderOrder = 3;
     this.plumes.visible = false;
@@ -403,7 +399,6 @@ export class VoxelView {
       this.clouds.material as MeshBasicMaterial,
       this.puffyClouds.material as MeshBasicMaterial,
       figureMats.lit,
-      this.farRoads.material as MeshBasicMaterial,
       this.plumes.material as MeshBasicMaterial,
     ];
     for (const m of this.lit) this.darkness.apply(m);
@@ -413,7 +408,7 @@ export class VoxelView {
     this.looks = new Looks(
       this.renderer,
       this.scene,
-      new Set([this.farRoads, this.markMesh, this.windows, this.flames, ...this.cubeFlames.meshes, this.boltCore, this.decorGlow, this.rainShafts]),
+      new Set([this.markMesh, this.windows, this.flames, ...this.cubeFlames.meshes, this.boltCore, this.decorGlow, this.rainShafts]),
     );
     for (const m of [land, basic, figureMats.lit]) this.looks.receive(m);
     this.looks.sharp(this.sky.dropMaterial);
@@ -1577,59 +1572,13 @@ export class VoxelView {
     return this.litMask;
   }
 
-  // The island as a map, drawn from far (map.ts): the roads wide and pale, a glow over each lit
-  // window at night, dust over what is being built and smoke over what burnt by day. None of it
-  // near (the island as it was), none in the eye view.
+  // The island as a map, drawn from far (map.ts): dust over what is being built and smoke over
+  // what burnt by day. None of it near (the island as it was), none in the eye view. The roads and
+  // a village's lights are the same at every zoom (21 November): the ground's own road, the lit
+  // windows (applyDaylight).
   private placeMap(time: number): void {
     const { world, map } = this;
     const night = daylight(time).night;
-    // Roads: the laid cells of the real ones, placed again only when the map is read again. A
-    // road more than half laid is a wide band; one half laid or less is a thin line, a third as wide.
-    const wide = fade(this.cover, FAR.roads);
-    const cells = map.roads.length + map.tracks.length;
-    this.farRoads.visible = wide > 0.01 && cells > 0;
-    if (this.farRoads.visible && this.roadsMapped !== map.version) {
-      this.roadsMapped = map.version;
-      const mesh = this.ensureCapacity(cells);
-      for (let k = 0; k < cells; k++) {
-        const track = k >= map.roads.length;
-        const i = track ? map.tracks[k - map.roads.length] : map.roads[k];
-        const deck = world.cover[i] === C.BRIDGE ? world.walkLevel(i) * V : columnTop(world, i);
-        const p = this.toScene((i % world.w) + 0.5, Math.floor(i / world.w) + 0.5, deck);
-        this.m.makeScale(track ? TRACK_WIDTH : 1, 1, track ? TRACK_WIDTH : 1);
-        this.m.setPosition(p.x, p.y, p.z);
-        mesh.setMatrixAt(k, this.m);
-      }
-      mesh.count = cells;
-      mesh.instanceMatrix.needsUpdate = true;
-    }
-    // A road two and a half cells wide from the whole island, raised clear of the ground's steps.
-    this.farWide.value = wide * 2.6;
-    // Glows: over the lit windows, larger the farther the camera, as many as the village's people light.
-    const glow = fade(this.cover, FAR.glows) * Math.max(0, (night - 0.15) / 0.85);
-    const lights = world.settlements.length ? this.buildings.lights : null;
-    if (glow > 0.01 && lights) {
-      const geo = this.glowPoints.geometry;
-      const pos = geo.getAttribute("position") as BufferAttribute;
-      const col = geo.getAttribute("color") as BufferAttribute;
-      const size = geo.getAttribute("size") as BufferAttribute;
-      let n = geo.drawRange.count;
-      const lit = this.markLit(lights.windows);
-      const s = 2.5 + 7 * glow;
-      for (let k = 0; k < lights.windows.length && n < pos.count; k++) {
-        // One in two lit windows: a house is a glow, not a dozen.
-        if (!lit[k] || k % 2) continue;
-        const w = lights.windows[k];
-        pos.setXYZ(n, w.x, w.y + 0.6, w.z);
-        col.setXYZW(n, 1, 0.7, 0.32, 0.55 * glow);
-        size.setX(n, s);
-        n++;
-      }
-      geo.setDrawRange(0, n);
-      pos.needsUpdate = true;
-      col.needsUpdate = true;
-      size.needsUpdate = true;
-    }
     // Plumes: three puffs rising over each, by day, larger from far.
     const far = fade(this.cover, FAR.plumes) * Math.max(0, 1 - night * 1.4);
     let n = 0;
@@ -1656,17 +1605,6 @@ export class VoxelView {
     this.plumes.visible = n > 0;
     this.plumes.instanceMatrix.needsUpdate = true;
     if (this.plumes.instanceColor) this.plumes.instanceColor.needsUpdate = true;
-  }
-
-  private ensureCapacity(need: number): InstancedMesh {
-    if (this.farRoads.instanceMatrix.count >= need) return this.farRoads;
-    const bigger = new InstancedMesh(this.farRoads.geometry, this.farRoads.material, Math.ceil(need * 1.5));
-    bigger.frustumCulled = false;
-    this.scene.remove(this.farRoads);
-    this.farRoads.dispose();
-    this.scene.add(bigger);
-    this.farRoads = bigger;
-    return bigger;
   }
 
   // The names over the villages (map.ts), lettered as on a map, on the overlay: from far only,
@@ -1973,9 +1911,9 @@ export class VoxelView {
         this.markMesh.setColorAt(marks, this.col.setHex(color));
         marks++;
       }
-      // A villager on a market trip pulls a cart (map.ts onTrip): larger from far, so the roads move. None in the eye view.
+      // A villager on a market trip pulls a cart (map.ts onTrip), the same size at every zoom. None in the eye view.
       if (marks + 5 <= 900 && !this.orbit.eye && onTrip(c)) {
-        const s = 1 + 2.6 * fade(this.cover, FAR.carts);
+        const s = cartScale(this.cover);
         const cart = g.cart ?? (g.cart = { hd: c.hd, x: rx, y: ry });
         const moved = Math.hypot(rx - cart.x, ry - cart.y);
         // A jump (a teleport) sets it straight behind at once.
@@ -2678,32 +2616,6 @@ function pointCloud(capacity: number, glow: boolean, texture: CanvasTexture): Po
   points.frustumCulled = false;
   points.renderOrder = 3;
   return points;
-}
-
-// A road still being laid, from far: a line this share of a finished road's band.
-export const TRACK_WIDTH = 0.33;
-
-// The roads drawn from far (map.ts): a flat pale tile on every road cell, widened in the shader by
-// `wide` (0 near, where the mesh is not drawn at all), lifted a little clear of the ground's steps.
-function farRoadMesh(wide: { value: number }): InstancedMesh {
-  // The colour is in the vertices: the material's own colour is the daylight's tint (applyDaylight).
-  const material = new MeshBasicMaterial({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
-  material.onBeforeCompile = (shader) => {
-    shader.uniforms.wide = wide;
-    shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", "#include <common>\nuniform float wide;")
-      .replace("#include <begin_vertex>", "vec3 transformed = vec3(position.x * wide, position.y + 0.18 * wide, position.z * wide);");
-  };
-  const geometry = new BoxGeometry(1, 0.1, 1);
-  const sand = new Color(0xe2c98c);
-  const colors = new Float32Array(geometry.getAttribute("position").count * 3);
-  for (let k = 0; k < colors.length; k += 3) [colors[k], colors[k + 1], colors[k + 2]] = [sand.r, sand.g, sand.b];
-  geometry.setAttribute("color", new BufferAttribute(colors, 3));
-  const mesh = new InstancedMesh(geometry, material, 1024);
-  mesh.count = 0;
-  mesh.frustumCulled = false;
-  mesh.visible = false;
-  return mesh;
 }
 
 // Instance colors must exist before the first render, or the shader is built without them.

@@ -1,16 +1,21 @@
 import { housesOf, tierOf, type Tier } from "./buildings";
 import type { Creature } from "./creatures";
 import { VILLAGE_REACH, type Village } from "./kin";
-import { C, G } from "./materials";
-import { laid } from "./roads";
+import { C } from "./materials";
 import type { World } from "./world";
 
 // The island as a map (roadmap 4.9 part 3, 2026-11-12). Seen whole, the
 // island reads as a place with towns and roads: each village's name over it,
-// the roads drawn wide and pale, a glow at night as large as its people, dust
-// over what is being built and smoke over what burnt, and carts on the roads
-// while a market trip is under way. All of it read from what the simulation
-// holds, nothing invented; nothing here changes the world (view only).
+// dust over what is being built and smoke over what burnt, and carts on the
+// roads while a market trip is under way. All of it read from what the
+// simulation holds, nothing invented; nothing here changes the world (view only).
+//
+// Nothing changes size or colour with zoom, except the names and the plumes
+// (21 November, the owner: "I don't like things looking different when zooming
+// out", "I like the smoke and names but that's about it"). The roads are the
+// ground's own at every zoom (no wide pale band from far), a cart keeps its
+// size (CART_SIZE), and a village's lights at night are its lit windows, as
+// close up (no glow that grew with the distance).
 //
 // Plain logic, no drawing: the view (voxel/view.ts) draws what this returns,
 // npm test checks it (scripts/map-test.ts).
@@ -18,13 +23,21 @@ import type { World } from "./world";
 // How much of the island the camera holds: 1 for the whole island (the
 // tour's opening shot, firstlook.ts), about 0.1 at the default zoom on a
 // folded phone. Each layer fades in between its two numbers.
+// Only these two layers: nothing else is drawn by how far the camera is.
 export const FAR = {
   names: [0.3, 0.55],
-  roads: [0.18, 0.45],
-  glows: [0.2, 0.45],
   plumes: [0.15, 0.4],
-  carts: [0.12, 0.6],
 } as const;
+
+// A cart's size against its villager (about 1.05 tall): its bed 0.71 long, its load's top 0.56 up,
+// a hand cart (21 November, the owner: "merchants carriage are a bit too big"; it was 0.95 and
+// 0.74 close up, and grew to 3.6 times that from far).
+export const CART_SIZE = 0.75;
+
+/** A cart's size at any share of the island held: the same at every zoom. */
+export function cartScale(_cover: number): number {
+  return CART_SIZE;
+}
 
 /** 0 below `from`, 1 above `to`, smooth between. */
 export function fade(cover: number, [from, to]: readonly [number, number]): number {
@@ -60,12 +73,6 @@ export interface Plume {
 
 export interface IslandMap {
   villages: MapVillage[];
-  // The laid cells of roads more than half laid, bridge decks included: drawn wide from far.
-  roads: number[];
-  // The laid cells of a road half laid or less: drawn thin from far, so its two stubs do not
-  // read as two villages joined (the reading test of 12 November). Lanes worn by a village and on
-  // no road are not drawn from far at all: the ground shows them.
-  tracks: number[];
   plumes: Plume[];
   // World time it was made at, and a count that changes with it.
   at: number;
@@ -76,7 +83,7 @@ export interface IslandMap {
 export const MAP_EVERY = 3;
 
 export function emptyMap(): IslandMap {
-  return { villages: [], roads: [], tracks: [], plumes: [], at: -Infinity, version: 0 };
+  return { villages: [], plumes: [], at: -Infinity, version: 0 };
 }
 
 /** Made again when MAP_EVERY seconds have passed since the last; true when it was. */
@@ -85,9 +92,6 @@ export function refreshMap(world: World, map: IslandMap): boolean {
   map.at = world.time;
   map.version++;
   map.villages = villagesOf(world);
-  const r = roadCells(world);
-  map.roads = r.roads;
-  map.tracks = r.tracks;
   map.plumes = plumesOf(world);
   return true;
 }
@@ -126,24 +130,6 @@ export function villagesOf(world: World): MapVillage[] {
     });
   }
   return out;
-}
-
-export function roadCells(world: World): { roads: number[]; tracks: number[] } {
-  const done = new Set<number>();
-  const part = new Set<number>();
-  for (const r of world.roads) {
-    const on = r.cells.map((_, k) => laid(world, r, k));
-    // Past half laid, the way between the two villages is mostly there: drawn as the road it is.
-    const finished = on.filter(Boolean).length * 2 > on.length;
-    for (let k = 0; k < r.cells.length; k++) {
-      const i = r.cells[k];
-      // Laid, and road or deck underfoot (a house or a wonder on its way is not drawn over).
-      if (!on[k] || !(world.ground[i] === G.ROAD || (world.cover[i] === C.BRIDGE && world.decks.has(i)))) continue;
-      (finished ? done : part).add(i);
-    }
-  }
-  const byCell = (a: number, b: number) => a - b;
-  return { roads: [...done].sort(byCell), tracks: [...part].filter((i) => !done.has(i)).sort(byCell) };
 }
 
 // One plume a site, one a burnt block (its 2 by 2 rubble counted once), within a village's reach.
@@ -217,7 +203,7 @@ export function placeNames(labels: Label[], order: number[], screen: { w: number
 
 /**
  * Each village's name as a label, just under the village's middle as `project` puts it on the
- * screen (CSS pixels; `behind` when the camera cannot see it): the village's own glow and smoke rise
+ * screen (CSS pixels; `behind` when the camera cannot see it): the village's own lights and smoke rise
  * above it, clear of the letters. `widthOf` is its lettered width. A hidden village's or one behind
  * the camera is placed off the screen, so it is never shown.
  */
