@@ -12,7 +12,7 @@ import { roadSpeed, stepRoads } from "./roads";
 import { DRAGON, stepWonders } from "./wonders";
 import { growBuildings, stepBuildings } from "./buildings";
 import { packLook, randomLook, shirtOf, sizeOf, unpackLook } from "./villagers";
-import { denDown, goalOfCreature, hasNeeds, kindGoal, needsTick, pursue, stepGoals } from "./goals";
+import { denDown, goalOfCreature, hasNeeds, kindGoal, needsTick, pursue, stepGoals, weatherCairns } from "./goals";
 import { abilitiesFromName, useAbilities } from "./abilities";
 import { stepArtifacts } from "./artifacts";
 import { meter } from "./motion";
@@ -1580,6 +1580,8 @@ export function lifeCycle(world: World, dt: number): void {
   if (world.wards.length) keepOut(world);
   stepLandmarks(world, maxHp, (c) => kindOf(c).fireproof);
   stepArtifacts(world);
+  // Cairns over the island's number, or too close together, weather away (goals.ts).
+  weatherCairns(world);
   for (let k = world.creatures.length - 1; k >= 0; k--) {
     if (world.creatures[k].dead && world.creatures[k].deadFor > 40) world.creatures.splice(k, 1);
   }

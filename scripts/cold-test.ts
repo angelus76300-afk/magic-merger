@@ -14,7 +14,8 @@
 //   7. a polar bear on a cold peak and people at home in a cold village never chill or freeze;
 //   8. a trip's path goes round a band of cold ground when the warm way is not much longer;
 //   and a saved island whose creatures stood frozen on its cold uplands thaws within a second
-//   of loading; the cairn an explorer leaves: never on a field, a crop or a road, never one box.
+//   of loading; the cairn an explorer leaves: never on a field, a crop or a road, never one box;
+//   and the grey cubes of main's cairns on a saved island weather away to the island's cap.
 // The ten-minute tundra run (9) is a job of npm test's workers (scripts/cold-run.ts).
 // These read only c.frozen, c.data and the island, so the same file runs on main to show each
 // failing there (the constants of cold.ts are written out).
@@ -28,7 +29,8 @@ import { Runtime } from "../src/sim/runtime";
 import { stepHeadless } from "../src/sim/tick";
 import { TICK, World, generateWorld } from "../src/sim/world";
 import { keyX, keyY } from "../src/sim/voxelkey";
-import { voxelColor } from "../src/sim/voxels";
+import { VK, voxelColor } from "../src/sim/voxels";
+import { countCairns } from "./cairn-soak";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
@@ -310,6 +312,26 @@ export function coldChecks(check: Check): void {
       "cold: a saved island whose creatures stood frozen thaws within a second of loading",
       total > 0 && held === 0,
       `${held} of ${total} still frozen after 1 s`,
+    );
+  }
+
+  // Main's cairns on a saved island: 40 light grey cubes on the grass, every few cells (as the
+  // owner's screenshots showed the peaks). In four minutes they weather to the cap (one per 2,000
+  // cells: 2 here), none within 12 cells of another.
+  {
+    const { world, rt } = island(() => 14);
+    for (let n = 0; n < 40; n++) {
+      const x = 6 + (n % 8) * 7;
+      const y = 6 + Math.floor(n / 8) * 11;
+      world.setVoxel(x, y, Math.round(world.height[y * SIZE + x] * 0.5), 0x8d8d96, VK.STONE);
+    }
+    const before = countCairns(world).cairns;
+    run(world, rt, 240, () => {});
+    const after = countCairns(world).cairns;
+    check(
+      "cold: main's grey cairns on a saved island weather away to the island's cap",
+      before === 40 && after <= 2,
+      `${before} cairns, ${after} after four minutes (cap 2)`,
     );
   }
 

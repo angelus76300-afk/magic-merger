@@ -1453,6 +1453,17 @@ check(
     ) >= 1,
   [...new Set(balances.flatMap((b) => Object.keys(b.catches)))].map((k) => `${k} ${balances.reduce((n, b) => n + (b.catches[k] ?? 0), 0)}`).join(", "),
 );
+// Cairns stay rare (21 November, the owner's screenshots of grey cubes over the peaks): at the end of
+// every half hour run, at most one cairn per 2,000 cells of island (goals.ts CAIRN). On main the
+// mixed large island of seed 31 had hundreds after 45 minutes (scripts/cairn-soak.ts).
+for (const r of balances.filter((b) => !b.wipe)) {
+  const cap = Math.max(1, Math.floor(r.cells / 2000));
+  check(
+    `cairns: half an hour on a ${r.biome} island (${r.size}) leaves ${cap} cairns at most`,
+    r.cairns.cairns <= cap,
+    `${r.cairns.cairns} cairns of ${r.cairns.stones} stones (cap ${cap}), ${r.cairns.decor} voxels in all`,
+  );
+}
 // Cold is a pressure, not a trap (21 November, scripts/cold-run.ts): ten minutes on a tundra island,
 // three seeds. Nobody is held frozen more than 10 s in a row (on main: 3 to 11 creatures an island),
 // and most of those there at the start are alive at the end.
