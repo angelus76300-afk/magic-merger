@@ -69,6 +69,8 @@ import { groundBlendChecks } from "./ground-blend-test";
 import { roadsGroundChecks } from "./roads-ground-test";
 import { coldChecks } from "./cold-test";
 import type { ColdRun } from "./cold-run";
+import { natureChecks } from "./nature-test";
+import { natureVerdict, type NatureRun } from "./nature-run";
 import { verdict, type LinkedPull } from "../worker/feedback";
 import { DROP_MAX, DROP_TILE, dropAt, dropShare, dropSize, rainWidth } from "../src/sim/voxel/drops";
 import { cronJobs } from "../worker/cron";
@@ -146,6 +148,9 @@ const WIPE_AT = 60;
 const RECOVER_SECONDS = 600;
 const COLD_SEEDS = [1, 2, 3];
 const COLD_SECONDS = 600;
+// Nature holds its shape (21 November): two small islands left running six minutes.
+const NATURE_ISLANDS = ["small-meadow", "small-dry"];
+const NATURE_MINUTES = 6;
 const idle: Job[] = [
   { balance: "mixed", seed: 31, seconds: BALANCE_SECONDS, size: 208, wipeAt: -1 },
   { balance: "mixed", seed: 33, seconds: WIPE_AT + RECOVER_SECONDS, size: 208, wipeAt: WIPE_AT },
@@ -153,6 +158,7 @@ const idle: Job[] = [
   { balance: "temperate", seed: 3, seconds: WIPE_AT + RECOVER_SECONDS, size: 152, wipeAt: WIPE_AT },
   // Cold is a pressure, not a trap (21 November): ten minutes on a tundra island, three seeds.
   ...COLD_SEEDS.map((cold) => ({ cold, seconds: COLD_SECONDS })),
+  ...NATURE_ISLANDS.map((nature) => ({ nature, minutes: NATURE_MINUTES })),
   // Monsters that live through their first day (2026-11-11): ten creature programs placed by the village.
   ...MONSTERS.map((_, monster) => ({ monster })),
   ...Array.from({ length: SCENE_STREAMS }, (_, n) => ({ scene: n, seconds: SCENE_SECONDS })),
@@ -180,6 +186,7 @@ const lands: LandLife[] = [];
 const balances: Balance[] = [];
 const monsterRows: MonsterLife[] = [];
 const colds: ColdRun[] = [];
+const natures: NatureRun[] = [];
 const nextIdle = new Int32Array(new SharedArrayBuffer(4));
 const idleDone = Promise.all(
   Array.from({ length: Math.min(4, Math.max(2, availableParallelism() - 1)) }, () => {
@@ -198,9 +205,11 @@ const idleDone = Promise.all(
         balance,
         monster,
         cold,
+        nature,
       }: {
         job: Job;
         cold?: ColdRun;
+        nature?: NatureRun;
         monster?: MonsterLife;
         land?: LandLife;
         balance?: Balance;
@@ -211,7 +220,8 @@ const idleDone = Promise.all(
         report?: SceneReport;
         verified?: { ok: boolean; wins: number; runs: number };
       }) => {
-        if (cold) colds.push(cold);
+        if (nature) natures.push(nature);
+        else if (cold) colds.push(cold);
         else if (monster) monsterRows.push(monster);
         else if (balance) balances.push(balance);
         else if (land) lands.push(land);
@@ -1477,6 +1487,16 @@ for (const r of colds.sort((a, b) => a.seed - b.seed)) {
   );
 }
 check("cold: the three tundra runs ran", colds.length === COLD_SEEDS.length, `${colds.length} of ${COLD_SEEDS.length}`);
+// Nature holds its shape (21 November, scripts/nature-run.ts): each small island six minutes, the
+// soak's bounds.
+for (const r of natures.sort((a, b) => a.name.localeCompare(b.name)))
+  for (const v of natureVerdict(r))
+    check(
+      `nature: ${r.name}, six minutes left running: ${v.bound}`,
+      v.ok && r.errors.length === 0,
+      v.detail + (r.errors.length ? ` errors: ${r.errors.join("; ")}` : ""),
+    );
+check("nature: the two islands ran", natures.length === NATURE_ISLANDS.length, `${natures.length} of ${NATURE_ISLANDS.length}`);
 for (const scenario of SCENARIOS) {
   const runs = idleResults.get(scenario.id) ?? [];
   const tally = (s: string) => runs.filter((r) => r.status === s).length;
@@ -2576,6 +2596,8 @@ groundBlendChecks(check);
 roadsGroundChecks(check);
 // Cold is a pressure, not a trap (21 November): scripts/cold-test.ts.
 coldChecks(check);
+// Nature holds its shape (21 November): scripts/nature-test.ts.
+natureChecks(check);
 // Water and light (16 November): scripts/water-light-test.ts.
 waterLightChecks(check);
 // Weed and stones on lake beds (20 November): scripts/lake-weed-test.ts.

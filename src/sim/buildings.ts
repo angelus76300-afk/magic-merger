@@ -4,6 +4,7 @@ import type { Biome } from "./land-options";
 import type { World } from "./world";
 import type { Creature } from "./creatures";
 import { WOODLAND, cellHash, type Settlement } from "./ecology";
+import { treeRoom } from "./nature";
 import { daylight, dayOf } from "./daylight";
 import { tell, villageOf, type Village } from "./kin";
 import { wordOf } from "./names";
@@ -375,6 +376,8 @@ export function growBuildings(world: World): void {
         if (!world.inside(x, y) || Math.hypot(x - s.x, y - s.y) < 10) continue;
         const i = y * world.w + x;
         if (world.ground[i] !== G.GRASS || world.cover[i] !== C.NONE || world.depth[i] > 0 || !(world.flora[i] & WOODLAND)) continue;
+        // Only where the forest was thinned (nature.ts): a young tree's bush, not a hedge everywhere.
+        if (!treeRoom(world, i)) continue;
         world.setCover(i, C.BUSH);
         planted++;
       }

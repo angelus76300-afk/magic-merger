@@ -43,6 +43,7 @@ import { carried, carry } from "./pacing";
 import { gaitOf, hipHeight, lookAround, strideRate } from "./gait";
 import { BUILTIN, C, F, G, S, isBuilding } from "../materials";
 import { laid } from "../roads";
+import { fenceKey } from "../fences";
 import { envelope, type Body, type Visuals } from "../visuals";
 import { TICK, type World } from "../world";
 import { bodyGeometry } from "./bodies";
@@ -869,11 +870,8 @@ export class VoxelView {
       if (c === C.FLOWER) return "bloom";
       if (c === C.FUNGI && world.rare?.[i] === RARE.GLOWWOOD) return "fungi-glow";
     }
-    if (c === C.FENCE) {
-      const x = i % world.w;
-      const along = (x > 0 && world.cover[i - 1] === C.FENCE) || (x < world.w - 1 && world.cover[i + 1] === C.FENCE);
-      return along ? "fence-x" : "fence-z";
-    }
+    // By the field's side, a post alone where its run is broken (fences.ts, 21 November).
+    if (c === C.FENCE) return fenceKey(world, i);
     if (c === C.BRIDGE) {
       // Along the way it carries: the side with more bridge or road.
       const x = i % world.w;

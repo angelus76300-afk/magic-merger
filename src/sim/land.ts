@@ -2,6 +2,7 @@ import { C, F, G, type Material } from "./materials";
 import { Rng, fbm, valueNoise } from "./noise";
 import { SPECIES, type Species } from "./wildlife";
 import type { World } from "./world";
+import { FOREST } from "./genrules";
 import { BIOMES, classify, seedRoll, wetness, type Biome, type LandOptions, type Shape } from "./land-options";
 
 // Islands of every kind (4.4): a biome, a shape and three sliders, chosen at
@@ -1117,8 +1118,6 @@ function grounds(world: World, seed: number, peak: number): void {
     }
   }
 }
-
-const FOREST: Record<Biome, number> = { temperate: 0.56, desert: 0.6, tundra: 0.58, jungle: 0.42, swamp: 0.55, volcanic: 0.56, mesa: 0.62 };
 
 function covers(world: World, land: LandOptions, seed: number, rng: Rng): void {
   const { w, h, ground } = world;

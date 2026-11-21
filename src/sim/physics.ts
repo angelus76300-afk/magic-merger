@@ -5,7 +5,8 @@ import type { World } from "./world";
 import { addGas } from "./cells";
 import { igniteVoxels, stepVoxels } from "./voxels";
 import { WARD, stepWards, wardHit, warded } from "./wards";
-import { SPREADS, sprout, woodland } from "./ecology";
+import { SPREADS, woodland } from "./ecology";
+import { NATURE, freezes, greensBack, niche, sparse, treeRoom, wither } from "./nature";
 import { ashGrowth, gust } from "./reactions";
 
 // The rules of the land. Spells set them in motion; these keep them going:
@@ -384,6 +385,10 @@ function burnOut(world: World, i: number): void {
   if (world.ground[i] === G.GRASS || world.ground[i] === G.FIELD) world.ground[i] = G.ASH;
 }
 
+// Each world's usual temperatures and the temperature steps it has taken (stepTemperature), by
+// world: more than one may step in turn.
+const usualOf = new WeakMap<World, { cells: Float32Array; steps: number }>();
+
 function stepTemperature(world: World, dt: number): void {
   const { w, h, temp, materials, rng } = world;
   // The tables themselves, read by id: materials.get looked its layer up by
@@ -433,8 +438,17 @@ function stepTemperature(world: World, dt: number): void {
   // in a hard cold (4.4.5 part B: rivers of cold regions froze white within
   // minutes, and from above a big island seemed to have none).
   const running = runningWater(world);
+  // Each cell's usual temperature, a few seconds behind its own (nature.ts SNOW_DROP): not saved.
+  // While an island settles (made or loaded) it is the temperature itself: a fresh island's air
+  // falls from its climate into the hollows in its first minutes, and that is no spell.
+  let kept = usualOf.get(world);
+  if (!kept || kept.cells.length !== world.n) usualOf.set(world, (kept = { cells: Float32Array.from(temp), steps: 0 }));
+  const usual = kept.cells;
+  const follow = kept.steps++ < NATURE.SETTLE ? 1 : NATURE.USUAL;
   for (let i = 0; i < world.n; i++) {
     const t = temp[i];
+    const was = usual[i];
+    usual[i] = was + (t - was) * follow;
     const fl = world.fluid[i];
     if (fl === F.WATER) {
       if (t < (running && running[i] ? -10 : 0)) world.fluid[i] = F.ICE;
@@ -448,7 +462,9 @@ function stepTemperature(world: World, dt: number): void {
     if (g === G.SNOW && t > 2 && rng.next() < dt * 0.3) {
       world.ground[i] = G.GRASS;
       world.place(i, "water", 0.12);
-    } else if ((g === G.GRASS || g === G.DIRT || g === G.FIELD) && t < -6 && world.depth[i] === 0 && rng.next() < dt * 0.4) {
+    } else if ((g === G.GRASS || g === G.DIRT || g === G.FIELD) && t < -6 && world.depth[i] === 0 && rng.next() < dt * 0.4 && freezes(world, i, t, was)) {
+      // 21 November (nature.ts): above generation's snow line or in a spell's sudden cold, not
+      // just because the air up there is cold; high grass under the line had turned to pale squares.
       world.ground[i] = G.SNOW;
     }
     if (t > 280 && world.fire[i] === 0 && !warded(world, i, WARD.fire)) {
@@ -514,6 +530,8 @@ function stepGrowth(world: World): void {
   const samples = Math.ceil(world.n / 250);
   for (let k = 0; k < samples; k++) {
     const i = (rng.next() * world.n) | 0;
+    // A fence left on a road or a path (a save from before roads cleared them) comes down.
+    if (cover[i] === C.FENCE && (ground[i] === G.ROAD || ground[i] === G.PATH)) world.setCover(i, C.NONE);
     if (world.depth[i] > 0.02 || world.fire[i] > 0) continue;
     const t = world.temp[i];
     if (t < 2 || t > 45) continue;
@@ -543,27 +561,35 @@ function stepGrowth(world: World): void {
 // inside a woodland grow into young trees and trees seed the cells around
 // them, so a burnt forest comes back as grass, then shrubs, then forest.
 // Reeds come back along wet banks. A worn path no one walks greens over.
+// 21 November (nature.ts): only into each cell's niche, up to generation's
+// density; what stands outside its niche wilts slowly, dirt greens only where
+// generation laid grass, in the wet lands.
 function floraGrowth(world: World, i: number, j: number, g: number): void {
   const { rng, ground, cover } = world;
   const c = cover[i];
   const r = rng.next();
   if (g === G.DIRT && c !== C.HOUSE && ground[j] === G.GRASS) {
-    if (r < 0.5) ground[i] = G.GRASS;
+    if (r < NATURE.GREEN && greensBack(world, i)) ground[i] = G.GRASS;
   } else if (g === G.PATH) {
     if ((!world.wear || world.wear[i] === 0) && r < 0.03) ground[i] = G.GRASS;
   } else if (g === G.ASH) {
     if (r < 0.08) ground[i] = G.DIRT;
   } else if (g === G.GRASS && c === C.NONE) {
     const cj = cover[j];
-    if (cj === C.TREE && r < (woodland(world, i) ? 0.05 : 0.015)) world.setCover(i, C.TREE);
-    else if (SPREADS.has(cj) && r < 0.03) world.setCover(i, cj);
-    else if (r < 0.003) world.setCover(i, sprout(world, i, rng.next()));
-    else if (r > 0.997 && world.fluid[j] === F.WATER && world.depth[j] > 0.05) world.setCover(i, C.REEDS);
+    if (cj === C.TREE && r < (woodland(world, i) ? 0.05 : 0.015)) {
+      if (treeRoom(world, i)) world.setCover(i, C.TREE);
+    } else if (SPREADS.has(cj) && r < NATURE.SPREAD) {
+      if (niche(world, i) === cj) world.setCover(i, cj);
+    } else if (r < NATURE.SPROUT) {
+      const s = niche(world, i);
+      if (s !== C.NONE && (!sparse(world, i) || rng.next() < NATURE.SPARSE)) world.setCover(i, s);
+    }
   } else if (c === C.STUMP) {
     if (r < 0.01) world.setCover(i, C.TREE);
-  } else if ((c === C.BUSH || c === C.BERRIES) && woodland(world, i)) {
-    if (r < 0.006) world.setCover(i, C.TREE);
-  } else if (g === G.FIELD && c === C.NONE && r < 0.1) world.setCover(i, C.CROP);
+  } else if ((c === C.BUSH || c === C.BERRIES) && woodland(world, i) && r < 0.006 && treeRoom(world, i)) world.setCover(i, C.TREE);
+  else if (g === G.FIELD && c === C.NONE) {
+    if (r < 0.1) world.setCover(i, C.CROP);
+  } else wither(world, i, r);
 }
 
 function neighbor(world: World, i: number): number {
