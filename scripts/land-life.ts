@@ -1,7 +1,7 @@
 // A living island on every biome (4.4): generated, populated and left alone
 // for a few simulated minutes. Used by `npm test` (in its worker threads) and
 // by scripts/land-life-run.ts. Nothing here depends on the machine's speed.
-import { populate } from "../src/sim/creatures";
+import { populate, resetCreatureIds } from "../src/sim/creatures";
 import { DEFAULT_LAND, habitatCount, resolveLand, type Biome, type Shape } from "../src/sim/land";
 import { C, F } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
@@ -40,6 +40,9 @@ export interface LandLife {
 export function landLife(biome: Biome | "mixed", shape: Shape, seed: number, seconds: number, size = 152): LandLife {
   const shared = Math.random;
   Math.random = seeded(seed * 7 + 1);
+  // Creatures numbered from 1 whatever this worker ran before (ids feed their choices): an island
+  // lives the same alone and in npm test (21 November: a new job ahead of it flooded a village).
+  resetCreatureIds(1);
   try {
     const land = biome === "mixed" ? resolveLand(DEFAULT_LAND, seed, size) : { ...DEFAULT_LAND, biome, shape };
     const world = generateWorld(size, size, seed, land);

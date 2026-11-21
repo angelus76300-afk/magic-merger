@@ -497,10 +497,13 @@ function highWater(check: Check): void {
   // 3. Only what the water takes is the water's: a house crushed by the player's own spell is not.
   {
     let at = { stage: 0, lost: 0, crushed: 0 };
+    // The house cells standing when the spell lands and gone after it (21 November: counting the
+    // houses round the village, a house the villagers finished meanwhile hid the one crushed).
+    let standing: number[] = [];
     flow(M, [{ key: "crush", code: CRUSH, at: "house", when: 5 }], {
       every: (world, t, s) => {
-        if (s === 5) at.crushed = t.seen;
-        if (s === 12) at = { stage: t.stage, lost: t.lost, crushed: at.crushed - t.seen };
+        if (s === 5) standing = world.cover.reduce<number[]>((out, c, i) => (c === C.HOUSE ? [...out, i] : out), []);
+        if (s === 12) at = { stage: t.stage, lost: t.lost, crushed: standing.filter((i) => world.cover[i] !== C.HOUSE).length };
       },
     });
     check(

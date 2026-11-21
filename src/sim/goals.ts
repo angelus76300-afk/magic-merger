@@ -1220,7 +1220,7 @@ function plantFlowers(world: World, c: Creature, m: Mind, surely = false): boole
     12,
     (j) => (world.ground[j] === G.GRASS || world.ground[j] === G.DIRT) && dryFree(world, j) && crowded(world, j) < 2,
   );
-  if (i < 0 || (!surely && Math.random() < 0.3) || gardenFull(world, c.homeX, c.homeY)) return false;
+  if (i < 0 || (!surely && Math.random() < 0.3) || (world.flora && gardenFull(world, c.homeX, c.homeY))) return false;
   cellTask(world, m, "seed", i, 0.7);
   m.action = "planting flowers by the houses";
   return true;
@@ -2027,14 +2027,15 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
         const r = Math.random();
         // 21 November (nature.ts): a bird's seed grows only what the cell's niche grows (a tree
         // where the forest is thin), so a flock does not cover the island in flowers; a
-        // villager's flowers by the houses and a spell creature's magic are their own doing.
-        if (k.native && c.kind !== "villager") {
+        // villager's flowers by the houses and a spell creature's magic are their own doing. An
+        // island with flora only (the game's islands): a challenge's or a check's keeps its old ways.
+        if (world.flora && k.native && c.kind !== "villager") {
           const grow = woodland(world, i) && treeRoom(world, i) ? C.TREE : niche(world, i);
           if (grow === C.NONE) return;
           world.setCover(i, grow);
         } else if (c.kind === "villager") {
           // A garden by the houses, not a field of flowers: a home's garden holds a few beds.
-          if (gardenFull(world, c.homeX, c.homeY)) return;
+          if (world.flora && gardenFull(world, c.homeX, c.homeY)) return;
           world.setCover(i, C.FLOWER);
         } else world.setCover(i, r < 0.5 ? C.FLOWER : r < 0.85 ? C.BUSH : C.TREE);
       } else return;

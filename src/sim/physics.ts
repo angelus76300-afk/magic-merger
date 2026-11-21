@@ -531,7 +531,7 @@ function stepGrowth(world: World): void {
   for (let k = 0; k < samples; k++) {
     const i = (rng.next() * world.n) | 0;
     // A fence left on a road or a path (a save from before roads cleared them) comes down.
-    if (cover[i] === C.FENCE && (ground[i] === G.ROAD || ground[i] === G.PATH)) world.setCover(i, C.NONE);
+    if (world.flora && cover[i] === C.FENCE && (ground[i] === G.ROAD || ground[i] === G.PATH)) world.setCover(i, C.NONE);
     if (world.depth[i] > 0.02 || world.fire[i] > 0) continue;
     const t = world.temp[i];
     if (t < 2 || t > 45) continue;

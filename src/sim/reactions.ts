@@ -847,7 +847,7 @@ export function ashGrowth(world: World, i: number, j: number, r: number): boolea
     const cj = world.cover[j];
     if ((cj === C.TREE || cj === C.STUMP) && r < 0.12) {
       // 21 November (nature.ts): a burnt forest comes back as thick as it was, no thicker.
-      if (treeRoom(world, i)) world.setCover(i, C.TREE);
+      if (!world.flora || treeRoom(world, i)) world.setCover(i, C.TREE);
     } else if (r < 0.03) world.setCover(i, r < 0.015 ? C.FLOWER : C.BUSH);
     return true;
   }
