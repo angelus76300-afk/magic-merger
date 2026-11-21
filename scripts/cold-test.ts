@@ -451,4 +451,22 @@ export function coldChecks(check: Check): void {
       `trip ${cleared < 0 ? "never cleared" : `cleared after ${cleared.toFixed(2)} s`}; ${retreats} retreats; ${gaveUp ? "gave the carrying up" : "kept its work"}; its village's food ${from.food} (was 5)`,
     );
   }
+
+  // A cairn already standing goes when its cell's surroundings change: a field tilled beside it, a
+  // road laid through it (CI of 21 November: crops grew on a field next to two cairns placed apart
+  // from it). Within one weathering pass (10 s).
+  {
+    const { world, rt } = island(() => 14);
+    const id = world.materials.id("cover", "cairn");
+    const a = 20 * SIZE + 20;
+    const b = 40 * SIZE + 40;
+    world.setCover(a, id);
+    world.setCover(b, id);
+    run(world, rt, 1, () => {});
+    world.ground[a + 1] = G.FIELD;
+    world.ground[b] = G.ROAD;
+    run(world, rt, 11, () => {});
+    const left = [a, b].filter((i) => id > 0 && world.cover[i] === id).length;
+    check("cold: a standing cairn goes when a field or a road comes to it", id > 0 && left === 0, `${left} of 2 still standing 11 s after`);
+  }
 }

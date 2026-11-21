@@ -2104,10 +2104,12 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
 // A cairn (21 November): a few stones an explorer stacks on one cell, the "cairn" cover, drawn as
 // stones smaller toward a top that leans (cover-cubes.ts). On main it piled one light grey cube a
 // visit, with nothing to limit them: after a while hundreds covered the peaks. Never on a field, a
-// crop, a path, a road, a road's line or anything built, nor beside a crop or a building.
-function cairnFree(world: World, i: number): boolean {
+// crop, a path, a road, a road's line or anything built, nor beside a field, a crop or a building.
+// standing: a cairn already there, asked whether it may stay (weatherCairns).
+function cairnFree(world: World, i: number, standing = false): boolean {
   if (i < 0 || i >= world.n) return false;
-  if (world.cover[i] !== C.NONE || world.depth[i] > 0.05 || world.fire[i] > 0.1) return false;
+  // A fire passes over standing stones; a new cairn waits for it to go out.
+  if (world.cover[i] !== (standing ? C.CAIRN : C.NONE) || world.depth[i] > 0.05 || (!standing && world.fire[i] > 0.1)) return false;
   const g = world.ground[i];
   if (g === G.FIELD || isWay(g) || planned(world, i)) return false;
   for (const s of world.sites) if (i === s.i || i === s.i + 1 || i === s.i + world.w || i === s.i + world.w + 1) return false;
@@ -2119,7 +2121,8 @@ function cairnFree(world: World, i: number): boolean {
       const ny = y + dy;
       if (nx < 0 || ny < 0 || nx >= world.w || ny >= world.h) return false;
       const cv = world.cover[ny * world.w + nx];
-      if (cv === C.CROP || isBuildingCover(cv)) return false;
+      // Nor beside a field: crops grow on it, and one would stand against the stones.
+      if (cv === C.CROP || isBuildingCover(cv) || world.ground[ny * world.w + nx] === G.FIELD) return false;
     }
   return true;
 }
@@ -2221,6 +2224,12 @@ export function weatherCairns(world: World): void {
   const kept: number[] = [];
   let budget = CAIRN.weatherPerPass;
   for (const g of all) {
+    // A field, a crop, a road or a building came to it after (21 November: crops grew on the field
+    // beside one): it goes, whatever the count.
+    if (!g.keys.length && !cairnFree(world, g.at, true)) {
+      world.setCover(g.at, C.NONE);
+      continue;
+    }
     const x = g.at % world.w;
     const y = Math.floor(g.at / world.w);
     const crowded = kept.length >= cap || kept.some((j) => Math.hypot((j % world.w) - x, Math.floor(j / world.w) - y) < CAIRN.reach);
