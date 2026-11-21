@@ -188,8 +188,9 @@ export function natureVerdict(run: NatureRun): { bound: string; ok: boolean; det
     if (!e1 || e0.grass < 150) continue;
     const s0 = e0.flower / e0.grass;
     const s1 = e1.flower / Math.max(1, e1.grass);
-    // Within 1.5 times its start (and a point of share, for a biome with almost none).
-    const ok = s1 <= s0 * 1.5 + 0.01;
+    // Within 1.5 times its start, a point of share and 8 flowers more (a biome of a few hundred
+    // grass cells, as the dry island's mesa, can start with none: its niche holds a handful).
+    const ok = e1.flower <= (s0 * 1.5 + 0.01) * e1.grass + 8;
     if (!ok) flowersOk = false;
     flowers.push(`${b} ${(s0 * 100).toFixed(1)}% to ${(s1 * 100).toFixed(1)}%`);
   }

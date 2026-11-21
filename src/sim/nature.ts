@@ -15,8 +15,8 @@
 // overgrown save holds, a reed whose water went. Trees seed only where the forest around
 // is thinner than generation made it there, and thin out slowly where it is far thicker.
 // Bare ground greens back only where generation laid grass, in the wet lands, slowly.
-// Grass freezes to snow above the snow line generation used, or in a cold well under the
-// cell's own climate (a spell's), never just because the air up there is cold.
+// Grass freezes to snow above the snow line generation used, or in a sudden cold (a spell's),
+// never just because the air up there is cold.
 //
 // Every number of it is here.
 import { C, F, G } from "./materials";
@@ -52,9 +52,16 @@ export const NATURE = {
   THIN_MIN: 16,
   THIN_OVER: 8,
   THIN: 0.0005,
-  // Grass freezes to snow in a cold this far under the cell's own climate: a spell's (-10 and under);
-  // the land's own air strays up to about 6 from it, by a peak or the island's edge.
-  SNOW_COLD: 10,
+  // Grass freezes to snow in a cold this far under the cell's usual temperature (physics.ts keeps
+  // it, a few seconds behind): a spell's sudden cold. The land's own air can sit 20 degrees under
+  // its climate in a hollow among peaks, so the climate alone cannot tell (the dry island's
+  // pale squares), but it changes slowly.
+  SNOW_DROP: 8,
+  // How fast the usual temperature follows the cell's own, per temperature step (15 a second).
+  USUAL: 0.01,
+  // Temperature steps an island settles first, made or loaded (three minutes): its usual
+  // temperature is its own, so nothing is sudden.
+  SETTLE: 2700,
 } as const;
 
 // The plants that wilt outside their niche. Fungi rings, logs and the rest stay as made.
@@ -242,10 +249,10 @@ export function greensBack(world: World, i: number): boolean {
   return (b === "temperate" || b === "swamp" || b === "jungle") && !bareByMaking(world, i);
 }
 
-// Does grass (or dirt, or a field) at temperature t freeze to snow? Above generation's snow
-// line, or in a cold well under the cell's own climate. An island with no land of its own (a
-// challenge, a lab) keeps the old rule: under -6 is enough.
-export function freezes(world: World, i: number, t: number): boolean {
+// Does grass (or dirt, or a field) at temperature t (under -6) freeze to snow? Above generation's
+// snow line, or in a sudden cold, well under its usual temperature. An island with no land of its
+// own (a challenge, a lab) keeps the old rule: under -6 is enough.
+export function freezes(world: World, i: number, t: number, usual: number): boolean {
   if (!world.land) return true;
-  return t < world.ambient(i) - NATURE.SNOW_COLD || world.height[i] > snowLine(world, i);
+  return t < usual - NATURE.SNOW_DROP || world.height[i] > snowLine(world, i);
 }

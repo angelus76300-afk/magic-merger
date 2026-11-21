@@ -21,7 +21,7 @@ import { seeded } from "../src/sim/noise";
 import { Runtime } from "../src/sim/runtime";
 import { stepHeadless } from "../src/sim/tick";
 import { TICK, World, generateWorld } from "../src/sim/world";
-import { niche } from "../src/sim/nature";
+import { niche, waterNear } from "../src/sim/nature";
 import { fenceKey, railIntoField } from "../src/sim/fences";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
@@ -83,7 +83,9 @@ export function natureChecks(check: Check): void {
     let trees0 = 0;
     for (let i = 0; i < world.n; i++) if (world.cover[i] === C.TREE) trees0++;
     // A patch made high: cold air (ambient under -6) and still under the snow line.
-    const [high, burnt, cold] = openPatches(world, 3, () => true);
+    const [high, burnt] = openPatches(world, 2, () => true);
+    // A lowland patch far from water (a pond that rises would wet it).
+    const [cold] = openPatches(world, 1, (i) => i !== high && i !== burnt && !waterNear(world, i, 8) && world.ambient(i) > 10);
     const hx = high % w;
     const hy = (high / w) | 0;
     const line = snowLine(world, high);
@@ -130,7 +132,9 @@ export function natureChecks(check: Check): void {
         }
       }
       t += TICK;
-      if (t < 3) for (const j of coldCells) world.temp[j] = -15;
+      // Once the island has settled (nature.ts SETTLE, three minutes).
+      if (t < 200) return;
+      if (t < 203) for (const j of coldCells) world.temp[j] = -15;
       else if (!coldSnow) coldSnow = coldCells.filter((j) => world.ground[j] === G.SNOW).length;
     });
     let dirtGreened = 0;
