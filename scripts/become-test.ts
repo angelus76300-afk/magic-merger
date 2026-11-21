@@ -523,8 +523,18 @@ function becomeChecksSeeded(check: Check): void {
         const ground = groundOf(t.world);
         const req = { key: "eyes test rain", name: "Eyes Test Rain", tier: "minor" as const, code: "const spell = { *cast(w) { yield 0.1; } };" };
         const cast = (x: number, y: number) => playerCast(t.world, t.rt, req, x, y);
-        // Eight cells from the fire's heart, looking down at it.
-        const a = Math.atan2(fire.y - v.y, fire.x - v.x);
+        // Eight cells from the fire's heart, looking down at it, from the side the land between is
+        // flattest (21 November: the villager stood on the fire's heart, its way in said nothing,
+        // and a step of ground on the line caught the look short).
+        const rough = (b: number) => {
+          let worst = 0;
+          for (let k = 1; k <= 8; k++) worst = Math.max(worst, Math.abs(ground(fire.x - Math.cos(b) * k, fire.y - Math.sin(b) * k) - ground(fire.x, fire.y)));
+          return worst;
+        };
+        const a = Array.from({ length: 16 }, (_, k) => (k / 16) * Math.PI * 2).reduce(
+          (best, b) => (rough(b) < rough(best) ? b : best),
+          Math.atan2(fire.y - v.y, fire.x - v.x),
+        );
         const ex = fire.x - Math.cos(a) * 8;
         const ey = fire.y - Math.sin(a) * 8;
         const h = ground(ex, ey) + 1.6;
