@@ -278,7 +278,7 @@ export function doEffect(world: World, a: Artifact, what: ArtEffectName, arg: st
         if (!land(world, i) || world.depth[i] > 0.05 || world.fire[i] > 0) continue;
         if (world.ground[i] === G.DIRT || world.ground[i] === G.ASH) world.ground[i] = G.GRASS;
         else if (world.cover[i] === C.STUMP) world.setCover(i, C.TREE);
-        else if (world.ground[i] === G.GRASS && world.cover[i] === C.NONE) world.setCover(i, Math.random() < 0.6 ? C.FLOWER : C.BUSH);
+        else if (world.ground[i] === G.GRASS && world.cover[i] === C.NONE) world.plant(i, Math.random() < 0.6 ? C.FLOWER : C.BUSH);
         else continue;
         n++;
       }
@@ -295,6 +295,7 @@ export function doEffect(world: World, a: Artifact, what: ArtEffectName, arg: st
         if (warded(world, i, WARD.cold)) return false;
         t.frozen = Math.max(t.frozen, 3);
         world.temp[i] = Math.min(world.temp[i], -10);
+        world.markCold(i);
         puff(world, t.x, t.y, 0xbfe8ff, 6);
       } else if (what === "burn") {
         if (warded(world, i, WARD.fire)) return false;

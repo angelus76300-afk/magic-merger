@@ -42,7 +42,19 @@ export function bareByNature(world: World, i: number): boolean {
   const y = (i / world.w) | 0;
   const patch = fbm(x / 20, y / 20, world.seed + 5, 3);
   const at = biome === "mesa" ? 0.5 : biome === "swamp" ? 0.62 : biome === "desert" ? 0.66 : biome === "tundra" ? 0.72 : 0.7;
-  return patch > at;
+  if (patch <= at) return false;
+  // Dry lands laid grass by the water and where the land is moist, whatever the patch.
+  if (biome === "desert" || biome === "mesa") {
+    const moist = fbm(x / 34, y / 34, world.seed + 77, 4);
+    if (moist > (biome === "desert" ? 0.7 : 0.66)) return false;
+    const r = biome === "desert" ? 4 : 3;
+    for (let dy = -r; dy <= r; dy++)
+      for (let dx = -r; dx <= r; dx++) {
+        const j = (y + dy) * world.w + x + dx;
+        if (Math.abs(dx) + Math.abs(dy) <= r && world.inside(x + dx, y + dy) && world.fluid[j] === F.WATER && world.depth[j] > 0) return false;
+      }
+  }
+  return true;
 }
 
 // The chance generation gave a grass cell of being a tree (land.ts covers()).

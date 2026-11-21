@@ -42,7 +42,7 @@ export type Job =
 const { jobs, next } = workerData as { jobs: Job[]; next: Int32Array };
 for (let k = Atomics.add(next, 0, 1); k < jobs.length; k = Atomics.add(next, 0, 1)) {
   const job = jobs[k];
-  if ("nature" in job) parentPort!.postMessage({ job, nature: natureRun(job.nature, job.minutes, job.minutes) });
+  if ("nature" in job) parentPort!.postMessage({ job, nature: natureRun(job.nature, job.minutes, job.minutes, undefined, true) });
   else if ("monster" in job) parentPort!.postMessage({ job, monster: monsterLife(MONSTERS[job.monster]) });
   else if ("cold" in job) parentPort!.postMessage({ job, cold: coldRun(job.cold, job.seconds) });
   else if ("motion" in job) parentPort!.postMessage({ job, motion: measureMotion(job.motion) });

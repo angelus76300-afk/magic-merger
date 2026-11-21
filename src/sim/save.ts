@@ -99,6 +99,8 @@ export function saveWorld(world: World, owners: Map<string, string>): SavedWorld
       // What grows where and the rare variants (4.4.5).
       ...(world.flora ? { flora: toBase64(world.flora) } : {}),
       ...(world.rare ? { rare: toBase64(world.rare) } : {}),
+      // 21 November (nature.ts): plants the player put there, which never wilt for their place.
+      ...(world.planted && world.planted.some((v) => v > 0) ? { planted: toBase64(world.planted) } : {}),
     },
     custom,
     builtins: { ground: BUILTIN.ground.length, fluid: BUILTIN.fluid.length, cover: BUILTIN.cover.length, gas: BUILTIN.gas.length },
@@ -181,6 +183,8 @@ export function loadWorld(data: SavedWorld, prepare: (world: World) => void): Wo
     if (flora.length >= world.n) world.flora = flora.slice(0, world.n);
     const rare = fromBase64(data.layers.rare ?? "");
     if (rare.length >= world.n) world.rare = Uint8Array.from(rare.subarray(0, world.n), (b) => (b <= 10 ? b : 0));
+    const planted = fromBase64(data.layers.planted ?? "");
+    if (planted.length >= world.n) world.planted = Uint8Array.from(planted.subarray(0, world.n), (b) => (b ? 1 : 0));
     world.islandName = typeof data.islandName === "string" ? data.islandName.slice(0, 40) : null;
     for (const i of Array.isArray(data.patched) ? data.patched.slice(0, 4000) : []) if (Number.isInteger(i) && i >= 0 && i < world.n) world.patched.add(i);
     world.refuges = (Array.isArray(data.refuges) ? data.refuges : [])

@@ -1798,7 +1798,7 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       m.hunger = Math.max(0, m.hunger - (cover === C.NONE ? 0.3 : 0.55));
       if (i < 0) return;
       if (cover === C.CROP || cover === C.FLOWER || (cover === C.BUSH && Math.random() < 0.5)) {
-        world.setCover(i, C.NONE);
+        world.graze(i);
         deed(c, `ate ${cover === C.CROP ? "crops" : cover === C.FLOWER ? "flowers" : "a bush"}`);
         if (cover === C.CROP) for (const o of world.crowd.near(world, c.x, c.y, 10)) if (o.kind === "villager") remember(o, c.kind, -0.4);
       } else if (world.ground[i] === G.GRASS && (c.kind === "boar" || (c.data.grazes = ((c.data.grazes as number | undefined) ?? 0) + 1) % 2 === 1)) {
@@ -1828,7 +1828,7 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
     case "forage": {
       const was = world.cover[i];
       if (was !== C.BUSH && was !== C.FLOWER && was !== C.CROP) return;
-      if (was !== C.BUSH || Math.random() < 0.4) world.setCover(i, C.NONE);
+      if (was !== C.BUSH || Math.random() < 0.4) world.graze(i);
       if (c.kind === "villager") {
         m.carry = "food";
         setTask(m, "carry", c.homeX, c.homeY);
@@ -2014,7 +2014,7 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       const leaves = k.ai?.leaves;
       if (!leaves) return;
       if (leaves === "fire") world.fire[i] = Math.max(world.fire[i], 0.6);
-      else if (leaves === "flowers" || leaves === "life") world.setCover(i, C.FLOWER);
+      else if (leaves === "flowers" || leaves === "life") world.plant(i, C.FLOWER);
       else if (!world.place(i, leaves, 0.4)) return;
       deed(c, `spread ${leaves}`);
       return;
@@ -2037,7 +2037,7 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
           // A garden by the houses, not a field of flowers: a home's garden holds a few beds.
           if (world.flora && gardenFull(world, c.homeX, c.homeY)) return;
           world.setCover(i, C.FLOWER);
-        } else world.setCover(i, r < 0.5 ? C.FLOWER : r < 0.85 ? C.BUSH : C.TREE);
+        } else world.plant(i, r < 0.5 ? C.FLOWER : r < 0.85 ? C.BUSH : C.TREE);
       } else return;
       deed(c, c.kind === "villager" ? "planted flowers" : m.goal === "tend" ? "made something grow" : "dropped a seed");
       return;

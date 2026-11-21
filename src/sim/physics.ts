@@ -385,10 +385,6 @@ function burnOut(world: World, i: number): void {
   if (world.ground[i] === G.GRASS || world.ground[i] === G.FIELD) world.ground[i] = G.ASH;
 }
 
-// Each world's usual temperatures and the temperature steps it has taken (stepTemperature), by
-// world: more than one may step in turn.
-const usualOf = new WeakMap<World, { cells: Float32Array; steps: number }>();
-
 function stepTemperature(world: World, dt: number): void {
   const { w, h, temp, materials, rng } = world;
   // The tables themselves, read by id: materials.get looked its layer up by
@@ -438,17 +434,11 @@ function stepTemperature(world: World, dt: number): void {
   // in a hard cold (4.4.5 part B: rivers of cold regions froze white within
   // minutes, and from above a big island seemed to have none).
   const running = runningWater(world);
-  // Each cell's usual temperature, a few seconds behind its own (nature.ts SNOW_DROP): not saved.
-  // While an island settles (made or loaded) it is the temperature itself: a fresh island's air
-  // falls from its climate into the hollows in its first minutes, and that is no spell.
-  let kept = usualOf.get(world);
-  if (!kept || kept.cells.length !== world.n) usualOf.set(world, (kept = { cells: Float32Array.from(temp), steps: 0 }));
-  const usual = kept.cells;
-  const follow = kept.steps++ < NATURE.SETTLE ? 1 : NATURE.USUAL;
+  // Where a spell's cold reached in the last seconds (World.markCold): it counts down.
+  const chill = world.chill;
   for (let i = 0; i < world.n; i++) {
     const t = temp[i];
-    const was = usual[i];
-    usual[i] = was + (t - was) * follow;
+    if (chill && chill[i]) chill[i]--;
     const fl = world.fluid[i];
     if (fl === F.WATER) {
       if (t < (running && running[i] ? -10 : 0)) world.fluid[i] = F.ICE;
@@ -462,8 +452,8 @@ function stepTemperature(world: World, dt: number): void {
     if (g === G.SNOW && t > 2 && rng.next() < dt * 0.3) {
       world.ground[i] = G.GRASS;
       world.place(i, "water", 0.12);
-    } else if ((g === G.GRASS || g === G.DIRT || g === G.FIELD) && t < -6 && world.depth[i] === 0 && rng.next() < dt * 0.4 && freezes(world, t, was)) {
-      // 21 November (nature.ts): only in a spell's sudden cold, not just because the air up
+    } else if ((g === G.GRASS || g === G.DIRT || g === G.FIELD) && t < -6 && world.depth[i] === 0 && rng.next() < dt * 0.4 && freezes(world, i)) {
+      // 21 November (nature.ts): only where a spell's cold reached, not just because the air up
       // there is cold; high grass had turned to pale squares.
       world.ground[i] = G.SNOW;
     }
@@ -576,7 +566,15 @@ function floraGrowth(world: World, i: number, j: number, g: number): void {
     if (r < 0.08) ground[i] = G.DIRT;
   } else if (g === G.GRASS && c === C.NONE) {
     const cj = cover[j];
-    if (cj === C.TREE && r < (woodland(world, i) ? 0.05 : 0.015)) {
+    const roots = world.eaten ? world.eaten[i] : 0;
+    if (roots) {
+      // An eaten plant grows back from its roots, on its own cell (planted again if it was).
+      if (r < NATURE.REGROW) {
+        world.eaten![i] = 0;
+        if (roots & 128) world.plant(i, roots & 127);
+        else world.setCover(i, roots);
+      }
+    } else if (cj === C.TREE && r < (woodland(world, i) ? 0.05 : 0.015)) {
       if (treeRoom(world, i)) world.setCover(i, C.TREE);
     } else if (SPREADS.has(cj) && r < NATURE.SPREAD) {
       if (niche(world, i) === cj) world.setCover(i, cj);

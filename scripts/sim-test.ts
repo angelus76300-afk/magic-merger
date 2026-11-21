@@ -148,9 +148,9 @@ const WIPE_AT = 60;
 const RECOVER_SECONDS = 600;
 const COLD_SEEDS = [1, 2, 3];
 const COLD_SECONDS = 600;
-// Nature holds its shape (21 November): two small islands left running six minutes.
+// Nature holds its shape (21 November): two small islands left running half an hour, a spell's growth on each.
 const NATURE_ISLANDS = ["small-meadow", "small-dry"];
-const NATURE_MINUTES = 6;
+const NATURE_MINUTES = 30;
 const idle: Job[] = [
   { balance: "mixed", seed: 31, seconds: BALANCE_SECONDS, size: 208, wipeAt: -1 },
   { balance: "mixed", seed: 33, seconds: WIPE_AT + RECOVER_SECONDS, size: 208, wipeAt: WIPE_AT },
@@ -1487,12 +1487,12 @@ for (const r of colds.sort((a, b) => a.seed - b.seed)) {
   );
 }
 check("cold: the three tundra runs ran", colds.length === COLD_SEEDS.length, `${colds.length} of ${COLD_SEEDS.length}`);
-// Nature holds its shape (21 November, scripts/nature-run.ts): each small island six minutes, the
+// Nature holds its shape (21 November, scripts/nature-run.ts): each small island half an hour, the
 // soak's bounds.
 for (const r of natures.sort((a, b) => a.name.localeCompare(b.name)))
   for (const v of natureVerdict(r))
     check(
-      `nature: ${r.name}, six minutes left running: ${v.bound}`,
+      `nature: ${r.name}, half an hour left running: ${v.bound}`,
       v.ok && r.errors.length === 0,
       v.detail + (r.errors.length ? ` errors: ${r.errors.join("; ")}` : ""),
     );

@@ -1236,9 +1236,12 @@ function sideEffects(world: World, c: Creature, ai: Behavior, i: number, onGroun
     else if (ai.leaves === "ice" && world.fluid[i] === F.WATER) world.fluid[i] = F.ICE;
     else if (ai.leaves === "flowers" || ai.leaves === "life") {
       if (world.ground[i] === G.DIRT || world.ground[i] === G.ASH) world.ground[i] = G.GRASS;
-      if (world.cover[i] === C.NONE && Math.random() < 0.5) world.setCover(i, Math.random() < 0.7 ? C.FLOWER : C.BUSH);
+      if (world.cover[i] === C.NONE && Math.random() < 0.5) world.plant(i, Math.random() < 0.7 ? C.FLOWER : C.BUSH);
     } else world.place(i, ai.leaves, 0.3);
-    if (ai.leaves === "ice") world.temp[i] = Math.min(world.temp[i], -8);
+    if (ai.leaves === "ice") {
+      world.temp[i] = Math.min(world.temp[i], -8);
+      world.markCold(i);
+    }
     deed(c, `left ${ai.leaves} where it walked`);
   }
   if (!ai.aura || world.tick % 8 !== c.id % 8) return;
@@ -1295,6 +1298,7 @@ function sideEffects(world: World, c: Creature, ai: Behavior, i: number, onGroun
   if (ai.aura === "freeze")
     forDisc(world, c.x, c.y, r, (j) => {
       world.temp[j] = Math.min(world.temp[j], -5);
+      world.markCold(j);
       world.fire[j] = 0;
     });
   if (ai.aura === "burn" || ai.aura === "heal")
@@ -1320,12 +1324,13 @@ function deathOf(world: World, c: Creature, what: string): void {
     forDisc(world, c.x, c.y, 3, (j) => {
       if (world.depth[j] < 0.1 && Math.random() < 0.4) {
         world.ground[j] = G.GRASS;
-        world.setCover(j, Math.random() < 0.5 ? C.TREE : C.FLOWER);
+        world.plant(j, Math.random() < 0.5 ? C.TREE : C.FLOWER);
       }
     });
   else if (what === "ice")
     forDisc(world, c.x, c.y, 3, (j) => {
       world.temp[j] = -20;
+      world.markCold(j);
       if (world.fluid[j] === F.WATER) world.fluid[j] = F.ICE;
     });
   else if (what.startsWith("spawn:")) {

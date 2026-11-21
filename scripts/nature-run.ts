@@ -4,11 +4,11 @@
 // rails that point into a field. Nothing is cast. Used by npm test in its worker threads (two short
 // islands, a check each), and run on its own for the hour-long soak of the pull request:
 //   npx esbuild scripts/nature-run.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/nature-run.mjs --log-level=warning
-//   node node_modules/.cache/nature-run.mjs <island: meadow|dry|large|small-meadow|small-dry> <minutes> [save dir]
+//   node node_modules/.cache/nature-run.mjs <island: meadow|dry|large|small-meadow|small-dry> <minutes> [save dir] [grow]
 // It reads only the island's layers, which main has too, so it runs on main to compare.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { populate } from "../src/sim/creatures";
+import { populate, resetCreatureIds } from "../src/sim/creatures";
 import { biomeAt, DEFAULT_LAND, resolveLand, type LandOptions } from "../src/sim/land";
 import { C, F, G } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
@@ -18,6 +18,7 @@ import { stepHeadless } from "../src/sim/tick";
 import { raiseWonders } from "../src/sim/wonderbuild";
 import { TICK, generateWorld, type World } from "../src/sim/world";
 import { railIntoField } from "../src/sim/fences";
+import { holds } from "../src/sim/nature";
 
 export interface Island {
   name: string;
@@ -62,6 +63,8 @@ export interface NatureRow {
   reedsFar: number;
   reedsFarNew: number;
   dirt: number;
+  // Dirt away from the villages (a village's houses stand on dirt, its graves are dug: it grows).
+  dirtAway: number;
   sand: number;
   // Cells that were grass at the start and are snow now.
   grassToSnow: number;
@@ -76,6 +79,25 @@ export interface NatureRun {
   rows: NatureRow[];
   errors: string[];
   seconds: number;
+  // Generation's flowers and bushes: how many, how many stand where their land holds them at the
+  // start (nature.ts holds), and of those away from the villages (where children pick flowers and
+  // houses go up), how many and how many still stand in their own cell at the end.
+  generated: { plants: number; held: number; away: number; still: number };
+  // Plants a spell grew at the start (GROWN of them, two flowers to a bush, in thick patches on open
+  // grass more than 20 cells from any village), and how many still stand at the end; 0 when none.
+  grown: { plants: number; still: number };
+}
+
+export const GROWN = 200;
+// How many of them main kept after half an hour on each small island (grazing and trampling take
+// some): this script on main 13a703c, which wilts nothing.
+export const GROWN_MAIN_KEPT: Record<string, number> = { "small-meadow": 189, "small-dry": 132 };
+
+// Within 16 cells of a village, now or as generation laid it (nature.ts GARDEN).
+function nearVillage(world: World, i: number): boolean {
+  const x = i % world.w;
+  const y = (i / world.w) | 0;
+  return [...world.villages, ...world.settlements].some((v) => Math.abs(v.x - x) <= 16 && Math.abs(v.y - y) <= 16);
 }
 
 function waterWithin(world: World, i: number, r: number): boolean {
@@ -91,7 +113,7 @@ function waterWithin(world: World, i: number, r: number): boolean {
 }
 
 export function natureRow(world: World, minute: number, grass0: Uint8Array, cover0: Uint8Array): NatureRow {
-  const garden = (i: number) => world.villages.some((v) => Math.abs(v.x - (i % world.w)) <= 16 && Math.abs(v.y - ((i / world.w) | 0)) <= 16);
+  const garden = (i: number) => nearVillage(world, i);
   const row: NatureRow = {
     minute,
     biomes: {},
@@ -100,6 +122,7 @@ export function natureRow(world: World, minute: number, grass0: Uint8Array, cove
     reedsFar: 0,
     reedsFarNew: 0,
     dirt: 0,
+    dirtAway: 0,
     sand: 0,
     grassToSnow: 0,
     fences: 0,
@@ -109,8 +132,10 @@ export function natureRow(world: World, minute: number, grass0: Uint8Array, cove
   for (let i = 0; i < world.n; i++) {
     const g = world.ground[i];
     const c = world.cover[i];
-    if (g === G.DIRT) row.dirt++;
-    else if (g === G.SAND) row.sand++;
+    if (g === G.DIRT) {
+      row.dirt++;
+      if (!garden(i)) row.dirtAway++;
+    } else if (g === G.SAND) row.sand++;
     else if (g === G.SNOW && grass0[i]) row.grassToSnow++;
     if (c === C.FLOWER) row.covers.flower++;
     else if (c === C.BUSH) row.covers.bush++;
@@ -142,11 +167,14 @@ export function natureRow(world: World, minute: number, grass0: Uint8Array, cove
   return row;
 }
 
-export function natureRun(name: string, minutes: number, every = 5, out?: string): NatureRun {
+export function natureRun(name: string, minutes: number, every = 5, out?: string, grow = false): NatureRun {
   const shared = Math.random;
   const t0 = Date.now();
   const spec = island(name);
   Math.random = seeded(spec.seed * 7919 + 1);
+  // Creatures numbered from 1 whatever ran before (ids feed their choices): the same alone and in
+  // npm test's workers.
+  resetCreatureIds(1);
   try {
     Runtime.slowMs = Infinity;
     const world = generateWorld(spec.size, spec.size, spec.seed, spec.land);
@@ -158,6 +186,33 @@ export function natureRun(name: string, minutes: number, every = 5, out?: string
     world.reactions = true;
     const grass0 = new Uint8Array(world.n);
     for (let i = 0; i < world.n; i++) grass0[i] = world.ground[i] === G.GRASS ? 1 : 0;
+    const genCells: number[] = [];
+    let held = 0;
+    for (let i = 0; i < world.n; i++) {
+      const c = world.cover[i];
+      if (c !== C.FLOWER && c !== C.BUSH) continue;
+      genCells.push(i);
+      if (holds(world, i, c)) held++;
+    }
+    // A spell's growth, as the grow ability leaves it: every open grass cell of a 5 by 5 in flower
+    // or bush, far thicker than the land would hold, in patches across the island away from the
+    // villages; placed as a spell places a plant (World.place).
+    const grownCells: number[] = [];
+    if (grow) {
+      const far = (x: number, y: number) => world.settlements.every((s) => Math.hypot(s.x - x, s.y - y) > 20);
+      for (let cy = 6; cy < world.h - 6 && grownCells.length < GROWN; cy += 13)
+        for (let cx = 6; cx < world.w - 6 && grownCells.length < GROWN; cx += 13) {
+          if (!far(cx, cy)) continue;
+          for (let dy = -2; dy <= 2; dy++)
+            for (let dx = -2; dx <= 2; dx++) {
+              const i = (cy + dy) * world.w + cx + dx;
+              if (grownCells.length >= GROWN || world.ground[i] !== G.GRASS || world.cover[i] !== C.NONE || world.depth[i] > 0) continue;
+              world.place(i, grownCells.length % 3 === 2 ? "bush" : "flower");
+              grownCells.push(i);
+            }
+        }
+    }
+    const grownCover = grownCells.map((i) => world.cover[i]);
     const cover0 = Uint8Array.from(world.cover);
     if (out) {
       mkdirSync(out, { recursive: true });
@@ -170,7 +225,20 @@ export function natureRun(name: string, minutes: number, every = 5, out?: string
       if (m % every === 0 || m === minutes) rows.push(natureRow(world, m, grass0, cover0));
     }
     if (out) writeFileSync(join(out, `${name}-${minutes}.json`), JSON.stringify(saveWorld(world, rt.owners)));
-    return { name, minutes, rows, errors: errors.slice(0, 3), seconds: Math.round((Date.now() - t0) / 1000) };
+    return {
+      name,
+      minutes,
+      rows,
+      errors: errors.slice(0, 3),
+      seconds: Math.round((Date.now() - t0) / 1000),
+      generated: {
+        plants: genCells.length,
+        held,
+        away: genCells.filter((i) => !nearVillage(world, i)).length,
+        still: genCells.filter((i) => !nearVillage(world, i) && world.cover[i] === cover0[i]).length,
+      },
+      grown: { plants: grownCells.length, still: grownCells.filter((i, k) => world.cover[i] === grownCover[k]).length },
+    };
   } finally {
     Math.random = shared;
   }
@@ -206,18 +274,40 @@ export function natureVerdict(run: NatureRun): { bound: string; ok: boolean; det
     detail: `${last.reedsFarNew} new, ${last.reedsFar} in all (of ${last.covers.reeds} reeds)`,
   });
   const within = (a: number, b: number) => Math.abs(b - a) <= Math.max(10, a * 0.1);
-  out.push({ bound: "dirt cells within 10%", ok: within(first.dirt, last.dirt), detail: `${first.dirt} to ${last.dirt}` });
+  out.push({
+    bound: "dirt cells within 10% (away from villages)",
+    ok: within(first.dirtAway, last.dirtAway),
+    detail: `${first.dirtAway} to ${last.dirtAway} (${first.dirt} to ${last.dirt} in all)`,
+  });
   out.push({ bound: "sand cells within 10%", ok: within(first.sand, last.sand), detail: `${first.sand} to ${last.sand}` });
   out.push({ bound: "no grass turned to snow", ok: last.grassToSnow === 0, detail: `${last.grassToSnow}` });
   out.push({ bound: "no fence on a road or a path", ok: last.fenceOnWay === 0, detail: `${last.fenceOnWay} of ${last.fences}` });
   out.push({ bound: "no rail into a field", ok: last.railIntoField === 0, detail: `${last.railIntoField} of ${last.fences}` });
+  const g = run.generated;
+  out.push({
+    bound: "generation's flowers and bushes: 95% stand where their land holds them",
+    ok: g.held >= g.plants * 0.95,
+    detail: `${g.held} of ${g.plants}`,
+  });
+  if (run.minutes >= 30)
+    out.push({
+      bound: "generation's flowers and bushes away from villages: 80% still in their own cell after half an hour",
+      ok: g.still >= g.away * 0.8,
+      detail: `${g.still} of ${g.away}`,
+    });
+  if (run.grown.plants)
+    out.push({
+      bound: `plants a spell grew: as many still stand as on main (${GROWN_MAIN_KEPT[run.name] ?? 0})`,
+      ok: run.grown.still >= (GROWN_MAIN_KEPT[run.name] ?? 0),
+      detail: `${run.grown.still} of ${run.grown.plants}`,
+    });
   return out;
 }
 
 if (typeof process !== "undefined" && process.argv[1]?.includes("nature-run")) {
   const name = process.argv[2] ?? "small-meadow";
   const minutes = Number(process.argv[3] ?? 6);
-  const run = natureRun(name, minutes, 5, process.argv[4]);
+  const run = natureRun(name, minutes, 5, process.argv[4] || undefined, process.argv[5] === "grow");
   console.log(JSON.stringify(run));
   for (const v of natureVerdict(run)) console.error(`${v.ok ? "ok  " : "FAIL"} ${v.bound}: ${v.detail}`);
   console.error(`${name}: ${minutes} min in ${run.seconds} s`);

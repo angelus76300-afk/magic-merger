@@ -557,6 +557,7 @@ export function natureTick(world: World, c: Creature, k: CreatureKind, i: number
   if (n & N.COLD) {
     // Cold: it chills where it goes (water under it freezes), is at home in snow, and fire hurts it.
     if (world.temp[i] > -8) world.temp[i] += (-8 - world.temp[i]) * Math.min(1, dt * 3);
+    world.markCold(i);
     c.frozen = 0;
     if (world.ground[i] === G.SNOW || world.fluid[i] === F.ICE) c.hp = Math.min(max, c.hp + 6 * dt);
     if (!weak("fire") && !immune("fire") && (c.burning > 0 || world.fire[i] > 0.25 || world.temp[i] > 80)) c.hp -= 25 * dt;

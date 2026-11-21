@@ -1479,6 +1479,7 @@ function frozenFall(world: World, w: Wonder): void {
     if (world.fire[i] > 0.2 || world.fluid[i] === F.LAVA) warm += 3;
     if (world.temp[i] > 8) warm++;
     world.temp[i] = Math.min(world.temp[i], world.temp[i] * 0.9 - 1.2);
+    world.markCold(i);
   });
   if (warm / Math.max(1, n) < 0.5) {
     w.state = 0;
