@@ -1,4 +1,4 @@
-import { C, F, G, S, isBuilding } from "./materials";
+import { BUILTIN, C, F, G, S, isBuilding } from "./materials";
 import { blastWonders } from "./wonders";
 import { blastProps } from "./props";
 import type { World } from "./world";
@@ -392,6 +392,11 @@ function stepTemperature(world: World, dt: number): void {
   const fluids = materials.list.fluid;
   const grounds = materials.list.ground;
   const covers = materials.list.cover;
+  // A spell's own material colder than SPELL_COLD (nature.ts): its cells are a spell's cold
+  // (World.markCold), as a spell's cold write is. The built-in ones (snow, ice) are the land's.
+  const builtinFluids = BUILTIN.fluid.length;
+  const builtinGrounds = BUILTIN.ground.length;
+  const builtinCovers = BUILTIN.cover.length;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
@@ -417,6 +422,13 @@ function stepTemperature(world: World, dt: number): void {
         target = coverHeat;
         pull = 0.2;
       }
+      if (target < NATURE.SPELL_COLD) {
+        const spells =
+          (world.cover[i] >= builtinCovers && coverHeat !== null) ||
+          (fl >= builtinFluids && world.depth[i] > 0.05) ||
+          (world.ground[i] >= builtinGrounds && groundHeat !== null);
+        if (spells) world.markCold(i);
+      }
       if (world.fire[i] > 0) {
         target = Math.max(target, 500 * world.fire[i]);
         pull = 0.2;
@@ -434,11 +446,25 @@ function stepTemperature(world: World, dt: number): void {
   // in a hard cold (4.4.5 part B: rivers of cold regions froze white within
   // minutes, and from above a big island seemed to have none).
   const running = runningWater(world);
-  // Where a spell's cold reached in the last seconds (World.markCold): it counts down.
+  // Where a spell's cold reached in the last seconds (World.markCold): it counts down, and it
+  // goes where that cold goes, to a neighbour the cold spread into (under -6), a little less each
+  // cell out, so a spell's cold patch snows round its edge as it did, and the land's own cold
+  // never does.
   const chill = world.chill;
   for (let i = 0; i < world.n; i++) {
     const t = temp[i];
-    if (chill && chill[i]) chill[i]--;
+    if (chill) {
+      if (chill[i]) chill[i]--;
+      if (t < -6 && chill[i] < 255 - NATURE.CHILL_STEP) {
+        const x = i % w;
+        let most = 0;
+        if (x > 0) most = Math.max(most, chill[i - 1]);
+        if (x < w - 1) most = Math.max(most, chill[i + 1]);
+        if (i >= w) most = Math.max(most, chill[i - w]);
+        if (i + w < world.n) most = Math.max(most, chill[i + w]);
+        if (most - NATURE.CHILL_STEP > chill[i]) chill[i] = most - NATURE.CHILL_STEP;
+      }
+    }
     const fl = world.fluid[i];
     if (fl === F.WATER) {
       if (t < (running && running[i] ? -10 : 0)) world.fluid[i] = F.ICE;

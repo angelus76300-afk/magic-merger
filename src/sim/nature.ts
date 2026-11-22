@@ -54,6 +54,11 @@ export const NATURE = {
   // Of the flower sprouts in the dry and cold lands (desert, mesa, tundra), the share that happen
   // (what animals graze, bushes and berries, grows back at the usual pace).
   SPARSE: 0.1,
+  // A spell's own material colder than this marks its cells as a spell's cold (physics.ts), and
+  // a spell's cold reaches a neighbour it spread into with CHILL_STEP less of its count (255,
+  // about 17 seconds), so up to seven cells out.
+  SPELL_COLD: -6,
+  CHILL_STEP: 32,
   // Bare dirt greening beside grass where generation laid grass (it was 0.5, everywhere): ground
   // grazed bare, burnt or dug comes back; generation's own dirt and sand stay.
   GREEN: 0.05,

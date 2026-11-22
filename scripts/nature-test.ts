@@ -9,7 +9,7 @@
 //      turns to snow, a 7 by 7 patch made high (air under -6, under the snow line) stays grass,
 //      and a burnt patch (dirt where generation laid grass) greens back from its edge;
 //   2. a frost spell snows over 7 of 9 lowland grass cells or more, 10 s after an island is
-//      made and 10 s after it is loaded;
+//      made and 10 s after it is loaded, and a spell's own cold material snows the grass round it;
 //   3. an overgrown saved island (seven open grass cells in ten in flower) thins by itself;
 //   4. a fence is drawn by its field's side, a lone post without a rail.
 // The two islands left running half an hour with their villages (the soak's bounds, plants a
@@ -74,6 +74,9 @@ function openPatches(world: World, n: number, test: (i: number) => boolean): num
     }
   return out;
 }
+
+// A spell's own material, colder than any of the land's, laid on a 3 by 3.
+const PERMAFROST = `const spell = { materials: [{ name: "permafrost", layer: "cover", heat: -40, color: "#d8ecff" }], *cast(w) { for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) w.set(w.x + dx, w.y + dy, "permafrost"); } };`;
 
 // A frost spell on a 3 by 3 of grass round a cell: three seconds of cold, then the cells under snow
 // five seconds later.
@@ -179,7 +182,13 @@ export function natureChecks(check: Check): void {
   // and ten seconds after it is saved and loaded again (main: 9 of 9 both times).
   {
     const world = fresh(96, 5, 0.9);
-    const spots = openPatches(world, 40, (i) => !waterNear(world, i, 8) && world.ambient(i) > 10);
+    // Three spots of warm lowland grass, away from water and more than 10 cells from each other,
+    // so no spell's snow counts for another's.
+    const away = (a: number, b: number) => Math.hypot((a % world.w) - (b % world.w), ((a / world.w) | 0) - ((b / world.w) | 0)) > 10;
+    const spots: number[] = [];
+    for (const i of openPatches(world, 60, (i) => !waterNear(world, i, 4) && world.ambient(i) > 5))
+      if (spots.length < 3 && spots.every((j) => away(i, j))) spots.push(i);
+    check("nature: three spots for the cold spells", spots.length === 3, `${spots.length}`);
     const rt = new Runtime(world, () => {});
     run(world, 10, () => {}, 7, rt);
     const made = frost(world, rt, spots[0]);
@@ -189,9 +198,34 @@ export function natureChecks(check: Check): void {
     loaded.wonders = [];
     const rt2 = new Runtime(loaded, () => {});
     run(loaded, 10, () => {}, 7, rt2);
-    const after = frost(loaded, rt2, spots[spots.length - 1]);
+    const after = frost(loaded, rt2, spots[1]);
     check("nature: a frost spell 10 s after an island is made snows over 7 of 9 cells or more", made >= 7, `${made} of 9`);
     check("nature: a frost spell 10 s after an island is loaded snows over 7 of 9 cells or more", after >= 7, `${after} of 9`);
+    // A spell's own cold material (heat -40) on a 3 by 3: the grass round it snows, as the cold
+    // spreads (main: 11 of the 25 cells round it here; 6d47f43, which marked only written cold: 0).
+    const at = spots[2];
+    const ax = at % loaded.w;
+    const ay = (at / loaded.w) | 0;
+    rt2.cast({ key: "permafrost", name: "Permafrost", tier: "minor", code: PERMAFROST }, ax, ay);
+    let most = 0;
+    let coldest = Infinity;
+    run(
+      loaded,
+      60,
+      () => {
+        let n = 0;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (loaded.ground[(ay + dy) * loaded.w + ax + dx] === G.SNOW) n++;
+        most = Math.max(most, n);
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) coldest = Math.min(coldest, loaded.temp[(ay + dy) * loaded.w + ax + dx]);
+      },
+      7,
+      rt2,
+    );
+    check(
+      "nature: a spell's own cold material snows over 8 of the 25 cells round it or more",
+      most >= 8,
+      `${most} of 25, the 3 by 3 down to ${coldest.toFixed(1)}`,
+    );
   }
   // 3. An overgrown saved island thins by itself.
   {
