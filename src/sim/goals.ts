@@ -738,14 +738,35 @@ function urgent(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
 
 // A place it walked to and could not reach (cut off by water, a fallen wall): not tried again
 // for a while, so the next thought goes elsewhere.
+// Standing in a river or a pond, where no way is found from, it wades to the nearest bank first;
+// cut off over and over (a patch of land between rivers), it settles where it is and lives off the
+// land round it (22 November: villagers stranded between rivers starved, trying home again and
+// again from the same spot).
 function unreached(world: World, c: Creature, m: Mind, x: number, y: number): void {
   if (c.kind !== "villager" || (m.task !== "eat" && m.task !== "carry" && m.task !== "rest")) return;
-  c.data.unreached = [x, y, world.time + HOME.unreached];
+  const now = world.time;
+  const list = ((c.data.unreached as [number, number, number][] | undefined) ?? []).filter((u) => now < u[2] && Math.hypot(u[0] - x, u[1] - y) >= 2);
+  list.push([x, y, now + HOME.unreached]);
+  c.data.unreached = list.slice(-3);
+  const here = pointAt(world, c.x, c.y);
+  if (world.depth[here] > 0.05) {
+    const bank = findCell(world, c.x, c.y, 6, 40, (j) => world.depth[j] === 0 && standable(world, j));
+    if (bank >= 0) life.free(c, (bank % world.w) + 0.5, Math.floor(bank / world.w) + 0.5);
+  }
+  const lost = ((c.data.lost as number | undefined) ?? 0) + 1;
+  c.data.lost = lost;
+  if (lost >= 4 && Math.hypot(c.x - c.homeX, c.y - c.homeY) > 8) {
+    c.data.lost = 0;
+    c.homeX = c.x;
+    c.homeY = c.y;
+    c.data.house = undefined;
+    deed(c, "settled where they were, cut off from home");
+  }
 }
 
 function isUnreached(world: World, c: Creature, x: number, y: number): boolean {
-  const u = c.data.unreached as [number, number, number] | undefined;
-  return !!u && world.time < u[2] && Math.hypot(u[0] - x, u[1] - y) < 2;
+  const list = c.data.unreached as [number, number, number][] | undefined;
+  return !!list && list.some((u) => world.time < u[2] && Math.hypot(u[0] - x, u[1] - y) < 2);
 }
 
 const pointAt = (world: World, x: number, y: number) => world.idx(Math.max(0, Math.min(world.w - 1, x)), Math.max(0, Math.min(world.h - 1, y)));
@@ -1459,7 +1480,10 @@ function trade(world: World, c: Creature, m: Mind, v: Village): void {
 }
 
 function forage(world: World, c: Creature, m: Mind, child = false): boolean {
-  const i = findCell(world, c.homeX, c.homeY, 16, 18, (j) => (world.cover[j] === C.BUSH || (child && world.cover[j] === C.FLOWER)) && world.fire[j] < 0.1);
+  const test = (j: number) => (world.cover[j] === C.BUSH || world.cover[j] === C.BERRIES || (child && world.cover[j] === C.FLOWER)) && world.fire[j] < 0.1;
+  let i = findCell(world, c.homeX, c.homeY, 16, 18, test);
+  // Away from home and hungry (cut off, or home in water): what grows round it.
+  if (i < 0 && m.meal && Math.hypot(c.x - c.homeX, c.y - c.homeY) > 6) i = findCell(world, c.x, c.y, 12, 18, test);
   if (i < 0) return false;
   cellTask(world, m, "forage", i);
   m.action = child ? "picking berries and flowers" : "picking berries";
@@ -2021,6 +2045,8 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
   const v = c.kind === "villager" ? villageOf(world, c.homeX, c.homeY) : null;
   const task = m.task;
   if (meter) meter.done(c, task);
+  // Got where it was going: not lost (unreached, below).
+  if (c.data.lost) c.data.lost = 0;
   drop(m);
   switch (task) {
     case "use": {
@@ -2082,9 +2108,14 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       return;
     case "forage": {
       const was = world.cover[i];
-      if (was !== C.BUSH && was !== C.FLOWER && was !== C.CROP) return;
-      if (was !== C.BUSH || Math.random() < 0.4) world.graze(i);
-      if (c.kind === "villager") {
+      if (was !== C.BUSH && was !== C.BERRIES && was !== C.FLOWER && was !== C.CROP) return;
+      if ((was !== C.BUSH && was !== C.BERRIES) || Math.random() < 0.4) world.graze(i);
+      if (c.kind === "villager" && m.meal && was !== C.FLOWER) {
+        // Hungry, it eats them there (22 November: cut off from home, a villager picked berries,
+        // carried them toward a home it could not reach, and starved with them in its hands).
+        m.hunger = Math.max(0, m.hunger - 0.5);
+        deed(c, "ate berries off the bush");
+      } else if (c.kind === "villager") {
         m.carry = "food";
         setTask(m, "carry", c.homeX, c.homeY);
         deed(c, was === C.FLOWER ? "picked flowers" : "picked berries");
@@ -2100,6 +2131,12 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
     case "harvest":
       if (world.cover[i] !== C.CROP) return;
       world.setCover(i, C.NONE);
+      // Hungry with no food in the stores (harvestToEat): it eats there.
+      if (c.kind === "villager" && m.meal && (!v || v.food < 1)) {
+        m.hunger = Math.max(0, m.hunger - 0.6);
+        deed(c, "ate from the fields");
+        return;
+      }
       m.carry = "food";
       setTask(m, "carry", c.homeX, c.homeY);
       deed(c, "harvested crops");
