@@ -109,6 +109,21 @@ export function villagersChecks(check: Check): void {
         `${woke.length} of ${within.length} out (${within.filter((c) => c.dead).length} died in the fire), ${back()} back in the burning house 5 s later, ${within.filter((c) => c.data.indoors !== undefined).length} asleep in another`,
       );
     }
+    // Water over another occupied house: those inside wake and come out.
+    const dryOne = villagers(world).find((c) => c.data.indoors !== undefined && Math.hypot(c.x - (one?.x ?? -99), c.y - (one?.y ?? -99)) > 8);
+    if (dryOne) {
+      const house = dryOne.data.indoors as number;
+      const pond: number[] = [];
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) pond.push(house + dy * world.w + dx);
+      run(world, rt, 2, () => {
+        for (const j of pond) world.setFluid(j, F.WATER, Math.max(world.depth[j], 1));
+      });
+      check(
+        "villagers: water over a house wakes those inside, and they come out",
+        dryOne.data.indoors === undefined,
+        `${dryOne.data.indoors === undefined ? "out" : "still inside"}, doing: ${dryOne.mind?.action}`,
+      );
+    } else check("villagers: water over a house wakes those inside, and they come out", false, "no second house with a sleeper");
     // Morning: nobody is left inside.
     run(world, rt, 345 - world.time);
     const day = daylight(world.time).night;
