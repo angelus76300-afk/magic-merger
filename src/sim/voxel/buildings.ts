@@ -544,7 +544,9 @@ function hash(i: number, seed: number): number {
 }
 
 export interface Lights {
-  windows: { x: number; y: number; z: number; axis: 0 | 1 }[];
+  // `house`: the top left cell of the house a window is in (lit while someone sleeps there,
+  // homes.ts), or -1 for a building with a job (lit by its village's people).
+  windows: { x: number; y: number; z: number; axis: 0 | 1; house: number }[];
   chimneys: { x: number; y: number; z: number }[];
 }
 
@@ -671,7 +673,7 @@ export class Buildings {
       for (const wdw of shape.windows) {
         const p = turnPoint(wdw, qq);
         const axis = (qq % 2 === 1 ? 1 - wdw.axis : wdw.axis) as 0 | 1;
-        this.lights.windows.push({ x: p.x + ox, y: wdw.y + base, z: p.z + oz, axis });
+        this.lights.windows.push({ x: p.x + ox, y: wdw.y + base, z: p.z + oz, axis, house: b.kind === C.HOUSE ? b.i : -1 });
       }
       for (const ch of shape.chimneys) {
         const p = turnPoint(ch, qq);

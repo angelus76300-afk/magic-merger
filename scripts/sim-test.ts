@@ -70,6 +70,7 @@ import { roadsGroundChecks } from "./roads-ground-test";
 import { coldChecks } from "./cold-test";
 import type { ColdRun } from "./cold-run";
 import { natureChecks } from "./nature-test";
+import { villagersChecks } from "./villagers-test";
 import { natureVerdict, type NatureRun } from "./nature-run";
 import { verdict, type LinkedPull } from "../worker/feedback";
 import { DROP_MAX, DROP_TILE, dropAt, dropShare, dropSize, rainWidth } from "../src/sim/voxel/drops";
@@ -2598,6 +2599,8 @@ roadsGroundChecks(check);
 coldChecks(check);
 // Nature holds its shape (21 November): scripts/nature-test.ts.
 natureChecks(check);
+// Villagers at home (22 November): asleep indoors, fed when home floods, fields tilled, no village under a spring: scripts/villagers-test.ts.
+villagersChecks(check);
 // Water and light (16 November): scripts/water-light-test.ts.
 waterLightChecks(check);
 // Weed and stones on lake beds (20 November): scripts/lake-weed-test.ts.

@@ -483,11 +483,12 @@ function placeVillages(world: World, rng: Rng, top: number): void {
   const { w, h } = world;
   const villages = Math.max(2, Math.round((w * h) / 12000));
   const candidates: { x: number; y: number; score: number }[] = [];
+  const under = underSprings(world);
   for (let k = 0; k < Math.max(600, (w * h) / 40); k++) {
     const x = rng.int(12, w - 13);
     const y = rng.int(12, h - 13);
     const score = landScore(world, x, y, 7, top, (world.seaLevel + top) / 2);
-    if (score < Infinity) candidates.push({ x, y, score });
+    if (score < Infinity && !footprintUnder(world, under, x, y)) candidates.push({ x, y, score });
   }
   candidates.sort((a, b) => a.score - b.score);
   const centers: { x: number; y: number }[] = [];
@@ -501,6 +502,47 @@ function placeVillages(world: World, rng: Rng, top: number): void {
       world.settlements.push({ x: c.x, y: c.y, style: 0, level: 1, jobs: [], store: 0, street: 0, name: "" });
     }
   }
+}
+
+// Below a spring's water (22 November: the meadow island's village was laid out a few cells from a
+// river's head, its houses a hand lower than the spring's level, and stood in water within the
+// first minutes; its people starved going home to eat). A cell is under a spring when a spring of
+// water within SPRING_REACH cells keeps its level above the cell's height plus SPRING_MARGIN, and
+// the cell either lies below that level or in a hollow that holds water (drainage: no way down
+// for the water). A cell above the level and draining is safe.
+const SPRING_REACH = 10;
+const SPRING_MARGIN = 0.6;
+const HOLLOW = 0.2;
+function underSprings(world: World): Uint8Array {
+  const { w, n } = world;
+  const level = new Float32Array(n).fill(-Infinity);
+  const r = SPRING_REACH;
+  for (const s of world.springs) {
+    if (s.lava) continue;
+    const sx = s.i % w;
+    const sy = (s.i / w) | 0;
+    for (let dy = -r; dy <= r; dy++)
+      for (let dx = -r; dx <= r; dx++) {
+        if (dx * dx + dy * dy > r * r || !world.inside(sx + dx, sy + dy)) continue;
+        const j = (sy + dy) * w + sx + dx;
+        if (s.level > level[j]) level[j] = s.level;
+      }
+  }
+  const { filled } = drainage(world);
+  const out = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const hgt = world.height[i];
+    if (hgt >= level[i] + SPRING_MARGIN) continue;
+    if (hgt < level[i] || filled[i] - hgt > HOLLOW) out[i] = 1;
+  }
+  return out;
+}
+
+// A village's houses stand up to 9 cells from its centre (buildVillage): any of those cells under a
+// spring refuses the spot.
+function footprintUnder(world: World, under: Uint8Array, cx: number, cy: number): boolean {
+  for (let y = cy - 9; y <= cy + 9; y++) for (let x = cx - 9; x <= cx + 9; x++) if (world.inside(x, y) && under[y * world.w + x]) return true;
+  return false;
 }
 
 function carveRiver(world: World, rng: Rng): void {

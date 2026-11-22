@@ -291,7 +291,8 @@ function separation(world: World, c: Creature, k: CreatureKind): { x: number; y:
   let px = 0;
   let py = 0;
   for (const o of world.crowd.near(world, c.x, c.y, r)) {
-    if (o === c || o.kind !== c.kind) continue;
+    // One asleep indoors (homes.ts) takes no room at the door.
+    if (o === c || o.kind !== c.kind || o.data.indoors !== undefined) continue;
     const dx = c.x - o.x;
     const dy = c.y - o.y;
     const d = Math.hypot(dx, dy);

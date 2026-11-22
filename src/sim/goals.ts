@@ -1,7 +1,22 @@
 import { C, F, G, isBuilding as isBuildingCover } from "./materials";
 import { woodland } from "./ecology";
 import { bareByMaking, gardenFull, niche, treeRoom } from "./nature";
-import { SITE, STAGE_WORDS, canStake, handsOn, kindName, siteToWork, standBy, sitesOf, sitesOn, stageOf, stake, work as workSite, type Site } from "./sites";
+import {
+  SITE,
+  STAGE_WORDS,
+  canStake,
+  cellsOf,
+  handsOn,
+  kindName,
+  siteToWork,
+  standBy,
+  sitesOf,
+  sitesOn,
+  stageOf,
+  stake,
+  work as workSite,
+  type Site,
+} from "./sites";
 import { MIN_PEOPLE, alongRoad, claim, isWay, nextPave, noteTrip, pave, planned, unnoteTrip, type PaveJob } from "./roads";
 import { tolerance, tooCold } from "./cold";
 import type { Wonder } from "./wonders";
@@ -38,6 +53,7 @@ import {
 import type { Behavior, Creature, CreatureKind } from "./creatures";
 import type { World } from "./world";
 import { artifactVisit, useArtifact, type Visit } from "./artifacts";
+import { HOME, goIn, homeWet, houseBlock, houseNear, houseOf, sleepable, wetAt } from "./homes";
 import { meter } from "./motion";
 import { facing, standsUpTo, strikeBack } from "./social";
 
@@ -454,6 +470,7 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
       // A herd across the water is not sought again for a while, and the
       // next thought waits a little: no task taken up and dropped every tick.
       if (m.task === "herd") c.data.herdAway = world.time + 8;
+      unreached(world, c, m, tx, ty);
       life.free(c, tx, ty);
       drop(m);
       m.acted = undefined;
@@ -464,7 +481,10 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
       m.near = d;
       m.stall = 0;
     } else if ((m.stall += dt) > 5) {
-      // Five seconds without getting closer: a step out, then think again.
+      // Five seconds without getting closer: a step out, then think again, elsewhere
+      // (22 November: a villager whose home stood in water took "going home to eat" up
+      // again at once, every five seconds, and starved by its door).
+      unreached(world, c, m, tx, ty);
       life.free(c, tx, ty);
       drop(m);
       return null;
@@ -481,6 +501,7 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
           c.homeX = c.x;
           c.homeY = c.y;
         }
+        unreached(world, c, m, tx, ty);
         drop(m);
       }
       return null;
@@ -509,6 +530,7 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
     return OUT;
   }
   m.work += dt;
+  if (m.task === "rest" && c.kind === "villager" && c.data.indoors === undefined && !c.data.rough) bedDown(world, c, m);
   const duration = m.task === "custom" ? (CUSTOM_GOALS.get(m.custom)?.work ?? 2) : (DURATION[m.task] ?? 2);
   if (m.work >= duration) finish(world, c, k, m);
   OUT.x = c.x;
@@ -592,7 +614,8 @@ function stillValid(world: World, c: Creature, m: Mind): boolean {
     case "harvest":
       return world.cover[i] === C.CROP;
     case "plant":
-      return world.ground[i] === G.FIELD && world.cover[i] === C.NONE;
+      // Sowing a field, or tilling a new one (farm): the ground it set out to till is still free.
+      return world.cover[i] === C.NONE && (world.ground[i] === G.FIELD || (c.data.till === i && tillable(world, i)));
     case "graze":
       return i < 0 || world.cover[i] !== C.NONE || world.ground[i] === G.GRASS;
     case "repair":
@@ -620,8 +643,12 @@ function urgent(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
   const job = villager ? jobOf(c) : "none";
   if (c.hp < life.maxHp(c) * 0.35 && m.task !== "rest" && m.task !== "fight") {
     setTask(m, "rest", m.lair >= 0 ? m.lair % world.w : c.homeX, m.lair >= 0 ? Math.floor(m.lair / world.w) : c.homeY);
+    c.data.bed = undefined;
     return true;
   }
+  // A home standing in water too long is given up for a dry one (22 November: villages flooded in
+  // their first minutes and their people starved going home to eat).
+  if (villager) wetHome(world, c);
   if ((m.task === "rest" && m.hunger < 0.8) || m.task === "fight" || m.task === "feast") return true;
   if (villager) {
     // What it remembers harmed it: guards go for it, the rest keep away.
@@ -670,8 +697,7 @@ function urgent(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
       return true;
     }
     if (night > 0.6 && job !== "guard") {
-      setTask(m, "rest", c.homeX, c.homeY);
-      m.action = "asleep at home";
+      goToBed(world, c, m);
       return true;
     }
     // 4.4.5 part B: at dusk the grown-ups of a village with a tavern gather there.
@@ -708,6 +734,209 @@ function urgent(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
   return m.task === "beg";
 }
 
+// ---- Villagers: home, bed and a dry roof (homes.ts) ---------------------------
+
+// A place it walked to and could not reach (cut off by water, a fallen wall): not tried again
+// for a while, so the next thought goes elsewhere.
+function unreached(world: World, c: Creature, m: Mind, x: number, y: number): void {
+  if (c.kind !== "villager" || (m.task !== "eat" && m.task !== "carry" && m.task !== "rest")) return;
+  c.data.unreached = [x, y, world.time + HOME.unreached];
+}
+
+function isUnreached(world: World, c: Creature, x: number, y: number): boolean {
+  const u = c.data.unreached as [number, number, number] | undefined;
+  return !!u && world.time < u[2] && Math.hypot(u[0] - x, u[1] - y) < 2;
+}
+
+const pointAt = (world: World, x: number, y: number) => world.idx(Math.max(0, Math.min(world.w - 1, x)), Math.max(0, Math.min(world.h - 1, y)));
+
+// Where it eats the village's food: at home, or in the square when home stands in water or
+// could not be reached; null when neither will do (it forages instead).
+function mealAt(world: World, c: Creature, v: Village): { x: number; y: number } | null {
+  const bad = (x: number, y: number) => wetAt(world, pointAt(world, x, y)) || isUnreached(world, c, x, y);
+  if (!bad(c.homeX, c.homeY)) return { x: c.homeX, y: c.homeY };
+  if (!bad(v.x, v.y)) return { x: v.x, y: v.y };
+  return null;
+}
+
+// No food in the stores and no berries: ripe crops of its village's fields, brought in.
+function harvestToEat(world: World, c: Creature, m: Mind): boolean {
+  const i = findCell(world, c.homeX, c.homeY, 18, 24, (j) => world.cover[j] === C.CROP && world.fire[j] < 0.1 && world.depth[j] < 0.3);
+  if (i < 0) return false;
+  cellTask(world, m, "harvest", i);
+  return true;
+}
+
+// At night: home to its house, or, with none fit to sleep in (none, burning, flooded, cut off),
+// to a free house of its village, else to lie down by a building of the village.
+function goToBed(world: World, c: Creature, m: Mind): void {
+  let house = houseOf(world, c);
+  if (house >= 0 && (!sleepable(world, house) || isUnreached(world, c, c.homeX, c.homeY))) house = -1;
+  if (house < 0 && claimHouse(world, c)) house = houseOf(world, c);
+  if (house >= 0 && sleepable(world, house)) {
+    setTask(m, "rest", c.homeX, c.homeY);
+    c.data.bed = "home";
+    m.action = "going home to sleep";
+    return;
+  }
+  const s = shelterFor(world, c);
+  setTask(m, "rest", s.x, s.y);
+  c.data.bed = "rough";
+  c.data.bedWords = s.words;
+  m.action = `going to sleep ${s.words}`;
+}
+
+// Arrived where it sleeps, at night: in at the door, or down on the ground beside its shelter.
+function bedDown(world: World, c: Creature, m: Mind): void {
+  if (daylight(world.time).night <= 0.3) return;
+  const house = houseOf(world, c);
+  if (c.data.bed !== "rough" && sleepable(world, house) && Math.hypot(c.x - c.homeX, c.y - c.homeY) < 2.4) {
+    goIn(c, house);
+    const v = villageOf(world, c.homeX, c.homeY);
+    m.action = v ? `asleep in their house in ${nameNear(world, v)}` : "asleep in their house";
+    return;
+  }
+  c.data.rough = true;
+  m.action = `asleep ${(c.data.bedWords as string | undefined) ?? "under the open sky"}`;
+}
+
+// A dry spot to lie down beside a building of its village (a well, a barn, a house), or where its
+// home was, or where it stands.
+function shelterFor(world: World, c: Creature): { x: number; y: number; words: string } {
+  const v = villageOf(world, c.homeX, c.homeY);
+  const x = v ? v.x : c.homeX;
+  const y = v ? v.y : c.homeY;
+  const by = (j: number) => {
+    for (const d of [1, -1, world.w, -world.w]) {
+      const n = j + d;
+      if (n >= 0 && n < world.n && (isBuildingCover(world.cover[n]) || world.cover[n] === C.WELL)) return world.cover[n];
+    }
+    return -1;
+  };
+  const i = findCell(world, x, y, 12, 30, (j) => world.depth[j] === 0 && world.fire[j] < 0.05 && standable(world, j) && by(j) >= 0);
+  if (i >= 0) {
+    const b = by(i);
+    const words = b === C.WELL ? "by the well" : b === C.HOUSE ? "against a house wall" : `by the ${kindName(b)}`;
+    return { x: (i % world.w) + 0.5, y: Math.floor(i / world.w) + 0.5, words };
+  }
+  if (!wetAt(world, pointAt(world, c.homeX, c.homeY))) return { x: c.homeX, y: c.homeY, words: "under the open sky" };
+  return { x: c.x, y: c.y, words: "under the open sky" };
+}
+
+// The people who share its home (as inspect.ts counts a household).
+function familyOf(world: World, c: Creature): Creature[] {
+  return world.creatures.filter((o) => !o.dead && o.kind === "villager" && Math.hypot(o.homeX - c.homeX, o.homeY - c.homeY) < 1.3);
+}
+
+function moveHome(world: World, c: Creature, to: { x: number; y: number }): void {
+  for (const o of familyOf(world, c)) {
+    o.homeX = to.x;
+    o.homeY = to.y;
+    o.data.house = undefined;
+    o.data.wetSince = undefined;
+    o.data.unreached = undefined;
+  }
+}
+
+// The point by a house's door: a dry, open cell beside its block, the one nearest its village's
+// square; null when water or walls are all round it.
+function doorOf(world: World, house: number, v: { x: number; y: number }, block = houseBlock(world, house)): { x: number; y: number } | null {
+  let best: { x: number; y: number } | null = null;
+  let bestD = Infinity;
+  for (const j of block)
+    for (const d of [1, -1, world.w, -world.w]) {
+      const n = j + d;
+      if (n < 0 || n >= world.n || block.includes(n) || Math.abs((n % world.w) - (j % world.w)) > 1) continue;
+      if (world.depth[n] > 0.05 || world.fire[n] > 0.05 || world.materials.get("cover", world.cover[n]).solid) continue;
+      const x = (n % world.w) + 0.5;
+      const y = Math.floor(n / world.w) + 0.5;
+      const dd = Math.hypot(x - v.x, y - v.y);
+      if (dd < bestD) {
+        bestD = dd;
+        best = { x, y };
+      }
+    }
+  return best;
+}
+
+// A house of its village nobody lives in, dry and standing, nearest (x, y); its door.
+function freeHouse(world: World, v: { x: number; y: number }, x: number, y: number): { x: number; y: number } | null {
+  const used = new Set<number>();
+  for (const o of world.creatures) {
+    if (o.dead || o.kind !== "villager" || Math.hypot(o.homeX - v.x, o.homeY - v.y) > 30) continue;
+    const h = houseOf(world, o);
+    if (h >= 0) for (const j of houseBlock(world, h)) used.add(j);
+  }
+  let best: { x: number; y: number } | null = null;
+  let bestD = Infinity;
+  const r = 16;
+  for (let yy = Math.round(v.y) - r; yy <= Math.round(v.y) + r; yy++)
+    for (let xx = Math.round(v.x) - r; xx <= Math.round(v.x) + r; xx++) {
+      if (!world.inside(xx, yy)) continue;
+      const i = yy * world.w + xx;
+      if (world.cover[i] !== C.HOUSE || used.has(i) || !sleepable(world, i)) continue;
+      const d = Math.hypot(xx - x, yy - y);
+      if (d >= bestD) continue;
+      const door = doorOf(world, i, v);
+      // The house its door leads to must be this one (houseOf finds the nearest).
+      if (!door || houseNear(world, door.x, door.y) < 0 || used.has(houseNear(world, door.x, door.y))) continue;
+      bestD = d;
+      best = door;
+    }
+  return best;
+}
+
+// A homeless family takes a free house of its village, at most every twenty seconds.
+function claimHouse(world: World, c: Creature): boolean {
+  if (world.time < ((c.data.claimAt as number | undefined) ?? -Infinity)) return false;
+  c.data.claimAt = world.time + 20;
+  const v = villageOf(world, c.homeX, c.homeY);
+  if (!v) return false;
+  const to = freeHouse(world, v, c.homeX, c.homeY);
+  if (!to) return false;
+  moveHome(world, c, to);
+  deed(c, "moved into an empty house");
+  return true;
+}
+
+// Its home stood in water for HOME.wetFor seconds: the family moves to a free dry house of the
+// village, or to a house it stakes out nearby (raised by the builders), or, with no wood, to a dry
+// spot by the square, homeless until a house is free.
+function wetHome(world: World, c: Creature): void {
+  if (!homeWet(world, c)) {
+    c.data.wetSince = undefined;
+    return;
+  }
+  const since = (c.data.wetSince as number | undefined) ?? world.time;
+  c.data.wetSince = since;
+  if (world.time - since < HOME.wetFor) return;
+  // Tried again in ten seconds if nowhere will do.
+  c.data.wetSince = world.time - HOME.wetFor + 10;
+  const v = villageOf(world, c.homeX, c.homeY);
+  const centre = v ?? { x: c.homeX, y: c.homeY };
+  let to = freeHouse(world, centre, c.homeX, c.homeY);
+  let words = "moved out of a flooded house";
+  if (!to && v && sitesOn(world) && v.wood >= SITE.houseWood) {
+    const site = houseSite(world, v.x, v.y);
+    if (site >= 0) {
+      v.wood -= SITE.houseWood;
+      stake(world, site, C.HOUSE, SITE.houseWood);
+      const door = doorOf(world, site, v, cellsOf(world, site));
+      if (door) {
+        to = door;
+        words = "left a flooded house for a new one";
+      }
+    }
+  }
+  if (!to) {
+    const i = findCell(world, centre.x, centre.y, 12, 30, (j) => world.depth[j] === 0 && world.fire[j] < 0.05 && standable(world, j));
+    if (i >= 0) to = { x: (i % world.w) + 0.5, y: Math.floor(i / world.w) + 0.5 };
+  }
+  if (!to) return;
+  moveHome(world, c, to);
+  deed(c, words);
+}
+
 const EATING = new Set<Task>(["eat", "graze", "hunt", "feast", "forage"]);
 
 // Finds something to eat for its diet: the village's food, a plant, or prey.
@@ -715,10 +944,16 @@ function eat(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
   if (c.kind === "villager") {
     const v = villageOf(world, c.homeX, c.homeY);
     if (v && v.food >= 1) {
-      setTask(m, "eat", c.homeX, c.homeY);
-      return true;
+      // Home, or the village's square when home cannot be reached or stands in water: the stores
+      // are the village's, wherever it eats them.
+      const at = mealAt(world, c, v);
+      if (at) {
+        setTask(m, "eat", at.x, at.y);
+        if (at.x !== c.homeX || at.y !== c.homeY) m.action = "going to eat in the square";
+        return true;
+      }
     }
-    return forage(world, c, m);
+    return forage(world, c, m) || harvestToEat(world, c, m);
   }
   const prey = PREY[c.kind] ?? (k.needs ? preyOf(k) : null);
   if (prey && prey.length) {
@@ -899,20 +1134,40 @@ function farm(world: World, c: Creature, m: Mind, v: Village): void {
   let bare = Math.hypot(ax - v.x, ay - v.y) < 18 ? findCell(world, ax, ay, 4, 8, isBare) : -1;
   if (bare < 0) bare = findCell(world, v.x, v.y, 18, 24, isBare);
   if (bare >= 0) return cellTask(world, m, "plant", bare);
-  // No field left (burnt, flooded): till a new one on grass or dirt near the houses.
-  const fresh = findCell(
-    world,
-    v.x,
-    v.y,
-    14,
-    16,
-    (i) => (world.ground[i] === G.GRASS || world.ground[i] === G.DIRT || world.ground[i] === G.ASH) && dryFree(world, i),
-    7,
-  );
+  // No field left to sow (burnt, flooded): till a new one on grass or dirt near the houses, while
+  // the village has fewer fields than its people need (22 November: the task was set out on and
+  // dropped at the next thought, its ground not a field yet, so no field was ever tilled).
+  if (fieldsNear(world, v) >= fieldCap(v)) return;
+  // Beside a field it already has when it can, so fields grow as plots, not one cell here and there.
+  const byField = (i: number) => [1, -1, world.w, -world.w].some((d) => world.ground[i + d] === G.FIELD);
+  let fresh = findCell(world, v.x, v.y, 14, 24, (i) => tillable(world, i) && byField(i), 5);
+  if (fresh < 0) fresh = findCell(world, v.x, v.y, 14, 16, (i) => tillable(world, i), 7);
   if (fresh >= 0) {
     cellTask(world, m, "plant", fresh);
+    c.data.till = fresh;
     m.action = "tilling a new field";
   }
+}
+
+// Ground a farmer may till: open, dry grass, dirt or ash, not a road, a path or a planned house.
+function tillable(world: World, i: number): boolean {
+  const g = world.ground[i];
+  return (g === G.GRASS || g === G.DIRT || g === G.ASH) && dryFree(world, i) && !planned(world, i);
+}
+
+// Field cells a village works: within its reach of 18 cells, as farm looks for them.
+export const FIELDS = { reach: 18, perPerson: 6, least: 24 } as const;
+
+export function fieldCap(v: Village): number {
+  return Math.max(FIELDS.least, Math.round(v.people * FIELDS.perPerson));
+}
+
+function fieldsNear(world: World, v: Village): number {
+  let n = 0;
+  const r = FIELDS.reach;
+  for (let y = Math.max(0, Math.round(v.y) - r); y <= Math.min(world.h - 1, Math.round(v.y) + r); y++)
+    for (let x = Math.max(0, Math.round(v.x) - r); x <= Math.min(world.w - 1, Math.round(v.x) + r); x++) if (world.ground[y * world.w + x] === G.FIELD) n++;
+  return n;
 }
 
 function fellTree(world: World, c: Creature, m: Mind, v: Village): boolean {
@@ -1850,8 +2105,15 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       deed(c, "harvested crops");
       return;
     case "plant":
-      if (world.ground[i] !== G.FIELD) world.ground[i] = G.FIELD;
-      else world.setCover(i, C.CROP);
+      c.data.till = undefined;
+      if (world.ground[i] !== G.FIELD) {
+        if (!tillable(world, i)) return;
+        world.ground[i] = G.FIELD;
+        deed(c, "tilled a new field");
+        return;
+      }
+      if (world.cover[i] !== C.NONE) return;
+      world.setCover(i, C.CROP);
       deed(c, "sowed a field");
       return;
     case "fell":
