@@ -439,6 +439,12 @@ function moodOf(m: Mind): Plan["mood"] {
 }
 
 function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): Plan | null {
+  // Asleep indoors: nowhere to go until it wakes (homes.ts brings it out).
+  if (m.task === "rest" && c.data.indoors !== undefined) {
+    m.acted = world.tick;
+    m.work += dt;
+    return still(c, m);
+  }
   let tx = m.tx;
   let ty = m.ty;
   const t = m.target;
@@ -477,7 +483,7 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
       // A herd across the water is not sought again for a while, and the
       // next thought waits a little: no task taken up and dropped every tick.
       if (m.task === "herd") c.data.herdAway = world.time + 8;
-      unreached(world, c, m, tx, ty);
+      if (unreached(world, c, m, tx, ty)) return still(c, m);
       life.free(c, tx, ty);
       drop(m);
       m.acted = undefined;
@@ -491,7 +497,7 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
       // Five seconds without getting closer: a step out, then think again, elsewhere
       // (22 November: a villager whose home stood in water took "going home to eat" up
       // again at once, every five seconds, and starved by its door).
-      unreached(world, c, m, tx, ty);
+      if (unreached(world, c, m, tx, ty)) return still(c, m);
       life.free(c, tx, ty);
       drop(m);
       return null;
@@ -508,7 +514,7 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
           c.homeX = c.x;
           c.homeY = c.y;
         }
-        unreached(world, c, m, tx, ty);
+        if (unreached(world, c, m, tx, ty)) return still(c, m);
         drop(m);
       }
       return null;
@@ -749,8 +755,24 @@ function urgent(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
 // cut off over and over (a patch of land between rivers), it settles where it is and lives off the
 // land round it (22 November: villagers stranded between rivers starved, trying home again and
 // again from the same spot).
-function unreached(world: World, c: Creature, m: Mind, x: number, y: number): void {
-  if (c.kind !== "villager" || (m.task !== "eat" && m.task !== "carry" && m.task !== "rest")) return;
+// True when it went in at its door after all (the task goes on, standing still).
+function unreached(world: World, c: Creature, m: Mind, x: number, y: number): boolean {
+  if (c.kind !== "villager" || (m.task !== "eat" && m.task !== "carry" && m.task !== "rest")) return false;
+  // Held up a few steps from its own door at night (its family in the way, a step too high): it
+  // goes in all the same, rather than lying down outside a house it can see.
+  if (m.task === "rest" && c.data.bed === "home" && Math.hypot(c.x - c.homeX, c.y - c.homeY) < 4 && daylight(world.time).night > 0.3) {
+    const house = houseOf(world, c);
+    if (sleepable(world, house)) {
+      goIn(c, house);
+      const v = villageOf(world, c.homeX, c.homeY);
+      m.action = v ? `asleep in their house in ${nameNear(world, v)}` : "asleep in their house";
+      m.stall = 0;
+      m.near = Infinity;
+      m.walk = 0;
+      c.data.noWay = undefined;
+      return true;
+    }
+  }
   const now = world.time;
   const list = ((c.data.unreached as [number, number, number][] | undefined) ?? []).filter((u) => now < u[2] && Math.hypot(u[0] - x, u[1] - y) >= 2);
   list.push([x, y, now + HOME.unreached]);
@@ -769,6 +791,16 @@ function unreached(world: World, c: Creature, m: Mind, x: number, y: number): vo
     c.data.house = undefined;
     deed(c, "settled where they were, cut off from home");
   }
+  return false;
+}
+
+// Asleep where it stands (unreached: in at the door after all).
+function still(c: Creature, m: Mind): Plan {
+  OUT.x = c.x;
+  OUT.y = c.y;
+  OUT.pace = 0;
+  OUT.mood = moodOf(m);
+  return OUT;
 }
 
 function isUnreached(world: World, c: Creature, x: number, y: number): boolean {
