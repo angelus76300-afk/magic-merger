@@ -4,7 +4,7 @@
 //
 //   npx vite --port 5174 &
 //   node scripts/villagers-night-frames.mjs <out dir> [tag]
-//   SIZES=832x1000 LAB_URL=http://localhost:5174/lab/perf.html ...
+//   SIZES=832x1000 LAB_URL=http://localhost:5174/lab/perf.html NIGHT=268 FOCUS=rough ...
 import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -34,7 +34,7 @@ try {
     await page.waitForFunction(() => window.perfReady === true, null, { timeout: 180_000 });
     await page.evaluate(() => document.querySelectorAll("div").forEach((d) => (d.style.display = "none")));
     const r = await page.evaluate(
-      async ({ night }) => {
+      async ({ night, focus }) => {
         const e = window.__engine;
         const w = e.world;
         const wait = (ms) => new Promise((res) => setTimeout(res, ms));
@@ -51,11 +51,13 @@ try {
           const n = indoors.filter((c) => Math.hypot(c.homeX - v.x, c.homeY - v.y) < 16).length;
           if (!best || n > best.n) best = { v, n };
         }
-        const at = best ? best.v : (people[0] ?? { x: w.w / 2, y: w.h / 2 });
+        // FOCUS=rough: close on one asleep outside, lying down (a homeless family).
+        const lying = focus === "rough" ? rough[0] : undefined;
+        const at = lying ?? (best ? best.v : (people[0] ?? { x: w.w / 2, y: w.h / 2 }));
         const o = e.view.orbit;
         o.tx = at.x;
         o.ty = at.y;
-        o.dist = 22;
+        o.dist = lying ? 7 : 22;
         o.phi = 0.95;
         o.theta = 0.6;
         for (let k = 0; k < 30; k++) e.render(0.1);
@@ -74,7 +76,7 @@ try {
           village: best ? { x: Math.round(at.x), y: Math.round(at.y), indoors: best.n } : null,
         };
       },
-      { night: NIGHT },
+      { night: NIGHT, focus: process.env.FOCUS ?? "" },
     );
     await page.screenshot({ path: join(OUT, `${TAG}-${W}x${H}.png`) });
     rows.push({ size: `${W}x${H}`, ...r });
@@ -84,4 +86,4 @@ try {
 } finally {
   await browser.close();
 }
-writeFileSync(join(OUT, `${TAG}.json`), JSON.stringify(rows, null, 2));
+writeFileSync(join(OUT, `${TAG}.json`), JSON.stringify(rows, null, 2) + "\n");
