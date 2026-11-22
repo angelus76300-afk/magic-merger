@@ -1641,6 +1641,7 @@ export class SpellApi {
     const i = this.i(x, y);
     if (warded(this.rt.world, i, d > 0 ? WARD.fire : WARD.cold)) return;
     this.rt.world.temp[i] += d;
+    if (d < 0) this.rt.world.markCold(i);
   }
   raise(x: number, y: number, amount: number) {
     if (!this.inside(x, y) || this.landHeld(this.i(x, y))) return;
@@ -1758,6 +1759,7 @@ export class SpellApi {
     forDisc(w, x, y, num(r, 0, 400, 3), (i, k) => {
       if (warded(w, i, guard)) return;
       w.temp[i] += d * (0.4 + 0.6 * k);
+      if (d < 0) w.markCold(i);
       if (d < -20) {
         w.fire[i] = 0;
         if (w.fluid[i] === F.WATER && w.temp[i] < 0) w.fluid[i] = F.ICE;
@@ -2038,8 +2040,8 @@ export class SpellApi {
       if (ash) fertilize(w, i);
       if (w.cover[i] === C.NONE || w.cover[i] === C.STUMP) {
         const p = Math.random() / (ash ? 1.8 : 1);
-        if (p < d * 0.35 * (0.5 + k)) w.setCover(i, C.TREE);
-        else if (p < d * 0.45) w.setCover(i, Math.random() < 0.5 ? C.BUSH : C.FLOWER);
+        if (p < d * 0.35 * (0.5 + k)) w.plant(i, C.TREE);
+        else if (p < d * 0.45) w.plant(i, Math.random() < 0.5 ? C.BUSH : C.FLOWER);
       }
     });
   }

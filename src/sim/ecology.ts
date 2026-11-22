@@ -4,6 +4,9 @@ import { Rng, fbm, valueNoise } from "./noise";
 import { seedRoll, type Biome } from "./land-options";
 import type { World } from "./world";
 import { tell } from "./kin";
+import { cellHash, isFresh, isSea } from "./cellhash";
+
+export { cellHash, isFresh, isSea };
 
 // Nature that is never the same twice (4.4.5). Once an island's land, water
 // and villages are made, this decides what grows where by ecology rules
@@ -137,12 +140,6 @@ const N4: readonly [number, number][] = [
   [0, -1],
 ];
 
-export function cellHash(i: number, seed: number): number {
-  let h = Math.imul(i, 0x27d4eb2d) ^ Math.imul(seed + 0x165667b1, 0x9e3779b1);
-  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
-  return ((h ^ (h >>> 13)) >>> 0) / 4294967296;
-}
-
 function biomeOf(world: World, i: number, biomes: readonly Biome[]): Biome {
   return world.biomeMap ? biomes[world.biomeMap[i]] : (world.land?.biome ?? "temperate");
 }
@@ -218,10 +215,6 @@ interface Site {
   // the first seconds of play: nothing dry-footed grows there.
   soon: Uint8Array;
 }
-
-export const isSea = (world: World, i: number) =>
-  world.fluid[i] === F.WATER && world.depth[i] > 0.05 && world.height[i] + world.depth[i] < world.seaLevel + 0.35;
-export const isFresh = (world: World, i: number) => world.fluid[i] === F.WATER && world.depth[i] > 0.05 && !isSea(world, i);
 
 function survey(world: World, biomes: readonly Biome[], peak: number, filled: Float32Array): Site {
   const seed = world.seed;
@@ -622,17 +615,6 @@ export function markRefuges(world: World, kinds: { name: string; habitat: (world
 
 // --- Growth ---------------------------------------------------------------
 
-// What springs up on a bare cell of an island with flora: the niche's own
-// undergrowth. Called by physics.ts's growth step, with the world's stream.
-export function sprout(world: World, i: number, r: number): number {
-  const f = world.flora![i];
-  const g = world.ground[i];
-  if (g !== G.GRASS) return C.NONE;
-  if (f & DAMP && f & WOODLAND) return r < 0.6 ? C.FERN : C.FUNGI;
-  if (f & WOODLAND) return r < 0.5 ? C.BUSH : C.BERRIES;
-  return r < 0.6 ? C.FLOWER : C.BUSH;
-}
-
 // Undergrowth that spreads from a neighbor of its own kind: ferns, reeds,
 // berries and flowers creep; trees seed.
 export const SPREADS = new Set<number>([C.FERN, C.REEDS, C.BERRIES, C.FLOWER]);
@@ -763,7 +745,8 @@ function build(world: World, s: Settlement, level: number): boolean {
         for (const [dx, dy] of N4) {
           if (n >= 70 || !world.inside(x + dx, y + dy)) continue;
           const j = (y + dy) * w + x + dx;
-          if (world.ground[j] !== G.FIELD && openCell(world, j)) {
+          // Never across a path (21 November): a path is where people walk, and roads clear fences.
+          if (world.ground[j] !== G.FIELD && world.ground[j] !== G.PATH && openCell(world, j)) {
             world.setCover(j, C.FENCE);
             n++;
           }

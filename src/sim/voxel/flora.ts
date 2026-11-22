@@ -350,6 +350,8 @@ export const COVER_MODELS: Record<string, Box[]> = {
   // A surveyor's peg with a red rag, where a road is marked out and not laid yet.
   "road-peg": [B(0.46, 0, 0.46, 0.08, 0.55, 0.08, 0xd8c8a0), B(0.5, 0.42, 0.46, 0.16, 0.1, 0.03, 0xc0402e)],
   "fence-x": [B(0.45, 0, 0.45, 0.1, 0.42, 0.1, 0x6a4a2e), B(0, 0.28, 0.47, 1, 0.06, 0.06, 0x8a6a44), B(0, 0.12, 0.475, 1, 0.05, 0.05, 0x8a6a44)],
+  // A fence post on its own, where its run was broken (fences.ts).
+  "fence-post": [B(0.45, 0, 0.45, 0.1, 0.42, 0.1, 0x6a4a2e)],
   "fence-z": [B(0.45, 0, 0.45, 0.1, 0.42, 0.1, 0x6a4a2e), B(0.47, 0.28, 0, 0.06, 0.06, 1, 0x8a6a44), B(0.475, 0.12, 0, 0.05, 0.05, 1, 0x8a6a44)],
   // 4.4.5 part B: a crater's strange ore and a dragon's gold, both shining.
   "strange ore": [B(0.3, 0, 0.32, 0.22, 0.32, 0.2, 0x7fe8d8), B(0.55, 0, 0.5, 0.16, 0.22, 0.18, 0x9af0c8), B(0.2, 0, 0.6, 0.14, 0.16, 0.14, 0x5fd0e0)],

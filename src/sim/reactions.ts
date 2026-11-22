@@ -4,6 +4,7 @@ import { daylight } from "./daylight";
 import type { Behavior, Creature, CreatureKind } from "./creatures";
 import { life } from "./kin";
 import { WARD } from "./wards";
+import { treeRoom } from "./nature";
 import type { World } from "./world";
 
 // Spells that answer each other (4.12 step 2). A spell cannot know the 485
@@ -556,6 +557,7 @@ export function natureTick(world: World, c: Creature, k: CreatureKind, i: number
   if (n & N.COLD) {
     // Cold: it chills where it goes (water under it freezes), is at home in snow, and fire hurts it.
     if (world.temp[i] > -8) world.temp[i] += (-8 - world.temp[i]) * Math.min(1, dt * 3);
+    world.markCold(i);
     c.frozen = 0;
     if (world.ground[i] === G.SNOW || world.fluid[i] === F.ICE) c.hp = Math.min(max, c.hp + 6 * dt);
     if (!weak("fire") && !immune("fire") && (c.burning > 0 || world.fire[i] > 0.25 || world.temp[i] > 80)) c.hp -= 25 * dt;
@@ -844,8 +846,10 @@ export function ashGrowth(world: World, i: number, j: number, r: number): boolea
   }
   if (g === G.GRASS && c === C.NONE) {
     const cj = world.cover[j];
-    if ((cj === C.TREE || cj === C.STUMP) && r < 0.12) world.setCover(i, C.TREE);
-    else if (r < 0.03) world.setCover(i, r < 0.015 ? C.FLOWER : C.BUSH);
+    if ((cj === C.TREE || cj === C.STUMP) && r < 0.12) {
+      // 21 November (nature.ts): a burnt forest comes back as thick as it was, no thicker.
+      if (!world.flora || treeRoom(world, i)) world.setCover(i, C.TREE);
+    } else if (r < 0.03) world.setCover(i, r < 0.015 ? C.FLOWER : C.BUSH);
     return true;
   }
   if ((c === C.BUSH || c === C.FLOWER) && (world.cover[j] === C.TREE || world.cover[j] === C.STUMP) && r < 0.03) {

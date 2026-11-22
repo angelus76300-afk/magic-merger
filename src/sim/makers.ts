@@ -403,8 +403,8 @@ export function shapeLand(world: World, x: number, y: number, shape: string, r: 
         if (world.depth[i] > 0 || k > 0.75) return;
         const r = rng.next();
         if (r < 0.16) world.setCover(i, C.TREE);
-        else if (r < 0.26) world.setCover(i, C.REEDS);
-        else if (r < 0.32) world.setCover(i, C.FLOWER);
+        else if (r < 0.26) world.plant(i, C.REEDS);
+        else if (r < 0.32) world.plant(i, C.FLOWER);
       });
       break;
     }
@@ -417,7 +417,7 @@ export function shapeLand(world: World, x: number, y: number, shape: string, r: 
         strip(world, i, false);
         if (n < 0.3 && k > 0.15) world.setFluid(i, F.WATER, 0.5);
         else if (n < 0.42) world.setFluid(i, F.MUD, 0.4);
-        else if (n < 0.62) world.setCover(i, C.REEDS);
+        else if (n < 0.62) world.plant(i, C.REEDS);
         else if (n < 0.7) world.setCover(i, C.TREE);
       });
       break;
@@ -450,6 +450,7 @@ export function shapeLand(world: World, x: number, y: number, shape: string, r: 
         strip(world, i, false);
         if (k > 0.25) world.setFluid(i, F.ICE, 0.6 + k * 1.2);
         world.temp[i] = Math.min(world.temp[i], -15);
+        world.markCold(i);
         cells++;
       });
       break;

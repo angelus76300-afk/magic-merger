@@ -1,11 +1,12 @@
-import { C, F, G, S, isBuilding } from "./materials";
+import { BUILTIN, C, F, G, S, isBuilding } from "./materials";
 import { blastWonders } from "./wonders";
 import { blastProps } from "./props";
 import type { World } from "./world";
 import { addGas } from "./cells";
 import { igniteVoxels, stepVoxels } from "./voxels";
 import { WARD, stepWards, wardHit, warded } from "./wards";
-import { SPREADS, sprout, woodland } from "./ecology";
+import { SPREADS, woodland } from "./ecology";
+import { NATURE, freezes, greensBack, niche, sparse, treeRoom, wither } from "./nature";
 import { ashGrowth, gust } from "./reactions";
 
 // The rules of the land. Spells set them in motion; these keep them going:
@@ -391,6 +392,11 @@ function stepTemperature(world: World, dt: number): void {
   const fluids = materials.list.fluid;
   const grounds = materials.list.ground;
   const covers = materials.list.cover;
+  // A spell's own material colder than SPELL_COLD (nature.ts): its cells are a spell's cold
+  // (World.markCold), as a spell's cold write is. The built-in ones (snow, ice) are the land's.
+  const builtinFluids = BUILTIN.fluid.length;
+  const builtinGrounds = BUILTIN.ground.length;
+  const builtinCovers = BUILTIN.cover.length;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
@@ -416,6 +422,13 @@ function stepTemperature(world: World, dt: number): void {
         target = coverHeat;
         pull = 0.2;
       }
+      if (target < NATURE.SPELL_COLD) {
+        const spells =
+          (world.cover[i] >= builtinCovers && coverHeat !== null) ||
+          (fl >= builtinFluids && world.depth[i] > 0.05) ||
+          (world.ground[i] >= builtinGrounds && groundHeat !== null);
+        if (spells) world.markCold(i);
+      }
       if (world.fire[i] > 0) {
         target = Math.max(target, 500 * world.fire[i]);
         pull = 0.2;
@@ -433,8 +446,25 @@ function stepTemperature(world: World, dt: number): void {
   // in a hard cold (4.4.5 part B: rivers of cold regions froze white within
   // minutes, and from above a big island seemed to have none).
   const running = runningWater(world);
+  // Where a spell's cold reached in the last seconds (World.markCold): it counts down, and it
+  // goes where that cold goes, to a neighbour the cold spread into (under -6), a little less each
+  // cell out, so a spell's cold patch snows round its edge as it did, and the land's own cold
+  // never does.
+  const chill = world.chill;
   for (let i = 0; i < world.n; i++) {
     const t = temp[i];
+    if (chill) {
+      if (chill[i]) chill[i]--;
+      if (t < -6 && chill[i] < 255 - NATURE.CHILL_STEP) {
+        const x = i % w;
+        let most = 0;
+        if (x > 0) most = Math.max(most, chill[i - 1]);
+        if (x < w - 1) most = Math.max(most, chill[i + 1]);
+        if (i >= w) most = Math.max(most, chill[i - w]);
+        if (i + w < world.n) most = Math.max(most, chill[i + w]);
+        if (most - NATURE.CHILL_STEP > chill[i]) chill[i] = most - NATURE.CHILL_STEP;
+      }
+    }
     const fl = world.fluid[i];
     if (fl === F.WATER) {
       if (t < (running && running[i] ? -10 : 0)) world.fluid[i] = F.ICE;
@@ -448,7 +478,9 @@ function stepTemperature(world: World, dt: number): void {
     if (g === G.SNOW && t > 2 && rng.next() < dt * 0.3) {
       world.ground[i] = G.GRASS;
       world.place(i, "water", 0.12);
-    } else if ((g === G.GRASS || g === G.DIRT || g === G.FIELD) && t < -6 && world.depth[i] === 0 && rng.next() < dt * 0.4) {
+    } else if ((g === G.GRASS || g === G.DIRT || g === G.FIELD) && t < -6 && world.depth[i] === 0 && rng.next() < dt * 0.4 && freezes(world, i)) {
+      // 21 November (nature.ts): only where a spell's cold reached, not just because the air up
+      // there is cold; high grass had turned to pale squares.
       world.ground[i] = G.SNOW;
     }
     if (t > 280 && world.fire[i] === 0 && !warded(world, i, WARD.fire)) {
@@ -514,6 +546,8 @@ function stepGrowth(world: World): void {
   const samples = Math.ceil(world.n / 250);
   for (let k = 0; k < samples; k++) {
     const i = (rng.next() * world.n) | 0;
+    // A fence left on a road or a path (a save from before roads cleared them) comes down.
+    if (world.flora && cover[i] === C.FENCE && (ground[i] === G.ROAD || ground[i] === G.PATH)) world.setCover(i, C.NONE);
     if (world.depth[i] > 0.02 || world.fire[i] > 0) continue;
     const t = world.temp[i];
     if (t < 2 || t > 45) continue;
@@ -543,27 +577,43 @@ function stepGrowth(world: World): void {
 // inside a woodland grow into young trees and trees seed the cells around
 // them, so a burnt forest comes back as grass, then shrubs, then forest.
 // Reeds come back along wet banks. A worn path no one walks greens over.
+// 21 November (nature.ts): only into each cell's niche, up to generation's
+// density; what stands outside its niche wilts slowly, dirt greens only where
+// generation laid grass, in the wet lands.
 function floraGrowth(world: World, i: number, j: number, g: number): void {
   const { rng, ground, cover } = world;
   const c = cover[i];
   const r = rng.next();
   if (g === G.DIRT && c !== C.HOUSE && ground[j] === G.GRASS) {
-    if (r < 0.5) ground[i] = G.GRASS;
+    if (r < NATURE.GREEN && greensBack(world, i)) ground[i] = G.GRASS;
   } else if (g === G.PATH) {
     if ((!world.wear || world.wear[i] === 0) && r < 0.03) ground[i] = G.GRASS;
   } else if (g === G.ASH) {
     if (r < 0.08) ground[i] = G.DIRT;
   } else if (g === G.GRASS && c === C.NONE) {
     const cj = cover[j];
-    if (cj === C.TREE && r < (woodland(world, i) ? 0.05 : 0.015)) world.setCover(i, C.TREE);
-    else if (SPREADS.has(cj) && r < 0.03) world.setCover(i, cj);
-    else if (r < 0.003) world.setCover(i, sprout(world, i, rng.next()));
-    else if (r > 0.997 && world.fluid[j] === F.WATER && world.depth[j] > 0.05) world.setCover(i, C.REEDS);
+    const roots = world.eaten ? world.eaten[i] : 0;
+    if (roots) {
+      // An eaten plant grows back from its roots, on its own cell (planted again if it was).
+      if (r < NATURE.REGROW) {
+        world.eaten![i] = 0;
+        if (roots & 128) world.plant(i, roots & 127);
+        else world.setCover(i, roots);
+      }
+    } else if (cj === C.TREE && r < (woodland(world, i) ? 0.05 : 0.015)) {
+      if (treeRoom(world, i)) world.setCover(i, C.TREE);
+    } else if (SPREADS.has(cj) && r < NATURE.SPREAD) {
+      if (niche(world, i) === cj) world.setCover(i, cj);
+    } else if (r < NATURE.SPROUT) {
+      const s = niche(world, i);
+      if (s !== C.NONE && (s !== C.FLOWER || !sparse(world, i) || rng.next() < NATURE.SPARSE)) world.setCover(i, s);
+    }
   } else if (c === C.STUMP) {
     if (r < 0.01) world.setCover(i, C.TREE);
-  } else if ((c === C.BUSH || c === C.BERRIES) && woodland(world, i)) {
-    if (r < 0.006) world.setCover(i, C.TREE);
-  } else if (g === G.FIELD && c === C.NONE && r < 0.1) world.setCover(i, C.CROP);
+  } else if ((c === C.BUSH || c === C.BERRIES) && woodland(world, i) && r < 0.006 && treeRoom(world, i)) world.setCover(i, C.TREE);
+  else if (g === G.FIELD && c === C.NONE) {
+    if (r < 0.1) world.setCover(i, C.CROP);
+  } else wither(world, i, r);
 }
 
 function neighbor(world: World, i: number): number {

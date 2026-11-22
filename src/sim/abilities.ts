@@ -382,6 +382,7 @@ function perform(world: World, c: Creature, k: CreatureKind, m: Mind, what: Abil
           const i = cellOf(world, t.x + dx, t.y + dy);
           if (warded(world, i, WARD.cold)) continue;
           world.temp[i] = Math.min(world.temp[i], -10);
+          world.markCold(i);
           world.fire[i] = 0;
           if (world.fluid[i] === F.WATER && world.depth[i] < 1.5) world.fluid[i] = F.ICE;
         }
@@ -413,7 +414,7 @@ function perform(world: World, c: Creature, k: CreatureKind, m: Mind, what: Abil
         if (world.depth[i] > 0.05 || world.fire[i] > 0) continue;
         if (world.ground[i] === G.DIRT || world.ground[i] === G.ASH) world.ground[i] = G.GRASS;
         else if (world.cover[i] === C.STUMP) world.setCover(i, C.TREE);
-        else if (world.ground[i] === G.GRASS && world.cover[i] === C.NONE) world.setCover(i, Math.random() < 0.6 ? C.FLOWER : C.BUSH);
+        else if (world.ground[i] === G.GRASS && world.cover[i] === C.NONE) world.plant(i, Math.random() < 0.6 ? C.FLOWER : C.BUSH);
         else continue;
         n++;
       }

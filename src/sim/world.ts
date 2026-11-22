@@ -172,6 +172,16 @@ export class World {
   propsVersion = 0;
   islandName: string | null = null;
   readonly patched = new Set<number>();
+  // 21 November (nature.ts): cells whose plant the player's spell, item or creature put there
+  // (saved; null until one is). Never wilted for standing outside its niche. Any other change of
+  // the cover clears it.
+  planted: Uint8Array | null = null;
+  // Plants eaten or picked, by cell (not saved): the cover id, plus 128 when the player had
+  // planted it. Its roots are left: it grows back on its own cell (nature.ts, physics.ts).
+  eaten: Uint8Array | null = null;
+  // Cells a spell's cold reached in the last seconds (not saved): only there does grass freeze to
+  // snow (physics.ts). Counts down each temperature step.
+  chill: Uint8Array | null = null;
 
   constructor(
     readonly w: number,
@@ -237,9 +247,29 @@ export class World {
   }
 
   setCover(i: number, id: number): void {
+    if (this.planted) this.planted[i] = 0;
     this.cover[i] = id;
     const m = this.materials.get("cover", id);
     this.coverHp[i] = id === C.HOUSE ? 14 : m.fuel;
+  }
+
+  // A plant the player's spell, item or creature puts on a cell (nature.ts: it never wilts for
+  // standing outside its niche).
+  plant(i: number, id: number): void {
+    this.setCover(i, id);
+    (this.planted ??= new Uint8Array(this.n))[i] = 1;
+  }
+
+  // A plant eaten or picked: gone for now, its roots left to grow back.
+  graze(i: number): void {
+    const c = this.cover[i];
+    (this.eaten ??= new Uint8Array(this.n))[i] = c < 128 ? c | (this.planted && this.planted[i] ? 128 : 0) : 0;
+    this.setCover(i, C.NONE);
+  }
+
+  // A spell's cold reached this cell: grass here may freeze to snow for the next seconds.
+  markCold(i: number): void {
+    (this.chill ??= new Uint8Array(this.n))[i] = 255;
   }
 
   setFluid(i: number, id: number, depth: number): void {
@@ -253,7 +283,7 @@ export class World {
     if (!found) return false;
     const { layer, id } = found;
     if (layer === "ground") this.ground[i] = id;
-    else if (layer === "cover") this.setCover(i, id);
+    else if (layer === "cover") this.plant(i, id);
     else if (layer === "fluid") {
       // 4.12: poured onto its opposite, it reacts (cells.ts, fluidsMeet).
       if (this.reactions && this.fluid[i] !== id && this.fluid[i] !== F.NONE && fluidsMeet(this, i, this.fluid[i], id, amount)) return true;

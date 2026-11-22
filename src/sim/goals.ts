@@ -1,4 +1,6 @@
 import { C, F, G, isBuilding as isBuildingCover } from "./materials";
+import { woodland } from "./ecology";
+import { bareByMaking, gardenFull, niche, treeRoom } from "./nature";
 import { SITE, STAGE_WORDS, canStake, handsOn, kindName, siteToWork, standBy, sitesOf, sitesOn, stageOf, stake, work as workSite, type Site } from "./sites";
 import { MIN_PEOPLE, alongRoad, claim, isWay, nextPave, noteTrip, pave, planned, unnoteTrip, type PaveJob } from "./roads";
 import { tolerance, tooCold } from "./cold";
@@ -1218,7 +1220,7 @@ function plantFlowers(world: World, c: Creature, m: Mind, surely = false): boole
     12,
     (j) => (world.ground[j] === G.GRASS || world.ground[j] === G.DIRT) && dryFree(world, j) && crowded(world, j) < 2,
   );
-  if (i < 0 || (!surely && Math.random() < 0.3)) return false;
+  if (i < 0 || (!surely && Math.random() < 0.3) || (world.flora && gardenFull(world, c.homeX, c.homeY))) return false;
   cellTask(world, m, "seed", i, 0.7);
   m.action = "planting flowers by the houses";
   return true;
@@ -1796,7 +1798,7 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       m.hunger = Math.max(0, m.hunger - (cover === C.NONE ? 0.3 : 0.55));
       if (i < 0) return;
       if (cover === C.CROP || cover === C.FLOWER || (cover === C.BUSH && Math.random() < 0.5)) {
-        world.setCover(i, C.NONE);
+        world.graze(i);
         deed(c, `ate ${cover === C.CROP ? "crops" : cover === C.FLOWER ? "flowers" : "a bush"}`);
         if (cover === C.CROP) for (const o of world.crowd.near(world, c.x, c.y, 10)) if (o.kind === "villager") remember(o, c.kind, -0.4);
       } else if (world.ground[i] === G.GRASS && (c.kind === "boar" || (c.data.grazes = ((c.data.grazes as number | undefined) ?? 0) + 1) % 2 === 1)) {
@@ -1826,7 +1828,7 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
     case "forage": {
       const was = world.cover[i];
       if (was !== C.BUSH && was !== C.FLOWER && was !== C.CROP) return;
-      if (was !== C.BUSH || Math.random() < 0.4) world.setCover(i, C.NONE);
+      if (was !== C.BUSH || Math.random() < 0.4) world.graze(i);
       if (c.kind === "villager") {
         m.carry = "food";
         setTask(m, "carry", c.homeX, c.homeY);
@@ -2012,18 +2014,32 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       const leaves = k.ai?.leaves;
       if (!leaves) return;
       if (leaves === "fire") world.fire[i] = Math.max(world.fire[i], 0.6);
-      else if (leaves === "flowers" || leaves === "life") world.setCover(i, C.FLOWER);
+      else if (leaves === "flowers" || leaves === "life") world.plant(i, C.FLOWER);
       else if (!world.place(i, leaves, 0.4)) return;
       deed(c, `spread ${leaves}`);
       return;
     }
     case "seed": {
       if (world.cover[i] === C.STUMP) world.setCover(i, C.TREE);
-      else if (world.ground[i] === G.DIRT || world.ground[i] === G.ASH) world.ground[i] = G.GRASS;
+      else if (world.ground[i] === G.ASH || (world.ground[i] === G.DIRT && !(world.flora && bareByMaking(world, i)))) world.ground[i] = G.GRASS;
+      // 21 November (nature.ts): the land's own dirt and a village's square and yards stay bare.
+      else if (world.ground[i] === G.DIRT) return;
       else if (world.ground[i] === G.FIELD) world.setCover(i, C.CROP);
       else if (world.cover[i] === C.NONE && world.depth[i] < 0.05) {
         const r = Math.random();
-        world.setCover(i, c.kind === "villager" ? C.FLOWER : r < 0.5 ? C.FLOWER : r < 0.85 ? C.BUSH : C.TREE);
+        // 21 November (nature.ts): a bird's seed grows only what the cell's niche grows (a tree
+        // where the forest is thin), so a flock does not cover the island in flowers; a
+        // villager's flowers by the houses and a spell creature's magic are their own doing. An
+        // island with flora only (the game's islands): a challenge's or a check's keeps its old ways.
+        if (world.flora && k.native && c.kind !== "villager") {
+          const grow = woodland(world, i) && treeRoom(world, i) ? C.TREE : niche(world, i);
+          if (grow === C.NONE) return;
+          world.setCover(i, grow);
+        } else if (c.kind === "villager") {
+          // A garden by the houses, not a field of flowers: a home's garden holds a few beds.
+          if (world.flora && gardenFull(world, c.homeX, c.homeY)) return;
+          world.setCover(i, C.FLOWER);
+        } else world.plant(i, r < 0.5 ? C.FLOWER : r < 0.85 ? C.BUSH : C.TREE);
       } else return;
       deed(c, c.kind === "villager" ? "planted flowers" : m.goal === "tend" ? "made something grow" : "dropped a seed");
       return;
