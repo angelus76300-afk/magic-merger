@@ -35,7 +35,7 @@ export interface VillagersRun {
   // Houses (2 by 2 blocks counted by cell / 4) that stood in water at some sample, and the most at once.
   housesWetEver: number;
   // Night samples (every 5 s while the night is deep), of those asleep where they arrived (not those
-  // still walking to bed): asleep standing outside, the most at once
+  // still walking to bed, nor one running from a fright): asleep standing outside, the most at once
   // and summed; homeless asleep lying down, the most at once; asleep indoors, the most at once.
   nightSamples: number;
   standingMax: number;
@@ -114,7 +114,7 @@ export function villagersRun(name: string, minutes: number): VillagersRun {
           let indoors = 0;
           for (const c of world.creatures) {
             // Asleep where it lies down: arrived (its rest under way), not still walking to bed.
-            if (c.dead || c.kind !== "villager" || c.mind?.task !== "rest" || !(c.mind.work > 0)) continue;
+            if (c.dead || c.kind !== "villager" || c.mind?.task !== "rest" || !(c.mind.work > 0) || c.fear > 0 || c.sp > 0.5) continue;
             if (c.data.indoors !== undefined) indoors++;
             else if (c.data.rough) rough++;
             else standing++;

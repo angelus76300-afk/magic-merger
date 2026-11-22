@@ -126,7 +126,13 @@ export function stayIndoors(world: World, c: Creature): void {
   const house = c.data.indoors as number | undefined;
   if (house === undefined) return;
   const at = c.data.indoorsAt as [number, number] | undefined;
-  const moved = !at || Math.hypot(c.x - at[0], c.y - at[1]) > 0.6;
+  // Inside, it stays put: a nudge (a crowd at the door, a slope) is undone; a real throw (a blast,
+  // a quake) brings it out where it landed.
+  const moved = !at || Math.hypot(c.x - at[0], c.y - at[1]) > 1.5;
+  if (at && !moved) {
+    c.x = at[0];
+    c.y = at[1];
+  }
   const gone = world.cover[house] !== C.HOUSE;
   const burning = !gone && houseBurning(world, house);
   const wet = !gone && houseWet(world, house);

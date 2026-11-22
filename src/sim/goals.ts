@@ -302,6 +302,7 @@ export const TASK_WORDS: Record<Task, string> = {
 };
 
 const OUT: Plan = { x: 0, y: 0, pace: 0, mood: null };
+const BED_REACH = 2.4;
 // Island-wide counts by kind, refreshed every few seconds (births and taming read them).
 const census = new WeakMap<World, Map<string, number>>();
 
@@ -459,7 +460,13 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
     m.stall = 0;
   }
   m.acted = world.tick;
-  const reach = strike && t ? life.kindOf(c).radius * c.size + life.kindOf(t).radius * t.size + 0.7 : (REACH[m.task] ?? 1.6);
+  // A villager going to bed is at its door within BED_REACH (a family arrives together).
+  const reach =
+    strike && t
+      ? life.kindOf(c).radius * c.size + life.kindOf(t).radius * t.size + 0.7
+      : m.task === "rest" && c.kind === "villager"
+        ? BED_REACH
+        : (REACH[m.task] ?? 1.6);
   OUT.mood = moodOf(m);
   if (d > reach) {
     m.walk += dt;
@@ -811,7 +818,7 @@ function goToBed(world: World, c: Creature, m: Mind): void {
 function bedDown(world: World, c: Creature, m: Mind): void {
   if (daylight(world.time).night <= 0.3) return;
   const house = houseOf(world, c);
-  if (c.data.bed !== "rough" && sleepable(world, house) && Math.hypot(c.x - c.homeX, c.y - c.homeY) < 2.4) {
+  if (c.data.bed !== "rough" && sleepable(world, house) && Math.hypot(c.x - c.homeX, c.y - c.homeY) <= BED_REACH + 0.1) {
     goIn(c, house);
     const v = villageOf(world, c.homeX, c.homeY);
     m.action = v ? `asleep in their house in ${nameNear(world, v)}` : "asleep in their house";
