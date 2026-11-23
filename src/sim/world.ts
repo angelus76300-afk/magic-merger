@@ -460,7 +460,7 @@ function generateLand(w: number, h: number, seed: number, land: LandOptions, rec
   const rng = world.rng;
   const { peak } = buildLand(world, land);
   const had = habitatKinds(world);
-  placeVillages(world, rng, world.seaLevel + Math.max(10, peak * 0.62));
+  placeVillages(world, rng, world.seaLevel + Math.max(10, peak * 0.62), !!land.peaks);
   // 4.4.5 part B: wonders shape the land before the plants grow round them.
   placeWonders(world, BIOMES, peak, recent, defs);
   // 4.4.5: what grows where, rare variants, villages' looks, refuges.
@@ -479,17 +479,22 @@ function generateLand(w: number, h: number, seed: number, land: LandOptions, rec
 
 // Villages on the flattest dry land, away from each other and from rivers:
 // score many candidate spots and keep the best ones.
-function placeVillages(world: World, rng: Rng, top: number): void {
+// `dry`: islands made now (taller peaks, 5.2.5) keep their villages out from under a spring's water
+// (underSprings); older islands keep their exact land (challenges and saves are made from it).
+function placeVillages(world: World, rng: Rng, top: number, dry = false): void {
   const { w, h } = world;
   const villages = Math.max(2, Math.round((w * h) / 12000));
-  const candidates: { x: number; y: number; score: number }[] = [];
+  const candidates: { x: number; y: number; score: number; under: boolean }[] = [];
+  const under = dry ? underSprings(world) : null;
   for (let k = 0; k < Math.max(600, (w * h) / 40); k++) {
     const x = rng.int(12, w - 13);
     const y = rng.int(12, h - 13);
     const score = landScore(world, x, y, 7, top, (world.seaLevel + top) / 2);
-    if (score < Infinity) candidates.push({ x, y, score });
+    if (score < Infinity) candidates.push({ x, y, score, under: !!under && footprintUnder(world, under, x, y) });
   }
-  candidates.sort((a, b) => a.score - b.score);
+  // A spot under a spring only when no other is left (an island of rivers): a village floods
+  // rather than an island with none.
+  candidates.sort((a, b) => Number(a.under) - Number(b.under) || a.score - b.score);
   const centers: { x: number; y: number }[] = [];
   for (let spread = 3.2; spread <= 8 && centers.length < villages; spread *= 1.6) {
     for (const c of candidates) {
@@ -501,6 +506,62 @@ function placeVillages(world: World, rng: Rng, top: number): void {
       world.settlements.push({ x: c.x, y: c.y, style: 0, level: 1, jobs: [], store: 0, street: 0, name: "" });
     }
   }
+}
+
+// Below a spring's water (22 November: the meadow island's village was laid out a few cells from a
+// river's head, its houses a hand lower than the spring's level, and stood in water within the
+// first minutes; its people starved going home to eat). From each source of water (a river's head,
+// a lake's spring), the dry cells its water reaches at its level: those SPRING_BELOW or more under
+// the level, joined to the source through such cells, within SPRING_REACH of it (the meadow's houses
+// stood 0.9 to 1.2 under theirs; a village a hand under a spring 18 cells off stays dry). A cell
+// behind higher ground (a rim, a bank) drains and is safe, however low it lies.
+const SPRING_REACH = 10;
+const SPRING_BELOW = 0.25;
+function underSprings(world: World): Uint8Array {
+  const { w, n } = world;
+  const out = new Uint8Array(n);
+  const seen = new Int32Array(n).fill(-1);
+  const r2 = SPRING_REACH * SPRING_REACH;
+  world.springs.forEach((s, k) => {
+    // The cells along a river's bed are fed a little too (rate 0.08, land.ts), to keep the river
+    // full, not to raise it: not sources.
+    if (s.lava || (s.rate !== undefined && s.rate < 1)) return;
+    const sx = s.i % w;
+    const sy = (s.i / w) | 0;
+    const top = s.level - SPRING_BELOW;
+    const stack = [s.i];
+    seen[s.i] = k;
+    while (stack.length) {
+      const i = stack.pop()!;
+      // Water already (the lake, the river): the village keeps its distance from it anyway
+      // (landScore). Dry land the spring's level would cover is what is under it.
+      if (world.depth[i] === 0) out[i] = 1;
+      const x = i % w;
+      const y = (i / w) | 0;
+      for (const [dx, dy] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ]) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!world.inside(nx, ny) || (nx - sx) ** 2 + (ny - sy) ** 2 > r2) continue;
+        const j = ny * w + nx;
+        if (seen[j] === k || world.height[j] >= top) continue;
+        seen[j] = k;
+        stack.push(j);
+      }
+    }
+  });
+  return out;
+}
+
+// A village's houses stand up to 9 cells from its centre (buildVillage): any of those cells under a
+// spring refuses the spot.
+function footprintUnder(world: World, under: Uint8Array, cx: number, cy: number): boolean {
+  for (let y = cy - 9; y <= cy + 9; y++) for (let x = cx - 9; x <= cx + 9; x++) if (world.inside(x, y) && under[y * world.w + x]) return true;
+  return false;
 }
 
 function carveRiver(world: World, rng: Rng): void {

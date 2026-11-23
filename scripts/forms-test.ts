@@ -314,7 +314,10 @@ export function formChecks(check: Check): void {
 
   // Sizes: a giant book fails unless it says so; a statue of a serpent is no
   // creature; a charm is no village (the live Serpent and Village, 5 November).
-  const book = `const spell = { artifacts: [{ name: "Book", effects: [{ when: "every", every: 20, do: "heal" }] }], *cast(w) {
+  // It grows the land round it every 20 s, so it always acts: a book that heals acted only when
+  // chance wounded someone beside it in the five minutes (22 November: on another stream of the
+  // island's life nobody was, and its size checks failed as idle).
+  const book = `const spell = { artifacts: [{ name: "Book", effects: [{ when: "every", every: 20, do: "grow" }] }], *cast(w) {
     const parts = []; for (let k = 0; k < 8; k++) parts.push([-1.5, -1, k, 3, 2, 1, k % 2 ? "#6b3a2a" : "#e8dcc0"]);
     w.model(w.x, w.y, parts); w.artifact(w.x, w.y, "Book"); } };`;
   const blocky = `const spell = { artifacts: [{ name: "Book", effects: [{ when: "every", every: 20, do: "heal" }] }], *cast(w) {

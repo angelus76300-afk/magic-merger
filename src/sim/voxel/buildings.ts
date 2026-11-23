@@ -6,6 +6,7 @@ import type { World } from "../world";
 import { pushBox, type Box } from "./models";
 import { columnTop } from "./terrain";
 import { logsLeft, stageOf } from "../sites";
+import { tileHouses } from "../homes";
 import { lodAt, type FineFocus } from "./cubes";
 import { fineBoxes, fineHouse } from "./cube-houses";
 import type { LocalMesh } from "./shapes";
@@ -544,7 +545,9 @@ function hash(i: number, seed: number): number {
 }
 
 export interface Lights {
-  windows: { x: number; y: number; z: number; axis: 0 | 1 }[];
+  // `house`: the top left cell of the house a window is in (lit while someone sleeps there,
+  // homes.ts), or -1 for a building with a job (lit by its village's people).
+  windows: { x: number; y: number; z: number; axis: 0 | 1; house: number }[];
   chimneys: { x: number; y: number; z: number }[];
 }
 
@@ -573,7 +576,6 @@ export class Buildings {
     const drawn = new Set<number>();
     const blocks: { i: number; kind: number; s: Settlement | null }[] = [];
     const W = world.w;
-    const isHouse = (i: number) => world.cover[i] === C.HOUSE;
     // Job buildings where their village put them; then houses, two by two.
     for (const s of world.settlements)
       for (const j of s.jobs ?? []) {
@@ -593,12 +595,12 @@ export class Buildings {
       blocks.push({ i, kind: k, s: nearest(world, i) });
       for (const c of cells) drawn.add(c);
     }
+    // Houses two by two as homes.ts tiles them, so a sleeper's window is the one drawn.
+    const tiles = tileHouses(world);
     for (let i = 0; i < world.n - W - 1; i++) {
-      if (!isHouse(i) || drawn.has(i) || (i % W) + 1 >= W) continue;
-      const cells = [i, i + 1, i + W, i + W + 1];
-      if (!cells.every((c) => isHouse(c) && !drawn.has(c))) continue;
+      if (tiles[i] !== i || drawn.has(i)) continue;
       blocks.push({ i, kind: C.HOUSE, s: nearest(world, i) });
-      for (const c of cells) drawn.add(c);
+      for (const c of [i, i + 1, i + W, i + W + 1]) drawn.add(c);
     }
     this.updateSites(world, drawn, fine);
     let key = "";
@@ -671,7 +673,7 @@ export class Buildings {
       for (const wdw of shape.windows) {
         const p = turnPoint(wdw, qq);
         const axis = (qq % 2 === 1 ? 1 - wdw.axis : wdw.axis) as 0 | 1;
-        this.lights.windows.push({ x: p.x + ox, y: wdw.y + base, z: p.z + oz, axis });
+        this.lights.windows.push({ x: p.x + ox, y: wdw.y + base, z: p.z + oz, axis, house: b.kind === C.HOUSE ? b.i : -1 });
       }
       for (const ch of shape.chimneys) {
         const p = turnPoint(ch, qq);

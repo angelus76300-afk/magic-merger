@@ -1,0 +1,17 @@
+[
+  {
+    "size": "832x1000",
+    "time": 268,
+    "people": 38,
+    "asleep": 35,
+    "indoors": 32,
+    "rough": 3,
+    "standing": 0,
+    "lit": 58,
+    "village": {
+      "x": 100,
+      "y": 77,
+      "indoors": 17
+    }
+  }
+]

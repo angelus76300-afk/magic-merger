@@ -23,12 +23,13 @@ export interface Inspection {
   dead: boolean;
 }
 
-// The creature nearest a tapped point, within reach.
+// The creature nearest a tapped point, within reach. One asleep inside its house (homes.ts) is not
+// drawn, so a tap does not find it: a tap by a door at night opens the card of whoever is outside.
 export function creatureAt(world: World, x: number, y: number, reach = 2.5): Creature | null {
   let best: Creature | null = null;
   let bestD = reach;
   for (const c of world.creatures) {
-    if (c.dead) continue;
+    if (c.dead || c.data.indoors !== undefined) continue;
     const d = Math.hypot(c.x - x, c.y - y);
     if (d < bestD) {
       bestD = d;
@@ -140,7 +141,8 @@ function moodWords(c: Creature): string | null {
   // Chilled by the land (cold.ts).
   if ((c.chill || 0) > 0) return c.data.retreat ? "cold, getting out of it" : "cold";
   if (c.sleep > 0) return "asleep under a spell";
-  if (c.fear > 0) return "terrified";
+  // Woken by its house burning, flooding or falling (homes.ts): the card says so.
+  if (c.fear > 0) return (c.data.fright as string | undefined) ?? "terrified";
   return null;
 }
 

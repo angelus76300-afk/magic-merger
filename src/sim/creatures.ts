@@ -25,6 +25,7 @@ import { pathsOf, solidCovers } from "./paths";
 import { LOADS, deed, harmed, life, newMind, noteDeath, reborn, storyOn, tell, villageOf, type AbilitySpec, type Goal, type Mind } from "./kin";
 import { COLD, chillPace, chillTick, hardy, landFreeze, person, tolerance, tooCold, warmerWay } from "./cold";
 import { abandonTrip } from "./goals";
+import { comeOut, stayIndoors } from "./homes";
 
 // What a spell-made creature does, declared rather than coded, so even a
 // short program gets a creature with a life of its own.
@@ -537,6 +538,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   const rider = ridden(c);
   if (c.dead) {
     if (rider) throwOut(c);
+    // Dead in its house (a blast, a fire): its body lies by the door, drawn.
+    if (c.data.indoors !== undefined) comeOut(c);
     if (c.deadFor === 0) {
       noteDeath(world, c);
       if (k.ai?.onDeath) deathOf(world, c, k.ai.onDeath);
@@ -1001,6 +1004,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   const idle = idleOf(c, busy);
   if (c.data.idle !== idle) c.data.idle = idle;
   if (c.hp <= 0) c.dead = true;
+  // Asleep indoors until it wakes or its house burns, floods or falls (homes.ts).
+  if (c.kind === "villager") stayIndoors(world, c, !!rider);
 
   if (k.tick) k.tick(c, dt);
   if (meter) {

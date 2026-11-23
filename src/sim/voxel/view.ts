@@ -32,6 +32,7 @@ import {
   type Material,
 } from "three";
 import { kindOf, type Creature, type CreatureKind } from "../creatures";
+import { litHouses } from "../homes";
 import { COLD, hooded, person } from "../cold";
 import { F as FLUID } from "../materials";
 import { Figures, figureMaterials, type Pose } from "./figures";
@@ -300,6 +301,7 @@ export class VoxelView {
   private litMask = new Uint8Array(0);
   private litFor: unknown = null;
   private litMapped = -1;
+  private litKey = 0;
   private nameWidths = new Map<string, number>();
   // Set by the frame (frame.ts): no names while the tour's card is up, and none over what it shows
   // above the island (the story line, a creature's card, the Watch button), as top left rectangles.
@@ -1542,12 +1544,19 @@ export class VoxelView {
   // Which windows are lit: in each village, the share its people fill (two to a house, map.ts),
   // chosen by a hash of the window so the same ones stay lit. Windows far from any village stay lit.
   // Again only when the map is read again (every 3 s) or the buildings are placed again.
-  private markLit(windows: { x: number; z: number }[]): Uint8Array {
+  // A house's windows glow while someone sleeps inside (homes.ts, 22 November, the owner: "Inside
+  // their house, window lit"), and are dark when it is empty; a building with a job keeps the
+  // share of its village's people.
+  private markLit(windows: { x: number; z: number; house?: number }[]): Uint8Array {
     const { world } = this;
     const total = windows.length + this.houseCells.length;
-    if (this.litFor === windows && this.litMapped === this.map.version && this.litMask.length === total) return this.litMask;
+    const asleep = litHouses(world);
+    let key = asleep.size;
+    for (const i of asleep) key = (key * 31 + i) | 0;
+    if (this.litFor === windows && this.litMapped === this.map.version && this.litMask.length === total && this.litKey === key) return this.litMask;
     this.litFor = windows;
     this.litMapped = this.map.version;
+    this.litKey = key;
     if (this.litMask.length !== total) this.litMask = new Uint8Array(total);
     const villages = this.map.villages;
     const share = (x: number, y: number): number => {
@@ -1563,14 +1572,16 @@ export class VoxelView {
       return best;
     };
     for (let k = 0; k < windows.length; k++) {
+      const house = windows[k].house ?? -1;
+      if (house >= 0) {
+        this.litMask[k] = asleep.has(house) ? 1 : 0;
+        continue;
+      }
       const x = windows[k].x + world.w / 2;
       const y = windows[k].z + world.h / 2;
       this.litMask[k] = (cellHash(Math.floor(y) * world.w + Math.floor(x) + k * 7919) % 1000) / 1000 < share(x, y) ? 1 : 0;
     }
-    for (let k = 0; k < this.houseCells.length; k++) {
-      const i = this.houseCells[k];
-      this.litMask[windows.length + k] = (cellHash(i) % 1000) / 1000 < share(i % world.w, Math.floor(i / world.w)) ? 1 : 0;
-    }
+    for (let k = 0; k < this.houseCells.length; k++) this.litMask[windows.length + k] = asleep.has(this.houseCells[k]) ? 1 : 0;
     return this.litMask;
   }
 
@@ -1780,6 +1791,8 @@ export class VoxelView {
     let n = 0;
     for (const c of world.creatures) {
       if (n >= 900) break;
+      // Asleep in its house (homes.ts): not drawn; its window glows instead.
+      if (c.data.indoors !== undefined && !c.dead) continue;
       n++;
       const k = kindOf(c);
       const rig = this.rigFor(c, k);
@@ -1952,8 +1965,14 @@ export class VoxelView {
       pose.glide = pose.flying && !still ? glideOf(time, c.id, g.speed / Math.max(0.1, walking)) : 0;
       pose.pitch = rig.lean + (still ? 0 : pose.moving * 0.05 + gait * 0.07 + Math.sin(phase * 2) * 0.03 * gait);
       if (!still && gait > 0) pose.y += Math.abs(Math.sin(phase)) * (hop ? 0.22 : 0.08) * gait * size;
-      if (g.lie > 0.01 && !c.dead) pose.y -= hipHeight(rig) * 0.75 * g.lie * size;
       pose.roll = 0;
+      // Asleep out of doors, with no house to go in (homes.ts): lying on its side, as the dead
+      // fall, not crouched upright (22 November, the owner: "sleeping is them not moving").
+      if (c.data.rough && !c.dead && !pose.flying && g.lie > 0.01) {
+        pose.roll = (Math.PI / 2) * g.lie;
+        pose.pitch = 0;
+        pose.y += rig.halfWidth * size * Math.sin((g.lie * Math.PI) / 2);
+      } else if (g.lie > 0.01 && !c.dead) pose.y -= hipHeight(rig) * 0.75 * g.lie * size;
       pose.offset = (c.id % 17) * 0.37;
       pose.glowAll = k.glow;
       pose.tintAmount = 0;

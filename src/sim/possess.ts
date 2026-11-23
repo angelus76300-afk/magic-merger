@@ -1,6 +1,7 @@
 import { abilitiesOf, enemyOf, fireAbility } from "./abilities";
 import { doChore, eats, jobOf, mealFor, strikeNow, strikes, tradeFor } from "./goals";
 import { bankFor, heapBank } from "./highwater";
+import { comeOut } from "./homes";
 import { unpackLook } from "./villagers";
 import { life, mindOf, type AbilitySpec, type Mind } from "./kin";
 import { names } from "./social";
@@ -74,7 +75,17 @@ export function possess(world: World, c: Creature): Possession | null {
   if (c.dead || c.hp <= 0 || !world.creatures.includes(c)) return null;
   if (current) release(current.world);
   ended = null;
-  const { task, tx, ty, cell, target, pace, work, action } = mindOf(c);
+  const m = mindOf(c);
+  // Taken in its sleep (homes.ts): up, out of its door and drawn again, its rest forgotten, so
+  // the stick walks it. Let go, it picks what to do next as on waking.
+  if (c.data.indoors !== undefined) comeOut(c);
+  c.data.rough = undefined;
+  if (m.task === "rest") {
+    m.task = "none";
+    m.work = 0;
+    m.action = "waking up";
+  }
+  const { task, tx, ty, cell, target, pace, work, action } = m;
   current = {
     world,
     c,
