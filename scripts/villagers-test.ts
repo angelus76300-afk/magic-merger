@@ -72,7 +72,13 @@ export function villagersChecks(check: Check): void {
     check(
       "villagers: at night they sleep inside their houses, none asleep standing outside",
       night > 0.9 && asleep.length >= 10 && inside.length >= asleep.length * 0.8 && standing.length === 0 && inHouses,
-      `night ${night.toFixed(2)}: ${asleep.length} asleep, ${inside.length} indoors, ${rough.length} lying outside, ${standing.length} standing outside`,
+      `night ${night.toFixed(2)}: ${asleep.length} asleep, ${inside.length} indoors, ${rough.length} lying outside, ${standing.length} standing outside` +
+        standing
+          .map(
+            (c) =>
+              ` (#${c.id} "${c.mind?.action}" ${Math.hypot(c.x - c.mind!.tx, c.y - c.mind!.ty).toFixed(1)} from its bed, ${c.mind!.work > 0 ? "arrived" : "walking"}, sp ${c.sp.toFixed(2)}, fear ${c.fear.toFixed(1)})`,
+          )
+          .join(""),
     );
     const one = inside[0];
     const card = one ? inspect(world, one, kindOf, life.maxHp).rows.find((r) => r[0] === "Doing")?.[1] : undefined;

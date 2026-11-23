@@ -854,6 +854,9 @@ function bedDown(world: World, c: Creature, m: Mind): void {
 // A dry spot to lie down beside a building of its village (a well, a barn, a house), or where its
 // home was, or where it stands.
 function shelterFor(world: World, c: Creature): { x: number; y: number; words: string } {
+  // Cut off from home, or far out at nightfall: where it stands, on dry ground.
+  const far = Math.hypot(c.x - c.homeX, c.y - c.homeY) > 24 || isUnreached(world, c, c.homeX, c.homeY);
+  if (far && world.depth[pointAt(world, c.x, c.y)] === 0) return { x: c.x, y: c.y, words: "under the open sky" };
   const v = villageOf(world, c.homeX, c.homeY);
   const x = v ? v.x : c.homeX;
   const y = v ? v.y : c.homeY;
