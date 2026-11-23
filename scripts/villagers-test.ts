@@ -16,7 +16,9 @@
 // The hour-long soak of the pull request is scripts/villagers-run.ts.
 import { kindOf, populate, resetCreatureIds, type Creature } from "../src/sim/creatures";
 import { daylight } from "../src/sim/daylight";
-import { inspect } from "../src/sim/inspect";
+import { creatureAt, inspect } from "../src/sim/inspect";
+import { possess, possessed, release, steerBy } from "../src/sim/possess";
+import { litHouses } from "../src/sim/homes";
 import { life, villageOf } from "../src/sim/kin";
 import { C, F, G } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
@@ -62,6 +64,33 @@ function run(world: World, rt: Runtime, seconds: number, each: () => void = () =
 
 const villagers = (world: World) => world.creatures.filter((c) => !c.dead && c.kind === "villager");
 const cellOf = (world: World, x: number, y: number) => world.idx(Math.max(0, Math.min(world.w - 1, x)), Math.max(0, Math.min(world.h - 1, y)));
+
+// The first cell of the two by two block each house cell is drawn in (voxel/buildings.ts update),
+// -1 for a cell drawn alone. Written out here, not taken from the game, so the check stands apart.
+function drawnBlocks(world: World): Int32Array {
+  const W = world.w;
+  const top = new Int32Array(world.n).fill(-1);
+  const taken = new Set<number>();
+  for (const s of world.settlements)
+    for (const j of s.jobs ?? []) {
+      const cells = [j.i, j.i + 1, j.i + W, j.i + W + 1];
+      if (cells.every((c) => world.cover[c] === j.kind))
+        for (const c of cells) {
+          taken.add(c);
+          if (j.kind === C.HOUSE) top[c] = j.i;
+        }
+    }
+  for (let i = 0; i < world.n - W - 1; i++) {
+    if (world.cover[i] !== C.HOUSE || taken.has(i) || (i % W) + 1 >= W) continue;
+    const cells = [i, i + 1, i + W, i + W + 1];
+    if (!cells.every((c) => world.cover[c] === C.HOUSE && !taken.has(c))) continue;
+    for (const c of cells) {
+      taken.add(c);
+      top[c] = i;
+    }
+  }
+  return top;
+}
 
 export function villagersChecks(check: Check): void {
   // 1. A night and a morning.
@@ -127,20 +156,121 @@ export function villagersChecks(check: Check): void {
       const house = dryOne.data.indoors as number;
       const pond: number[] = [];
       for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) pond.push(house + dy * world.w + dx);
+      // The card the moment it is out of the door says why.
+      let card: string | undefined;
       run(world, rt, 2, () => {
         for (const j of pond) world.setFluid(j, F.WATER, Math.max(world.depth[j], 1));
+        if (card === undefined && dryOne.data.indoors === undefined)
+          card = inspect(world, dryOne, kindOf, life.maxHp).rows.find((r) => r[0] === "Doing")?.[1] ?? "";
       });
       check(
         "villagers: water over a house wakes those inside, and they come out",
         dryOne.data.indoors === undefined,
         `${dryOne.data.indoors === undefined ? "out" : "still inside"}, doing: ${dryOne.mind?.action}`,
       );
+      check("villagers: the card of one woken by water says so", !!card && card.includes("out of their flooded house"), `card: ${card}`);
     } else check("villagers: water over a house wakes those inside, and they come out", false, "no second house with a sleeper");
     // Morning: nobody is left inside.
     run(world, rt, 345 - world.time);
     const day = daylight(world.time).night;
     const still = villagers(world).filter((c) => c.data.indoors !== undefined).length;
     check("villagers: in the morning nobody is left inside", day < 0.1 && still === 0, `night ${day.toFixed(2)}, ${still} inside`);
+  }
+  // 1c. A whole night on two islands: the window of every sleeper's house is lit. The house is
+  // drawn as voxel/buildings.ts tiles it (below, as it did at 2cecc47: job blocks, then the first
+  // four house cells in reading order), its windows numbered by the block's first cell; a cell left
+  // over is drawn alone and lit by its own number. Review of 2cecc47: where house blocks touch, a
+  // sleeper could light a block that was not drawn, and its house looked dark. On these two islands
+  // no sleeper fell on such a cell at 2cecc47; the houses laid out by hand below are one.
+  {
+    const { world } = fresh();
+    // An empty square of land six by six, away from the edge.
+    let at = -1;
+    for (let y = 8; y < world.h - 8 && at < 0; y++)
+      for (let x = 8; x < world.w - 8 && at < 0; x++) {
+        let free = true;
+        for (let dy = 0; dy < 6 && free; dy++)
+          for (let dx = 0; dx < 6 && free; dx++) free = world.cover[(y + dy) * world.w + x + dx] === C.NONE && world.depth[(y + dy) * world.w + x + dx] <= 0;
+        if (free) at = (y + 1) * world.w + x + 1;
+      }
+    // Rows from the top: two cells (a block with the row below), three, three, two. The builder
+    // takes the top block first, so the cell under its left foot joins the block below-left.
+    const W = world.w;
+    const cells = [2, 3, W + 1, W + 2, W + 3, 2 * W, 2 * W + 1, 2 * W + 2, 3 * W, 3 * W + 1].map((d) => at + d);
+    for (const j of cells) world.cover[j] = C.HOUSE;
+    const c = villagers(world)[0];
+    const was = c.data.indoors;
+    c.data.indoors = at + 2 * W + 1;
+    const top = drawnBlocks(world);
+    const lit = litHouses(world);
+    const window = top[c.data.indoors as number];
+    c.data.indoors = was;
+    check(
+      "villagers: a sleeper in a house where blocks touch lights the block it is drawn in",
+      at >= 0 && window >= 0 && lit.has(window),
+      `${at < 0 ? "no empty square" : `drawn in the block at ${window}, lit: ${[...lit].join(", ")}`}`,
+    );
+  }
+  for (const name of ["small-meadow", "small-dry"]) {
+    const { world, rt } = fresh(name);
+    let asleep = 0;
+    let dark = 0;
+    let example = "";
+    run(world, rt, 230);
+    let next = world.time;
+    run(world, rt, 345 - world.time, () => {
+      if (world.time < next) return;
+      next = world.time + 2;
+      const top = drawnBlocks(world);
+      const lit = litHouses(world);
+      for (const c of villagers(world)) {
+        const house = c.data.indoors as number | undefined;
+        if (house === undefined) continue;
+        asleep++;
+        const window = top[house] >= 0 ? top[house] : house;
+        if (!lit.has(window)) {
+          dark++;
+          example ||= `#${c.id} in cell ${house}, drawn in the block at ${top[house]}`;
+        }
+      }
+    });
+    check(
+      `villagers: ${name}, a whole night, every sleeper's house window is lit`,
+      asleep > 0 && dark === 0,
+      `${asleep} sleepers counted every 2 s, ${dark} in a dark house${example ? ` (${example})` : ""}`,
+    );
+  }
+  // 1b. Become one asleep indoors (review of 2cecc47: it stayed inside, not drawn, and did not move
+  // under the stick). A tap at its door does not open its card; taken all the same, it comes out
+  // of its door, is drawn, and walks where the stick says.
+  {
+    const { world, rt } = fresh();
+    run(world, rt, 280);
+    const c = villagers(world).find((o) => o.data.indoors !== undefined);
+    const tapped = c ? creatureAt(world, c.x, c.y, 0.5) : null;
+    check(
+      "villagers: a tap at the door of one asleep indoors does not pick it",
+      !!c && tapped !== c,
+      `${c ? `#${c.id}` : "nobody indoors"}, tap found ${tapped ? `#${tapped.id}` : "nobody"}`,
+    );
+    if (c) {
+      const x0 = c.x;
+      const y0 = c.y;
+      possess(world, c);
+      // Five seconds of the stick, one way and then another if the first is walled.
+      run(world, rt, 2.5, () => steerBy(world, 0, -1, 0));
+      run(world, rt, 2.5, () => steerBy(world, 1, 0, 0));
+      const moved = Math.hypot(c.x - x0, c.y - y0);
+      const out = c.data.indoors === undefined;
+      const task = c.mind?.task;
+      const still = possessed(world)?.c === c;
+      release(world);
+      check(
+        "villagers: become one asleep indoors and it comes out, is drawn and walks",
+        still && out && moved > 1 && task !== "rest",
+        `moved ${moved.toFixed(2)}, ${out ? "out" : "still indoors"}, task ${task}, ${still ? "still the player" : "let go"}`,
+      );
+    }
   }
   // 2. A home in water: a family whose house and door are flooded, hungry, the stores full.
   {

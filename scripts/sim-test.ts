@@ -1537,13 +1537,16 @@ for (const scenario of SCENARIOS) {
       .join(" | ")}`,
   );
 }
+const wildKinds = new Set(SPECIES.map((s) => s.kind.name));
 for (const { stream, report: r } of sceneReports.sort((a, b) => a.stream - b.stream)) {
   const kinds = Object.entries(r.kinds);
-  // Vanished: under a third of its number and not back to a third by the end. The island brings
-  // its wild kinds back (creatures.ts keepWild), so a herd of three a pack takes in one night and
-  // that is born again is not gone (22 November: the island's life on another stream, its villagers
-  // asleep indoors, had stream 0's wolves take all three deer at once at the first night).
-  const vanished = kinds.filter(([, v]) => v.start >= 3 && v.min < Math.ceil(v.start / 3) && v.end < Math.ceil(v.start / 3)).map(([k]) => k);
+  // Vanished: under a third of its number at any time. The island brings its wild kinds back
+  // (creatures.ts keepWild), so for them only, a herd of three a pack takes in one night and that is
+  // born again is not gone: back to a third by the end will do (22 November: the island's life on
+  // another stream, its villagers asleep indoors, had stream 0's wolves take all three deer at once
+  // at the first night). Villagers and a spell's creatures keep the strict rule.
+  const third = (v: { start: number }) => Math.ceil(v.start / 3);
+  const vanished = kinds.filter(([k, v]) => v.start >= 3 && v.min < third(v) && (!wildKinds.has(k) || v.end < third(v))).map(([k]) => k);
   const exploded = kinds.filter(([, v]) => v.max > Math.max(v.start * 2.5, v.start + 3)).map(([k, v]) => `${k} ${v.start} to ${v.max}`);
   const lively = Object.values(r.lively).reduce((a, [d, n]) => [a[0] + d, a[1] + n], [0, 0]);
   check(

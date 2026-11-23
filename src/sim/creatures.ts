@@ -1005,7 +1005,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   if (c.data.idle !== idle) c.data.idle = idle;
   if (c.hp <= 0) c.dead = true;
   // Asleep indoors until it wakes or its house burns, floods or falls (homes.ts).
-  if (c.kind === "villager") stayIndoors(world, c);
+  if (c.kind === "villager") stayIndoors(world, c, !!rider);
 
   if (k.tick) k.tick(c, dt);
   if (meter) {

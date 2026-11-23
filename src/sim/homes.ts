@@ -58,23 +58,46 @@ export function houseOf(world: World, c: Creature): number {
   return i;
 }
 
-// The two by two block a house cell belongs to (as voxel/buildings.ts draws it: the first block
-// in reading order that holds it), or the cell alone.
-export function houseBlock(world: World, i: number): number[] {
+// How voxel/buildings.ts draws the houses: two by two blocks, a job's own block first, then the
+// rest in reading order, each block the first four house cells not yet taken. For each cell, the
+// first cell of its block (its windows carry that number), or -1 for a cell drawn alone. Pure, so
+// the builder and the homes below agree on which block holds a sleeper's window (review of
+// 2cecc47: in a row of three, the old guess here lit a block the builder had not drawn).
+export function tileHouses(world: World): Int32Array {
   const W = world.w;
-  for (const [dx, dy] of [
-    [-1, -1],
-    [0, -1],
-    [-1, 0],
-    [0, 0],
-  ]) {
-    const t = i + dx + dy * W;
-    const x = (i % W) + dx;
-    if (t < 0 || x < 0 || x + 1 >= W || t + W + 1 >= world.n) continue;
-    const cells = [t, t + 1, t + W, t + W + 1];
-    if (cells.every((j) => world.cover[j] === C.HOUSE)) return cells;
+  const top = new Int32Array(world.n).fill(-1);
+  const isHouse = (i: number) => world.cover[i] === C.HOUSE;
+  for (const s of world.settlements)
+    for (const j of s.jobs ?? []) {
+      if (j.kind !== C.HOUSE) continue;
+      const cells = [j.i, j.i + 1, j.i + W, j.i + W + 1];
+      if (cells.every((c) => c >= 0 && c < world.n && isHouse(c) && top[c] < 0)) for (const c of cells) top[c] = j.i;
+    }
+  for (let i = 0; i < world.n - W - 1; i++) {
+    if (!isHouse(i) || top[i] >= 0 || (i % W) + 1 >= W) continue;
+    const cells = [i, i + 1, i + W, i + W + 1];
+    if (!cells.every((c) => isHouse(c) && top[c] < 0)) continue;
+    for (const c of cells) top[c] = i;
   }
-  return [i];
+  return top;
+}
+
+// tileHouses once a tick: asked for each sleeper each tick (its house burning, flooded).
+const tiled = new WeakMap<World, { at: number; top: Int32Array }>();
+function tilesOf(world: World): Int32Array {
+  const known = tiled.get(world);
+  if (known && known.at === world.time && known.top.length === world.n) return known.top;
+  const top = tileHouses(world);
+  tiled.set(world, { at: world.time, top });
+  return top;
+}
+
+// The block a house cell is drawn in (tileHouses), or the cell alone.
+export function houseBlock(world: World, i: number): number[] {
+  const t = i >= 0 && i < world.n ? tilesOf(world)[i] : -1;
+  if (t < 0 || world.cover[i] !== C.HOUSE) return [i];
+  const W = world.w;
+  return [t, t + 1, t + W, t + W + 1];
 }
 
 // Water on the house or at the point by its door.
@@ -117,12 +140,15 @@ export function comeOut(c: Creature): void {
 // Once a tick for a villager indoors (creatures.ts): it comes out when it wakes, is hurt or
 // frightened, is moved (a blast, a push), or when its house burns, floods or falls. Fire and water
 // wake it with a fright, so it runs out rather than back in.
-export function stayIndoors(world: World, c: Creature): void {
+// `ridden`: the player is this creature (possess.ts), so it comes out and walks.
+export function stayIndoors(world: World, c: Creature, ridden = false): void {
   // Up from the ground when it wakes; the bed it chose is forgotten with the rest.
   if (c.mind?.task !== "rest") {
     if (c.data.rough) c.data.rough = undefined;
     if (c.data.bed) c.data.bed = undefined;
   } else if (c.data.rough && c.fear > 0) c.data.rough = undefined;
+  // Why it ran, for the card while the fright lasts (inspect.ts).
+  if (c.data.fright && c.fear <= 0) c.data.fright = undefined;
   const house = c.data.indoors as number | undefined;
   if (house === undefined) return;
   const at = c.data.indoorsAt as [number, number] | undefined;
@@ -136,16 +162,18 @@ export function stayIndoors(world: World, c: Creature): void {
   const gone = world.cover[house] !== C.HOUSE;
   const burning = !gone && houseBurning(world, house);
   const wet = !gone && houseWet(world, house);
-  if (!c.dead && !moved && !gone && !burning && !wet && c.mind?.task === "rest" && c.fear <= 0 && c.burning <= 0) return;
+  if (!c.dead && !ridden && !moved && !gone && !burning && !wet && c.mind?.task === "rest" && c.fear <= 0 && c.burning <= 0) return;
   comeOut(c);
   if (c.dead) return;
   if (burning || wet || gone) {
     c.fear = Math.max(c.fear, 2);
     c.fearX = (house % world.w) + 0.5;
     c.fearY = Math.floor(house / world.w) + 0.5;
+    const why = burning ? "running from their burning house" : wet ? "out of their flooded house" : "out of their fallen house";
+    c.data.fright = why;
     if (c.mind) {
       c.mind.task = "none";
-      c.mind.action = burning ? "running from their burning house" : wet ? "out of their flooded house" : "out of their fallen house";
+      c.mind.action = why;
     }
   }
 }
