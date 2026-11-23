@@ -745,6 +745,7 @@ export function buildFineTile(
   ty1: number,
   tops: FineTops | null = null,
   water: Writer | null = null,
+  far = false,
 ): boolean {
   const steps = GRAPHICS.steps;
   const blend = GRAPHICS.blend;
@@ -1068,6 +1069,9 @@ export function buildFineTile(
       GL[s] = glowLevel(s, H[s] / sub);
     }
 
+  // Far land (FAR): dry columns in blocks of two by two take one column's height and colour.
+  if (far) blockFar(f, sub, sx0, sy0, SW, j0, j1, k0, k1);
+
   // Tops, merged into rectangles of one height, colour and glow.
   for (let j = j0; j < j1; j++) DONE.fill(0, j * SW + k0, j * SW + k1);
   const topLight = FACE_LIGHT.top;
@@ -1169,6 +1173,8 @@ export function buildFineTile(
   }
   out.e0 = 0;
   out.e1 = 0;
+  // The water and the foam meet the land as it stands in eighths.
+  if (far) unblockFar(SW * SH);
 
   // The water in eighths (16 November) takes the place of the line of foam on the land.
   if (water) {
@@ -1188,6 +1194,73 @@ export function buildFineTile(
   }
   if (GRAPHICS.foam) foam(f, out, sub, sx0, sy0, SW, SH, ox, oz);
   return false;
+}
+
+// Far land (23 November, the owner on the Fold: 27 frames a second falling to 13 on a large
+// island, drawing two thirds of each frame, 2.8 to 4.9 million triangles in the sky view). Where an
+// eighth is under a pixel on the screen (terrain.ts wantFar), a chunk is drawn with its dry columns
+// in blocks of FAR.block by FAR.block: each block takes the height, colour and light of its first
+// column. Heights stay in eighths, so a step is as tall as before and its line on the slope as
+// thin (quarter voxels doubled it, and the seam showed: scripts/looks-seam.mjs, 15 November); only
+// where it runs is coarser, by an eighth. Tops merge four times as far and half the walls go.
+// Kept as they are: columns within FAR.edge of the chunk's side, so two chunks at any level meet
+// with the same columns along their border and no gap opens; and columns of water, a bed, a
+// shore, weed or a spell's drawings. Blocks are aligned on the island, so the tiles of a chunk
+// agree. Drawing only: what stands on the land stands on its columns in eighths (FineTops).
+// `edge` is a switch only for the checks (scripts/far-land-test.ts: at 0 the borders open).
+export const FAR = { block: 2, edge: 2 };
+let HT = new Int32Array(0);
+let CT = new Uint32Array(0);
+let FAR_SAVED = 0;
+
+function blockFar(f: FineCells, sub: number, sx0: number, sy0: number, SW: number, j0: number, j1: number, k0: number, k1: number): void {
+  const n = H.length;
+  if (HT.length < n) {
+    HT = new Int32Array(n);
+    CT = new Uint32Array(n);
+  }
+  FAR_SAVED = 0;
+  const B2 = FAR.block;
+  const ex0 = f.x0 * sub + FAR.edge;
+  const ey0 = f.y0 * sub + FAR.edge;
+  const ex1 = f.x1 * sub - FAR.edge;
+  const ey1 = f.y1 * sub - FAR.edge;
+  const plain = (s: number) => D[s] === 1 && WET[s] === 0 && FLOOD[s] < 0 && WEEDS[s] === WEED_NONE && CELL[s] >= 0;
+  // The tile's columns and one more round (the walls read their neighbours).
+  for (let j = j0 - 1; j <= j1; j++)
+    for (let k = k0 - 1; k <= k1; k++) {
+      const sx = sx0 + k;
+      const sy = sy0 + j;
+      const bx = sx - (((sx % B2) + B2) % B2);
+      const by = sy - (((sy % B2) + B2) % B2);
+      if (bx === sx && by === sy) continue;
+      if (bx < ex0 || by < ey0 || bx + B2 > ex1 || by + B2 > ey1) continue;
+      const r = (by - sy0) * SW + (bx - sx0);
+      let ok = true;
+      for (let q = 0; q < B2 && ok; q++) for (let p = 0; p < B2 && ok; p++) ok = plain(r + q * SW + p);
+      if (!ok) continue;
+      const s = j * SW + k;
+      if (!FAR_SAVED) {
+        HT.set(H.subarray(0, n));
+        CT.set(C.subarray(0, n));
+        FAR_SAVED = 1;
+      }
+      H[s] = HT[r];
+      C[s] = CT[r];
+      GL[s] = GL[r];
+      RS[s] = RS[r];
+      SANDY[s] = SANDY[r];
+      LAND[s] = LAND[r];
+      LAVA_D[s] = LAVA_D[r];
+      HOUSE_D[s] = HOUSE_D[r];
+    }
+}
+
+function unblockFar(n: number): void {
+  if (!FAR_SAVED) return;
+  H.set(HT.subarray(0, n));
+  C.set(CT.subarray(0, n));
+  FAR_SAVED = 0;
 }
 
 // The land shader's flag (landWet) for a face lit as its slope is: half way to a bed's (1).

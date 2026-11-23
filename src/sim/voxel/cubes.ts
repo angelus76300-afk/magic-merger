@@ -134,10 +134,10 @@ export class Vox {
 
   // The faces, in the view's axes (x, up, south) and cells, as a look's (shapes.ts). `centre`: the
   // model's middle put at the middle of the cell (0.5, 0.5), whatever its side.
-  mesh(centre = false): LocalMesh {
+  mesh(centre = false, width = (this.nx - this.pad * 2) * this.cube): LocalMesh {
     let count = 0;
     for (const c of this.color) if (c >= 0) count++;
-    const shift = centre ? 0.5 - ((this.nx - this.pad * 2) * this.cube) / 2 : 0;
+    const shift = centre ? 0.5 - width / 2 : 0;
     const g: VoxelGrid = {
       s: this.cube,
       o: [shift - this.pad * this.cube, shift - this.pad * this.cube, 0],
@@ -679,6 +679,46 @@ export function cubeTree(style: Exclude<TreeStyle, "">, variant: number, size = 
     trees.set(key, m);
   }
   return m;
+}
+
+// A tree's shadow where the shadow map's texels are SHADOW_COARSE cubes or more (the sky view of a
+// medium or large island, 23 November: its trees cast 0.6 of the frame's 3.9 million triangles into
+// the map): the same tree in cubes twice the side (Vox.coarse), its middle where the tree's is. A
+// map that coarse cannot tell the two apart. An odd side is made even with an empty row first.
+export const SHADOW_COARSE = 2;
+const shadows = new Map<string, LocalMesh>();
+export function cubeTreeShadow(style: Exclude<TreeStyle, "">, variant: number, size = 8): LocalMesh {
+  const key = `${style}:${variant}:${size}`;
+  let m = shadows.get(key);
+  if (!m) {
+    cubeTree(style, variant, size);
+    const v = models.get(`${style}:${variant}`)!.sized(size);
+    let even = v;
+    if (size % 2) {
+      even = new Vox(size + 1, v.nz, v.pad, v.cube);
+      v.each((x, y, z, c) => even.set(x, y, z, c));
+    }
+    m = skyOnly(even.coarse().mesh(true, size * v.cube));
+    shadows.set(key, m);
+  }
+  return m;
+}
+
+// A cube tree's geometry: its faces, then those of its shadow (cubeTreeShadow), as two runs the
+// view draws one or the other of (userData.runs: the vertices of each).
+export function cubeTreeGeometry(style: Exclude<TreeStyle, "">, variant: number, size = 8): BufferGeometry {
+  const fine = cubeTree(style, variant, size);
+  const coarse = cubeTreeShadow(style, variant, size);
+  const pos = [...fine.lit.pos, ...fine.glow.pos, ...coarse.lit.pos, ...coarse.glow.pos];
+  const col = [...fine.lit.col, ...fine.glow.col, ...coarse.lit.col, ...coarse.glow.col];
+  const g = new BufferGeometry();
+  g.setAttribute("position", new BufferAttribute(new Float32Array(pos), 3));
+  g.setAttribute("color", new BufferAttribute(new Float32Array(col), 3));
+  const n = (fine.lit.pos.length + fine.glow.pos.length) / 3;
+  g.userData.runs = { fine: n, coarse: (coarse.lit.pos.length + coarse.glow.pos.length) / 3 };
+  g.setDrawRange(0, n);
+  g.computeBoundingSphere();
+  return g;
 }
 
 // A tree's faces without those that look down (under a crown, a branch): the sky view never sees

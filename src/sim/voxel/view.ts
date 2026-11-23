@@ -30,6 +30,7 @@ import {
   Vector3,
   WebGLRenderer,
   type Material,
+  type OrthographicCamera,
 } from "three";
 import { kindOf, type Creature, type CreatureKind } from "../creatures";
 import { litHouses } from "../homes";
@@ -65,7 +66,19 @@ import { DAMP, HEART, HOUSE_STYLES, R as RARE, STYLE_BITS, TREE_STYLES, type Tre
 import { FAR_CELLS, NEAR_CELLS, farTreeModel, nearTreeModel } from "./near";
 import { GLOWING, VARIANTS, floraModels } from "./flora";
 import { Buildings } from "./buildings";
-import { FINE_VARIANTS, OLD_TREES, cubeTree, fineFocus, geometryOfMesh, refocus, treeSize, type FineFocus } from "./cubes";
+import {
+  CUBE,
+  FINE_VARIANTS,
+  OLD_TREES,
+  SHADOW_COARSE,
+  cubeTree,
+  cubeTreeGeometry,
+  fineFocus,
+  geometryOfMesh,
+  refocus,
+  treeSize,
+  type FineFocus,
+} from "./cubes";
 import { WonderModels } from "./wonders";
 import {
   CLOUD_CUBE,
@@ -829,7 +842,7 @@ export class VoxelView {
     const geometry = mesh
       ? mesh.geometry
       : cube
-        ? geometryOfMesh(cubeTree(cube[1] as never, Number(cube[2]), Number(cube[3])))
+        ? cubeTreeGeometry(cube[1] as never, Number(cube[2]), Number(cube[3]))
         : GRAPHICS.cubes && !far
           ? geometryOfMesh(coverInCubes(own) ?? boxesInCubes(boxes))
           : geometryOf(boxes);
@@ -838,6 +851,7 @@ export class VoxelView {
     withColors(bigger);
     bigger.count = 0;
     bigger.frustumCulled = false;
+    if (geometry.userData.runs) treeRuns(bigger, geometry, () => this.terrain.allFar);
     if (mesh) {
       this.scene.remove(mesh);
       mesh.dispose();
@@ -2656,6 +2670,22 @@ function pointCloud(capacity: number, glow: boolean, texture: CanvasTexture): Po
 function withColors(mesh: InstancedMesh): void {
   const white = new Color(0xffffff);
   for (let k = 0; k < mesh.instanceMatrix.count; k++) mesh.setColorAt(k, white);
+}
+
+// A cube tree's two runs (cubes.ts cubeTreeGeometry): its own faces, or the same tree in cubes
+// twice the side. On the screen the coarse one while every chunk of the land is drawn far (`far`,
+// terrain.ts allFar: a cube is under a pixel even at the land nearest the camera). In the sun's
+// shadow map the coarse one where the map's texels are SHADOW_COARSE cubes or more (the sky view).
+function treeRuns(mesh: InstancedMesh, geometry: BufferGeometry, far: () => boolean): void {
+  const runs = geometry.userData.runs as { fine: number; coarse: number };
+  mesh.onBeforeRender = () => (far() ? geometry.setDrawRange(runs.fine, runs.coarse) : geometry.setDrawRange(0, runs.fine));
+  mesh.onBeforeShadow = (renderer, _o, _c, shadowCamera) => {
+    const cam = shadowCamera as OrthographicCamera;
+    const map = renderer.getRenderTarget();
+    const texel = map ? (cam.right - cam.left) / map.width : 0;
+    if (texel >= SHADOW_COARSE * CUBE) geometry.setDrawRange(runs.fine, runs.coarse);
+    else geometry.setDrawRange(0, runs.fine);
+  };
 }
 
 const FLORA_MODELS = floraModels();
