@@ -121,6 +121,7 @@ import { fogChecks } from "./fog-test";
 import { terrainLooksChecks } from "./terrain-looks-test";
 import { lakeWeedChecks } from "./lake-weed-test";
 import { landLagChecks } from "./land-lag-test";
+import { chunkFillChecks } from "./chunk-fill-test";
 import { waterLeftoversChecks } from "./water-leftovers-test";
 import { waterLightChecks } from "./water-light-test";
 import { lavaChecks } from "./lava-test";
@@ -2604,6 +2605,8 @@ fogChecks(check);
 // The land's looks (5.2.5): scripts/terrain-looks-test.ts.
 terrainLooksChecks(check);
 landLagChecks(check);
+// The land in view first, and a larger share of the frame while it fills (23 November): scripts/chunk-fill-test.ts.
+chunkFillChecks(check);
 // Ground tones that blend, near and from afar (21 November): scripts/ground-blend-test.ts.
 groundBlendChecks(check);
 // Roads that follow the ground, and a change one cell from a chunk seam (21 November): scripts/roads-ground-test.ts.

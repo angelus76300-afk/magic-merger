@@ -90,6 +90,13 @@ interface ChunkMeshes {
 // For the measure of a big spell (scripts and the frame's own hook): the switch of the one frame
 // redraw, and the longest run of frames with land left to redraw.
 export const LAND_REDRAW = { burst: true, maxLag: 0, lastLag: 0 };
+// When the player last acted on the page (a touch, a key, a cast), performance.now() ms: set by the
+// engine (playerActed), read by every terrain (Terrain.updateFine, FILL_BUDGET_MS). `at`: the checks
+// set it back (-Infinity) when they are done.
+const PLAYER = { actedAt: -Infinity };
+export function playerActed(at = performance.now()): void {
+  PLAYER.actedAt = at;
+}
 // Chunks changed at once from which the land is redrawn whole in one frame (rebuild).
 const BURST_CHUNKS = 10;
 
@@ -651,6 +658,12 @@ export class Terrain {
   // The camera's view, set by the view each frame: chunks wholly outside it are built after those
   // in it. null: every chunk counts as seen (the checks).
   frustum: Frustum | null = null;
+  // When the player last acted, by this terrain's clock (the checks; the game tells playerActed):
+  // land in view not built yet takes FILL_BUDGET_MS of a frame only ACT_QUIET_MS after it.
+  private actedAt = -Infinity;
+  acted(): void {
+    this.actedAt = this.clock();
+  }
   // How far a changed cell reaches into the fine land (FINE_REACH; the checks try less).
   fineReach = FINE_REACH;
   // The time, ms; the checks set their own, to count frames without the machine's speed.
@@ -1237,14 +1250,20 @@ export class Terrain {
     this.credit = Math.min(CREDIT_MAX_MS, this.credit + Math.min(CREDIT_FRAME_MS, Math.max(0, start - this.creditAt)) * CREDIT_REFILL);
     this.creditAt = start;
     const boosted = FINE_BUDGET_MS + Math.max(0, Math.min(CHANGE_BUDGET_MS - FINE_BUDGET_MS, this.credit));
+    const quiet = start - this.actedAt >= ACT_QUIET_MS && performance.now() - PLAYER.actedAt >= ACT_QUIET_MS;
+    // The share the credit is not spent for: FILL_BUDGET_MS in a frame that fills the view.
+    let base = FINE_BUDGET_MS;
     let built = false;
     for (;;) {
       if (!this.group) this.group = this.pickGroup(start, all);
       const g = this.group;
       if (!g) break;
       // Changed land takes a larger share while the credit lasts; a chunk not built yet or water
-      // that flowed too, to be done sooner, when a change waits.
-      const budget = all ? Infinity : g.kind === "change" || this.marked > 0 ? boosted : g.budget;
+      // that flowed too, to be done sooner, when a change waits. Land in view not built yet takes
+      // FILL_BUDGET_MS while the player is not acting.
+      const own = g.fill && quiet ? FILL_BUDGET_MS : g.budget;
+      if (own > base) base = own;
+      const budget = all ? Infinity : g.kind === "change" || this.marked > 0 ? Math.max(boosted, own) : own;
       let done = true;
       jobs: while (g.at < g.jobs.length) {
         const job = g.jobs[g.at];
@@ -1299,7 +1318,7 @@ export class Terrain {
       if (!all && this.clock() - start > budget) break;
     }
     const spent = this.clock() - start;
-    if (!all) this.credit -= Math.max(0, spent - FINE_BUDGET_MS);
+    if (!all) this.credit -= Math.max(0, spent - base);
     this.fineStats.maxFrameMs = Math.max(this.fineStats.maxFrameMs, spent);
     // A chunk built in this frame is shown in it.
     this.syncShown();
@@ -1332,15 +1351,22 @@ export class Terrain {
     return this.frustum.intersectsBox(SEEN_BOX);
   }
 
-  // The next group to build: the changed chunks the camera sees (all changed chunks when it sees
-  // none), else the nearest chunk not built yet, else the chunk whose water flowed longest ago.
+  // The next group to build (23 November, the owner: "chunk loading is very slow"): a chunk not
+  // built yet that the camera sees, nearest first; else the changed chunks it sees; else a chunk
+  // not built yet that it does not see; else the changed chunks it does not see; else the chunk
+  // whose water flowed longest ago. Changed land went first before, and the island's own life
+  // changes land somewhere every few ticks, so the land in view waited behind land no one saw. A
+  // change in view still goes before land out of view: a spell cast while the far side fills shows
+  // at once.
   private pickGroup(now: number, all: boolean): FineGroup | null {
     const n = this.chunks.length;
     const changed: number[] = [];
     for (let c = 0; c < n; c++)
       if (this.fineStale[c] === 1 && !this.fineBusy[c] && this.fine[c] !== undefined && this.fineLevel[c] === this.wantLevel(c)) changed.push(c);
-    if (changed.length) {
-      const seen = changed.filter((c) => this.seen(c));
+    const missing = this.pickMissing(now, all);
+    if (missing?.seen) return this.newGroup(missing.c, false, true);
+    const seen = changed.filter((c) => this.seen(c));
+    if (changed.length && (seen.length || !missing || missing.flow)) {
       const take = this.touching(seen.length ? seen : changed);
       // The change's middle: of the changed parts, by their size.
       let mx = 0;
@@ -1364,7 +1390,7 @@ export class Terrain {
       const key = new Map(take.map((c) => [c, near(c)]));
       take.sort((a, b) => key.get(a)! - key.get(b)! || a - b);
       this.marked = 0;
-      const g: FineGroup = { kind: "change", jobs: [], at: 0, done: [], tiles: 0, budget: FINE_BUDGET_MS, firstFrame: Infinity };
+      const g: FineGroup = { kind: "change", jobs: [], at: 0, done: [], tiles: 0, budget: FINE_BUDGET_MS, fill: false, firstFrame: Infinity };
       for (const c of take) {
         const b = c * 4;
         const box = this.fineBox;
@@ -1380,35 +1406,38 @@ export class Terrain {
       }
       return g;
     }
+    return missing ? this.newGroup(missing.c, missing.flow, false) : null;
+  }
+
+  // The chunk to build next apart from changed land: missing or at the wrong level first, those the
+  // camera sees before those it does not, nearest first (their whole cells drawn meanwhile); then
+  // water that flowed, each at most once in FLOW_STALE_MS, one that flowed long ago before a nearer
+  // one (STALE_AGE), so none waits for ever. `seen`: a missing chunk the camera sees.
+  private pickMissing(now: number, all: boolean): { c: number; seen: boolean; flow: boolean } | null {
     let best = -1;
     let bestRank = Infinity;
     let flow = false;
-    for (let c = 0; c < n; c++) {
+    for (let c = 0; c < this.chunks.length; c++) {
       if (this.fineBusy[c]) continue;
       const want = this.wantLevel(c);
       if (want === 0) continue;
+      const missing = this.fine[c] === undefined || this.fineLevel[c] !== want;
+      if (missing ? this.dirtyLand.has(c) : this.fineStale[c] !== 2 || !(all || now - this.fineBuiltAt[c] > FLOW_STALE_MS)) continue;
       const d = this.chunkDistance(c);
-      const stale = this.fineStale[c];
-      // Missing or at the wrong level first, nearest first (its whole cells drawn first); then water
-      // that flowed, each at most once in FLOW_STALE_MS, one that flowed long ago before a nearer one
-      // (STALE_AGE), so none waits for ever.
-      const rank =
-        this.fine[c] === undefined || this.fineLevel[c] !== want
-          ? this.dirtyLand.has(c)
-            ? Infinity
-            : d
-          : stale === 2 && (all || now - this.fineBuiltAt[c] > FLOW_STALE_MS)
-            ? d + 1000 - Math.min(STALE_AGE_MAX, (now - this.staleAt[c]) / 1000) * STALE_AGE
-            : Infinity;
+      const rank = missing ? (this.seen(c) ? 0 : UNSEEN_RANK) + d : 2 * UNSEEN_RANK + d - Math.min(STALE_AGE_MAX, (now - this.staleAt[c]) / 1000) * STALE_AGE;
       if (rank < bestRank) {
         best = c;
         bestRank = rank;
-        flow = this.fine[c] !== undefined && this.fineLevel[c] === want;
+        flow = !missing;
       }
     }
-    if (best < 0) return null;
-    const job = this.takeChunk(best, this.wantLevel(best), null);
-    return { kind: flow ? "flow" : "new", jobs: [job], at: 0, done: [], tiles: 0, budget: flow ? FINE_AGAIN_MS : FINE_BUDGET_MS, firstFrame: Infinity };
+    return best < 0 ? null : { c: best, seen: !flow && bestRank < UNSEEN_RANK, flow };
+  }
+
+  // A group of one chunk not built yet (`fill`: one the camera sees), or one whose water flowed.
+  private newGroup(c: number, flow: boolean, fill: boolean): FineGroup {
+    const job = this.takeChunk(c, this.wantLevel(c), null);
+    return { kind: flow ? "flow" : "new", jobs: [job], at: 0, done: [], tiles: 0, budget: flow ? FINE_AGAIN_MS : FINE_BUDGET_MS, fill, firstFrame: Infinity };
   }
 
   // Of the changed chunks, those that touch one another (side or corner) as one group: chunks that
@@ -2359,6 +2388,17 @@ export const LOD_PX = 0;
 // Every face, as one run.
 const FACES_ALL = Infinity;
 const FINE_BUDGET_MS = 4;
+// While land the camera sees is not built yet, a frame's share is larger (23 November, the owner:
+// "chunk loading is very slow"; a medium island took about a minute to fill on a phone). A touch
+// screen draws 30 frames a second, 33 ms each. With the land in view first, 10 ms a frame filled
+// the view of a medium island in 528 frames instead of 2893 (CPU slowed four times, PR notes).
+// Some frames of the fill run long; once the view is full the share is FINE_BUDGET_MS again. The
+// player acting (a drag, a pinch, a cast, the stick) keeps FINE_BUDGET_MS for ACT_QUIET_MS after
+// the last touch (playerActed).
+export const FILL_BUDGET_MS = 10;
+export const ACT_QUIET_MS = 1000;
+// What a chunk the camera does not see counts as, past any distance (Terrain.pickMissing).
+const UNSEEN_RANK = 1e6;
 const FINE_AGAIN_MS = 1.5;
 const FINE_TOP = 6;
 // The fine land's faces by the way they face, in the order of its index buffer (quadGeometry):
@@ -2507,6 +2547,8 @@ interface FineGroup {
   done: FineDone[];
   tiles: number;
   budget: number;
+  // A chunk the camera sees, not built yet: built with FILL_BUDGET_MS while the player is not acting.
+  fill: boolean;
   firstFrame: number;
 }
 
