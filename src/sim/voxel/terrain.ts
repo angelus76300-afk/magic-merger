@@ -2389,9 +2389,11 @@ const FACES_ALL = Infinity;
 const FINE_BUDGET_MS = 4;
 // While land the camera sees is not built yet, a frame's share is larger (23 November, the owner:
 // "chunk loading is very slow"; a medium island took about a minute to fill on a phone). A touch
-// screen draws 30 frames a second, 33 ms each, and the rest of a frame left most of them idle; 10
-// ms more fills the view in about a third of the time. The player acting (a drag, a pinch, a cast,
-// the stick) keeps FINE_BUDGET_MS, for ACT_QUIET_MS after the last touch (Terrain.acted).
+// screen draws 30 frames a second, 33 ms each. With the land in view first, 10 ms a frame filled
+// the view of a medium island in 528 frames instead of 2893 (CPU slowed four times, PR notes).
+// Some frames of the fill run long; once the view is full the share is FINE_BUDGET_MS again. The
+// player acting (a drag, a pinch, a cast, the stick) keeps FINE_BUDGET_MS for ACT_QUIET_MS after
+// the last touch (playerActed).
 export const FILL_BUDGET_MS = 10;
 export const ACT_QUIET_MS = 1000;
 // What a chunk the camera does not see counts as, past any distance (Terrain.pickMissing).
