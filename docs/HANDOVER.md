@@ -4,7 +4,7 @@ So the project can stop and restart from fresh sessions with nothing lost. Two p
 
 ## The lead session's part (from 11 November 2026, 13:00 UTC)
 
-An experiment the owner asked for: one session leads and builds, instead of a planner starting builders and reviewers. The lead is "Magic Merger lead session" (session_01NxvtApgb2CBkVZn1xvQR2w). The owner talks to it directly. It builds updates, not fixes: something seen within thirty seconds of opening the game, shipped whole under a name. One fresh Sonnet reviewer per pull request, one round unless it finds something real. The planner and its night run stay paused meanwhile.
+An experiment the owner asked for: one session leads and builds, instead of a planner starting builders and reviewers. The lead is "Magic Merger lead session" (session_01NxvtAnVeeSftkua711EPa8 since 13 November; the first one, session_01NxvtApgb2CBkVZn1xvQR2w, is archived). The owner talks to it directly. It builds updates, not fixes: something seen within thirty seconds of opening the game, shipped whole under a name. One fresh Sonnet reviewer per pull request, one round unless it finds something real. The planner and its night run stay paused meanwhile.
 
 ### The order, and why
 
