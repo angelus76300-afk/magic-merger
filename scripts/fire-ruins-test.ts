@@ -10,11 +10,14 @@
 //      average (main: 4 to 5);
 //   4. a house burned by day stays rubble until dawn, its family sleeps lying down beside it and
 //      keeps its home, the others sleep in their houses, nobody asleep standing; from dawn it is
-//      rebuilt; a ruin saved and loaded at night still waits for the dawn.
+//      rebuilt; a ruin saved and loaded at night still waits for the dawn;
+//   5. its family keeps its own ruin with a neighbour's house nearer its home point;
+//   6. once its house is rebuilt, each family is back in it (main: 4 of 20 on two islands);
+//   7. a ruin nobody rebuilds is given up a day after its dawn, so no family is homeless for good.
 // The measurement of the pull request (ten islands, before and after) is scripts/fire-run.ts.
 import { populate, resetCreatureIds, type Creature } from "../src/sim/creatures";
 import { daylight } from "../src/sim/daylight";
-import { homeRuin, houseOf, ruinStands, tileHouses } from "../src/sim/homes";
+import { homeRuin, houseBlock, houseOf, ruinStands, tileHouses } from "../src/sim/homes";
 import { DEFAULT_LAND, resolveLand, type LandOptions } from "../src/sim/land-options";
 import { C, G } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
@@ -297,4 +300,85 @@ export function fireRuinsChecks(check: Check): void {
       );
     }
   }
+  // 6. Back in its own house once it is rebuilt (review of b1133dc: from dawn until the builders
+  // finished, a family took a neighbour's house for its own and kept it; 17 of 42 were back home).
+  {
+    const r = ownHouseAfterRebuild([8, 11], 3);
+    check(
+      "ruins: once its burned house is rebuilt, each family is back in its own house",
+      r.total >= 16 && r.own >= r.total * 0.9,
+      `${r.own} of ${r.total} in their own house; ${r.rows.join(", ")}`,
+    );
+  }
+  // 7. A ruin nobody rebuilds (no wood, no builders) is kept through the day after the dawn it may
+  // be rebuilt from, and given up at the next dawn: the family is not left homeless for good.
+  {
+    const { world, rt } = fresh(4, 112, island("small-meadow").land);
+    run(world, rt, 120);
+    const home = villagers(world).find((c) => c.mind && homeRuin(world, c) < 0 && houseOf(world, c) >= 0)!;
+    const house = houseOf(world, home);
+    const block = houseBlock(world, house);
+    for (const j of block) world.setCover(j, C.RUBBLE);
+    const keptFor = (fell: number) => {
+      for (const j of block) world.ruinedAt.set(j, fell);
+      home.data.house = house;
+      home.data.houseFor = home.homeX + home.homeY * 1e4;
+      return houseOf(world, home) === -1 && homeRuin(world, home) === house;
+    };
+    // Fell the night before (dawn 306 s): the next evening, 600 s, it is still kept.
+    const at = world.time;
+    world.time = 600;
+    const lastNight = keptFor(250);
+    // Fell two nights before: at 700 s, past the second dawn (666 s), given up.
+    world.time = 700;
+    const twoNights = keptFor(250);
+    world.time = at;
+    check(
+      "ruins: a ruin nobody rebuilds is kept a whole day after its dawn, then given up",
+      lastNight && !twoNights,
+      `${lastNight ? "kept" : "given up"} the evening after, ${twoNights ? "still kept" : "given up"} after the second dawn`,
+    );
+  }
+}
+
+// Houses burned by day on islands of these seeds, the nearest `burn` to the village's centre that
+// someone lives in: of the villagers whose house was rebuilt by the next evening (home not moved),
+// how many have it for their house again.
+export function ownHouseAfterRebuild(seeds: number[], burn: number): { own: number; total: number; rows: string[] } {
+  let own = 0;
+  let total = 0;
+  const rows: string[] = [];
+  for (const seed of seeds) {
+    const { world, rt } = fresh(seed, 112, island("small-meadow").land);
+    run(world, rt, 120);
+    const top = tileHouses(world);
+    const before = new Map<Creature, number>();
+    for (const c of villagers(world)) {
+      const h = houseOf(world, c);
+      if (h >= 0 && top[h] >= 0) before.set(c, top[h]);
+    }
+    const s = world.settlements[0];
+    const far = (b: number) => Math.hypot((b % world.w) - s.x, Math.floor(b / world.w) - s.y);
+    const burned = [...new Set(before.values())].sort((a, b) => far(a) - far(b)).slice(0, burn);
+    const cellsOf = (b: number) => [b, b + 1, b + world.w, b + world.w + 1];
+    for (const b of burned) for (const j of cellsOf(b)) world.setCover(j, C.RUBBLE);
+    const homes = new Map([...before.keys()].map((c) => [c, c.homeX + c.homeY * 1e4]));
+    // Past the dawn (306 s) and the rebuild, before the next night (605 s).
+    run(world, rt, 580 - world.time);
+    let n = 0;
+    let ok = 0;
+    for (const [c, b] of before) {
+      if (!burned.includes(b) || c.dead || homes.get(c) !== c.homeX + c.homeY * 1e4) continue;
+      if (!cellsOf(b).every((j) => world.cover[j] === C.HOUSE)) continue;
+      n++;
+      if (cellsOf(b).includes(houseOf(world, c))) ok++;
+    }
+    own += ok;
+    total += n;
+    const fam = [...before.values()].filter((b) => burned.includes(b)).length;
+    const up = burned.filter((b) => cellsOf(b).every((j) => world.cover[j] === C.HOUSE)).length;
+    const moved = [...before.keys()].filter((c) => burned.includes(before.get(c)!) && homes.get(c) !== c.homeX + c.homeY * 1e4).length;
+    rows.push(`seed ${seed}: ${ok} of ${n} (${fam} burned out, ${up} of ${burned.length} rebuilt, ${moved} moved)`);
+  }
+  return { own, total, rows };
 }
