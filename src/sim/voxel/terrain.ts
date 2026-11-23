@@ -91,10 +91,11 @@ interface ChunkMeshes {
 // redraw, and the longest run of frames with land left to redraw.
 export const LAND_REDRAW = { burst: true, maxLag: 0, lastLag: 0 };
 // When the player last acted on the page (a touch, a key, a cast), performance.now() ms: set by the
-// engine (playerActed), read by every terrain (Terrain.updateFine, FILL_BUDGET_MS).
+// engine (playerActed), read by every terrain (Terrain.updateFine, FILL_BUDGET_MS). `at`: the checks
+// set it back (-Infinity) when they are done.
 const PLAYER = { actedAt: -Infinity };
-export function playerActed(): void {
-  PLAYER.actedAt = performance.now();
+export function playerActed(at = performance.now()): void {
+  PLAYER.actedAt = at;
 }
 // Chunks changed at once from which the land is redrawn whole in one frame (rebuild).
 const BURST_CHUNKS = 10;

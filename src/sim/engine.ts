@@ -310,16 +310,22 @@ export class Engine {
     // Any touch, press, drag or key anywhere on the page (the view, the stick, the cast button, the
     // menus) is the player acting: the land not built yet keeps its small share of the frames while
     // they do (terrain.ts FILL_BUDGET_MS), and while a finger stays down (the stick held still
-    // walks on: frame). A mouse moved with no button held is not.
+    // walks on: frame). A finger scrolling a list natively (the spell bar) counts too: the browser
+    // cancels its pointer and sends scroll and touchmove instead. A mouse moved with no button held
+    // is not, and it lets go of a press released outside the window, as leaving the page does.
     const acted = (e: Event) => {
-      if (e.type === "pointermove" && (e as PointerEvent).buttons === 0) return;
+      if (e.type === "pointermove" && (e as PointerEvent).buttons === 0) {
+        this.held.delete((e as PointerEvent).pointerId);
+        return;
+      }
       if (e.type === "pointerdown") this.held.add((e as PointerEvent).pointerId);
       playerActed();
     };
     const lifted = (e: PointerEvent) => this.held.delete(e.pointerId);
-    for (const type of ["pointerdown", "pointermove", "wheel", "keydown"])
-      window.addEventListener(type, acted, { capture: true, passive: true, signal: abort.signal });
-    for (const type of ["pointerup", "pointercancel"] as const) window.addEventListener(type, lifted, { capture: true, passive: true, signal: abort.signal });
+    const live = { capture: true, passive: true, signal: abort.signal };
+    for (const type of ["pointerdown", "pointermove", "wheel", "keydown", "scroll", "touchmove"]) window.addEventListener(type, acted, live);
+    for (const type of ["pointerup", "pointercancel"] as const) window.addEventListener(type, lifted, live);
+    window.addEventListener("blur", () => this.held.clear(), live);
     c.addEventListener(
       "pointerdown",
       (e) => {

@@ -8,7 +8,7 @@
 import { Frustum, MeshBasicMaterial, Plane, Vector3, type Mesh } from "three";
 import { generateWorld, type World } from "../src/sim/world";
 import { GRAPHICS } from "../src/sim/voxel/graphics";
-import { ACT_QUIET_MS, CHUNK, FILL_BUDGET_MS, Terrain } from "../src/sim/voxel/terrain";
+import { ACT_QUIET_MS, CHUNK, FILL_BUDGET_MS, Terrain, playerActed } from "../src/sim/voxel/terrain";
 import { LOOK_ISLANDS } from "./terrain-looks-test";
 import { crater } from "./land-lag-test";
 
@@ -169,6 +169,18 @@ export function chunkFillChecks(check: Check): void {
     const acting = e.frame().spent;
     e.wait(ACT_QUIET_MS);
     const again = e.frame().spent;
+    // The game's own path: the engine tells playerActed (by the machine's time, not the island's
+    // clock). The island's clock is past ACT_QUIET_MS since any acted(), so only the hook can keep
+    // the next frame at 4 ms.
+    let hooked = 0;
+    try {
+      playerActed();
+      e.wait(ACT_QUIET_MS);
+      hooked = e.frame().spent;
+    } finally {
+      playerActed(-Infinity);
+    }
+    const released = e.frame().spent;
     play(e, () => e.inside.fine[0] !== undefined && e.inside.fine[1] !== undefined);
     const after: number[] = [];
     for (let k = 0; k < 10; k++) after.push(e.frame().spent);
@@ -182,6 +194,11 @@ export function chunkFillChecks(check: Check): void {
         full <= 6 &&
         e.inside.fine.some((m) => m === undefined),
       `filling ${filling.toFixed(1)} ms, acting ${acting.toFixed(1)}, quiet again ${again.toFixed(1)}, view full ${full.toFixed(1)}`,
+    );
+    check(
+      "the engine's hook (playerActed) keeps a filling frame at about 4 ms, and the 10 ms come back once it is quiet",
+      hooked > 0 && hooked <= 6 && released >= FILL_BUDGET_MS - 1,
+      `after playerActed ${hooked.toFixed(1)} ms, after it is set back ${released.toFixed(1)} ms`,
     );
   });
 }
