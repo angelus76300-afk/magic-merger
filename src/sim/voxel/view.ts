@@ -1143,7 +1143,8 @@ export class VoxelView {
         const y = Math.floor(i / world.w);
         const h = cellHash(i);
         let base = columnTop(world, i);
-        if (key === "lily") base = surfaceY(world, i) + 0.01;
+        // On the water as drawn (in eighths, a little under the shore: Terrain.fineWaterLevel).
+        if (key === "lily") base = this.terrain.fineWaterLevel(i) + 0.01;
         else if (key === "dock") base = Math.max(base, surfaceY(world, i)) - 0.24;
         else if (key === "bridge-x" || key === "bridge-z") base = world.walkLevel(i) * V - 0.3;
         const p = this.toScene(x + 0.5, y + 0.5, base);
@@ -1347,7 +1348,7 @@ export class VoxelView {
         if (glow < 0.35) continue;
         const x = i % world.w;
         const y = Math.floor(i / world.w);
-        const p = this.toScene(x + 0.2 + ((h >> 4) % 6) / 10, y + 0.2 + ((h >> 8) % 6) / 10, surfaceY(world, i) + 0.02);
+        const p = this.toScene(x + 0.2 + ((h >> 4) % 6) / 10, y + 0.2 + ((h >> 8) % 6) / 10, this.terrain.fineWaterLevel(i) + 0.02);
         const s = 0.12 + glow * 0.16;
         this.m.makeScale(s, 0.4, s);
         this.m.setPosition(p.x, p.y, p.z);

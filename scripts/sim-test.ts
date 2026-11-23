@@ -125,6 +125,7 @@ import { landLagChecks } from "./land-lag-test";
 import { chunkFillChecks } from "./chunk-fill-test";
 import { farLandChecks } from "./far-land-test";
 import { waterLeftoversChecks } from "./water-leftovers-test";
+import { shoreRimChecks } from "./shore-rim-test";
 import { waterLightChecks } from "./water-light-test";
 import { lavaChecks } from "./lava-test";
 import { movementChecks } from "./movement-test";
@@ -2629,6 +2630,8 @@ waterLightChecks(check);
 lakeWeedChecks(check);
 // Water leftovers (20 November): beds under thin ice, feet at a dry shore, the rim's side: scripts/water-leftovers-test.ts.
 waterLeftoversChecks(check);
+// Shores without a rim, the water a little under the land (23 November): scripts/shore-rim-test.ts.
+shoreRimChecks(check);
 // Lava's crust and cracks (18 November): scripts/lava-test.ts.
 lavaChecks(check);
 

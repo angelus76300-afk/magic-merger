@@ -533,7 +533,10 @@ export function isBed(f: FineCells, c: number): boolean {
 // on one side, natural ground (not a house) on the other at most SHORE_LOW above it; a cliff into
 // the water keeps its wall at the cell's edge. Every cell's middle keeps its own side, so a cell
 // under water still has its water, and the land over a water cell is always beside a dry cell.
-const SHORE_LOW = 1;
+// A quarter more since the water in eighths lies lower (23 November, Terrain.fineWaterLevel: a
+// quarter lower by the sea than lifted over its rounded tops), so a bank a voxel over the sea still
+// curves into it: kept as a cliff, it drew a wall of soil along the shore.
+const SHORE_LOW = 1 + 0.25;
 // How far under a water cell's surface (scene units) the nearest dry neighbour's own height may lie
 // and still be its shore: a beach's sand lies a little under the water drawn over it.
 const RAW_UNDER = 0.3;
@@ -627,10 +630,12 @@ export function shoreLine(f: FineCells, c: number, cx: number, cy: number, px: n
     return SHORE_FLOOD;
   }
   // The dry side: down to the water's edge near the line, and never under the water there (it drew
-  // the water's side as a dark line along the shore).
+  // the water's side as a dark line along the shore), nor under the highest water beside it (by a
+  // river's mouth, where two levels meet at a corner, a column of the higher one's shore stood alone).
   const k = Math.min(1, (0.5 - w) / SHORE_RAMP);
-  if (k >= 1 || hgt < edge - sub) return SHORE_NONE;
-  SHORE_H = hgt > edge ? edge + Math.round((hgt - edge) * k) : edge;
+  const top = Math.max(edge, Math.ceil(hi * sub));
+  if (k >= 1 || hgt < top - sub) return SHORE_NONE;
+  SHORE_H = hgt > top ? top + Math.round((hgt - top) * k) : top;
   return SHORE_RAISE;
 }
 
@@ -1459,6 +1464,11 @@ const PTS: number[] = [];
 let CORNER = new Float32Array(0);
 // The same for a dry cell by water (NaN elsewhere): the surface of the water over its shore's columns.
 let DRY = new Float32Array(0);
+// The water in eighths by low land (Terrain.fineWaterLevel, 23 November): how far under the top of
+// the land beside it the water is drawn, and how far under the water's level that land may lie and
+// still lower it (more, a river falling off a plateau past its banks, keeps its own level).
+export const SHORE_UNDER = 3 / 16;
+export const SHORE_DIP = 0.8;
 function cornerLevel(f: FineCells, gx: number, gy: number, own: number): number {
   let lo = Infinity;
   let hi = -Infinity;
@@ -1479,13 +1489,28 @@ function cornerLevel(f: FineCells, gx: number, gy: number, own: number): number 
     n++;
   }
   // Cells far apart (a fall) keep their own levels at the corner; nearer, the water slopes.
-  return n && hi - lo <= (iced ? ICE_JOIN : LEVEL_JOIN) ? sum / n : own;
+  let level = n && hi - lo <= (iced ? ICE_JOIN : LEVEL_JOIN) ? sum / n : own;
+  // Never over the low natural land at the corner (Terrain.fineWaterLevel holds each cell's level
+  // under the land round it; a corner shared with water of a higher level, not so held, rose over it).
+  const at = level;
+  for (let k = 0; k < 4; k++) {
+    const x = gx - 1 + (k & 1);
+    const y = gy - 1 + (k >> 1);
+    if (x < f.x0 - 3 || y < f.y0 - 3 || x >= f.x1 + 3 || y >= f.y1 + 3) continue;
+    const c = fineAt(f, x, y);
+    if (!f.inside[c] || f.wet[c] || f.flat[c] || !f.natural[c]) continue;
+    const t = f.top[c] - SHORE_UNDER;
+    if (t < level && f.top[c] >= at - SHORE_DIP) level = t;
+  }
+  return level;
 }
 // The surface fineWater draws over column (lx, ly) of water cell c (cx, cy): its corners' levels
 // (cornerLevel, kept as fineWater keeps them, in 32 bits) eased across the cell. Lower than the
 // cell's own level where it slopes toward lower water or ice round it. BED_UNDER: how far under it
 // a bed stays at least, past fineWater's own margin (a column within 0.001 of the surface has none).
-const BED_UNDER = 0.002;
+// 0.01 since the water slopes more by the shore (23 November, Terrain.fineWaterLevel): a column's
+// surface is two flat triangles, which dip a few thousandths under its corners' blend.
+const BED_UNDER = 0.01;
 // The cell whose corners LEVEL_C holds, -1 at each tile's start (the cells are read again between).
 let LEVEL_CELL = -1;
 const LEVEL_C = [0, 0, 0, 0];

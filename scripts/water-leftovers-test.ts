@@ -193,7 +193,10 @@ function feetUnder(b: Built, water: Float32Array): { columns: number; under: num
 }
 
 // 3: the water's upright triangles a cell or more tall: how many, their least opacity and their
-// lightest colour (luma, 0 to 1, of the colour drawn).
+// lightest colour (luma, 0 to 1, of the colour drawn). TALL: three quarters of a cell since the water
+// in eighths is drawn at its own level (23 November, Terrain.fineWaterLevel), under the lifted one
+// the rim's sides were measured on; the rim's sides now stand 0.8 to 1 tall.
+const TALL = 0.75;
 function tallSides(b: Built): { n: number; alpha: number; luma: number } {
   let n = 0;
   let alpha = Infinity;
@@ -210,7 +213,7 @@ function tallSides(b: Built): { n: number; alpha: number; luma: number } {
       const ys = vs.map((v) => p.getY(v));
       const zs = vs.map((v) => p.getZ(v));
       const flat = Math.max(...xs) - Math.min(...xs) > 1e-6 && Math.max(...zs) - Math.min(...zs) > 1e-6;
-      if (flat || Math.max(...ys) - Math.min(...ys) < 1) continue;
+      if (flat || Math.max(...ys) - Math.min(...ys) < TALL) continue;
       n++;
       for (const v of vs) {
         alpha = Math.min(alpha, c.itemSize > 3 ? c.getW(v) : 1);
@@ -249,6 +252,6 @@ export function waterLeftoversChecks(check: Check): void {
     check(
       "water leftovers: the water's tall sides (the island's rim) are nearly opaque and no lighter than the water's own blue",
       sides.n > 50 && sides.alpha >= 0.8 && sides.luma < 0.45,
-      `${sides.n} sides a cell or more tall, least opacity ${sides.alpha.toFixed(2)}, lightest luma ${sides.luma.toFixed(3)}`,
+      `${sides.n} sides three quarters of a cell or more tall, least opacity ${sides.alpha.toFixed(2)}, lightest luma ${sides.luma.toFixed(3)}`,
     );
 }
