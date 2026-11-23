@@ -393,7 +393,7 @@ export const BLEND_ISLANDS: { name: string; seed: number; land: LandOptions; gro
 // dirt road were drawn as ground, following the slopes (scripts/roads-ground-test.ts; eedf16d8 before).
 // And again on 23 November, when the water in eighths was drawn under the low land beside it and the
 // shore's rim went (scripts/shore-rim-test.ts; ab52e4ef before).
-const ONE_LAND = { cells: 152, seed: 7, hash: "1f25d402" };
+const ONE_LAND = { cells: 152, seed: 7, hash: "d5501afb" };
 
 // An island at noon (the fine land bakes a glow round lava and lit houses at night).
 function island(cells: number, seed: number, land: LandOptions): World {
