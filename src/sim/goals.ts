@@ -752,9 +752,9 @@ function urgent(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
 // A place it walked to and could not reach (cut off by water, a fallen wall): not tried again
 // for a while, so the next thought goes elsewhere.
 // Standing in a river or a pond, where no way is found from, it wades to the nearest bank first;
-// cut off over and over (a patch of land between rivers), it settles where it is and lives off the
-// land round it (22 November: villagers stranded between rivers starved, trying home again and
-// again from the same spot).
+// cut off (a patch of land between rivers), it lives off what grows round it until a way opens
+// (forage), keeping its home (22 November: villagers stranded between rivers starved, trying home
+// again and again from the same spot).
 // True when it went in at its door after all (the task goes on, standing still).
 function unreached(world: World, c: Creature, m: Mind, x: number, y: number): boolean {
   if (c.kind !== "villager" || (m.task !== "eat" && m.task !== "carry" && m.task !== "rest")) return false;
@@ -781,15 +781,6 @@ function unreached(world: World, c: Creature, m: Mind, x: number, y: number): bo
   if (world.depth[here] > 0.05) {
     const bank = findCell(world, c.x, c.y, 6, 40, (j) => world.depth[j] === 0 && standable(world, j));
     if (bank >= 0) life.free(c, (bank % world.w) + 0.5, Math.floor(bank / world.w) + 0.5);
-  }
-  const lost = ((c.data.lost as number | undefined) ?? 0) + 1;
-  c.data.lost = lost;
-  if (lost >= 4 && Math.hypot(c.x - c.homeX, c.y - c.homeY) > 8) {
-    c.data.lost = 0;
-    c.homeX = c.x;
-    c.homeY = c.y;
-    c.data.house = undefined;
-    deed(c, "settled where they were, cut off from home");
   }
   return false;
 }
@@ -2085,8 +2076,6 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
   const v = c.kind === "villager" ? villageOf(world, c.homeX, c.homeY) : null;
   const task = m.task;
   if (meter) meter.done(c, task);
-  // Got where it was going: not lost (unreached, below).
-  if (c.data.lost) c.data.lost = 0;
   drop(m);
   switch (task) {
     case "use": {
