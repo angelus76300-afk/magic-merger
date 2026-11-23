@@ -1521,8 +1521,9 @@ function trade(world: World, c: Creature, m: Mind, v: Village): void {
 function forage(world: World, c: Creature, m: Mind, child = false): boolean {
   const test = (j: number) => (world.cover[j] === C.BUSH || world.cover[j] === C.BERRIES || (child && world.cover[j] === C.FLOWER)) && world.fire[j] < 0.1;
   let i = findCell(world, c.homeX, c.homeY, 16, 18, test);
-  // Away from home and hungry (cut off, or home in water): what grows round it.
-  if (i < 0 && m.meal && Math.hypot(c.x - c.homeX, c.y - c.homeY) > 6) i = findCell(world, c.x, c.y, 12, 18, test);
+  // Hungry and cut off from home (unreached): what grows round it. Not otherwise, so the wild bushes
+  // away from the villages are left to the animals (nature.ts).
+  if (i < 0 && m.meal && Math.hypot(c.x - c.homeX, c.y - c.homeY) > 6 && isUnreached(world, c, c.homeX, c.homeY)) i = findCell(world, c.x, c.y, 12, 18, test);
   if (i < 0) return false;
   cellTask(world, m, "forage", i);
   m.action = child ? "picking berries and flowers" : "picking berries";

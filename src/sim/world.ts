@@ -506,35 +506,50 @@ function placeVillages(world: World, rng: Rng, top: number): void {
 
 // Below a spring's water (22 November: the meadow island's village was laid out a few cells from a
 // river's head, its houses a hand lower than the spring's level, and stood in water within the
-// first minutes; its people starved going home to eat). A cell is under a spring when a spring of
-// water within SPRING_REACH cells keeps its level above the cell's height plus SPRING_MARGIN, and
-// the cell either lies below that level or in a hollow that holds water (drainage: no way down
-// for the water). A cell above the level and draining is safe.
+// first minutes; its people starved going home to eat). From each source of water (a river's head,
+// a lake's spring), the dry cells its water reaches at its level: those SPRING_BELOW or more under
+// the level, joined to the source through such cells, within SPRING_REACH of it (the meadow's houses
+// stood 0.9 to 1.2 under theirs; a village a hand under a spring 18 cells off stays dry). A cell
+// behind higher ground (a rim, a bank) drains and is safe, however low it lies.
 const SPRING_REACH = 10;
-const SPRING_MARGIN = 0.6;
-const HOLLOW = 0.2;
+const SPRING_BELOW = 0.25;
 function underSprings(world: World): Uint8Array {
   const { w, n } = world;
-  const level = new Float32Array(n).fill(-Infinity);
-  const r = SPRING_REACH;
-  for (const s of world.springs) {
-    if (s.lava) continue;
+  const out = new Uint8Array(n);
+  const seen = new Int32Array(n).fill(-1);
+  const r2 = SPRING_REACH * SPRING_REACH;
+  world.springs.forEach((s, k) => {
+    // The cells along a river's bed are fed a little too (rate 0.08, land.ts), to keep the river
+    // full, not to raise it: not sources.
+    if (s.lava || (s.rate !== undefined && s.rate < 1)) return;
     const sx = s.i % w;
     const sy = (s.i / w) | 0;
-    for (let dy = -r; dy <= r; dy++)
-      for (let dx = -r; dx <= r; dx++) {
-        if (dx * dx + dy * dy > r * r || !world.inside(sx + dx, sy + dy)) continue;
-        const j = (sy + dy) * w + sx + dx;
-        if (s.level > level[j]) level[j] = s.level;
+    const top = s.level - SPRING_BELOW;
+    const stack = [s.i];
+    seen[s.i] = k;
+    while (stack.length) {
+      const i = stack.pop()!;
+      // Water already (the lake, the river): the village keeps its distance from it anyway
+      // (landScore). Dry land the spring's level would cover is what is under it.
+      if (world.depth[i] === 0) out[i] = 1;
+      const x = i % w;
+      const y = (i / w) | 0;
+      for (const [dx, dy] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ]) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!world.inside(nx, ny) || (nx - sx) ** 2 + (ny - sy) ** 2 > r2) continue;
+        const j = ny * w + nx;
+        if (seen[j] === k || world.height[j] >= top) continue;
+        seen[j] = k;
+        stack.push(j);
       }
-  }
-  const { filled } = drainage(world);
-  const out = new Uint8Array(n);
-  for (let i = 0; i < n; i++) {
-    const hgt = world.height[i];
-    if (hgt >= level[i] + SPRING_MARGIN) continue;
-    if (hgt < level[i] || filled[i] - hgt > HOLLOW) out[i] = 1;
-  }
+    }
+  });
   return out;
 }
 
