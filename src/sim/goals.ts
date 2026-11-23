@@ -53,7 +53,7 @@ import {
 import type { Behavior, Creature, CreatureKind } from "./creatures";
 import type { World } from "./world";
 import { artifactVisit, useArtifact, type Visit } from "./artifacts";
-import { HOME, goIn, homeWet, houseBlock, houseNear, houseOf, sleepable, wetAt } from "./homes";
+import { HOME, goIn, homeRuin, homeWet, houseBlock, houseBurning, houseNear, houseOf, rebuildable, ruinStands, sleepable, wetAt } from "./homes";
 import { meter } from "./motion";
 import { facing, standsUpTo, strikeBack } from "./social";
 
@@ -632,7 +632,7 @@ function stillValid(world: World, c: Creature, m: Mind): boolean {
     case "graze":
       return i < 0 || world.cover[i] !== C.NONE || world.ground[i] === G.GRASS;
     case "repair":
-      return world.cover[i] === C.RUBBLE;
+      return rebuildable(world, i);
     case "rest":
       // Villagers rest the night through; others until they are well.
       return c.kind === "villager" ? daylight(world.time).night > 0.3 || c.hp < life.maxHp(c) * 0.35 : c.hp < life.maxHp(c) * 0.9;
@@ -820,10 +820,23 @@ function harvestToEat(world: World, c: Creature, m: Mind): boolean {
 
 // At night: home to its house, or, with none fit to sleep in (none, burning, flooded, cut off),
 // to a free house of its village, else to lie down by a building of the village.
+// Its house burned or fell this day (homes.ts ruinStands): it lies down beside the ruin, keeping its
+// home there, and moves into no other house; the ruin is rebuilt from dawn.
 function goToBed(world: World, c: Creature, m: Mind): void {
+  const ruin = homeRuin(world, c);
+  if (ruin >= 0) {
+    const s = byRuin(world, c, ruin);
+    setTask(m, "rest", s.x, s.y);
+    c.data.bed = "rough";
+    c.data.bedWords = s.words;
+    m.action = `going to sleep ${s.words}`;
+    return;
+  }
   let house = houseOf(world, c);
+  // Its house on fire: it lies down outside, and keeps its home (the fire may yet go out).
+  const burning = house >= 0 && houseBurning(world, house);
   if (house >= 0 && (!sleepable(world, house) || isUnreached(world, c, c.homeX, c.homeY))) house = -1;
-  if (house < 0 && claimHouse(world, c)) house = houseOf(world, c);
+  if (house < 0 && !burning && claimHouse(world, c)) house = houseOf(world, c);
   if (house >= 0 && sleepable(world, house)) {
     setTask(m, "rest", c.homeX, c.homeY);
     c.data.bed = "home";
@@ -849,6 +862,25 @@ function bedDown(world: World, c: Creature, m: Mind): void {
   }
   c.data.rough = true;
   m.action = `asleep ${(c.data.bedWords as string | undefined) ?? "under the open sky"}`;
+}
+
+// A dry spot beside the ruin of its house, or where its home was.
+function byRuin(world: World, c: Creature, ruin: number): { x: number; y: number; words: string } {
+  const rx = (ruin % world.w) + 0.5;
+  const ry = Math.floor(ruin / world.w) + 0.5;
+  const near = (j: number) => [1, -1, world.w, -world.w].some((d) => j + d >= 0 && j + d < world.n && world.cover[j + d] === C.RUBBLE);
+  const i = findCell(
+    world,
+    rx,
+    ry,
+    3,
+    24,
+    (j) => world.depth[j] === 0 && world.fire[j] < 0.05 && world.cover[j] !== C.RUBBLE && standable(world, j) && near(j),
+  );
+  const words = "by the ruins of their house";
+  if (i >= 0) return { x: (i % world.w) + 0.5, y: Math.floor(i / world.w) + 0.5, words };
+  if (!wetAt(world, pointAt(world, c.homeX, c.homeY))) return { x: c.homeX, y: c.homeY, words };
+  return shelterFor(world, c);
 }
 
 // A dry spot to lie down beside a building of its village (a well, a barn, a house), or where its
@@ -1248,7 +1280,8 @@ export function smithyNear(world: World, x: number, y: number): number {
 }
 
 function build(world: World, c: Creature, m: Mind, v: Village): void {
-  const ruin = findCell(world, v.x, v.y, 14, 20, (i) => world.cover[i] === C.RUBBLE);
+  // Rubble waits for the dawn after it fell (homes.ts ruinStands).
+  const ruin = findCell(world, v.x, v.y, 14, 20, (i) => rebuildable(world, i));
   if (ruin >= 0) return cellTask(world, m, "repair", ruin);
   // 4.9 part 2: a house or building the village began comes first.
   if (world.sites.length && raiseSite(world, m, v)) return;
@@ -2256,7 +2289,7 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       return;
     }
     case "repair":
-      if (world.cover[i] !== C.RUBBLE) return;
+      if (!rebuildable(world, i)) return;
       world.setCover(i, C.HOUSE);
       // 4.4.5 part B: a rebuilt roof shows its patch.
       if (world.settlements.length) world.patched.add(i);
@@ -2810,6 +2843,7 @@ export function tradeFor(world: World, c: Creature, facing: number): Chore | { v
         if (forge >= 0) return chore("forge", "Forge", forge, "Forged tools");
       }
       const ruin = first((j) => world.cover[j] === C.RUBBLE);
+      if (ruin >= 0 && ruinStands(world, ruin)) return { verb: "Repair", missing: "The ruin is rebuilt from dawn" };
       if (ruin >= 0) return chore("repair", "Repair", ruin, "Rebuilt a house");
       if (!v || v.wood < 5) return { verb: "Build", missing: "The village has no wood to build with" };
       const i = cells[1];

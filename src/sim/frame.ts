@@ -266,6 +266,9 @@ let inspectBottom = -1;
 function reportInspect(): void {
   // The story line counts too: a toast never lands on it.
   const line = document.getElementById("story");
+  // A line said while a card is open goes under the card, never over its name (23 November: at
+  // 832 by 1000 a news line covered the name on an open villager card).
+  if (line) line.style.top = card.hidden ? "" : `${card.offsetTop + card.offsetHeight + 8}px`;
   const bottom = Math.max(
     card.hidden ? 0 : Math.ceil(card.getBoundingClientRect().bottom),
     line && !line.hidden && !line.classList.contains("out") ? Math.ceil(line.getBoundingClientRect().bottom) : 0,

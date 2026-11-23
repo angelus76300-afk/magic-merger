@@ -172,6 +172,10 @@ export class World {
   propsVersion = 0;
   islandName: string | null = null;
   readonly patched = new Set<number>();
+  // 23 November (the owner: a burned village is rebuilt "after a night"): when each cell of rubble
+  // fell, by world time (setCover). Not saved: rubble a loaded island finds is counted from then
+  // (homes.ts ruinStands), so it still waits for the next dawn.
+  readonly ruinedAt = new Map<number, number>();
   // 21 November (nature.ts): cells whose plant the player's spell, item or creature put there
   // (saved; null until one is). Never wilted for standing outside its niche. Any other change of
   // the cover clears it.
@@ -248,6 +252,9 @@ export class World {
 
   setCover(i: number, id: number): void {
     if (this.planted) this.planted[i] = 0;
+    if (id === C.RUBBLE) {
+      if (this.cover[i] !== C.RUBBLE) this.ruinedAt.set(i, this.time);
+    } else if (this.ruinedAt.size) this.ruinedAt.delete(i);
     this.cover[i] = id;
     const m = this.materials.get("cover", id);
     this.coverHp[i] = id === C.HOUSE ? 14 : m.fuel;

@@ -1,6 +1,7 @@
 import { C, F } from "./materials";
 import type { Creature } from "./creatures";
 import type { World } from "./world";
+import { DAY_LENGTH, dayOf } from "./daylight";
 
 // Homes (22 November, the owner after letting an island run: "sleeping is them not moving. Its
 // just weird"; then "Inside their house, window lit"). A villager's home is a point by its door
@@ -187,4 +188,50 @@ export function litHouses(world: World): Set<number> {
     for (const j of houseBlock(world, house)) out.add(j);
   }
   return out;
+}
+
+// Ruins (23 November, the owner: a burned village is rebuilt "after a night"). Rubble stands until
+// the dawn after it fell: builders rebuild it from then (goals.ts, creatures.ts), and the family
+// whose house it was sleeps that night lying down beside it. Dawn is when the night lifts under
+// 0.3 (daylight.ts), when sleepers get up; rubble that falls at dawn or later waits for the next.
+const dawnOf = (t: number) => dayOf(t + DAY_LENGTH * 0.05);
+
+// Rubble that may not be rebuilt yet. Rubble with no time (a loaded island: ruinedAt is not saved)
+// is counted from now, so it waits for the next dawn as well.
+export function ruinStands(world: World, i: number): boolean {
+  if (world.cover[i] !== C.RUBBLE) return false;
+  let at = world.ruinedAt.get(i);
+  if (at === undefined) {
+    at = world.time;
+    world.ruinedAt.set(i, at);
+  }
+  return dawnOf(world.time) === dawnOf(at);
+}
+
+// Rubble the builders may rebuild now.
+export function rebuildable(world: World, i: number): boolean {
+  return world.cover[i] === C.RUBBLE && !ruinStands(world, i);
+}
+
+// The rubble of a villager's house: rubble within HOME.reach of its home point, nearer than any
+// house cell; -1 when its house stands (or it had none).
+export function homeRuin(world: World, c: Creature): number {
+  let best = -1;
+  let bestD: number = HOME.reach;
+  let house: number = HOME.reach;
+  const r = Math.ceil(HOME.reach);
+  const cx = Math.floor(c.homeX);
+  const cy = Math.floor(c.homeY);
+  for (let yy = cy - r; yy <= cy + r; yy++)
+    for (let xx = cx - r; xx <= cx + r; xx++) {
+      if (!world.inside(xx, yy)) continue;
+      const i = yy * world.w + xx;
+      const d = dist(world, i, c.homeX, c.homeY);
+      if (world.cover[i] === C.HOUSE) house = Math.min(house, d);
+      else if (world.cover[i] === C.RUBBLE && d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+  return best >= 0 && bestD < house ? best : -1;
 }

@@ -255,6 +255,11 @@ function react(world: World, i: number, j: number): void {
   }
 }
 
+// How easily a building catches from a fire of only the ground beside it (stepFire).
+export const LOW_TO_WALL = 0.2;
+// How readily a fire of only the ground spreads, by that ground's flammability (grass 0.1: 0.3).
+export const LOW_CREEP = 3;
+
 function stepFire(world: World, dt: number): void {
   const { w, h, fire, cover, coverHp, materials, rng, wind } = world;
   for (let i = 0; i < world.n; i++) {
@@ -288,6 +293,8 @@ function stepFire(world: World, dt: number): void {
     const coverMat = materials.get("cover", cover[i]);
     const groundMat = materials.get("ground", world.ground[i]);
     let burning = false;
+    // Only its ground burns (grass, a field's stubble): a low fire.
+    let low = false;
     if (cover[i] !== C.NONE && coverMat.flammable > 0) {
       burning = true;
       coverHp[i] -= dt * (0.5 + f);
@@ -298,6 +305,7 @@ function stepFire(world: World, dt: number): void {
       if (world.depth[i] <= 0.01) world.setFluid(i, F.NONE, 0);
     } else if (groundMat.flammable > 0) {
       burning = true;
+      low = true;
       if (rng.next() < dt * 0.6) world.ground[i] = G.ASH;
     }
     // 4.12: a strong wind blows a small fire out, one with few flames around it (it fans a
@@ -330,7 +338,9 @@ function stepFire(world: World, dt: number): void {
         gravity: -1,
       });
     }
-    // Catch the neighbors, more easily downwind.
+    // Catch the neighbors, more easily downwind. A fire of only its ground spreads as
+    // readily as that ground burns: a field's stubble as it did, short grass a third as much.
+    const creep = low ? Math.min(1, groundMat.flammable * LOW_CREEP) : 1;
     const x = i % w;
     const y = (i / w) | 0;
     for (let k = 0; k < 8; k++) {
@@ -351,7 +361,11 @@ function stepFire(world: World, dt: number): void {
       if (flam <= 0 || (world.fluid[j] === F.WATER && world.depth[j] > 0.05)) continue;
       const downwind = 1 + (N8[k][0] * wind.x + N8[k][1] * wind.y) * 0.8;
       const diag = k >= 4 ? 0.6 : 1;
-      if (rng.next() < f * flam * dt * 1.6 * downwind * diag) fire[j] = 0.3;
+      // A grass fire licks a wall: a building catches from it a fifth as easily as from a
+      // burning tree, crop or building (23 November: burning yards set most houses of a village
+      // alight within two seconds of one Fire).
+      const wall = low && (isBuilding(cover[j]) || cover[j] === C.SITE) ? LOW_TO_WALL : 1;
+      if (rng.next() < f * flam * dt * 1.6 * downwind * diag * wall * creep) fire[j] = 0.3;
     }
   }
 }

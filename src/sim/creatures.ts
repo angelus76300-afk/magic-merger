@@ -25,7 +25,7 @@ import { pathsOf, solidCovers } from "./paths";
 import { LOADS, deed, harmed, life, newMind, noteDeath, reborn, storyOn, tell, villageOf, type AbilitySpec, type Goal, type Mind } from "./kin";
 import { COLD, chillPace, chillTick, hardy, landFreeze, person, tolerance, tooCold, warmerWay } from "./cold";
 import { abandonTrip } from "./goals";
-import { comeOut, stayIndoors } from "./homes";
+import { comeOut, rebuildable, stayIndoors } from "./homes";
 
 // What a spell-made creature does, declared rather than coded, so even a
 // short program gets a creature with a life of its own.
@@ -1406,7 +1406,7 @@ function plan(world: World, c: Creature, k: CreatureKind, dt: number): void {
     const ruin = c.data.ruin as { x: number; y: number } | undefined;
     if (ruin) {
       const i = world.idx(ruin.x, ruin.y);
-      if (world.cover[i] !== C.RUBBLE) {
+      if (!rebuildable(world, i)) {
         c.data.ruin = undefined;
       } else if (Math.hypot(ruin.x - c.x, ruin.y - c.y) < 1.6) {
         const progress = ((c.data.work as number) ?? 0) + dt;
@@ -1425,7 +1425,8 @@ function plan(world: World, c: Creature, k: CreatureKind, dt: number): void {
       }
     }
     if (c.goal <= 0 && Math.random() < 0.3) {
-      const found = nearest(world, c.homeX, c.homeY, 10, (j) => world.cover[j] === C.RUBBLE);
+      // Rubble waits for the dawn after it fell (homes.ts ruinStands).
+      const found = nearest(world, c.homeX, c.homeY, 10, (j) => rebuildable(world, j));
       if (found) {
         c.data.ruin = found;
         return;
