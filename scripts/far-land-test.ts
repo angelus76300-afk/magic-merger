@@ -7,14 +7,16 @@
 //     gap), and with the border columns blocked too (FAR.edge 0) the same check finds gaps;
 //   - a chunk in eighths is the same mesh, byte for byte, whatever its neighbours' level;
 //   - a chunk switched back to eighths shows its kept mesh in the same frame (no wait, no pop);
+//   - land dug on a far chunk, then zoomed into: no frame shows the kept mesh of the land before;
 //   - a cube tree's coarse run (its shadow from the sky) has well under its triangles.
 import { MeshBasicMaterial, type BufferGeometry, type Mesh } from "three";
-import { generateWorld } from "../src/sim/world";
+import { generateWorld, type World } from "../src/sim/world";
 import { GRAPHICS, type GraphicsFlag } from "../src/sim/voxel/graphics";
 import { CHUNK, Terrain } from "../src/sim/voxel/terrain";
 import { FAR } from "../src/sim/voxel/terrain-fine";
 import { cubeTreeGeometry } from "../src/sim/voxel/cubes";
 import { LOOK_ISLANDS } from "./terrain-looks-test";
+import { crater } from "./land-lag-test";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
@@ -22,6 +24,8 @@ interface Inside {
   fine: (Mesh | null | undefined)[];
   fineFar: Uint8Array;
   fineOther: ({ mesh: Mesh | null } | null)[];
+  fineStale: Uint8Array;
+  group: unknown;
   cols: number;
   rows: number;
 }
@@ -39,9 +43,10 @@ function withLooks<T>(run: () => T): T {
 }
 
 // The small island, its fine land built whole at the level `far` gives each chunk.
-function build(far: (c: number) => number): { terrain: Terrain; inside: Inside; w: number; h: number } {
+function build(far: (c: number) => number, dig = false): { terrain: Terrain; inside: Inside; w: number; h: number; world: World } {
   const { cells, seed, land } = LOOK_ISLANDS[2];
   const world = generateWorld(cells, cells, seed, land);
+  if (dig) DIG.apply(world);
   const mat = new MeshBasicMaterial();
   const terrain = new Terrain(
     world,
@@ -55,8 +60,12 @@ function build(far: (c: number) => number): { terrain: Terrain; inside: Inside; 
   terrain.rebuild(true);
   terrain.focus(30, 40, 30, 0, 0);
   terrain.updateFine(0, true);
-  return { terrain, inside: terrain as unknown as Inside, w: world.w, h: world.h };
+  return { terrain, inside: terrain as unknown as Inside, w: world.w, h: world.h, world };
 }
+
+// A crater inside chunk 10 (third column, third row), as the review of 23 November dug it.
+const DUG = 10;
+const DIG = crater(80, 80, 4, 3);
 
 const tris = (m: Mesh | null | undefined) => (m ? (m.geometry.index?.count ?? 0) / 3 : 0);
 
@@ -205,6 +214,40 @@ export function farLandChecks(check: Check): void {
     far.terrain.updateFine(0);
     const back = far.inside.fine.every((m, c) => !kept[c] || (m === kept[c] && far.inside.fineFar[c] === 0));
     check("far land: back to eighths, each chunk shows its kept mesh in the same frame", back);
+
+    // Dug from the sky, then zoomed into: the far chunk is built again with the crater, the kept
+    // mesh in eighths (the land before it) is never shown again, a new one is built in the
+    // background, and the switch back shows it at once, with the crater, as a fresh build of the
+    // dug island has it.
+    const sky = build(() => 1);
+    const before = sky.inside.fineOther[DUG]?.mesh ?? null;
+    const beforeBytes = before ? bytes(before.geometry) : "";
+    DIG.apply(sky.world);
+    sky.terrain.scan();
+    let frames = 0;
+    const shownOld: number[] = [];
+    const frame = () => {
+      sky.terrain.rebuild(false);
+      frames++;
+      const m = sky.inside.fine[DUG];
+      if (m && (m === before || (sky.inside.fineFar[DUG] === 0 && bytes(m.geometry) === beforeBytes))) shownOld.push(frames);
+    };
+    while (frames < 400 && (sky.inside.fineStale[DUG] !== 0 || sky.inside.group)) frame();
+    const farAgain = sky.inside.fineFar[DUG] === 1 && sky.inside.fineStale[DUG] === 0;
+    // Its mesh in eighths built again in the background, with the crater, for the switch back.
+    while (frames < 600 && !sky.inside.fineOther[DUG]?.mesh) frame();
+    const rebuilt = sky.inside.fineOther[DUG]?.mesh ?? null;
+    sky.terrain.wantFar = () => 0;
+    while (frames < 800 && (sky.inside.fineFar[DUG] !== 0 || sky.inside.fineStale[DUG] !== 0 || sky.inside.group)) frame();
+    const fresh = build(() => 0, true).inside.fine[DUG];
+    const now = sky.inside.fine[DUG];
+    const asFresh = !!now && !!fresh && bytes(now.geometry) === bytes(fresh.geometry);
+    const instant = !!rebuilt && rebuilt !== before && now === rebuilt;
+    check(
+      "far land: dug from the sky, then zoomed into, no frame shows the land before the crater, and it comes back at once in eighths with it",
+      !!before && farAgain && shownOld.length === 0 && sky.inside.fineFar[DUG] === 0 && asFresh && instant,
+      JSON.stringify({ kept: !!before, farAgain, shownOld: shownOld.slice(0, 5), frames, eighths: sky.inside.fineFar[DUG] === 0, asFresh, instant }),
+    );
   });
 
   const g = cubeTreeGeometry("oak", 0, 9);

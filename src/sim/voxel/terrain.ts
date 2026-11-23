@@ -927,10 +927,17 @@ export class Terrain {
   }
 
   // The land of chunk c changed (x0, y0, x1, y1 in cells): its other mesh (fineOther) is out of date
-  // there too, built again when it is shown.
+  // there too. Land that changed (not water that flowed) drops it, so it is never shown with the
+  // land as it was (the review of 23 November: a crater dug from the sky, then zoomed into, showed
+  // the land before the crater for 3 frames); it is built again in the background (pickMissing,
+  // OTHER_RANK) once the mesh shown is up to date. Water that flowed: kept, built again when shown.
   private staleOther(c: number, flow: boolean, x0: number, y0: number, x1: number, y1: number): void {
     const o = this.fineOther[c];
     if (!o) return;
+    if (!flow) {
+      this.setOther(c, null);
+      return;
+    }
     const was = o.stale;
     o.stale = flow && was !== 1 ? 2 : 1;
     if (!was) o.staleAt = this.clock();
@@ -1027,7 +1034,9 @@ export class Terrain {
       const o = this.fineOther[c];
       if (!o || this.fineBusy[c] || this.fine[c] === undefined) continue;
       if (o.far === this.fineFar[c] || o.far !== this.wantFar(c)) continue;
-      if (o.sig !== sig || o.with !== water) {
+      // Out of date where the land changed (kept while a change was being built): not shown; the
+      // chunk stays at its level until it is built at the new one, as a chunk with none kept.
+      if (o.sig !== sig || o.with !== water || o.stale === 1) {
         this.setOther(c, null);
         continue;
       }
@@ -2009,8 +2018,11 @@ export class Terrain {
     const old = this.fine[c];
     const shown = this.fineShown[c];
     // At the other level: the mesh shown until now kept hidden, for the switch back.
-    if (old !== undefined && this.fineFar[c] !== (h.far ? 1 : 0)) this.setOther(c, this.takeOther(c, this.fineWasStale[c]));
-    else if (old) {
+    if (old !== undefined && this.fineFar[c] !== (h.far ? 1 : 0)) {
+      this.setOther(c, this.takeOther(c, this.fineWasStale[c]));
+      // Its land changed since it was built: not kept (staleOther), built again in the background.
+      if (this.fineOther[c]?.stale === 1) this.setOther(c, null);
+    } else if (old) {
       this.remove(old);
       old.geometry.dispose();
     }
@@ -2124,6 +2136,8 @@ export class Terrain {
       box: [this.fineBox[b], this.fineBox[b + 1], this.fineBox[b + 2], this.fineBox[b + 3]],
     });
     if (!h.geometry) this.spareTops = h.tops.h;
+    // The land changed while it was built: not kept (staleOther), built again in the background.
+    if (this.fineStale[c] === 1) this.setOther(c, null);
   }
 
   // For the measures: triangles of the land and water as now shown, and the fine chunks by level.
