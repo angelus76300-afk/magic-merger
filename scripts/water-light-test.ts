@@ -251,7 +251,11 @@ export function waterLightChecks(check: Check): void {
     // of the sea as sand islets (the lead's review, 17 November). Since the waterline in eighths (18
     // November) a water cell's columns on the land's side of the line are the shore's sand: each is
     // joined to a dry cell's land through such columns, never alone in the water.
-    const levels = (terrain as unknown as { fluidLevel: Float32Array }).fluidLevel;
+    // The water's surface as drawn in eighths (23 November: at its own level, under the low land
+    // beside it, Terrain.fineWaterLevel), not the whole cells' level lifted over their rounded tops.
+    const lifted = (terrain as unknown as { fluidLevel: Float32Array }).fluidLevel;
+    const levels = new Float32Array(lifted.length);
+    for (let i = 0; i < lifted.length; i++) levels[i] = lifted[i] > -1e8 && world.fluid[i] === F.WATER ? terrain.fineWaterLevel(i) : lifted[i];
     let above = 0;
     let alone = 0;
     let wetCols = 0;

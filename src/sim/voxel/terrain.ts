@@ -40,6 +40,8 @@ import {
   WEED_GROWS,
   WEED_STONE,
   weedClumps,
+  SHORE_DIP,
+  SHORE_UNDER,
 } from "./terrain-fine";
 
 // The island as voxel columns. Each cell is one column whose top sits at its
@@ -63,10 +65,6 @@ export function columnTop(world: World, i: number): number {
 // across the shallows on a phone, 4.2; 18 to 40% of wet cells on generated
 // islands). A fluid's top is always at least FLUID_LIFT above its own land.
 export const FLUID_LIFT = 0.06;
-// The water in eighths by low land (Terrain.fineWaterLevel): how far under the land's top it is
-// drawn, and how far under the water's own level land may lie and still lower it.
-export const SHORE_UNDER = 3 / 16;
-const SHORE_DIP = 0.5;
 export function surfaceY(world: World, i: number): number {
   const top = columnTop(world, i);
   if (world.fluid[i] === F.NONE || world.depth[i] <= 0.02) return top;

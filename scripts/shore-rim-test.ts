@@ -5,7 +5,8 @@
 // the fine chunks round five places along their shores, from the land and water meshes as drawn:
 //   1. a rim: a column of land at the water's edge, with land behind it (up to four columns inland)
 //      drawn under the water beside it, by at most half a unit (low ground, not a cliff's foot);
-//   2. the water level with the land: the water beside a column of land at or above its top.
+//   2. the water level with the land: the water beside a column of land at or above its top, by at
+//      most half a unit (not at a cliff's foot).
 // Run with the other checks (npm test, scripts/sim-test.ts).
 import { MeshBasicMaterial, type Mesh } from "three";
 import { generateWorld, type World } from "../src/sim/world";
@@ -117,7 +118,8 @@ export function shoreRims(k: number): ShoreRims {
             const n = s + step;
             if (!water(n)) continue;
             out.pairs++;
-            if (F[n] >= L[s] - 1e-3) out.level++;
+            // Not at a cliff's foot (a river falling off a plateau, its side seen over the land).
+            if (F[n] >= L[s] - 1e-3 && F[n] <= L[s] + LOW) out.level++;
             let low = Infinity;
             for (let b = 1; b <= BEHIND && dry(s - b * step); b++) low = Math.min(low, L[s - b * step]);
             if (low < F[n] && low >= F[n] - LOW && low < L[s] - 1e-3) {

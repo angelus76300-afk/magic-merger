@@ -130,8 +130,10 @@ function luma(c: number): number {
   return 0.2126 * ((c >> 16) & 255) + 0.7152 * ((c >> 8) & 255) + 0.0722 * (c & 255);
 }
 
-// The surface the fine land reads over cell i (FineCells.water).
-function level(world: World, i: number): number {
+// The surface the fine land reads over cell i (FineCells.water): water and ice in eighths at their
+// own level, under the low land beside them (Terrain.fineWaterLevel, 23 November).
+function level(terrain: Terrain, world: World, i: number): number {
+  if (world.fluid[i] === F.WATER || world.fluid[i] === F.ICE) return terrain.fineWaterLevel(i);
   return Math.max(surfaceY(world, i), columnTop(world, i) + FLUID_LIFT);
 }
 
@@ -155,7 +157,7 @@ function raised(world: World, on: Built, off: Built): Raised[] {
     const z = Math.floor(Math.floor(s / W) / SUB);
     const i = z * world.w + x;
     let lv = Infinity;
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) lv = Math.min(lv, level(world, i + dy * world.w + dx));
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) lv = Math.min(lv, level(on.terrain, world, i + dy * world.w + dx));
     const bed = Math.round(b.y[s] * SUB);
     out.push({
       s,
@@ -182,7 +184,7 @@ export function lakeWeedChecks(check: Check): void {
     const on = withLevel("high", true, () => build(w0));
     const again = withLevel("high", true, () => build(world()));
     const off = withLevel("high", false, () => build(world()));
-    const rs = raised(w0, on, off);
+    const rs = withLevel("high", true, () => raised(w0, on, off));
     const weed = rs.filter((r) => r.raise >= 2);
     const cells = new Set(rs.map((r) => r.i));
     let sea = 0;
