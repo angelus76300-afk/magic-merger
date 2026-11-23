@@ -13,6 +13,7 @@ import { CUSTOM_GOALS, LOADS, TRIGGERS, mindOf, remember, tell, type AbilitySpec
 import { BUILTIN, BUILTIN_BEFORE_4_4_5, C, F, G, LAYERS, isBuilding, type Layer } from "./materials";
 import { valueNoise } from "./noise";
 import { addGas } from "./cells";
+import { tileHouses } from "./homes";
 import { LIGHT_MIN_SECONDS, N, addLight, fertile, fertilize, gust, holyName, natureOf } from "./reactions";
 import { explode, forDisc, quake } from "./physics";
 import type { ParticleOptions } from "./particles";
@@ -1427,6 +1428,47 @@ export function castReach(req: Pick<CastRequest, "tier" | "form" | "reach">, w: 
   return Math.max(2, Math.round(TIER_REACH[req.tier] * (held ? Math.min(REFERENCE_SIDE, side) : side)));
 }
 
+// How many buildings a small spell's own fire may light (23 November, a playtest: one tap of
+// the base Fire, a minor spell, on a house burned 8 houses of its village in 10 seconds, twice).
+// Its programs light discs 9 to 18 cells across, scattered round the tap, which took half a
+// village at once (measured: 3.6 houses burning one second in, on 10 islands, against 1 when one
+// cell is lit). A cantrip or a minor spell now sets alight only the building nearest where it
+// was cast (a house or a building with a job, as drawn, or a building site); the rest of its fire
+// burns as before, and a neighbour catches from it the way fire spreads (physics.ts) if it is
+// left alone. Its heat stops under the 280 degrees that set a building alight. A major spell and
+// above burn what they reach.
+export const BUILDINGS_LIT: Partial<Record<Tier, number>> = { cantrip: 1, minor: 1 };
+const SPARED_HEAT = 250;
+
+// The cells of the `most` buildings nearest (x, y) within r: each a two by two block as drawn
+// (homes.ts tileHouses for houses, a village's job or a site for the rest), or a lone cell.
+export function nearestBuildings(w: World, x: number, y: number, most: number, r: number): Set<number> {
+  const blocks = new Map<number, number[]>();
+  const top = tileHouses(w);
+  const owner = new Map<number, number>();
+  for (const s of w.settlements)
+    for (const j of s.jobs ?? []) if (j.kind !== C.HOUSE) for (const c of [j.i, j.i + 1, j.i + w.w, j.i + w.w + 1]) owner.set(c, j.i);
+  for (const s of w.sites) for (const c of [s.i, s.i + 1, s.i + w.w, s.i + w.w + 1]) owner.set(c, s.i);
+  const x0 = Math.max(0, Math.floor(x - r));
+  const x1 = Math.min(w.w - 1, Math.ceil(x + r));
+  const y0 = Math.max(0, Math.floor(y - r));
+  const y1 = Math.min(w.h - 1, Math.ceil(y + r));
+  for (let yy = y0; yy <= y1; yy++)
+    for (let xx = x0; xx <= x1; xx++) {
+      const i = yy * w.w + xx;
+      if (!isBuilding(w.cover[i]) && w.cover[i] !== C.SITE) continue;
+      if (Math.hypot(xx + 0.5 - x, yy + 0.5 - y) > r) continue;
+      const key = w.cover[i] === C.HOUSE && top[i] >= 0 ? top[i] : (owner.get(i) ?? i);
+      const cells = blocks.get(key) ?? [];
+      cells.push(i);
+      blocks.set(key, cells);
+    }
+  const near = (cells: number[]) => Math.min(...cells.map((i) => Math.hypot((i % w.w) + 0.5 - x, Math.floor(i / w.w) + 0.5 - y)));
+  const out = new Set<number>();
+  for (const cells of [...blocks.values()].sort((a, b) => near(a) - near(b)).slice(0, most)) for (const i of cells) out.add(i);
+  return out;
+}
+
 // How much a spell may grow a creature (4.7 item 2), as its size: a person,
 // and any creature, up to 1.6 times; a being a person is small beside (a
 // dragon, a giant, a golem: shared/forms.ts, bigBeing) up to 3.2. The view
@@ -1600,6 +1642,32 @@ export class SpellApi {
     else if (Math.random() < 0.02) wardHit(w, i, 1, this.source, this.power);
     return true;
   }
+  // A building a small spell's own fire may not light (BUILDINGS_LIT): any but the few nearest
+  // where it was cast. Its heat is held under what sets a building alight there too.
+  // `yards`: the ground touching a building is spared too, unless it touches the one it may light
+  // (burning grass at a wall sets most houses alight within two seconds).
+  private litBuildings: Set<number> | undefined;
+  private buildingSpared(i: number, yards = false): boolean {
+    const most = BUILDINGS_LIT[this.tier];
+    if (most === undefined) return false;
+    const w = this.rt.world;
+    const built = (j: number) => isBuilding(w.cover[j]) || w.cover[j] === C.SITE;
+    const lit = (this.litBuildings ??= nearestBuildings(w, this.x, this.y, most, Math.max(6, this.r)));
+    if (built(i)) return !lit.has(i);
+    if (!yards) return false;
+    const x = i % w.w;
+    const y = Math.floor(i / w.w);
+    let spared = false;
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!w.inside(x + dx, y + dy)) continue;
+        const j = i + dy * w.w + dx;
+        if (!built(j)) continue;
+        if (lit.has(j)) return false;
+        spared = true;
+      }
+    return spared;
+  }
   // For heights, which scale with what passed instead of a coin toss.
   private landHeld(i: number): boolean {
     const w = this.rt.world;
@@ -1614,6 +1682,7 @@ export class SpellApi {
   }
   private fireBlocked(i: number): boolean {
     const w = this.rt.world;
+    if (this.buildingSpared(i, true)) return true;
     if (w.ruins.length && Math.random() >= this.passAt(i)) return true;
     if (!w.wards.length || !warded(w, i, WARD.fire)) return false;
     if (this.rt.glass) this.rt.glass.harm++;
@@ -1641,6 +1710,7 @@ export class SpellApi {
     const i = this.i(x, y);
     if (warded(this.rt.world, i, d > 0 ? WARD.fire : WARD.cold)) return;
     this.rt.world.temp[i] += d;
+    if (d > 0 && this.buildingSpared(i)) this.rt.world.temp[i] = Math.min(this.rt.world.temp[i], SPARED_HEAT);
     if (d < 0) this.rt.world.markCold(i);
   }
   raise(x: number, y: number, amount: number) {
@@ -1759,6 +1829,7 @@ export class SpellApi {
     forDisc(w, x, y, num(r, 0, 400, 3), (i, k) => {
       if (warded(w, i, guard)) return;
       w.temp[i] += d * (0.4 + 0.6 * k);
+      if (d > 0 && this.buildingSpared(i)) w.temp[i] = Math.min(w.temp[i], SPARED_HEAT);
       if (d < 0) w.markCold(i);
       if (d < -20) {
         w.fire[i] = 0;
