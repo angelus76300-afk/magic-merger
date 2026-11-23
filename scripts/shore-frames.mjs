@@ -2,7 +2,7 @@
 // wall to contain the water that looks weird ... the water should be the one slightly under"). Close
 // frames of where land meets water, on high in the Perf Lab, the same cameras before and after:
 //   coast-close, coast-low   the medium island of seed 7 (the medium coast of the land's checks), at
-//                            its longest straight sea shore, from above and from low over the water
+//                            its longest straight sea shore, from the land and from low over the water
 //   river-close              the same island's river (river-frames.mjs's RIVER)
 //   desert-close, desert-low the small desert plateau of seed 3, at its longest sea shore
 // The numbers of the rim itself are the sim tests' (scripts/shore-rim-test.ts).
@@ -21,47 +21,23 @@ const SIZE = { width: 390, height: 844 };
 mkdirSync(OUT, { recursive: true });
 const RIVER = { x: 121, y: 47 };
 
-// In the page: the dry cell with the longest straight run of shore (dry cells each with sea on the
-// same side) by wide water, away from the island's edge.
-function shore() {
-  const e = window.__engine;
-  const w = e.world;
-  const t = e.view.terrain;
-  const water = (x, y) => x >= 0 && y >= 0 && x < w.w && y < w.h && t.wet[y * w.w + x] === 1 && w.fluid[y * w.w + x] === 1;
-  const dry = (x, y) => x >= 0 && y >= 0 && x < w.w && y < w.h && t.wet[y * w.w + x] === 0;
-  let best = null;
-  for (let y = 10; y < w.h - 10; y++)
-    for (let x = 10; x < w.w - 10; x++)
-      for (const [dx, dy] of [
-        [1, 0],
-        [-1, 0],
-        [0, 1],
-        [0, -1],
-      ]) {
-        if (!dry(x, y) || !water(x + dx, y + dy) || !water(x + 4 * dx, y + 4 * dy)) continue;
-        let n = 0;
-        for (let k = -6; k <= 6; k++) {
-          const ax = x + k * dy;
-          const ay = y + k * dx;
-          if (dry(ax, ay) && water(ax + dx, ay + dy) && dry(ax - dx, ay - dy)) n++;
-        }
-        if (!best || n > best.n) best = { n, x, y, dx, dy };
-      }
-  return best;
-}
+// The shores looked at: a dry cell at a long straight shore, the water toward (dx, dy). Found once by
+// the longest straight run of shore by wide water (the cells the page counts as wet change while it
+// loads, so the search is not repeated).
+const COAST = { x: 20, y: 27, dx: 1, dy: 0 };
+const DESERT = { x: 82, y: 26, dx: 0, dy: -1 };
 
-async function shoot(browser, query, views) {
+async function shoot(browser, query, views, s) {
   const ctx = await browser.newContext({ viewport: SIZE, deviceScaleFactor: 1, hasTouch: true });
   const page = await ctx.newPage();
   page.on("pageerror", (err) => console.error("page error:", err.message));
   await page.goto(`${BASE}?${query}&dpr=1&quality=high`);
   await page.waitForFunction(() => window.perfReady === true, null, { timeout: 300_000 });
   await page.evaluate(() => document.querySelectorAll("div").forEach((d) => (d.style.display = "none")));
-  const s = await page.evaluate(shore);
-  console.error(`${query}: shore at ${s.x},${s.y} water toward ${s.dx},${s.dy} (${s.n} cells straight)`);
-  for (const [name, at, dist, phi] of views(s)) {
-    // Looking along the shore's normal from the land's side, a little turned.
-    const theta = at.dx !== undefined ? Math.atan2(-at.dx, -at.dy) + 0.5 : 0.6;
+  for (const [name, at, dist, phi, sea] of views(s)) {
+    // Looking along the shore's normal from the land's side (from the water's with `sea`), a little turned.
+    const side = sea ? 1 : -1;
+    const theta = at.dx !== undefined ? Math.atan2(side * at.dx, side * at.dy) + 0.5 : 0.6;
     const aim = (a) => {
       const e = window.__engine;
       e.world.time = 100;
@@ -85,15 +61,25 @@ async function shoot(browser, query, views) {
 
 const browser = await chromium.launch({ args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--ignore-gpu-blocklist"] });
 try {
-  await shoot(browser, "size=medium&seed=7", (s) => [
-    ["coast-close", s, 9, 0.75],
-    ["coast-low", s, 8, 1.2],
-    ["river-close", RIVER, 9, 0.85],
-  ]);
-  await shoot(browser, "size=small&seed=3&biome=desert&shape=plateau", (s) => [
-    ["desert-close", s, 9, 0.75],
-    ["desert-low", s, 8, 1.2],
-  ]);
+  await shoot(
+    browser,
+    "size=medium&seed=7",
+    (s) => [
+      ["coast-close", s, 9, 0.75],
+      ["coast-low", s, 12, 1.1, true],
+      ["river-close", RIVER, 9, 0.85],
+    ],
+    COAST,
+  );
+  await shoot(
+    browser,
+    "size=small&seed=3&biome=desert&shape=plateau",
+    (s) => [
+      ["desert-close", s, 9, 0.75],
+      ["desert-low", s, 12, 1.1, true],
+    ],
+    DESERT,
+  );
 } finally {
   await browser.close();
 }

@@ -533,7 +533,10 @@ export function isBed(f: FineCells, c: number): boolean {
 // on one side, natural ground (not a house) on the other at most SHORE_LOW above it; a cliff into
 // the water keeps its wall at the cell's edge. Every cell's middle keeps its own side, so a cell
 // under water still has its water, and the land over a water cell is always beside a dry cell.
-const SHORE_LOW = 1;
+// A quarter more since the water in eighths lies lower (23 November, Terrain.fineWaterLevel: a
+// quarter lower by the sea than lifted over its rounded tops), so a bank a voxel over the sea still
+// curves into it: kept as a cliff, it drew a wall of soil along the shore.
+const SHORE_LOW = 1 + 0.25;
 // How far under a water cell's surface (scene units) the nearest dry neighbour's own height may lie
 // and still be its shore: a beach's sand lies a little under the water drawn over it.
 const RAW_UNDER = 0.3;
