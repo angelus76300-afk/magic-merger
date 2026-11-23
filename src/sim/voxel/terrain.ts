@@ -63,6 +63,10 @@ export function columnTop(world: World, i: number): number {
 // across the shallows on a phone, 4.2; 18 to 40% of wet cells on generated
 // islands). A fluid's top is always at least FLUID_LIFT above its own land.
 export const FLUID_LIFT = 0.06;
+// The water in eighths by low land (Terrain.fineWaterLevel): how far under the land's top it is
+// drawn, and how far under the water's own level land may lie and still lower it.
+export const SHORE_UNDER = 3 / 16;
+const SHORE_DIP = 0.5;
 export function surfaceY(world: World, i: number): number {
   const top = columnTop(world, i);
   if (world.fluid[i] === F.NONE || world.depth[i] <= 0.02) return top;
@@ -158,6 +162,35 @@ export class Terrain {
   // The water in eighths (16 November): fine chunks draw their water with their land.
   private get fineWaterOn(): boolean {
     return GRAPHICS.fine && GRAPHICS.water;
+  }
+  // The surface of water or ice as the water in eighths draws it, scene units (23 November, the
+  // owner: "Boarder with water seem to often create a little wall to contain the water ... the water
+  // should be the one slightly under"). Drawn over its cell's rounded top (FLUID_LIFT), the water
+  // stood over the low land beside it, and the shore's land was raised to the water's edge
+  // (terrain-fine.ts shoreLine): a rim an eighth or two over the ground behind it. Here it is its own
+  // level (height and depth), and never above the low natural land beside it (a cell round it, dry,
+  // at most SHORE_DIP under that level): SHORE_UNDER under the lowest of those tops. The beds in
+  // eighths are always drawn under it. In whole cells it stays as it was (their beds are the tops).
+  fineWaterLevel(i: number): number {
+    const { world } = this;
+    const lifted = Math.max(surfaceY(world, i), columnTop(world, i) + FLUID_LIFT);
+    if (!this.fineWaterOn || world.fluid[i] === F.LAVA) return lifted;
+    const own = (world.height[i] + Math.max(0, world.depth[i])) * V;
+    let level = own;
+    const x = i % world.w;
+    const y = (i - x) / world.w;
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if ((!dx && !dy) || nx < 0 || ny < 0 || nx >= world.w || ny >= world.h) continue;
+        const j = ny * world.w + nx;
+        if (this.wet[j] || world.cover[j] === C.HOUSE) continue;
+        const top = columnTop(world, j);
+        if (top < own - SHORE_DIP || top >= level || !this.naturalAt(j)) continue;
+        level = top;
+      }
+    return level - SHORE_UNDER;
   }
   // The water's colour by depth, a texel a cell, read by the water's shader (water-light.ts) and
   // filtered between cells, so depth shades smoothly under the water in eighths: rgb the shallow
@@ -846,9 +879,12 @@ export class Terrain {
     const cy = Math.max(0, Math.min(world.h - 1, Math.floor(y)));
     const i = cy * world.w + cx;
     const base = surfaceY(world, i);
-    if (!GRAPHICS.fine || !GRAPHICS.steps || !this.fine.length || this.wet[i]) return base;
+    if (!GRAPHICS.fine || !this.fine.length) return base;
     const c = Math.floor(cy / CHUNK) * this.cols + Math.floor(cx / CHUNK);
     if (!this.fineShown[c] || !this.fine[c]) return base;
+    // Water in eighths is drawn at its own level, under the low land beside it (fineWaterLevel).
+    if (this.wet[i]) return this.waterWet(i) && this.fineWaterOn ? this.fineWaterLevel(i) : base;
+    if (!GRAPHICS.steps) return base;
     if (!this.naturalAt(i)) return base;
     const sub = this.fineLevel[c];
     // The middle of the column drawn there.
@@ -1165,7 +1201,7 @@ export class Terrain {
         // 15 November: its cell-shaped edge read as big cubes on the volcano).
         const lava = world.fluid[i] === F.LAVA;
         const ice = this.iceFine(i);
-        f.water[k] = this.wet[i] && (world.fluid[i] === F.WATER || lava || ice) ? Math.max(surfaceY(world, i), top + FLUID_LIFT) : -1e9;
+        f.water[k] = !this.wet[i] || !(world.fluid[i] === F.WATER || lava || ice) ? -1e9 : this.fineWaterLevel(i);
         f.lava[k] = lava ? 1 : 0;
         f.ice[k] = ice ? 1 : 0;
         const surface = this.fineTopColor(i);
