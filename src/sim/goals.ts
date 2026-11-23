@@ -53,7 +53,7 @@ import {
 import type { Behavior, Creature, CreatureKind } from "./creatures";
 import type { World } from "./world";
 import { artifactVisit, useArtifact, type Visit } from "./artifacts";
-import { HOME, goIn, homeRuin, homeWet, houseBlock, houseBurning, houseNear, houseOf, rebuildable, ruinStands, sleepable, wetAt } from "./homes";
+import { HOME, goIn, homeRuin, homeWet, houseBlock, houseBurning, houseNear, houseOf, rebuildRuin, rebuildable, ruinStands, sleepable, wetAt } from "./homes";
 import { meter } from "./motion";
 import { facing, standsUpTo, strikeBack } from "./social";
 
@@ -2290,9 +2290,8 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
     }
     case "repair":
       if (!rebuildable(world, i)) return;
-      world.setCover(i, C.HOUSE);
-      // 4.4.5 part B: a rebuilt roof shows its patch.
-      if (world.settlements.length) world.patched.add(i);
+      // The house as a whole, its roof patched (homes.ts rebuildRuin).
+      rebuildRuin(world, i);
       deed(c, "rebuilt a house");
       return;
     case "raise": {

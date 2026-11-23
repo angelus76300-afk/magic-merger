@@ -235,3 +235,29 @@ export function homeRuin(world: World, c: Creature): number {
     }
   return best >= 0 && bestD < house ? best : -1;
 }
+
+// A ruin rebuilt: the cell and the rest of its two by two block still in rubble, as one house (23
+// November: rebuilt a cell at a time, the last cell of a burned house could wait the whole day).
+// The block is the square holding the cell with the most rubble that may be rebuilt. A rebuilt roof
+// shows its patch (4.4.5 part B).
+export function rebuildRuin(world: World, i: number): void {
+  const W = world.w;
+  const x = i % W;
+  const y = Math.floor(i / W);
+  let best: number[] = [i];
+  for (const [ox, oy] of [
+    [0, 0],
+    [-1, 0],
+    [0, -1],
+    [-1, -1],
+  ]) {
+    if (!world.inside(x + ox, y + oy) || !world.inside(x + ox + 1, y + oy + 1)) continue;
+    const t = (y + oy) * W + x + ox;
+    const cells = [t, t + 1, t + W, t + W + 1].filter((j) => rebuildable(world, j));
+    if (cells.length > best.length) best = cells;
+  }
+  for (const j of best) {
+    world.setCover(j, C.HOUSE);
+    if (world.settlements.length) world.patched.add(j);
+  }
+}

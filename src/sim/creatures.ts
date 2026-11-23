@@ -25,7 +25,7 @@ import { pathsOf, solidCovers } from "./paths";
 import { LOADS, deed, harmed, life, newMind, noteDeath, reborn, storyOn, tell, villageOf, type AbilitySpec, type Goal, type Mind } from "./kin";
 import { COLD, chillPace, chillTick, hardy, landFreeze, person, tolerance, tooCold, warmerWay } from "./cold";
 import { abandonTrip } from "./goals";
-import { comeOut, rebuildable, stayIndoors } from "./homes";
+import { comeOut, rebuildRuin, rebuildable, stayIndoors } from "./homes";
 
 // What a spell-made creature does, declared rather than coded, so even a
 // short program gets a creature with a life of its own.
@@ -1412,8 +1412,7 @@ function plan(world: World, c: Creature, k: CreatureKind, dt: number): void {
         const progress = ((c.data.work as number) ?? 0) + dt;
         c.data.work = progress;
         if (progress > 5) {
-          world.setCover(i, C.HOUSE);
-          if (world.settlements.length) world.patched.add(i);
+          rebuildRuin(world, i);
           c.data.work = 0;
           c.data.ruin = undefined;
         }
