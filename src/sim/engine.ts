@@ -129,6 +129,8 @@ export class Engine {
     // player's cast gives them priority just after it (eventAt). A sound with
     // no place belongs to the player's last cast while it runs (castOwns).
     if (ok) this.lastCast = { x, y, at: performance.now() };
+    // The player acts: the land not built yet keeps its small share of the frames (terrain.ts FILL_BUDGET_MS).
+    this.view.terrain.acted();
     // What the cast changed before the next tick is drawn too (view.ts, scan).
     this.view.landChanged = true;
     return ok;
@@ -211,6 +213,7 @@ export class Engine {
     // How far the frame is from the last tick to the next one, for the view.
     this.view.between = this.pacer.enabled ? drawBetween(this.acc, TICK) : 1;
     this.view.paceMs = smooth ? 1000 / 60 : 1000 / 30;
+    if (this.held.size) this.view.terrain.acted();
     this.render(Math.min(0.1, since / 1000) * scale);
     // A draw from outside the loop (the Spell Lab, a test's frame) shows the
     // creatures where the simulation has them.
@@ -237,6 +240,8 @@ export class Engine {
   readonly pacer = new FramePacer(GRAPHICS.smooth, performance.now());
 
   private lastCast: { x: number; y: number; at: number } | null = null;
+  // The fingers and buttons down anywhere on the page (bindInput): the player is acting.
+  private held = new Set<number>();
   private bedsAt = 0;
   private callsAt = 0;
   private callClock = new CallClock();
@@ -301,6 +306,20 @@ export class Engine {
     const orbit = this.view.orbit;
     const abort = new AbortController();
     const opts = { signal: abort.signal };
+    // Any touch, press, drag or key anywhere on the page (the view, the stick, the cast button, the
+    // menus) is the player acting: the land not built yet keeps its small share of the frames while
+    // they do (terrain.ts FILL_BUDGET_MS), and while a finger stays down (the stick held still
+    // walks on: frame). A mouse moved with no button held is not.
+    const acted = (e: Event) => {
+      if (e.type === "pointermove" && (e as PointerEvent).buttons === 0) return;
+      if (e.type === "pointerdown") this.held.add((e as PointerEvent).pointerId);
+      this.view.terrain.acted();
+    };
+    const lifted = (e: PointerEvent) => this.held.delete(e.pointerId);
+    for (const type of ["pointerdown", "pointermove", "wheel", "keydown"])
+      window.addEventListener(type, acted, { capture: true, passive: true, signal: abort.signal });
+    for (const type of ["pointerup", "pointercancel"] as const)
+      window.addEventListener(type, lifted, { capture: true, passive: true, signal: abort.signal });
     c.addEventListener(
       "pointerdown",
       (e) => {
@@ -368,7 +387,10 @@ export class Engine {
       { passive: false, signal: abort.signal },
     );
     window.addEventListener("resize", () => this.resize(), opts);
-    return () => abort.abort();
+    return () => {
+      abort.abort();
+      this.held.clear();
+    };
   }
 
   private pinchState(): { d: number; mx: number; my: number } {
