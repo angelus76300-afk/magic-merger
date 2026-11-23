@@ -52,9 +52,12 @@ export function houseOf(world: World, c: Creature): number {
   const none =
     known !== undefined && known < 0 && c.data.houseFor === c.homeX + c.homeY * 1e4 && world.time < ((c.data.houseAt as number | undefined) ?? 0) + 10;
   if (none || (known !== undefined && known >= 0 && world.cover[known] === C.HOUSE && dist(world, known, c.homeX, c.homeY) <= HOME.reach)) return known!;
-  // Its house in ruins until dawn: no house, and the ruin is kept as its own (review of 367ebc1: a
-  // neighbour's house nearer its home point was taken for its own, and the ruin forgotten).
-  if (ownRuin(world, c, known) && ruinStands(world, known!)) return -1;
+  // Its house in ruins: no house, and the ruin is kept as its own until it is a house again
+  // (review of 367ebc1: a neighbour's house nearer its home point was taken for its own, and the
+  // ruin forgotten; review of b1133dc: from dawn until the builders were done, the same, so 25 of
+  // 42 families burned out were in a neighbour's house once theirs was rebuilt). A ruin not rebuilt
+  // in the whole day after it may be is given up (ruinKept).
+  if (ownRuin(world, c, known) && ruinKept(world, known!)) return -1;
   const i = houseNear(world, c.homeX, c.homeY);
   c.data.house = i;
   c.data.houseFor = c.homeX + c.homeY * 1e4;
@@ -211,6 +214,14 @@ export function ruinStands(world: World, i: number): boolean {
   return dawnOf(world.time) === dawnOf(at);
 }
 
+// Rubble its family still waits on: until the second dawn after it fell, a whole day for the
+// builders. Past that (no wood, no builders), the family looks for a house again.
+export function ruinKept(world: World, i: number): boolean {
+  if (world.cover[i] !== C.RUBBLE) return false;
+  if (ruinStands(world, i)) return true;
+  return dawnOf(world.time) <= dawnOf(world.ruinedAt.get(i) ?? world.time) + 1;
+}
+
 // Rubble the builders may rebuild now.
 export function rebuildable(world: World, i: number): boolean {
   return world.cover[i] === C.RUBBLE && !ruinStands(world, i);
@@ -224,10 +235,11 @@ function ownRuin(world: World, c: Creature, known: number | undefined): boolean 
 // The rubble of a villager's house, or -1 when its house stands (or it had none). Its own house as
 // houseOf remembers it, fallen to rubble; for one with none remembered, rubble within HOME.reach of
 // its home point nearer than any house cell (review of 367ebc1: judged that way for all, a
-// neighbour's house nearer the home point than the ruin left a family under the open sky).
+// neighbour's house nearer the home point than the ruin left a family under the open sky). A ruin
+// given up (ruinKept) is none: the family looks for a house.
 export function homeRuin(world: World, c: Creature): number {
   const known = c.data.house as number | undefined;
-  if (ownRuin(world, c, known)) return known!;
+  if (ownRuin(world, c, known)) return ruinKept(world, known!) ? known! : -1;
   if (known !== undefined && known >= 0 && world.cover[known] === C.HOUSE && c.data.houseFor === c.homeX + c.homeY * 1e4) return -1;
   let best = -1;
   let bestD: number = HOME.reach;
@@ -241,7 +253,7 @@ export function homeRuin(world: World, c: Creature): number {
       const i = yy * world.w + xx;
       const d = dist(world, i, c.homeX, c.homeY);
       if (world.cover[i] === C.HOUSE) house = Math.min(house, d);
-      else if (world.cover[i] === C.RUBBLE && d < bestD) {
+      else if (world.cover[i] === C.RUBBLE && d < bestD && ruinKept(world, i)) {
         bestD = d;
         best = i;
       }
