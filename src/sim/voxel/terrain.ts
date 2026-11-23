@@ -421,6 +421,7 @@ export class Terrain {
           this.staleFrame[c] = this.redraw.frame + 1;
           this.fineStale[c] = 1;
         }
+        this.staleOther(c, false, Math.max(x0, x - R), Math.max(y0, y - R), Math.min(x1, x + R + 1), Math.min(y1, y + R + 1));
       }
     this.marked++;
   }
@@ -514,6 +515,7 @@ export class Terrain {
     }
     // Turned off (the low quality level): every chunk back to whole cells.
     else if (this.fine.some((m) => m !== undefined) || this.group) {
+      this.allFar = false;
       this.dropGroup();
       for (let c = 0; c < this.fine.length; c++) this.dropFine(c);
     }
@@ -640,6 +642,13 @@ export class Terrain {
   private fineCorners: (Float32Array | null)[] = [];
   private fineWith = new Uint8Array(0);
   private fineSig: string[] = [];
+  // Far land (terrain-fine.ts FAR): 1 where a chunk's fine mesh is drawn far. Its other mesh,
+  // in eighths or far, is kept hidden (fineOther) when it switches, so the switch back is at once:
+  // a pinch from the sky to a village shows the eighths in the same frame. fineWasStale: the chunk's
+  // land had changed when a build at the other level began, so the mesh it replaces is out of date.
+  private fineFar = new Uint8Array(0);
+  private fineOther: (FineOther | null)[] = [];
+  private fineWasStale = new Uint8Array(0);
   // Cells marked changed since the last group of changed land began: a chunk being built for
   // another reason is finished sooner (CHANGE_BUDGET_MS) when a change waits.
   private marked = 0;
@@ -914,6 +923,125 @@ export class Terrain {
     if (this.fineStale[c] === 1 && was !== 1) this.staleFrame[c] = this.redraw.frame + 1;
     const { x0, y0, x1, y1 } = this.bounds(c);
     this.fineBox.set([x0, y0, x1, y1], c * 4);
+    this.staleOther(c, flow, x0, y0, x1, y1);
+  }
+
+  // The land of chunk c changed (x0, y0, x1, y1 in cells): its other mesh (fineOther) is out of date
+  // there too. Land that changed (not water that flowed) drops it, so it is never shown with the
+  // land as it was (the review of 23 November: a crater dug from the sky, then zoomed into, showed
+  // the land before the crater for 3 frames); it is built again in the background (pickMissing,
+  // OTHER_RANK) once the mesh shown is up to date. Water that flowed: kept, built again when shown.
+  private staleOther(c: number, flow: boolean, x0: number, y0: number, x1: number, y1: number): void {
+    const o = this.fineOther[c];
+    if (!o) return;
+    if (!flow) {
+      this.setOther(c, null);
+      return;
+    }
+    const was = o.stale;
+    o.stale = flow && was !== 1 ? 2 : 1;
+    if (!was) o.staleAt = this.clock();
+    if (o.stale === 1 && was !== 1) o.staleFrame = this.redraw.frame + 1;
+    const b = o.box;
+    if (b[0] >= b[2]) o.box = [x0, y0, x1, y1];
+    else o.box = [Math.min(b[0], x0), Math.min(b[1], y0), Math.max(b[2], x1), Math.max(b[3], y1)];
+  }
+
+  // Chunk c's fine mesh as now shown, as a mesh kept hidden (fineOther): out of date where its land
+  // changed, all of it when `wasStale` (changed before the build that replaces it began).
+  private takeOther(c: number, wasStale: number): FineOther {
+    const mesh = this.fine[c] ?? null;
+    const water = this.fineWater[c] ?? null;
+    if (mesh) mesh.visible = false;
+    if (water) water.visible = false;
+    const b = c * 4;
+    const { x0, y0, x1, y1 } = this.bounds(c);
+    const now = this.fineStale[c];
+    const stale = wasStale === 1 || now === 1 ? 1 : wasStale || now ? 2 : 0;
+    const box: [number, number, number, number] = wasStale
+      ? [x0, y0, x1, y1]
+      : [this.fineBox[b], this.fineBox[b + 1], this.fineBox[b + 2], this.fineBox[b + 3]];
+    const o: FineOther = {
+      mesh,
+      water,
+      far: this.fineFar[c],
+      tileQ: this.fineTileQ[c],
+      tileWet: this.fineTileWet[c],
+      tileWQ: this.fineTileWQ[c],
+      waterTiles: this.fineWaterTiles[c],
+      corners: this.fineCorners[c],
+      with: this.fineWith[c],
+      sig: this.fineSig[c],
+      tops: this.fineTops[c],
+      builtAt: this.fineBuiltAt[c],
+      stale,
+      staleAt: wasStale ? this.clock() : this.staleAt[c],
+      staleFrame: wasStale ? this.redraw.frame : this.staleFrame[c],
+      box,
+    };
+    this.fine[c] = undefined;
+    this.fineWater[c] = undefined;
+    this.fineTops[c] = undefined;
+    return o;
+  }
+
+  // Chunk c's hidden mesh at its other level, given (null: none); the one it had dropped.
+  private setOther(c: number, o: FineOther | null): void {
+    const old = this.fineOther[c];
+    if (old) {
+      for (const m of [old.mesh, old.water]) {
+        if (!m) continue;
+        this.remove(m);
+        m.geometry.dispose();
+      }
+      if (old.tops) this.spareTops = old.tops.h;
+    }
+    this.fineOther[c] = o;
+  }
+
+  // Chunk c drawn at its other level, at once: its hidden mesh shown, the one shown kept hidden.
+  // Where the land changed since the hidden one was built, it is built again in turn (fineStale).
+  private swapLevel(c: number): void {
+    const o = this.fineOther[c]!;
+    const mine = this.takeOther(c, 0);
+    this.fine[c] = o.mesh;
+    this.fineWater[c] = o.water;
+    this.fineFar[c] = o.far;
+    this.fineTileQ[c] = o.tileQ;
+    this.fineTileWet[c] = o.tileWet;
+    this.fineTileWQ[c] = o.tileWQ;
+    this.fineWaterTiles[c] = o.waterTiles;
+    this.fineCorners[c] = o.corners;
+    this.fineWith[c] = o.with;
+    this.fineSig[c] = o.sig;
+    this.fineTops[c] = o.tops;
+    this.fineBuiltAt[c] = o.builtAt;
+    this.fineStale[c] = o.stale;
+    this.staleAt[c] = o.staleAt;
+    this.staleFrame[c] = o.staleFrame;
+    this.fineBox.set(o.box, c * 4);
+    this.fineOther[c] = mine;
+    this.fineShown[c] = 0;
+    this.builtSinceShown = true;
+  }
+
+  // Every chunk whose hidden mesh is at the level it should now be drawn at, and was built with
+  // the looks of now, drawn with it.
+  private swapLevels(): void {
+    const sig = this.looksSig();
+    const water = this.fineWaterOn ? 1 : 0;
+    for (let c = 0; c < this.chunks.length; c++) {
+      const o = this.fineOther[c];
+      if (!o || this.fineBusy[c] || this.fine[c] === undefined) continue;
+      if (o.far === this.fineFar[c] || o.far !== this.wantFar(c)) continue;
+      // Out of date where the land changed (kept while a change was being built): not shown; the
+      // chunk stays at its level until it is built at the new one, as a chunk with none kept.
+      if (o.sig !== sig || o.with !== water || o.stale === 1) {
+        this.setOther(c, null);
+        continue;
+      }
+      this.swapLevel(c);
+    }
   }
 
   // Whether changed land is waiting to be drawn finely.
@@ -936,6 +1064,8 @@ export class Terrain {
     }
     this.fine[c] = undefined;
     this.dropFineWater(c);
+    if (this.fineOther.length) this.setOther(c, null);
+    if (this.fineFar.length) this.fineFar[c] = 0;
     this.fineLevel[c] = 0;
     this.fineStale[c] = 0;
     if (this.fineBox.length) this.fineBox.fill(0, c * 4, c * 4 + 4);
@@ -974,7 +1104,7 @@ export class Terrain {
   // hysteresis, so a chunk at the edge does not flip as the camera turns. `lod.perUnit` (pixels
   // of the screen a scene unit spans at distance 1) is set by the view; 0 keeps every chunk in
   // eighths (the checks, and the view until its first frame).
-  readonly lod = { perUnit: 0, px: LOD_PX };
+  readonly lod = { perUnit: 0, px: LOD_PX, far: FAR_PX };
   // Off only for the before and after (scripts/looks-cull-proof.mjs): every face in every pass.
   cullFaces = true;
   private wantLevel(c: number): number {
@@ -982,6 +1112,17 @@ export class Terrain {
     const eighth = this.lod.perUnit / FINE_SUB / Math.max(0.5, this.eyeDistance(c));
     const now = this.fine[c] ? this.fineLevel[c] : FINE_SUB;
     return eighth < this.lod.px * (now === FINE_SUB ? 1 : 1.2) ? FINE_SUB / 2 : FINE_SUB;
+  }
+
+  // Whether a chunk should be drawn far (terrain-fine.ts FAR): where an eighth is smaller than
+  // `lod.far` pixels on the screen at the chunk's nearest point, back in eighths only past FAR_BACK
+  // times that, so a chunk at the edge does not flip as the camera turns. 0 (the checks, the view
+  // until its first frame, `lod.far` 0): eighths.
+  wantFar(c: number): number {
+    if (!this.lod.perUnit || !this.lod.far) return 0;
+    const eighth = this.lod.perUnit / FINE_SUB / Math.max(0.5, this.eyeDistance(c));
+    const now = this.fine[c] !== undefined ? this.fineFar[c] : 0;
+    return eighth < this.lod.far * (now ? FAR_BACK : 1) ? 1 : 0;
   }
 
   // The distance from the camera to the nearest point of a chunk (its land up to its highest column).
@@ -1234,6 +1375,9 @@ export class Terrain {
       this.fineCorners = new Array(n).fill(null);
       this.fineWith = new Uint8Array(n);
       this.fineSig = new Array(n).fill("");
+      this.fineFar = new Uint8Array(n);
+      this.fineOther = new Array(n).fill(null);
+      this.fineWasStale = new Uint8Array(n);
     }
     if (!this.eye.known) return;
     void until;
@@ -1241,6 +1385,7 @@ export class Terrain {
     const start = this.frameAt >= 0 ? this.frameAt : this.clock();
     this.frameAt = -1;
     this.redraw.frame++;
+    this.swapLevels();
     this.syncShown();
     // The credit for changed land: refilled with the time, at most a frame's worth a frame, spent by
     // every millisecond past FINE_BUDGET_MS. Counted by the time alone, a slow device's long frames
@@ -1289,6 +1434,7 @@ export class Terrain {
             ty1,
             job.tops,
             job.water ? FINE_WATER : null,
+            job.far,
           );
           job.wet[job.next] = wet ? 1 : 0;
           job.next++;
@@ -1322,6 +1468,22 @@ export class Terrain {
     this.fineStats.maxFrameMs = Math.max(this.fineStats.maxFrameMs, spent);
     // A chunk built in this frame is shown in it.
     this.syncShown();
+    this.allFar = this.everyFar();
+  }
+
+  // Whether every chunk with land to draw is drawn far (the view draws the trees simpler then).
+  allFar = false;
+  private everyFar(): boolean {
+    let any = false;
+    for (let c = 0; c < this.chunks.length; c++) {
+      if (!this.fine[c]) {
+        if (this.fine[c] === undefined && this.chunks[c].land) return false;
+        continue;
+      }
+      if (!this.fineFar[c] || !this.fineShown[c]) return false;
+      any = true;
+    }
+    return any;
   }
 
   // Each chunk shown finely or in whole cells, as its fine mesh is there or not.
@@ -1362,11 +1524,18 @@ export class Terrain {
     const n = this.chunks.length;
     const changed: number[] = [];
     for (let c = 0; c < n; c++)
-      if (this.fineStale[c] === 1 && !this.fineBusy[c] && this.fine[c] !== undefined && this.fineLevel[c] === this.wantLevel(c)) changed.push(c);
+      if (
+        this.fineStale[c] === 1 &&
+        !this.fineBusy[c] &&
+        this.fine[c] !== undefined &&
+        this.fineLevel[c] === this.wantLevel(c) &&
+        (this.fineFar[c] === this.wantFar(c) || this.fineFar[c] === 0)
+      )
+        changed.push(c);
     const missing = this.pickMissing(now, all);
     if (missing?.seen) return this.newGroup(missing.c, false, true);
     const seen = changed.filter((c) => this.seen(c));
-    if (changed.length && (seen.length || !missing || missing.flow)) {
+    if (changed.length && (seen.length || !missing || missing.late)) {
       const take = this.touching(seen.length ? seen : changed);
       // The change's middle: of the changed parts, by their size.
       let mx = 0;
@@ -1396,7 +1565,7 @@ export class Terrain {
         const box = this.fineBox;
         const part = box[b] < box[b + 2] ? [box[b], box[b + 1], box[b + 2], box[b + 3]] : null;
         g.firstFrame = Math.min(g.firstFrame, this.staleFrame[c]);
-        g.jobs.push(this.takeChunk(c, this.fineLevel[c], part));
+        g.jobs.push(this.takeChunk(c, this.fineLevel[c], part, this.fineFar[c] === 1));
       }
       // The cells of every chunk read now, so the group is drawn from one moment (no seam between
       // two chunks read a tick apart); past SNAPSHOT_MS, each as its turn comes.
@@ -1406,37 +1575,62 @@ export class Terrain {
       }
       return g;
     }
-    return missing ? this.newGroup(missing.c, missing.flow, false) : null;
+    return missing ? this.newGroup(missing.c, missing.flow, false, missing.other) : null;
   }
 
   // The chunk to build next apart from changed land: missing or at the wrong level first, those the
   // camera sees before those it does not, nearest first (their whole cells drawn meanwhile); then
   // water that flowed, each at most once in FLOW_STALE_MS, one that flowed long ago before a nearer
   // one (STALE_AGE), so none waits for ever. `seen`: a missing chunk the camera sees.
-  private pickMissing(now: number, all: boolean): { c: number; seen: boolean; flow: boolean } | null {
+  private pickMissing(now: number, all: boolean): { c: number; seen: boolean; flow: boolean; late: boolean; other: boolean } | null {
     let best = -1;
     let bestRank = Infinity;
     let flow = false;
+    let late = false;
+    let other = false;
     for (let c = 0; c < this.chunks.length; c++) {
       if (this.fineBusy[c]) continue;
       const want = this.wantLevel(c);
       if (want === 0) continue;
-      const missing = this.fine[c] === undefined || this.fineLevel[c] !== want;
+      // A chunk with no land to draw stays at the level it was built at.
+      const far = this.fine[c] === null ? this.fineFar[c] : this.wantFar(c);
+      // A far chunk's mesh in eighths, kept hidden for the switch back, when it has none.
+      if (this.fine[c] && far === 1 && this.fineFar[c] === 1 && !this.fineOther[c] && !this.fineStale[c]) {
+        const rank = OTHER_RANK + this.chunkDistance(c);
+        if (rank < bestRank) {
+          best = c;
+          bestRank = rank;
+          flow = false;
+          late = true;
+          other = true;
+        }
+        continue;
+      }
+      // Drawn far where it should be in eighths counts as not built: in eighths first. Drawn in
+      // eighths where it could be far waits for the land not built yet.
+      const toFar = this.fine[c] !== undefined && this.fineLevel[c] === want && far === 1 && this.fineFar[c] === 0;
+      const missing = this.fine[c] === undefined || this.fineLevel[c] !== want || this.fineFar[c] !== far;
       if (missing ? this.dirtyLand.has(c) : this.fineStale[c] !== 2 || !(all || now - this.fineBuiltAt[c] > FLOW_STALE_MS)) continue;
       const d = this.chunkDistance(c);
-      const rank = missing ? (this.seen(c) ? 0 : UNSEEN_RANK) + d : 2 * UNSEEN_RANK + d - Math.min(STALE_AGE_MAX, (now - this.staleAt[c]) / 1000) * STALE_AGE;
+      const rank = missing
+        ? (this.seen(c) ? 0 : UNSEEN_RANK) + (toFar ? FAR_RANK : 0) + d
+        : 2 * UNSEEN_RANK + d - Math.min(STALE_AGE_MAX, (now - this.staleAt[c]) / 1000) * STALE_AGE;
       if (rank < bestRank) {
         best = c;
         bestRank = rank;
         flow = !missing;
+        late = !missing || toFar;
+        other = false;
       }
     }
-    return best < 0 ? null : { c: best, seen: !flow && bestRank < UNSEEN_RANK, flow };
+    return best < 0 ? null : { c: best, seen: !flow && bestRank < UNSEEN_RANK, flow, late, other };
   }
 
   // A group of one chunk not built yet (`fill`: one the camera sees), or one whose water flowed.
-  private newGroup(c: number, flow: boolean, fill: boolean): FineGroup {
-    const job = this.takeChunk(c, this.wantLevel(c), null);
+  private newGroup(c: number, flow: boolean, fill: boolean, other = false): FineGroup {
+    const job = other
+      ? this.takeChunk(c, this.wantLevel(c), null, false, true)
+      : this.takeChunk(c, this.wantLevel(c), null, this.fine[c] === null ? this.fineFar[c] === 1 : this.wantFar(c) === 1);
     return { kind: flow ? "flow" : "new", jobs: [job], at: 0, done: [], tiles: 0, budget: flow ? FINE_AGAIN_MS : FINE_BUDGET_MS, fill, firstFrame: Infinity };
   }
 
@@ -1502,13 +1696,22 @@ export class Terrain {
 
   // Chunk c taken into a group: whole, or only the tiles that reach `part` when its fine mesh can
   // keep the rest (the same level, looks and water).
-  private takeChunk(c: number, sub: number, part: number[] | null): FineJob {
+  private takeChunk(c: number, sub: number, part: number[] | null, far = this.fineFar[c] === 1, other = false): FineJob {
     const all = this.tilesOf(c, sub);
     let idx: number[] | null = null;
+    if (other) {
+      // Built to be kept hidden: the mesh shown stays as it is, changed or not.
+      this.fineBusy[c] = 1;
+      return this.newJob(c, sub, far, true, all, null, null, all);
+    }
+    // Built at the other level: the mesh it replaces is kept (fineOther), out of date if its land
+    // had changed.
+    this.fineWasStale[c] = this.fine[c] !== undefined && this.fineFar[c] !== (far ? 1 : 0) && this.fineStale[c] ? this.fineStale[c] : 0;
     if (
       part &&
       !!this.fine[c] &&
       this.fineLevel[c] === sub &&
+      this.fineFar[c] === (far ? 1 : 0) &&
       this.fineTileQ[c]?.length === all.length + 1 &&
       this.fineWith[c] === (this.fineWaterOn ? 1 : 0) &&
       (!this.fineWaterOn || (this.fineTileWQ[c] && this.fineWaterTiles[c] && this.fineCorners[c])) &&
@@ -1525,12 +1728,27 @@ export class Terrain {
     this.fineBox.fill(0, c * 4, c * 4 + 4);
     this.fineBusy[c] = 1;
     const tiles = idx ? idx.map((t) => all[t]) : all;
+    return this.newJob(c, sub, far, false, all, idx, idx ? part : null, tiles);
+  }
+
+  private newJob(
+    c: number,
+    sub: number,
+    far: boolean,
+    other: boolean,
+    all: [number, number, number, number][],
+    idx: number[] | null,
+    part: number[] | null,
+    tiles: [number, number, number, number][],
+  ): FineJob {
     return {
       c,
       sub,
+      far,
+      other,
       all,
       idx,
-      part: idx ? part : null,
+      part,
       tiles,
       next: 0,
       begun: false,
@@ -1631,6 +1849,8 @@ export class Terrain {
       g.done.push({
         c,
         sub: job.sub,
+        far: job.far,
+        other: job.other,
         geometry,
         water,
         tops: job.tops!,
@@ -1655,6 +1875,8 @@ export class Terrain {
     g.done.push({
       c,
       sub: job.sub,
+      far: job.far,
+      other: job.other,
       geometry,
       water,
       tops: job.tops!,
@@ -1789,12 +2011,23 @@ export class Terrain {
     const c = h.c;
     const sub = h.sub;
     const geometry = h.geometry;
+    if (h.other) {
+      this.keepOther(h);
+      return;
+    }
     const old = this.fine[c];
     const shown = this.fineShown[c];
-    if (old) {
+    // At the other level: the mesh shown until now kept hidden, for the switch back.
+    if (old !== undefined && this.fineFar[c] !== (h.far ? 1 : 0)) {
+      this.setOther(c, this.takeOther(c, this.fineWasStale[c]));
+      // Its land changed since it was built: not kept (staleOther), built again in the background.
+      if (this.fineOther[c]?.stale === 1) this.setOther(c, null);
+    } else if (old) {
       this.remove(old);
       old.geometry.dispose();
     }
+    this.fineWasStale[c] = 0;
+    this.fineFar[c] = h.far ? 1 : 0;
     // Its water in eighths: drawn after the land, as the water in whole cells is.
     this.dropFineWater(c);
     if (h.water) {
@@ -1829,6 +2062,15 @@ export class Terrain {
       this.showParts(c);
       return;
     }
+    const mesh = this.fineMesh(geometry);
+    mesh.visible = shown === 1 && this.chunkOn[c] === 1;
+    this.fine[c] = mesh;
+    this.showParts(c);
+    this.builtSinceShown = true;
+  }
+
+  // A fine chunk's mesh, added to the scene.
+  private fineMesh(geometry: BufferGeometry): Mesh {
     const mesh = new Mesh(geometry, this.landMaterial);
     mesh.matrixAutoUpdate = false;
     // The east and south walls drawn by a second mesh on the same geometry, each mesh setting its
@@ -1856,11 +2098,46 @@ export class Terrain {
     };
     facing(mesh, true);
     facing(twin, false);
-    mesh.visible = shown === 1 && this.chunkOn[c] === 1;
-    this.fine[c] = mesh;
     this.add(mesh);
-    this.showParts(c);
-    this.builtSinceShown = true;
+    return mesh;
+  }
+
+  // A chunk's mesh at its other level built, kept hidden (fineOther): out of date where its land
+  // changed while it was built.
+  private keepOther(h: FineDone): void {
+    const c = h.c;
+    this.fineBusy[c] = 0;
+    const mesh = h.geometry ? this.fineMesh(h.geometry) : null;
+    let water: Mesh | null = null;
+    if (h.water) {
+      water = new Mesh(h.water, this.fluidMaterial);
+      water.matrixAutoUpdate = false;
+      water.renderOrder = 2;
+      this.add(water);
+    }
+    for (const m of [mesh, water]) if (m) m.visible = false;
+    const b = c * 4;
+    this.setOther(c, {
+      mesh,
+      water,
+      far: h.far ? 1 : 0,
+      tileQ: h.tileQ,
+      tileWet: h.tileWet,
+      tileWQ: h.tileWQ,
+      waterTiles: h.waterTiles,
+      corners: h.corners,
+      with: h.with ? 1 : 0,
+      sig: h.sig,
+      tops: h.geometry ? h.tops : undefined,
+      builtAt: this.clock(),
+      stale: this.fineStale[c],
+      staleAt: this.staleAt[c],
+      staleFrame: this.staleFrame[c],
+      box: [this.fineBox[b], this.fineBox[b + 1], this.fineBox[b + 2], this.fineBox[b + 3]],
+    });
+    if (!h.geometry) this.spareTops = h.tops.h;
+    // The land changed while it was built: not kept (staleOther), built again in the background.
+    if (this.fineStale[c] === 1) this.setOther(c, null);
   }
 
   // For the measures: triangles of the land and water as now shown, and the fine chunks by level.
@@ -2385,6 +2662,11 @@ export const FINE_SUB = 8;
 // Off (0): the seam was measured (scripts/looks-seam.mjs) and quarters showed wherever they were
 // used, so every chunk stays in eighths.
 export const LOD_PX = 0;
+// Far land (Terrain.wantFar): a chunk is drawn far where an eighth is under FAR_PX pixels of the
+// screen at its nearest point, and in eighths again past FAR_BACK times that. Measured at the sky
+// view (scripts/far-land-proof.mjs): the frames differ no more than two frames in eighths do.
+export const FAR_PX = 1;
+export const FAR_BACK = 1.2;
 // Every face, as one run.
 const FACES_ALL = Infinity;
 const FINE_BUDGET_MS = 4;
@@ -2399,6 +2681,10 @@ export const FILL_BUDGET_MS = 10;
 export const ACT_QUIET_MS = 1000;
 // What a chunk the camera does not see counts as, past any distance (Terrain.pickMissing).
 const UNSEEN_RANK = 1e6;
+// A chunk to draw far, from eighths, after every chunk not built yet, seen or not.
+const FAR_RANK = 1.5 * UNSEEN_RANK;
+// A far chunk's mesh in eighths, built to be kept hidden (fineOther), after everything else.
+const OTHER_RANK = 4 * UNSEEN_RANK;
 const FINE_AGAIN_MS = 1.5;
 const FINE_TOP = 6;
 // The fine land's faces by the way they face, in the order of its index buffer (quadGeometry):
@@ -2508,6 +2794,9 @@ const SEEN_BOX = new Box3(new Vector3(), new Vector3());
 interface FineJob {
   c: number;
   sub: number;
+  far: boolean;
+  // Built to be kept hidden (fineOther), not shown.
+  other: boolean;
   all: [number, number, number, number][];
   idx: number[] | null;
   part: number[] | null;
@@ -2527,6 +2816,8 @@ interface FineJob {
 interface FineDone {
   c: number;
   sub: number;
+  far: boolean;
+  other: boolean;
   geometry: BufferGeometry | null;
   water: BufferGeometry | null;
   tops: FineTops;
@@ -2537,6 +2828,26 @@ interface FineDone {
   corners: Float32Array | null;
   with: boolean;
   sig: string;
+}
+// A chunk's fine mesh at its other level (Terrain.fineOther), hidden, with what a build in part keeps
+// and whether its land changed since it was built (stale and box, as fineStale and fineBox).
+interface FineOther {
+  mesh: Mesh | null;
+  water: Mesh | null;
+  far: number;
+  tileQ: Int32Array | null;
+  tileWet: Uint8Array | null;
+  tileWQ: Int32Array | null;
+  waterTiles: (WaterTile | null)[] | null;
+  corners: Float32Array | null;
+  with: number;
+  sig: string;
+  tops: FineTops | undefined;
+  builtAt: number;
+  stale: number;
+  staleAt: number;
+  staleFrame: number;
+  box: [number, number, number, number];
 }
 // Chunks shown together: the land a change reached ("change"), a chunk not built yet ("new"), or
 // water that flowed ("flow"). firstFrame: the frame the change was first drawn in.
