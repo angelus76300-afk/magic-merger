@@ -403,6 +403,17 @@ What this go covers, no more than each concept already states:
 3. **5.0, 5.3 and 4.11.3**: go. Their concepts state no money, players' data or public part. If one appears, it goes back to the owner first.
 4. **5.4 Ready for strangers and 5.5 Items worth showing a friend**: nothing goes public and no running cost starts on this go. It covers planning only. 5.5 has no concept text yet. Each comes back to the owner as a concept with its cost and what goes public before anything is built on it.
 
+### The owner's answers of 22 November
+
+The owner, typed in the lead session on 22 November 2026 (about 20:56 UTC):
+
+1. **"looks: yes, up to $25"**: the yes the go of 20 November left open for 5.2.5. It covers the pilot and the bulk pass within $25, on the concept above. The gates stay: reference models approved on frames before the pilot, and "looks: go" after it. The lead records it on each pull request that spends from it.
+2. **"nature saves: ok"**: the saved layer of player plants (#204, live).
+3. **"Inside their house, window lit"**: sleeping villagers go inside their house and its window lights; one with no house lies down (#205).
+4. **"yes, but rarely"**: cold still kills villagers, rarely.
+5. **"Shadows ok"**: no change to shadows.
+6. **"Chunk loading is very slow"**: measured at about 66 s for a medium island and 2 minutes for a large one on a throttled phone. The fix loads what is on screen first, with a bigger budget until the view is full. A worker mesher comes with 5.2.
+
 ### 4.11.3 A drought, reworked
 
 Not built. The lead session's first draft was challenged by the game designer on 12 November and lost to high water as the second trouble: a drought's answers are the fire's (water, rain), so the measure the troubles are held to (the share answered by an item first made after the trouble began) would fail by construction; paling soil does not read from the sky on a folded phone; and the engine has no thirst (crops grow on any field). Its conditions when it is built: the answer is one cast that keeps the fields wet for about a minute, and recasting by hand scores "held"; it starts only when no rain front will reach the village for some minutes and never at a village a standing item already waters; dust off the fields, the pond draining and crops yellowing in a wave within ten seconds; people walk to water and come back when the fields green; and before tuning, the library is run against a drought fixture: if a starting element answers it, or under 5% of items do, retune.
