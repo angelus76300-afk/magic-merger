@@ -847,6 +847,9 @@ function driveChecks(check: Check, world: World, rt: Runtime): void {
       const v = put("villager", at.x0 + 3, at.a);
       v.x = at.x0 + 3;
       v.y = at.a + dy;
+      // Its size sets its pace (drive.ts): one size, whatever the island's life drew before (22
+      // November: a smaller villager drawn on another stream was 2 cells short in a second).
+      v.size = 1;
       awake(v);
       push(world, 1, 0);
       let near = Infinity;

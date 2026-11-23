@@ -590,6 +590,10 @@ saveChecks(check);
 // line counted again), everyday work counted, villagers' memories gathered;
 // the digest is what the chronicle is written from, bounded on the way back.
 {
+  // Creatures numbered from 1, as when this ran alone: ids feed their choices, and inside the suite
+  // the count stood at whatever ran before (22 November: on another count every villager fell to
+  // the imps and none was left to remember them). Put back after.
+  const ids = resetCreatureIds(1);
   seed(21);
   const world = generateWorld(112, 112, 8);
   populate(world);
@@ -622,6 +626,7 @@ saveChecks(check);
   );
   const back = loadWorld(JSON.parse(JSON.stringify(saveWorld(world, new Map()))), () => {});
   check("the story is saved with the world", back?.story.length === world.story.length && back.story.length <= 60);
+  resetCreatureIds(ids);
   const forged = readDigest({ days: 1e9, lines: ["x".repeat(500), 3, "ok"], work: "no", memories: [], now: [] });
   check(
     "a digest from the sandbox is bounded",
@@ -1513,7 +1518,8 @@ for (const scenario of SCENARIOS) {
 // wolves, a dragon, a vampire, gold and a shrine, left alone for ten
 // simulated minutes on three streams of life. Every creature that lived five
 // minutes changed something; no kind of three or more vanished (fell under a
-// third of its number) and none exploded (past two and a half times it).
+// third of its number and was not back to it by the end) and none exploded
+// (past two and a half times it).
 // 4.3: deer run better, and wolves must still catch some. Not on every
 // stream: on main, stream 0 has wolves catch no deer in ten minutes and
 // streams 1 and 2 three and four.
@@ -1533,7 +1539,11 @@ for (const scenario of SCENARIOS) {
 }
 for (const { stream, report: r } of sceneReports.sort((a, b) => a.stream - b.stream)) {
   const kinds = Object.entries(r.kinds);
-  const vanished = kinds.filter(([, v]) => v.start >= 3 && v.min < Math.ceil(v.start / 3)).map(([k]) => k);
+  // Vanished: under a third of its number and not back to a third by the end. The island brings
+  // its wild kinds back (creatures.ts keepWild), so a herd of three a pack takes in one night and
+  // that is born again is not gone (22 November: the island's life on another stream, its villagers
+  // asleep indoors, had stream 0's wolves take all three deer at once at the first night).
+  const vanished = kinds.filter(([, v]) => v.start >= 3 && v.min < Math.ceil(v.start / 3) && v.end < Math.ceil(v.start / 3)).map(([k]) => k);
   const exploded = kinds.filter(([, v]) => v.max > Math.max(v.start * 2.5, v.start + 3)).map(([k, v]) => `${k} ${v.start} to ${v.max}`);
   const lively = Object.values(r.lively).reduce((a, [d, n]) => [a[0] + d, a[1] + n], [0, 0]);
   check(
