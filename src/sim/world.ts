@@ -460,7 +460,7 @@ function generateLand(w: number, h: number, seed: number, land: LandOptions, rec
   const rng = world.rng;
   const { peak } = buildLand(world, land);
   const had = habitatKinds(world);
-  placeVillages(world, rng, world.seaLevel + Math.max(10, peak * 0.62));
+  placeVillages(world, rng, world.seaLevel + Math.max(10, peak * 0.62), !!land.peaks);
   // 4.4.5 part B: wonders shape the land before the plants grow round them.
   placeWonders(world, BIOMES, peak, recent, defs);
   // 4.4.5: what grows where, rare variants, villages' looks, refuges.
@@ -479,18 +479,22 @@ function generateLand(w: number, h: number, seed: number, land: LandOptions, rec
 
 // Villages on the flattest dry land, away from each other and from rivers:
 // score many candidate spots and keep the best ones.
-function placeVillages(world: World, rng: Rng, top: number): void {
+// `dry`: islands made now (taller peaks, 5.2.5) keep their villages out from under a spring's water
+// (underSprings); older islands keep their exact land (challenges and saves are made from it).
+function placeVillages(world: World, rng: Rng, top: number, dry = false): void {
   const { w, h } = world;
   const villages = Math.max(2, Math.round((w * h) / 12000));
-  const candidates: { x: number; y: number; score: number }[] = [];
-  const under = underSprings(world);
+  const candidates: { x: number; y: number; score: number; under: boolean }[] = [];
+  const under = dry ? underSprings(world) : null;
   for (let k = 0; k < Math.max(600, (w * h) / 40); k++) {
     const x = rng.int(12, w - 13);
     const y = rng.int(12, h - 13);
     const score = landScore(world, x, y, 7, top, (world.seaLevel + top) / 2);
-    if (score < Infinity && !footprintUnder(world, under, x, y)) candidates.push({ x, y, score });
+    if (score < Infinity) candidates.push({ x, y, score, under: !!under && footprintUnder(world, under, x, y) });
   }
-  candidates.sort((a, b) => a.score - b.score);
+  // A spot under a spring only when no other is left (an island of rivers): a village floods
+  // rather than an island with none.
+  candidates.sort((a, b) => Number(a.under) - Number(b.under) || a.score - b.score);
   const centers: { x: number; y: number }[] = [];
   for (let spread = 3.2; spread <= 8 && centers.length < villages; spread *= 1.6) {
     for (const c of candidates) {

@@ -9,9 +9,10 @@
 //      up again every five seconds and starved by its door), and its family moves to a dry home;
 //   3. a village whose fields were lost tills new ones (main: "tilling a new field" was dropped at
 //      the next thought, its ground not a field yet), and no more than its people need;
-//   4. a village is never laid out below a spring's water: no house of the meadow island (main:
-//      its village by a river's head stood in water within three minutes, 28 house cells) or the
-//      small dry island stands in water after three minutes.
+//   4. on an island made now (taller peaks), a village is never laid out below a spring's water:
+//      no house of a desert delta (seed 6; main: its village by a river's head stood in water
+//      within three minutes, 8 house cells) or of the small dry island stands in water after three
+//      minutes. Islands made the old way keep their exact land (scripts/peaks-test.ts).
 // The hour-long soak of the pull request is scripts/villagers-run.ts.
 import { kindOf, populate, resetCreatureIds, type Creature } from "../src/sim/creatures";
 import { daylight } from "../src/sim/daylight";
@@ -23,12 +24,17 @@ import { Runtime } from "../src/sim/runtime";
 import { stepHeadless } from "../src/sim/tick";
 import { TICK, generateWorld, type World } from "../src/sim/world";
 import { island } from "./nature-run";
+import { DEFAULT_LAND, type LandOptions } from "../src/sim/land-options";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
 function fresh(name = "small-meadow", seed = 11): { world: World; rt: Runtime } {
   const was = Math.random;
-  const spec = island(name);
+  // "biome/shape/seed": an island made now (taller peaks), 112 cells.
+  const [biome, shape, s] = name.split("/");
+  const spec = shape
+    ? { size: 112, seed: Number(s), land: { ...DEFAULT_LAND, biome: biome as LandOptions["biome"], shape: shape as LandOptions["shape"], peaks: true } }
+    : island(name);
   Math.random = seeded(seed);
   resetCreatureIds(1);
   try {
@@ -199,7 +205,7 @@ export function villagersChecks(check: Check): void {
     );
   }
   // 4. No village laid out under a spring: three minutes on each soak island, no house in water.
-  for (const name of ["meadow", "small-dry"]) {
+  for (const name of ["desert/delta/6", "small-dry"]) {
     const { world, rt } = fresh(name);
     world.weather = true;
     run(world, rt, 180);
