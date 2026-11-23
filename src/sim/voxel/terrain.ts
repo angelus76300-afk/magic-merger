@@ -90,6 +90,12 @@ interface ChunkMeshes {
 // For the measure of a big spell (scripts and the frame's own hook): the switch of the one frame
 // redraw, and the longest run of frames with land left to redraw.
 export const LAND_REDRAW = { burst: true, maxLag: 0, lastLag: 0 };
+// When the player last acted on the page (a touch, a key, a cast), performance.now() ms: set by the
+// engine (playerActed), read by every terrain (Terrain.updateFine, FILL_BUDGET_MS).
+const PLAYER = { actedAt: -Infinity };
+export function playerActed(): void {
+  PLAYER.actedAt = performance.now();
+}
 // Chunks changed at once from which the land is redrawn whole in one frame (rebuild).
 const BURST_CHUNKS = 10;
 
@@ -651,7 +657,7 @@ export class Terrain {
   // The camera's view, set by the view each frame: chunks wholly outside it are built after those
   // in it. null: every chunk counts as seen (the checks).
   frustum: Frustum | null = null;
-  // When the player last acted (a touch, a key, a cast; the engine tells, Terrain.acted), by clock:
+  // When the player last acted, by this terrain's clock (the checks; the game tells playerActed):
   // land in view not built yet takes FILL_BUDGET_MS of a frame only ACT_QUIET_MS after it.
   private actedAt = -Infinity;
   acted(): void {
@@ -1243,7 +1249,7 @@ export class Terrain {
     this.credit = Math.min(CREDIT_MAX_MS, this.credit + Math.min(CREDIT_FRAME_MS, Math.max(0, start - this.creditAt)) * CREDIT_REFILL);
     this.creditAt = start;
     const boosted = FINE_BUDGET_MS + Math.max(0, Math.min(CHANGE_BUDGET_MS - FINE_BUDGET_MS, this.credit));
-    const quiet = start - this.actedAt >= ACT_QUIET_MS;
+    const quiet = start - this.actedAt >= ACT_QUIET_MS && performance.now() - PLAYER.actedAt >= ACT_QUIET_MS;
     // The share the credit is not spent for: FILL_BUDGET_MS in a frame that fills the view.
     let base = FINE_BUDGET_MS;
     let built = false;
@@ -1417,9 +1423,7 @@ export class Terrain {
       const missing = this.fine[c] === undefined || this.fineLevel[c] !== want;
       if (missing ? this.dirtyLand.has(c) : this.fineStale[c] !== 2 || !(all || now - this.fineBuiltAt[c] > FLOW_STALE_MS)) continue;
       const d = this.chunkDistance(c);
-      const rank = missing
-        ? (this.seen(c) ? 0 : UNSEEN_RANK) + d
-        : 2 * UNSEEN_RANK + d - Math.min(STALE_AGE_MAX, (now - this.staleAt[c]) / 1000) * STALE_AGE;
+      const rank = missing ? (this.seen(c) ? 0 : UNSEEN_RANK) + d : 2 * UNSEEN_RANK + d - Math.min(STALE_AGE_MAX, (now - this.staleAt[c]) / 1000) * STALE_AGE;
       if (rank < bestRank) {
         best = c;
         bestRank = rank;

@@ -10,6 +10,7 @@ import { daylight } from "./daylight";
 import { weatherAt } from "./voxel/sky";
 import { stepWorld } from "./tick";
 import { VoxelView } from "./voxel/view";
+import { playerActed } from "./voxel/terrain";
 import { GRAPHICS } from "./voxel/graphics";
 import { FramePacer, drawBetween, ticksDue } from "./voxel/pacing";
 import { TICK, generateWorld, type World } from "./world";
@@ -130,7 +131,7 @@ export class Engine {
     // no place belongs to the player's last cast while it runs (castOwns).
     if (ok) this.lastCast = { x, y, at: performance.now() };
     // The player acts: the land not built yet keeps its small share of the frames (terrain.ts FILL_BUDGET_MS).
-    this.view.terrain.acted();
+    playerActed();
     // What the cast changed before the next tick is drawn too (view.ts, scan).
     this.view.landChanged = true;
     return ok;
@@ -213,7 +214,7 @@ export class Engine {
     // How far the frame is from the last tick to the next one, for the view.
     this.view.between = this.pacer.enabled ? drawBetween(this.acc, TICK) : 1;
     this.view.paceMs = smooth ? 1000 / 60 : 1000 / 30;
-    if (this.held.size) this.view.terrain.acted();
+    if (this.held.size) playerActed();
     this.render(Math.min(0.1, since / 1000) * scale);
     // A draw from outside the loop (the Spell Lab, a test's frame) shows the
     // creatures where the simulation has them.
@@ -313,13 +314,12 @@ export class Engine {
     const acted = (e: Event) => {
       if (e.type === "pointermove" && (e as PointerEvent).buttons === 0) return;
       if (e.type === "pointerdown") this.held.add((e as PointerEvent).pointerId);
-      this.view.terrain.acted();
+      playerActed();
     };
     const lifted = (e: PointerEvent) => this.held.delete(e.pointerId);
     for (const type of ["pointerdown", "pointermove", "wheel", "keydown"])
       window.addEventListener(type, acted, { capture: true, passive: true, signal: abort.signal });
-    for (const type of ["pointerup", "pointercancel"] as const)
-      window.addEventListener(type, lifted, { capture: true, passive: true, signal: abort.signal });
+    for (const type of ["pointerup", "pointercancel"] as const) window.addEventListener(type, lifted, { capture: true, passive: true, signal: abort.signal });
     c.addEventListener(
       "pointerdown",
       (e) => {
