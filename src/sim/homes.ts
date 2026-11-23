@@ -52,6 +52,9 @@ export function houseOf(world: World, c: Creature): number {
   const none =
     known !== undefined && known < 0 && c.data.houseFor === c.homeX + c.homeY * 1e4 && world.time < ((c.data.houseAt as number | undefined) ?? 0) + 10;
   if (none || (known !== undefined && known >= 0 && world.cover[known] === C.HOUSE && dist(world, known, c.homeX, c.homeY) <= HOME.reach)) return known!;
+  // Its house in ruins until dawn: no house, and the ruin is kept as its own (review of 367ebc1: a
+  // neighbour's house nearer its home point was taken for its own, and the ruin forgotten).
+  if (ownRuin(world, c, known) && ruinStands(world, known!)) return -1;
   const i = houseNear(world, c.homeX, c.homeY);
   c.data.house = i;
   c.data.houseFor = c.homeX + c.homeY * 1e4;
@@ -213,9 +216,19 @@ export function rebuildable(world: World, i: number): boolean {
   return world.cover[i] === C.RUBBLE && !ruinStands(world, i);
 }
 
-// The rubble of a villager's house: rubble within HOME.reach of its home point, nearer than any
-// house cell; -1 when its house stands (or it had none).
+// Its remembered house cell (houseOf), fallen to rubble, its home not moved since.
+function ownRuin(world: World, c: Creature, known: number | undefined): boolean {
+  return known !== undefined && known >= 0 && world.cover[known] === C.RUBBLE && c.data.houseFor === c.homeX + c.homeY * 1e4;
+}
+
+// The rubble of a villager's house, or -1 when its house stands (or it had none). Its own house as
+// houseOf remembers it, fallen to rubble; for one with none remembered, rubble within HOME.reach of
+// its home point nearer than any house cell (review of 367ebc1: judged that way for all, a
+// neighbour's house nearer the home point than the ruin left a family under the open sky).
 export function homeRuin(world: World, c: Creature): number {
+  const known = c.data.house as number | undefined;
+  if (ownRuin(world, c, known)) return known!;
+  if (known !== undefined && known >= 0 && world.cover[known] === C.HOUSE && c.data.houseFor === c.homeX + c.homeY * 1e4) return -1;
   let best = -1;
   let bestD: number = HOME.reach;
   let house: number = HOME.reach;

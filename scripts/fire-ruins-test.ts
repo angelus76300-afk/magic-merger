@@ -126,9 +126,9 @@ export function fireRuinsChecks(check: Check): void {
     // Along one wall: the two cells west of the block.
     const ring = [aim - 1, aim + world.w - 1];
     const keep = { cover: world.cover.slice(), ground: world.ground.slice(), fire: world.fire.slice(), temp: world.temp.slice(), hp: world.coverHp.slice() };
-    const caught = (bush: boolean, trials: number) => {
+    const caught = (bush: boolean, trials: number, ground: number = G.GRASS) => {
       let n = 0;
-      withRandom(bush ? 11 : 12, () => {
+      withRandom(bush ? 11 : ground === G.GRASS ? 12 : 13, () => {
         for (let t = 0; t < trials; t++) {
           world.cover.set(keep.cover);
           world.ground.set(keep.ground);
@@ -136,7 +136,7 @@ export function fireRuinsChecks(check: Check): void {
           world.temp.set(keep.temp);
           world.coverHp.set(keep.hp);
           for (const j of ring) {
-            world.ground[j] = G.GRASS;
+            world.ground[j] = ground;
             world.setCover(j, bush ? C.BUSH : C.NONE);
             world.fire[j] = 1;
           }
@@ -152,6 +152,15 @@ export function fireRuinsChecks(check: Check): void {
       "fire: a house catches from burning grass along its wall far less often than from burning bushes",
       bush >= 0.3 && grass <= bush * 0.5,
       `grass ${(grass * 100).toFixed(0)}%, bushes ${(bush * 100).toFixed(0)}% of 24 tries`,
+    );
+    // A field's stubble burns as fiercely as a bush (it creeps at full strength, LOW_CREEP), so
+    // only the wall (LOW_TO_WALL) keeps it from setting the house alight as often (review of
+    // 367ebc1: no check failed with LOW_TO_WALL at 1).
+    const field = caught(false, 24, G.FIELD);
+    check(
+      "fire: a house catches from a burning field along its wall far less often than from burning bushes",
+      bush >= 0.3 && field <= bush * 0.5,
+      `field ${(field * 100).toFixed(0)}%, bushes ${(bush * 100).toFixed(0)}% of 24 tries`,
     );
   }
   // 3. One Fire on a house of a fresh medium island, 30 s.
@@ -241,5 +250,51 @@ export function fireRuinsChecks(check: Check): void {
       before < 0 && rebuiltAt >= 306 && rebuiltAt < 456 && done === 4,
       `first cell rebuilt at ${rebuiltAt.toFixed(0)} s, ${done} of 4 house cells back at ${world.time.toFixed(0)} s`,
     );
+  }
+  // 5. A neighbour's house nearer its home point than the ruin of its own (review of 367ebc1: seed
+  // 15, rubble 3.15 cells off, a neighbour's house 2.26; she slept under the open sky).
+  {
+    const { world, rt } = fresh(4, 112, island("small-meadow").land);
+    run(world, rt, 120);
+    const top = tileHouses(world);
+    let case5: { c: Creature; block: number[]; near: number } | undefined;
+    for (const c of villagers(world)) {
+      if (!c.mind || jobOf(c) === "guard") continue;
+      const house = houseOf(world, c);
+      if (house < 0 || top[house] < 0) continue;
+      const b = top[house];
+      const block = [b, b + 1, b + world.w, b + world.w + 1];
+      const at = (i: number) => Math.hypot((i % world.w) + 0.5 - c.homeX, Math.floor(i / world.w) + 0.5 - c.homeY);
+      const ruinD = Math.min(...block.map(at));
+      // An open cell nearer its home point than any cell of its house, not touching it.
+      let near = -1;
+      for (let i = 0; i < world.n && near < 0; i++)
+        if (
+          world.cover[i] === C.NONE &&
+          at(i) < ruinD &&
+          at(i) > 0.8 &&
+          block.every((j) => Math.abs((j % world.w) - (i % world.w)) > 1 || Math.abs(Math.floor(j / world.w) - Math.floor(i / world.w)) > 1)
+        )
+          near = i;
+      if (near >= 0) {
+        case5 = { c, block, near };
+        break;
+      }
+    }
+    if (!case5) check("ruins: a family keeps its own ruin with a neighbour's house nearer its home point", false, "no case found");
+    else {
+      const { c, block, near } = case5;
+      for (const j of block) world.setCover(j, C.RUBBLE);
+      world.setCover(near, C.HOUSE);
+      const found = homeRuin(world, c);
+      const took = houseOf(world, c);
+      run(world, rt, 280 - world.time);
+      const action = c.mind?.action ?? "";
+      check(
+        "ruins: a family keeps its own ruin with a neighbour's house nearer its home point",
+        block.includes(found) && took === -1 && c.data.rough === true && /by the ruins/.test(action),
+        `ruin ${block.includes(found) ? "found" : "missed"}, ${took === -1 ? "no house taken" : "took the neighbour's house"}; "${action}"`,
+      );
+    }
   }
 }
