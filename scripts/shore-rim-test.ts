@@ -22,7 +22,7 @@ const LOW = 0.5;
 
 // The highest surface of `mat`'s meshes over each eighth column of the island, at its middle, NaN
 // where none (each triangle that is not upright).
-function surface(world: World, meshes: Mesh[], mat: MeshBasicMaterial): Float32Array {
+export function surface(world: World, meshes: Mesh[], mat: MeshBasicMaterial): Float32Array {
   const W = world.w * SUB;
   const y = new Float32Array(W * world.h * SUB).fill(NaN);
   for (const m of meshes) {

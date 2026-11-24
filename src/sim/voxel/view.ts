@@ -38,7 +38,8 @@ import { COLD, hooded, person } from "../cold";
 import { F as FLUID } from "../materials";
 import { Figures, figureMaterials, type Pose } from "./figures";
 import { buildRig, drawScale, paletteOf, ROLES, variantOf, type Rig } from "./rigs";
-import { easeFoot, easeGround, walkGround, type Footing } from "./walk";
+import { easeFoot, easeGround, type Footing } from "./walk";
+import { dockBase, feetGround, lilyBase, sparkBase } from "./afloat";
 import { leanToward } from "../director";
 import { BUILDS } from "../body";
 import { carried, carry } from "./pacing";
@@ -554,6 +555,16 @@ export class VoxelView {
       this.lastCovers = -1;
       this.terrain.coversChanged = true;
     }
+    // The water drawn under a lily or a dock changed (shown in eighths or in whole cells, or built
+    // again): they are put on it again.
+    if (this.terrain.waterMark !== this.afloatSeen) {
+      this.afloatSeen = this.terrain.waterMark;
+      for (const [c, mark] of this.afloatMarks)
+        if (this.terrain.waterMarks[c] !== mark) {
+          this.terrain.coversChanged = true;
+          break;
+        }
+    }
     if (
       moved ||
       ((this.terrain.coversChanged || this.roadsDrawn !== world.roadsVersion || this.sitesDrawn !== world.sitesVersion) && time - this.lastCovers > 0.25)
@@ -930,6 +941,10 @@ export class VoxelView {
 
   // Where the eye was when the covers were last placed (null: placed whole, from the sky).
   private coversAround: { x: number; y: number; yaw: number } | null = null;
+  // The chunks with a lily or a dock on their water, and the count of changes to the water drawn
+  // there when they were put on it (Terrain.waterMarks); the terrain's whole count when last looked.
+  private afloatMarks = new Map<number, number>();
+  private afloatSeen = -1;
 
   // A tree's size, as placeCovers draws its old model: height and girth from its cell, older trees
   // bigger; on the old islands (no flora) a little variety by its shade.
@@ -1053,6 +1068,7 @@ export class VoxelView {
     }
     const lists = new Map<string, number[]>();
     for (const key of this.covers.keys()) lists.set(key, []);
+    this.afloatMarks.clear();
     // In the eye view, only the covers within the mist and a step beyond it (the eye may walk
     // COVER_STEP cells before they are placed again), and only those ahead of the look, within
     // COVER_WEDGE of it either side (it may turn COVER_TURN before they are placed again; the view
@@ -1143,10 +1159,13 @@ export class VoxelView {
         const y = Math.floor(i / world.w);
         const h = cellHash(i);
         let base = columnTop(world, i);
-        // On the water as drawn (in eighths, a little under the shore: Terrain.fineWaterLevel).
-        if (key === "lily") base = this.terrain.fineWaterLevel(i) + 0.01;
-        else if (key === "dock") base = Math.max(base, surfaceY(world, i)) - 0.24;
-        else if (key === "bridge-x" || key === "bridge-z") base = world.walkLevel(i) * V - 0.3;
+        // On the water as drawn, in eighths or in whole cells (afloat.ts); put on it again when the
+        // water drawn under it changes (afloatMarks).
+        if (key === "lily" || key === "dock") {
+          base = key === "lily" ? lilyBase(this.terrain, world, i) : dockBase(this.terrain, world, i);
+          const c = Math.floor(y / CHUNK) * Math.ceil(world.w / CHUNK) + Math.floor(x / CHUNK);
+          this.afloatMarks.set(c, this.terrain.waterMarks[c] ?? 0);
+        } else if (key === "bridge-x" || key === "bridge-z") base = world.walkLevel(i) * V - 0.3;
         const p = this.toScene(x + 0.5, y + 0.5, base);
         if (house || key === "bridge-x" || key === "bridge-z") {
           m.makeTranslation(p.x - 0.5, p.y, p.z - 0.5);
@@ -1348,7 +1367,9 @@ export class VoxelView {
         if (glow < 0.35) continue;
         const x = i % world.w;
         const y = Math.floor(i / world.w);
-        const p = this.toScene(x + 0.2 + ((h >> 4) % 6) / 10, y + 0.2 + ((h >> 8) % 6) / 10, this.terrain.fineWaterLevel(i) + 0.02);
+        const u = 0.2 + ((h >> 4) % 6) / 10;
+        const v = 0.2 + ((h >> 8) % 6) / 10;
+        const p = this.toScene(x + u, y + v, sparkBase(this.terrain, world, i, u, v));
         const s = 0.12 + glow * 0.16;
         this.m.makeScale(s, 0.4, s);
         this.m.setPosition(p.x, p.y, p.z);
@@ -1759,7 +1780,7 @@ export class VoxelView {
     const a = this.between;
     const x = g ? g.px + (c.x - g.px) * a : c.x;
     const y = g ? g.py + (c.y - g.py) * a : c.y;
-    const ground = g && Number.isFinite(g.gy) ? g.gy : walkGround(world, x, y);
+    const ground = g && Number.isFinite(g.gy) ? g.gy : feetGround(this.terrain, world, x, y);
     // Eyes sit a little under the top of the head (a hat or antlers above them),
     // kept clear of walls, trunks and steps of ground (eyes.ts clearEye): pressed
     // to a cliff or a house the view was one flat colour (the playtest of 12 November).
@@ -2036,9 +2057,11 @@ export class VoxelView {
   // Where a walker's feet are drawn, eased at `time` (walk.ts): on the fine land as it is drawn
   // (terrain.ts footAt), and where that is not drawn, or with it off (the low level, which draws
   // as before), on the cells' own steps.
+  // In the water, on its surface as drawn (afloat.ts feetGround).
   private feetAt(g: Footing, x: number, y: number, time: number): number {
-    if (!GRAPHICS.fine || !GRAPHICS.steps) return easeGround(g, walkGround(this.world, x, y), time);
-    return easeFoot(g, this.terrain.footAt(x, y) ?? walkGround(this.world, x, y), time);
+    const ground = feetGround(this.terrain, this.world, x, y);
+    if (!GRAPHICS.fine || !GRAPHICS.steps) return easeGround(g, ground, time);
+    return easeFoot(g, ground, time);
   }
 
   // A small voxel cart behind (x, y) facing `heading` (radians along +x), `s` times its size: a bed,
