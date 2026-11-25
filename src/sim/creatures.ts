@@ -1100,8 +1100,10 @@ function unstick(world: World, c: Creature, k: CreatureKind): void {
 // of dry ground within ASHORE.reach, it swims for the nearest other shore, through water no deeper
 // than it drowns in (1.4) if it can; deep water is no wall for it until it is out (blocked). Held
 // in the water ASHORE.held seconds within three cells of one place, it walks to the nearest dry
-// ground. Its mind waits meanwhile, and takes up its task again once it stands in the shallows.
-const ASHORE = { wade: 0.3, reach: 24, land: 120, drown: 1.4, ahead: 3, every: 1, held: 8 } as const;
+// ground: long enough that its own mind has first given up a task it cannot reach (goals.ts,
+// unreached), as a shorter wait kept turning it back into the water. Its mind waits meanwhile, and
+// takes up its task again once it stands in the shallows.
+const ASHORE = { wade: 0.3, reach: 24, land: 120, drown: 1.4, ahead: 3, every: 1, held: 45 } as const;
 const SPAN = ASHORE.reach * 2 + 1;
 const shoreFrom = new Int32Array(SPAN * SPAN);
 const shoreQueue = new Int32Array(SPAN * SPAN);
