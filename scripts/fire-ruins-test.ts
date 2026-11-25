@@ -13,7 +13,9 @@
 //      rebuilt; a ruin saved and loaded at night still waits for the dawn;
 //   5. its family keeps its own ruin with a neighbour's house nearer its home point;
 //   6. once its house is rebuilt, each family is back in it (main: 4 of 20 on two islands);
-//   7. a ruin nobody rebuilds is given up a day after its dawn, so no family is homeless for good.
+//   7. a ruin nobody rebuilds is given up a day after its dawn, so no family is homeless for good;
+//   8. a village with no builder near: its families rebuild their houses themselves by midmorning
+//      (homes.ts ownRebuild), so every ruin is gone by the evening.
 // The measurement of the pull request (ten islands, before and after) is scripts/fire-run.ts.
 import { populate, resetCreatureIds, type Creature } from "../src/sim/creatures";
 import { daylight } from "../src/sim/daylight";
@@ -339,6 +341,48 @@ export function fireRuinsChecks(check: Check): void {
       `${lastNight ? "kept" : "given up"} the evening after, ${twoNights ? "still kept" : "given up"} after the second dawn`,
     );
   }
+  // 8. A village with no builder of its own (review of 4e4e18e: seed 4, the village at (99,12);
+  // the island's builders lived 40 cells off and look for ruins within 14 cells of their own
+  // village, so its three ruins stood for good). By the evening of the day they may be rebuilt,
+  // before the night and before the families give them up, every ruin is gone. Three islands whose
+  // first village has no builder at hand (main: 3, 3 and 3 ruins left of 9).
+  {
+    const r = burnedVillagesRebuilt([4, 2, 7]);
+    check(
+      "ruins: every burned house of every village is rebuilt by the evening, builder or not",
+      r.burned >= 9 && r.left === 0,
+      `${r.left} of ${r.burned} ruins left at 600 s; ${r.rows.join(", ")}`,
+    );
+  }
+}
+
+// The three lived-in houses nearest the centre of each of the first `villages` villages burned by
+// day (120 s) on islands of these seeds; how many still have rubble on the evening of the day they
+// may be rebuilt (600 s).
+// A cell paved by a road crew (pave clears what stands on a road's cell) counts as cleared.
+export function burnedVillagesRebuilt(seeds: number[], villages = 1): { burned: number; left: number; rows: string[] } {
+  let burned = 0;
+  let left = 0;
+  const rows: string[] = [];
+  for (const seed of seeds) {
+    const { world, rt } = fresh(seed, 112, island("small-meadow").land);
+    run(world, rt, 120);
+    const top = tileHouses(world);
+    const lived = [...new Set(villagers(world).map((c) => houseOf(world, c)).filter((h) => h >= 0 && top[h] >= 0).map((h) => top[h]))];
+    const blocks: number[] = [];
+    for (const s of world.settlements.slice(0, villages)) {
+      const far = (b: number) => Math.hypot((b % world.w) - s.x, Math.floor(b / world.w) - s.y);
+      blocks.push(...lived.filter((b) => !blocks.includes(b)).sort((a, b) => far(a) - far(b)).slice(0, 3));
+    }
+    const cellsOf = (b: number) => [b, b + 1, b + world.w, b + world.w + 1];
+    for (const b of blocks) for (const j of cellsOf(b)) world.setCover(j, C.RUBBLE);
+    run(world, rt, 600 - world.time);
+    const standing = blocks.filter((b) => cellsOf(b).some((j) => world.cover[j] === C.RUBBLE));
+    burned += blocks.length;
+    left += standing.length;
+    rows.push(`seed ${seed}: ${blocks.length - standing.length} of ${blocks.length}`);
+  }
+  return { burned, left, rows };
 }
 
 // Houses burned by day on islands of these seeds, the nearest `burn` to the village's centre that
