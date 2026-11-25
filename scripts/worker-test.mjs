@@ -361,6 +361,12 @@ const vars = {
   DAILY_CHALLENGES: "0",
   // Daily 2026-11-05: the cron rewrites nothing by evidence; section 32 turns it on.
   EVIDENCE_REWRITES: "0",
+  // 25 November 2026: production runs the looks in bulk, $25 a day, and the refresh with
+  // SPELL_MODEL for every tier (the promotional credits, wrangler.jsonc). The sections before 36
+  // check the usual settings; section 36 checks these.
+  LOOKS: "pilot",
+  LOOKS_NIGHT_USD: "3",
+  REFRESH_MODEL_ALL_TIERS: "0",
 };
 // What the Worker logs, kept for the checks that read it (the cron, 4.1).
 let workerLog = "";
@@ -4335,6 +4341,34 @@ const signIn = async (key, count) => {
     JSON.stringify({ spent: report.spent, byCall: report.byCall, counts: report.counts }),
   );
   await db.prepare("DELETE FROM spend WHERE invite = 'looks'").run();
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev();
+  await reset();
+}
+
+// 36. The promotional credits of 25 November 2026 (wrangler.jsonc): with REFRESH_MODEL_ALL_TIERS
+// the refresh writes a minor spell with SPELL_MODEL, held at the big estimate, while a player's
+// first cast of a minor spell keeps the small model; LOOKS_NIGHT_USD may raise the day's share of
+// the looks up to the revamp's whole budget (it was held at $3 whatever it said).
+{
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev({ REFRESH_MODEL_ALL_TIERS: "1", LOOKS: "pilot", LOOKS_NIGHT_USD: "25" });
+  await reset();
+  const live = await liveSpell("Promo Spark");
+  const first = await db.prepare("SELECT model FROM programs WHERE id = ?").bind(live).first();
+  check("promo: a player's first cast of a minor spell keeps the small model", first?.model === "claude-haiku-5-5", JSON.stringify(first));
+  const started = (await api("/api/admin/refresh", { admin: true, body: { keys: ["promo spark"], dry: true } })).data;
+  await api("/api/admin/poll-batches", { admin: true, body: {} });
+  const cand = (await api("/api/admin/refresh-candidates", { admin: true })).data.find((c) => c.name === "Promo Spark");
+  check(
+    "promo: the refresh writes a minor spell with SPELL_MODEL, held at the big estimate",
+    started?.queued?.length === 1 && started.estimate === 0.06 && cand?.model === "claude-opus-5-5",
+    JSON.stringify({ started, model: cand?.model }),
+  );
+  const report = (await api("/api/admin/looks-report", { admin: true })).data;
+  check("promo: the looks' share of a day may be the revamp's whole $25", report?.night === 25 && report?.budget === 25, JSON.stringify(report?.night));
   killDev();
   await new Promise((r) => setTimeout(r, 1500));
   await startDev();

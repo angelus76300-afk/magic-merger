@@ -13,7 +13,11 @@
 //
 // DRY=1: decides nothing, only prints what it would do and saves the frames
 // (the dry run of 20 the owner looks at before the rest).
-import { mkdirSync, writeFileSync } from "node:fs";
+//
+// `start <candidates.json> [from] [count]`: asks the Worker to write the keys of a measurement's
+// candidates list (docs/measurements/spell-rewrite-candidates-2026-11-12.json), `count` (20) from
+// `from` (0), in one /api/admin/refresh call. Twenty at a time keeps one request's queries small.
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runCheck } from "../src/sim/check";
 import type { Tier } from "../shared/tiers";
@@ -27,12 +31,30 @@ if (!url || !token) {
   console.error("Set MM_URL (the game's address) and MM_TOKEN (its ADMIN_TOKEN).");
   process.exit(1);
 }
+const api = adminApi(url, token!);
+
+if (process.argv[2] === "start") {
+  const file = process.argv[3];
+  if (!file) {
+    console.error("start <candidates.json> [from] [count]");
+    process.exit(1);
+  }
+  const from = Number(process.argv[4]) || 0;
+  const count = Math.min(200, Number(process.argv[5]) || 20);
+  const all = (JSON.parse(readFileSync(file, "utf8")) as { candidates?: { key: string }[] }).candidates ?? [];
+  const keys = all.map((c) => c.key).slice(from, from + count);
+  const r = await api("/api/admin/refresh", { keys, limit: keys.length });
+  console.log(
+    `asked ${keys.length} (${from} to ${from + keys.length - 1} of ${all.length}); queued ${r.queued.length}; held $${r.estimate}; $${r.room} left in the refresh's month`,
+  );
+  console.log(`not queued (refreshed before, no live program, or past the budget): ${keys.length - r.queued.length}`);
+  process.exit(0);
+}
+
 const dry = process.env.DRY === "1";
 const out = process.env.OUT ?? "refresh-frames";
 const limit = Number(process.argv[2]) || 20;
 mkdirSync(out, { recursive: true });
-
-const api = adminApi(url, token!);
 
 interface Candidate {
   id: number;

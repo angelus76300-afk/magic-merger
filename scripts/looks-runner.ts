@@ -5,7 +5,8 @@
 //                                 looks-pool, shared/looks/pilot.ts): the 10 plainest items that draw
 //                                 a w.model, the 10 most cast that draw none and may gain one (a
 //                                 spell only with --spells), and 10 wonders
-//   start                         the next ones in the bulk order, up to the night's $3 (LOOKS=bulk)
+//   start [limit]                 the next ones in the bulk order (30, at most 60 a call), up to the
+//                                 day's share (LOOKS_NIGHT_USD) and the revamp's budget (LOOKS=bulk)
 //   decide [limit]                for each candidate: its test run, frames of the old look and the
 //                                 new at medium quality, the Worker's judge, and the verdict
 //   report                        what the revamp spent and decided
@@ -57,7 +58,7 @@ interface Candidate {
 async function start(): Promise<void> {
   const pilot = rest[0] === "--pilot";
   const spells = rest.includes("--spells");
-  let body: Record<string, unknown> = {};
+  let body: Record<string, unknown> = Number(rest[0]) > 0 ? { limit: Number(rest[0]) } : {};
   if (pilot) {
     const pool = (await api("/api/admin/looks-pool?limit=1000")) as PoolItem[];
     const picked = pickPilot(pool, { spells });
