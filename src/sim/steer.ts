@@ -131,7 +131,13 @@ export function steer(
     const detour = world.time < ((c.data.detour as number | undefined) ?? 0);
     if (routed && !air && trip > 2.5 && ((arrive && trip > LONG_TRIP) || detour)) {
       const paths = pathsOf(world);
-      const f = paths.toward(world, k.aquatic ? Mobility.WATER : k.swims ? Mobility.SWIM : Mobility.WALK, gx, gy, !chase && trip <= LONG_TRIP * 1.5);
+      const mobility = k.aquatic ? Mobility.WATER : k.swims ? Mobility.SWIM : Mobility.WALK;
+      let f = paths.toward(world, mobility, gx, gy, !chase && trip <= LONG_TRIP * 1.5);
+      // Where a villager on its way home would be told "no way" (below), a field that stopped short
+      // of it may only be too short for a long way round (paths.ts FAR_STEPS): the long field says,
+      // once it is filled; meanwhile it walks on. Only then: a home given up for "no way" is what it
+      // starves of (goals.ts unreached), and the long fields cost the others' fields their turn.
+      if (f && homeward(c) && f.capped && trip < MAX_STEPS * 0.7 && !paths.aim(world, f, c.x, c.y, AIM)) f = paths.toward(world, mobility, gx, gy, false, true);
       if (f && !paths.aim(world, f, c.x, c.y, AIM)) {
         // No way there from here: the mind is told (goals.ts drops the task
         // and steps out of the hollow, instead of pacing along the wall).
@@ -141,6 +147,20 @@ export function steer(
         dx = AIM.x - c.x;
         dy = AIM.y - c.y;
         onField = true;
+        // On a long field, what is left of the way, for the mind: a way round that first leads
+        // away is still a way there (goals.ts, the five seconds without getting closer). The best
+        // so far counts for this walk only: a record over a second old is from an earlier one.
+        if (f.far) {
+          const was = c.data.longWay as LongWay | undefined;
+          const left = f.dist[Math.round(c.y) * world.w + Math.round(c.x)];
+          c.data.longWay = {
+            t: world.time,
+            left,
+            best: was && was.gx === gx && was.gy === gy && world.time - was.t < 1 ? was.best : left,
+            gx,
+            gy,
+          } satisfies LongWay;
+        }
       }
     }
     want = Math.atan2(dy, dx);
@@ -311,4 +331,17 @@ function separation(world: World, c: Creature, k: CreatureKind): { x: number; y:
   SEP.x = px * s;
   SEP.y = py * s;
   return SEP;
+}
+
+// A villager on its way home to eat, carry or sleep (goals.ts unreached).
+const homeward = (c: Creature) => c.kind === "villager" && (c.mind?.task === "eat" || c.mind?.task === "carry" || c.mind?.task === "rest");
+
+// A walk home along a long field (paths.ts FAR_STEPS): when it was last on it, the cost of the way
+// left from where it stood, the least it has been, and where the field leads.
+export interface LongWay {
+  t: number;
+  left: number;
+  best: number;
+  gx: number;
+  gy: number;
 }

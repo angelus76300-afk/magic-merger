@@ -29,6 +29,13 @@ const MAX_FIELDS = 40;
 // No field reaches further than this many steps from its destination: a trip
 // longer than that walks straight until it is within reach.
 export const MAX_STEPS = 64;
+// A long field (25 November, found by ai): a field that stopped at MAX_STEPS has no word for a cell
+// further than that, which may be a long way round, not no way. On seed 4 of the fire and ruins
+// soak two villagers stood 41 and 45 cells from home with a walk of 110 and 115 steps round a
+// lake; their field said "no way", their minds gave home up again every few seconds (goals.ts
+// unreached), and they starved on dry ground. Asked for only then (steer.ts), a long field of the
+// same destination reaches FAR_STEPS and says which.
+const FAR_STEPS = 192;
 // 4.9: a field is the cost of the walk, not its steps. A step costs STEP, a
 // step along a dirt road or a bridge ROAD_STEP, so walkers keep to a road
 // that is up to a third longer than the way across the grass. With no road
@@ -64,6 +71,10 @@ interface Field {
   // A step over a cell colder than this costs COLD_STEP: as cold as the people of the destination's
   // own climate can bear (cold.ts tolerance), so a tundra village's paths are not cut short.
   coldAt: number;
+  // A long field (FAR_STEPS), and whether a cell was left out for being further than the field
+  // reaches: without that, a cell it did not reach has no way there at all.
+  far: boolean;
+  capped: boolean;
 }
 
 export class Paths {
@@ -93,11 +104,13 @@ export class Paths {
   // exact: to that very cell (a short way round a tree to the bush behind
   // it), reaching SHORT_STEPS from it; otherwise to its block of 4 by 4,
   // shared with everyone bound for the same part of the island.
-  toward(world: World, mobility: Mobility, x: number, y: number, exact = false): Field | null {
+  // far: the long field of that block (FAR_STEPS), for one the field did not reach.
+  toward(world: World, mobility: Mobility, x: number, y: number, exact = false, far = false): Field | null {
+    if (far) exact = false;
     const size = exact ? 1 : BLOCK;
     const bx = Math.floor(Math.max(0, Math.min(world.w - 1, Math.round(exact ? x : Math.floor(x)))) / size);
     const by = Math.floor(Math.max(0, Math.min(world.h - 1, Math.round(exact ? y : Math.floor(y)))) / size);
-    const key = (((by * 1024 + bx) * 2 + (exact ? 1 : 0)) << 2) | mobility;
+    const key = ((by * 1024 + bx) * 4 + (exact ? 1 : 0) + (far ? 2 : 0)) * 4 + mobility;
     let f = this.fields.get(key);
     if (f && f.done && world.time - f.made > FIELD_LIFE) {
       this.fields.delete(key);
@@ -108,7 +121,7 @@ export class Paths {
       // Room is made by forgetting the field least used lately; while every
       // one is still being filled, the trip waits and walks straight.
       if (this.fields.size >= MAX_FIELDS && !this.forgetOldest()) return null;
-      f = this.start(world, key, mobility, bx, by, size);
+      f = this.start(world, key, mobility, bx, by, size, far);
       this.asked++;
     }
     f.used = world.time;
@@ -219,11 +232,14 @@ export class Paths {
     return true;
   }
 
-  private start(world: World, key: number, mobility: Mobility, bx: number, by: number, size: number): Field {
+  private start(world: World, key: number, mobility: Mobility, bx: number, by: number, size: number, far: boolean): Field {
     const n = world.w * world.h;
     let f = this.spare.pop();
-    if (!f || f.dist.length !== n) f = { key, mobility, dist: new Uint16Array(n), done: false, made: 0, used: 0, bx, by, size, coldAt: COLD.CHILL_AT };
+    if (!f || f.dist.length !== n)
+      f = { key, mobility, dist: new Uint16Array(n), done: false, made: 0, used: 0, bx, by, size, coldAt: COLD.CHILL_AT, far, capped: false };
     f.key = key;
+    f.far = far;
+    f.capped = false;
     f.mobility = mobility;
     f.bx = bx;
     f.by = by;
@@ -282,7 +298,7 @@ export class Paths {
     const h = world.h;
     const dist = f.dist;
     const walk = f.mobility !== Mobility.WATER;
-    const limit = (f.size === 1 ? SHORT_STEPS : MAX_STEPS) * STEP;
+    const limit = (f.far ? FAR_STEPS : f.size === 1 ? SHORT_STEPS : MAX_STEPS) * STEP;
     const solid = solidCovers(world);
     const ground = world.ground;
     const cover = world.cover;
@@ -312,7 +328,11 @@ export class Paths {
         if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
         const j = ny * w + nx;
         const d = this.cost + (walk && temp[j] < coldAt ? COLD_STEP : walk && (ground[j] === G.ROAD || cover[j] === C.BRIDGE) ? ROAD_STEP : STEP);
-        if (d > limit || d >= dist[j] || !openFast(world, j, f.mobility, solid)) continue;
+        if (d > limit) {
+          if (dist[j] === FAR) f.capped = true;
+          continue;
+        }
+        if (d >= dist[j] || !openFast(world, j, f.mobility, solid)) continue;
         // From j the creature steps onto i.
         if (walk && here - (bridges ? world.walkLevel(j) : height[j] + depth[j]) > CLIMB) continue;
         dist[j] = d;
