@@ -25,7 +25,7 @@ import { pathsOf, solidCovers } from "./paths";
 import { LOADS, deed, harmed, life, newMind, noteDeath, reborn, storyOn, tell, villageOf, type AbilitySpec, type Goal, type Mind } from "./kin";
 import { COLD, chillPace, chillTick, hardy, landFreeze, person, tolerance, tooCold, warmerWay } from "./cold";
 import { abandonTrip } from "./goals";
-import { comeOut, rebuildRuin, rebuildable, stayIndoors } from "./homes";
+import { comeOut, rebuildRuin, rebuildable, stayIndoors, wetAt } from "./homes";
 
 // What a spell-made creature does, declared rather than coded, so even a
 // short program gets a creature with a life of its own.
@@ -487,7 +487,8 @@ function blocked(world: World, x: number, y: number, c: Creature, k: CreatureKin
   const f = world.fluid[i];
   if (!deck && f !== F.NONE && f !== F.ICE && world.depth[i] > 0.05) {
     if (f === F.LAVA && !k.fireproof) return true;
-    if (world.depth[i] > 1 && !k.swims) return true;
+    // One swimming for the shore (ashoreAim) is in it already: deep water is no wall for it.
+    if (world.depth[i] > 1 && !k.swims && c.data.ashore === undefined) return true;
   }
   // Cliffs: too steep a step up (ice and fluids count as the surface you walk on).
   const here = world.walkLevel(world.idx(Math.max(0, Math.min(world.w - 1, fx)), Math.max(0, Math.min(world.h - 1, fy))));
@@ -688,6 +689,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   let meeting: Meeting | null = null;
   // Which decision drove this tick's step, for the motion meter (4.3).
   let drive = busy ? "asleep" : "idle";
+  let shore: { x: number; y: number } | null = null;
+  if (rider || busy) leaveWater(c);
   if (rider && !busy) {
     // Become anything (2026-11-12): the stick says where it goes, in place of
     // everything it would decide (fear, needs, goals, behavior, wandering).
@@ -697,6 +700,15 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
     wantY = aim.y;
     pace = aim.pace;
     drive = "possessed";
+  } else if (!busy && (shore = onGround && !onDeck ? ashoreAim(world, c, k, i) : null)) {
+    // Out of the water first: its mind waits until it stands in the shallows (ashoreAim).
+    wantX = shore.x - c.x;
+    wantY = shore.y - c.y;
+    drive = "ashore";
+    if (c.mind && c.mind.action !== SWIMMING) {
+      c.data.ashoreWas = c.mind.action;
+      c.mind.action = SWIMMING;
+    }
   } else if (!busy) {
     // Danger is probed every third tick and remembered in between (3.6: goals
     // keep creatures on the move, and this was the dearest part of a tick).
@@ -904,7 +916,9 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   const chase = mood === "fear" || mood === "angry" || mood === "hunt" || drive === "fear" || drive === "burning" || drive === "danger" || drive === "flee";
   // Ridden, it goes straight where the stick points: no flow field that would
   // take it another way round, only its own feelers and walls (steer.ts).
-  const arrive = !rider && (!chase || drive === "shelter");
+  // Swimming for the shore, it goes by its own way (ashoreAim), not a walker's flow field, which
+  // has no way from a cell too deep to walk.
+  const arrive = !rider && (!chase || drive === "shelter") && drive !== "ashore";
   const len = Math.hypot(wantX, wantY);
   let wanted = 0;
   {
@@ -1006,6 +1020,13 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   if (c.hp <= 0) c.dead = true;
   // Asleep indoors until it wakes or its house burns, floods or falls (homes.ts).
   if (c.kind === "villager") stayIndoors(world, c, !!rider);
+  // Asleep on the ground where the water rose (a shore, a hollow): it wakes and finds a dry bed,
+  // as a sleeper does from a flooded house (homes.ts).
+  if (c.kind === "villager" && c.data.rough && c.mind?.task === "rest" && wetAt(world, world.idx(c.x, c.y))) {
+    c.data.rough = undefined;
+    c.mind.task = "none";
+    c.mind.action = "up from the rising water";
+  }
 
   if (k.tick) k.tick(c, dt);
   if (meter) {
@@ -1066,6 +1087,183 @@ function unstick(world: World, c: Creature, k: CreatureKind): void {
         return;
       }
     }
+}
+
+// Out of the water (25 November, found by ai). A walker the water rose round (asleep on a shore, at
+// work in a hollow that filled) stood in water too deep to step through, every cell round it a wall
+// (blocked: deeper than 1), and starved there over minutes, its tasks still pointing home: the
+// flow field has no way from a cell too deep to walk, and a hop out (free) lands only within three
+// cells. Another paced the shallows of an islet the lake had cut off, with nothing left to eat.
+// A third stood in water 0.86 deep with dry land three cells away, each task it took up pointing
+// across the lake, jammed against the deep water and dropped (seed 4, villager 15 at 74,41).
+// Standing in water deeper than ASHORE.wade, with no walk from there to more than ASHORE.land cells
+// of dry ground within ASHORE.reach, it swims for the nearest other shore, through water no deeper
+// than it drowns in (1.4) if it can; deep water is no wall for it until it is out (blocked). Held
+// in the water ASHORE.held seconds within three cells of one place, it walks to the nearest dry
+// ground. Its mind waits meanwhile, and takes up its task again once it stands in the shallows.
+const ASHORE = { wade: 0.3, reach: 24, land: 120, drown: 1.4, ahead: 3, every: 1, held: 8 } as const;
+const SPAN = ASHORE.reach * 2 + 1;
+const shoreFrom = new Int32Array(SPAN * SPAN);
+const shoreQueue = new Int32Array(SPAN * SPAN);
+const AIM_ASHORE = { x: 0, y: 0 };
+
+const SWIMMING = "swimming for the shore";
+
+function leaveWater(c: Creature, out = true): void {
+  if (c.data.ashoreAt === undefined) return;
+  // Back to what it was doing, in the words it had.
+  if (c.mind?.action === SWIMMING && typeof c.data.ashoreWas === "string") c.mind.action = c.data.ashoreWas;
+  c.data.ashore = undefined;
+  c.data.ashoreWas = undefined;
+  if (out) {
+    c.data.ashoreAt = undefined;
+    c.data.heldAt = undefined;
+  }
+}
+
+// The point to make for, or null when it is not cut off in the water.
+function ashoreAim(world: World, c: Creature, k: CreatureKind, i: number): { x: number; y: number } | null {
+  // Indoors it is in its house, at the door's cell: homes.ts (stayIndoors) sends it out if that floods.
+  if (k.swims || k.aquatic || k.flying || c.data.indoors !== undefined || world.fluid[i] !== F.WATER || world.depth[i] <= ASHORE.wade) {
+    if (c.data.heldAt !== undefined) c.data.heldAt = undefined;
+    leaveWater(c);
+    return null;
+  }
+  let since = c.data.heldAt as [number, number, number] | undefined;
+  // At work on the water (a fisher in the shallows), it is not held; resting there, it is.
+  const m = c.mind;
+  const atWater = !!m && m.work > 0 && m.cell >= 0 && world.fluid[m.cell] === F.WATER;
+  if (!since || Math.hypot(c.x - since[0], c.y - since[1]) > 3 || atWater) c.data.heldAt = since = [c.x, c.y, world.time];
+  const at = c.data.ashoreAt as number | undefined;
+  if (at === undefined || world.time >= at) {
+    c.data.ashoreAt = world.time + ASHORE.every;
+    let to = -1;
+    // Cut off: swimming to land. With a walk to land, its own mind finds the way.
+    if (!landAround(world, i)) {
+      to = shoreWay(world, i, ASHORE.drown);
+      if (to < 0) to = shoreWay(world, i, Infinity);
+    }
+    // Held in the water all the same: out on the nearest dry ground, land or islet.
+    if (to < 0 && world.time - since[2] > ASHORE.held) to = shoreWay(world, i, 1, true);
+    if (to < 0) leaveWater(c, false);
+    else c.data.ashore = [to % world.w, Math.floor(to / world.w)];
+  }
+  const to = c.data.ashore as [number, number] | undefined;
+  if (!to) return null;
+  AIM_ASHORE.x = to[0];
+  AIM_ASHORE.y = to[1];
+  return AIM_ASHORE;
+}
+
+const isDry = (world: World, j: number) =>
+  world.fluid[j] === F.NONE || world.fluid[j] === F.ICE || world.depth[j] <= 0.05 || (world.cover[j] === C.BRIDGE && world.onDeck(j));
+
+// Breadth first from cell `start`, four ways, within ASHORE.reach: through water no deeper than
+// `deep`, round solid covers and danger, and up no step a walker cannot take. `visit` is told of
+// each cell reached and stops the search by returning true. Returns that cell, or -1; the way back
+// from it is in shoreFrom.
+function shoreSearch(world: World, start: number, deep: number, visit: (j: number) => boolean): number {
+  const w = world.w;
+  const sx = start % w;
+  const sy = (start - sx) / w;
+  const solid = solidCovers(world);
+  shoreFrom.fill(-2);
+  let head = 0;
+  let tail = 0;
+  shoreQueue[tail++] = start;
+  shoreFrom[ASHORE.reach * SPAN + ASHORE.reach] = -1;
+  while (head < tail) {
+    const j = shoreQueue[head++];
+    if (visit(j)) return j;
+    const x = j % w;
+    const y = (j - x) / w;
+    for (let d = 0; d < 4; d++) {
+      const nx = d === 0 ? x + 1 : d === 1 ? x - 1 : x;
+      const ny = d === 2 ? y + 1 : d === 3 ? y - 1 : y;
+      if (Math.abs(nx - sx) > ASHORE.reach || Math.abs(ny - sy) > ASHORE.reach || nx < 1 || ny < 1 || nx >= w - 1 || ny >= world.h - 1) continue;
+      const n = ny * w + nx;
+      const l = (ny - sy + ASHORE.reach) * SPAN + nx - sx + ASHORE.reach;
+      if (shoreFrom[l] !== -2) continue;
+      shoreFrom[l] = j;
+      const wet = world.fluid[n] !== F.NONE && world.fluid[n] !== F.ICE ? world.depth[n] : 0;
+      if (solid[world.cover[n]] || danger(world, n) || wet > deep || world.walkLevel(n) - world.walkLevel(j) > 1.55) continue;
+      shoreQueue[tail++] = n;
+    }
+  }
+  return -1;
+}
+
+const windowAt = (world: World, start: number, j: number) =>
+  (Math.floor(j / world.w) - Math.floor(start / world.w) + ASHORE.reach) * SPAN + (j % world.w) - (start % world.w) + ASHORE.reach;
+
+// The pieces of land round it, as far as one can walk (dry ground and water up to 1 deep), by their
+// place in the window: which piece each cell is in (0: not looked at), and which pieces are land
+// (more than ASHORE.land dry cells, or going on out of the window) rather than an islet.
+const pieceOf = new Int32Array(SPAN * SPAN);
+const pieceIsLand: boolean[] = [];
+const pieceQueue = new Int32Array(SPAN * SPAN);
+
+function forgetPieces(): void {
+  pieceOf.fill(0);
+  pieceIsLand.length = 0;
+}
+
+// Is cell j (in the window round `start`) on land one can walk on from, rather than an islet?
+function onLand(world: World, start: number, j: number): boolean {
+  const known = pieceOf[windowAt(world, start, j)];
+  if (known) return pieceIsLand[known - 1];
+  const id = pieceIsLand.length + 1;
+  const w = world.w;
+  const sx = start % w;
+  const sy = (start - sx) / w;
+  const solid = solidCovers(world);
+  let head = 0;
+  let tail = 0;
+  let dry = 0;
+  let out = false;
+  pieceQueue[tail++] = j;
+  pieceOf[windowAt(world, start, j)] = id;
+  while (head < tail && !out && dry <= ASHORE.land) {
+    const n = pieceQueue[head++];
+    if (isDry(world, n)) dry++;
+    const x = n % w;
+    const y = (n - x) / w;
+    for (let d = 0; d < 4; d++) {
+      const nx = d === 0 ? x + 1 : d === 1 ? x - 1 : x;
+      const ny = d === 2 ? y + 1 : d === 3 ? y - 1 : y;
+      if (Math.abs(nx - sx) > ASHORE.reach || Math.abs(ny - sy) > ASHORE.reach) {
+        out = true;
+        continue;
+      }
+      if (nx < 1 || ny < 1 || nx >= w - 1 || ny >= world.h - 1) continue;
+      const m = ny * w + nx;
+      const l = (ny - sy + ASHORE.reach) * SPAN + nx - sx + ASHORE.reach;
+      if (pieceOf[l]) continue;
+      const wet = world.fluid[m] !== F.NONE && world.fluid[m] !== F.ICE ? world.depth[m] : 0;
+      if (solid[world.cover[m]] || danger(world, m) || wet > 1 || world.walkLevel(m) - world.walkLevel(n) > 1.55) continue;
+      pieceOf[l] = id;
+      pieceQueue[tail++] = m;
+    }
+  }
+  pieceIsLand.push(out || dry > ASHORE.land);
+  return out || dry > ASHORE.land;
+}
+
+// Can it walk from cell `start` to land (onLand), not only to an islet or nowhere?
+function landAround(world: World, start: number): boolean {
+  forgetPieces();
+  return onLand(world, start, start);
+}
+
+// The nearest dry ground on land (onLand, not an islet), or any (`walk`), through water no deeper
+// than `deep`: the cell ASHORE.ahead steps along the way there, or -1 when there is none within
+// ASHORE.reach. After landAround, from the same cell.
+function shoreWay(world: World, start: number, deep: number, walk = false): number {
+  const to = shoreSearch(world, start, deep, (j) => isDry(world, j) && (walk || onLand(world, start, j)));
+  if (to < 0) return -1;
+  const way: number[] = [];
+  for (let n = to; n !== start; n = shoreFrom[windowAt(world, start, n)]) way.push(n);
+  return way[Math.max(0, way.length - ASHORE.ahead)];
 }
 
 // Out of the sun: under or beside a tree, or by a house.
