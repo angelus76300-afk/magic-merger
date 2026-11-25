@@ -72,6 +72,7 @@ import type { ColdRun } from "./cold-run";
 import { natureChecks } from "./nature-test";
 import { villagersChecks } from "./villagers-test";
 import { fireRuinsChecks } from "./fire-ruins-test";
+import { waterEscapeChecks } from "./water-escape-test";
 import { natureVerdict, type NatureRun } from "./nature-run";
 import { verdict, type LinkedPull } from "../worker/feedback";
 import { DROP_MAX, DROP_TILE, dropAt, dropShare, dropSize, rainWidth } from "../src/sim/voxel/drops";
@@ -2626,6 +2627,8 @@ natureChecks(check);
 villagersChecks(check);
 // Fire and ruins (23 November): a small spell's fire lights one house, a burned house stands a night: scripts/fire-ruins-test.ts.
 fireRuinsChecks(check);
+// Out of the water (25 November): a villager cut off in deep water makes for dry land, a sleeper outside wakes as the water rises: scripts/water-escape-test.ts.
+waterEscapeChecks(check);
 // Water and light (16 November): scripts/water-light-test.ts.
 waterLightChecks(check);
 // Weed and stones on lake beds (20 November): scripts/lake-weed-test.ts.
