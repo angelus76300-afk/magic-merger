@@ -1,0 +1,3 @@
+section: Backlog
+
+- **Footprints home** (the designer's idea, 2026-11-25; lens: what the player feels, a mind the player can read). When a villager takes the long way round a lake or a ridge, the inspect card could show its way home as a faint dotted line on the map while the card is open, and "the long way round" in its action. What the player feels: the villager has a plan, not a glitch, when it walks off in what looks like the wrong direction. What it adds: a reason to open the card, and a way for the owner and the AI to spot a stuck walker at a glance. Cost: no paid calls; the long field is already there (paths.ts), the line is twenty or so cells read down it each frame the card is open, drawn in the overlay layer. Claude.

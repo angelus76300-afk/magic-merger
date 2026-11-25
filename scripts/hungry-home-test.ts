@@ -11,11 +11,15 @@
 //     (goals.ts urgent) replaced every meal before it was eaten, a thought or two later.
 // The checks, on the small meadow island of seed 4:
 //   1. that soak: nobody starves with a walk home on foot from where it falls (main after #215: the
-//      two above);
+//      two above); and nobody is kept from home over 200 s after giving it up (main after #216:
+//      villagers 8 and 15 stalled at the lake shore by (52..56,28..30), 45 cells from home, about
+//      500 s for villager 8: once round the lake led the straight line past 44.8 cells, or it set
+//      off from there, the long field was not asked for and it pushed at the bank, steer.ts);
 //   2. one at home, starving with a third of its health left and food in the stores, has eaten
 //      within 20 s (main: it went back and forth between resting and eating, and ate nothing).
-//   3. one walks home twice from the same place round the lake, a rest at home between, and both
-//      walks arrive (with the first walk's best kept for the second, the second gave up).
+//   3. one walks home twice from the same place round the lake, a rest at home between, both
+//      walks arrive (with the first walk's best kept for the second, the second gave up), and the
+//      second gives home up not once.
 import { populate, resetCreatureIds, type Creature } from "../src/sim/creatures";
 import { life, villageOf } from "../src/sim/kin";
 import { houseOf, tileHouses } from "../src/sim/homes";
@@ -112,7 +116,27 @@ export function hungryHomeChecks(check: Check): void {
     const alive = new Set<Creature>(villagers(world));
     const starved: string[] = [];
     let walkable = 0;
+    // Cut off: from a villager giving its home up (goals.ts unreached) to its next time at its door.
+    const cut = new Map<Creature, { from: number; seen: Set<number> }>();
+    let longest = 0;
+    let longestAt = "";
     run(world, rt, 1250 - world.time, () => {
+      for (const c of alive) {
+        if (c.dead) continue;
+        let r = cut.get(c);
+        if (!r) cut.set(c, (r = { from: -1, seen: new Set() }));
+        for (const u of (c.data.unreached as [number, number, number][] | undefined) ?? [])
+          if (Math.hypot(u[0] - c.homeX, u[1] - c.homeY) < 3 && !r.seen.has(u[2])) {
+            r.seen.add(u[2]);
+            if (r.from < 0) r.from = world.time;
+          }
+        if (r.from < 0) continue;
+        if (world.time - r.from > longest) {
+          longest = world.time - r.from;
+          longestAt = `villager ${c.id} from ${Math.round(r.from)} s, now at (${Math.round(c.x)},${Math.round(c.y)}) ${Math.round(Math.hypot(c.x - c.homeX, c.y - c.homeY))} cells from home`;
+        }
+        if (Math.hypot(c.x - c.homeX, c.y - c.homeY) < 3 || c.data.indoors !== undefined) r.from = -1;
+      }
       for (const c of alive) {
         if (!c.dead) continue;
         alive.delete(c);
@@ -128,6 +152,11 @@ export function hungryHomeChecks(check: Check): void {
       "hungry: on the fire and ruins soak of seed 4, nobody starves with a walk home (to 1250 s)",
       walkable === 0,
       `${starved.length} starved${starved.length ? ": " + starved.join("; ") : ""}`,
+    );
+    check(
+      "hungry: on the fire and ruins soak of seed 4, nobody is kept from home over 200 s after giving it up",
+      longest <= 200,
+      `longest ${Math.round(longest)} s${longestAt ? ": " + longestAt : ""}`,
     );
   }
   // 2. At home, starving, a third of its health left.
@@ -215,6 +244,7 @@ export function hungryHomeChecks(check: Check): void {
     }
     const walks: string[] = [];
     let arrived = 0;
+    const gaveUps = [0, 0];
     if (c && from >= 0) {
       for (let k = 0; k < 2 && !c.dead; k++) {
         const v = villageOf(world, c.homeX, c.homeY);
@@ -242,6 +272,7 @@ export function hungryHomeChecks(check: Check): void {
             .map((u) => u[2]);
           const gaveUp = until.some((u) => !seen.has(u));
           for (const u of until) seen.add(u);
+          if (gaveUp) gaveUps[k]++;
           if (gaveUp && lw && world.time - lw.t < 0.5) {
             const was = along.find((a) => a[0] >= world.time - 4);
             lost = !!was && was[1] - lw.left >= 2 * STEP;
@@ -249,13 +280,13 @@ export function hungryHomeChecks(check: Check): void {
         });
         if (took >= 0 && !lost) arrived++;
         walks.push(
-          `walk ${k + 1}: ${lost ? "home given up while getting closer on the long way" : took < 0 ? `not home after 150 s, ${Math.round(Math.hypot(c.x - c.homeX, c.y - c.homeY))} cells away` : `home in ${Math.round(took)} s`}`,
+          `walk ${k + 1}: ${lost ? "home given up while getting closer on the long way" : took < 0 ? `not home after 150 s, ${Math.round(Math.hypot(c.x - c.homeX, c.y - c.homeY))} cells away` : `home in ${Math.round(took)} s`}, ${gaveUps[k]} give-ups`,
         );
       }
     }
     check(
-      "hungry: a villager walks home twice from the same place round the lake, and both walks arrive",
-      arrived === 2,
+      "hungry: a villager walks home twice from the same place round the lake, both walks arrive, and the second gives home up not once",
+      arrived === 2 && gaveUps[1] === 0,
       c && from >= 0
         ? `villager ${c.id} from (${from % world.w},${Math.floor(from / world.w)}), ${Math.round(gap)} cells from home, ${Math.round(steps)} steps on the long field: ${walks.join("; ")}`
         : "no villager or no place with a long way home",
