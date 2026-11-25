@@ -5,7 +5,7 @@ import { makeCreature, updateCreature } from "../src/sim/creatures";
 import type { Village } from "../src/sim/kin";
 import { C, F, G } from "../src/sim/materials";
 import { Mobility, STEP, pathsOf } from "../src/sim/paths";
-import { ROAD, laid, nextPave, noteTrip, pave, roadSpeed, roadsOf, stepRoads, wearMinute } from "../src/sim/roads";
+import { ROAD, alongRoad, laid, nextPave, noteTrip, pave, roadSpeed, roadsOf, stepRoads, wearMinute } from "../src/sim/roads";
 import { loadWorld, saveWorld } from "../src/sim/save";
 import { seeded } from "../src/sim/noise";
 import { World } from "../src/sim/world";
@@ -130,6 +130,12 @@ export function roadsChecks(check: Check): void {
       cutOff && !!road && water === 6 && road.decks.every((d, k) => (world.fluid[road.cells[k]] === F.WATER ? d > 10 : d === -999)),
       road ? `${road.cells.length} cells, ${water} over water, decks ${road.decks.filter((d) => d !== -999).join(" ")}` : "no road",
     );
+    // A traveller short of the river, bound for the far village: a road cut by a bridge not built
+    // yet does not lead it on (25 November, found by ai: main took it to the water and let it go
+    // there, and a few steps along its own way round sent it back, so it rocked by the shore).
+    const AT = { x: 0, y: 0 };
+    const cutRoad = !!road && !alongRoad(world, 40, 20, 82, 20, AT);
+    const cutAim = `${AT.x},${AT.y}`;
     if (road) {
       // Builders from both ends, one cell at a time.
       let jobs = 0;
@@ -149,6 +155,12 @@ export function roadsChecks(check: Check): void {
       world.time += 60;
       const after = field(world, 82, 20);
       check("a walker can now cross the river on the bridge", after.dist[20 * 96 + 14] !== 0xffff, `cost ${after.dist[20 * 96 + 14]}`);
+      const builtRoad = alongRoad(world, 40, 20, 82, 20, AT) && AT.x > 40;
+      check(
+        "a road cut by a bridge not built yet leads no traveller to the water; built, it leads on",
+        cutRoad && builtRoad,
+        `${cutRoad ? "cut: no aim" : `cut: aimed at ${cutAim}`}, ${builtRoad ? `built: aimed at ${AT.x},${AT.y}` : "built: no aim"}`,
+      );
       check("the villager's card says where its roads go", roadsOf(world, a).join() === "to the village, finished, over a bridge", roadsOf(world, a).join());
 
       // A villager on the deck stays dry and does not drown.
