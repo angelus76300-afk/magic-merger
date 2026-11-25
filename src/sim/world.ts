@@ -21,6 +21,7 @@ import type { Prop } from "./props";
 import type { Death, Mark, Village } from "./kin";
 import type { Road } from "./roads";
 import type { Site } from "./sites";
+import type { Rebuild } from "./homes";
 import type { LightField, LightSource } from "./reactions";
 
 export const TICK = 1 / 30;
@@ -176,6 +177,9 @@ export class World {
   // fell, by world time (setCover). Not saved: rubble a loaded island finds is counted from then
   // (homes.ts ruinStands), so it still waits for the next dawn.
   readonly ruinedAt = new Map<number, number>();
+  // 25 November: a family's slow rebuild of its own ruin, by each cell of the block (homes.ts
+  // slowRebuild). Not saved, as ruinedAt.
+  readonly rebuilds = new Map<number, Rebuild>();
   // 21 November (nature.ts): cells whose plant the player's spell, item or creature put there
   // (saved; null until one is). Never wilted for standing outside its niche. Any other change of
   // the cover clears it.
@@ -254,7 +258,10 @@ export class World {
     if (this.planted) this.planted[i] = 0;
     if (id === C.RUBBLE) {
       if (this.cover[i] !== C.RUBBLE) this.ruinedAt.set(i, this.time);
-    } else if (this.ruinedAt.size) this.ruinedAt.delete(i);
+    } else if (this.ruinedAt.size) {
+      this.ruinedAt.delete(i);
+      this.rebuilds.delete(i);
+    }
     this.cover[i] = id;
     const m = this.materials.get("cover", id);
     this.coverHp[i] = id === C.HOUSE ? 14 : m.fuel;

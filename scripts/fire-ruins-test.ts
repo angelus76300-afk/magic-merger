@@ -14,12 +14,15 @@
 //   5. its family keeps its own ruin with a neighbour's house nearer its home point;
 //   6. once its house is rebuilt, each family is back in it (main: 4 of 20 on two islands);
 //   7. a ruin nobody rebuilds is given up a day after its dawn, so no family is homeless for good;
-//   8. a village with no builder near: its families rebuild their houses themselves by midmorning
-//      (homes.ts ownRebuild), so every ruin is gone by the evening.
+//   8. a village with no builder near: its families rebuild their houses themselves from midmorning
+//      (homes.ts ownRebuild), slowly (25 November, the owner: "slow rebuild: yes"): each takes half
+//      a day at the least and every ruin is gone by the evening of the day after, a household of
+//      only children and elders helped by a neighbour (homes.ts SLOW_REBUILD).
 // The measurement of the pull request (ten islands, before and after) is scripts/fire-run.ts.
 import { populate, resetCreatureIds, type Creature } from "../src/sim/creatures";
 import { daylight } from "../src/sim/daylight";
-import { homeRuin, houseBlock, houseOf, ruinStands, tileHouses } from "../src/sim/homes";
+import { SLOW_REBUILD, homeRuin, houseBlock, houseOf, ruinStands, tileHouses } from "../src/sim/homes";
+import { unpackLook } from "../src/sim/villagers";
 import { DEFAULT_LAND, resolveLand, type LandOptions } from "../src/sim/land-options";
 import { C, G } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
@@ -343,28 +346,46 @@ export function fireRuinsChecks(check: Check): void {
   }
   // 8. A village with no builder of its own (review of 4e4e18e: seed 4, the village at (99,12);
   // the island's builders lived 40 cells off and look for ruins within 14 cells of their own
-  // village, so its three ruins stood for good). By the evening of the day they may be rebuilt,
-  // before the night and before the families give them up, every ruin is gone. Three islands whose
-  // first village has no builder at hand (main: 3, 3 and 3 ruins left of 9).
+  // village, so its three ruins stood for good). Each family rebuilds its own house, slowly: half a
+  // day at the least from its first spell of work (main: 6 s), and by the evening of the day after
+  // the one they may be rebuilt (940 s) every ruin is gone. Three islands whose first village has
+  // no builder at hand; on seed 2 ten houses burn, among them the house of a lone child (review of
+  // 8545a7f: it stood for good, main: 1 of 10 left at 940 s).
   {
-    const r = burnedVillagesRebuilt([4, 2, 7]);
+    const r = burnedVillagesRebuilt([4, [2, 10], 7], 940);
+    const short = r.spans.filter((t) => t < SLOW_REBUILD.least);
     check(
-      "ruins: every burned house of every village is rebuilt by the evening, builder or not",
-      r.burned >= 9 && r.left === 0,
-      `${r.left} of ${r.burned} ruins left at 600 s; ${r.rows.join(", ")}`,
+      "ruins: a family rebuilds its own burned house over half a day at the least",
+      r.spans.length >= 6 && short.length === 0,
+      `${r.spans.length} rebuilt by their family, ${short.length} in under ${SLOW_REBUILD.least} s; took ${r.spans.map(Math.round).join(", ")} s`,
+    );
+    check(
+      "ruins: every burned house is rebuilt by the evening of the day after, builder or not, children and elders too",
+      r.burned >= 16 && r.left === 0 && r.young >= 1 && r.youngLeft === 0,
+      `${r.left} of ${r.burned} ruins left at 940 s, ${r.youngLeft} of ${r.young} of households with no adult; ${r.rows.join(", ")}`,
     );
   }
 }
 
-// The three lived-in houses nearest the centre of each of the first `villages` villages burned by
-// day (120 s) on islands of these seeds; how many still have rubble on the evening of the day they
-// may be rebuilt (600 s).
+// The `burn` lived-in houses (3, or a seed's own) nearest the centre of each of the first `villages`
+// villages burned by day (120 s) on islands of these seeds; how many still have rubble at `end` (the
+// evening of the day after the one they may be rebuilt). Spans: from the first spell of a family's
+// work on its ruin (or a neighbour's: anyone but a builder) to the house, for ruins no builder
+// worked on. Young: ruins of households with no adult at the fire.
 // A cell paved by a road crew (pave clears what stands on a road's cell) counts as cleared.
-export function burnedVillagesRebuilt(seeds: number[], villages = 1): { burned: number; left: number; rows: string[] } {
+export function burnedVillagesRebuilt(
+  seeds: (number | [number, number])[],
+  end: number,
+  villages = 1,
+): { burned: number; left: number; spans: number[]; young: number; youngLeft: number; rows: string[] } {
   let burned = 0;
   let left = 0;
+  let young = 0;
+  let youngLeft = 0;
+  const spans: number[] = [];
   const rows: string[] = [];
-  for (const seed of seeds) {
+  for (const entry of seeds) {
+    const [seed, burn] = typeof entry === "number" ? [entry, 3] : entry;
     const { world, rt } = fresh(seed, 112, island("small-meadow").land);
     run(world, rt, 120);
     const top = tileHouses(world);
@@ -383,18 +404,38 @@ export function burnedVillagesRebuilt(seeds: number[], villages = 1): { burned: 
         ...lived
           .filter((b) => !blocks.includes(b))
           .sort((a, b) => far(a) - far(b))
-          .slice(0, 3),
+          .slice(0, burn),
       );
     }
     const cellsOf = (b: number) => [b, b + 1, b + world.w, b + world.w + 1];
     for (const b of blocks) for (const j of cellsOf(b)) world.setCover(j, C.RUBBLE);
-    run(world, rt, 600 - world.time);
+    const noAdult = blocks.filter((b) => {
+      const kin = villagers(world).filter((c) => cellsOf(b).includes(homeRuin(world, c)));
+      return kin.length > 0 && kin.every((c) => unpackLook(c.look).age !== "adult");
+    });
+    const began = new Map<number, number>();
+    const done = new Map<number, number>();
+    const built = new Set<number>();
+    run(world, rt, end - world.time, () => {
+      for (const c of villagers(world)) {
+        if (c.mind?.task !== "repair" || c.mind.work <= 0) continue;
+        const b = blocks.find((q) => cellsOf(q).includes(c.mind!.cell));
+        if (b === undefined) continue;
+        // A builder rebuilds at its own speed: not a family's slow rebuild.
+        if (jobOf(c) === "builder" || jobOf(c) === "smith") built.add(b);
+        else if (!began.has(b)) began.set(b, world.time);
+      }
+      for (const b of blocks) if (!done.has(b) && cellsOf(b).every((j) => world.cover[j] !== C.RUBBLE)) done.set(b, world.time);
+    });
+    for (const [b, t] of began) if (done.has(b) && !built.has(b)) spans.push(done.get(b)! - t);
     const standing = blocks.filter((b) => cellsOf(b).some((j) => world.cover[j] === C.RUBBLE));
     burned += blocks.length;
     left += standing.length;
+    young += noAdult.length;
+    youngLeft += noAdult.filter((b) => standing.includes(b)).length;
     rows.push(`seed ${seed}: ${blocks.length - standing.length} of ${blocks.length}`);
   }
-  return { burned, left, rows };
+  return { burned, left, spans, young, youngLeft, rows };
 }
 
 // Houses burned by day on islands of these seeds, the nearest `burn` to the village's centre that

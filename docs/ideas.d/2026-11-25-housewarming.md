@@ -1,0 +1,3 @@
+section: Backlog
+
+- **A housewarming** (the designer's idea, 2026-11-25; lens: what the player feels, the social loop). A family's own rebuild now takes about a day, and the player can watch it go up stage by stage. When the walls are done, the neighbours within a few cells walk over to the new door at the next dusk for a short gathering (the feast task, a few seconds), and a news line says the family is home again. What the player feels: the day of work pays off with a moment, and a fire becomes a story with an end. What it adds: a reason to come back to a burned village the next evening. Cost: no paid calls; a few lines in goals.ts (a gathering goal at a rebuilt house for villagers within 6 cells, once) and a check that it happens once and is over by night. Claude.

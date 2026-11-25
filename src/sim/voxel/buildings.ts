@@ -6,7 +6,7 @@ import type { World } from "../world";
 import { pushBox, type Box } from "./models";
 import { columnTop } from "./terrain";
 import { logsLeft, stageOf } from "../sites";
-import { tileHouses } from "../homes";
+import { rebuildStage, tileHouses } from "../homes";
 import { lodAt, type FineFocus } from "./cubes";
 import { fineBoxes, fineHouse } from "./cube-houses";
 import type { LocalMesh } from "./shapes";
@@ -718,14 +718,25 @@ export class Buildings {
 
   // 4.9 part 2: the sites going up, in a mesh of their own (one more draw
   // call), rebuilt when a site is staked, moves on a stage or is finished.
+  // A family's slow rebuild of its burned house (homes.ts slowRebuild) is drawn as a house site
+  // from its footing on, over its block of rubble.
   private updateSites(world: World, drawn: Set<number>, fine: FineFocus | null): void {
     const W = world.w;
-    let key = "";
+    const going: { i: number; kind: number; stage: number; logs: number }[] = [];
     for (const t of world.sites) {
       const cells = [t.i, t.i + 1, t.i + W, t.i + W + 1];
-      if (!cells.every((c) => world.cover[c] === C.SITE)) continue;
-      for (const c of cells) drawn.add(c);
-      key += `${t.i}:${t.kind}:${stageOf(t)}:${logsLeft(t)},`;
+      if (cells.every((c) => world.cover[c] === C.SITE)) going.push({ i: t.i, kind: t.kind, stage: stageOf(t), logs: logsLeft(t) });
+    }
+    for (const r of new Set(world.rebuilds.values())) {
+      const i = Math.min(...r.cells);
+      const stage = rebuildStage(r);
+      const cells = [i, i + 1, i + W, i + W + 1];
+      if (stage >= 1 && cells.every((c) => world.cover[c] === C.RUBBLE && world.rebuilds.get(c) === r)) going.push({ i, kind: C.HOUSE, stage, logs: 0 });
+    }
+    let key = "";
+    for (const t of going) {
+      for (const c of [t.i, t.i + 1, t.i + W, t.i + W + 1]) drawn.add(c);
+      key += `${t.i}:${t.kind}:${t.stage}:${t.logs},`;
       const lod = lodAt(fine);
       if (lod) key += `c${lod},`;
     }
@@ -733,9 +744,8 @@ export class Buildings {
     this.siteKey = key;
     const pos: number[] = [];
     const col: number[] = [];
-    for (const t of world.sites) {
+    for (const t of going) {
       const cells = [t.i, t.i + 1, t.i + W, t.i + W + 1];
-      if (!cells.every((c) => world.cover[c] === C.SITE)) continue;
       const x = t.i % W;
       const y = Math.floor(t.i / W);
       const tops = cells.map((c) => columnTop(world, c));
@@ -760,7 +770,7 @@ export class Buildings {
         pushBox(pos, col, { ...r, x: r.x + ox, y: r.y + base, z: r.z + oz }, box.y > 0.05);
       };
       if (base - low > 0.05) add(B(0.05, low - base, 0.05, 1.9, base - low + 0.02, 1.9, 0x7a7068));
-      const boxes = siteShape(final, stageOf(t), logsLeft(t), STYLE[style]?.trim);
+      const boxes = siteShape(final, t.stage, t.logs, STYLE[style]?.trim);
       // In small cubes near the camera: poles, planks and logs a cube or two thick.
       if (lodAt(fine)) {
         appendTurned(fineBoxes(boxes).mesh(), qq, ox, base, oz, 1, pos, col);
