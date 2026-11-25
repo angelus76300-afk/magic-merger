@@ -277,6 +277,7 @@ export class Terrain {
     if (m) m.visible = on && fine;
     const w = this.fineWater[c];
     if (w) w.visible = on && fine;
+    this.markWater(c);
   }
 
   // The eye view, second pass: chunks wholly past `r` cells from (x, y) are not drawn (the mist
@@ -880,8 +881,12 @@ export class Terrain {
     if (!GRAPHICS.fine || !this.fine.length) return base;
     const c = Math.floor(cy / CHUNK) * this.cols + Math.floor(cx / CHUNK);
     if (!this.fineShown[c] || !this.fine[c]) return base;
-    // Water in eighths is drawn at its own level, under the low land beside it (fineWaterLevel).
-    if (this.wet[i]) return this.waterWet(i) && this.fineWaterOn ? this.fineWaterLevel(i) : base;
+    // Water in eighths is drawn at its own level, under the low land beside it (fineWaterLevel),
+    // sloping where it meets other water (fineWaterAt).
+    if (this.wet[i]) {
+      const water = this.fineWaterAt(x, y);
+      return Number.isNaN(water) ? base : water;
+    }
     if (!GRAPHICS.steps) return base;
     if (!this.naturalAt(i)) return base;
     const sub = this.fineLevel[c];
@@ -889,6 +894,66 @@ export class Terrain {
     const px = (Math.floor(Math.min(cx + 0.999, Math.max(cx, x)) * sub) + 0.5) / sub;
     const py = (Math.floor(Math.min(cy + 0.999, Math.max(cy, y)) * sub) + 0.5) / sub;
     return fieldStep(fieldHeight(this.landRead, px, py), px, py, sub) / sub;
+  }
+
+  // The surface of the water or ice in eighths at (x, y) in cells, scene units, as its chunk drew it:
+  // its cell's four corners (terrain-fine.ts cornerLevel, kept with the chunk) eased across the
+  // cell. NaN where the water there is not drawn in eighths (dry land, lava, a chunk in whole cells
+  // or not built yet, the water in eighths off). What wades in the water or floats on it stands on
+  // this (24 November: walkers and dock posts read the cells' level, at least 0.19 over the water
+  // drawn since it lies under the shore, Terrain.fineWaterLevel).
+  fineWaterAt(x: number, y: number): number {
+    const { world } = this;
+    if (!GRAPHICS.fine || !this.fineShown.length) return NaN;
+    const cx = Math.max(0, Math.min(world.w - 1, Math.floor(x)));
+    const cy = Math.max(0, Math.min(world.h - 1, Math.floor(y)));
+    const i = cy * world.w + cx;
+    if (!this.wet[i] || (world.fluid[i] !== F.WATER && world.fluid[i] !== F.ICE)) return NaN;
+    const c = Math.floor(cy / CHUNK) * this.cols + Math.floor(cx / CHUNK);
+    const corners = this.fineShown[c] && this.fine[c] && this.fineWater[c] ? this.fineCorners[c] : null;
+    if (!corners) return NaN;
+    const b = this.bounds(c);
+    const k = ((cy - b.y0) * (b.x1 - b.x0) + (cx - b.x0)) * 4;
+    const a = corners[k];
+    const d = corners[k + 1];
+    const e = corners[k + 2];
+    const g = corners[k + 3];
+    if (Number.isNaN(a) || Number.isNaN(d) || Number.isNaN(e) || Number.isNaN(g)) return NaN;
+    const u = Math.max(0, Math.min(1, x - cx));
+    const v = Math.max(0, Math.min(1, y - cy));
+    return a * (1 - u) * (1 - v) + d * u * (1 - v) + e * (1 - u) * v + g * u * v;
+  }
+
+  // The surface of the water or ice at (x, y) in cells as drawn, scene units: in eighths
+  // (fineWaterAt), or the cell's water in whole cells, a little over its rounded top (FLUID_LIFT).
+  // NaN where there is no water or ice.
+  waterTopAt(x: number, y: number): number {
+    const { world } = this;
+    const fine = this.fineWaterAt(x, y);
+    if (!Number.isNaN(fine)) return fine;
+    const cx = Math.max(0, Math.min(world.w - 1, Math.floor(x)));
+    const cy = Math.max(0, Math.min(world.h - 1, Math.floor(y)));
+    const i = cy * world.w + cx;
+    if (!this.wet[i] || (world.fluid[i] !== F.WATER && world.fluid[i] !== F.ICE)) return NaN;
+    return Math.max(surfaceY(world, i), columnTop(world, i) + FLUID_LIFT);
+  }
+
+  // A count that moves on whenever the water drawn changes in some chunk (shown in eighths or in
+  // whole cells, or built again), and the same for each chunk: what floats on the water there (a
+  // lily, a dock) is put on it again (view.ts placeCovers).
+  waterMark = 0;
+  waterMarks = new Uint32Array(0);
+  private waterSeen: (Float32Array | null)[] = [];
+  private markWater(c: number): void {
+    const corners = GRAPHICS.fine && this.fineShown[c] && this.fine[c] && this.fineWater[c] ? (this.fineCorners[c] ?? null) : null;
+    if (this.waterSeen.length !== this.chunks.length) {
+      this.waterSeen = new Array(this.chunks.length).fill(null);
+      this.waterMarks = new Uint32Array(this.chunks.length);
+    }
+    if (this.waterSeen[c] === corners) return;
+    this.waterSeen[c] = corners;
+    this.waterMarks[c]++;
+    this.waterMark++;
   }
 
   // The tops of a chunk no longer drawn, kept for the next build.
