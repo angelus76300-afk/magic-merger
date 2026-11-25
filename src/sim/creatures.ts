@@ -1099,10 +1099,11 @@ function unstick(world: World, c: Creature, k: CreatureKind): void {
 // Standing in water deeper than ASHORE.wade, with no walk from there to more than ASHORE.land cells
 // of dry ground within ASHORE.reach, it swims for the nearest other shore, through water no deeper
 // than it drowns in (1.4) if it can; deep water is no wall for it until it is out (blocked). Held
-// in the water ASHORE.held seconds within three cells of one place, it walks to the nearest dry
-// ground: long enough that its own mind has first given up a task it cannot reach (goals.ts,
-// unreached), as a shorter wait kept turning it back into the water. Its mind waits meanwhile, and
-// takes up its task again once it stands in the shallows.
+// in the water ASHORE.held seconds on end, not at work on it, it walks to the nearest dry ground:
+// held, not stood still, as one jammed paces the shallows a few cells to and fro. The wait is long
+// enough to wade any ford and for its own mind to give up a task it cannot reach first (goals.ts,
+// unreached): 8 s kept turning walkers back into the water. Its mind waits meanwhile, and takes up
+// its task again once it stands in the shallows.
 const ASHORE = { wade: 0.3, reach: 24, land: 120, drown: 1.4, ahead: 3, every: 1, held: 45 } as const;
 const SPAN = ASHORE.reach * 2 + 1;
 const shoreFrom = new Int32Array(SPAN * SPAN);
@@ -1131,11 +1132,11 @@ function ashoreAim(world: World, c: Creature, k: CreatureKind, i: number): { x: 
     leaveWater(c);
     return null;
   }
-  let since = c.data.heldAt as [number, number, number] | undefined;
+  let since = c.data.heldAt as number | undefined;
   // At work on the water (a fisher in the shallows), it is not held; resting there, it is.
   const m = c.mind;
   const atWater = !!m && m.work > 0 && m.cell >= 0 && world.fluid[m.cell] === F.WATER;
-  if (!since || Math.hypot(c.x - since[0], c.y - since[1]) > 3 || atWater) c.data.heldAt = since = [c.x, c.y, world.time];
+  if (since === undefined || atWater) c.data.heldAt = since = world.time;
   const at = c.data.ashoreAt as number | undefined;
   if (at === undefined || world.time >= at) {
     c.data.ashoreAt = world.time + ASHORE.every;
@@ -1146,7 +1147,7 @@ function ashoreAim(world: World, c: Creature, k: CreatureKind, i: number): { x: 
       if (to < 0) to = shoreWay(world, i, Infinity);
     }
     // Held in the water all the same: out on the nearest dry ground, land or islet.
-    if (to < 0 && world.time - since[2] > ASHORE.held) to = shoreWay(world, i, 1, true);
+    if (to < 0 && world.time - since > ASHORE.held) to = shoreWay(world, i, 1, true);
     if (to < 0) leaveWater(c, false);
     else c.data.ashore = [to % world.w, Math.floor(to / world.w)];
   }
