@@ -65,6 +65,7 @@ import {
 import { FORMS } from "../shared/forms";
 import { pickExamples, words } from "../worker/programs";
 import { readingChecks } from "./reading-test";
+import { fixtureFingerprintChecks } from "./fixtures-fingerprint-test";
 import { groundBlendChecks } from "./ground-blend-test";
 import { roadsGroundChecks } from "./roads-ground-test";
 import { coldChecks } from "./cold-test";
@@ -2717,6 +2718,7 @@ dailyChecks(check);
 monsterChecks(check);
 // Reading the island and smarter writing (4.12 steps 3 and 4): scripts/reading-test.ts.
 readingChecks(check);
+fixtureFingerprintChecks(check);
 propChecks(check);
 // Spells that answer each other (4.12 step 2): scripts/reactions-test.ts.
 reactionChecks(check);
