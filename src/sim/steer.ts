@@ -137,7 +137,15 @@ export function steer(
       // of it may only be too short for a long way round (paths.ts FAR_STEPS): the long field says,
       // once it is filled; meanwhile it walks on. Only then: a home given up for "no way" is what it
       // starves of (goals.ts unreached), and the long fields cost the others' fields their turn.
-      if (f && homeward(c) && f.capped && trip < MAX_STEPS * 0.7 && !paths.aim(world, f, c.x, c.y, AIM)) f = paths.toward(world, mobility, gx, gy, false, true);
+      // Further than that, it asks too once it is on the long field (a record under a second old),
+      // however far the way round then leads away, or once walking straight has brought it no
+      // closer for a second (25 November, found by ai: round a lake the straight line grew past
+      // 44.8 cells, or started there, and it pushed at the bank until the five seconds ran out).
+      const was = c.data.longWay as LongWay | undefined;
+      const onLong = !!was && world.time - was.t < 1 && Math.hypot(was.gx - gx, was.gy - gy) < 2;
+      const held = (c.mind?.stall ?? 0) > 1;
+      if (f && homeward(c) && f.capped && (trip < MAX_STEPS * 0.7 || onLong || held) && !paths.aim(world, f, c.x, c.y, AIM))
+        f = paths.toward(world, mobility, gx, gy, false, true);
       if (f && !paths.aim(world, f, c.x, c.y, AIM)) {
         // No way there from here: the mind is told (goals.ts drops the task
         // and steps out of the hollow, instead of pacing along the wall).
@@ -151,7 +159,6 @@ export function steer(
         // away is still a way there (goals.ts, the five seconds without getting closer). The best
         // so far counts for this walk only: a record over a second old is from an earlier one.
         if (f.far) {
-          const was = c.data.longWay as LongWay | undefined;
           const left = f.dist[Math.round(c.y) * world.w + Math.round(c.x)];
           c.data.longWay = {
             t: world.time,

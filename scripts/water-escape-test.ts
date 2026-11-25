@@ -223,7 +223,10 @@ export function waterEscapeChecks(check: Check): void {
       const woke = !(v.data.rough && v.mind?.task === "rest");
       const said = v.mind?.action;
       run(world, rt, 30);
-      const d = depthAt(world, cellOf(world, v));
+      // Gone in at its door, it sleeps in its house, not where it stood at the door (homes.ts goIn
+      // leaves it there: 25 November, a house three cells from the pool read as asleep in water).
+      const house = v.data.indoors as number | undefined;
+      const d = depthAt(world, house !== undefined ? house : cellOf(world, v));
       const lying = !!v.data.rough || v.data.indoors !== undefined;
       check(
         "water: one asleep outside where the water rises wakes, and sleeps again on dry ground",
