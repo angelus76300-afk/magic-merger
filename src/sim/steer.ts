@@ -131,7 +131,12 @@ export function steer(
     const detour = world.time < ((c.data.detour as number | undefined) ?? 0);
     if (routed && !air && trip > 2.5 && ((arrive && trip > LONG_TRIP) || detour)) {
       const paths = pathsOf(world);
-      const f = paths.toward(world, k.aquatic ? Mobility.WATER : k.swims ? Mobility.SWIM : Mobility.WALK, gx, gy, !chase && trip <= LONG_TRIP * 1.5);
+      const mobility = k.aquatic ? Mobility.WATER : k.swims ? Mobility.SWIM : Mobility.WALK;
+      let f = paths.toward(world, mobility, gx, gy, !chase && trip <= LONG_TRIP * 1.5);
+      // Where it would be told "no way" (below), a field that stopped short of it may only be too
+      // short for a long way round (paths.ts FAR_STEPS): the long field says, once it is filled;
+      // meanwhile it walks on.
+      if (f && f.capped && trip < MAX_STEPS * 0.7 && !paths.aim(world, f, c.x, c.y, AIM)) f = paths.toward(world, mobility, gx, gy, false, true);
       if (f && !paths.aim(world, f, c.x, c.y, AIM)) {
         // No way there from here: the mind is told (goals.ts drops the task
         // and steps out of the hollow, instead of pacing along the wall).

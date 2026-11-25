@@ -131,6 +131,7 @@ import { waterLightChecks } from "./water-light-test";
 import { lavaChecks } from "./lava-test";
 import { movementChecks } from "./movement-test";
 import { peaksChecks } from "./peaks-test";
+import { hungryHomeChecks } from "./hungry-home-test";
 
 // No verdict here depends on how fast the machine is (4.1, review M8): the
 // slow cast guard is off unless SLOW_MS is set, and worst ticks are printed,
@@ -2643,6 +2644,8 @@ lavaChecks(check);
 movementChecks(check);
 // Taller peaks on new islands, old islands unchanged (5.2.5): scripts/peaks-test.ts.
 peaksChecks(check);
+// Hungry, it goes home (25 November): a long way round to its home, a meal before a rest when starving: scripts/hungry-home-test.ts.
+hungryHomeChecks(check);
 
 // 16. Rain and snow stay over the island when the camera moves (issue #69).
 {

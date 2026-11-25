@@ -669,7 +669,9 @@ function stillValid(world: World, c: Creature, m: Mind): boolean {
 function urgent(world: World, c: Creature, k: CreatureKind, m: Mind): boolean {
   const villager = c.kind === "villager";
   const job = villager ? jobOf(c) : "none";
-  if (c.hp < life.maxHp(c) * 0.35 && m.task !== "rest" && m.task !== "fight") {
+  // Starving, a meal comes first: hunger is what takes its health (25 November: a villager under a
+  // third of its health went to rest each time it set out to eat, and ate nothing until it died).
+  if (c.hp < life.maxHp(c) * 0.35 && m.task !== "rest" && m.task !== "fight" && !(m.hunger >= 0.8 && EATING.has(m.task))) {
     setTask(m, "rest", m.lair >= 0 ? m.lair % world.w : c.homeX, m.lair >= 0 ? Math.floor(m.lair / world.w) : c.homeY);
     c.data.bed = undefined;
     return true;
