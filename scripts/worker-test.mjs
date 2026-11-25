@@ -4071,7 +4071,8 @@ const signIn = async (key, count) => {
   check("looks: off, nothing is asked", off.status === 409 && looksAsked.length === 0, `${off.status}`);
   killDev();
   await new Promise((r) => setTimeout(r, 1500));
-  await startDev({ LOOKS: "pilot" });
+  // The tier split is checked with Sonnet as the writer, whatever production sets for the credits.
+  await startDev({ LOOKS: "pilot", LOOKS_MODEL: "claude-sonnet-5-5" });
   const now = Date.now();
   const drawn = (name) => `const spell = {
   *cast(w) {
