@@ -35,9 +35,10 @@
     "SPELL_EFFORT": "medium",
     // Everyone together, the admin included. $48, not the Console's $50: the
     // previews (env.staging, $2) share the same key and the same Console limit.
-    // 85 from 25 November 2026, for the promotional credits ($68, ending on 26 November,
-    // the owner in the lead session); back to 48 after them, on 26 November.
-    "BUDGET_USD": "85",
+    // 69 from 25 November 2026, for the promotional credits ($68, ending on 26 November, the
+    // owner in the lead session: "still within 68"): $43.05 of room over November's $25.95,
+    // plus the looks' $24.27 left apart from it, is $67.32. Back to 48 on 26 November.
+    "BUDGET_USD": "69",
     // 3.4. Each invite's monthly allowance; the admin can top one up.
     "INVITE_CAP_USD": "5",
     // 3.3. Looks at three Spell Lab frames and guesses the vote.
