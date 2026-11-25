@@ -18,7 +18,7 @@
 //    A program goes live as a new version (the old one kept, so votes can roll it back); a
 //    wonder's code is replaced, the old code kept in the row.
 //
-// Money: LOOKS_BUDGET_USD ($25) in all, over the whole revamp, and LOOKS_NIGHT_USD in any 24 hours
+// Money: LOOKS_BUDGET_USD ($25, at most $35 for the promotional credits of 25 November 2026) in all, over the whole revamp, and LOOKS_NIGHT_USD in any 24 hours
 // ($3 by default, at most the whole budget); both checked before every call, the writer's estimate held until it is billed. The
 // revamp's spend is its own: the game's monthly budget does not count it (ledger.ts hold), and
 // nothing but these calls counts against it. LOOKS ("off" by default) turns it on: "pilot" lets
@@ -61,9 +61,13 @@ export function looksMode(env: LooksEnv): "off" | "pilot" | "bulk" {
   return env.LOOKS === "pilot" || env.LOOKS === "bulk" ? env.LOOKS : "off";
 }
 
+// The most LOOKS_BUDGET_USD may say: 25 for the revamp, 35 while the promotional credits last
+// (the owner, 25 November 2026: "even use stronger models for better results where possible").
+export const LOOKS_BUDGET_CEILING = 35;
+
 export function looksBudget(env: LooksEnv): number {
   const v = Number(env.LOOKS_BUDGET_USD);
-  return Number.isFinite(v) && v >= 0 ? Math.min(v, 25) : 25;
+  return Number.isFinite(v) && v >= 0 ? Math.min(v, LOOKS_BUDGET_CEILING) : 25;
 }
 
 export function looksNightBudget(env: LooksEnv): number {

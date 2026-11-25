@@ -365,6 +365,7 @@ const vars = {
   // SPELL_MODEL for every tier (the promotional credits, wrangler.jsonc). The sections before 36
   // check the usual settings; section 36 checks these.
   LOOKS: "pilot",
+  LOOKS_BUDGET_USD: "25",
   LOOKS_NIGHT_USD: "3",
   REFRESH_MODEL_ALL_TIERS: "0",
 };
@@ -4355,7 +4356,7 @@ const signIn = async (key, count) => {
 {
   killDev();
   await new Promise((r) => setTimeout(r, 1500));
-  await startDev({ REFRESH_MODEL_ALL_TIERS: "1", LOOKS: "pilot", LOOKS_NIGHT_USD: "25" });
+  await startDev({ REFRESH_MODEL_ALL_TIERS: "1", LOOKS: "pilot", LOOKS_BUDGET_USD: "35", LOOKS_NIGHT_USD: "35" });
   await reset();
   const live = await liveSpell("Promo Spark");
   const first = await db.prepare("SELECT model FROM programs WHERE id = ?").bind(live).first();
@@ -4369,7 +4370,11 @@ const signIn = async (key, count) => {
     JSON.stringify({ started, model: cand?.model }),
   );
   const report = (await api("/api/admin/looks-report", { admin: true })).data;
-  check("promo: the looks' share of a day may be the revamp's whole $25", report?.night === 25 && report?.budget === 25, JSON.stringify(report?.night));
+  check(
+    "promo: LOOKS_BUDGET_USD 35 gives the looks $35, and the day's share may be all of it",
+    report?.budget === 35 && report?.night === 35,
+    JSON.stringify({ budget: report?.budget, night: report?.night }),
+  );
   killDev();
   await new Promise((r) => setTimeout(r, 1500));
   await startDev();
