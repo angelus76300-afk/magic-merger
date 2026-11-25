@@ -227,6 +227,16 @@ export function rebuildable(world: World, i: number): boolean {
   return world.cover[i] === C.RUBBLE && !ruinStands(world, i);
 }
 
+// Rubble its own family rebuilds: the builders had the morning after the dawn it may be rebuilt
+// from, a third of the day, and did not come (review of 4e4e18e: a village with no builder kept
+// its ruins for good, the island's builders 40 cells off in the other village).
+export const SELF_REBUILD_AFTER = DAY_LENGTH / 3;
+export function ownRebuild(world: World, i: number): boolean {
+  if (!rebuildable(world, i)) return false;
+  const dawn = (dawnOf(world.ruinedAt.get(i) ?? world.time) + 1) * DAY_LENGTH - DAY_LENGTH * 0.15;
+  return world.time >= dawn + SELF_REBUILD_AFTER;
+}
+
 // Its remembered house cell (houseOf), fallen to rubble, its home not moved since.
 function ownRuin(world: World, c: Creature, known: number | undefined): boolean {
   return known !== undefined && known >= 0 && world.cover[known] === C.RUBBLE && c.data.houseFor === c.homeX + c.homeY * 1e4;

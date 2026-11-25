@@ -53,7 +53,7 @@ import {
 import type { Behavior, Creature, CreatureKind } from "./creatures";
 import type { World } from "./world";
 import { artifactVisit, useArtifact, type Visit } from "./artifacts";
-import { HOME, goIn, homeRuin, homeWet, houseBlock, houseBurning, houseNear, houseOf, rebuildRuin, rebuildable, ruinStands, sleepable, wetAt } from "./homes";
+import { HOME, goIn, homeRuin, homeWet, houseBlock, houseBurning, houseNear, houseOf, ownRebuild, rebuildRuin, rebuildable, ruinStands, sleepable, wetAt } from "./homes";
 import { meter } from "./motion";
 import { facing, standsUpTo, strikeBack } from "./social";
 
@@ -1157,6 +1157,13 @@ function work(world: World, c: Creature, m: Mind): void {
   }
   if (look.age === "elder" && job !== "priest") {
     if (!plantFlowers(world, c, m)) forage(world, c, m);
+    return;
+  }
+  // Its own house still in ruins at midmorning, no builder come: the family rebuilds it itself.
+  const ruin = homeRuin(world, c);
+  if (ruin >= 0 && ownRebuild(world, ruin)) {
+    cellTask(world, m, "repair", ruin);
+    m.action = "rebuilding their burned house";
     return;
   }
   // A job a spell invented and hired it for (w.hire), when its spell's rules are loaded.
