@@ -14,17 +14,20 @@
 //      two above);
 //   2. one at home, starving with a third of its health left and food in the stores, has eaten
 //      within 20 s (main: it went back and forth between resting and eating, and ate nothing).
+//   3. one walks home twice from the same place round the lake, a rest at home between, and both
+//      walks arrive (with the first walk's best kept for the second, the second gave up).
 import { populate, resetCreatureIds, type Creature } from "../src/sim/creatures";
 import { life, villageOf } from "../src/sim/kin";
 import { houseOf, tileHouses } from "../src/sim/homes";
 import { C, F } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
-import { solidCovers } from "../src/sim/paths";
+import { Mobility, STEP, pathsOf, solidCovers } from "../src/sim/paths";
 import { Runtime } from "../src/sim/runtime";
 import { stepHeadless } from "../src/sim/tick";
 import { TICK, generateWorld, type World } from "../src/sim/world";
 import { island } from "./nature-run";
 import { jobOf } from "../src/sim/goals";
+import type { LongWay } from "../src/sim/steer";
 
 type Check = (name: string, ok: boolean, detail?: string) => void;
 
@@ -156,5 +159,106 @@ export function hungryHomeChecks(check: Check): void {
         `${c.dead ? "dead" : "alive"}, ${ateAt < 0 ? `not eaten, hunger ${(c.mind?.hunger ?? 0).toFixed(2)}` : `ate after ${ateAt.toFixed(1)} s`}; tasks: ${[...tasks].join(", ")}`,
       );
     }
+  }
+  // 3. Two long walks home from the same place, the second after a rest at home. The place: dry,
+  // 30 to 42 cells from home, out of the reach of home's field but in its long field's, where the
+  // long way round first leads furthest away from home. Both walks arrive, and neither gives home
+  // up while getting closer along the long way (with the first walk's best kept for the second,
+  // steer.ts longWay, the second gave up after five seconds without getting closer in a line).
+  {
+    const { world, rt } = fresh();
+    run(world, rt, 20);
+    const solid = solidCovers(world);
+    const paths = pathsOf(world);
+    const fieldOf = (x: number, y: number, far: boolean) => {
+      let f = paths.toward(world, Mobility.WALK, x, y, false, far);
+      for (let k = 0; k < 400 && !f; k++) {
+        paths.step(world);
+        f = paths.toward(world, Mobility.WALK, x, y, false, far);
+      }
+      return f;
+    };
+    let c: Creature | undefined;
+    let from = -1;
+    let most = 0;
+    let gap = 0;
+    let steps = 0;
+    for (const o of villagers(world)) {
+      if (!o.mind || jobOf(o) === "guard" || o.data.indoors !== undefined || wetOf(world, cellOf(world, o.homeX, o.homeY)) > 0) continue;
+      const short = fieldOf(o.homeX, o.homeY, false);
+      const long = fieldOf(o.homeX, o.homeY, true);
+      if (!short || !long) continue;
+      const nearOf = (i: number) => Math.hypot((i % world.w) - o.homeX, Math.floor(i / world.w) - o.homeY);
+      for (let i = 0; i < world.n; i++) {
+        const near = nearOf(i);
+        const way = long.dist[i] / STEP;
+        // Beyond the short field, a long way round, and near enough to be told "no way" by it.
+        if (short.dist[i] !== 0xffff || way < 80 || way > 150 || near < 30 || near > 42 || wetOf(world, i) > 0 || solid[world.cover[i]]) continue;
+        // Down the long field for 30 steps: how much further from home it first leads.
+        let j = i;
+        let away = 0;
+        for (let k = 0; k < 30; k++) {
+          let next = j;
+          for (const d of [1, -1, world.w, -world.w]) if (long.dist[j + d] < long.dist[next]) next = j + d;
+          if (next === j || short.dist[next] !== 0xffff) break;
+          j = next;
+          away = Math.max(away, nearOf(j) - near);
+        }
+        if (away > most) {
+          most = away;
+          from = i;
+          c = o;
+          gap = near;
+          steps = way;
+        }
+      }
+    }
+    const walks: string[] = [];
+    let arrived = 0;
+    if (c && from >= 0) {
+      for (let k = 0; k < 2 && !c.dead; k++) {
+        const v = villageOf(world, c.homeX, c.homeY);
+        if (v) v.food = Math.max(v.food, 20);
+        c.x = from % world.w;
+        c.y = Math.floor(from / world.w);
+        c.hp = life.maxHp(c);
+        c.data.unreached = undefined;
+        c.mind!.hunger = 0.9;
+        c.mind!.task = "none";
+        const t0 = world.time;
+        let took = -1;
+        // Home given up while the long field said it was getting closer (by 2 steps in the last
+        // 4 s). Given up where it was held still (a jam) does not count here.
+        let lost = false;
+        const along: [number, number][] = [];
+        const seen = new Set<number>();
+        run(world, rt, 150, () => {
+          if (took >= 0 || lost) return;
+          if (Math.hypot(c.x - c.homeX, c.y - c.homeY) < 3) took = world.time - t0;
+          const lw = c.data.longWay as LongWay | undefined;
+          if (lw && world.time - lw.t < 0.1) along.push([world.time, lw.left]);
+          const until = ((c.data.unreached as [number, number, number][] | undefined) ?? [])
+            .filter((u) => Math.hypot(u[0] - c.homeX, u[1] - c.homeY) < 3)
+            .map((u) => u[2]);
+          const gaveUp = until.some((u) => !seen.has(u));
+          for (const u of until) seen.add(u);
+          if (gaveUp && lw && world.time - lw.t < 0.5) {
+            const was = along.find((a) => a[0] >= world.time - 4);
+            lost = !!was && was[1] - lw.left >= 2 * STEP;
+          }
+        });
+        if (took >= 0 && !lost) arrived++;
+        walks.push(
+          `walk ${k + 1}: ${lost ? "home given up while getting closer on the long way" : took < 0 ? `not home after 150 s, ${Math.round(Math.hypot(c.x - c.homeX, c.y - c.homeY))} cells away` : `home in ${Math.round(took)} s`}`,
+        );
+      }
+    }
+    check(
+      "hungry: a villager walks home twice from the same place round the lake, and both walks arrive",
+      arrived === 2,
+      c && from >= 0
+        ? `villager ${c.id} from (${from % world.w},${Math.floor(from / world.w)}), ${Math.round(gap)} cells from home, ${Math.round(steps)} steps on the long field: ${walks.join("; ")}`
+        : "no villager or no place with a long way home",
+    );
   }
 }

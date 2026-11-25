@@ -148,11 +148,18 @@ export function steer(
         dy = AIM.y - c.y;
         onField = true;
         // On a long field, what is left of the way, for the mind: a way round that first leads
-        // away is still a way there (goals.ts, the five seconds without getting closer).
+        // away is still a way there (goals.ts, the five seconds without getting closer). The best
+        // so far counts for this walk only: a record over a second old is from an earlier one.
         if (f.far) {
           const was = c.data.longWay as LongWay | undefined;
           const left = f.dist[Math.round(c.y) * world.w + Math.round(c.x)];
-          c.data.longWay = { t: world.time, left, best: was && was.gx === gx && was.gy === gy ? was.best : left, gx, gy } satisfies LongWay;
+          c.data.longWay = {
+            t: world.time,
+            left,
+            best: was && was.gx === gx && was.gy === gy && world.time - was.t < 1 ? was.best : left,
+            gx,
+            gy,
+          } satisfies LongWay;
         }
       }
     }
