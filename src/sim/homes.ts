@@ -318,7 +318,7 @@ export const SLOW_REBUILD = {
   // Seconds from the first spell of work to the house, at the least.
   least: DAY_LENGTH / 2,
   // Seconds a due ruin waits with nobody of its own at work before a neighbour comes.
-  helpAfter: 40,
+  helpAfter: 100,
   stages: 4,
 } as const;
 
