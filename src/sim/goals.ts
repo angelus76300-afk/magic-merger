@@ -53,7 +53,22 @@ import {
 import type { Behavior, Creature, CreatureKind } from "./creatures";
 import type { World } from "./world";
 import { artifactVisit, useArtifact, type Visit } from "./artifacts";
-import { HOME, goIn, homeRuin, homeWet, houseBlock, houseBurning, houseNear, houseOf, ownRebuild, rebuildRuin, rebuildable, ruinStands, sleepable, wetAt } from "./homes";
+import {
+  HOME,
+  goIn,
+  homeRuin,
+  homeWet,
+  houseBlock,
+  houseBurning,
+  houseNear,
+  houseOf,
+  ownRebuild,
+  rebuildRuin,
+  rebuildable,
+  ruinStands,
+  sleepable,
+  wetAt,
+} from "./homes";
 import { meter } from "./motion";
 import { facing, standsUpTo, strikeBack } from "./social";
 

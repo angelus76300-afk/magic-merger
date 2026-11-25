@@ -368,11 +368,23 @@ export function burnedVillagesRebuilt(seeds: number[], villages = 1): { burned: 
     const { world, rt } = fresh(seed, 112, island("small-meadow").land);
     run(world, rt, 120);
     const top = tileHouses(world);
-    const lived = [...new Set(villagers(world).map((c) => houseOf(world, c)).filter((h) => h >= 0 && top[h] >= 0).map((h) => top[h]))];
+    const lived = [
+      ...new Set(
+        villagers(world)
+          .map((c) => houseOf(world, c))
+          .filter((h) => h >= 0 && top[h] >= 0)
+          .map((h) => top[h]),
+      ),
+    ];
     const blocks: number[] = [];
     for (const s of world.settlements.slice(0, villages)) {
       const far = (b: number) => Math.hypot((b % world.w) - s.x, Math.floor(b / world.w) - s.y);
-      blocks.push(...lived.filter((b) => !blocks.includes(b)).sort((a, b) => far(a) - far(b)).slice(0, 3));
+      blocks.push(
+        ...lived
+          .filter((b) => !blocks.includes(b))
+          .sort((a, b) => far(a) - far(b))
+          .slice(0, 3),
+      );
     }
     const cellsOf = (b: number) => [b, b + 1, b + world.w, b + world.w + 1];
     for (const b of blocks) for (const j of cellsOf(b)) world.setCover(j, C.RUBBLE);
