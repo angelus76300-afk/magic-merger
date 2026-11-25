@@ -297,8 +297,10 @@ export async function startCheck(env: PromiseEnv, body: PickBody & { dry?: unkno
   const room = cap - spent - held;
   const fit = Math.max(0, Math.min(items.length, Math.floor((room + 1e-9) / CHECK_ESTIMATE)));
   const sent = items.slice(0, fit);
-  const base = { picked: items.length, room: Math.round(room * 100) / 100, cap };
-  if (body.dry === true || !sent.length) return { ...base, batch: null, items: sent.map(brief) };
+  const base = { picked: items.length, fit, room: Math.round(room * 100) / 100, cap };
+  // A dry run lists every item picked, the ones past the room too; it sends nothing.
+  if (body.dry === true) return { ...base, batch: null, items: items.map(brief) };
+  if (!sent.length) return { ...base, batch: null, items: [] };
   const client = clientOf(env);
   const ledger = new Ledger(ADMIN_PAYER);
   // Inside the game's month: refused, like any call, when BUDGET_USD has no room for it.

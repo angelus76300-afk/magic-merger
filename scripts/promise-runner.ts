@@ -147,13 +147,14 @@ async function run(): Promise<void> {
     const limit = Math.min(batchSize, max - sent);
     const r = (await api("/api/admin/promise-check", { kinds, offset, limit, dry })) as {
       picked: number;
+      fit: number;
       batch: string | null;
       items: Item[];
       room: number;
       estimate?: number;
     };
     if (dry) {
-      console.log(`would send ${r.items.length} of ${r.picked} picked from ${offset} ($${r.room} of the check's month left):`);
+      console.log(`picked ${r.picked} from ${offset}; the $${r.room} left in the check's month sends the first ${r.fit}:`);
       for (const it of r.items) console.log(`  ${it.name} (${it.kind}, ${it.tier}, ${it.casts} casts)`);
       return;
     }
