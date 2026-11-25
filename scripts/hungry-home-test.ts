@@ -14,7 +14,11 @@
 //      two above); and nobody is kept from home over 200 s after giving it up (main after #216:
 //      villagers 8 and 15 stalled at the lake shore by (52..56,28..30), 45 cells from home, about
 //      500 s for villager 8: once round the lake led the straight line past 44.8 cells, or it set
-//      off from there, the long field was not asked for and it pushed at the bank, steer.ts);
+//      off from there, the long field was not asked for and it pushed at the bank, steer.ts); and
+//      nobody on its long way home gives it up while a road leads it (main after #218: nine times,
+//      sent off the long field to a road a few cells away, goals.ts via, it had no long way left
+//      to count as getting closer; on seed 16 a road to a bridge not built yet sent walkers back
+//      to the water as they went round, and they rocked by it, roads.ts alongRoad);
 //   2. one at home, starving with a third of its health left and food in the stores, has eaten
 //      within 20 s (main: it went back and forth between resting and eating, and ate nothing).
 //   3. one walks home twice from the same place round the lake, a rest at home between, both
@@ -120,15 +124,23 @@ export function hungryHomeChecks(check: Check): void {
     const cut = new Map<Creature, { from: number; seen: Set<number> }>();
     let longest = 0;
     let longestAt = "";
+    // Led by a road (goals.ts via) in the last 5 s, and on the long way home in the last 6 s, when
+    // it gave home up.
+    const viaAt = new Map<Creature, number>();
+    const roadLed: string[] = [];
     run(world, rt, 1250 - world.time, () => {
       for (const c of alive) {
         if (c.dead) continue;
+        if (Array.isArray(c.data.via)) viaAt.set(c, world.time);
         let r = cut.get(c);
         if (!r) cut.set(c, (r = { from: -1, seen: new Set() }));
         for (const u of (c.data.unreached as [number, number, number][] | undefined) ?? [])
           if (Math.hypot(u[0] - c.homeX, u[1] - c.homeY) < 3 && !r.seen.has(u[2])) {
             r.seen.add(u[2]);
             if (r.from < 0) r.from = world.time;
+            const lw = c.data.longWay as LongWay | undefined;
+            if (world.time - (viaAt.get(c) ?? -99) < 5 && lw && world.time - lw.t < 6 && Math.hypot(lw.gx - c.homeX, lw.gy - c.homeY) < 3)
+              roadLed.push(`villager ${c.id} at (${Math.round(c.x)},${Math.round(c.y)}) at ${Math.round(world.time)} s`);
           }
         if (r.from < 0) continue;
         if (world.time - r.from > longest) {
@@ -157,6 +169,11 @@ export function hungryHomeChecks(check: Check): void {
       "hungry: on the fire and ruins soak of seed 4, nobody is kept from home over 200 s after giving it up",
       longest <= 200,
       `longest ${Math.round(longest)} s${longestAt ? ": " + longestAt : ""}`,
+    );
+    check(
+      "hungry: on the fire and ruins soak of seed 4, nobody on its long way home gives it up while a road leads it",
+      roadLed.length === 0,
+      `${roadLed.length} given up${roadLed.length ? ": " + roadLed.join("; ") : ""}`,
     );
   }
   // 2. At home, starving, a third of its health left.

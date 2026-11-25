@@ -553,7 +553,12 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
     OUT.pace = m.pace;
     // 4.9: a long walk keeps to a road that goes there.
     const long = world.roads.length > 0 && (m.task === "trade" || ((m.task === "eat" || m.task === "carry" || m.task === "rest") && d > 30));
-    if (!long) c.data.via = undefined;
+    // Not one on a long field (steer.ts), which knows the way and takes a road where it is quicker
+    // (paths.ts ROAD_STEP): a road is for past a field's reach. Sent to a road a few cells off its
+    // way round a lake, it had no long way left to count as getting closer, and gave home up five
+    // seconds later (25 November, found by ai: seed 4 of the fire and ruins soak, seven times).
+    const fielded = !!longWay && world.time - longWay.t < 5 && Math.hypot(longWay.gx - tx, longWay.gy - ty) < 2;
+    if (!long || fielded) c.data.via = undefined;
     else if ((world.tick + c.id) % 10 === 0 || c.data.via === undefined) c.data.via = alongRoad(world, c.x, c.y, tx, ty, VIA) ? [VIA.x, VIA.y] : null;
     const via = c.data.via as [number, number] | null | undefined;
     if (via) {
