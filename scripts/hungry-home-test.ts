@@ -10,13 +10,14 @@
 //   - once starving had taken its health under a third, the rest it then went to take
 //     (goals.ts urgent) replaced every meal before it was eaten, a thought or two later.
 // The checks, on the small meadow island of seed 4:
-//   1. a hungry villager set down on dry ground 25 to 40 cells from home, with a walk of more than
-//      75 steps round water or a wall, is home and has eaten within two minutes (main: never home);
+//   1. that soak: nobody starves with a walk home on foot from where it falls (main after #215: the
+//      two above);
 //   2. one at home, starving with a third of its health left and food in the stores, has eaten
 //      within 20 s (main: it went back and forth between resting and eating, and ate nothing).
 import { populate, resetCreatureIds, type Creature } from "../src/sim/creatures";
 import { life, villageOf } from "../src/sim/kin";
-import { F } from "../src/sim/materials";
+import { houseOf, tileHouses } from "../src/sim/homes";
+import { C, F } from "../src/sim/materials";
 import { seeded } from "../src/sim/noise";
 import { solidCovers } from "../src/sim/paths";
 import { Runtime } from "../src/sim/runtime";
@@ -37,12 +38,13 @@ function withRandom<T>(seed: number, f: () => T): T {
   }
 }
 
-function fresh(seed = 4): { world: World; rt: Runtime } {
+function fresh(seed = 4, reactions = false): { world: World; rt: Runtime } {
   return withRandom(seed, () => {
     resetCreatureIds(1);
     const world = generateWorld(112, 112, seed, island("small-meadow").land);
     populate(world);
     world.wonders = [];
+    if (reactions) world.reactions = true;
     return { world, rt: new Runtime(world, () => {}) };
   });
 }
@@ -71,7 +73,10 @@ function walkFrom(world: World, to: number): Int32Array {
     const j = queue[h];
     for (const d of [1, -1, world.w, -world.w]) {
       const n = j + d;
-      if (n < 0 || n >= world.n || dist[n] >= 0 || Math.abs((n % world.w) - (j % world.w)) > 1) continue;
+      // Not along the island's edge, where nobody walks.
+      const nx = n % world.w;
+      const ny = Math.floor(n / world.w);
+      if (n < 0 || n >= world.n || dist[n] >= 0 || nx < 4 || ny < 4 || nx >= world.w - 4 || ny >= world.h - 4) continue;
       if (solid[world.cover[n]] || wetOf(world, n) > 1 || world.walkLevel(j) - world.walkLevel(n) > 1.55) continue;
       dist[n] = dist[j] + 1;
       queue.push(n);
@@ -81,54 +86,46 @@ function walkFrom(world: World, to: number): Int32Array {
 }
 
 export function hungryHomeChecks(check: Check): void {
-  // 1. Set down hungry on dry ground with a long way round to its home.
+  // 1. The soak of the report: seed 4, the three lived-in houses nearest the first village's centre
+  // burned at 120 s, to 1250 s. Counted: villagers who starve with a walk home on foot from where
+  // they fall (walkFrom). A cup of boulders set round one villager did not do: a hop over a thin
+  // wall (creatures.ts free) took it home without the long field, and a thick one left it held by
+  // the land at the mouth of the cup, as no lake of the island does.
   {
-    const { world, rt } = fresh();
-    run(world, rt, 20);
-    const solid = solidCovers(world);
-    let found: { c: Creature; at: number; steps: number; d: number } | undefined;
-    for (const c of villagers(world)) {
-      if (found) break;
-      if (!c.mind || jobOf(c) === "guard" || c.data.indoors !== undefined) continue;
-      const home = cellOf(world, c.homeX, c.homeY);
-      if (wetOf(world, home) > 0.05) continue;
-      const dist = walkFrom(world, home);
-      let bestD = Infinity;
-      for (let i = 0; i < world.n; i++) {
-        const x = (i % world.w) + 0.5;
-        const y = Math.floor(i / world.w) + 0.5;
-        const d = Math.hypot(x - c.homeX, y - c.homeY);
-        if (d < 25 || d > 40 || d >= bestD || dist[i] < 75 || wetOf(world, i) > 0 || solid[world.cover[i]]) continue;
-        // On open ground, not in a nook: its four neighbours walkable too.
-        if (![1, -1, world.w, -world.w].every((o) => dist[i + o] >= 0 && wetOf(world, i + o) === 0)) continue;
-        bestD = d;
-        found = { c, at: i, steps: dist[i], d };
+    const { world, rt } = fresh(4, true);
+    run(world, rt, 120);
+    const top = tileHouses(world);
+    const lived = [
+      ...new Set(
+        villagers(world)
+          .map((c) => houseOf(world, c))
+          .filter((h) => h >= 0 && top[h] >= 0)
+          .map((h) => top[h]),
+      ),
+    ];
+    const s = world.settlements[0];
+    const far = (b: number) => Math.hypot((b % world.w) - s.x, Math.floor(b / world.w) - s.y);
+    for (const b of lived.sort((p, q) => far(p) - far(q)).slice(0, 3)) for (const j of [b, b + 1, b + world.w, b + world.w + 1]) world.setCover(j, C.RUBBLE);
+    const alive = new Set<Creature>(villagers(world));
+    const starved: string[] = [];
+    let walkable = 0;
+    run(world, rt, 1250 - world.time, () => {
+      for (const c of alive) {
+        if (!c.dead) continue;
+        alive.delete(c);
+        if (!c.mind || c.mind.hunger < 1) continue;
+        const steps = walkFrom(world, cellOf(world, c.homeX, c.homeY))[cellOf(world, c.x, c.y)];
+        if (steps >= 0) walkable++;
+        starved.push(
+          `at (${Math.round(c.x)},${Math.round(c.y)}) ${Math.round(Math.hypot(c.x - c.homeX, c.y - c.homeY))} cells from home, ${steps < 0 ? "no walk home" : `${steps} steps home`}, at ${Math.round(world.time)} s`,
+        );
       }
-    }
-    if (!found) check("hungry: a villager with a long way round to its home goes home and eats", false, "no such spot on the island");
-    else {
-      const { c, at, steps, d } = found;
-      c.x = (at % world.w) + 0.5;
-      c.y = Math.floor(at / world.w) + 0.5;
-      c.hd = Math.atan2(c.homeY - c.y, c.homeX - c.x);
-      c.mind!.hunger = 0.9;
-      c.mind!.task = "none";
-      c.data.unreached = undefined;
-      const v = villageOf(world, c.homeX, c.homeY);
-      if (v) v.food = Math.max(v.food, 20);
-      let homeAt = -1;
-      let ateAt = -1;
-      const t0 = world.time;
-      run(world, rt, 120, () => {
-        if (homeAt < 0 && Math.hypot(c.x - c.homeX, c.y - c.homeY) < 3) homeAt = world.time - t0;
-        if (ateAt < 0 && (c.mind?.hunger ?? 1) < 0.5) ateAt = world.time - t0;
-      });
-      check(
-        "hungry: a villager with a long way round to its home goes home and eats within two minutes",
-        homeAt >= 0 && ateAt >= 0,
-        `set down ${d.toFixed(0)} cells from home, ${steps} steps on foot; ${homeAt < 0 ? `never home, ${Math.hypot(c.x - c.homeX, c.y - c.homeY).toFixed(0)} cells off at the end` : `home after ${homeAt.toFixed(0)} s`}, ${ateAt < 0 ? `not eaten, hunger ${(c.mind?.hunger ?? 0).toFixed(2)}` : `ate after ${ateAt.toFixed(0)} s`}; "${c.mind?.action}"`,
-      );
-    }
+    });
+    check(
+      "hungry: on the fire and ruins soak of seed 4, nobody starves with a walk home (to 1250 s)",
+      walkable === 0,
+      `${starved.length} starved${starved.length ? ": " + starved.join("; ") : ""}`,
+    );
   }
   // 2. At home, starving, a third of its health left.
   {

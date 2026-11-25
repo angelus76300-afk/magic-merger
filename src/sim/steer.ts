@@ -147,6 +147,13 @@ export function steer(
         dx = AIM.x - c.x;
         dy = AIM.y - c.y;
         onField = true;
+        // On a long field, what is left of the way, for the mind: a way round that first leads
+        // away is still a way there (goals.ts, the five seconds without getting closer).
+        if (f.far) {
+          const was = c.data.longWay as LongWay | undefined;
+          const left = f.dist[Math.round(c.y) * world.w + Math.round(c.x)];
+          c.data.longWay = { t: world.time, left, best: was && was.gx === gx && was.gy === gy ? was.best : left, gx, gy } satisfies LongWay;
+        }
       }
     }
     want = Math.atan2(dy, dx);
@@ -321,3 +328,13 @@ function separation(world: World, c: Creature, k: CreatureKind): { x: number; y:
 
 // A villager on its way home to eat, carry or sleep (goals.ts unreached).
 const homeward = (c: Creature) => c.kind === "villager" && (c.mind?.task === "eat" || c.mind?.task === "carry" || c.mind?.task === "rest");
+
+// A walk home along a long field (paths.ts FAR_STEPS): when it was last on it, the cost of the way
+// left from where it stood, the least it has been, and where the field leads.
+export interface LongWay {
+  t: number;
+  left: number;
+  best: number;
+  gx: number;
+  gy: number;
+}

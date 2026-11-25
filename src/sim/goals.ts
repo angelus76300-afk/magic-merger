@@ -1,4 +1,6 @@
 import { C, F, G, isBuilding as isBuildingCover } from "./materials";
+import type { LongWay } from "./steer";
+import { STEP } from "./paths";
 import { woodland } from "./ecology";
 import { bareByMaking, gardenFull, niche, treeRoom } from "./nature";
 import {
@@ -505,7 +507,15 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
       m.think = 0.5;
       return null;
     }
-    if (d < m.near - 0.3) {
+    // Along a long field (steer.ts), getting closer is the way left getting shorter: round a lake
+    // it first leads away (25 November: on main the way round was given up after five seconds).
+    const longWay = c.data.longWay as LongWay | undefined;
+    const along = !!longWay && world.time - longWay.t < 0.5 && Math.hypot(longWay.gx - tx, longWay.gy - ty) < 2;
+    if (along && longWay.left < longWay.best - 0.3 * STEP) {
+      longWay.best = longWay.left;
+      m.near = Math.min(m.near, d);
+      m.stall = 0;
+    } else if (d < m.near - 0.3) {
       m.near = d;
       m.stall = 0;
     } else if ((m.stall += dt) > 5) {
@@ -520,7 +530,8 @@ function act(world: World, c: Creature, k: CreatureKind, m: Mind, dt: number): P
     // Somewhere it cannot reach: give up and think again (a fish spawns where it got to).
     // A trip to another village (4.9) is a long walk, not a lost one.
     // So is the way home from it.
-    const far = !!world.flora && (m.task === "trade" || ((m.task === "eat" || m.task === "carry" || m.task === "rest") && Math.hypot(tx - c.x, ty - c.y) > 30));
+    const far =
+      !!world.flora && (m.task === "trade" || along || ((m.task === "eat" || m.task === "carry" || m.task === "rest") && Math.hypot(tx - c.x, ty - c.y) > 30));
     if (m.walk > (strike ? 20 : far ? 150 : 30)) {
       if (m.task === "spawn") finish(world, c, k, m);
       else {
