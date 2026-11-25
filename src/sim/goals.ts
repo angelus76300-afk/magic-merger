@@ -64,7 +64,10 @@ import {
   houseBurning,
   houseNear,
   houseOf,
+  needsHand,
   ownRebuild,
+  rebuildStage,
+  slowRebuild,
   rebuildRuin,
   rebuildable,
   ruinStands,
@@ -1187,12 +1190,23 @@ function work(world: World, c: Creature, m: Mind): void {
     if (!plantFlowers(world, c, m)) forage(world, c, m);
     return;
   }
-  // Its own house still in ruins at midmorning, no builder come: the family rebuilds it itself.
+  // Its own house still in ruins at midmorning, no builder come: the family rebuilds it itself,
+  // slowly, over about a day (homes.ts SLOW_REBUILD).
   const ruin = homeRuin(world, c);
   if (ruin >= 0 && ownRebuild(world, ruin)) {
     cellTask(world, m, "repair", ruin);
-    m.action = "rebuilding their burned house";
+    m.action = `${REBUILD_WORDS[stageAt(world, ruin)]} their burned house`;
     return;
+  }
+  // A neighbour's ruin nobody of its own works on (a household of only children and elders): it
+  // lends a hand at the same slow pace.
+  if (job !== "builder" && job !== "smith" && job !== "guard" && job !== "priest" && world.ruinedAt.size) {
+    const help = ruinToHelp(world, c);
+    if (help >= 0) {
+      cellTask(world, m, "repair", help);
+      m.action = "helping rebuild a neighbour's burned house";
+      return;
+    }
   }
   // A job a spell invented and hired it for (w.hire), when its spell's rules are loaded.
   const hired = m.job ? CUSTOM_GOALS.get(m.job) : undefined;
@@ -1210,6 +1224,27 @@ function work(world: World, c: Creature, m: Mind): void {
   if (m.task === "none" && (job === "none" || job === "woodcutter" || job === "farmer") && world.roads.length && Math.random() < 0.5 && layRoad(world, c, m, v))
     return;
   if (m.task === "none" && !forage(world, c, m) && Math.random() < 0.25) plantFlowers(world, c, m, true);
+}
+
+// What the card says of a slow rebuild, by its stage (homes.ts rebuildStage).
+const REBUILD_WORDS = ["clearing the rubble of", "laying the footing of", "raising the frame of", "putting up the walls of"] as const;
+function stageAt(world: World, i: number): number {
+  const r = world.rebuilds.get(i);
+  return r ? rebuildStage(r) : 0;
+}
+
+// The nearest ruin within 14 cells of its home that wants a neighbour's hand (homes.ts needsHand);
+// -1 when none does.
+function ruinToHelp(world: World, c: Creature): number {
+  let best = -1;
+  let bestD = 14;
+  for (const i of world.ruinedAt.keys()) {
+    const d = Math.hypot((i % world.w) - c.homeX, Math.floor(i / world.w) - c.homeY);
+    if (d >= bestD || !needsHand(world, i, c)) continue;
+    best = i;
+    bestD = d;
+  }
+  return best;
 }
 
 function job2(world: World, c: Creature, m: Mind, v: Village, job: Job): void {
@@ -2323,12 +2358,20 @@ function finish(world: World, c: Creature, k: CreatureKind, m: Mind): void {
       deed(c, "forged tools at the smithy");
       return;
     }
-    case "repair":
+    case "repair": {
       if (!rebuildable(world, i)) return;
-      // The house as a whole, its roof patched (homes.ts rebuildRuin).
-      rebuildRuin(world, i);
-      deed(c, "rebuilt a house");
+      // A builder: the house as a whole, its roof patched (homes.ts rebuildRuin). Anyone else:
+      // a spell of the slow rebuild (homes.ts slowRebuild).
+      const trade = jobOf(c);
+      if (trade === "builder" || trade === "smith") {
+        rebuildRuin(world, i);
+        deed(c, "rebuilt a house");
+        return;
+      }
+      if (slowRebuild(world, i, DURATION.repair!, homeRuin(world, c) === i ? undefined : c)) deed(c, "rebuilt a house");
+      else deed(c, "worked on a burned house");
       return;
+    }
     case "raise": {
       const s = world.sites.find((o) => i >= 0 && (o.i === i || o.i + 1 === i || o.i + world.w === i || o.i + world.w + 1 === i));
       const done = s ? workSite(world, s, DURATION.raise!, c) : null;

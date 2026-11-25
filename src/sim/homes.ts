@@ -216,10 +216,13 @@ export function ruinStands(world: World, i: number): boolean {
 
 // Rubble its family still waits on: until the second dawn after it fell, a whole day for the
 // builders. Past that (no wood, no builders), the family looks for a house again.
+// A ruin its family (or a neighbour) is rebuilding, worked on within the last day, is kept as well.
 export function ruinKept(world: World, i: number): boolean {
   if (world.cover[i] !== C.RUBBLE) return false;
   if (ruinStands(world, i)) return true;
-  return dawnOf(world.time) <= dawnOf(world.ruinedAt.get(i) ?? world.time) + 1;
+  if (dawnOf(world.time) <= dawnOf(world.ruinedAt.get(i) ?? world.time) + 1) return true;
+  const r = world.rebuilds.get(i);
+  return !!r && world.time - r.last < DAY_LENGTH;
 }
 
 // Rubble the builders may rebuild now.
@@ -271,11 +274,10 @@ export function homeRuin(world: World, c: Creature): number {
   return best >= 0 && bestD < house ? best : -1;
 }
 
-// A ruin rebuilt: the cell and the rest of its two by two block still in rubble, as one house (23
-// November: rebuilt a cell at a time, the last cell of a burned house could wait the whole day).
-// The block is the square holding the cell with the most rubble that may be rebuilt. A rebuilt roof
-// shows its patch (4.4.5 part B).
-export function rebuildRuin(world: World, i: number): void {
+// The cells a ruin is rebuilt as: the cell and the rest of its two by two block still in rubble, as
+// one house (23 November: rebuilt a cell at a time, the last cell of a burned house could wait the
+// whole day). The block is the square holding the cell with the most rubble that may be rebuilt.
+export function ruinBlock(world: World, i: number): number[] {
   const W = world.w;
   const x = i % W;
   const y = Math.floor(i / W);
@@ -291,8 +293,81 @@ export function rebuildRuin(world: World, i: number): void {
     const cells = [t, t + 1, t + W, t + W + 1].filter((j) => rebuildable(world, j));
     if (cells.length > best.length) best = cells;
   }
-  for (const j of best) {
+  return best;
+}
+
+// A ruin rebuilt as one house (ruinBlock). A rebuilt roof shows its patch (4.4.5 part B).
+export function rebuildRuin(world: World, i: number): void {
+  for (const j of ruinBlock(world, i)) {
     world.setCover(j, C.HOUSE);
     if (world.settlements.length) world.patched.add(j);
   }
+}
+
+// A family's own rebuild is slow (25 November, the owner: "slow rebuild: yes"). A builder rebuilds
+// a ruin in one spell of work (5 s); a family with no builder come takes about a day (360 s): the
+// rubble cleared, then the footing, the frame and the walls, the four stages of a building site
+// (sites.ts), drawn on the ruin as they go (voxel/buildings.ts). Each spell of work at the ruin (the
+// repair task, 5 s) counts; the family goes back to it between meals and sleep. Two at work go
+// faster, but never under half a day. A household of only children and elders is helped by a
+// neighbour once nobody of its own has worked on the ruin for a while. Not saved, as ruinedAt: a
+// loaded island's ruin waits for the next dawn and its rebuild starts again.
+export const SLOW_REBUILD = {
+  // Seconds of one villager's work at the ruin.
+  work: 200,
+  // Seconds from the first spell of work to the house, at the least.
+  least: DAY_LENGTH / 2,
+  // Seconds a due ruin waits with nobody of its own at work before a neighbour comes.
+  helpAfter: 40,
+  stages: 4,
+} as const;
+
+export interface Rebuild {
+  // The block's cells (ruinBlock when work began).
+  cells: number[];
+  // Seconds of work done, when the work began, when it was last worked on.
+  work: number;
+  since: number;
+  last: number;
+  // The neighbour helping, by creature id.
+  helper?: number;
+}
+
+// The stage a rebuild is at: 0 clearing the rubble, 1 the footing, 2 the frame, 3 the walls.
+export function rebuildStage(r: Rebuild): number {
+  return Math.min(SLOW_REBUILD.stages - 1, Math.floor((r.work / SLOW_REBUILD.work) * SLOW_REBUILD.stages));
+}
+
+// A spell of slow work on a ruin. True when the house stands again.
+export function slowRebuild(world: World, i: number, seconds: number, helper?: Creature): boolean {
+  if (!rebuildable(world, i)) return false;
+  let r = world.rebuilds.get(i);
+  if (!r) {
+    r = { cells: ruinBlock(world, i), work: 0, since: world.time, last: world.time };
+    for (const j of r.cells) world.rebuilds.set(j, r);
+  }
+  const before = rebuildStage(r);
+  r.work += seconds;
+  r.last = world.time;
+  if (helper) r.helper = helper.id;
+  if (r.work >= SLOW_REBUILD.work && world.time - r.since >= SLOW_REBUILD.least) {
+    for (const j of r.cells) if (world.rebuilds.get(j) === r) world.rebuilds.delete(j);
+    rebuildRuin(world, i);
+    world.sitesVersion++;
+    return true;
+  }
+  if (rebuildStage(r) !== before) world.sitesVersion++;
+  return false;
+}
+
+// A ruin of its village a neighbour may help rebuild: due for its family's own rebuild, and nobody
+// of its own at work on it for SLOW_REBUILD.helpAfter seconds (a household of only children and
+// elders, or one away); or the one this neighbour already helps with.
+export function needsHand(world: World, i: number, c: Creature): boolean {
+  if (!ownRebuild(world, i)) return false;
+  const r = world.rebuilds.get(i);
+  if (r?.helper === c.id) return true;
+  if (r?.helper !== undefined && world.time - r.last < SLOW_REBUILD.helpAfter) return false;
+  const due = (dawnOf(world.ruinedAt.get(i) ?? world.time) + 1) * DAY_LENGTH - DAY_LENGTH * 0.15 + SELF_REBUILD_AFTER;
+  return world.time - Math.max(due, r?.last ?? due) >= SLOW_REBUILD.helpAfter;
 }
