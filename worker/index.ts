@@ -130,6 +130,7 @@ import {
   type Payer,
 } from "./ledger";
 
+import { checkReport, pollCheck, startCheck } from "./promise";
 import { LooksError, judgeLooks, looksBusy, looksCandidates, looksMode, looksPool, looksReport, looksVerdict, pollLooks, startLooks } from "./looks";
 
 export interface Env {
@@ -164,6 +165,11 @@ export interface Env {
   ANTHROPIC_BASE_URL?: string;
   // 3.7. Dollars a month the refresh of the legacy library may spend.
   REFRESH_BUDGET_USD?: string;
+  // 25 November 2026: the promise check (worker/promise.ts): dollars a month, inside BUDGET_USD;
+  // unset or "0" turns it off. Its model (Opus 5.5) and effort (medium) by default.
+  CHECK_BUDGET_USD?: string;
+  CHECK_MODEL?: string;
+  CHECK_EFFORT?: string;
   // 3.3. Who looks at Spell Lab frames and guesses the vote (Haiku).
   JUDGE_MODEL?: string;
   // Dollars a day that votes, the judge and failed test runs may spend on rewrites.
@@ -2472,6 +2478,11 @@ async function handleAdmin(request: Request, url: URL, env: Env, oracle: Oracle,
   if (post && path === "feedback-sync") return json(await syncFeedback(env, 20));
   // 4.5: a pull request that says "Idea #n" (.github/workflows/ideas.yml).
   if (post && path === "idea-pr") return json(await ideaPull(env, await readBody(request)));
+  // 25 November 2026: the promise check (worker/promise.ts). Opus reads items and says whether
+  // each does what its name promises; it rewrites nothing.
+  if (post && path === "promise-check") return json(await startCheck(env, await readBody(request)));
+  if (post && path === "promise-check-poll") return json(await pollCheck(env, String((await readBody<{ batch?: unknown }>(request)).batch ?? "")));
+  if (!post && path === "promise-check-report") return json(await checkReport(env));
   // 3.4.2: the API that grows.
   if (post && path === "refresh") return json(await startRefresh(env, oracle, await readBody(request)));
   // 5.2.5: the looks revamp (worker/looks.ts), paid from its own budget, never the request's.

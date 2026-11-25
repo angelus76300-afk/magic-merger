@@ -790,7 +790,7 @@ const PRICES: Record<string, [number, number, number, number]> = {
 };
 
 // One JSON line per call, visible with `wrangler tail` and in Workers Logs.
-function logUsage(call: string, response: Anthropic.Beta.BetaMessage, discount = 1, ms?: number): Spent {
+export function logUsage(call: string, response: Anthropic.Beta.BetaMessage, discount = 1, ms?: number): Spent {
   const u = response.usage;
   const input = u.input_tokens ?? 0;
   const output = u.output_tokens ?? 0;
