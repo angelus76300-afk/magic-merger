@@ -4571,9 +4571,13 @@ const signIn = async (key, count) => {
 // renamed for the test, so the read fails as it did live.
 {
   await db.prepare("ALTER TABLE invites RENAME COLUMN admin TO admin_hidden").run();
-  const h = await api("/api/health", { admin: true });
-  const spend = await api("/api/spend", { admin: true });
-  await db.prepare("ALTER TABLE invites RENAME COLUMN admin_hidden TO admin").run();
+  let h, spend;
+  try {
+    h = await api("/api/health", { admin: true });
+    spend = await api("/api/spend", { admin: true });
+  } finally {
+    await db.prepare("ALTER TABLE invites RENAME COLUMN admin_hidden TO admin").run();
+  }
   check(
     "admin token: a failed owner read still answers health, as the admin, with the reason",
     h.status === 200 && h.data?.admin === true && !!h.data?.ownerError,
