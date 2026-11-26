@@ -514,7 +514,16 @@ function cornerOfLand(land: LandRead): CornerRead {
   }
   return r;
 }
+const CELLS_CORNER = new WeakMap<FineCells, CornerRead>();
 function cornerOfCells(f: FineCells): CornerRead {
+  let r = CELLS_CORNER.get(f);
+  if (!r) {
+    r = cornerReadOf(f);
+    CELLS_CORNER.set(f, r);
+  }
+  return r;
+}
+function cornerReadOf(f: FineCells): CornerRead {
   const at = (x: number, y: number) => {
     if (x < f.x0 - 3 || y < f.y0 - 3 || x >= f.x1 + 3 || y >= f.y1 + 3) return -1;
     const c = fineAt(f, x, y);
@@ -556,8 +565,20 @@ export function fieldStep(h: number, px: number, py: number, sub: number): numbe
 // fieldHeight on the fine cells' own arrays, for the mesher: the same field, without a call per
 // neighbour (16 of them a column).
 export function fieldFine(f: FineCells, px: number, py: number): number {
-  const cx = Math.floor(px);
-  const cy = Math.floor(py);
+  let cx = Math.floor(px);
+  let cy = Math.floor(py);
+  // A cliff's corner cut on the diagonal, as fieldHeight reads it (the mesher has already moved its
+  // columns into the cell they are drawn as: there this changes nothing).
+  if (CLIFF_CORNER.on && GRAPHICS.steps && cx >= f.x0 - 2 && cy >= f.y0 - 2 && cx < f.x1 + 2 && cy < f.y1 + 2) {
+    const k = cliffCorner(cornerOfCells(f), cx, cy, px, py);
+    if (k === 1) {
+      cx += px - cx > 0.5 ? 1 : -1;
+      px = intoCell(px, cx);
+    } else if (k === 2) {
+      cy += py - cy > 0.5 ? 1 : -1;
+      py = intoCell(py, cy);
+    }
+  }
   const c = fineAt(f, cx, cy);
   const t = f.top[c];
   if (f.flat[c]) return t;
