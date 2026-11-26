@@ -1,0 +1,175 @@
+{
+ "started": "2026-11-26T02:40:37.761Z",
+ "offsets": {
+  "all": 20
+ },
+ "pending": [
+  {
+   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+   "items": [
+    {
+     "id": "p244",
+     "key": "fire",
+     "name": "Fire",
+     "kind": "spell",
+     "tier": "minor",
+     "casts": 7
+    },
+    {
+     "id": "p139",
+     "key": "water",
+     "name": "Water",
+     "kind": "spell",
+     "tier": "cantrip",
+     "casts": 6
+    },
+    {
+     "id": "p276",
+     "key": "life",
+     "name": "Life",
+     "kind": "spell",
+     "tier": "cantrip",
+     "casts": 5
+    },
+    {
+     "id": "p666",
+     "key": "light",
+     "name": "Light",
+     "kind": "spell",
+     "tier": "cantrip",
+     "casts": 4
+    },
+    {
+     "id": "p734",
+     "key": "meteor strike",
+     "name": "Meteor Strike",
+     "kind": "spell",
+     "tier": "legendary",
+     "casts": 4
+    },
+    {
+     "id": "p723",
+     "key": "phoenix",
+     "name": "Phoenix",
+     "kind": "creature",
+     "tier": "major",
+     "casts": 4
+    },
+    {
+     "id": "p39",
+     "key": "arcane",
+     "name": "Arcane",
+     "kind": "spell",
+     "tier": "minor",
+     "casts": 3
+    },
+    {
+     "id": "p185",
+     "key": "arcane shield",
+     "name": "Arcane Shield",
+     "kind": "spell",
+     "tier": "minor",
+     "casts": 3
+    },
+    {
+     "id": "p188",
+     "key": "divine shield",
+     "name": "Divine Shield",
+     "kind": "spell",
+     "tier": "major",
+     "casts": 3
+    },
+    {
+     "id": "p256",
+     "key": "extinction event",
+     "name": "Extinction Event",
+     "kind": "spell",
+     "tier": "cosmic",
+     "casts": 3
+    },
+    {
+     "id": "p16",
+     "key": "great flood",
+     "name": "Great Flood",
+     "kind": "spell",
+     "tier": "legendary",
+     "casts": 3
+    },
+    {
+     "id": "p195",
+     "key": "meteor",
+     "name": "Meteor",
+     "kind": "spell",
+     "tier": "grand",
+     "casts": 3
+    },
+    {
+     "id": "p735",
+     "key": "protection spell",
+     "name": "Protection Spell",
+     "kind": "spell",
+     "tier": "minor",
+     "casts": 3
+    },
+    {
+     "id": "p69",
+     "key": "rebirth",
+     "name": "Rebirth",
+     "kind": "spell",
+     "tier": "cosmic",
+     "casts": 3
+    },
+    {
+     "id": "p299",
+     "key": "resurrection",
+     "name": "Resurrection",
+     "kind": "spell",
+     "tier": "minor",
+     "casts": 3
+    },
+    {
+     "id": "p732",
+     "key": "serpent",
+     "name": "Serpent",
+     "kind": "creature",
+     "tier": "minor",
+     "casts": 3
+    },
+    {
+     "id": "p29",
+     "key": "shadow",
+     "name": "Shadow",
+     "kind": "spell",
+     "tier": "cantrip",
+     "casts": 3
+    },
+    {
+     "id": "p702",
+     "key": "sky mage",
+     "name": "Sky Mage",
+     "kind": "creature",
+     "tier": "major",
+     "casts": 3
+    },
+    {
+     "id": "p713",
+     "key": "underworld",
+     "name": "Underworld",
+     "kind": "place",
+     "tier": "cosmic",
+     "casts": 3
+    },
+    {
+     "id": "p714",
+     "key": "world seed",
+     "name": "World Seed",
+     "kind": "object",
+     "tier": "cosmic",
+     "casts": 3
+    }
+   ]
+  }
+ ],
+ "rows": [],
+ "billed": 0
+}
