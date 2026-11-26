@@ -51,7 +51,10 @@
     // 3.7. Dollars a month the refresh of the legacy library may spend (held
     // before each batch is sent); scripts/refresh-runner.ts decides each program.
     // 26 from 25 November 2026 (the promotional credits), back to 8 after them.
-    "REFRESH_BUDGET_USD": "26",
+    // 42 from 25 November 2026, the promotional credits: rewrites of the items the
+    // promise check flagged (312 of 503), inside BUDGET_USD (about $24 of room over
+    // the month's $35). Back to 8 on 26 November.
+    "REFRESH_BUDGET_USD": "42",
     // 25 November 2026: the refresh writes every tier with SPELL_MODEL (Opus), not Haiku, for the
     // promotional credits; players' merges, first casts and votes keep SPELL_MODEL_SMALL. Back to
     // "0" after them, on 26 November.

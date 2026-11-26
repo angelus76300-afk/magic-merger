@@ -1569,7 +1569,8 @@ async function startRefresh(
   const again = new Map<string, string[]>();
   const why = (k: string): string | null => {
     const w = body.why && typeof body.why === "object" ? (body.why as Record<string, unknown>)[k] : undefined;
-    return typeof w === "string" && w.trim() ? w.trim().slice(0, 300) : null;
+    // Up to 1200 characters: the promise check's missing and fix (25 November 2026).
+    return typeof w === "string" && w.trim() ? w.trim().slice(0, 1200) : null;
   };
   if (byForm && asked?.length) {
     const more = await db
@@ -1585,6 +1586,31 @@ async function startRefresh(
       const reasons = r.replaced ? [] : [`its last rewrite for its kind was not used: ${r.reason}`];
       if (asker) reasons.push(asker);
       again.set(r.key, reasons);
+    }
+  }
+  // On the plain path, a key asked by name with a `why` may be written again
+  // though it was refreshed before (25 November 2026: the promise check found
+  // 312 of 503 items short of their name, most refreshed once already); the
+  // writer is told the why, as by form. At most one such rewrite per key a
+  // day: a refresh rewrite of it in the last 24 hours, or one still pending,
+  // refuses it, so nothing loops. Never in the daily run (it names no keys).
+  if (!byForm && asked?.length) {
+    // One never refreshed is told its why too.
+    for (const k of asked) if (why(k) !== null && rows.results.some((o) => o.key === k)) again.set(k, [why(k)!]);
+    const named = asked.filter((k) => why(k) !== null && !rows.results.some((o) => o.key === k));
+    if (named.length) {
+      const more = await db
+        .prepare(
+          `SELECT s.key, s.pid FROM spells s JOIN elements e ON e.key = s.key
+           WHERE s.pid IS NOT NULL AND s.key IN (SELECT value FROM json_each(?))
+             AND NOT EXISTS (SELECT 1 FROM rewrites r WHERE r.key = s.key AND r.cause = 'refresh' AND r.status NOT IN ('failed', 'superseded') AND (r.at > ? OR r.status = 'pending'))`,
+        )
+        .bind(JSON.stringify(named), Date.now() - 24 * 3600 * 1000)
+        .all<{ key: string; pid: number }>();
+      for (const r of more.results) {
+        rows.results.push({ key: r.key, pid: r.pid });
+        again.set(r.key, [why(r.key)!]);
+      }
     }
   }
   const inOrder = asked ? asked.map((k) => rows.results.find((r) => r.key === k)).filter((r): r is { key: string; pid: number } => !!r) : rows.results;
