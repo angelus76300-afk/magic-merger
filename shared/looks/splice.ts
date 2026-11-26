@@ -436,6 +436,16 @@ export function oldPartsProblem(arg: string): string | null {
   return null;
 }
 
+// Why the writer may not redraw this call, or null when it may: the call has no parts argument, or
+// what it draws now does something too (oldPartsProblem), so its look stays and with it what it
+// does. spliceLooks refuses such a call; the Worker asks before it pays the writer (worker/looks.ts
+// startLooks), so it is never shown one.
+export function lockedCall(code: string, c: ModelCall): string | null {
+  if (c.args.length < 3) return "the call has no parts argument";
+  const kept = oldPartsProblem(code.slice(c.args[2].start, c.args[2].end));
+  return kept ? `its parts are not only a look (${kept})` : null;
+}
+
 export interface SpliceResult {
   code: string;
   // Which calls were replaced, and which patches were refused and why.
@@ -538,19 +548,15 @@ export function spliceLooks(code: string, patches: LookPatch[], mayAdd: boolean 
       refused.push({ call: p.call, why: "a second look for the same call" });
       continue;
     }
-    if (c.args.length < 3) {
-      refused.push({ call: p.call, why: "the call has no parts argument" });
+    // What it draws now may do something too: then its look stays, and with it what it does.
+    const locked = lockedCall(code, c);
+    if (locked) {
+      refused.push({ call: p.call, why: locked });
       continue;
     }
     const why = partsProblem(p.parts);
     if (why) {
       refused.push({ call: p.call, why });
-      continue;
-    }
-    // What it draws now may do something too: then its look stays, and with it what it does.
-    const kept = oldPartsProblem(code.slice(c.args[2].start, c.args[2].end));
-    if (kept) {
-      refused.push({ call: p.call, why: `its parts are not only a look (${kept})` });
       continue;
     }
     seen.add(p.call);

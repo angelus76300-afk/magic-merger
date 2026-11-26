@@ -4,7 +4,17 @@
 import { syntaxError } from "../shared/spellcode";
 import { REFERENCES, partTarget, referencesFor } from "../shared/looks";
 import { shapesOf, silhouette, toneGroups } from "../shared/looks/measure";
-import { changedLines, drawablePart, modelCalls, numberedProgram, oldPartsProblem, partsProblem, readLiteral, spliceLooks } from "../shared/looks/splice";
+import {
+  changedLines,
+  drawablePart,
+  lockedCall,
+  modelCalls,
+  numberedProgram,
+  oldPartsProblem,
+  partsProblem,
+  readLiteral,
+  spliceLooks,
+} from "../shared/looks/splice";
 import { drawableShare } from "./looks-drawable";
 import { looksGainChecks } from "./looks-gain-test";
 import { MAX_PROP_BOXES, readBox, type PropBox } from "../src/sim/props";
@@ -264,6 +274,12 @@ export function looksRefChecks(check: Check): void {
   ];
   const lost = acting.filter((code) => spliceLooks(code, [{ call: 1, parts: anvil }])?.code !== code);
   check(`${acting.length} calls whose parts also act keep their old look and what it does`, lost.length === 0, JSON.stringify(lost));
+  // The Worker asks lockedCall before it pays the writer (worker/looks.ts): the same rule, so a
+  // call it offers is never refused for its old parts, and one it holds back always would be.
+  const drawnOne = "const spell = { *cast(w) { w.model(w.x, w.y, [[0, 0, 0, 1, 1, 1, '#888']], {}); } };";
+  const offered = acting.filter((code) => !lockedCall(code, modelCalls(code)![0]));
+  check(`lockedCall holds back all ${acting.length} calls whose parts act, the splice's own rule`, offered.length === 0, JSON.stringify(offered));
+  check("lockedCall offers a call whose parts are a plain list", lockedCall(drawnOne, modelCalls(drawnOne)![0]) === null);
   check(
     "the spawn in a call's parts survives, refused with its reason",
     /not only a look/.test(spliceLooks(acting[0], [{ call: 1, parts: anvil }])?.refused[0]?.why ?? ""),

@@ -918,20 +918,26 @@ export interface LooksPrompt {
   // The program with its calls numbered (shared/looks/splice.ts numberedProgram).
   program: string;
   calls: number;
+  // The calls it may redraw, when not all of them: the others' parts do something besides drawing
+  // (shared/looks/splice.ts lockedCall), are not marked in the program, and stay as they are.
+  redraw?: number[];
   mayAdd: boolean;
 }
 
 export function looksUserMessage(r: LooksPrompt): string {
   const what = r.kind === "wonder" ? "Wonder (raised with the island)" : r.kind === "spell" ? "Spell" : `Artifact, ${FORM_NOUN[r.kind as Form] ?? r.kind}`;
-  const calls = r.calls
-    ? `Its program draws with ${r.calls} w.model call${r.calls > 1 ? "s" : ""}: redraw each one whose look is plainer than the references.`
-    : !r.mayAdd
-      ? "Its program draws no model."
-      : r.kind === "wonder"
-        ? "Its program draws no model: it may gain one or two (call 0), standing at its center over what it raises."
-        : r.kind === "spell"
-          ? "Its program draws no model: it may gain one (call 0), the lasting mark the spell leaves where it was cast (a rune stone, a scorched ring, a crystal), small, standing at the cast's point. It stays on the island after the spell's effects end."
-          : `Its program draws no model: it may gain one (call 0), the ${r.name} itself at its real size, standing where its program places it.`;
+  const only = r.redraw && r.redraw.length < r.calls ? r.redraw : null;
+  const calls = only
+    ? `Its program draws with ${r.calls} w.model calls. Redraw only these calls: ${only.join(", ")}, each one whose look is plainer than the references. The parts of the other calls do something besides drawing, so they stay as they are: they are not marked, and a look sent for one is refused.`
+    : r.calls
+      ? `Its program draws with ${r.calls} w.model call${r.calls > 1 ? "s" : ""}: redraw each one whose look is plainer than the references.`
+      : !r.mayAdd
+        ? "Its program draws no model."
+        : r.kind === "wonder"
+          ? "Its program draws no model: it may gain one or two (call 0), standing at its center over what it raises."
+          : r.kind === "spell"
+            ? "Its program draws no model: it may gain one (call 0), the lasting mark the spell leaves where it was cast (a rune stone, a scorched ring, a crystal), small, standing at the cast's point. It stays on the island after the spell's effects end."
+            : `Its program draws no model: it may gain one (call 0), the ${r.name} itself at its real size, standing where its program places it.`;
   return `${what}: ${r.name}\nTier: ${r.tier}\nGrimoire entry: ${r.description}\n\n${referencesText(referencesFor(r.kind))}\n\n${calls}\n\nThe program:\n${r.program}`;
 }
 

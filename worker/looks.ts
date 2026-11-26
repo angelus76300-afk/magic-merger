@@ -4,7 +4,9 @@
 // 1. startLooks picks items (the keys and wonders asked, or in bulk: wonders, then cosmic and
 //    legendary items, then the most cast), shows the writer each program with its w.model calls
 //    numbered, and asks through the Batch API at half price: Sonnet for every tier, Opus for a
-//    cosmic one. Each item's estimate is held in its row while it is pending.
+//    cosmic one. Each item's estimate is held in its row while it is pending, at its longest answer.
+//    A call whose parts do something besides drawing (splice.ts lockedCall) is not offered, and an
+//    item with no call to offer and none to gain is skipped before the writer is paid.
 // 2. pollLooks collects the answers, records what each cost in the ledger (`spend`, invite
 //    'looks'), and splices each new look into its program (shared/looks/splice.ts): only the
 //    parts argument of each call changes, every other line stays byte for byte as it was. A
@@ -26,7 +28,7 @@
 import { elementKey } from "../shared/elements";
 import { FIRST_PROGRAM_VERSION, syntaxError } from "../shared/spellcode";
 import { isTier, TIERS, type Tier } from "../shared/tiers";
-import { PROGRAM_ADD, WONDER_ADD, mayGainModel, modelCalls, numberedProgram, ownLookCall, spliceLooks } from "../shared/looks/splice";
+import { PROGRAM_ADD, WONDER_ADD, lockedCall, mayGainModel, modelCalls, numberedProgram, ownLookCall, spliceLooks } from "../shared/looks/splice";
 import type { LooksVerdict, Oracle } from "./oracle";
 import { getProgram, insertProgram, liveProgram, promote } from "./programs";
 
@@ -90,16 +92,23 @@ const LOOKS_PRICES: Record<string, [number, number]> = {
   "claude-sonnet-5-5": [2, 10],
   "claude-opus-5-5": [4, 20],
 };
+// The writer's longest answer, by how many looks it may send (the calls it may redraw, or the
+// models it may add): its thinking and the plan, then each parts list written out. 16,000 cut off
+// big programs with many calls on 25 November 2026 (Yggdrasil, Midgard, $0.18 each for nothing),
+// so each look past the first gets 6,000 more, up to 32,000.
+export const LOOKS_MAX_TOKENS = 32_000;
+export function writerMaxTokens(looks: number): number {
+  return Math.min(LOOKS_MAX_TOKENS, 10_000 + 6_000 * Math.max(1, looks));
+}
 // Held before a writer's item is sent, from its size: the look guide (cached after the first),
-// three references and the program in, the parts and the plan's thinking out. Measured on the
-// pilot; until then, the upper end of the plan's estimate.
+// three references and the program in, and the longest answer it may send out (maxTokens), so
+// what it is billed never passes what was held, and the budget is never passed.
 const GUIDE_TOKENS = 2_200;
 const REFERENCE_TOKENS = 3_600;
-const OUTPUT_TOKENS = 6_000;
-export function writerEstimate(model: string, programChars: number): number {
+export function writerEstimate(model: string, programChars: number, maxTokens = writerMaxTokens(1)): number {
   const [i, o] = LOOKS_PRICES[model] ?? [10, 50];
   const input = GUIDE_TOKENS + REFERENCE_TOKENS + Math.ceil(programChars / 3.2);
-  return ((input * i + OUTPUT_TOKENS * o) / 1e6) * 0.5;
+  return ((input * i + maxTokens * o) / 1e6) * 0.5;
 }
 // The judge: six frames of 540 by 540 (about 390 tokens each) and the rubric, a short answer.
 export const JUDGE_ESTIMATE = ((6 * 400 + 900) * 2 + 1_200 * 10) / 1e6;
@@ -265,7 +274,7 @@ export async function startLooks(env: LooksEnv, oracle: Oracle, body: StartBody,
     if (p) picked.push(p);
   }
   const { room } = await looksRoom(env);
-  const items: { id: number; model: string; request: Parameters<Oracle["submitLooks"]>[0][number]["request"] }[] = [];
+  const items: { id: number; model: string; maxTokens: number; request: Parameters<Oracle["submitLooks"]>[0][number]["request"] }[] = [];
   const queued: string[] = [];
   const skipped: string[] = [];
   let estimate = 0;
@@ -277,17 +286,32 @@ export async function startLooks(env: LooksEnv, oracle: Oracle, body: StartBody,
     // item the island draws already (a building, a village, a built-in wonder: ownLookCall).
     const notAdded = p.target === "wonder" ? null : (mayGainModel(p.kind, body.spells === true) ?? ownLookCall(p.code));
     const mayAdd = !notAdded;
-    // Nothing to redraw: no model call and none to add, or code the splice cannot read.
-    if (!calls || (!calls.length && !mayAdd)) {
+    // The calls the splice would refuse (their parts do something besides drawing) are not shown
+    // to the writer as calls to redraw: it is paid only for looks that can be used.
+    const locked = (calls ?? []).map((c) => ({ c, why: lockedCall(p.code, c) }));
+    const open = locked.filter((l) => !l.why).map((l) => l.c);
+    const firstLocked = locked.find((l) => l.why);
+    // Nothing to redraw: no model call and none to add, every call's parts doing something (a
+    // program with a model never gains one), or code the splice cannot read.
+    const why = !calls
+      ? "its code could not be read"
+      : !calls.length && !mayAdd
+        ? `no model call to redraw (${notAdded})`
+        : calls.length && !open.length
+          ? `no model call it may redraw (call ${firstLocked!.c.index}: ${firstLocked!.why})`
+          : null;
+    if (!calls || why) {
       await db
         .prepare("INSERT INTO looks (target, key, wonder_id, from_pid, status, pilot, reason, at) VALUES (?, ?, ?, ?, 'skipped', ?, ?, ?)")
-        .bind(p.target, p.key, p.wonderId, p.fromPid, pilot ? 1 : 0, calls ? `no model call to redraw (${notAdded})` : "its code could not be read", at)
+        .bind(p.target, p.key, p.wonderId, p.fromPid, pilot ? 1 : 0, why, at)
         .run();
       skipped.push(p.name);
       continue;
     }
     const model = looksModelFor(env, p.tier);
-    const cost = writerEstimate(model, p.code.length);
+    // How many looks it may send: the calls it may redraw, or the models it may add.
+    const maxTokens = writerMaxTokens(calls.length ? open.length : p.target === "wonder" ? WONDER_ADD.max : PROGRAM_ADD.max);
+    const cost = writerEstimate(model, p.code.length, maxTokens);
     if (estimate + cost > room) break;
     const ins = await db
       .prepare(
@@ -298,13 +322,16 @@ export async function startLooks(env: LooksEnv, oracle: Oracle, body: StartBody,
     items.push({
       id: Number(ins.meta.last_row_id),
       model,
+      maxTokens,
       request: {
         name: p.name,
         kind: p.kind,
         tier: p.tier === "wonder" ? "grand" : p.tier,
         description: p.description,
-        program: numberedProgram(p.code, calls),
+        // Only the calls it may redraw are marked with their number.
+        program: numberedProgram(p.code, open),
         calls: calls.length,
+        ...(open.length < calls.length ? { redraw: open.map((c) => c.index) } : {}),
         mayAdd: mayAdd && !calls.length,
       },
     });
@@ -314,7 +341,7 @@ export async function startLooks(env: LooksEnv, oracle: Oracle, body: StartBody,
   const batches: string[] = [];
   if (items.length) {
     try {
-      const batch = await oracle.submitLooks(items.map((it) => ({ id: `lk${it.id}`, model: it.model, request: it.request })));
+      const batch = await oracle.submitLooks(items.map((it) => ({ id: `lk${it.id}`, model: it.model, maxTokens: it.maxTokens, request: it.request })));
       batches.push(batch);
       await db.batch(items.map((it) => db.prepare("UPDATE looks SET batch = ? WHERE id = ?").bind(batch, it.id)));
     } catch (err) {
