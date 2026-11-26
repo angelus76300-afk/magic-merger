@@ -123,6 +123,7 @@ import { pacingChecks } from "./pacing-test";
 import { fogChecks } from "./fog-test";
 import { terrainLooksChecks } from "./terrain-looks-test";
 import { lakeWeedChecks } from "./lake-weed-test";
+import { lakeDepthChecks } from "./lake-depth-test";
 import { landLagChecks } from "./land-lag-test";
 import { chunkFillChecks } from "./chunk-fill-test";
 import { farLandChecks } from "./far-land-test";
@@ -2634,6 +2635,8 @@ waterEscapeChecks(check);
 waterLightChecks(check);
 // Weed and stones on lake beds (20 November): scripts/lake-weed-test.ts.
 lakeWeedChecks(check);
+// A lake's floor fades smoothly with depth, no squares a cell wide (26 November): scripts/lake-depth-test.ts.
+lakeDepthChecks(check);
 // Water leftovers (20 November): beds under thin ice, feet at a dry shore, the rim's side: scripts/water-leftovers-test.ts.
 waterLeftoversChecks(check);
 // Shores without a rim, the water a little under the land (23 November): scripts/shore-rim-test.ts.
