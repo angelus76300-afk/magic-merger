@@ -51,6 +51,34 @@ if (process.argv[2] === "start") {
   process.exit(0);
 }
 
+// `start-promise <report.json> [from] [count]`: asks the Worker to write again the items the
+// promise check flagged (docs/measurements/promise-check-2026-11-25.json, `rows`): verdict
+// "no" or "partly", the most cast first, item programs only ("p<id>"; a wonder, "w<id>", is
+// not the refresh's to write). Each key carries its why, the check's missing and fix, which
+// lets a key refreshed before be written once more and reaches the writer's prompt.
+if (process.argv[2] === "start-promise") {
+  const file = process.argv[3];
+  if (!file) {
+    console.error("start-promise <report.json> [from] [count]");
+    process.exit(1);
+  }
+  const from = Number(process.argv[4]) || 0;
+  const count = Math.min(200, Number(process.argv[5]) || 20);
+  type Row = { id: string; key: string; verdict: string | null; casts: number; missing?: string; fix?: string };
+  const rows = (JSON.parse(readFileSync(file, "utf8")) as { rows?: Row[] }).rows ?? [];
+  const flagged = rows.filter((r) => r.verdict === "no" || r.verdict === "partly");
+  const all = flagged.filter((r) => r.id.startsWith("p") && !!r.key).sort((a, b) => b.casts - a.casts || a.key.localeCompare(b.key));
+  const part = all.slice(from, from + count);
+  const keys = part.map((r) => r.key);
+  const why = Object.fromEntries(part.map((r) => [r.key, `The promise check (Opus) found: ${(r.missing ?? "").trim()} Fix: ${(r.fix ?? "").trim()}`]));
+  const r = await api("/api/admin/refresh", { keys, why, limit: keys.length });
+  console.log(
+    `flagged ${flagged.length}, ${all.length} programs (skipped ${flagged.length - all.length}: wonders or no key); asked ${keys.length} (${from} to ${from + keys.length - 1}); queued ${r.queued.length}; held $${r.estimate}; $${r.room} left in the refresh's month`,
+  );
+  console.log(`not queued (rewritten in the last day, no live program, or past the budget): ${keys.length - r.queued.length}`);
+  process.exit(0);
+}
+
 const dry = process.env.DRY === "1";
 const out = process.env.OUT ?? "refresh-frames";
 const limit = Number(process.argv[2]) || 20;

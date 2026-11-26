@@ -4390,6 +4390,45 @@ const signIn = async (key, count) => {
   await reset();
 }
 
+// 36b. The refresh told what the promise check found (25 November 2026): a key refreshed before
+// is refused by name alone, queued again with a `why`, which reaches the writer's request text;
+// a second ask within a day is refused, so nothing loops.
+{
+  await reset();
+  const now = Date.now();
+  await db
+    .prepare(
+      "INSERT INTO elements (key, name, emoji, kind, depth, tier, description, intents, created_at) VALUES ('thin ward', 'Thin Ward', '🛡️', 'spell', 2, 'minor', 'A ward', 'protect', ?)",
+    )
+    .bind(now)
+    .run();
+  const p = await api("/api/spell", { admin: true, body: { name: "Thin Ward" } });
+  await api("/api/spell/check", { admin: true, body: { name: "Thin Ward", id: p.data.program.id, ok: true, problem: null, detail: "ok" } });
+  await api("/api/admin/refresh", { admin: true, body: { keys: ["thin ward"] } });
+  await api("/api/admin/poll-batches", { admin: true, body: {} });
+  const cand = (await api("/api/admin/refresh-candidates", { admin: true })).data.find((c) => c.name === "Thin Ward");
+  await api("/api/admin/refresh-verdict", { admin: true, body: { id: cand.id, replace: false, reason: "scored lower", oldScore: 3, newScore: 2 } });
+  // Its refresh was two days ago.
+  await db
+    .prepare("UPDATE rewrites SET at = ? WHERE key = 'thin ward' AND cause = 'refresh'")
+    .bind(now - 2 * 24 * 3600 * 1000)
+    .run();
+  const plain = await api("/api/admin/refresh", { admin: true, body: { keys: ["thin ward"] } });
+  check("promise refresh: a key refreshed before is refused without a why", plain.status === 200 && plain.data.queued.length === 0, JSON.stringify(plain.data));
+  const reason = "The promise check (Opus) found: the ward never blocks a blow. Fix: raise a shield that stops harm for ten seconds.";
+  const b0 = batches.size;
+  const told = await api("/api/admin/refresh", { admin: true, body: { keys: ["thin ward"], why: { "thin ward": reason } } });
+  const sent = JSON.stringify([...batches.values()].slice(b0).flat());
+  check(
+    "promise refresh: with a why it is queued again, and the why reaches the writer's request",
+    told.status === 200 && told.data.queued.length === 1 && sent.includes("the ward never blocks a blow") && sent.includes("being written again"),
+    JSON.stringify(told.data),
+  );
+  await api("/api/admin/poll-batches", { admin: true, body: {} });
+  const twice = await api("/api/admin/refresh", { admin: true, body: { keys: ["thin ward"], why: { "thin ward": reason } } });
+  check("promise refresh: a second ask the same day is refused", twice.status === 200 && twice.data.queued.length === 0, JSON.stringify(twice.data));
+}
+
 // 37. The promise check (worker/promise.ts, 25 November 2026): off unless CHECK_BUDGET_USD; the
 // most cast first; one batch through the Batch API, Opus, the shared system part cached for an
 // hour; its estimate held inside BUDGET_USD and under its own cap; the answers billed once, as
