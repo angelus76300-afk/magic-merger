@@ -67,6 +67,10 @@
     // 4.4.5 part C. Dollars a month the new wonder a day may spend (held
     // before each call, inside BUDGET_USD); "0" in WONDERS stops the daily call.
     "WONDER_BUDGET_USD": "2",
+    // 25 November 2026, the promise check (worker/promise.ts, the owner: "an Opus check of the
+    // most-cast spells"): dollars a month, inside BUDGET_USD, through the Batch API. Back to
+    // "0" (off) after the promotional credits, on 26 November.
+    "CHECK_BUDGET_USD": "15",
     // 5.2.5, the looks revamp (worker/looks.ts; the owner, 16 November: "looks: yes, up to $25").
     // Off until the lead session turns it on after the pilot's gate: "pilot" lets the admin
     // start looks by name, "bulk" the nightly share too. Its own budget, apart from BUDGET_USD:
@@ -137,6 +141,7 @@
         "REFRESH_BUDGET_USD": "0",
         "AHEAD_DAILY_USD": "0.3",
         "WONDER_BUDGET_USD": "0",
+        "CHECK_BUDGET_USD": "0",
         // The looks revamp never runs on staging.
         "LOOKS": "off",
         "LOOKS_BUDGET_USD": "0",

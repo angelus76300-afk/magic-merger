@@ -340,7 +340,8 @@ export async function rebuildTotals(db: D1Database, now = Date.now()): Promise<v
 // 4.5.1 (audit): a rewrite left `pending` with no batch (the request died
 // between its insert and its submission) held its money for good, and counted
 // against every later day's rewrite budget; after two days it is failed and
-// its hold released. A daily wonder's hold (call 'wonder') waits for its
+// its hold released. A daily wonder's hold (call 'wonder'), and a promise
+// check's (call 'promise-check', worker/promise.ts), waits for its
 // batch like a batch hold, for two days at most, instead of being billed
 // after an hour and billed again when the wonder is collected.
 export async function sweep(db: D1Database, now = Date.now()): Promise<void> {
@@ -352,20 +353,20 @@ export async function sweep(db: D1Database, now = Date.now()): Promise<void> {
     db
       .prepare(
         `UPDATE reservations SET settled = 1
-         WHERE settled = 0 AND call IN ('batch', 'wonder') AND at < ? AND ${waiting}`,
+         WHERE settled = 0 AND call IN ('batch', 'wonder', 'promise-check') AND at < ? AND ${waiting}`,
       )
       .bind(old),
     db
       .prepare(
         `INSERT INTO spend (at, call, model, usd, invite)
          SELECT at, call || '-unsettled', 'unknown', usd, invite FROM reservations
-         WHERE settled = 0 AND at < ? AND call NOT IN ('batch', 'wonder') AND ${waiting}`,
+         WHERE settled = 0 AND at < ? AND call NOT IN ('batch', 'wonder', 'promise-check') AND ${waiting}`,
       )
       .bind(stale),
     db
       .prepare(
         `UPDATE reservations SET settled = 1
-         WHERE settled = 0 AND at < ? AND call NOT IN ('batch', 'wonder') AND ${waiting}`,
+         WHERE settled = 0 AND at < ? AND call NOT IN ('batch', 'wonder', 'promise-check') AND ${waiting}`,
       )
       .bind(stale),
     db.prepare("DELETE FROM reservations WHERE settled = 1 AND at < ?").bind(now - 2 * 86400_000),

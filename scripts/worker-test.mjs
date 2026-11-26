@@ -40,6 +40,13 @@ let intentsDown = false;
 // 4.6: every page of names the library's sort was asked.
 const sortPages = [];
 function stubAnswer(n, system, user) {
+  // The promise check (section 37): an item named Broken does not do what it says.
+  if (system.startsWith("You check the items of Magic Merger"))
+    return JSON.stringify(
+      /Name: Broken/.test(user)
+        ? { verdict: "no", promise: "keeps a promise", does: "one flash", missing: "the promise", fix: "make it keep the promise with w.ward" }
+        : { verdict: "yes", promise: "a spark", does: "a spark", missing: "", fix: "" },
+    );
   if (system.startsWith("You write the grimoire")) {
     grimoireCalls++;
     if (/Refusenik/.test(user ?? "") || (refuseSecret && /secret/.test(user ?? ""))) return "I can't write this one as stated. Here's a safer entry instead.";
@@ -361,6 +368,8 @@ const vars = {
   DAILY_CHALLENGES: "0",
   // Daily 2026-11-05: the cron rewrites nothing by evidence; section 32 turns it on.
   EVIDENCE_REWRITES: "0",
+  // 25 November 2026: the promise check is off; section 37 turns it on.
+  CHECK_BUDGET_USD: "0",
   // 25 November 2026: production runs the looks in bulk, $25 a day, and the refresh with
   // SPELL_MODEL for every tier (the promotional credits, wrangler.jsonc). The sections before 36
   // check the usual settings; section 36 checks these.
@@ -4375,6 +4384,92 @@ const signIn = async (key, count) => {
     report?.budget === 35 && report?.night === 35,
     JSON.stringify({ budget: report?.budget, night: report?.night }),
   );
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev();
+  await reset();
+}
+
+// 37. The promise check (worker/promise.ts, 25 November 2026): off unless CHECK_BUDGET_USD; the
+// most cast first; one batch through the Batch API, Opus, the shared system part cached for an
+// hour; its estimate held inside BUDGET_USD and under its own cap; the answers billed once, as
+// 'promise-check'; any kind, wonders too; and nothing rewritten.
+{
+  const off = await api("/api/admin/promise-check", { admin: true, body: { kinds: ["spell"] } });
+  check("promise check: off without CHECK_BUDGET_USD", off.status === 409, `${off.status}`);
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  // Room for two items at the $0.05 held for each.
+  await startDev({ CHECK_BUDGET_USD: "0.12" });
+  await reset();
+  const now = Date.now();
+  const honest = await liveSpell("Honest Spark");
+  const broken = await liveSpell("Broken Promise");
+  // More casts than anything the earlier sections left.
+  const castBy = (pid, n, who) =>
+    db
+      .prepare(
+        `INSERT INTO casts (player, pid, at) WITH RECURSIVE s(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM s WHERE i < ${n}) SELECT '${who}' || i, ?1, ?2 FROM s`,
+      )
+      .bind(pid, now)
+      .run();
+  await castBy(broken, 500, "pb");
+  await castBy(honest, 400, "ph");
+  await db
+    .prepare(
+      "INSERT INTO wonders (source, key, kind, rarity, status, model, summary, does, code, created_at, live_at) VALUES ('daily', NULL, 'singing stones', 'rare', 'live', '', 'Stones that hum', 'hums at night', 'const spell = { *cast(w) {} };', ?1, ?1)",
+    )
+    .bind(now)
+    .run();
+  const live = async () => JSON.stringify((await db.prepare("SELECT key, pid FROM spells ORDER BY key").all()).results);
+  const programs = async () => (await db.prepare("SELECT COUNT(*) AS n FROM programs").first()).n;
+  const [liveBefore, programsBefore] = [await live(), await programs()];
+  const dry = (await api("/api/admin/promise-check", { admin: true, body: { kinds: ["spell"], dry: true } })).data;
+  check(
+    "promise check: the most cast first, nothing sent on a dry run",
+    dry.batch === null && dry.items[0]?.name === "Broken Promise" && dry.items[1]?.name === "Honest Spark",
+    JSON.stringify(dry),
+  );
+  const wonders = (await api("/api/admin/promise-check", { admin: true, body: { kinds: ["wonder"], dry: true } })).data;
+  check(
+    "promise check: wonders can be checked too",
+    wonders.items.some((i) => i.name === "Singing Stones") && wonders.items.every((i) => i.kind === "wonder"),
+    JSON.stringify(wonders.items),
+  );
+  const started = (await api("/api/admin/promise-check", { admin: true, body: { kinds: ["spell"], limit: 5 } })).data;
+  const sent = batches.get(started.batch) ?? [];
+  check(
+    "promise check: one batch, Opus, the shared system part cached for an hour, capped at its own budget",
+    sent.length === 2 &&
+      started.items.length === 2 &&
+      sent.every(
+        (r) => r.params.model === "claude-opus-5-5" && r.params.system[0].cache_control?.ttl === "1h" && /^You check the items/.test(r.params.system[0].text),
+      ) &&
+      sent[0].params.system[0].text === sent[1].params.system[0].text &&
+      sent.some((r) => r.params.messages[0].content.includes("Name: Broken Promise")),
+    JSON.stringify({ started, n: sent.length }),
+  );
+  const held = await db.prepare("SELECT usd, settled, invite FROM reservations WHERE call = 'promise-check' AND req = ?").bind(started.batch).first();
+  check("promise check: its estimate is held, under the batch's id", held?.usd === 0.1 && held.settled === 0 && held.invite === "admin", JSON.stringify(held));
+  const more = (await api("/api/admin/promise-check", { admin: true, body: { kinds: ["spell"] } })).data;
+  check("promise check: nothing more is sent past its cap", more.batch === null, JSON.stringify(more));
+  const polled = (await api("/api/admin/promise-check-poll", { admin: true, body: { batch: started.batch } })).data;
+  const flagged = polled.outcomes.find((o) => o.id === `p${broken}`);
+  const spent = async () => (await db.prepare("SELECT COUNT(*) AS n, SUM(usd) AS usd FROM spend WHERE call = 'promise-check' AND invite = 'admin'").first()).n;
+  check(
+    "promise check: the verdicts come back and are billed as 'promise-check'",
+    polled.ended && polled.outcomes.length === 2 && flagged?.verdict?.verdict === "no" && flagged.verdict.fix && polled.billed > 0 && (await spent()) === 2,
+    JSON.stringify(polled),
+  );
+  const again = (await api("/api/admin/promise-check-poll", { admin: true, body: { batch: started.batch } })).data;
+  const settled = await db.prepare("SELECT settled FROM reservations WHERE req = ?").bind(started.batch).first();
+  check(
+    "promise check: a second poll reads the answers and bills nothing",
+    again.outcomes.length === 2 && again.billed === 0 && (await spent()) === 2 && settled?.settled === 1,
+  );
+  check("promise check: nothing is rewritten", (await live()) === liveBefore && (await programs()) === programsBefore);
+  const report = (await api("/api/admin/promise-check-report", { admin: true })).data;
+  check("promise check: the report says what it spent against its cap", report.cap === 0.12 && report.spent > 0 && report.held === 0, JSON.stringify(report));
   killDev();
   await new Promise((r) => setTimeout(r, 1500));
   await startDev();
