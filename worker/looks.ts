@@ -107,7 +107,9 @@ const GUIDE_TOKENS = 2_200;
 const REFERENCE_TOKENS = 3_600;
 export function writerEstimate(model: string, programChars: number, maxTokens = writerMaxTokens(1)): number {
   const [i, o] = LOOKS_PRICES[model] ?? [10, 50];
-  const input = GUIDE_TOKENS + REFERENCE_TOKENS + Math.ceil(programChars / 3.2);
+  // The shared guide and references are priced as a 1-hour cache write (twice the input price), as
+  // the first request of a batch pays, so the hold covers the input too (review of #225).
+  const input = (GUIDE_TOKENS + REFERENCE_TOKENS) * 2 + Math.ceil(programChars / 3.2);
   return ((input * i + maxTokens * o) / 1e6) * 0.5;
 }
 // The judge: six frames of 540 by 540 (about 390 tokens each) and the rubric, a short answer.
