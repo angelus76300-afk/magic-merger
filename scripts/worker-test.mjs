@@ -4566,6 +4566,26 @@ const signIn = async (key, count) => {
   await reset();
 }
 
+// 38. The admin token survives a failed read of the owner's row (26 November 2026: every admin
+// request threw a bare 1101 there, which stopped the night's judges). The column the read needs is
+// renamed for the test, so the read fails as it did live.
+{
+  await db.prepare("ALTER TABLE invites RENAME COLUMN admin TO admin_hidden").run();
+  const h = await api("/api/health", { admin: true });
+  const spend = await api("/api/spend", { admin: true });
+  await db.prepare("ALTER TABLE invites RENAME COLUMN admin_hidden TO admin").run();
+  check(
+    "admin token: a failed owner read still answers health, as the admin, with the reason",
+    h.status === 200 && h.data?.admin === true && !!h.data?.ownerError,
+    JSON.stringify(h),
+  );
+  check("admin token: a failed owner read still serves the admin routes", spend.status === 200, JSON.stringify(spend).slice(0, 300));
+  const player = await api("/api/health");
+  check("admin token: the reason is never shown without the token", !("ownerError" in (player.data ?? {})));
+  const fine = await api("/api/health", { admin: true });
+  check("admin token: no reason is given when the owner's row reads", fine.status === 200 && !("ownerError" in (fine.data ?? {})));
+}
+
 // A build beside this run once restarted the Worker mid-request (see ASSETS).
 check("wrangler dev never restarted the Worker under a request", restarts === 0, `${restarts} restarts`);
 

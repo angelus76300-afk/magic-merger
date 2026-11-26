@@ -396,7 +396,9 @@ export default {
         if (err instanceof LedgerError) return json({ error: err.message, code: err.code }, err.status);
         if (err instanceof OracleError) return json({ error: err.message }, 502);
         console.error(err);
-        return json({ error: "Something went wrong in the Worker" }, 500);
+        // The admin is told what threw (26 November: the judges stopped on this line with no reason).
+        const detail = admin ? (err instanceof Error ? err.message : String(err)).slice(0, 300) : undefined;
+        return json({ error: "Something went wrong in the Worker", ...(detail ? { detail } : {}) }, 500);
       } finally {
         // Every call is written down, even when the request failed after it,
         // and the money held for it is released in the same batch.
@@ -567,6 +569,8 @@ interface Who {
   invite?: InviteRow;
   // The owner's account, reached by the admin token alone.
   owner?: boolean;
+  // Why the owner's account could not be read, for the admin's /api/health.
+  ownerError?: string;
 }
 
 async function authenticate(request: Request, env: Env): Promise<Who | Response> {
@@ -578,8 +582,17 @@ async function authenticate(request: Request, env: Env): Promise<Who | Response>
     if (found) return { admin: tokenAdmin || !!found.invite.admin, payer: payerOf(found.invite), session: found.session, invite: found.invite };
   }
   if (tokenAdmin) {
-    const owner = await env.DB.prepare("SELECT * FROM invites WHERE id = ? AND admin = 1").bind(ADMIN_PAYER.invite).first<InviteRow>();
-    return { admin: true, payer: ADMIN_PAYER, ...(owner ? { invite: owner, owner: true } : {}) };
+    // A failed read of the owner's row (26 November: every admin request threw here, as a bare 1101)
+    // leaves the token its admin powers without the owner's account, and says why in /api/health.
+    let owner: InviteRow | null = null;
+    let ownerError: string | undefined;
+    try {
+      owner = await env.DB.prepare("SELECT * FROM invites WHERE id = ? AND admin = 1").bind(ADMIN_PAYER.invite).first<InviteRow>();
+    } catch (err) {
+      console.error(err);
+      ownerError = err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300);
+    }
+    return { admin: true, payer: ADMIN_PAYER, ...(owner ? { invite: owner, owner: true } : {}), ...(ownerError ? { ownerError } : {}) };
   }
   const secret = request.headers.get("x-invite");
   if (secret) {
@@ -633,6 +646,7 @@ async function health(env: Env, who: Who): Promise<HealthResponse> {
       admin: !!invite.admin,
     };
   out.email = emailReady(env);
+  if (admin && who.ownerError) out.ownerError = who.ownerError;
   if (env.STAGING === "1") out.staging = true;
   return out;
 }
