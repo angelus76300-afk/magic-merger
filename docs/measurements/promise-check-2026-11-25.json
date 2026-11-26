@@ -1,1116 +1,1116 @@
 {
- "started": "2026-11-26T02:40:37.761Z",
- "offsets": {
-  "all": 120
- },
- "pending": [
-  {
-   "batch": "msgbatch_01Uuu9hhbupGMhGgE9ps1Jrq",
-   "items": [
-    {
-     "id": "p736",
-     "key": "wormhole",
-     "name": "Wormhole",
-     "kind": "place",
-     "tier": "cosmic",
-     "casts": 3
-    },
-    {
-     "id": "p1147",
-     "key": "wormhole network",
-     "name": "Wormhole Network",
-     "kind": "place",
-     "tier": "cosmic",
-     "casts": 3
-    },
-    {
-     "id": "p546",
-     "key": "adamantine wall",
-     "name": "Adamantine Wall",
-     "kind": "building",
-     "tier": "major",
-     "casts": 2
-    },
-    {
-     "id": "p102",
-     "key": "apocalypse",
-     "name": "Apocalypse",
-     "kind": "spell",
-     "tier": "cosmic",
-     "casts": 2
-    },
-    {
-     "id": "p420",
-     "key": "arcane cataclysm",
-     "name": "Arcane Cataclysm",
-     "kind": "spell",
-     "tier": "legendary",
-     "casts": 2
-    },
-    {
-     "id": "p721",
-     "key": "archangel",
-     "name": "Archangel",
-     "kind": "creature",
-     "tier": "legendary",
-     "casts": 2
-    },
-    {
-     "id": "p700",
-     "key": "astrologer",
-     "name": "Astrologer",
-     "kind": "creature",
-     "tier": "minor",
-     "casts": 2
-    },
-    {
-     "id": "p701",
-     "key": "astronomer",
-     "name": "Astronomer",
-     "kind": "creature",
-     "tier": "cantrip",
-     "casts": 2
-    },
-    {
-     "id": "p336",
-     "key": "aurora",
-     "name": "Aurora",
-     "kind": "spell",
-     "tier": "grand",
-     "casts": 2
-    },
-    {
-     "id": "p9",
-     "key": "black hole",
-     "name": "Black Hole",
-     "kind": "spell",
-     "tier": "cosmic",
-     "casts": 2
-    },
-    {
-     "id": "p461",
-     "key": "bog monster",
-     "name": "Bog Monster",
-     "kind": "creature",
-     "tier": "minor",
-     "casts": 2
-    },
-    {
-     "id": "p712",
-     "key": "book of the dead",
-     "name": "Book of the Dead",
-     "kind": "object",
-     "tier": "legendary",
-     "casts": 2
-    },
-    {
-     "id": "p1060",
-     "key": "cosmic tempest",
-     "name": "Cosmic Tempest",
-     "kind": "spell",
-     "tier": "legendary",
-     "casts": 2
-    },
-    {
-     "id": "p518",
-     "key": "crystal golem",
-     "name": "Crystal Golem",
-     "kind": "creature",
-     "tier": "minor",
-     "casts": 2
-    },
-    {
-     "id": "p114",
-     "key": "divine intervention",
-     "name": "Divine Intervention",
-     "kind": "spell",
-     "tier": "legendary",
-     "casts": 2
-    },
-    {
-     "id": "p856",
-     "key": "doombringer",
-     "name": "Doombringer",
-     "kind": "object",
-     "tier": "legendary",
-     "casts": 2
-    },
-    {
-     "id": "p237",
-     "key": "earth",
-     "name": "Earth",
-     "kind": "spell",
-     "tier": "cantrip",
-     "casts": 2
-    },
-    {
-     "id": "p725",
-     "key": "familiar",
-     "name": "Familiar",
-     "kind": "creature",
-     "tier": "cantrip",
-     "casts": 2
-    },
-    {
-     "id": "p246",
-     "key": "firestorm",
-     "name": "Firestorm",
-     "kind": "spell",
-     "tier": "grand",
-     "casts": 2
-    },
-    {
-     "id": "p359",
-     "key": "flight",
-     "name": "Flight",
-     "kind": "spell",
-     "tier": "cantrip",
-     "casts": 2
-    },
-    {
-     "id": "p799",
-     "key": "frozen tomb",
-     "name": "Frozen Tomb",
-     "kind": "building",
-     "tier": "major",
-     "casts": 2
-    },
-    {
-     "id": "p875",
-     "key": "grand finale",
-     "name": "Grand Finale",
-     "kind": "spell",
-     "tier": "major",
-     "casts": 2
-    },
-    {
-     "id": "p1061",
-     "key": "healing rain",
-     "name": "Healing Rain",
-     "kind": "spell",
-     "tier": "major",
-     "casts": 2
-    },
-    {
-     "id": "p433",
-     "key": "hellfire",
-     "name": "Hellfire",
-     "kind": "spell",
-     "tier": "major",
-     "casts": 2
-    },
-    {
-     "id": "p857",
-     "key": "hot spring",
-     "name": "Hot Spring",
-     "kind": "place",
-     "tier": "minor",
-     "casts": 2
-    },
-    {
-     "id": "p684",
-     "key": "human",
-     "name": "Human",
-     "kind": "creature",
-     "tier": "cantrip",
-     "casts": 2
-    },
-    {
-     "id": "p360",
-     "key": "levitate",
-     "name": "Levitate",
-     "kind": "spell",
-     "tier": "cantrip",
-     "casts": 2
-    },
-    {
-     "id": "p902",
-     "key": "ley line",
-     "name": "Ley Line",
-     "kind": "place",
-     "tier": "legendary",
-     "casts": 2
-    },
-    {
-     "id": "p611",
-     "key": "meteor swarm",
-     "name": "Meteor Swarm",
-     "kind": "spell",
-     "tier": "grand",
-     "casts": 2
-    },
-    {
-     "id": "p916",
-     "key": "meteorite",
-     "name": "Meteorite",
-     "kind": "land",
-     "tier": "minor",
-     "casts": 2
-    },
-    {
-     "id": "p269",
-     "key": "miracle",
-     "name": "Miracle",
-     "kind": "spell",
-     "tier": "legendary",
-     "casts": 2
-    },
-    {
-     "id": "p287",
-     "key": "philosopher's stone",
-     "name": "Philosopher's Stone",
-     "kind": "object",
-     "tier": "legendary",
-     "casts": 2
-    },
-    {
-     "id": "p362",
-     "key": "sandstorm",
-     "name": "Sandstorm",
-     "kind": "spell",
-     "tier": "grand",
-     "casts": 2
-    },
-    {
-     "id": "p367",
-     "key": "shadow step",
-     "name": "Shadow Step",
-     "kind": "spell",
-     "tier": "cantrip",
-     "casts": 2
-    },
-    {
-     "id": "p946",
-     "key": "supermassive black hole",
-     "name": "Supermassive Black Hole",
-     "kind": "place",
-     "tier": "cosmic",
-     "casts": 2
-    },
-    {
-     "id": "p323",
-     "key": "supernova",
-     "name": "Supernova",
-     "kind": "spell",
-     "tier": "cosmic",
-     "casts": 2
-    },
-    {
-     "id": "p932",
-     "key": "tree of life",
-     "name": "Tree of Life",
-     "kind": "place",
-     "tier": "legendary",
-     "casts": 2
-    },
-    {
-     "id": "p938",
-     "key": "village",
-     "name": "Village",
-     "kind": "settlement",
-     "tier": "major",
-     "casts": 2
-    },
-    {
-     "id": "p686",
-     "key": "villager",
-     "name": "Villager",
-     "kind": "creature",
-     "tier": "cantrip",
-     "casts": 2
-    },
-    {
-     "id": "p726",
-     "key": "volcano",
-     "name": "Volcano",
-     "kind": "land",
-     "tier": "grand",
-     "casts": 2
-    },
-    {
-     "id": "p727",
-     "key": "will-o'-the-wisp",
-     "name": "Will-o'-the-Wisp",
-     "kind": "creature",
-     "tier": "cantrip",
-     "casts": 2
-    },
-    {
-     "id": "p704",
-     "key": "wizard",
-     "name": "Wizard",
-     "kind": "creature",
-     "tier": "cantrip",
-     "casts": 2
-    },
-    {
-     "id": "p717",
-     "key": "yggdrasil",
-     "name": "Yggdrasil",
-     "kind": "place",
-     "tier": "cosmic",
-     "casts": 2
-    },
-    {
-     "id": "p718",
-     "key": "abyss",
-     "name": "Abyss",
-     "kind": "place",
-     "tier": "legendary",
-     "casts": 1
-    },
-    {
-     "id": "p349",
-     "key": "acid breath",
-     "name": "Acid Breath",
-     "kind": "spell",
-     "tier": "major",
-     "casts": 1
-    },
-    {
-     "id": "p408",
-     "key": "aegis",
-     "name": "Aegis",
-     "kind": "object",
-     "tier": "legendary",
-     "casts": 1
-    },
-    {
-     "id": "p204",
-     "key": "air",
-     "name": "Air",
-     "kind": "spell",
-     "tier": "cantrip",
-     "casts": 1
-    },
-    {
-     "id": "p719",
-     "key": "akashic records",
-     "name": "Akashic Records",
-     "kind": "object",
-     "tier": "cosmic",
-     "casts": 1
-    },
-    {
-     "id": "p720",
-     "key": "ambrosia",
-     "name": "Ambrosia",
-     "kind": "object",
-     "tier": "legendary",
-     "casts": 1
-    },
-    {
-     "id": "p403",
-     "key": "apotheosis",
-     "name": "Apotheosis",
-     "kind": "spell",
-     "tier": "legendary",
-     "casts": 1
-    },
-    {
-     "id": "p842",
-     "key": "ark",
-     "name": "Ark",
-     "kind": "object",
-     "tier": "legendary",
-     "casts": 1
-    },
-    {
-     "id": "p223",
-     "key": "armageddon",
-     "name": "Armageddon",
-     "kind": "spell",
-     "tier": "cosmic",
-     "casts": 1
-    },
-    {
-     "id": "p380",
-     "key": "ash cloud",
-     "name": "Ash Cloud",
-     "kind": "spell",
-     "tier": "grand",
-     "casts": 1
-    },
-    {
-     "id": "p753",
-     "key": "assassin",
-     "name": "Assassin",
-     "kind": "creature",
-     "tier": "cantrip",
-     "casts": 1
-    },
-    {
-     "id": "p697",
-     "key": "astronaut",
-     "name": "Astronaut",
-     "kind": "creature",
-     "tier": "cantrip",
-     "casts": 1
-    },
-    {
-     "id": "p594",
-     "key": "aurora borealis",
-     "name": "Aurora Borealis",
-     "kind": "spell",
-     "tier": "cosmic",
-     "casts": 1
-    },
-    {
-     "id": "p1001",
-     "key": "balrog",
-     "name": "Balrog",
-     "kind": "creature",
-     "tier": "legendary",
-     "casts": 1
-    },
-    {
-     "id": "p19",
-     "key": "big bang",
-     "name": "Big Bang",
-     "kind": "spell",
-     "tier": "cosmic",
-     "casts": 1
-    },
-    {
-     "id": "p729",
-     "key": "bird",
-     "name": "Bird",
-     "kind": "creature",
-     "tier": "cantrip",
-     "casts": 1
-    },
-    {
-     "id": "p722",
-     "key": "black dragon",
-     "name": "Black Dragon",
-     "kind": "creature",
-     "tier": "legendary",
-     "casts": 1
-    },
-    {
-     "id": "p1063",
-     "key": "black flame",
-     "name": "Black Flame",
-     "kind": "spell",
-     "tier": "minor",
-     "casts": 1
-    },
-    {
-     "id": "p730",
-     "key": "black ice",
-     "name": "Black Ice",
-     "kind": "land",
-     "tier": "major",
-     "casts": 1
-    },
-    {
-     "id": "p841",
-     "key": "blast wave",
-     "name": "Blast Wave",
-     "kind": "spell",
-     "tier": "major",
-     "casts": 1
-    },
-    {
-     "id": "p404",
-     "key": "blizzard",
-     "name": "Blizzard",
-     "kind": "spell",
-     "tier": "grand",
-     "casts": 1
-    },
-    {
-     "id": "p731",
-     "key": "bog spirit",
-     "name": "Bog Spirit",
-     "kind": "creature",
-     "tier": "minor",
-     "casts": 1
-    },
-    {
-     "id": "p485",
-     "key": "brick",
-     "name": "Brick",
-     "kind": "object",
-     "tier": "cantrip",
-     "casts": 1
-    },
-    {
-     "id": "p227",
-     "key": "camelot",
-     "name": "Camelot",
-     "kind": "settlement",
-     "tier": "legendary",
-     "casts": 1
-    },
-    {
-     "id": "p228",
-     "key": "cataclysm",
-     "name": "Cataclysm",
-     "kind": "spell",
-     "tier": "legendary",
-     "casts": 1
-    },
-    {
-     "id": "p853",
-     "key": "celestial bastion",
-     "name": "Celestial Bastion",
-     "kind": "building",
-     "tier": "legendary",
-     "casts": 1
-    },
-    {
-     "id": "p604",
-     "key": "celestial choir",
-     "name": "Celestial Choir",
-     "kind": "creature",
-     "tier": "cosmic",
-     "casts": 1
-    },
-    {
-     "id": "p859",
-     "key": "clay",
-     "name": "Clay",
-     "kind": "land",
-     "tier": "cantrip",
-     "casts": 1
-    },
-    {
-     "id": "p913",
-     "key": "clay golem",
-     "name": "Clay Golem",
-     "kind": "creature",
-     "tier": "minor",
-     "casts": 1
-    },
-    {
-     "id": "p942",
-     "key": "cloud",
-     "name": "Cloud",
-     "kind": "object",
-     "tier": "minor",
-     "casts": 1
-    },
-    {
-     "id": "p860",
-     "key": "cloud fountain",
-     "name": "Cloud Fountain",
-     "kind": "place",
-     "tier": "major",
-     "casts": 1
-    },
-    {
-     "id": "p861",
-     "key": "cloud giant",
-     "name": "Cloud Giant",
-     "kind": "creature",
-     "tier": "major",
-     "casts": 1
-    },
-    {
-     "id": "p862",
-     "key": "crater",
-     "name": "Crater",
-     "kind": "land",
-     "tier": "major",
-     "casts": 1
-    },
-    {
-     "id": "p396",
-     "key": "cryostasis",
-     "name": "Cryostasis",
-     "kind": "spell",
-     "tier": "cantrip",
-     "casts": 1
-    },
-    {
-     "id": "p780",
-     "key": "curse",
-     "name": "Curse",
-     "kind": "spell",
-     "tier": "minor",
-     "casts": 1
-    },
-    {
-     "id": "p397",
-     "key": "dark meteor",
-     "name": "Dark Meteor",
-     "kind": "spell",
-     "tier": "major",
-     "casts": 1
-    },
-    {
-     "id": "p473",
-     "key": "dark phoenix",
-     "name": "Dark Phoenix",
-     "kind": "creature",
-     "tier": "grand",
-     "casts": 1
-    },
-    {
-     "id": "p654",
-     "key": "demiurge",
-     "name": "Demiurge",
-     "kind": "creature",
-     "tier": "cosmic",
-     "casts": 1
-    },
-    {
-     "id": "p234",
-     "key": "divine light",
-     "name": "Divine Light",
-     "kind": "spell",
-     "tier": "legendary",
-     "casts": 1
-    },
-    {
-     "id": "p1068",
-     "key": "divine radiance",
-     "name": "Divine Radiance",
-     "kind": "spell",
-     "tier": "grand",
-     "casts": 1
-    },
-    {
-     "id": "p749",
-     "key": "djinn",
-     "name": "Djinn",
-     "kind": "creature",
-     "tier": "grand",
-     "casts": 1
-    },
-    {
-     "id": "p220",
-     "key": "dodo flock",
-     "name": "Dodo Flock",
-     "kind": "creature",
-     "tier": "minor",
-     "casts": 1
-    },
-    {
-     "id": "p399",
-     "key": "dragon breath",
-     "name": "Dragon Breath",
-     "kind": "spell",
-     "tier": "major",
-     "casts": 1
-    },
-    {
-     "id": "p866",
-     "key": "dragon egg",
-     "name": "Dragon Egg",
-     "kind": "object",
-     "tier": "minor",
-     "casts": 1
-    },
-    {
-     "id": "p619",
-     "key": "dragon rider",
-     "name": "Dragon Rider",
-     "kind": "creature",
-     "tier": "major",
-     "casts": 1
-    },
-    {
-     "id": "p868",
-     "key": "dungeon",
-     "name": "Dungeon",
-     "kind": "place",
-     "tier": "major",
-     "casts": 1
-    },
-    {
-     "id": "p638",
-     "key": "dwarf",
-     "name": "Dwarf",
-     "kind": "creature",
-     "tier": "cantrip",
-     "casts": 1
-    },
-    {
-     "id": "p4",
-     "key": "eclipse",
-     "name": "Eclipse",
-     "kind": "spell",
-     "tier": "grand",
-     "casts": 1
-    },
-    {
-     "id": "p1064",
-     "key": "ember swarm",
-     "name": "Ember Swarm",
-     "kind": "spell",
-     "tier": "minor",
-     "casts": 1
-    },
-    {
-     "id": "p255",
-     "key": "exodus",
-     "name": "Exodus",
-     "kind": "spell",
-     "tier": "legendary",
-     "casts": 1
-    },
-    {
-     "id": "p1086",
-     "key": "exorcism",
-     "name": "Exorcism",
-     "kind": "spell",
-     "tier": "minor",
-     "casts": 1
-    },
-    {
-     "id": "p617",
-     "key": "extinct spirit",
-     "name": "Extinct Spirit",
-     "kind": "creature",
-     "tier": "minor",
-     "casts": 1
-    },
-    {
-     "id": "p373",
-     "key": "extinction",
-     "name": "Extinction",
-     "kind": "spell",
-     "tier": "cosmic",
-     "casts": 1
-    },
-    {
-     "id": "p917",
-     "key": "fallen angel",
-     "name": "Fallen Angel",
-     "kind": "creature",
-     "tier": "major",
-     "casts": 1
-    },
-    {
-     "id": "p883",
-     "key": "fallen castle",
-     "name": "Fallen Castle",
-     "kind": "building",
-     "tier": "major",
-     "casts": 1
-    },
-    {
-     "id": "p884",
-     "key": "fenghuang",
-     "name": "Fenghuang",
-     "kind": "creature",
-     "tier": "grand",
-     "casts": 1
-    },
-    {
-     "id": "p190",
-     "key": "final incantation",
-     "name": "Final Incantation",
-     "kind": "spell",
-     "tier": "major",
-     "casts": 1
+  "started": "2026-11-26T02:40:37.761Z",
+  "offsets": {
+    "all": 120
+  },
+  "pending": [
+    {
+      "batch": "msgbatch_01Uuu9hhbupGMhGgE9ps1Jrq",
+      "items": [
+        {
+          "id": "p736",
+          "key": "wormhole",
+          "name": "Wormhole",
+          "kind": "place",
+          "tier": "cosmic",
+          "casts": 3
+        },
+        {
+          "id": "p1147",
+          "key": "wormhole network",
+          "name": "Wormhole Network",
+          "kind": "place",
+          "tier": "cosmic",
+          "casts": 3
+        },
+        {
+          "id": "p546",
+          "key": "adamantine wall",
+          "name": "Adamantine Wall",
+          "kind": "building",
+          "tier": "major",
+          "casts": 2
+        },
+        {
+          "id": "p102",
+          "key": "apocalypse",
+          "name": "Apocalypse",
+          "kind": "spell",
+          "tier": "cosmic",
+          "casts": 2
+        },
+        {
+          "id": "p420",
+          "key": "arcane cataclysm",
+          "name": "Arcane Cataclysm",
+          "kind": "spell",
+          "tier": "legendary",
+          "casts": 2
+        },
+        {
+          "id": "p721",
+          "key": "archangel",
+          "name": "Archangel",
+          "kind": "creature",
+          "tier": "legendary",
+          "casts": 2
+        },
+        {
+          "id": "p700",
+          "key": "astrologer",
+          "name": "Astrologer",
+          "kind": "creature",
+          "tier": "minor",
+          "casts": 2
+        },
+        {
+          "id": "p701",
+          "key": "astronomer",
+          "name": "Astronomer",
+          "kind": "creature",
+          "tier": "cantrip",
+          "casts": 2
+        },
+        {
+          "id": "p336",
+          "key": "aurora",
+          "name": "Aurora",
+          "kind": "spell",
+          "tier": "grand",
+          "casts": 2
+        },
+        {
+          "id": "p9",
+          "key": "black hole",
+          "name": "Black Hole",
+          "kind": "spell",
+          "tier": "cosmic",
+          "casts": 2
+        },
+        {
+          "id": "p461",
+          "key": "bog monster",
+          "name": "Bog Monster",
+          "kind": "creature",
+          "tier": "minor",
+          "casts": 2
+        },
+        {
+          "id": "p712",
+          "key": "book of the dead",
+          "name": "Book of the Dead",
+          "kind": "object",
+          "tier": "legendary",
+          "casts": 2
+        },
+        {
+          "id": "p1060",
+          "key": "cosmic tempest",
+          "name": "Cosmic Tempest",
+          "kind": "spell",
+          "tier": "legendary",
+          "casts": 2
+        },
+        {
+          "id": "p518",
+          "key": "crystal golem",
+          "name": "Crystal Golem",
+          "kind": "creature",
+          "tier": "minor",
+          "casts": 2
+        },
+        {
+          "id": "p114",
+          "key": "divine intervention",
+          "name": "Divine Intervention",
+          "kind": "spell",
+          "tier": "legendary",
+          "casts": 2
+        },
+        {
+          "id": "p856",
+          "key": "doombringer",
+          "name": "Doombringer",
+          "kind": "object",
+          "tier": "legendary",
+          "casts": 2
+        },
+        {
+          "id": "p237",
+          "key": "earth",
+          "name": "Earth",
+          "kind": "spell",
+          "tier": "cantrip",
+          "casts": 2
+        },
+        {
+          "id": "p725",
+          "key": "familiar",
+          "name": "Familiar",
+          "kind": "creature",
+          "tier": "cantrip",
+          "casts": 2
+        },
+        {
+          "id": "p246",
+          "key": "firestorm",
+          "name": "Firestorm",
+          "kind": "spell",
+          "tier": "grand",
+          "casts": 2
+        },
+        {
+          "id": "p359",
+          "key": "flight",
+          "name": "Flight",
+          "kind": "spell",
+          "tier": "cantrip",
+          "casts": 2
+        },
+        {
+          "id": "p799",
+          "key": "frozen tomb",
+          "name": "Frozen Tomb",
+          "kind": "building",
+          "tier": "major",
+          "casts": 2
+        },
+        {
+          "id": "p875",
+          "key": "grand finale",
+          "name": "Grand Finale",
+          "kind": "spell",
+          "tier": "major",
+          "casts": 2
+        },
+        {
+          "id": "p1061",
+          "key": "healing rain",
+          "name": "Healing Rain",
+          "kind": "spell",
+          "tier": "major",
+          "casts": 2
+        },
+        {
+          "id": "p433",
+          "key": "hellfire",
+          "name": "Hellfire",
+          "kind": "spell",
+          "tier": "major",
+          "casts": 2
+        },
+        {
+          "id": "p857",
+          "key": "hot spring",
+          "name": "Hot Spring",
+          "kind": "place",
+          "tier": "minor",
+          "casts": 2
+        },
+        {
+          "id": "p684",
+          "key": "human",
+          "name": "Human",
+          "kind": "creature",
+          "tier": "cantrip",
+          "casts": 2
+        },
+        {
+          "id": "p360",
+          "key": "levitate",
+          "name": "Levitate",
+          "kind": "spell",
+          "tier": "cantrip",
+          "casts": 2
+        },
+        {
+          "id": "p902",
+          "key": "ley line",
+          "name": "Ley Line",
+          "kind": "place",
+          "tier": "legendary",
+          "casts": 2
+        },
+        {
+          "id": "p611",
+          "key": "meteor swarm",
+          "name": "Meteor Swarm",
+          "kind": "spell",
+          "tier": "grand",
+          "casts": 2
+        },
+        {
+          "id": "p916",
+          "key": "meteorite",
+          "name": "Meteorite",
+          "kind": "land",
+          "tier": "minor",
+          "casts": 2
+        },
+        {
+          "id": "p269",
+          "key": "miracle",
+          "name": "Miracle",
+          "kind": "spell",
+          "tier": "legendary",
+          "casts": 2
+        },
+        {
+          "id": "p287",
+          "key": "philosopher's stone",
+          "name": "Philosopher's Stone",
+          "kind": "object",
+          "tier": "legendary",
+          "casts": 2
+        },
+        {
+          "id": "p362",
+          "key": "sandstorm",
+          "name": "Sandstorm",
+          "kind": "spell",
+          "tier": "grand",
+          "casts": 2
+        },
+        {
+          "id": "p367",
+          "key": "shadow step",
+          "name": "Shadow Step",
+          "kind": "spell",
+          "tier": "cantrip",
+          "casts": 2
+        },
+        {
+          "id": "p946",
+          "key": "supermassive black hole",
+          "name": "Supermassive Black Hole",
+          "kind": "place",
+          "tier": "cosmic",
+          "casts": 2
+        },
+        {
+          "id": "p323",
+          "key": "supernova",
+          "name": "Supernova",
+          "kind": "spell",
+          "tier": "cosmic",
+          "casts": 2
+        },
+        {
+          "id": "p932",
+          "key": "tree of life",
+          "name": "Tree of Life",
+          "kind": "place",
+          "tier": "legendary",
+          "casts": 2
+        },
+        {
+          "id": "p938",
+          "key": "village",
+          "name": "Village",
+          "kind": "settlement",
+          "tier": "major",
+          "casts": 2
+        },
+        {
+          "id": "p686",
+          "key": "villager",
+          "name": "Villager",
+          "kind": "creature",
+          "tier": "cantrip",
+          "casts": 2
+        },
+        {
+          "id": "p726",
+          "key": "volcano",
+          "name": "Volcano",
+          "kind": "land",
+          "tier": "grand",
+          "casts": 2
+        },
+        {
+          "id": "p727",
+          "key": "will-o'-the-wisp",
+          "name": "Will-o'-the-Wisp",
+          "kind": "creature",
+          "tier": "cantrip",
+          "casts": 2
+        },
+        {
+          "id": "p704",
+          "key": "wizard",
+          "name": "Wizard",
+          "kind": "creature",
+          "tier": "cantrip",
+          "casts": 2
+        },
+        {
+          "id": "p717",
+          "key": "yggdrasil",
+          "name": "Yggdrasil",
+          "kind": "place",
+          "tier": "cosmic",
+          "casts": 2
+        },
+        {
+          "id": "p718",
+          "key": "abyss",
+          "name": "Abyss",
+          "kind": "place",
+          "tier": "legendary",
+          "casts": 1
+        },
+        {
+          "id": "p349",
+          "key": "acid breath",
+          "name": "Acid Breath",
+          "kind": "spell",
+          "tier": "major",
+          "casts": 1
+        },
+        {
+          "id": "p408",
+          "key": "aegis",
+          "name": "Aegis",
+          "kind": "object",
+          "tier": "legendary",
+          "casts": 1
+        },
+        {
+          "id": "p204",
+          "key": "air",
+          "name": "Air",
+          "kind": "spell",
+          "tier": "cantrip",
+          "casts": 1
+        },
+        {
+          "id": "p719",
+          "key": "akashic records",
+          "name": "Akashic Records",
+          "kind": "object",
+          "tier": "cosmic",
+          "casts": 1
+        },
+        {
+          "id": "p720",
+          "key": "ambrosia",
+          "name": "Ambrosia",
+          "kind": "object",
+          "tier": "legendary",
+          "casts": 1
+        },
+        {
+          "id": "p403",
+          "key": "apotheosis",
+          "name": "Apotheosis",
+          "kind": "spell",
+          "tier": "legendary",
+          "casts": 1
+        },
+        {
+          "id": "p842",
+          "key": "ark",
+          "name": "Ark",
+          "kind": "object",
+          "tier": "legendary",
+          "casts": 1
+        },
+        {
+          "id": "p223",
+          "key": "armageddon",
+          "name": "Armageddon",
+          "kind": "spell",
+          "tier": "cosmic",
+          "casts": 1
+        },
+        {
+          "id": "p380",
+          "key": "ash cloud",
+          "name": "Ash Cloud",
+          "kind": "spell",
+          "tier": "grand",
+          "casts": 1
+        },
+        {
+          "id": "p753",
+          "key": "assassin",
+          "name": "Assassin",
+          "kind": "creature",
+          "tier": "cantrip",
+          "casts": 1
+        },
+        {
+          "id": "p697",
+          "key": "astronaut",
+          "name": "Astronaut",
+          "kind": "creature",
+          "tier": "cantrip",
+          "casts": 1
+        },
+        {
+          "id": "p594",
+          "key": "aurora borealis",
+          "name": "Aurora Borealis",
+          "kind": "spell",
+          "tier": "cosmic",
+          "casts": 1
+        },
+        {
+          "id": "p1001",
+          "key": "balrog",
+          "name": "Balrog",
+          "kind": "creature",
+          "tier": "legendary",
+          "casts": 1
+        },
+        {
+          "id": "p19",
+          "key": "big bang",
+          "name": "Big Bang",
+          "kind": "spell",
+          "tier": "cosmic",
+          "casts": 1
+        },
+        {
+          "id": "p729",
+          "key": "bird",
+          "name": "Bird",
+          "kind": "creature",
+          "tier": "cantrip",
+          "casts": 1
+        },
+        {
+          "id": "p722",
+          "key": "black dragon",
+          "name": "Black Dragon",
+          "kind": "creature",
+          "tier": "legendary",
+          "casts": 1
+        },
+        {
+          "id": "p1063",
+          "key": "black flame",
+          "name": "Black Flame",
+          "kind": "spell",
+          "tier": "minor",
+          "casts": 1
+        },
+        {
+          "id": "p730",
+          "key": "black ice",
+          "name": "Black Ice",
+          "kind": "land",
+          "tier": "major",
+          "casts": 1
+        },
+        {
+          "id": "p841",
+          "key": "blast wave",
+          "name": "Blast Wave",
+          "kind": "spell",
+          "tier": "major",
+          "casts": 1
+        },
+        {
+          "id": "p404",
+          "key": "blizzard",
+          "name": "Blizzard",
+          "kind": "spell",
+          "tier": "grand",
+          "casts": 1
+        },
+        {
+          "id": "p731",
+          "key": "bog spirit",
+          "name": "Bog Spirit",
+          "kind": "creature",
+          "tier": "minor",
+          "casts": 1
+        },
+        {
+          "id": "p485",
+          "key": "brick",
+          "name": "Brick",
+          "kind": "object",
+          "tier": "cantrip",
+          "casts": 1
+        },
+        {
+          "id": "p227",
+          "key": "camelot",
+          "name": "Camelot",
+          "kind": "settlement",
+          "tier": "legendary",
+          "casts": 1
+        },
+        {
+          "id": "p228",
+          "key": "cataclysm",
+          "name": "Cataclysm",
+          "kind": "spell",
+          "tier": "legendary",
+          "casts": 1
+        },
+        {
+          "id": "p853",
+          "key": "celestial bastion",
+          "name": "Celestial Bastion",
+          "kind": "building",
+          "tier": "legendary",
+          "casts": 1
+        },
+        {
+          "id": "p604",
+          "key": "celestial choir",
+          "name": "Celestial Choir",
+          "kind": "creature",
+          "tier": "cosmic",
+          "casts": 1
+        },
+        {
+          "id": "p859",
+          "key": "clay",
+          "name": "Clay",
+          "kind": "land",
+          "tier": "cantrip",
+          "casts": 1
+        },
+        {
+          "id": "p913",
+          "key": "clay golem",
+          "name": "Clay Golem",
+          "kind": "creature",
+          "tier": "minor",
+          "casts": 1
+        },
+        {
+          "id": "p942",
+          "key": "cloud",
+          "name": "Cloud",
+          "kind": "object",
+          "tier": "minor",
+          "casts": 1
+        },
+        {
+          "id": "p860",
+          "key": "cloud fountain",
+          "name": "Cloud Fountain",
+          "kind": "place",
+          "tier": "major",
+          "casts": 1
+        },
+        {
+          "id": "p861",
+          "key": "cloud giant",
+          "name": "Cloud Giant",
+          "kind": "creature",
+          "tier": "major",
+          "casts": 1
+        },
+        {
+          "id": "p862",
+          "key": "crater",
+          "name": "Crater",
+          "kind": "land",
+          "tier": "major",
+          "casts": 1
+        },
+        {
+          "id": "p396",
+          "key": "cryostasis",
+          "name": "Cryostasis",
+          "kind": "spell",
+          "tier": "cantrip",
+          "casts": 1
+        },
+        {
+          "id": "p780",
+          "key": "curse",
+          "name": "Curse",
+          "kind": "spell",
+          "tier": "minor",
+          "casts": 1
+        },
+        {
+          "id": "p397",
+          "key": "dark meteor",
+          "name": "Dark Meteor",
+          "kind": "spell",
+          "tier": "major",
+          "casts": 1
+        },
+        {
+          "id": "p473",
+          "key": "dark phoenix",
+          "name": "Dark Phoenix",
+          "kind": "creature",
+          "tier": "grand",
+          "casts": 1
+        },
+        {
+          "id": "p654",
+          "key": "demiurge",
+          "name": "Demiurge",
+          "kind": "creature",
+          "tier": "cosmic",
+          "casts": 1
+        },
+        {
+          "id": "p234",
+          "key": "divine light",
+          "name": "Divine Light",
+          "kind": "spell",
+          "tier": "legendary",
+          "casts": 1
+        },
+        {
+          "id": "p1068",
+          "key": "divine radiance",
+          "name": "Divine Radiance",
+          "kind": "spell",
+          "tier": "grand",
+          "casts": 1
+        },
+        {
+          "id": "p749",
+          "key": "djinn",
+          "name": "Djinn",
+          "kind": "creature",
+          "tier": "grand",
+          "casts": 1
+        },
+        {
+          "id": "p220",
+          "key": "dodo flock",
+          "name": "Dodo Flock",
+          "kind": "creature",
+          "tier": "minor",
+          "casts": 1
+        },
+        {
+          "id": "p399",
+          "key": "dragon breath",
+          "name": "Dragon Breath",
+          "kind": "spell",
+          "tier": "major",
+          "casts": 1
+        },
+        {
+          "id": "p866",
+          "key": "dragon egg",
+          "name": "Dragon Egg",
+          "kind": "object",
+          "tier": "minor",
+          "casts": 1
+        },
+        {
+          "id": "p619",
+          "key": "dragon rider",
+          "name": "Dragon Rider",
+          "kind": "creature",
+          "tier": "major",
+          "casts": 1
+        },
+        {
+          "id": "p868",
+          "key": "dungeon",
+          "name": "Dungeon",
+          "kind": "place",
+          "tier": "major",
+          "casts": 1
+        },
+        {
+          "id": "p638",
+          "key": "dwarf",
+          "name": "Dwarf",
+          "kind": "creature",
+          "tier": "cantrip",
+          "casts": 1
+        },
+        {
+          "id": "p4",
+          "key": "eclipse",
+          "name": "Eclipse",
+          "kind": "spell",
+          "tier": "grand",
+          "casts": 1
+        },
+        {
+          "id": "p1064",
+          "key": "ember swarm",
+          "name": "Ember Swarm",
+          "kind": "spell",
+          "tier": "minor",
+          "casts": 1
+        },
+        {
+          "id": "p255",
+          "key": "exodus",
+          "name": "Exodus",
+          "kind": "spell",
+          "tier": "legendary",
+          "casts": 1
+        },
+        {
+          "id": "p1086",
+          "key": "exorcism",
+          "name": "Exorcism",
+          "kind": "spell",
+          "tier": "minor",
+          "casts": 1
+        },
+        {
+          "id": "p617",
+          "key": "extinct spirit",
+          "name": "Extinct Spirit",
+          "kind": "creature",
+          "tier": "minor",
+          "casts": 1
+        },
+        {
+          "id": "p373",
+          "key": "extinction",
+          "name": "Extinction",
+          "kind": "spell",
+          "tier": "cosmic",
+          "casts": 1
+        },
+        {
+          "id": "p917",
+          "key": "fallen angel",
+          "name": "Fallen Angel",
+          "kind": "creature",
+          "tier": "major",
+          "casts": 1
+        },
+        {
+          "id": "p883",
+          "key": "fallen castle",
+          "name": "Fallen Castle",
+          "kind": "building",
+          "tier": "major",
+          "casts": 1
+        },
+        {
+          "id": "p884",
+          "key": "fenghuang",
+          "name": "Fenghuang",
+          "kind": "creature",
+          "tier": "grand",
+          "casts": 1
+        },
+        {
+          "id": "p190",
+          "key": "final incantation",
+          "name": "Final Incantation",
+          "kind": "spell",
+          "tier": "major",
+          "casts": 1
+        }
+      ]
     }
-   ]
-  }
- ],
- "rows": [
-  {
-   "id": "p244",
-   "key": "fire",
-   "name": "Fire",
-   "kind": "spell",
-   "tier": "minor",
-   "casts": 7,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "yes",
-   "promise": "A thread of orange light blooms into flame that scorches the ground, ignites grass and wood, spreads heat about ten paces, singes and frightens creatures, and burns for about a minute.",
-   "does": "Draws an orange beam to the target, scorches the centre to ash, heats and ignites the area, rolls heat out to 10 cells, burns, frightens and hurts creatures within 10 cells, then rekindles the blaze three times over nine seconds while the world's fire spreads on.",
-   "missing": "",
-   "fix": "",
-   "usd": 0.05546
-  },
-  {
-   "id": "p139",
-   "key": "water",
-   "name": "Water",
-   "kind": "spell",
-   "tier": "cantrip",
-   "casts": 6,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "yes",
-   "promise": "A rushing cascade of water sweeps out in an arc, soaks a village-square-sized patch, douses fire into steam and makes plants grow.",
-   "does": "Sweeps 36 lines of water and falling water orbs in an arc from the target, puts out burning cells with steam, floods a small pool, grows plants and calms nearby creatures over about 10 seconds.",
-   "missing": "",
-   "fix": "",
-   "usd": 0.0073072
-  },
-  {
-   "id": "p276",
-   "key": "life",
-   "name": "Life",
-   "kind": "spell",
-   "tier": "cantrip",
-   "casts": 5,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "partly",
-   "promise": "A green ring spreads from the caster, sprouting grass and flowers and closing the wounds of injured creatures nearby.",
-   "does": "Draws a green circle and light, then expands rings that turn about half the dry cells to grass with a few flowers, calls w.grow, and heals 2 hp four times, but only on creatures under 10 hp.",
-   "missing": "Wounded creatures at 10 hp or more are never healed, so healing, half of the promise, skips the injured with larger health pools; the creature list is also read only once.",
-   "fix": "Heal every creature in w.here(w.x, w.y, R).wounded with c.heal(n) on each pulse, whatever its hp, re-reading the list each pulse, and keep the grass and flower ring as it is.",
-   "usd": 0.0087392
-  },
-  {
-   "id": "p666",
-   "key": "light",
-   "name": "Light",
-   "kind": "spell",
-   "tier": "cantrip",
-   "casts": 4,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "partly",
-   "promise": "A warm gold glow that lights a clearing for about an hour, makes creatures of darkness flinch back and gently warms travelers and crops.",
-   "does": "Gold motes gather to the spot, then it raises an hour-long ward dome against fire, lava, floods, blasts, lightning, cold and all beasts and spirits, re-lit with w.light every 5 seconds and warmed by 6 degrees.",
-   "missing": "The light is there, but the item is mostly a full protective dome that blocks lava, fire and blasts, far beyond a cantrip light. It also pushes out every beast and spirit, deer and rabbits included, rather than only creatures of darkness.",
-   "fix": "Drop lib.lastingWard/w.ward and keep the gathering plus a lasting body that calls w.light every few seconds for the hour. Each tick, give only undead, hostile and night hunters near the glow's edge status('fear', 3, w.x, w.y), and keep the small w.temperature warmth.",
-   "usd": 0.010781200000000001
-  },
-  {
-   "id": "p734",
-   "key": "meteor strike",
-   "name": "Meteor Strike",
-   "kind": "spell",
-   "tier": "legendary",
-   "casts": 4,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "yes",
-   "promise": "A blazing star-metal meteor falls on the spot, blasts a ~30-pace scorched crater, burns nearby trees to ash, hurls and dazes everything around, and leaves a long-lasting scar.",
-   "does": "A glowing meteor body streaks down from the sky. On impact it explodes and terraforms a crater about 16 to 36 cells wide. Creatures within twice the crater radius are hurt, pushed outward and stunned for 150 s. The ground is painted with a dark scar that decays to dirt after 900 s, with a star-metal",
-   "missing": "",
-   "fix": "",
-   "usd": 0.0106812
-  },
-  {
-   "id": "p723",
-   "key": "phoenix",
-   "name": "Phoenix",
-   "kind": "creature",
-   "tier": "major",
-   "casts": 4,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "partly",
-   "promise": "A flame bird that circles low over ash, warms the air, then bursts into fire that scatters seeds so green shoots rise through the cinders.",
-   "does": "Spawns one glowing, fireproof flying bird that wanders anywhere, leaves flowers, casts grow every 15 s, heals every 25 s, breathes fire when hurt, and respawns as a phoenix when it dies.",
-   "missing": "It never seeks out ash and never bursts into fire and seeds over it. It gives off no warmth, and the healing is an extra the entry never promises.",
-   "fix": "Add a custom goal that seeks 'ash' with an act that bursts fire particles, w.paint grass and w.grow on the ash. Give it a mild heat aura or w.temperature warmth, and drop the heal ability.",
-   "usd": 0.008467200000000001
-  },
-  {
-   "id": "p39",
-   "key": "arcane",
-   "name": "Arcane",
-   "kind": "spell",
-   "tier": "minor",
-   "casts": 3,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "partly",
-   "promise": "A humming silver lattice spirals out from the caster and lights stone, water, plants and beasts from within for about a minute, then they fade back, leaving a faint glow and a tingle in nearby creatures.",
-   "does": "Draws a circle, drones and flashes, then sends two slow spiral arms of glowing shards that travel only a few cells. It paints faint concentric rings and a soft light for 60 s, tints creatures pale silver for good, calms them for 4 s, and ends with a burst of sparks.",
-   "missing": "Stone, water and plants are never lit, only a general area light. Creature tints never fade back. The 'lattice' is plain rings, and the shards barely leave the centre. The hum is a drone, not struck glass.",
-   "fix": "Use w.sound('crystal') and faster shards (speed about w.r per second) whose tick lays short-lived glowing particles or w.light on the cells they pass. Draw crossing spiral lines in w.draw instead of rings. After about 60 s, reset creature tints with c.tint back to normal or a fading tint, and add a ",
-   "usd": 0.0106192
-  },
-  {
-   "id": "p185",
-   "key": "arcane shield",
-   "name": "Arcane Shield",
-   "kind": "spell",
-   "tier": "minor",
-   "casts": 3,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "yes",
-   "promise": "A faint blue dome around the caster and those beside them that turns aside arrows, stones and blows for up to ten minutes.",
-   "does": "Raises a blue ward over a house-sized area for 600 seconds, with a blue magic circle, a soft light and a ring of glowing voxels; the test shows it stopped 91% of the harm.",
-   "missing": "",
-   "fix": "",
-   "usd": 0.0068592
-  },
-  {
-   "id": "p188",
-   "key": "divine shield",
-   "name": "Divine Shield",
-   "kind": "spell",
-   "tier": "major",
-   "casts": 3,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "yes",
-   "promise": "A pale gold dome over everyone nearby that turns aside fire, floods, blasts and attackers for a long time, with a calming warmth inside.",
-   "does": "Draws a gold circle and light, then raises a pale gold ward of 0.9 w.r for 600 seconds against every harm, pushing beasts and spirits out; the test run shows it stopped fire, lava, blasts and most raiders.",
-   "missing": "",
-   "fix": "",
-   "usd": 0.0072312
-  },
-  {
-   "id": "p256",
-   "key": "extinction event",
-   "name": "Extinction Event",
-   "kind": "spell",
-   "tier": "cosmic",
-   "casts": 3,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "partly",
-   "promise": "A burning sky-stone falls trailing cinders and turns the land to glass and ash; the living are driven far off or put into a season-long sleep, and the scar stays barren for a generation.",
-   "does": "A large meteor with a cinder trail crashes at the target. It blasts a power-5 crater, paints glass ringed by ash, and sets fires over 1.1 r. Survivors in 0.6 r are put to sleep for 300 s and those beyond are feared and pushed away. The glass and ash then decay back to dirt over about an hour. The te",
-   "missing": "The entry promises the living are driven off or put to sleep, not killed. The explosion runs before the statuses, and the wide fires then burn the sleepers, so a player sees mass death instead of an exodus and a long sleep.",
-   "fix": "Apply sleep and fear/push before the impact. Cut w.explode to about power 2 inside the glass radius. Confine w.ignite and w.temperature(+300) to the glass core, or drop them, so sleepers in 0.6 r are not burned. Keep the glass and ash.",
-   "usd": 0.015303200000000001
-  },
-  {
-   "id": "p16",
-   "key": "great flood",
-   "name": "Great Flood",
-   "kind": "spell",
-   "tier": "legendary",
-   "casts": 3,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "yes",
-   "promise": "A sea-green ripple, then a roaring wall of water surges across a wide area, sweeps creatures into a heap at its edge, soaks the land, drains after about 12 seconds and leaves mud.",
-   "does": "Flash, shockwave and circle, then an expanding ring of water (6 deep, thinning to 2) fills a disc of 1.3 w.r over 3 seconds. Creatures at the front are pushed outward and stunned, with foam spray. After 4 seconds of churning foam it drains the area and paints silt that turns back to grass, plus some",
-   "missing": "",
-   "fix": "",
-   "usd": 0.0108132
-  },
-  {
-   "id": "p195",
-   "key": "meteor",
-   "name": "Meteor",
-   "kind": "spell",
-   "tier": "grand",
-   "casts": 3,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "yes",
-   "promise": "A blazing comet streaks down and bursts in a twenty-pace ring of fire and gale that knocks people flat, singes them, and leaves fading flames.",
-   "does": "A glowing meteor body falls from high across the sky. On landing it booms, shakes the ground and sends out a shockwave. It sets a ring of fire with ignites within about 10 cells and lays ash. Every creature in range is pushed outward and up, hurt, burned and frightened (test: 434 cells, 17 creatures",
-   "missing": "",
-   "fix": "",
-   "usd": 0.0081492
-  },
-  {
-   "id": "p735",
-   "key": "protection spell",
-   "name": "Protection Spell",
-   "kind": "spell",
-   "tier": "minor",
-   "casts": 3,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "yes",
-   "promise": "A faint silver ring sinks over a small target and shields those inside from blows, debris and sharp edges for an hour.",
-   "does": "Draws a silver circle and a glowing ring that sinks to the ground, then raises a ward of radius w.r that it renews for an hour; the test run shows it stopping fire, lava, blasts and most raider harm.",
-   "missing": "",
-   "fix": "",
-   "usd": 0.0074811999999999995
-  },
-  {
-   "id": "p69",
-   "key": "rebirth",
-   "name": "Rebirth",
-   "kind": "spell",
-   "tier": "cosmic",
-   "casts": 3,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "partly",
-   "promise": "An island-wide spiral of phoenix warmth that revives the recently dead and mends what was broken: blooms, branches, creatures.",
-   "does": "A glowing flame body spirals outward from the island's center for 16s. Within 9 to 10 cells of its path it revives and heals corpses, puts out fire, turns ash to grass, stumps to trees and rubble to houses, and grows plants.",
-   "missing": "On a large island the 4-turn spiral spaces its passes about R/4 apart (about 46 cells on 384), but each pass only reaches 9 to 10 cells, so much of a cosmic island's dead are never revived.",
-   "fix": "Scale the disc and corpse radius with R (e.g. R/8), or add turns so passes overlap. Finish with a sweep of w.corpses(cx, cy, R) that revives any the phoenix missed.",
-   "usd": 0.011957200000000001
-  },
-  {
-   "id": "p299",
-   "key": "resurrection",
-   "name": "Resurrection",
-   "kind": "spell",
-   "tier": "minor",
-   "casts": 3,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "yes",
-   "promise": "Warm gold light sinks into the fallen, who rise alive with wounds closed and then sleep, unless dead over a week.",
-   "does": "Draws a gold circle and light, then for each corpse in reach (skipping those dead over a week) casts a gold beam from the sky, revives it, heals it and puts it to sleep for 60 s; a faint drone if none are found.",
-   "missing": "",
-   "fix": "",
-   "usd": 0.0063812
-  },
-  {
-   "id": "p732",
-   "key": "serpent",
-   "name": "Serpent",
-   "kind": "creature",
-   "tier": "minor",
-   "casts": 3,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "partly",
-   "promise": "An olive, pale-bellied snake that slides through grass and reeds, strikes rabbits and small prey, and coils to rest at dusk.",
-   "does": "Spawns one olive serpent with a pale belly that hunts rabbits and birds by day. It digs every 30 s, freezes whoever hurts it, and sleeps on a heated cell at night. When it dies it spawns a new serpent.",
-   "missing": "Freezing its attackers is ice magic no grass snake has. Respawning itself on death makes it effectively unkillable. Neither fits a plain hunting snake.",
-   "fix": "Remove the 'freeze' ability (strike back with a plain bite, or use a custom act that hurts the attacker). Change onDeath from 'spawn:serpent' to nothing or a material. Optionally change the 'dig' ability to a custom act that moves it onto rock or grass to coil at dusk.",
-   "usd": 0.008991200000000001
-  },
-  {
-   "id": "p29",
-   "key": "shadow",
-   "name": "Shadow",
-   "kind": "spell",
-   "tier": "cantrip",
-   "casts": 3,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "partly",
-   "promise": "A small circle of pooled dusk that cools the grass, hushes birds and hides whoever stands in it for a minute, with drifting lengthened shadows.",
-   "does": "Hisses, dims the screen for 4 s, paints a dark ground disc that turns to bare dirt after 60 s, chills the spot by -20/-10, calms creatures inside for 60 s, sleeps only kind 'beast' nearby, and draws a dark disc with swaying spokes for 60 s.",
-   "missing": "Nothing is hidden: calm is not concealment, so hunters still see their prey. Birds are not hushed, because the 'beast' kind check misses deer and birds. The circle replaces the grass and leaves dirt instead of cooling it.",
-   "fix": "Drop the ground paint and draw the dusk with w.draw only. Hide those inside, for example with w.ward(w.x, w.y, w.r, {against: ['creatures'], seconds: 60, color: '#1a1426'}) or by calming every hunter in reach. Give status 'sleep' or 'calm' to every animal by w.nature(c) === 'animal' (birds especiall",
-   "usd": 0.0118312
-  },
-  {
-   "id": "p702",
-   "key": "sky mage",
-   "name": "Sky Mage",
-   "kind": "creature",
-   "tier": "major",
-   "casts": 3,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "partly",
-   "promise": "A glowing, floating being of green and violet northern light in a frost hood that walks the air, reads the winds and guides travelers by night.",
-   "does": "Makes an ordinary villager with the mage calling (a pointed-hat wizard who walks, freezes foes and blinks away) and flares three green and violet beams, a burst and a light around it.",
-   "missing": "It is a plain walking human villager, not a flying, glowing creature of aurora light, and it never reads the weather, guides anyone or carries messages; the arrival is a flash and a chime.",
-   "fix": "Declare a spell.creatures 'sky mage' (base spirit, flying, glow, color #7dffb0, color2 #b28dff, features hood, glowing eyes, staff), give it a goal such as explore or a custom guide goal that leads villagers, and add an ability like cast:Rain or a weather-reading act; spawn it with w.spawn instead o",
-   "usd": 0.009489200000000001
-  },
-  {
-   "id": "p713",
-   "key": "underworld",
-   "name": "Underworld",
-   "kind": "place",
-   "tier": "cosmic",
-   "casts": 3,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "partly",
-   "promise": "A mossy hollow under a crooked oak whose ground opens at dusk into a winding earth stair down into shadow, lit by pale fungus lanterns, where mages gather rare stones and roots.",
-   "does": "Sinks a 5-cell crater, paints spreading glowing shadow moss and grows a straight oak. It draws a dark pit with a spiral of descending posts and four glowing fungus lanterns, then scatters deepstone and silent roots. It hires two delvers who carry them home as gold and adds more at dusk.",
-   "missing": "Nobody ever descends and the ground never parts at dusk, so the promised move is absent. The oak is a plain straight oak, not crooked. The worship/prayer grant and night light are unpromised extras. It is tiny for a cosmic tier.",
-   "fix": "Add a dusk act that opens the pit and moves the delvers down and back: c.teleport into the hollow, hide them for a while, then return them carrying stones. Lean or twist the oak with a model trunk. Drop the worship use, the prayer grant and the night light effect. Widen the hollow and the spreading ",
-   "usd": 0.0152352
-  },
-  {
-   "id": "p714",
-   "key": "world seed",
-   "name": "World Seed",
-   "kind": "object",
-   "tier": "cosmic",
-   "casts": 3,
-   "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
-   "verdict": "partly",
-   "promise": "A glowing green-gold seed wrapped in silver Yggdrasil roots that makes barren land bloom and, cracked open, grows one sheltering great tree; cosmic in scale.",
-   "does": "Places a small glowing orb on a stone pedestal, paints a 4-cell patch of spreading green ground, waters fields at dawn and grows plants every 45 s within about 14 cells; an oak appears only on full-moon nights.",
-   "missing": "The sapling-into-sheltering-tree, its central promise, waits for a full moon and never came in the test; the reach is a few cells for a cosmic item; the silver root parts (0.04 wide) are below 0.05 and are not drawn.",
-   "fix": "On placing, plant the sapling with w.tree(style \"giant\", height 30-40, grow 20) beside the seed, or let the tree effect fire at night every few minutes; widen the greening and grow radius well past 14 and let seedbloom spread faster over dirt, ash and rock; make the root and silver parts at least 0.",
-   "usd": 0.013759200000000001
-  }
- ],
- "billed": 0.2455
+  ],
+  "rows": [
+    {
+      "id": "p244",
+      "key": "fire",
+      "name": "Fire",
+      "kind": "spell",
+      "tier": "minor",
+      "casts": 7,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "yes",
+      "promise": "A thread of orange light blooms into flame that scorches the ground, ignites grass and wood, spreads heat about ten paces, singes and frightens creatures, and burns for about a minute.",
+      "does": "Draws an orange beam to the target, scorches the centre to ash, heats and ignites the area, rolls heat out to 10 cells, burns, frightens and hurts creatures within 10 cells, then rekindles the blaze three times over nine seconds while the world's fire spreads on.",
+      "missing": "",
+      "fix": "",
+      "usd": 0.05546
+    },
+    {
+      "id": "p139",
+      "key": "water",
+      "name": "Water",
+      "kind": "spell",
+      "tier": "cantrip",
+      "casts": 6,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "yes",
+      "promise": "A rushing cascade of water sweeps out in an arc, soaks a village-square-sized patch, douses fire into steam and makes plants grow.",
+      "does": "Sweeps 36 lines of water and falling water orbs in an arc from the target, puts out burning cells with steam, floods a small pool, grows plants and calms nearby creatures over about 10 seconds.",
+      "missing": "",
+      "fix": "",
+      "usd": 0.0073072
+    },
+    {
+      "id": "p276",
+      "key": "life",
+      "name": "Life",
+      "kind": "spell",
+      "tier": "cantrip",
+      "casts": 5,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "partly",
+      "promise": "A green ring spreads from the caster, sprouting grass and flowers and closing the wounds of injured creatures nearby.",
+      "does": "Draws a green circle and light, then expands rings that turn about half the dry cells to grass with a few flowers, calls w.grow, and heals 2 hp four times, but only on creatures under 10 hp.",
+      "missing": "Wounded creatures at 10 hp or more are never healed, so healing, half of the promise, skips the injured with larger health pools; the creature list is also read only once.",
+      "fix": "Heal every creature in w.here(w.x, w.y, R).wounded with c.heal(n) on each pulse, whatever its hp, re-reading the list each pulse, and keep the grass and flower ring as it is.",
+      "usd": 0.0087392
+    },
+    {
+      "id": "p666",
+      "key": "light",
+      "name": "Light",
+      "kind": "spell",
+      "tier": "cantrip",
+      "casts": 4,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "partly",
+      "promise": "A warm gold glow that lights a clearing for about an hour, makes creatures of darkness flinch back and gently warms travelers and crops.",
+      "does": "Gold motes gather to the spot, then it raises an hour-long ward dome against fire, lava, floods, blasts, lightning, cold and all beasts and spirits, re-lit with w.light every 5 seconds and warmed by 6 degrees.",
+      "missing": "The light is there, but the item is mostly a full protective dome that blocks lava, fire and blasts, far beyond a cantrip light. It also pushes out every beast and spirit, deer and rabbits included, rather than only creatures of darkness.",
+      "fix": "Drop lib.lastingWard/w.ward and keep the gathering plus a lasting body that calls w.light every few seconds for the hour. Each tick, give only undead, hostile and night hunters near the glow's edge status('fear', 3, w.x, w.y), and keep the small w.temperature warmth.",
+      "usd": 0.010781200000000001
+    },
+    {
+      "id": "p734",
+      "key": "meteor strike",
+      "name": "Meteor Strike",
+      "kind": "spell",
+      "tier": "legendary",
+      "casts": 4,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "yes",
+      "promise": "A blazing star-metal meteor falls on the spot, blasts a ~30-pace scorched crater, burns nearby trees to ash, hurls and dazes everything around, and leaves a long-lasting scar.",
+      "does": "A glowing meteor body streaks down from the sky. On impact it explodes and terraforms a crater about 16 to 36 cells wide. Creatures within twice the crater radius are hurt, pushed outward and stunned for 150 s. The ground is painted with a dark scar that decays to dirt after 900 s, with a star-metal",
+      "missing": "",
+      "fix": "",
+      "usd": 0.0106812
+    },
+    {
+      "id": "p723",
+      "key": "phoenix",
+      "name": "Phoenix",
+      "kind": "creature",
+      "tier": "major",
+      "casts": 4,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "partly",
+      "promise": "A flame bird that circles low over ash, warms the air, then bursts into fire that scatters seeds so green shoots rise through the cinders.",
+      "does": "Spawns one glowing, fireproof flying bird that wanders anywhere, leaves flowers, casts grow every 15 s, heals every 25 s, breathes fire when hurt, and respawns as a phoenix when it dies.",
+      "missing": "It never seeks out ash and never bursts into fire and seeds over it. It gives off no warmth, and the healing is an extra the entry never promises.",
+      "fix": "Add a custom goal that seeks 'ash' with an act that bursts fire particles, w.paint grass and w.grow on the ash. Give it a mild heat aura or w.temperature warmth, and drop the heal ability.",
+      "usd": 0.008467200000000001
+    },
+    {
+      "id": "p39",
+      "key": "arcane",
+      "name": "Arcane",
+      "kind": "spell",
+      "tier": "minor",
+      "casts": 3,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "partly",
+      "promise": "A humming silver lattice spirals out from the caster and lights stone, water, plants and beasts from within for about a minute, then they fade back, leaving a faint glow and a tingle in nearby creatures.",
+      "does": "Draws a circle, drones and flashes, then sends two slow spiral arms of glowing shards that travel only a few cells. It paints faint concentric rings and a soft light for 60 s, tints creatures pale silver for good, calms them for 4 s, and ends with a burst of sparks.",
+      "missing": "Stone, water and plants are never lit, only a general area light. Creature tints never fade back. The 'lattice' is plain rings, and the shards barely leave the centre. The hum is a drone, not struck glass.",
+      "fix": "Use w.sound('crystal') and faster shards (speed about w.r per second) whose tick lays short-lived glowing particles or w.light on the cells they pass. Draw crossing spiral lines in w.draw instead of rings. After about 60 s, reset creature tints with c.tint back to normal or a fading tint, and add a ",
+      "usd": 0.0106192
+    },
+    {
+      "id": "p185",
+      "key": "arcane shield",
+      "name": "Arcane Shield",
+      "kind": "spell",
+      "tier": "minor",
+      "casts": 3,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "yes",
+      "promise": "A faint blue dome around the caster and those beside them that turns aside arrows, stones and blows for up to ten minutes.",
+      "does": "Raises a blue ward over a house-sized area for 600 seconds, with a blue magic circle, a soft light and a ring of glowing voxels; the test shows it stopped 91% of the harm.",
+      "missing": "",
+      "fix": "",
+      "usd": 0.0068592
+    },
+    {
+      "id": "p188",
+      "key": "divine shield",
+      "name": "Divine Shield",
+      "kind": "spell",
+      "tier": "major",
+      "casts": 3,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "yes",
+      "promise": "A pale gold dome over everyone nearby that turns aside fire, floods, blasts and attackers for a long time, with a calming warmth inside.",
+      "does": "Draws a gold circle and light, then raises a pale gold ward of 0.9 w.r for 600 seconds against every harm, pushing beasts and spirits out; the test run shows it stopped fire, lava, blasts and most raiders.",
+      "missing": "",
+      "fix": "",
+      "usd": 0.0072312
+    },
+    {
+      "id": "p256",
+      "key": "extinction event",
+      "name": "Extinction Event",
+      "kind": "spell",
+      "tier": "cosmic",
+      "casts": 3,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "partly",
+      "promise": "A burning sky-stone falls trailing cinders and turns the land to glass and ash; the living are driven far off or put into a season-long sleep, and the scar stays barren for a generation.",
+      "does": "A large meteor with a cinder trail crashes at the target. It blasts a power-5 crater, paints glass ringed by ash, and sets fires over 1.1 r. Survivors in 0.6 r are put to sleep for 300 s and those beyond are feared and pushed away. The glass and ash then decay back to dirt over about an hour. The te",
+      "missing": "The entry promises the living are driven off or put to sleep, not killed. The explosion runs before the statuses, and the wide fires then burn the sleepers, so a player sees mass death instead of an exodus and a long sleep.",
+      "fix": "Apply sleep and fear/push before the impact. Cut w.explode to about power 2 inside the glass radius. Confine w.ignite and w.temperature(+300) to the glass core, or drop them, so sleepers in 0.6 r are not burned. Keep the glass and ash.",
+      "usd": 0.015303200000000001
+    },
+    {
+      "id": "p16",
+      "key": "great flood",
+      "name": "Great Flood",
+      "kind": "spell",
+      "tier": "legendary",
+      "casts": 3,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "yes",
+      "promise": "A sea-green ripple, then a roaring wall of water surges across a wide area, sweeps creatures into a heap at its edge, soaks the land, drains after about 12 seconds and leaves mud.",
+      "does": "Flash, shockwave and circle, then an expanding ring of water (6 deep, thinning to 2) fills a disc of 1.3 w.r over 3 seconds. Creatures at the front are pushed outward and stunned, with foam spray. After 4 seconds of churning foam it drains the area and paints silt that turns back to grass, plus some",
+      "missing": "",
+      "fix": "",
+      "usd": 0.0108132
+    },
+    {
+      "id": "p195",
+      "key": "meteor",
+      "name": "Meteor",
+      "kind": "spell",
+      "tier": "grand",
+      "casts": 3,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "yes",
+      "promise": "A blazing comet streaks down and bursts in a twenty-pace ring of fire and gale that knocks people flat, singes them, and leaves fading flames.",
+      "does": "A glowing meteor body falls from high across the sky. On landing it booms, shakes the ground and sends out a shockwave. It sets a ring of fire with ignites within about 10 cells and lays ash. Every creature in range is pushed outward and up, hurt, burned and frightened (test: 434 cells, 17 creatures",
+      "missing": "",
+      "fix": "",
+      "usd": 0.0081492
+    },
+    {
+      "id": "p735",
+      "key": "protection spell",
+      "name": "Protection Spell",
+      "kind": "spell",
+      "tier": "minor",
+      "casts": 3,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "yes",
+      "promise": "A faint silver ring sinks over a small target and shields those inside from blows, debris and sharp edges for an hour.",
+      "does": "Draws a silver circle and a glowing ring that sinks to the ground, then raises a ward of radius w.r that it renews for an hour; the test run shows it stopping fire, lava, blasts and most raider harm.",
+      "missing": "",
+      "fix": "",
+      "usd": 0.0074811999999999995
+    },
+    {
+      "id": "p69",
+      "key": "rebirth",
+      "name": "Rebirth",
+      "kind": "spell",
+      "tier": "cosmic",
+      "casts": 3,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "partly",
+      "promise": "An island-wide spiral of phoenix warmth that revives the recently dead and mends what was broken: blooms, branches, creatures.",
+      "does": "A glowing flame body spirals outward from the island's center for 16s. Within 9 to 10 cells of its path it revives and heals corpses, puts out fire, turns ash to grass, stumps to trees and rubble to houses, and grows plants.",
+      "missing": "On a large island the 4-turn spiral spaces its passes about R/4 apart (about 46 cells on 384), but each pass only reaches 9 to 10 cells, so much of a cosmic island's dead are never revived.",
+      "fix": "Scale the disc and corpse radius with R (e.g. R/8), or add turns so passes overlap. Finish with a sweep of w.corpses(cx, cy, R) that revives any the phoenix missed.",
+      "usd": 0.011957200000000001
+    },
+    {
+      "id": "p299",
+      "key": "resurrection",
+      "name": "Resurrection",
+      "kind": "spell",
+      "tier": "minor",
+      "casts": 3,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "yes",
+      "promise": "Warm gold light sinks into the fallen, who rise alive with wounds closed and then sleep, unless dead over a week.",
+      "does": "Draws a gold circle and light, then for each corpse in reach (skipping those dead over a week) casts a gold beam from the sky, revives it, heals it and puts it to sleep for 60 s; a faint drone if none are found.",
+      "missing": "",
+      "fix": "",
+      "usd": 0.0063812
+    },
+    {
+      "id": "p732",
+      "key": "serpent",
+      "name": "Serpent",
+      "kind": "creature",
+      "tier": "minor",
+      "casts": 3,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "partly",
+      "promise": "An olive, pale-bellied snake that slides through grass and reeds, strikes rabbits and small prey, and coils to rest at dusk.",
+      "does": "Spawns one olive serpent with a pale belly that hunts rabbits and birds by day. It digs every 30 s, freezes whoever hurts it, and sleeps on a heated cell at night. When it dies it spawns a new serpent.",
+      "missing": "Freezing its attackers is ice magic no grass snake has. Respawning itself on death makes it effectively unkillable. Neither fits a plain hunting snake.",
+      "fix": "Remove the 'freeze' ability (strike back with a plain bite, or use a custom act that hurts the attacker). Change onDeath from 'spawn:serpent' to nothing or a material. Optionally change the 'dig' ability to a custom act that moves it onto rock or grass to coil at dusk.",
+      "usd": 0.008991200000000001
+    },
+    {
+      "id": "p29",
+      "key": "shadow",
+      "name": "Shadow",
+      "kind": "spell",
+      "tier": "cantrip",
+      "casts": 3,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "partly",
+      "promise": "A small circle of pooled dusk that cools the grass, hushes birds and hides whoever stands in it for a minute, with drifting lengthened shadows.",
+      "does": "Hisses, dims the screen for 4 s, paints a dark ground disc that turns to bare dirt after 60 s, chills the spot by -20/-10, calms creatures inside for 60 s, sleeps only kind 'beast' nearby, and draws a dark disc with swaying spokes for 60 s.",
+      "missing": "Nothing is hidden: calm is not concealment, so hunters still see their prey. Birds are not hushed, because the 'beast' kind check misses deer and birds. The circle replaces the grass and leaves dirt instead of cooling it.",
+      "fix": "Drop the ground paint and draw the dusk with w.draw only. Hide those inside, for example with w.ward(w.x, w.y, w.r, {against: ['creatures'], seconds: 60, color: '#1a1426'}) or by calming every hunter in reach. Give status 'sleep' or 'calm' to every animal by w.nature(c) === 'animal' (birds especiall",
+      "usd": 0.0118312
+    },
+    {
+      "id": "p702",
+      "key": "sky mage",
+      "name": "Sky Mage",
+      "kind": "creature",
+      "tier": "major",
+      "casts": 3,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "partly",
+      "promise": "A glowing, floating being of green and violet northern light in a frost hood that walks the air, reads the winds and guides travelers by night.",
+      "does": "Makes an ordinary villager with the mage calling (a pointed-hat wizard who walks, freezes foes and blinks away) and flares three green and violet beams, a burst and a light around it.",
+      "missing": "It is a plain walking human villager, not a flying, glowing creature of aurora light, and it never reads the weather, guides anyone or carries messages; the arrival is a flash and a chime.",
+      "fix": "Declare a spell.creatures 'sky mage' (base spirit, flying, glow, color #7dffb0, color2 #b28dff, features hood, glowing eyes, staff), give it a goal such as explore or a custom guide goal that leads villagers, and add an ability like cast:Rain or a weather-reading act; spawn it with w.spawn instead o",
+      "usd": 0.009489200000000001
+    },
+    {
+      "id": "p713",
+      "key": "underworld",
+      "name": "Underworld",
+      "kind": "place",
+      "tier": "cosmic",
+      "casts": 3,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "partly",
+      "promise": "A mossy hollow under a crooked oak whose ground opens at dusk into a winding earth stair down into shadow, lit by pale fungus lanterns, where mages gather rare stones and roots.",
+      "does": "Sinks a 5-cell crater, paints spreading glowing shadow moss and grows a straight oak. It draws a dark pit with a spiral of descending posts and four glowing fungus lanterns, then scatters deepstone and silent roots. It hires two delvers who carry them home as gold and adds more at dusk.",
+      "missing": "Nobody ever descends and the ground never parts at dusk, so the promised move is absent. The oak is a plain straight oak, not crooked. The worship/prayer grant and night light are unpromised extras. It is tiny for a cosmic tier.",
+      "fix": "Add a dusk act that opens the pit and moves the delvers down and back: c.teleport into the hollow, hide them for a while, then return them carrying stones. Lean or twist the oak with a model trunk. Drop the worship use, the prayer grant and the night light effect. Widen the hollow and the spreading ",
+      "usd": 0.0152352
+    },
+    {
+      "id": "p714",
+      "key": "world seed",
+      "name": "World Seed",
+      "kind": "object",
+      "tier": "cosmic",
+      "casts": 3,
+      "batch": "msgbatch_013QSDbPxjcqM2dkNR4M2wHn",
+      "verdict": "partly",
+      "promise": "A glowing green-gold seed wrapped in silver Yggdrasil roots that makes barren land bloom and, cracked open, grows one sheltering great tree; cosmic in scale.",
+      "does": "Places a small glowing orb on a stone pedestal, paints a 4-cell patch of spreading green ground, waters fields at dawn and grows plants every 45 s within about 14 cells; an oak appears only on full-moon nights.",
+      "missing": "The sapling-into-sheltering-tree, its central promise, waits for a full moon and never came in the test; the reach is a few cells for a cosmic item; the silver root parts (0.04 wide) are below 0.05 and are not drawn.",
+      "fix": "On placing, plant the sapling with w.tree(style \"giant\", height 30-40, grow 20) beside the seed, or let the tree effect fire at night every few minutes; widen the greening and grow radius well past 14 and let seedbloom spread faster over dirt, ash and rock; make the root and silver parts at least 0.",
+      "usd": 0.013759200000000001
+    }
+  ],
+  "billed": 0.2455
 }
