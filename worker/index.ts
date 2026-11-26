@@ -164,6 +164,10 @@ export interface Env {
   ANTHROPIC_BASE_URL?: string;
   // 3.7. Dollars a month the refresh of the legacy library may spend.
   REFRESH_BUDGET_USD?: string;
+  // 25 November 2026: "1" has the refresh write every tier with SPELL_MODEL, not the small model
+  // (the owner: "you can even use more expensive models for simpler spells"). The refresh only:
+  // merges, first casts and votes keep SPELL_MODEL_SMALL. Unset, the refresh is as before.
+  REFRESH_MODEL_ALL_TIERS?: string;
   // 3.3. Who looks at Spell Lab frames and guesses the vote (Haiku).
   JUDGE_MODEL?: string;
   // Dollars a day that votes, the judge and failed test runs may spend on rewrites.
@@ -1514,6 +1518,11 @@ async function refreshSpentThisMonth(db: D1Database): Promise<number> {
 
 const REFRESH_ESTIMATE = { big: 0.06, small: 0.006 };
 
+// The refresh writes every tier with SPELL_MODEL (25 November 2026, the promotional credits).
+function refreshAllTiers(env: Env): boolean {
+  return env.REFRESH_MODEL_ALL_TIERS === "1";
+}
+
 async function startRefresh(
   env: Env,
   oracle: Oracle,
@@ -1584,7 +1593,8 @@ async function startRefresh(
     const row = await getProgram(db, r.pid);
     if (!element || !row) continue;
     const tier = tierOf(element);
-    const big = isBig(tier, smallUpTo(env));
+    // Written as a big one (SPELL_MODEL, its estimate) when REFRESH_MODEL_ALL_TIERS says every tier.
+    const big = refreshAllTiers(env) || isBig(tier, smallUpTo(env));
     const cost = big ? REFRESH_ESTIMATE.big : REFRESH_ESTIMATE.small;
     if (estimate + cost > room) break;
     // 4.6: by form, the entry is written again for its kind the first time,
