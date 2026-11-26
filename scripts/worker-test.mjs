@@ -4645,7 +4645,8 @@ check("wrangler dev never restarted the Worker under a request", restarts === 0,
   const logBefore = workerLog.length;
   const cron = await fetch(`${BASE}/cdn-cgi/handler/scheduled?cron=*/10+*+*+*+*`);
   const stale = async () => (await db.prepare("SELECT COUNT(*) AS n FROM inflight WHERE key = 'reads-stale'").first()).n;
-  for (let k = 0; k < 40 && ((await stale()) > 0 || (await cronRows()) <= cronBefore); k++) await pause(250);
+  for (let k = 0; k < 40 && ((await stale()) > 0 || (await cronRows()) <= cronBefore || !/the cron skips/.test(workerLog.slice(logBefore))); k++)
+    await pause(250);
   const logged = workerLog.slice(logBefore);
   check(
     "reads: past four fifths, the cron sweeps, skips the rest, and counts its own reads",
