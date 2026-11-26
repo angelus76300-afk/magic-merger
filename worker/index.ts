@@ -131,6 +131,7 @@ import {
 } from "./ledger";
 
 import { checkReport, pollCheck, startCheck } from "./promise";
+import { ADMIN_SHARE, CRON_SHARE, Meter, deferring, metered, readsLimit, readsReport, readsToday, recordReads, type ReadsReport } from "./meter";
 import { LooksError, judgeLooks, looksBusy, looksCandidates, looksMode, looksPool, looksReport, looksVerdict, pollLooks, startLooks } from "./looks";
 
 export interface Env {
@@ -222,13 +223,17 @@ export interface Env {
   LOOKS_MODEL?: string;
   LOOKS_MODEL_COSMIC?: string;
   LOOKS_JUDGE_MODEL?: string;
+  // 26 November 2026 (worker/meter.ts): D1's rows read a day, 5,000,000 on the free plan by
+  // default. Past half of it the admin's bulk routes answer 429; past four fifths the cron
+  // runs only what players need.
+  READS_DAY_LIMIT?: string;
 }
 
 const MAX_NAME_LENGTH = 60;
 // A program that keeps crashing is sent back to Claude at most this many times.
 const MAX_REPAIRS = 3;
 
-export default {
+const handler = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
@@ -236,6 +241,14 @@ export default {
     const who = await authenticate(request, env);
     if (who instanceof Response) return who;
     const { admin, payer, session, invite, owner } = who;
+    // 26 November 2026: what an admin request read is told in x-rows-read, and the bulk routes
+    // wait past half of the day's rows read (worker/meter.ts).
+    const meter = METERS.get(request);
+    if (meter && admin) meter.admin = true;
+    if (admin && BULK_ROUTES.has(`${request.method} ${url.pathname}`)) {
+      const refused = await readsRefusal(env);
+      if (refused) return refused;
+    }
     // A signed in person is the player for votes and casts, on every device.
     const player = session ? session.invite : playerId(request);
     if (url.pathname === "/api/health" && request.method === "GET") {
@@ -427,9 +440,94 @@ export default {
   },
 
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(cronJobs(cronTasks(env)));
+    ctx.waitUntil(runCron(env));
   },
 } satisfies ExportedHandler<Env>;
+
+// 26 November 2026: every request to /api counts the rows it reads (worker/meter.ts): the
+// database is wrapped once, the request's background work is waited for, and the sum is added
+// to `reads`. An admin request is told its own in x-rows-read.
+const METERS = new WeakMap<Request, Meter>();
+
+export default {
+  ...handler,
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if (!new URL(request.url).pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
+    const meter = new Meter();
+    METERS.set(request, meter);
+    const later: Promise<unknown>[] = [];
+    let res = await handler.fetch(request, { ...env, DB: metered(env.DB, meter) }, deferring(ctx, later));
+    ctx.waitUntil(Promise.allSettled(later).then(() => recordReads(env.DB, meter.admin ? "admin" : "player", meter)));
+    if (meter.admin) {
+      try {
+        res.headers.set("x-rows-read", String(meter.read));
+      } catch {
+        res = new Response(res.body, res);
+        res.headers.set("x-rows-read", String(meter.read));
+      }
+    }
+    return res;
+  },
+} satisfies ExportedHandler<Env>;
+
+// The admin's routes that read in bulk, for the runners that call them for hours: refused past
+// half of the day's rows read, so the players keep the other half.
+const BULK_ROUTES = new Set([
+  "POST /api/admin/refresh",
+  "GET /api/admin/refresh-candidates",
+  "POST /api/admin/looks",
+  "POST /api/admin/looks-verdict",
+  "GET /api/admin/looks-candidates",
+  "POST /api/admin/judge-trial",
+  "POST /api/admin/promise-check",
+]);
+
+async function readsRefusal(env: Env): Promise<Response | null> {
+  const limit = readsLimit(env.READS_DAY_LIMIT);
+  let rowsRead: number;
+  try {
+    rowsRead = (await readsToday(env.DB)).read;
+  } catch (err) {
+    // Past D1's own limit (7500) the read itself fails: refused too. Anything else lets it run.
+    if (!/7500|exceeded/i.test(String(err))) return null;
+    rowsRead = limit;
+  }
+  if (rowsRead < limit * ADMIN_SHARE) return null;
+  return json(
+    {
+      error: `D1 has read ${rowsRead} rows today, past half of the day's ${limit}: the admin's bulk routes wait until 00:00 UTC`,
+      code: "reads",
+      rowsRead,
+      limit,
+    },
+    429,
+  );
+}
+
+// What the cron runs past four fifths of the day's rows read: only what players need. sweep
+// releases the money held by requests that died (else players could be refused for budget), and
+// the daily challenge is what players see that day. The rest waits for 00:00 UTC: polling the
+// Batch API (the big spells' drafts stay live meanwhile), the feedback sync, evolve, the intents
+// backfill, the daily wonder, the rewrite by evidence, the looks and the spend totals' check.
+export const CRON_FOR_PLAYERS = new Set(["sweep", "daily challenge"]);
+
+async function runCron(env: Env): Promise<void> {
+  const meter = new Meter();
+  const db = metered(env.DB, meter);
+  const limit = readsLimit(env.READS_DAY_LIMIT);
+  const today = await readsToday(db).then(
+    (r) => r.read,
+    () => 0,
+  );
+  let tasks = cronTasks({ ...env, DB: db });
+  if (today >= limit * CRON_SHARE) {
+    const skipped = Object.keys(tasks).filter((name) => tasks[name] && !CRON_FOR_PLAYERS.has(name));
+    console.error(`reads: ${today} of ${limit} today, the cron skips ${skipped.join(", ")}`);
+    tasks = Object.fromEntries(Object.entries(tasks).filter(([name]) => CRON_FOR_PLAYERS.has(name)));
+  }
+  await cronJobs(tasks);
+  await recordReads(env.DB, "cron", meter);
+}
 
 // What the ten minute cron runs, by name. Exported so scripts/cron-reads.mjs
 // can run each job alone and count the rows it reads.
@@ -656,7 +754,7 @@ async function handleAccount(request: Request, url: URL, env: Env, session: Sess
 }
 
 // The month so far, call by call, for the admin badge and `/api/spend`.
-async function spendReport(env: Env): Promise<SpendResponse> {
+async function spendReport(env: Env): Promise<SpendResponse & { reads: ReadsReport }> {
   const now = new Date();
   const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
@@ -672,6 +770,8 @@ async function spendReport(env: Env): Promise<SpendResponse> {
     today: round(calls.reduce((sum, c) => sum + c.today, 0)),
     budget: budget(env),
     calls,
+    // 26 November 2026: today's rows read against D1's daily limit (worker/meter.ts).
+    reads: await readsReport(env.DB, env.READS_DAY_LIMIT),
   };
 }
 

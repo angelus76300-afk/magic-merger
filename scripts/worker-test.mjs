@@ -496,7 +496,7 @@ async function api(path, { body, invite, admin, method, session, player } = {}) 
   } catch {
     // not JSON
   }
-  return { status: res.status, data };
+  return { status: res.status, data, headers: res.headers };
 }
 
 async function invite(name, cap) {
@@ -4568,6 +4568,99 @@ const signIn = async (key, count) => {
 
 // A build beside this run once restarted the Worker mid-request (see ASSETS).
 check("wrangler dev never restarted the Worker under a request", restarts === 0, `${restarts} restarts`);
+
+// 39. D1's rows read (worker/meter.ts, 26 November 2026: the account passed the free 5,000,000 a
+// day and every request failed until midnight UTC). An admin response says what it read in
+// x-rows-read, a player's does not; the day's total in `reads` grows and /api/spend shows it
+// against the limit. With READS_DAY_LIMIT tiny, the admin's bulk routes answer 429 code "reads",
+// the cron runs only what players need, and players are served as before.
+{
+  const today = new Date().toISOString().slice(0, 10);
+  const dayTotal = async () => (await db.prepare("SELECT COALESCE(SUM(rows_read), 0) AS n FROM reads WHERE day = ?").bind(today).first()).n;
+  const reader = await invite("Row Reader", 5);
+  const before = await dayTotal();
+  const spend = await api("/api/spend", { admin: true });
+  const rows = Number(spend.headers.get("x-rows-read"));
+  check(
+    "reads: an admin response says the rows it read",
+    spend.status === 200 && spend.headers.has("x-rows-read") && rows > 0,
+    `${spend.headers.get("x-rows-read")}`,
+  );
+  const cands = await api("/api/admin/refresh-candidates", { admin: true });
+  check("reads: a bulk route says it too", cands.status === 200 && Number(cands.headers.get("x-rows-read")) > 0, `${cands.headers.get("x-rows-read")}`);
+  const player = await api("/api/daily", { invite: reader.secret });
+  check("reads: a player's response does not", player.status === 200 && !player.headers.has("x-rows-read"), `${player.status}`);
+  check("reads: nor one without an invite", !(await api("/api/health")).headers.has("x-rows-read"));
+  let after = before;
+  for (let k = 0; k < 40 && after < before + rows; k++) {
+    await pause(100);
+    after = await dayTotal();
+  }
+  check("reads: the day's total grows by what the admin requests read", after >= before + rows, `${before} then ${after}, ${rows} read`);
+  const report = (await api("/api/spend", { admin: true })).data?.reads;
+  check(
+    "reads: /api/spend shows today's rows read against the limit",
+    report?.day === today &&
+      report.rowsRead >= after - 1 &&
+      report.limit === 5_000_000 &&
+      report.adminStopsAt === 2_500_000 &&
+      report.cronStopsAt === 4_000_000,
+    JSON.stringify(report),
+  );
+
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev({ READS_DAY_LIMIT: "10" });
+  const refused = await api("/api/admin/refresh-candidates", { admin: true });
+  check(
+    "reads: past half of READS_DAY_LIMIT, a bulk admin route answers 429 code reads",
+    refused.status === 429 &&
+      refused.data?.code === "reads" &&
+      refused.data.limit === 10 &&
+      refused.data.rowsRead >= after &&
+      refused.headers.has("x-rows-read"),
+    JSON.stringify(refused.data),
+  );
+  const started = await api("/api/admin/refresh", { admin: true, body: { limit: 1 } });
+  check("reads: the refresh start is refused too", started.status === 429 && started.data?.code === "reads", `${started.status}`);
+  check("reads: an admin route that is not in bulk still answers", (await api("/api/spend", { admin: true })).status === 200);
+  const daily = await api("/api/daily", { invite: reader.secret });
+  const library = await api("/api/library", { invite: reader.secret, body: { names: ["Fire", "Water"] } });
+  check("reads: players' routes are never refused by the guard", daily.status === 200 && library.status === 200, `${daily.status} ${library.status}`);
+
+  // The cron past four fifths: a stale in-flight key is still swept (sweep is kept for players),
+  // and the Batch API is not polled (a batch it cannot read would be a log line named after it).
+  await db
+    .prepare("INSERT OR REPLACE INTO inflight (key, at) VALUES ('reads-stale', ?)")
+    .bind(Date.now() - 3600_000)
+    .run();
+  await db
+    .prepare(
+      "INSERT INTO rewrites (key, from_pid, to_pid, cause, at, status, model, batch) VALUES ('nowhere', 0, NULL, 'refresh', ?, 'pending', 'claude-opus-5-5', 'msgbatch_reads')",
+    )
+    .bind(Date.now())
+    .run();
+  const cronRows = async () => (await db.prepare("SELECT COALESCE(SUM(rows_read), 0) AS n FROM reads WHERE day = ? AND source = 'cron'").bind(today).first()).n;
+  const cronBefore = await cronRows();
+  const logBefore = workerLog.length;
+  const cron = await fetch(`${BASE}/cdn-cgi/handler/scheduled?cron=*/10+*+*+*+*`);
+  const stale = async () => (await db.prepare("SELECT COUNT(*) AS n FROM inflight WHERE key = 'reads-stale'").first()).n;
+  for (let k = 0; k < 40 && ((await stale()) > 0 || (await cronRows()) <= cronBefore); k++) await pause(250);
+  const logged = workerLog.slice(logBefore);
+  check(
+    "reads: past four fifths, the cron sweeps, skips the rest, and counts its own reads",
+    cron.status === 200 &&
+      (await stale()) === 0 &&
+      /the cron skips poll batches/.test(logged) &&
+      !/msgbatch_reads|poll batches [^,]*Error/.test(logged) &&
+      (await cronRows()) > cronBefore,
+    `cron ${cron.status}, stale ${await stale()}, log: ${logged.replace(/\s+/g, " ").slice(0, 200)}`,
+  );
+  await db.prepare("DELETE FROM rewrites WHERE batch = 'msgbatch_reads'").run();
+  killDev();
+  await new Promise((r) => setTimeout(r, 1500));
+  await startDev();
+}
 
 stop();
 if (failed) {
