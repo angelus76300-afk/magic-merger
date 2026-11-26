@@ -183,6 +183,8 @@ export interface HealthResponse {
   email?: boolean;
   // 4.5: a preview on the staging Worker, not the live game.
   staging?: boolean;
+  // The admin only: why the owner's account could not be read (the token still works without it).
+  ownerError?: string;
 }
 
 // Why a request was refused, when the game should say it its own way:
