@@ -128,7 +128,13 @@ function stubAnswer(n, system, user) {
     const parts = which
       ? (bad[Number(which[1])] ?? good)
       : `[${[0, 1, 2, 3].map((k) => `[-0.5, -0.5, ${k * 0.5}, 1, 1, 0.5, '${k % 2 ? "#8a7655" : "#a08a64"}', 'cyl', 'grain']`).join(", ")}, [-0.625, -0.625, 2, 1.25, 1.25, 1, '#4c5a80', 'cone'], [-0.125, -0.625, 0.25, 0.25, 0.125, 0.5, '#ffcf6b', 'glow']]`;
-    const models = calls ? Array.from({ length: calls }, (_, k) => ({ call: k + 1, parts })) : /may gain one/.test(user) ? [{ call: 0, parts }] : [];
+    // Only the calls it may redraw, when the message names them.
+    const only = /Redraw only these calls: ([\d, ]+),/.exec(user)?.[1].split(", ").map(Number);
+    const models = calls
+      ? (only ?? Array.from({ length: calls }, (_, k) => k + 1)).map((call) => ({ call, parts }))
+      : /may gain one/.test(user)
+        ? [{ call: 0, parts }]
+        : [];
     return JSON.stringify({ plan: "a stone column of courses under a slate cone, a lit door", models });
   }
   if (system.startsWith("You write the chronicle")) return "The mage came, and the village remembered.";
@@ -4112,6 +4118,11 @@ const signIn = async (key, count) => {
   const spawning =
     "const spell = {\n  *cast(w) {\n    w.model(w.x, w.y, (w.spawn('wolf', w.x, w.y), [[0, 0, 0, 1, 1, 2, '#888']]), { name: 'Bad Lamp 9' });\n  },\n};";
   await setCode("Bad Lamp 9", spawning);
+  // One call whose parts spawn a wolf, one plain: only the plain one is offered to the writer.
+  await liveSpell("Mixed Lamp", "minor");
+  const mixedCode =
+    "const spell = {\n  *cast(w) {\n    w.model(w.x, w.y, (w.spawn('wolf', w.x, w.y), [[0, 0, 0, 1, 1, 2, '#888']]), { name: 'Mixed Lamp' });\n    w.model(w.x + 2, w.y, [[0, 0, 0, 1, 1, 1, '#777']], { name: 'Mixed Lamp base' });\n  },\n};";
+  await setCode("Mixed Lamp", mixedCode);
   const wonderCode =
     "const spell = {\n  *cast(w) {\n    w.terraform(w.x, w.y, 4, 2);\n    w.spire(w.x, w.y, { height: 8, radius: 1.2, kind: 'glow' });\n  },\n};";
   const wid = Number(
@@ -4135,14 +4146,47 @@ const signIn = async (key, count) => {
   const b0 = batches.size;
   const started = await api("/api/admin/looks", {
     admin: true,
-    body: { keys: ["lamp post", "star lamp", ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => `bad lamp ${k}`), "plain spark"], wonders: [wid] },
+    body: { keys: ["lamp post", "star lamp", ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => `bad lamp ${k}`), "plain spark", "mixed lamp"], wonders: [wid] },
   });
   const sent = [...batches.values()].slice(b0).flat();
-  const modelOf = (name) => sent.find((r) => r.params.messages[0].content.includes(`: ${name}\n`))?.params.model;
+  const sentFor = (name) => sent.find((r) => r.params.messages[0].content.includes(`: ${name}\n`));
+  const modelOf = (name) => sentFor(name)?.params.model;
   check(
     "looks: a pilot by name queues the items that draw a model and the wonder, in one batch",
-    started.status === 200 && started.data.queued.length === 13 && started.data.batches.length === 1 && started.data.skipped.join() === "Plain Spark",
+    started.status === 200 &&
+      started.data.queued.length === 13 &&
+      started.data.batches.length === 1 &&
+      started.data.skipped.join() === "Bad Lamp 9,Plain Spark",
     JSON.stringify(started.data),
+  );
+  // 25 November 2026: 9 of 70 Opus looks were paid for and then refused, their old parts calling
+  // something. Such a call is not offered, and an item with no other is skipped, unpaid.
+  const lamp9 = await db.prepare("SELECT status, reason, estimate FROM looks WHERE key = 'bad lamp 9'").first();
+  check(
+    "looks: an item whose only call's parts spawn a wolf is skipped before the writer is asked, nothing held",
+    !sentFor("Bad Lamp 9") &&
+      lamp9?.status === "skipped" &&
+      /no model call it may redraw \(call 1: its parts are not only a look/.test(lamp9.reason) &&
+      !lamp9.estimate,
+    JSON.stringify(lamp9),
+  );
+  const mixedAsk = sentFor("Mixed Lamp")?.params.messages[0].content ?? "";
+  check(
+    "looks: of a call that spawns and a plain one, only the plain one is offered and marked",
+    /Redraw only these calls: 2,/.test(mixedAsk) && mixedAsk.includes("/* MODEL CALL 2 */") && !mixedAsk.includes("/* MODEL CALL 1 */"),
+    mixedAsk.slice(-600),
+  );
+  // The answer's length grows with the looks it may send, and the hold covers all of it.
+  const held = (await db.prepare("SELECT key, model, estimate FROM looks WHERE status = 'pending'").all()).results;
+  const heldOf = (key) => held.find((r) => r.key === key)?.estimate ?? 0;
+  check(
+    "looks: the writer may answer at length by its looks, and the hold covers the longest answer",
+    sentFor("Mixed Lamp")?.params.max_tokens === 16000 &&
+      sentFor("Lamp Post")?.params.max_tokens === 22000 &&
+      heldOf("star lamp") >= (22000 * 20 * 0.5) / 1e6 &&
+      heldOf("lamp post") >= (22000 * 10 * 0.5) / 1e6 &&
+      heldOf("mixed lamp") >= (16000 * 10 * 0.5) / 1e6,
+    JSON.stringify({ held, max: sent.map((r) => r.params.max_tokens) }),
   );
   check(
     "looks: Sonnet writes every tier's look, Opus a cosmic one's",
@@ -4158,21 +4202,28 @@ const signIn = async (key, count) => {
       asked.params.system[0].cache_control?.ttl === "1h" &&
       asked.params.system[0].text.includes("Silhouette first"),
   );
-  check("looks: an estimate is held while the answers are pending", started.data.estimate > 0 && started.data.estimate < 1, `${started.data.estimate}`);
+  check("looks: an estimate is held while the answers are pending", started.data.estimate > 0 && started.data.estimate < 3, `${started.data.estimate}`);
   const again = await api("/api/admin/looks", { admin: true, body: { keys: ["lamp post"] } });
   check("looks: nothing is asked twice", again.data.queued.length === 0 && looksAsked.length === asked0, JSON.stringify(again.data));
   const busy = await api("/api/admin/refresh", { admin: true, body: { forms: true, dry: true } });
   check("looks: the rebuild by kind waits while a look is in flight", busy.status === 409, `${busy.status}`);
   const polled = await api("/api/admin/looks-poll", { admin: true, body: {} });
-  check("looks: the answers come back, three spliced and ten refused", polled.data.done === 3 && polled.data.failed === 10, JSON.stringify(polled.data));
+  check("looks: the answers come back, four spliced and nine refused", polled.data.done === 4 && polled.data.failed === 9, JSON.stringify(polled.data));
   const bad = (await db.prepare("SELECT key, status, reason FROM looks WHERE key LIKE 'bad lamp %' ORDER BY key").all()).results;
   check(
-    "looks: a look that is not plain data is refused (a program's name, the target, an endless loop, a billion loop, Math.random, w, nothing drawable, parts that act)",
-    bad.length === 10 && bad.every((b) => b.status === "failed" && /every look was refused/.test(b.reason)),
+    "looks: a look that is not plain data is refused (a program's name, the target, an endless loop, a billion loop, Math.random, w, nothing drawable)",
+    bad.length === 10 && bad.slice(0, 9).every((b) => b.status === "failed" && /every look was refused/.test(b.reason)),
     JSON.stringify(bad),
   );
-  const spawner = bad.find((b) => b.key === "bad lamp 9");
-  check("looks: a call whose old parts spawn a wolf keeps its look and its wolf", /not only a look/.test(spawner?.reason ?? ""), JSON.stringify(spawner));
+  const mixed = await db.prepare("SELECT status, refused, old_code, new_code FROM looks WHERE key = 'mixed lamp'").first();
+  check(
+    "looks: a call whose old parts spawn a wolf keeps its look and its wolf, the plain one beside it is redrawn",
+    mixed?.status === "candidate" &&
+      !mixed.refused &&
+      mixed.new_code.includes("(w.spawn('wolf', w.x, w.y), [[0, 0, 0, 1, 1, 2, '#888']])") &&
+      !mixed.new_code.includes("[[0, 0, 0, 1, 1, 1, '#777']]"),
+    JSON.stringify(mixed),
+  );
   check(
     "looks: a look with no part the island can draw is refused ([[ ]], junk, 1e999)",
     ["bad lamp 6", "bad lamp 7", "bad lamp 8"].every((k) => /can be drawn|too large|not a list/.test(bad.find((b) => b.key === k)?.reason ?? "")),

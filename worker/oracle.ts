@@ -203,6 +203,8 @@ export interface LooksItem {
   id: string;
   model: string;
   request: LooksPrompt;
+  // The answer's longest length; the hold covers all of it at the batch price (worker/looks.ts writerMaxTokens).
+  maxTokens?: number;
 }
 
 export interface LooksAnswer {
@@ -614,7 +616,15 @@ export class ClaudeOracle implements Oracle {
     const batch = await this.client.beta.messages.batches.create({
       requests: items.map((item) => ({
         custom_id: item.id,
-        params: requestParams(item.model, "medium", LOOKS_SYSTEM, [{ role: "user", content: looksUserMessage(item.request) }], LOOKS_SCHEMA, 16000, "1h"),
+        params: requestParams(
+          item.model,
+          "medium",
+          LOOKS_SYSTEM,
+          [{ role: "user", content: looksUserMessage(item.request) }],
+          LOOKS_SCHEMA,
+          item.maxTokens ?? 16000,
+          "1h",
+        ),
       })),
     });
     return batch.id;
@@ -957,7 +967,11 @@ export class MockOracle implements Oracle {
       usd: 0,
       answer: {
         plan: "a stone column under a cone, a glowing door",
-        models: it.request.calls ? Array.from({ length: it.request.calls }, (_, k) => ({ call: k + 1, parts })) : it.request.mayAdd ? [{ call: 0, parts }] : [],
+        models: it.request.calls
+          ? (it.request.redraw ?? Array.from({ length: it.request.calls }, (_, k) => k + 1)).map((call) => ({ call, parts }))
+          : it.request.mayAdd
+            ? [{ call: 0, parts }]
+            : [],
       },
     }));
   }
