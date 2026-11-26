@@ -18,8 +18,8 @@
 //    A program goes live as a new version (the old one kept, so votes can roll it back); a
 //    wonder's code is replaced, the old code kept in the row.
 //
-// Money: LOOKS_BUDGET_USD ($25) in all, over the whole revamp, and LOOKS_NIGHT_USD ($3) in any
-// 24 hours; both checked before every call, the writer's estimate held until it is billed. The
+// Money: LOOKS_BUDGET_USD ($25, at most $35 for the promotional credits of 25 November 2026) in all, over the whole revamp, and LOOKS_NIGHT_USD in any 24 hours
+// ($3 by default, at most the whole budget); both checked before every call, the writer's estimate held until it is billed. The
 // revamp's spend is its own: the game's monthly budget does not count it (ledger.ts hold), and
 // nothing but these calls counts against it. LOOKS ("off" by default) turns it on: "pilot" lets
 // the admin start a pilot by name, "bulk" lets the nightly cron start the night's share too.
@@ -61,14 +61,19 @@ export function looksMode(env: LooksEnv): "off" | "pilot" | "bulk" {
   return env.LOOKS === "pilot" || env.LOOKS === "bulk" ? env.LOOKS : "off";
 }
 
+// The most LOOKS_BUDGET_USD may say: 25 for the revamp, 35 while the promotional credits last
+// (the owner, 25 November 2026: "even use stronger models for better results where possible").
+export const LOOKS_BUDGET_CEILING = 35;
+
 export function looksBudget(env: LooksEnv): number {
   const v = Number(env.LOOKS_BUDGET_USD);
-  return Number.isFinite(v) && v >= 0 ? Math.min(v, 25) : 25;
+  return Number.isFinite(v) && v >= 0 ? Math.min(v, LOOKS_BUDGET_CEILING) : 25;
 }
 
 export function looksNightBudget(env: LooksEnv): number {
+  // At most the revamp's whole budget (25 November 2026: the whole $25 may go in one day).
   const v = Number(env.LOOKS_NIGHT_USD);
-  return Number.isFinite(v) && v >= 0 ? Math.min(v, 3) : 3;
+  return Number.isFinite(v) && v >= 0 ? Math.min(v, looksBudget(env)) : 3;
 }
 
 // Sonnet 5.5 writes every tier's look, Opus 5.5 a cosmic one's; Sonnet judges.
@@ -196,12 +201,15 @@ async function bulkOrder(db: D1Database, limit: number): Promise<{ keys: string[
     .prepare(`SELECT w.id FROM wonders w WHERE w.status = 'live' AND NOT EXISTS (${ASKED_WONDER}) ORDER BY w.id LIMIT ?`)
     .bind(limit)
     .all<{ id: number }>();
+  // The casts are counted in one pass (casts has no index on pid: a count per item read the whole
+  // table once per item, 22 million rows on a library of 1,500, scripts/cron-reads-test.mjs).
   const keys = await db
     .prepare(
       `SELECT s.key FROM spells s JOIN elements e ON e.key = s.key
+         LEFT JOIN (SELECT pid, COUNT(*) AS n FROM casts GROUP BY pid) c ON c.pid = s.pid
        WHERE s.pid IS NOT NULL AND NOT EXISTS (${ASKED_KEY})
        ORDER BY CASE e.tier WHEN 'cosmic' THEN 0 WHEN 'legendary' THEN 1 ELSE 2 END,
-         (SELECT COUNT(*) FROM casts c WHERE c.pid = s.pid) DESC, s.key LIMIT ?`,
+         COALESCE(c.n, 0) DESC, s.key LIMIT ?`,
     )
     .bind(limit * 3)
     .all<{ key: string }>();

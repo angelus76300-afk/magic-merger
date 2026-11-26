@@ -478,7 +478,7 @@ function finishSurvey(world: World, s: State, sv: Survey): void {
 // few cells ahead of the nearest cell, or at that cell when off the road.
 // The road is one with an end near the destination, and either its other
 // end near the walker or a cell of it close by. False with no such road,
-// near the end, or before a bridge not built yet.
+// near the end, or cut on the way by a bridge not built yet.
 export function alongRoad(world: World, x: number, y: number, tx: number, ty: number, out: { x: number; y: number }): boolean {
   if (Math.hypot(tx - x, ty - y) < 12) return false;
   const near = (px: number, py: number, qx: number, qy: number) => Math.hypot(px - qx, py - qy) < VILLAGE_REACH;
@@ -500,16 +500,16 @@ export function alongRoad(world: World, x: number, y: number, tx: number, ty: nu
     // Already nearer the end than the road would take it: no use.
     if (Math.abs(best - (forward ? r.cells.length - 1 : 0)) < 4) return false;
     const dir = forward ? 1 : -1;
+    // A road cut by a bridge not built yet does not go there (25 November, found by ai): it led
+    // the walker to the water and no further, there it was let go, and a few steps along its own
+    // way round it was sent back to the water. On seed 16 of the fire and ruins soak villagers
+    // rocked like that at the shore of a lake until they gave home up.
+    let cut = false;
+    for (let t = best; t >= 0 && t < r.cells.length && !cut; t += dir) cut = r.decks[t] !== LAND && world.cover[r.cells[t]] !== C.BRIDGE;
+    if (cut) continue;
     let k = best;
-    if (bestD <= 2) {
-      // On it: a few cells on, never past water without planks.
-      for (let t = 0; t < 6; t++) {
-        const next = k + dir;
-        if (next < 0 || next >= r.cells.length) break;
-        if (r.decks[next] !== LAND && world.cover[r.cells[next]] !== C.BRIDGE) return t > 0 ? aimAt(world, r.cells[k], out) : false;
-        k = next;
-      }
-    }
+    // On it: a few cells on.
+    if (bestD <= 2) k = Math.max(0, Math.min(r.cells.length - 1, k + dir * 6));
     return aimAt(world, r.cells[k], out);
   }
   return false;

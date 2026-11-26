@@ -52,7 +52,8 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 60 since 25 November 2026: npm test and test:worker passed 45 minutes on two runs in a row.
+    timeout-minutes: 60
     steps:
       # Started by the Gate: this commit must be the head it named, of a pull request of this repository.
       # Keyed on the input, never on the event's name: the Deploy workflow calls this one, and in a called
