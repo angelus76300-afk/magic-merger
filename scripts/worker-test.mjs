@@ -4656,7 +4656,7 @@ check("wrangler dev never restarted the Worker under a request", restarts === 0,
       (await cronRows()) > cronBefore,
     `cron ${cron.status}, stale ${await stale()}, log: ${logged.replace(/\s+/g, " ").slice(0, 200)}`,
   );
-  await db.prepare("DELETE FROM rewrites WHERE batch = 'msgbatch_reads'").run();
+  await db.prepare("UPDATE rewrites SET status = 'failed' WHERE batch = 'msgbatch_reads'").run();
   killDev();
   await new Promise((r) => setTimeout(r, 1500));
   await startDev();

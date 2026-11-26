@@ -131,7 +131,7 @@ import {
 } from "./ledger";
 
 import { checkReport, pollCheck, startCheck } from "./promise";
-import { ADMIN_SHARE, CRON_SHARE, Meter, deferring, metered, readsLimit, readsReport, readsToday, recordReads, type ReadsReport } from "./meter";
+import { ADMIN_SHARE, CRON_SHARE, Meter, deferring, metered, readsLimit, readsReport, readsToday, recordReads } from "./meter";
 import { LooksError, judgeLooks, looksBusy, looksCandidates, looksMode, looksPool, looksReport, looksVerdict, pollLooks, startLooks } from "./looks";
 
 export interface Env {
@@ -372,7 +372,8 @@ const handler = {
           return json(await programInfo(env, url.searchParams.get("name") ?? ""));
         }
         if (request.method === "GET" && url.pathname === "/api/spend" && admin) {
-          return json(await spendReport(env));
+          // 26 November 2026: with today's rows read against D1's daily limit (worker/meter.ts).
+          return json({ ...(await spendReport(env)), reads: await readsReport(env.DB, env.READS_DAY_LIMIT) });
         }
         if (request.method === "POST" && url.pathname === "/api/perf") {
           const kept = await recordPerf(env.DB, payer.invite, await readBody<PerfSample>(request), request.headers.get("user-agent") ?? "");
@@ -754,7 +755,7 @@ async function handleAccount(request: Request, url: URL, env: Env, session: Sess
 }
 
 // The month so far, call by call, for the admin badge and `/api/spend`.
-async function spendReport(env: Env): Promise<SpendResponse & { reads: ReadsReport }> {
+async function spendReport(env: Env): Promise<SpendResponse> {
   const now = new Date();
   const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
@@ -770,8 +771,6 @@ async function spendReport(env: Env): Promise<SpendResponse & { reads: ReadsRepo
     today: round(calls.reduce((sum, c) => sum + c.today, 0)),
     budget: budget(env),
     calls,
-    // 26 November 2026: today's rows read against D1's daily limit (worker/meter.ts).
-    reads: await readsReport(env.DB, env.READS_DAY_LIMIT),
   };
 }
 
