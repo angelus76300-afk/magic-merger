@@ -1,0 +1,40 @@
+[
+  {
+    "quality": "high",
+    "name": "temperate-lakes-7",
+    "shot": "lake-look",
+    "at": {
+      "x": 66.5,
+      "y": 95.5
+    },
+    "body": {
+      "size": 2677,
+      "maxD": 14.61,
+      "deepX": 46.5,
+      "deepY": 65.5,
+      "midX": 67.5,
+      "midY": 95.5
+    },
+    "file": "docs/measurements/lake-rim-27nov/temperate-lakes-7-lake-look-high-after.png",
+    "sha": "04f3b558dfa8a06c"
+  },
+  {
+    "quality": "high",
+    "name": "temperate-lakes-7",
+    "shot": "lake-low",
+    "at": {
+      "x": 46.5,
+      "y": 65.5
+    },
+    "body": {
+      "size": 2677,
+      "maxD": 14.61,
+      "deepX": 46.5,
+      "deepY": 65.5,
+      "midX": 67.5,
+      "midY": 95.5
+    },
+    "file": "docs/measurements/lake-rim-27nov/temperate-lakes-7-lake-low-high-after.png",
+    "sha": "8d3fd2137fded34b"
+  }
+]

@@ -640,6 +640,16 @@ export function isBed(f: FineCells, c: number): boolean {
   return f.inside[c] === 1 && f.wet[c] === 1 && f.water[c] > -1e8 && f.lava[c] === 0 && f.natural[c] === 1;
 }
 
+// A lake's rim (27 November, the owner: "Look at how bad the borders look now!"): where sand meets
+// grass at a lake's edge and on its bed, the border between grounds was drawn in whole-cell stairs,
+// the blend of two grounds skipping every cell under water. A cell of a lake's bed (not the sea's,
+// not ice) now takes part in the blend like dry ground, with its dry neighbours and with other cells
+// of the bed. Off (LAKE_RIM.on false), as before.
+export const LAKE_RIM = { on: true };
+function blendsWet(f: FineCells, c: number): boolean {
+  return !f.wet[c] || (LAKE_RIM.on && isBed(f, c) && f.ice[c] === 0 && f.wlake[c] > 0);
+}
+
 // The waterline in eighths (18 November). Which side of the line where water meets land a column
 // is on, by a smooth map of which cells are water (shoreMask): 1 at a water cell's middle, 0 at a dry
 // one's, in between a Catmull-Rom curve over the 4 by 4 cells round the column, plus a little wobble
@@ -1001,8 +1011,8 @@ export function buildFineTile(
               src = n;
             }
           } else if (
-            !f.wet[c] &&
-            !f.wet[n] &&
+            blendsWet(f, c) &&
+            blendsWet(f, n) &&
             f.blends[c] &&
             f.blends[n] &&
             (f.ground[n] !== f.ground[c] || f.tone[n] !== f.tone[c]) &&
@@ -1012,7 +1022,7 @@ export function buildFineTile(
             // Two grounds that meet: their border wanders up to almost half a cell either way,
             // the same line seen from both sides. One ground in two tones too (21 November, the
             // owner: "still some squares that do not meld together"), the mesa's sand beside the
-            // desert's, a swamp's grass beside a meadow's.
+            // desert's, a swamp's grass beside a meadow's. A lake's bed too (blendsWet), not the sea's.
             const over = f.ground[c] !== f.ground[n] ? f.ground[c] > f.ground[n] : f.tone[c] > f.tone[n];
             // A road's edge wanders less (ROAD_WANDER): softened, never so far it pinches the road.
             const reach = f.ground[c] === G.ROAD || f.ground[n] === G.ROAD ? ROAD_WANDER : 0.45;

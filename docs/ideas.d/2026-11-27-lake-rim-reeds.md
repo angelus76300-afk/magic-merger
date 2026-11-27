@@ -1,0 +1,3 @@
+section: Backlog
+
+- **Reeds where a lake's sand turns to grass** (the designer's idea, 2026-11-27; lens: what the player feels, a shore that looks lived in). Now that sand and grass meet on a lake's shelf in a winding line, a few reeds could grow along that line in the shallows, a voxel or two above the water. What the player feels: the lake's edge is a place with plants, not a colour change; a Drought spell that lowers the water leaves the reeds stranded, a Flood drowns them. What it adds: a living detail on every temperate and swamp lake, and a visible trace of water spells. Cost: no paid calls; baked into the fine land like the weed (a few triangles a cell, capped a chunk as weed is), only in eighths on high. Claude.
