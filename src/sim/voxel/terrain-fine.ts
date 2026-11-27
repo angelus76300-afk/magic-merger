@@ -1132,9 +1132,11 @@ export function buildFineTile(
         const weed = WEEDS[s];
         // Weed and stones take the bed's colour under them (darkened by the bed's depth, not by their
         // own top's), mixed toward their own.
-        const bedTop = weed ? h0 - RAISE[s] : h0;
         if (FLOOD[s] < 0 && c >= 0 && f.wlake[c] > 0) {
-          const dark = lakeBedDark((f.water[c] - bedTop * Q) / HEIGHT_V, f.wlake[c]);
+          // By the depth eased between cells (lakeBedDepth), not the column's own: a bed's steps drew
+          // squares a cell wide (26 November).
+          const [deep, share] = lakeBedDepth(f, c, (sx0 + k + 0.5) / sub, (sy0 + j + 0.5) / sub);
+          const dark = lakeBedDark(deep, share, LAKE_BED_STEPS);
           if (dark > 0) C[s] = mixColor(C[s], scaleColor(f.wdeep[c], LAKE_BED_DEEP), dark);
         }
         if (weed) {
@@ -1582,9 +1584,57 @@ const LAKE_BED_CLEAR = 0.5;
 const LAKE_BED_EASE = 3;
 const LAKE_BED_DARK = 0.87;
 export const LAKE_BED_DEEP = 0.32;
-export function lakeBedDark(d: number, share: number): number {
+export function lakeBedDark(d: number, share: number, steps = 16): number {
   if (share <= 0 || d <= LAKE_BED_CLEAR) return 0;
-  return Math.round((1 - Math.exp(-(d - LAKE_BED_CLEAR) / LAKE_BED_EASE)) * LAKE_BED_DARK * share * 16) / 16;
+  return Math.round((1 - Math.exp(-(d - LAKE_BED_CLEAR) / LAKE_BED_EASE)) * LAKE_BED_DARK * share * steps) / steps;
+}
+// The fine land's bed in LAKE_BED_STEPS shades: its depth is eased (lakeBedDepth), so a shade's step
+// is a thin contour, not a cell's edge, and a 32nd keeps it under a few 255ths of light.
+export const LAKE_BED_STEPS = 32;
+// A lake's depth and lakeShare at the point (px, py) of the island (in cells), for its bed's shade
+// (26 November, the owner's screenshot: a lake's floor in "big blocky squares" of dark and light).
+// Each column was darkened by its own depth under the surface, and a bed steps a voxel or more from
+// cell to cell, so each step drew a square a cell wide a shade apart, and a pit a cell wide a dark
+// hole. The depth here is the cells' (their surface over their own height), each the mean of the 3 by
+// 3 cells round it, eased between the middles of the four cells round the point: the shade follows
+// how deep the lake is there, not each step of its bed. A cell that is not a lake's bed (the shore)
+// counts as under the point's own cell's surface by as much as its ground is, none if it stands
+// above it, so the shade fades toward the shore and is the same on both sides of a cell's edge.
+// `c` is the point's own cell, a lake's bed.
+export function lakeBedDepth(f: FineCells, c: number, px: number, py: number): [number, number] {
+  const u = px - 0.5;
+  const v = py - 0.5;
+  const x0 = Math.floor(u);
+  const y0 = Math.floor(v);
+  const fx = u - x0;
+  const fy = v - y0;
+  const level = f.water[c];
+  let d = 0;
+  let share = 0;
+  for (let q = 0; q < 4; q++) {
+    const a = q & 1;
+    const b = q >> 1;
+    const wgt = (a ? fx : 1 - fx) * (b ? fy : 1 - fy);
+    if (wgt === 0) continue;
+    let sd = 0;
+    let ss = 0;
+    for (let j = -1; j <= 1; j++)
+      for (let i = -1; i <= 1; i++) {
+        const x = x0 + a + i;
+        const y = y0 + b + j;
+        const k = x >= f.x0 - 3 && y >= f.y0 - 3 && x < f.x1 + 3 && y < f.y1 + 3 ? fineAt(f, x, y) : -1;
+        if (k >= 0 && isBed(f, k) && f.wlake[k] > 0) {
+          sd += (f.water[k] - f.raw[k]) / HEIGHT_V;
+          ss += f.wlake[k];
+        } else {
+          sd += k >= 0 && f.inside[k] ? Math.max(0, (level - f.raw[k]) / HEIGHT_V) : (level - f.raw[c]) / HEIGHT_V;
+          ss += f.wlake[c];
+        }
+      }
+    d += (wgt * sd) / 9;
+    share += (wgt * ss) / 9;
+  }
+  return [d, share];
 }
 // Water cells whose levels are at most LEVEL_JOIN apart (scene units) share their corners' level.
 const LEVEL_JOIN = 1.2;
@@ -2297,8 +2347,11 @@ function wallFaces(
     return n;
   }
   // The small steps of a water bed: its own colour and nearly its top's light, so the bed under the
-  // water reads as one smooth floor and not as lines of darker steps.
-  if (T - low <= 2 * sub && (isBed(f, c) || FLOOD[s] >= 0) && low > bottom) {
+  // water reads as one smooth floor and not as lines of darker steps. A lake's bed so at any height
+  // between two of its columns (26 November): a taller step drew its soil and stone, not darkened with
+  // the floor, as light blocks across the dark deep floor.
+  const lakeStep = WET[s] & WET[s + DX[d] + DY[d] * SW] && isBed(f, c) && f.wlake[c] > 0 && FLOOD[s] < 0;
+  if ((T - low <= 2 * sub || lakeStep) && (isBed(f, c) || FLOOD[s] >= 0) && low > bottom) {
     face(low, T, C[s]);
     FACES[n - 1].light = 1 - 0.25 * (1 - light);
     FACES[n - 1].foot = 1;
