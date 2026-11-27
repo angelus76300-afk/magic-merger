@@ -38,7 +38,11 @@
     // 59 from 25 November 2026, for the promotional credits ($68, ending on 26 November, the
     // owner in the lead session: "still within 68"): $33.05 of room over November's $25.95,
     // plus the looks' $34.27 left apart from it, is $67.32. Back to 48 on 26 November.
-    "BUDGET_USD": "59",
+    // 27 November: 55 for the rest of November, not 48. The game's own month already stood at
+    // $49.9, so 48 would refuse every player's new spell until 1 December; 55 leaves about $5 for
+    // players over 3 days (about $0.25 a day lately) and keeps the key under its $75 limit.
+    // Back to 48 on 1 December.
+    "BUDGET_USD": "55",
     // 3.4. Each invite's monthly allowance; the admin can top one up.
     "INVITE_CAP_USD": "5",
     // 3.3. Looks at three Spell Lab frames and guesses the vote.
@@ -54,11 +58,11 @@
     // 42 from 25 November 2026, the promotional credits: rewrites of the items the
     // promise check flagged (312 of 503), inside BUDGET_USD (about $24 of room over
     // the month's $35). Back to 8 on 26 November.
-    "REFRESH_BUDGET_USD": "42",
+    "REFRESH_BUDGET_USD": "8",
     // 25 November 2026: the refresh writes every tier with SPELL_MODEL (Opus), not Haiku, for the
     // promotional credits; players' merges, first casts and votes keep SPELL_MODEL_SMALL. Back to
     // "0" after them, on 26 November.
-    "REFRESH_MODEL_ALL_TIERS": "1",
+    "REFRESH_MODEL_ALL_TIERS": "0",
     // 3.4.1. The repository the feedback routine works on. With the secrets
     // GITHUB_TOKEN, ROUTINE_URL and ROUTINE_TOKEN, the admin can send an idea
     // to Claude from the Feedback tab (docs/FEEDBACK.md). A fork sets its own.
@@ -73,7 +77,7 @@
     // 25 November 2026, the promise check (worker/promise.ts, the owner: "an Opus check of the
     // most-cast spells"): dollars a month, inside BUDGET_USD, through the Batch API. Back to
     // "0" (off) after the promotional credits, on 26 November.
-    "CHECK_BUDGET_USD": "15",
+    "CHECK_BUDGET_USD": "0",
     // 5.2.5, the looks revamp (worker/looks.ts; the owner, 16 November: "looks: yes, up to $25").
     // Off until the lead session turns it on after the pilot's gate: "pilot" lets the admin
     // start looks by name, "bulk" the nightly share too. Its own budget, apart from BUDGET_USD:
@@ -81,14 +85,16 @@
     // Opus writes a cosmic item's.
     // 25 November 2026 (the promotional credits, the owner: "looks: go without usual limits (still
     // within 68)"): bulk, and the whole $25 may go in one day; back to 3 a day after them.
-    "LOOKS": "bulk",
+    // 27 November: "pilot" (no nightly share) until 1 December: November's total stood at $64.88
+    // of the key's $75, so the $20 left in the looks budget could have run the key dry.
+    "LOOKS": "pilot",
     // 35 and Opus for every tier from 25 November 2026, for the promotional credits (the owner:
     // "even use stronger models for better results where possible"; the pilot kept 7 of 30 new
     // Sonnet looks). $10 moved here from BUDGET_USD, so the total stays $67.32. Back to Sonnet
     // and 25 on 26 November.
-    "LOOKS_BUDGET_USD": "35",
-    "LOOKS_NIGHT_USD": "35",
-    "LOOKS_MODEL": "claude-opus-5-5",
+    "LOOKS_BUDGET_USD": "25",
+    "LOOKS_NIGHT_USD": "3",
+    "LOOKS_MODEL": "claude-sonnet-5-5",
     "LOOKS_MODEL_COSMIC": "claude-opus-5-5",
     "LOOKS_JUDGE_MODEL": "claude-sonnet-5-5",
   },
