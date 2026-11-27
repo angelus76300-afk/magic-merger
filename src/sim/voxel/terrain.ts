@@ -849,6 +849,12 @@ export class Terrain {
       const { world } = this;
       return x >= 0 && y >= 0 && x < world.w && y < world.h && this.naturalAt(y * world.w + x);
     },
+    way: (x, y) => {
+      const { world } = this;
+      if (x < 0 || y < 0 || x >= world.w || y >= world.h) return false;
+      const g = world.ground[y * world.w + x];
+      return g === G.PATH || g === G.ROAD;
+    },
   };
 
   // Snow or a mountain's bare rock: a step of up to STEEP_LINK voxels to such a neighbour curves

@@ -143,6 +143,7 @@ export function sizeFineCells(f: FineCells, x0: number, y0: number, x1: number, 
   f.h = h;
   f.bottom = bottom;
   f.bw = x1 - x0 + 6;
+  outlineMark(f);
   const n = f.bw * (y1 - y0 + 6);
   if (f.top.length < n) {
     f.inside = new Uint8Array(n);
@@ -345,6 +346,8 @@ export interface LandRead {
   // Wet with any fluid, and natural ground (not built), on the island.
   wet(x: number, y: number): boolean;
   natural(x: number, y: number): boolean;
+  // A trodden path or a dirt road (a cliff's outline never moves it).
+  way(x: number, y: number): boolean;
 }
 // Catmull-Rom weights for t in [0, 1], for the samples at -1, 0, 1, 2.
 function cr(t: number, w: number[]): void {
@@ -378,8 +381,17 @@ const BED_SPAN = 2;
 export function fieldHeight(land: LandRead, px: number, py: number): number {
   let cx = Math.floor(px);
   let cy = Math.floor(py);
-  // A cliff's corner cut on the diagonal (cliffCorner): the point read as its neighbour's land.
-  if (CLIFF_CORNER.on && GRAPHICS.steps) {
+  // A cliff on its own line (cliffOutline): the point read as the land of the neighbour it is drawn as.
+  if (CLIFF_OUTLINE.on && GRAPHICS.steps) {
+    const k = outlineTrade(outlineOfLand(land), px, py);
+    if (k >= 0) {
+      const dx = (k % 3) - 1;
+      const dy = Math.floor(k / 3) - 1;
+      if (dx) px = intoCell(px, (cx += dx));
+      if (dy) py = intoCell(py, (cy += dy));
+    }
+  } else if (CLIFF_CORNER.on && GRAPHICS.steps) {
+    // A cliff's corner cut on the diagonal (cliffCorner): the point read as its neighbour's land.
     const k = cliffCorner(cornerOfLand(land), cx, cy, px, py);
     if (k === 1) {
       cx += px - cx > 0.5 ? 1 : -1;
@@ -545,6 +557,421 @@ export function intoCell(p: number, c: number): number {
   return Math.max(c + CORNER_IN, Math.min(c + 1 - CORNER_IN, p));
 }
 
+// Cliffs on their own line (27 November, the owner: "cliffs: rebuild"; a prototype, off in the
+// game). A cliff too tall to curve stands on the cells' sides, so off the axes it was a sawtooth of
+// whole-cell notches, and cliffCorner cuts only a lone cell's corner. Here, for each level L between
+// the four cells round a lattice corner, the cell-edge outline of the cells at L or above becomes a
+// line through the middles of its unit edges, eased: where the outline runs as a staircase (of one
+// or two directions, one of them never two edges in a row) by the mean of four edge middles in a
+// row, which lies on the staircase's true line; elsewhere (a corner, a lone cell) by one Chaikin
+// pass. An axis-aligned wall stays exactly on the cells' side. A point is drawn at the low level
+// plus each step L whose line it lies inside, as the cell of the four round its nearest corner that
+// has that level, and read there by the field (fieldHeight, fieldFine) and the mesher alike, so
+// feet follow the drawing. Each wall is traced on its own (where two diagonal cells are high, the
+// low ones join), so a canyon a cell wide keeps its width. It reads cells within three of the
+// corner (a chunk's border): the same at any level of detail. Guards: only between cells that do
+// not join; a built or flat cell, a path or a road never changes; a tree's or crops' cell only
+// beyond OUTLINE_ANCHOR of its middle; a wet cell (water, lava) may take a dry cliff's land in its
+// corner, never the reverse; no cell's middle ever changes. Walls stay vertical. `sharpRun` (0 off):
+// a corner where two straight walls of at least that many cells meet stays sharp, for a mesa.
+export const CLIFF_OUTLINE = { on: false, wave: 0.08, period: 2.5, sharpRun: 0 };
+export const OUTLINE_OPEN = 0;
+export const OUTLINE_TREE = 1;
+export const OUTLINE_WET = 2;
+export const OUTLINE_FIXED = 3;
+// How far from a tree's or crops' middle (Chebyshev, cells) its cell keeps its land, and any cell.
+const OUTLINE_ANCHOR = 0.3;
+const OUTLINE_MIDDLE = 0.1;
+// What cliffOutline reads of a cell: its height, its kind (OUTLINE_OPEN dry open ground, _TREE dry
+// ground something stands on, _WET water or lava over natural ground, _FIXED built, flat, a path, a
+// road or off the island) and whether it is snow or bare rock.
+export interface OutlineRead {
+  top(x: number, y: number): number;
+  kind(x: number, y: number): number;
+  steep(x: number, y: number): boolean;
+}
+// The four ways from a lattice corner, y down: north, east, south, west.
+const OX = [0, 1, 0, -1];
+const OY = [-1, 0, 1, 0];
+// Which of the four cells round corner (X, Y) are at L or above: 1 north-west, 2 north-east, 4
+// south-west, 8 south-east.
+function outlineBits(r: OutlineRead, X: number, Y: number, L: number): number {
+  return (r.top(X - 1, Y - 1) >= L ? 1 : 0) | (r.top(X, Y - 1) >= L ? 2 : 0) | (r.top(X - 1, Y) >= L ? 4 : 0) | (r.top(X, Y) >= L ? 8 : 0);
+}
+// The outline's edge from a corner toward d, travelled with the high cells on the side where the
+// cross product is positive: 1 if it leaves the corner, -1 if it arrives, 0 if no outline runs there.
+function edgeWay(b: number, d: number): number {
+  const nw = b & 1;
+  const ne = (b >> 1) & 1;
+  const sw = (b >> 2) & 1;
+  const se = (b >> 3) & 1;
+  if (d === 0) return nw === ne ? 0 : ne ? 1 : -1;
+  if (d === 1) return ne === se ? 0 : se ? 1 : -1;
+  if (d === 2) return sw === se ? 0 : sw ? 1 : -1;
+  return nw === sw ? 0 : nw ? 1 : -1;
+}
+// The way out of a corner for the edge arriving from `din`, and the reverse (-1 if none). Where two
+// diagonal cells are high and two low, the low ones join (a canyon keeps its width).
+function wayOut(b: number, din: number): number {
+  if (b === 6) return din === 1 ? 0 : din === 3 ? 2 : -1;
+  if (b === 9) return din === 0 ? 3 : din === 2 ? 1 : -1;
+  if (edgeWay(b, din) !== -1) return -1;
+  for (let d = 0; d < 4; d++) if (edgeWay(b, d) === 1) return d;
+  return -1;
+}
+function wayIn(b: number, dout: number): number {
+  if (b === 6) return dout === 0 ? 1 : dout === 2 ? 3 : -1;
+  if (b === 9) return dout === 3 ? 0 : dout === 1 ? 2 : -1;
+  if (edgeWay(b, dout) !== 1) return -1;
+  for (let d = 0; d < 4; d++) if (edgeWay(b, d) === -1) return d;
+  return -1;
+}
+// A pass of the outline through a corner, eased: the points of its line (x, y pairs).
+type OutlinePass = number[];
+// tracePass's six edge middles M0..M5 (x, y), each edge's way of travel, and the five corners
+// between them (U2, U1, the corner itself between M2 and M3, W1, W2).
+const TM = new Float64Array(12);
+const TT = new Int8Array(6);
+const TC = new Int32Array(10);
+function tracePass(r: OutlineRead, X: number, Y: number, L: number, din: number, dout: number): boolean {
+  let cx = X;
+  let cy = Y;
+  let out = dout;
+  for (let k = 3; k <= 5; k++) {
+    TM[2 * k] = cx + OX[out] / 2;
+    TM[2 * k + 1] = cy + OY[out] / 2;
+    TT[k] = out;
+    TC[2 * (k - 1)] = cx;
+    TC[2 * (k - 1) + 1] = cy;
+    if (k === 5) break;
+    cx += OX[out];
+    cy += OY[out];
+    out = wayOut(outlineBits(r, cx, cy, L), (out + 2) % 4);
+    if (out < 0) return false;
+  }
+  cx = X;
+  cy = Y;
+  let into = din;
+  for (let k = 2; k >= 0; k--) {
+    TM[2 * k] = cx + OX[into] / 2;
+    TM[2 * k + 1] = cy + OY[into] / 2;
+    TT[k] = (into + 2) % 4;
+    if (k === 0) break;
+    cx += OX[into];
+    cy += OY[into];
+    TC[2 * (k - 1)] = cx;
+    TC[2 * (k - 1) + 1] = cy;
+    into = wayIn(outlineBits(r, cx, cy, L), (into + 2) % 4);
+    if (into < 0) return false;
+  }
+  return true;
+}
+// Whether the outline turns at corner (X, Y) (travelling ta in, tb out) between straight walls of
+// at least `run` edges (CLIFF_OUTLINE.sharpRun).
+function sharpTurn(r: OutlineRead, X: number, Y: number, L: number, ta: number, tb: number, run: number): boolean {
+  if (ta === tb) return false;
+  let cx = X;
+  let cy = Y;
+  for (let n = 1; n < run; n++) {
+    cx -= OX[ta];
+    cy -= OY[ta];
+    if (wayIn(outlineBits(r, cx, cy, L), ta) !== (ta + 2) % 4) return false;
+  }
+  cx = X;
+  cy = Y;
+  for (let n = 1; n < run; n++) {
+    cx += OX[tb];
+    cy += OY[tb];
+    if (wayOut(outlineBits(r, cx, cy, L), (tb + 2) % 4) !== tb) return false;
+  }
+  return true;
+}
+// A staircase: four edges in a row of one way, or of two ways at right angles with one of them never
+// twice in a row (a straight line's digital steps; a corner has both twice).
+function stairLike(a: number, b: number, c: number, d: number): boolean {
+  let p = -1;
+  let q = -1;
+  for (const t of [a, b, c, d]) {
+    if (t === p || t === q) continue;
+    if (p < 0) p = t;
+    else if (q < 0) q = t;
+    else return false;
+  }
+  if (q < 0) return true;
+  if ((p + 2) % 4 === q) return false;
+  const twice = (t: number) => (a === t && b === t) || (b === t && c === t) || (c === t && d === t);
+  return !(twice(p) && twice(q));
+}
+// The eased line of the pass tracePass found: two points for each of U1, the corner and W1.
+function easePass(r: OutlineRead, L: number): OutlinePass {
+  const run = CLIFF_OUTLINE.sharpRun;
+  const sharp = [false, false, false, false, false];
+  if (run > 0) for (let j = 0; j < 5; j++) sharp[j] = sharpTurn(r, TC[2 * j], TC[2 * j + 1], L, TT[j], TT[j + 1], run);
+  const pts: number[] = [];
+  for (let j = 1; j <= 3; j++) {
+    if (sharp[j]) {
+      pts.push(TC[2 * j], TC[2 * j + 1]);
+      continue;
+    }
+    if (!sharp[j - 1] && !sharp[j + 1] && stairLike(TT[j - 1], TT[j], TT[j + 1], TT[j + 2])) {
+      pts.push((TM[2 * j - 2] + TM[2 * j] + TM[2 * j + 2] + TM[2 * j + 4]) / 4, (TM[2 * j - 1] + TM[2 * j + 1] + TM[2 * j + 3] + TM[2 * j + 5]) / 4);
+      continue;
+    }
+    const ax = TM[2 * j];
+    const ay = TM[2 * j + 1];
+    const bx = TM[2 * j + 2];
+    const by = TM[2 * j + 3];
+    pts.push(0.75 * ax + 0.25 * bx, 0.75 * ay + 0.25 * by, 0.25 * ax + 0.75 * bx, 0.25 * ay + 0.75 * by);
+  }
+  // Without repeated points.
+  const out: number[] = [pts[0], pts[1]];
+  for (let i = 2; i < pts.length; i += 2) {
+    const n = out.length;
+    if (Math.abs(pts[i] - out[n - 2]) > 1e-9 || Math.abs(pts[i + 1] - out[n - 1]) > 1e-9) out.push(pts[i], pts[i + 1]);
+  }
+  return out;
+}
+// Signed distance from (px, py) to a pass's line, positive on its high side; OUTLINE_AMP how far
+// from the axes its nearest piece runs (0 along an axis, 1 at 45 degrees), for the wave.
+let OUTLINE_AMP = 0;
+function passSide(p: OutlinePass, px: number, py: number): number {
+  const n = p.length / 2;
+  let best = Infinity;
+  let bi = -1;
+  let bt = 0;
+  for (let i = 0; i + 1 < n; i++) {
+    const ax = p[2 * i];
+    const ay = p[2 * i + 1];
+    const dx = p[2 * i + 2] - ax;
+    const dy = p[2 * i + 3] - ay;
+    const l2 = dx * dx + dy * dy;
+    if (l2 < 1e-12) continue;
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2));
+    const ex = ax + dx * t - px;
+    const ey = ay + dy * t - py;
+    const d2 = ex * ex + ey * ey;
+    if (d2 < best) {
+      best = d2;
+      bi = i;
+      bt = t;
+    }
+  }
+  if (bi < 0) return NaN;
+  const cross = (i: number) => (p[2 * i + 2] - p[2 * i]) * (py - p[2 * i + 1]) - (p[2 * i + 3] - p[2 * i + 1]) * (px - p[2 * i]);
+  const sx = p[2 * bi + 2] - p[2 * bi];
+  const sy = p[2 * bi + 3] - p[2 * bi + 1];
+  OUTLINE_AMP = Math.abs((2 * sx * sy) / (sx * sx + sy * sy));
+  // Nearest a point two pieces share: by the wedge they make.
+  const v = bt <= 1e-9 && bi > 0 ? bi : bt >= 1 - 1e-9 && bi + 2 < n ? bi + 1 : -1;
+  let inside: boolean;
+  if (v < 0) inside = cross(bi) > 0;
+  else {
+    const s1 = cross(v - 1) > 0;
+    const s2 = cross(v) > 0;
+    const turn = (p[2 * v] - p[2 * v - 2]) * (p[2 * v + 3] - p[2 * v + 1]) - (p[2 * v + 1] - p[2 * v - 1]) * (p[2 * v + 2] - p[2 * v]);
+    inside = turn > 0 ? s1 && s2 : s1 || s2;
+  }
+  const d = Math.sqrt(best);
+  return inside ? d : -d;
+}
+// A lattice corner's outlines: its four cells' heights (north-west, north-east, south-west,
+// south-east), the levels among them, and the passes of each step between two levels.
+interface CornerOutline {
+  tops: number[];
+  levels: number[];
+  passes: OutlinePass[][];
+}
+function cornerOutline(r: OutlineRead, X: number, Y: number): CornerOutline | null {
+  const tops = [r.top(X - 1, Y - 1), r.top(X, Y - 1), r.top(X - 1, Y), r.top(X, Y)];
+  const lo = Math.min(tops[0], tops[1], tops[2], tops[3]);
+  const hi = Math.max(tops[0], tops[1], tops[2], tops[3]);
+  if (hi - lo <= 1) return null;
+  if (hi - lo <= STEEP_LINK && r.steep(X - 1, Y - 1) && r.steep(X, Y - 1) && r.steep(X - 1, Y) && r.steep(X, Y)) return null;
+  // Two cells at least that may change.
+  let free = 0;
+  for (let q = 0; q < 4; q++) if (r.kind(X - 1 + (q & 1), Y - 1 + (q >> 1)) !== OUTLINE_FIXED) free++;
+  if (free < 2) return null;
+  const levels = [...new Set(tops)].sort((a, b) => a - b);
+  const passes: OutlinePass[][] = [];
+  for (let i = 1; i < levels.length; i++) {
+    const L = levels[i];
+    const b = outlineBits(r, X, Y, L);
+    const list: OutlinePass[] = [];
+    for (let d = 0; d < 4; d++) {
+      if (edgeWay(b, d) !== -1) continue;
+      const out = wayOut(b, d);
+      if (out >= 0 && tracePass(r, X, Y, L, d, out)) list.push(easePass(r, L));
+    }
+    passes.push(list);
+  }
+  return { tops, levels, passes };
+}
+// The level drawn at (px, py) by the outlines round its nearest lattice corner (X, Y), and in
+// OUTLINE_CELL which of the corner's four cells (0 north-west .. 3 south-east) is drawn there: the
+// one of that level nearest the point, its own on a tie.
+let OUTLINE_CELL = -1;
+function outlineLevel(o: CornerOutline, X: number, Y: number, px: number, py: number): number {
+  const { tops, levels, passes } = o;
+  const own = (px >= X ? 1 : 0) + (py >= Y ? 2 : 0);
+  let level = levels[0];
+  for (let i = 0; i < passes.length; i++) {
+    let near = NaN;
+    let far = Infinity;
+    let amp = 0;
+    for (const p of passes[i]) {
+      const s = passSide(p, px, py);
+      if (Math.abs(s) < far) {
+        far = Math.abs(s);
+        near = s;
+        amp = OUTLINE_AMP;
+      }
+    }
+    const step = levels[i + 1] - levels[i];
+    // No outline through the corner at this level: the point's own cell says.
+    if (Number.isNaN(near)) {
+      if (tops[own] >= levels[i + 1]) level += step;
+      continue;
+    }
+    const wave = (noise(px, py, CLIFF_OUTLINE.period, 73) - 0.5) * 2 * CLIFF_OUTLINE.wave * amp;
+    if (near + wave > 0) level += step;
+  }
+  let best = -1;
+  let gap = Infinity;
+  let dist = Infinity;
+  for (let q = 0; q < 4; q++) {
+    const g = Math.abs(tops[q] - level);
+    const cx = X - 1 + (q & 1);
+    const cy = Y - 1 + (q >> 1);
+    const ex = Math.max(cx - px, 0, px - cx - 1);
+    const ey = Math.max(cy - py, 0, py - cy - 1);
+    const dd = q === own ? -1 : ex * ex + ey * ey + ((q ^ own) === 3 ? 1e-6 : 0);
+    if (g < gap - 1e-9 || (Math.abs(g - gap) <= 1e-9 && dd < dist)) {
+      best = q;
+      gap = g;
+      dist = dd;
+    }
+  }
+  OUTLINE_CELL = best;
+  return level;
+}
+// The level drawn at the point (px, py), in cells, by the outlines: the cell's own where no cliff
+// runs near.
+export function cliffOutline(r: OutlineRead, px: number, py: number): number {
+  const X = Math.floor(px + 0.5);
+  const Y = Math.floor(py + 0.5);
+  const o = cornerOutline(r, X, Y);
+  return o ? outlineLevel(o, X, Y, px, py) : r.top(Math.floor(px), Math.floor(py));
+}
+// The cell the point (px, py) is drawn as, after the guards: -1 its own, else (dy + 1) * 3 + dx + 1
+// for its neighbour (dx, dy) away.
+function tradeOf(r: OutlineRead, o: CornerOutline | null, X: number, Y: number, px: number, py: number): number {
+  if (!o) return -1;
+  outlineLevel(o, X, Y, px, py);
+  const q = OUTLINE_CELL;
+  const cx = Math.floor(px);
+  const cy = Math.floor(py);
+  const own = (cx === X ? 1 : 0) + (cy === Y ? 2 : 0);
+  if (q < 0 || q === own) return -1;
+  const tx = X - 1 + (q & 1);
+  const ty = Y - 1 + (q >> 1);
+  const ko = r.kind(cx, cy);
+  const kt = r.kind(tx, ty);
+  if (ko === OUTLINE_FIXED || kt === OUTLINE_FIXED || kt === OUTLINE_WET) return -1;
+  const to = o.tops[own];
+  const tt = o.tops[q];
+  if (ko === OUTLINE_WET && tt <= to) return -1;
+  if (joins(tt - to, r.steep(cx, cy), r.steep(tx, ty))) return -1;
+  const m = Math.max(Math.abs(px - cx - 0.5), Math.abs(py - cy - 0.5));
+  if (m <= OUTLINE_MIDDLE || (ko === OUTLINE_TREE && m <= OUTLINE_ANCHOR)) return -1;
+  return (ty - cy + 1) * 3 + (tx - cx + 1);
+}
+export function outlineTrade(r: OutlineRead, px: number, py: number): number {
+  const X = Math.floor(px + 0.5);
+  const Y = Math.floor(py + 0.5);
+  return tradeOf(r, cornerOutline(r, X, Y), X, Y, px, py);
+}
+// The same on a chunk's cells, each corner's outlines kept until the cells are read again
+// (sizeFineCells).
+const OUTLINE_GEN = new WeakMap<FineCells, number>();
+const OUTLINE_MEMO = new WeakMap<FineCells, { gen: number; at: Map<number, CornerOutline | null> }>();
+const CELLS_OUTLINE = new WeakMap<FineCells, OutlineRead>();
+export function outlineOfCells(f: FineCells): OutlineRead {
+  let r = CELLS_OUTLINE.get(f);
+  if (!r) {
+    // Within the chunk and its border of three.
+    const at = (x: number, y: number) => fineAt(f, Math.max(f.x0 - 3, Math.min(f.x1 + 2, x)), Math.max(f.y0 - 3, Math.min(f.y1 + 2, y)));
+    r = {
+      top: (x, y) => {
+        const c = at(x, y);
+        return f.inside[c] ? f.top[c] : f.bottom;
+      },
+      kind: (x, y) => {
+        const c = at(x, y);
+        if (!f.inside[c] || !f.natural[c] || f.flat[c] || f.ground[c] === G.PATH || f.ground[c] === G.ROAD) return OUTLINE_FIXED;
+        if (f.wet[c]) return OUTLINE_WET;
+        return f.anchored[c] ? OUTLINE_TREE : OUTLINE_OPEN;
+      },
+      steep: (x, y) => f.steep[at(x, y)] === 1,
+    };
+    CELLS_OUTLINE.set(f, r);
+  }
+  return r;
+}
+function outlineMark(f: FineCells): void {
+  OUTLINE_GEN.set(f, (OUTLINE_GEN.get(f) ?? 0) + 1);
+}
+export function outlineTradeCells(f: FineCells, px: number, py: number): number {
+  const X = Math.floor(px + 0.5);
+  const Y = Math.floor(py + 0.5);
+  const gen = OUTLINE_GEN.get(f) ?? 0;
+  let memo = OUTLINE_MEMO.get(f);
+  if (!memo || memo.gen !== gen) {
+    memo = { gen, at: new Map() };
+    OUTLINE_MEMO.set(f, memo);
+  }
+  const r = outlineOfCells(f);
+  const key = (X + 4096) * 8192 + (Y + 4096);
+  let o = memo.at.get(key);
+  if (o === undefined) {
+    o = cornerOutline(r, X, Y);
+    memo.at.set(key, o);
+  }
+  return tradeOf(r, o, X, Y, px, py);
+}
+// The cell column (sx, sy) of 1 / sub is drawn as with the outlines on, -1 past the chunk's border.
+function drawnCell(f: FineCells, sx: number, sy: number, sub: number): number {
+  const px = (sx + 0.5) / sub;
+  const py = (sy + 0.5) / sub;
+  let cx = Math.floor(px);
+  let cy = Math.floor(py);
+  if (cx < f.x0 - 3 || cy < f.y0 - 3 || cx >= f.x1 + 3 || cy >= f.y1 + 3) return -1;
+  const k = outlineTradeCells(f, px, py);
+  if (k >= 0) {
+    cx += (k % 3) - 1;
+    cy += Math.floor(k / 3) - 1;
+  }
+  const c = fineAt(f, cx, cy);
+  return f.inside[c] ? c : -1;
+}
+// cliffOutline's reading of the island (LandRead, for groundAt).
+const LAND_OUTLINE = new WeakMap<LandRead, OutlineRead>();
+export function outlineOfLand(land: LandRead): OutlineRead {
+  let r = LAND_OUTLINE.get(land);
+  if (!r) {
+    r = {
+      top: (x, y) => land.top(x, y),
+      kind: (x, y) => {
+        if (!land.natural(x, y) || land.flat(x, y) || land.way(x, y)) return OUTLINE_FIXED;
+        if (land.wet(x, y)) return OUTLINE_WET;
+        return land.anchored(x, y) ? OUTLINE_TREE : OUTLINE_OPEN;
+      },
+      steep: (x, y) => land.steep(x, y),
+    };
+    LAND_OUTLINE.set(land, r);
+  }
+  return r;
+}
+
 // The gentle swell of open ground: about a tenth of a voxel either way, over patches several
 // cells wide (it was over three cells, and flat ground read as granular).
 export function swell(px: number, py: number): number {
@@ -567,6 +994,19 @@ export function fieldStep(h: number, px: number, py: number, sub: number): numbe
 export function fieldFine(f: FineCells, px: number, py: number): number {
   let cx = Math.floor(px);
   let cy = Math.floor(py);
+  // A cliff on its own line, as fieldHeight reads it.
+  if (CLIFF_OUTLINE.on && GRAPHICS.steps) {
+    if (cx >= f.x0 - 3 && cy >= f.y0 - 3 && cx < f.x1 + 3 && cy < f.y1 + 3) {
+      const k = outlineTradeCells(f, px, py);
+      if (k >= 0) {
+        const dx = (k % 3) - 1;
+        const dy = Math.floor(k / 3) - 1;
+        if (dx) px = intoCell(px, (cx += dx));
+        if (dy) py = intoCell(py, (cy += dy));
+      }
+    }
+    return fieldCell(f, cx, cy, px, py);
+  }
   // A cliff's corner cut on the diagonal, as fieldHeight reads it (the mesher has already moved its
   // columns into the cell they are drawn as: there this changes nothing).
   if (CLIFF_CORNER.on && GRAPHICS.steps && cx >= f.x0 - 2 && cy >= f.y0 - 2 && cx < f.x1 + 2 && cy < f.y1 + 2) {
@@ -579,6 +1019,10 @@ export function fieldFine(f: FineCells, px: number, py: number): number {
       py = intoCell(py, cy);
     }
   }
+  return fieldCell(f, cx, cy, px, py);
+}
+// fieldFine at (px, py) read as cell (cx, cy)'s land.
+function fieldCell(f: FineCells, cx: number, cy: number, px: number, py: number): number {
   const c = fineAt(f, cx, cy);
   const t = f.top[c];
   if (f.flat[c]) return t;
@@ -924,7 +1368,8 @@ export function buildFineTile(
   // ones on snow and rock, whose slopes (STEEP_LINK) climb up to three voxels a cell and meet a
   // neighbour's in steps of a voxel or more where three cells of different heights meet.
   const steepRiser = Math.max(RISER, 2 * sub);
-  const corner = steps && CLIFF_CORNER.on ? cornerOfCells(f) : null;
+  const outline = steps && CLIFF_OUTLINE.on;
+  const corner = steps && CLIFF_CORNER.on && !outline ? cornerOfCells(f) : null;
 
   for (let j = 0; j < SH; j++) {
     for (let k = 0; k < SW; k++) {
@@ -938,6 +1383,15 @@ export function buildFineTile(
       const py = (sy + 0.5) / sub;
       let qx = px;
       let qy = py;
+      // A cliff on its own line (cliffOutline): the column drawn as the land of the neighbour it falls
+      // in; the field reads the same (fieldFine at the column's own middle).
+      if (outline && cx >= f.x0 - 3 && cy >= f.y0 - 3 && cx < f.x1 + 3 && cy < f.y1 + 3) {
+        const ko = outlineTradeCells(f, px, py);
+        if (ko >= 0) {
+          cx += (ko % 3) - 1;
+          cy += Math.floor(ko / 3) - 1;
+        }
+      }
       // A cliff's corner cut on the diagonal (cliffCorner): the column drawn as its neighbour's land.
       if (corner && cx >= f.x0 - 2 && cy >= f.y0 - 2 && cx < f.x1 + 2 && cy < f.y1 + 2) {
         const kc = cliffCorner(corner, cx, cy, px, py);
@@ -977,7 +1431,7 @@ export function buildFineTile(
       const ly = Math.max(0, Math.min(sub - 1, sy - cy * sub));
       if (f.natural[c]) {
         // The secondary terrain map: slopes where the land rises one voxel, and water beds.
-        if (steps && !f.wet[c]) hgt = fieldStep(fieldFine(f, qx, qy), px, py, sub);
+        if (steps && !f.wet[c]) hgt = fieldStep(outline ? fieldFine(f, px, py) : fieldFine(f, qx, qy), px, py, sub);
         else if (steps && isBed(f, c)) hgt = bedStep(fieldFine(f, px, py), f.water[c], sub);
         let border = Infinity;
         let shore = false;
@@ -990,15 +1444,33 @@ export function buildFineTile(
           const n = fineAt(f, cx + DX[d], cy + DY[d]);
           if (!f.inside[n] || !f.natural[n]) continue;
           const dt = f.top[n] - t;
+          // With the cliffs on their own line (cliffOutline), the lip, its bevel and the foot are
+          // where the next columns toward this side are drawn as another cell's land, not at the
+          // cell's side: the cell that is (lip, n1 the next column, n2 the one after) and its step.
+          let lip = dt <= -2 && away === 0;
+          let lipN = n;
+          let lipAway = away;
+          let footN = dt >= 2 && af < 0.2 ? n : -1;
+          if (outline) {
+            const n1 = drawnCell(f, sx + DX[d], sy + DY[d], sub);
+            const n2 = drawnCell(f, sx + 2 * DX[d], sy + 2 * DY[d], sub);
+            const low = (m: number) => m >= 0 && m !== c && f.natural[m] === 1 && f.top[m] - t <= -2;
+            lip = low(n1);
+            lipN = lip ? n1 : low(n2) ? n2 : n;
+            lipAway = lip ? 0 : low(n2) ? 1 : BEVEL.length;
+            const high = (m: number) => m >= 0 && m !== c && f.natural[m] === 1 && f.top[m] - t >= 2;
+            footN = high(n1) ? n1 : sub === 8 && high(n2) ? n2 : -1;
+          }
           // A cliff's lip, broken in short runs.
-          if (steps && dt <= -2 && away === 0 && !f.wet[c] && !f.wet[n] && noise(px, py, 0.7, 2) > 0.62) hgt = Math.min(hgt, t * sub - Math.max(1, sub >> 3));
+          if (steps && lip && !f.wet[c] && !f.wet[lipN] && noise(px, py, 0.7, 2) > 0.62) hgt = Math.min(hgt, t * sub - Math.max(1, sub >> 3));
           // On snow and rock a cliff too tall to curve has its lip bevelled: three eighths down at
           // the edge, one the column after, so a peak's step reads as worn stone, not a block.
-          if (steps && f.steep[c] && dt <= -2 && !joins(dt, true, f.steep[n] === 1) && !f.wet[c] && !f.wet[n] && !f.anchored[c] && away < BEVEL.length)
-            hgt = Math.min(hgt, t * sub - Math.round((BEVEL[away] * sub) / 8));
+          const ld = f.top[lipN] - t;
+          if (steps && f.steep[c] && ld <= -2 && !joins(ld, true, f.steep[lipN] === 1) && !f.wet[c] && !f.wet[lipN] && !f.anchored[c] && lipAway < BEVEL.length)
+            hgt = Math.min(hgt, t * sub - Math.round((BEVEL[lipAway] * sub) / 8));
           if (f.wet[n] && !f.wet[c] && af < 0.3) shore = true;
           // At the foot of a cliff (not of a slope of snow or rock, which curves).
-          if (dt >= 2 && af < 0.2 && !f.wet[n] && !(steps && joins(dt, f.steep[c] === 1, f.steep[n] === 1))) foot = n;
+          if (footN >= 0 && !f.wet[footN] && !(steps && joins(f.top[footN] - t, f.steep[c] === 1, f.steep[footN] === 1))) foot = footN;
           if (!blend) continue;
           if (f.wet[c] && !f.wet[n] && f.water[c] > -1e8 && f.top[n] >= f.water[c] - 0.5 && f.top[n] - f.water[c] <= SHORE_LOW) {
             // The shore: sand reaches into the shallows in a wavy line, just above the water. Only
