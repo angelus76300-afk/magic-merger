@@ -25,20 +25,20 @@ const OUT = process.argv[2] ?? "cliff-frames";
 const BASE = process.env.LAB_URL ?? "http://localhost:5174/lab/perf.html";
 const SHOTS = process.env.SHOTS ? process.env.SHOTS.split(",") : null;
 const SIZES = (process.env.SIZES ?? "390x844,344x882").split(",").map((s) => s.split("x").map(Number));
-// Each island: its name, the lab's query, what its run must have (lava at its foot, trees on its
-// top) and whether it is drawn with sharp corners too.
+// Each island: its name, the lab's query and what its run must have (lava at its foot, trees on its
+// top).
 const ISLANDS = [
-  ["plateau-7", "size=medium&seed=7&biome=temperate&shape=plateau", null, false],
-  ["desert-plateau-3", "size=small&seed=3&biome=desert&shape=plateau&relief=0.8", null, false],
-  ["mesa-5", "size=medium&seed=5&biome=mesa&shape=plateau", null, true],
-  ["volcanic-6", "size=medium&seed=6&biome=volcanic&shape=ridges&relief=0.9", "lava", false],
-  ["forest-plateau-2", "size=medium&seed=2&biome=temperate&shape=plateau&relief=0.7&forest=0.9", "trees", false],
+  ["plateau-7", "size=medium&seed=7&biome=temperate&shape=plateau", null],
+  ["desert-plateau-3", "size=small&seed=3&biome=desert&shape=plateau&relief=0.8", null],
+  ["mesa-5", "size=medium&seed=5&biome=mesa&shape=plateau", null],
+  ["volcanic-6", "size=medium&seed=6&biome=volcanic&shape=ridges&relief=0.9", "lava"],
+  ["forest-plateau-2", "size=medium&seed=2&biome=temperate&shape=plateau&relief=0.7&forest=0.9", "trees"],
 ];
 const MODES = [
   ["off", "cliffs=off"],
   ["main", "cliffs=corner"],
-  ["outline", "cliffs=outline"],
-  ["sharp", "cliffs=outline&sharp=3"],
+  ["prototype", "cliffs=outline&walls=0&sharp=0"],
+  ["walls", "cliffs=outline"],
 ];
 const ONLY_MODES = process.env.MODES ? process.env.MODES.split(",") : null;
 mkdirSync(OUT, { recursive: true });
@@ -327,15 +327,17 @@ function cameras(run, groundAt) {
     ["above", { x: mx, y: my, dist: 26, phi: 0.5, theta }],
     ["play", { x: mx, y: my, dist: 13, phi: 0.95, theta }],
     ["eye", { eye: true, x: fx, y: fy, h: groundAt + 1.1, yaw: Math.atan2(-run.lowY, -run.lowX) + 0.25, pitch: 0.12 }],
+    // Up close: a few cells from the wall's middle, looking along it a little (the ribs, 27 November).
+    ["close", { x: mid((run.x0 + run.x1) / 2), y: mid((run.y0 + run.y1) / 2), dist: 6, phi: 1.2, theta: theta + 0.5 }],
   ];
 }
 
 const browser = await chromium.launch({ args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--ignore-gpu-blocklist"] });
 const rows = [];
 try {
-  for (const [name, q, needs, sharp] of ISLANDS) {
+  for (const [name, q, needs] of ISLANDS) {
+    if (SHOTS && !SHOTS.some((x) => x.startsWith(`${name}:`))) continue;
     for (const [mode, mq] of MODES) {
-      if (mode === "sharp" && !sharp) continue;
       if (ONLY_MODES && !ONLY_MODES.includes(mode)) continue;
       for (const [width, height] of SIZES) {
         const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1 });

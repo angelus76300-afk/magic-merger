@@ -565,3 +565,5 @@ if (process.argv[1]?.endsWith("cliff-outline.mjs")) {
   console.log(JSON.stringify(extraRows()));
   cliffOutlineChecks((name, ok, detail) => console.log(`${ok ? "ok  " : "FAIL"} ${name}${detail ? `\n     ${detail}` : ""}`));
 }
+// The straight cliff at angle a, for the scripts that look at it closer (scripts/cliff-dbg.ts).
+export const fillFor = (a: number): FineCells => fill(along(a));

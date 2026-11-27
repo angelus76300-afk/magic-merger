@@ -41,13 +41,15 @@ const land =
       : readLand({ biome: q.get("biome"), shape: q.get("shape"), relief: num("relief"), forest: num("forest") });
 // 27 November: "cliffs=off" draws cliffs on the cells' sides (no corner cut), "cliffs=corner" as the
 // game does (cliffCorner), "cliffs=outline" on their own line (cliffOutline, a prototype), with
-// "sharp=3" keeping a mesa's corners (CLIFF_OUTLINE.sharpRun).
+// "sharp=N" keeping a mesa's corners where walls of N cells meet (CLIFF_OUTLINE.sharpRun, 2 now).
 const cliffs = q.get("cliffs");
 if (cliffs === "off" || cliffs === "corner" || cliffs === "outline") {
   CLIFF_CORNER.on = cliffs !== "off";
   CLIFF_OUTLINE.on = cliffs === "outline";
 }
 if (q.has("sharp")) CLIFF_OUTLINE.sharpRun = Number(q.get("sharp"));
+// "walls=0": the outline's columns drawn whole, as the prototype drew them (no flat walls).
+if (q.has("walls")) CLIFF_OUTLINE.walls = q.get("walls") !== "0";
 // 5.2.5: "peaks=1" makes the island as new islands are made now, with taller peaks.
 if (land && q.has("peaks")) land.peaks = true;
 // 4.4.5 part C: "pool=1" hands new islands the live wonders of lab/wonders

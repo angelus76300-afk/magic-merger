@@ -575,7 +575,7 @@ export function intoCell(p: number, c: number): number {
 // the reverse, and a water bed (drawn by the fine water) trades nothing, so no rock stands up in
 // it; no cell's middle ever changes. Walls stay vertical. `sharpRun` (0 off): a corner where two
 // straight walls of at least that many cells meet stays sharp, for a mesa.
-export const CLIFF_OUTLINE = { on: false, wave: 0.08, period: 2.5, sharpRun: 0 };
+export const CLIFF_OUTLINE = { on: false, wave: 0.08, period: 2.5, sharpRun: 2, walls: true };
 export const OUTLINE_OPEN = 0;
 export const OUTLINE_TREE = 1;
 export const OUTLINE_WET = 2;
@@ -1574,6 +1574,9 @@ export function buildFineTile(
       C[s] = col;
     }
   }
+  // Flat walls (cutWalls): the columns a cliff's wall crosses take their low part's land, and keep
+  // where the wall runs and what stands above it.
+  const walls = outline && CLIFF_OUTLINE.walls && !far && cutWalls(f, sub, sx0, sy0, SW, SH);
   // Light, kept in the colour so tops still merge. A slope of tiny steps is lit as the tilted
   // ground it stands for, by which way it faces, so it reads as a slope and not as stripes (its
   // risers take the same light, wallFaces); a top below a real wall sits in its shadow. The tilt is
@@ -1682,6 +1685,9 @@ export function buildFineTile(
       if (light !== 1) C[s] = scaleColor(C[s], Math.round(light * 20) / 20);
     }
 
+  // A crossed column's low top is lit as the land it is of (its light, hollows and tint), so it
+  // merges with it: the foot of a flat wall has the wall's crease, not a band of shade.
+  if (walls) for (let s = 0; s < SW * SH; s++) if (CUT[s]) C[s] = C[CUT_LO[s]];
   const k0 = B;
   const k1 = SW - B;
   const j0 = B;
@@ -1743,6 +1749,8 @@ export function buildFineTile(
   }
   out.e0 = 0;
   out.e1 = 0;
+  // The high parts of the columns a wall crosses, over their low tops.
+  if (walls) cutTops(out, sx0, sy0, SW, j0, j1, k0, k1, sub, ox, oz);
 
   // Walls toward lower neighbours, in layers, merged along each line into runs.
   const runs = RUNS;
@@ -1757,7 +1765,16 @@ export function buildFineTile(
         if (p < len) {
           const k = alongX ? k0 + p : k0 + li;
           const j = alongX ? j0 + li : j0 + p;
-          faces = wallFaces(f, d, sx0 + k, sy0 + j, j * SW + k, SW, sub, grain, blend, out, ox, oz);
+          const s = j * SW + k;
+          if (walls && (CUT[s] || CUT[s + DX[d] + DY[d] * SW])) {
+            // A side of a column a wall crosses: of its high part where that side is all high, and
+            // up to the neighbour's high part where the neighbour's side is.
+            const n = s + DX[d] + DY[d] * SW;
+            const high = CUT[s] && sideHigh(s, d);
+            const T = high ? CUT_HI[s] : H[s];
+            const low = CUT[n] && sideHigh(n, (d + 2) % 4) ? CUT_HI[n] : H[n];
+            faces = wallFaces(f, d, sx0 + k, sy0 + j, s, SW, sub, grain, blend, out, ox, oz, high ? CUT_HS[s] : s, T, low);
+          } else faces = wallFaces(f, d, sx0 + k, sy0 + j, s, SW, sub, grain, blend, out, ox, oz);
         }
         // Each face carries on the open run it matches, or starts one.
         for (let q = 0; q < faces; q++) {
@@ -1801,6 +1818,8 @@ export function buildFineTile(
       for (const run of runs) emitRun(out, d, run, sub, ox, oz);
     }
   }
+  // The flat walls themselves, one slanted strip a crossed column, in the courses of its high part.
+  if (walls) cutFaces(f, out, sx0, sy0, SW, j0, j1, k0, k1, sub, grain, blend, ox, oz);
   out.e0 = 0;
   out.e1 = 0;
   // The water and the foam meet the land as it stands in eighths.
@@ -2738,8 +2757,611 @@ function emitRun(out: Writer, d: number, run: Run, sub: number, ox: number, oz: 
   out.e1 = 0;
 }
 
+// Flat walls (27 November, the owner: "cliffs: flat walls"). With the outline on (cliffOutline) each
+// column was still drawn whole as one cell's land, so a wall off the axes stood as a staircase of
+// columns an eighth wide, ribbed like organ pipes up close. Now a column the drawn line crosses
+// (its corners drawn at two levels at least two voxels apart, not a slope that curves) is split
+// along that line: its low part a top at the low land's height (the column takes that land), its
+// high part a polygon at the high land's height, and between them one flat vertical strip along the
+// line, in the courses of the high land's wall (wallFaces). In a column the line runs straight from
+// where it crosses one side to where it crosses the other (found by halving on the drawn level), so
+// a straight cliff is one flat plane and two columns meet where their shared side is crossed.
+// Drawing only: walls stay vertical, and what stands on the land stands on its columns (FineTops)
+// as the outline draws them. `CLIFF_OUTLINE.walls` off: the columns as they were.
+let CUT = new Uint8Array(0); // 1 where a wall crosses the column
+let CUT_M = new Uint8Array(0); // its high corners: 1 north-west, 2 north-east, 4 south-east, 8 south-west
+let CUT_T = new Float32Array(0); // where the line crosses each side (north, east, south, west), 0 to 1 from its first corner, NaN none
+let CUT_HI = new Int32Array(0); // the high part's height (the high level while cutWalls works)
+let CUT_LO = new Int32Array(0); // the low level, then the column the low part is of
+let CUT_HS = new Int32Array(0); // the column whose land the high part is
+// Corner q of a column, from its north-west corner: north-west, north-east, south-east, south-west.
+const CQX = [0, 1, 1, 0];
+const CQY = [0, 0, 1, 1];
+// How far inside a corner (of a column) its level is read, so a wall on a column's side crosses
+// neither column; and the halvings of a side.
+const CUT_IN = 0.004;
+const CUT_HALVE = 10;
+const CUT_LV = [0, 0, 0, 0];
+// The level drawn at (px, py), as the mesher draws it (the outline's trade), NaN off the chunk's
+// border or where the land is not natural.
+function drawnTopAt(f: FineCells, px: number, py: number): number {
+  let cx = Math.floor(px);
+  let cy = Math.floor(py);
+  if (cx < f.x0 - 3 || cy < f.y0 - 3 || cx >= f.x1 + 3 || cy >= f.y1 + 3) return NaN;
+  const k = outlineTradeCells(f, px, py);
+  if (k >= 0) {
+    cx += (k % 3) - 1;
+    cy += Math.floor(k / 3) - 1;
+  }
+  const c = fineAt(f, cx, cy);
+  return f.inside[c] && f.natural[c] ? f.top[c] : NaN;
+}
+// Where the drawn line crosses a side of the lattice of columns, 0 to 1 from its first corner: the
+// side along x (way 0) or y (1) from lattice corner (k, j) of the tile, at (X, Y) in cells; read
+// once a tile, by halving between its ends (just inside them) on the level `mid`.
+let SIDE_T = new Float32Array(0);
+let SIDE_DONE = new Uint8Array(0);
+let SIDE_W = 0;
+let SIDE_N = 0;
+function cutSide(f: FineCells, way: number, k: number, j: number, X: number, Y: number, Q: number, mid: number): number {
+  const at = way * SIDE_N + j * SIDE_W + k;
+  if (SIDE_DONE[at]) return SIDE_T[at];
+  const e = CUT_IN * Q;
+  const dx = way === 0 ? Q : 0;
+  const dy = way === 0 ? 0 : Q;
+  const ux = dx / Q;
+  const uy = dy / Q;
+  const ax = X + ux * e;
+  const ay = Y + uy * e;
+  const bx = X + dx - ux * e;
+  const by = Y + dy - uy * e;
+  const ha = drawnTopAt(f, ax, ay) >= mid ? 1 : 0;
+  const hb = drawnTopAt(f, bx, by) >= mid ? 1 : 0;
+  let t = 0.5;
+  if (ha !== hb) {
+    let t0 = 0;
+    let t1 = 1;
+    for (let it = 0; it < CUT_HALVE; it++) {
+      const tm = (t0 + t1) / 2;
+      if ((drawnTopAt(f, ax + (bx - ax) * tm, ay + (by - ay) * tm) >= mid ? 1 : 0) === ha) t0 = tm;
+      else t1 = tm;
+    }
+    t = (e + ((t0 + t1) / 2) * (Q - 2 * e)) / Q;
+  }
+  SIDE_DONE[at] = 1;
+  SIDE_T[at] = t;
+  return t;
+}
+// The share of a column its high part covers (corners m, crossings CUT_T).
+const CUT_SLIVER = 0;
+function cutArea(s: number, m: number): number {
+  const n = cutPolygon(s, 0, 0, 1, m);
+  let a = 0;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    a += CUT_PT[2 * i] * CUT_PT[2 * j + 1] - CUT_PT[2 * j] * CUT_PT[2 * i + 1];
+  }
+  return Math.abs(a) / 2;
+}
+// Whether side d (east, south, west, north) of a crossed column is all on the high side.
+function sideHigh(s: number, d: number): boolean {
+  const e = (d + 1) % 4;
+  const m = CUT_M[s];
+  return ((m >> e) & 1) === 1 && ((m >> (e + 1) % 4) & 1) === 1;
+}
+// Marks the columns of a tile (and its border but the outer ring) that a wall crosses, and gives
+// each its low part's land: false where none is.
+function cutWalls(f: FineCells, sub: number, sx0: number, sy0: number, SW: number, SH: number): boolean {
+  const n = SW * SH;
+  if (CUT.length < n) {
+    CUT = new Uint8Array(n);
+    CUT_M = new Uint8Array(n);
+    CUT_T = new Float32Array(4 * n);
+    CUT_HI = new Int32Array(n);
+    CUT_LO = new Int32Array(n);
+    CUT_HS = new Int32Array(n);
+  }
+  CUT.fill(0, 0, n);
+  const ne = (SW + 1) * (SH + 1);
+  if (SIDE_T.length < 2 * ne) {
+    SIDE_T = new Float32Array(2 * ne);
+    SIDE_DONE = new Uint8Array(2 * ne);
+  }
+  SIDE_DONE.fill(0, 0, 2 * ne);
+  SIDE_W = SW + 1;
+  SIDE_N = ne;
+  const Q = 1 / sub;
+  const e = CUT_IN * Q;
+  let any = false;
+  for (let j = 1; j < SH - 1; j++)
+    for (let k = 1; k < SW - 1; k++) {
+      const s = j * SW + k;
+      const c = CELL[s];
+      if (c < 0 || !f.natural[c] || FLOOD[s] >= 0 || WALLC[s] !== c || (f.wet[c] && !f.lava[c])) continue;
+      const t = f.top[c];
+      let near = false;
+      for (let dj = -1; dj <= 1 && !near; dj++)
+        for (let dk = -1; dk <= 1; dk++) {
+          const m = CELL[s + dj * SW + dk];
+          if (m >= 0 && Math.abs(f.top[m] - t) >= 2) near = true;
+        }
+      if (!near) continue;
+      const X = (sx0 + k) * Q;
+      const Y = (sy0 + j) * Q;
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let q = 0; q < 4; q++) {
+        const v = drawnTopAt(f, X + CQX[q] * Q + (CQX[q] ? -e : e), Y + CQY[q] * Q + (CQY[q] ? -e : e));
+        CUT_LV[q] = v;
+        lo = Math.min(lo, v);
+        hi = Math.max(hi, v);
+      }
+      if (!(hi - lo >= 2)) continue;
+      let m = 0;
+      let odd = false;
+      for (let q = 0; q < 4; q++) {
+        if (CUT_LV[q] === hi) m |= 1 << q;
+        else if (CUT_LV[q] !== lo) odd = true;
+      }
+      // Three levels in one column, or two high corners across from each other: as it was.
+      if (odd || m === 5 || m === 10) continue;
+      // Where the line crosses each side: one reading of each side of the lattice, so two columns
+      // meet on the same point (cutSide).
+      const mid = (hi + lo) / 2;
+      for (let a = 0; a < 4; a++) {
+        const b = (a + 1) % 4;
+        if (((m >> a) & 1) === ((m >> b) & 1)) {
+          CUT_T[4 * s + a] = NaN;
+          continue;
+        }
+        // North and east run from the side's first lattice corner, south and west back to it.
+        const t =
+          a === 0
+            ? cutSide(f, 0, k, j, X, Y, Q, mid)
+            : a === 1
+              ? cutSide(f, 1, k + 1, j, X + Q, Y, Q, mid)
+              : a === 2
+                ? 1 - cutSide(f, 0, k, j + 1, X, Y + Q, Q, mid)
+                : 1 - cutSide(f, 1, k, j, X, Y, Q, mid);
+        CUT_T[4 * s + a] = t;
+      }
+      // A sliver of a column either side is left as the column is (its middle's land): the step it
+      // leaves is less than a column's width, closed by the neighbours' short sides (cutFaces).
+      const area = cutArea(s, m);
+      if (area < CUT_SLIVER || area > 1 - CUT_SLIVER) continue;
+      CUT[s] = 1;
+      CUT_M[s] = m;
+      CUT_HI[s] = hi;
+      CUT_LO[s] = lo;
+      any = true;
+    }
+  if (!any) return false;
+  // The land of each part: the nearest column round it (or itself) drawn whole at that level, of a
+  // cliff (not a slope that curves).
+  any = false;
+  for (let j = 1; j < SH - 1; j++)
+    for (let k = 1; k < SW - 1; k++) {
+      const s = j * SW + k;
+      if (!CUT[s]) continue;
+      const m = CUT_M[s];
+      let hx = 0;
+      let hy = 0;
+      let hn = 0;
+      for (let q = 0; q < 4; q++)
+        if ((m >> q) & 1) {
+          hx += CQX[q];
+          hy += CQY[q];
+          hn++;
+        }
+      hx /= hn;
+      hy /= hn;
+      const lx = (2 - hn * hx) / (4 - hn);
+      const ly = (2 - hn * hy) / (4 - hn);
+      let hs = -1;
+      let ls = -1;
+      let hd = Infinity;
+      let ld = Infinity;
+      for (let dj = -1; dj <= 1; dj++)
+        for (let dk = -1; dk <= 1; dk++) {
+          const o = s + dj * SW + dk;
+          const c = CELL[o];
+          if (CUT[o] || c < 0 || !f.natural[c] || FLOOD[o] >= 0 || WALLC[o] !== c) continue;
+          const t = f.top[c];
+          const ox = dk + 0.5;
+          const oy = dj + 0.5;
+          if (t === CUT_HI[s] && !f.wet[c]) {
+            const dd = (ox - hx) ** 2 + (oy - hy) ** 2;
+            if (dd < hd) {
+              hd = dd;
+              hs = o;
+            }
+          } else if (t === CUT_LO[s] && (!f.wet[c] || f.lava[c])) {
+            const dd = (ox - lx) ** 2 + (oy - ly) ** 2;
+            if (dd < ld) {
+              ld = dd;
+              ls = o;
+            }
+          }
+        }
+      if (hs < 0 || ls < 0 || joins(CUT_HI[s] - CUT_LO[s], f.steep[CELL[hs]] === 1, f.steep[CELL[ls]] === 1) || H[hs] - H[ls] < sub) {
+        CUT[s] = 0;
+        continue;
+      }
+      CUT_HS[s] = hs;
+      CUT_LO[s] = ls;
+      any = true;
+    }
+  if (!any) return false;
+  // Each crossed column takes its low part's land (the sources are columns no wall crosses: unchanged).
+  for (let j = 1; j < SH - 1; j++)
+    for (let k = 1; k < SW - 1; k++) {
+      const s = j * SW + k;
+      if (!CUT[s]) continue;
+      const ls = CUT_LO[s];
+      CUT_HI[s] = H[CUT_HS[s]];
+      H[s] = H[ls];
+      C[s] = C[ls];
+      CELL[s] = CELL[ls];
+      WALLC[s] = WALLC[ls];
+      RS[s] = RS[ls];
+      LAND[s] = LAND[ls];
+      SANDY[s] = SANDY[ls];
+      D[s] = D[ls];
+      WEEDS[s] = WEEDS[ls];
+      RAISE[s] = RAISE[ls];
+    }
+  return true;
+}
+// The corners of a crossed column's high part, in cells (x, y pairs), in CUT_PT; how many.
+const CUT_PT: number[] = new Array(12).fill(0);
+function cutPolygon(s: number, X: number, Y: number, Q: number, m = CUT_M[s]): number {
+  let n = 0;
+  for (let q = 0; q < 4; q++) {
+    if ((m >> q) & 1) {
+      CUT_PT[2 * n] = X + CQX[q] * Q;
+      CUT_PT[2 * n + 1] = Y + CQY[q] * Q;
+      n++;
+    }
+    const t = CUT_T[4 * s + q];
+    if (!Number.isNaN(t)) {
+      const b = (q + 1) % 4;
+      CUT_PT[2 * n] = X + (CQX[q] + (CQX[b] - CQX[q]) * t) * Q;
+      CUT_PT[2 * n + 1] = Y + (CQY[q] + (CQY[b] - CQY[q]) * t) * Q;
+      n++;
+    }
+  }
+  return n;
+}
+// The high parts' tops: each a polygon at its height, in its land's colour and light. Where the
+// line runs across a row of columns (or down a column of them) on one plane, their high parts are
+// one quad.
+let CUT_DONE = new Uint8Array(0);
+function cutTops(out: Writer, sx0: number, sy0: number, SW: number, j0: number, j1: number, k0: number, k1: number, sub: number, ox: number, oz: number): void {
+  const Q = 1 / sub;
+  if (CUT_DONE.length < CUT.length) CUT_DONE = new Uint8Array(CUT.length);
+  for (let j = j0; j < j1; j++) CUT_DONE.fill(0, j * SW + k0, j * SW + k1);
+  const same = (a: number, b: number) => {
+    const ha = CUT_HS[a];
+    const hb = CUT_HS[b];
+    return CUT[b] === 1 && CUT_DONE[b] === 0 && CUT_M[b] === CUT_M[a] && CUT_HI[b] === CUT_HI[a] && C[hb] === C[ha] && GL[hb] === GL[ha] && D[hb] === D[ha];
+  };
+  const pt = (s: number, e: number, X: number, Y: number, xy: 0 | 1) => {
+    const t = CUT_T[4 * s + e];
+    const b = (e + 1) % 4;
+    return xy === 0 ? X + (CQX[e] + (CQX[b] - CQX[e]) * t) * Q : Y + (CQY[e] + (CQY[b] - CQY[e]) * t) * Q;
+  };
+  const off = (ax: number, ay: number, bx: number, by: number, px: number, py: number) => {
+    const l = Math.hypot(bx - ax, by - ay);
+    return l < 1e-9 ? 0 : Math.abs((bx - ax) * (py - ay) - (by - ay) * (px - ax)) / l;
+  };
+  for (let way = 0; way < 2; way++)
+    for (let j = j0; j < j1; j++)
+      for (let k = k0; k < k1; k++) {
+        const s = j * SW + k;
+        if (!CUT[s] || CUT_DONE[s]) continue;
+        if (way === 0) CUT_STATS.cut++;
+        const m = CUT_M[s];
+        // Across a row: north or south high, crossed on the west and east sides; down a column: west
+        // or east high, crossed on the north and south.
+        const row = m === 3 || m === 12;
+        const col = m === 9 || m === 6;
+        if (way === 0 ? !row : !col) continue;
+        const ea = way === 0 ? 3 : 0;
+        const eb = way === 0 ? 1 : 2;
+        const step = way === 0 ? 1 : SW;
+        const X = (sx0 + k) * Q;
+        const Y = (sy0 + j) * Q;
+        const ax = pt(s, ea, X, Y, 0);
+        const ay = pt(s, ea, X, Y, 1);
+        let n = 1;
+        let bx = pt(s, eb, X, Y, 0);
+        let by = pt(s, eb, X, Y, 1);
+        for (;;) {
+          const o = s + n * step;
+          if ((way === 0 ? k + n >= k1 : j + n >= j1) || !same(s, o)) break;
+          const OX2 = X + (way === 0 ? n * Q : 0);
+          const OY2 = Y + (way === 0 ? 0 : n * Q);
+          const cx = pt(o, eb, OX2, OY2, 0);
+          const cy = pt(o, eb, OX2, OY2, 1);
+          // The crossings it passes stay on the joined line.
+          let ok = true;
+          for (let q = 0; q < n && ok; q++) {
+            const PX = X + (way === 0 ? q * Q : 0);
+            const PY = Y + (way === 0 ? 0 : q * Q);
+            ok = off(ax, ay, cx, cy, pt(s + q * step, eb, PX, PY, 0), pt(s + q * step, eb, PX, PY, 1)) <= SLANT_TOL;
+          }
+          if (!ok) break;
+          bx = cx;
+          by = cy;
+          n++;
+        }
+        for (let q = 0; q < n; q++) CUT_DONE[s + q * step] = 1;
+        // The quad: the two high corners at the run's ends and the line's two ends.
+        const ex = X + (way === 0 ? n * Q : Q);
+        const ey = Y + (way === 0 ? Q : n * Q);
+        let pts: number[];
+        if (m === 3) pts = [X, Y, ex, Y, bx, by, ax, ay];
+        else if (m === 12) pts = [ax, ay, bx, by, ex, ey, X, ey];
+        else if (m === 9) pts = [X, Y, ax, ay, bx, by, X, ey];
+        else pts = [ax, ay, ex, Y, ex, ey, bx, by];
+        cutQuad(out, s, pts, 4, sub, ox, oz);
+      }
+  for (let j = j0; j < j1; j++)
+    for (let k = k0; k < k1; k++) {
+      const s = j * SW + k;
+      if (!CUT[s] || CUT_DONE[s]) continue;
+      const n = cutPolygon(s, (sx0 + k) * Q, (sy0 + j) * Q, Q);
+      cutQuad(out, s, CUT_PT, n, sub, ox, oz);
+    }
+  out.e0 = 0;
+  out.e1 = 0;
+}
+// A crossed column's high top over the polygon `pts` (n corners, x, y pairs in cells, clockwise
+// from above with y down: north-west, north-east...), as a fan of quads.
+export const CUT_STATS = { cut: 0, polys: 0, strips: 0, steps: 0 };
+function cutQuad(out: Writer, s: number, pts: number[], n: number, sub: number, ox: number, oz: number): void {
+  CUT_STATS.polys += Math.floor((n - 1) / 2);
+  const hs = CUT_HS[s];
+  const y = CUT_HI[s] / sub;
+  const col = scaleColor(C[hs], FACE_LIGHT.top);
+  out.e0 = GL[hs] / GLOW_LEVELS;
+  out.e1 = 0;
+  // Wound as a top (Writer.rect): the corners taken backwards.
+  const P = (i: number) => (n - i) % n;
+  for (let i = 1; i + 1 < n; i += 2) {
+    const a = P(0);
+    const b = P(i);
+    const c = P(i + 1);
+    const d = i + 2 < n ? P(i + 2) : c;
+    out.quad(
+      pts[2 * a] + ox,
+      y,
+      pts[2 * a + 1] + oz,
+      pts[2 * b] + ox,
+      y,
+      pts[2 * b + 1] + oz,
+      pts[2 * c] + ox,
+      y,
+      pts[2 * c + 1] + oz,
+      pts[2 * d] + ox,
+      y,
+      pts[2 * d + 1] + oz,
+      col,
+      1,
+      col,
+      1,
+      D[hs],
+      0,
+      false,
+    );
+  }
+}
+// A wall's faces (FACES, from wallFaces) as one stack of vertical quads from (ax, az) to (bx, bz),
+// scene units, facing the side (bz - az, -(bx - ax)); `k` scales their light. Kept until slantFlush,
+// which joins stacks of one plane that meet end to end and hold the same faces: every face of a
+// stack carries on, or none does, so no face's corner falls on another face's side (a crack).
+interface Stack {
+  ax: number;
+  az: number;
+  bx: number;
+  bz: number;
+  first: number; // its faces in SLANT_F, six numbers each: lo, hi, ca, cb, glow, wet
+  count: number;
+  sig: string;
+  next: number;
+  head: boolean;
+  done: boolean;
+}
+const STACKS: Stack[] = [];
+let NSTACKS = 0;
+const SLANT_F: number[] = [];
+const SLANT_HEADS: number[] = [];
+const SLANT_AT = new Map<string, number>();
+function slantFaces(nf: number, ax: number, az: number, bx: number, bz: number, k: number, sub: number): void {
+  if (nf === 0) return;
+  const Q = 1 / sub;
+  if (NSTACKS === STACKS.length) STACKS.push({ ax: 0, az: 0, bx: 0, bz: 0, first: 0, count: 0, sig: "", next: -1, head: true, done: false });
+  const r = STACKS[NSTACKS++];
+  r.ax = ax;
+  r.az = az;
+  r.bx = bx;
+  r.bz = bz;
+  r.first = SLANT_F.length;
+  r.count = nf;
+  r.next = -1;
+  r.head = true;
+  r.done = false;
+  let sig = "";
+  for (let q = 0; q < nf; q++) {
+    const F = FACES[q];
+    const light = F.light * k;
+    const cb = scaleColor(F.color, light);
+    const ca = F.foot !== 1 ? scaleColor(F.color, light * F.foot) : cb;
+    SLANT_F.push(F.lo * Q, F.hi * Q, ca, cb, F.glow, F.wet);
+    sig += `${F.lo},${F.hi},${ca},${cb},${F.glow},${F.wet};`;
+  }
+  r.sig = sig;
+}
+// How far a joined stack may pass from the ends it joins, scene units (a cell is 1).
+const SLANT_TOL = 0.0015;
+const slantKey = (x: number, z: number, sig: string) => `${Math.round(x * 4096)},${Math.round(z * 4096)}|${sig}`;
+// Writes the stacks kept, those of one plane that meet end to end with the same faces as one.
+function slantFlush(out: Writer): void {
+  SLANT_AT.clear();
+  for (let i = 0; i < NSTACKS; i++) SLANT_AT.set(slantKey(STACKS[i].ax, STACKS[i].az, STACKS[i].sig), i);
+  for (let i = 0; i < NSTACKS; i++) {
+    const r = STACKS[i];
+    const n = SLANT_AT.get(slantKey(r.bx, r.bz, r.sig));
+    if (n === undefined || n === i || !STACKS[n].head) continue;
+    r.next = n;
+    STACKS[n].head = false;
+  }
+  const off = (ax: number, az: number, bx: number, bz: number, px: number, pz: number) => {
+    const l = Math.hypot(bx - ax, bz - az);
+    return l < 1e-9 ? 0 : Math.abs((bx - ax) * (pz - az) - (bz - az) * (px - ax)) / l;
+  };
+  const write = (r: Stack, bx: number, bz: number) => {
+    for (let q = 0; q < r.count; q++) {
+      const o = r.first + 6 * q;
+      const lo = SLANT_F[o];
+      const hi = SLANT_F[o + 1];
+      out.e0 = SLANT_F[o + 4] / GLOW_LEVELS;
+      out.e1 = SLANT_F[o + 5];
+      out.quad(r.ax, lo, r.az, r.ax, hi, r.az, bx, hi, bz, bx, lo, bz, SLANT_F[o + 2], 1, SLANT_F[o + 3], 1, 0, 0, true);
+    }
+  };
+  const mids: number[] = [];
+  const heads = SLANT_HEADS;
+  heads.length = 0;
+  for (let i = 0; i < NSTACKS; i++) if (STACKS[i].head) heads.push(i);
+  for (let h = 0; h < heads.length; h++) {
+    const head = STACKS[heads[h]];
+    if (head.done) continue;
+    head.done = true;
+    mids.length = 0;
+    let bx = head.bx;
+    let bz = head.bz;
+    let r = head;
+    while (r.next >= 0) {
+      const n = STACKS[r.next];
+      if (n.done) break;
+      let ok = off(head.ax, head.az, n.bx, n.bz, bx, bz) <= SLANT_TOL;
+      for (let k = 0; ok && k < mids.length; k += 2) ok = off(head.ax, head.az, n.bx, n.bz, mids[k], mids[k + 1]) <= SLANT_TOL;
+      // A bend: the stack after it starts a plane of its own.
+      if (!ok) {
+        heads.push(r.next);
+        break;
+      }
+      n.done = true;
+      mids.push(bx, bz);
+      bx = n.bx;
+      bz = n.bz;
+      r = n;
+    }
+    write(head, bx, bz);
+  }
+  // Stacks joined in a ring, with no first one.
+  for (let i = 0; i < NSTACKS; i++) if (!STACKS[i].done) write(STACKS[i], STACKS[i].bx, STACKS[i].bz);
+  out.e0 = 0;
+  out.e1 = 0;
+  NSTACKS = 0;
+  SLANT_F.length = 0;
+}
+
+// The flat walls: for each crossed column, the strip along its line from its low part's top to its
+// high part's, and where its high part stands above a crossed neighbour's on a side the line
+// crosses, the small step between them on that side's high stretch.
+function cutFaces(
+  f: FineCells,
+  out: Writer,
+  sx0: number,
+  sy0: number,
+  SW: number,
+  j0: number,
+  j1: number,
+  k0: number,
+  k1: number,
+  sub: number,
+  grain: boolean,
+  blend: boolean,
+  ox: number,
+  oz: number,
+): void {
+  const Q = 1 / sub;
+  for (let j = j0; j < j1; j++)
+    for (let k = k0; k < k1; k++) {
+      const s = j * SW + k;
+      if (!CUT[s]) continue;
+      const X = (sx0 + k) * Q;
+      const Y = (sy0 + j) * Q;
+      const m = CUT_M[s];
+      let pa = -1;
+      let pb = -1;
+      for (let q = 0; q < 4; q++)
+        if (!Number.isNaN(CUT_T[4 * s + q])) {
+          if (pa < 0) pa = q;
+          else pb = q;
+        }
+      if (pa < 0 || pb < 0) continue;
+      const at = (q: number, xy: 0 | 1) => {
+        const t = CUT_T[4 * s + q];
+        const b = (q + 1) % 4;
+        return xy === 0 ? X + (CQX[q] + (CQX[b] - CQX[q]) * t) * Q : Y + (CQY[q] + (CQY[b] - CQY[q]) * t) * Q;
+      };
+      let ax = at(pa, 0);
+      let ay = at(pa, 1);
+      let bx = at(pb, 0);
+      let by = at(pb, 1);
+      // Facing the low side: toward a low corner.
+      let lq = 0;
+      while ((m >> lq) & 1) lq++;
+      const nxr = by - ay;
+      const nyr = -(bx - ax);
+      if ((X + CQX[lq] * Q - ax) * nxr + (Y + CQY[lq] * Q - ay) * nyr < 0) {
+        [ax, bx] = [bx, ax];
+        [ay, by] = [by, ay];
+      }
+      const len = Math.hypot(bx - ax, by - ay);
+      if (len < 1e-6) continue;
+      const nx = (by - ay) / len;
+      const ny = -(bx - ax) / len;
+      const d = Math.abs(nx) >= Math.abs(ny) ? (nx > 0 ? 0 : 2) : ny > 0 ? 1 : 3;
+      // Its light between the two sides it is turned between.
+      const light = nx * nx * (nx > 0 ? FACE_LIGHT.east : FACE_LIGHT.west) + ny * ny * (ny > 0 ? FACE_LIGHT.south : FACE_LIGHT.north);
+      const hs = CUT_HS[s];
+      const nf = wallFaces(f, d, sx0 + k, sy0 + j, s, SW, sub, grain, blend, out, ox, oz, hs, CUT_HI[s], H[s], false);
+      CUT_STATS.strips += nf;
+      slantFaces(nf, ax + ox, ay + oz, bx + ox, by + oz, light / WALL_LIGHT[d], sub);
+      // The step between two high parts on a crossed side.
+      for (const e of [pa, pb]) {
+        const dd = (e + 3) % 4;
+        const o = s + DX[dd] + DY[dd] * SW;
+        // Down to the neighbour's high part, or to its top where no wall crosses it.
+        const below = CUT[o] ? CUT_HI[o] : H[o];
+        if (below >= CUT_HI[s]) continue;
+        const hq = (m >> e) & 1 ? e : (e + 1) % 4;
+        let cx = X + CQX[hq] * Q;
+        let cy = Y + CQY[hq] * Q;
+        let tx = at(e, 0);
+        let ty = at(e, 1);
+        // Wound to face the neighbour (side dd).
+        if ((ty - cy) * DX[dd] - (tx - cx) * DY[dd] < 0) {
+          [cx, tx] = [tx, cx];
+          [cy, ty] = [ty, cy];
+        }
+        const sf = wallFaces(f, dd, sx0 + k, sy0 + j, s, SW, sub, grain, blend, out, ox, oz, hs, CUT_HI[s], below, false);
+        CUT_STATS.steps += sf;
+        slantFaces(sf, cx + ox, cy + oz, tx + ox, ty + oz, 1, sub);
+      }
+    }
+  slantFlush(out);
+}
+
 // The faces of column (sx, sy)'s wall on side d, into FACES; returns how many. Overhanging grass
 // is written straight to `out`.
+// With flat walls (cutWalls), `a` is the column whose land the wall is of (a crossed column's high
+// part: its source, CUT_HS), T its top and `low` the neighbour's as seen from this side; `extras`
+// false leaves out the ledges and the overhanging grass (a slanted wall has neither).
 function wallFaces(
   f: FineCells,
   d: number,
@@ -2753,14 +3375,18 @@ function wallFaces(
   out: Writer,
   ox: number,
   oz: number,
+  a = s,
+  T = H[s],
+  lowIn = H[s + DX[d] + DY[d] * SW],
+  extras = true,
 ): number {
-  const T = H[s];
-  let low = H[s + DX[d] + DY[d] * SW];
+  let low = lowIn;
   if (low >= T) return 0;
+  const ns = s + DX[d] + DY[d] * SW;
   // The column's cell as drawn (WALLC): a cliff corner's or the shore's raised land has the walls of
   // the land it is drawn as, not the sand of the water cell it stands in (26 November, the owner:
   // thin tan strips down the coast's cliffs).
-  const c = WALLC[s];
+  const c = WALLC[a];
   if (c < 0 || !f.inside[c]) return 0;
   // Past the chunk's edge the neighbour may be drawn as whole cells: the wall goes down to its
   // cell's top too, so no gap opens between the two.
@@ -2776,7 +3402,7 @@ function wallFaces(
   const foot = low > bottom ? CREASE : 1;
   const alongX = d === 1 || d === 3;
   const at = alongX ? sx : sy;
-  const glow = GL[s] > 0 || LAVA_D[s] < GLOW_REACH || HOUSE_D[s] < GLOW_REACH;
+  const glow = GL[a] > 0 || LAVA_D[a] < GLOW_REACH || HOUSE_D[a] < GLOW_REACH;
   // The wall's plane: the far side of the column for east and south.
   const line = alongX ? sy + (d === 1 ? 1 : 0) : sx + (d === 0 ? 1 : 0);
   let n = 0;
@@ -2789,9 +3415,9 @@ function wallFaces(
     // A bit darker the deeper below the column's top, in steps of a voxel so runs still merge.
     F.light = light * (1 - Math.min(0.25, Math.floor((T - hi) / sub) * 0.03));
     F.foot = lo === low ? foot : 1;
-    F.glow = glow ? glowLevel(s, (lo + hi) / (2 * sub)) : 0;
+    F.glow = glow ? glowLevel(a, (lo + hi) / (2 * sub)) : 0;
     // Under the water only between two columns of the bed: the island's side below the sea is earth.
-    F.wet = WET[s] & WET[s + DX[d] + DY[d] * SW];
+    F.wet = WET[a] & WET[ns];
     F.at = at;
     F.line = line;
   };
@@ -2801,29 +3427,29 @@ function wallFaces(
   }
   // The riser of a slope's tiny step: the ground's own colour (its slope light, hollows and tint
   // included), a little darker on its side, so every small cube's edge still shows.
-  if (T - low <= RS[s] && !f.wet[c] && low > bottom) {
-    face(low, T, C[s]);
+  if (T - low <= RS[a] && !f.wet[c] && low > bottom) {
+    face(low, T, C[a]);
     // On snow and rock the steps of a slope are lit as the slope is, not as walls: one turned from
     // the sun read as a lone blue face, in checkers across a snowy peak (17 November).
     // On sand too (18 November, the owner: dark wavy contour lines across flat sand, a step's riser
     // lit as a wall's dark side): its slopes' risers take the slope's light, as its tops do.
-    if (f.steep[c] || SANDY[s]) FACES[n - 1].wet = SLOPE_LIT;
+    if (f.steep[c] || SANDY[a]) FACES[n - 1].wet = SLOPE_LIT;
     // Bright ground (sand, snow) takes half the dark side: on sand every small step's shadow read
     // as a washboard (15 November).
     const bright = f.ground[c] === G.SAND || f.ground[c] === G.SNOW;
-    FACES[n - 1].light = 1 - RISER_SIDE * (LAND[s] === 2 ? ROCK_CALM : 1) * (bright ? BRIGHT_CALM : 1) * (1 - light);
+    FACES[n - 1].light = 1 - RISER_SIDE * (LAND[a] === 2 ? ROCK_CALM : 1) * (bright ? BRIGHT_CALM : 1) * (1 - light);
     FACES[n - 1].foot = 1;
     return n;
   }
   // Weed and stones on a lake's bed (weed): one face in their own colour, lit as a dry riser so each
   // stalk's cube shows; below the bed's top (a step of the bed beside it), one face of the bed's.
-  if (WEEDS[s] && low > bottom) {
-    const base = T - RAISE[s];
-    face(Math.max(low, base), T, C[s]);
+  if (WEEDS[a] && low > bottom) {
+    const base = T - RAISE[a];
+    face(Math.max(low, base), T, C[a]);
     FACES[n - 1].light = 1 - RISER_SIDE * (1 - light);
     FACES[n - 1].foot = 1;
     if (low < base) {
-      face(low, base, BEDC[s]);
+      face(low, base, BEDC[a]);
       FACES[n - 1].light = 1 - 0.25 * (1 - light);
       FACES[n - 1].foot = 1;
     }
@@ -2833,9 +3459,9 @@ function wallFaces(
   // water reads as one smooth floor and not as lines of darker steps. A lake's bed so at any height
   // between two of its columns (26 November): a taller step drew its soil and stone, not darkened with
   // the floor, as light blocks across the dark deep floor.
-  const lakeStep = WET[s] & WET[s + DX[d] + DY[d] * SW] && isBed(f, c) && f.wlake[c] > 0 && FLOOD[s] < 0;
-  if ((T - low <= 2 * sub || lakeStep) && (isBed(f, c) || FLOOD[s] >= 0) && low > bottom) {
-    face(low, T, C[s]);
+  const lakeStep = WET[a] & WET[ns] && isBed(f, c) && f.wlake[c] > 0 && FLOOD[a] < 0;
+  if ((T - low <= 2 * sub || lakeStep) && (isBed(f, c) || FLOOD[a] >= 0) && low > bottom) {
+    face(low, T, C[a]);
     FACES[n - 1].light = 1 - 0.25 * (1 - light);
     FACES[n - 1].foot = 1;
     return n;
@@ -2889,7 +3515,7 @@ function wallFaces(
   }
   face(low, Math.min(hi, bottom + 2 * sub), f.deep[c]);
   // A small ledge on a cliff, at a band's foot, in short runs (rocks).
-  if (rocks && grain && T - low >= 2 * sub && !f.wet[c]) {
+  if (extras && rocks && grain && T - low >= 2 * sub && !f.wet[c]) {
     const y = Math.floor((soilLo - 1) / sub) * sub;
     if (y - 1 > low + sub && y < soilLo && noise(px, py, 0.5, 77 + d) > 0.7) {
       const Q = 1 / sub;
@@ -2913,7 +3539,7 @@ function wallFaces(
     }
   }
   // Grass and snow that hang over the edge of a cliff, in short runs (blend).
-  if (blend && f.hangs[c] && !f.wet[c] && T - low >= sub && T >= top - 1 && noise(px, py, 0.6, 71 + d) > 0.6) {
+  if (extras && blend && f.hangs[c] && !f.wet[c] && T - low >= sub && T >= top - 1 && noise(px, py, 0.6, 71 + d) > 0.6) {
     const Q = 1 / sub;
     const drop = Math.max(1, sub >> 2) + (noise(px, py, 0.35, 75) > 0.5 ? 1 : 0);
     const reach = Q * 0.8;
