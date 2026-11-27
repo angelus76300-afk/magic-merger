@@ -571,9 +571,10 @@ export function intoCell(p: number, c: number): number {
 // low ones join), so a canyon a cell wide keeps its width. It reads cells within three of the
 // corner (a chunk's border): the same at any level of detail. Guards: only between cells that do
 // not join; a built or flat cell, a path or a road never changes; a tree's or crops' cell only
-// beyond OUTLINE_ANCHOR of its middle; a wet cell (water, lava) may take a dry cliff's land in its
-// corner, never the reverse; no cell's middle ever changes. Walls stay vertical. `sharpRun` (0 off):
-// a corner where two straight walls of at least that many cells meet stays sharp, for a mesa.
+// beyond OUTLINE_ANCHOR of its middle; a lava cell may take a dry cliff's land in its corner, never
+// the reverse, and a water bed (drawn by the fine water) trades nothing, so no rock stands up in
+// it; no cell's middle ever changes. Walls stay vertical. `sharpRun` (0 off): a corner where two
+// straight walls of at least that many cells meet stays sharp, for a mesa.
 export const CLIFF_OUTLINE = { on: false, wave: 0.08, period: 2.5, sharpRun: 0 };
 export const OUTLINE_OPEN = 0;
 export const OUTLINE_TREE = 1;
@@ -907,7 +908,7 @@ export function outlineOfCells(f: FineCells): OutlineRead {
       },
       kind: (x, y) => {
         const c = at(x, y);
-        if (!f.inside[c] || !f.natural[c] || f.flat[c] || f.ground[c] === G.PATH || f.ground[c] === G.ROAD) return OUTLINE_FIXED;
+        if (!f.inside[c] || !f.natural[c] || f.flat[c] || f.ground[c] === G.PATH || f.ground[c] === G.ROAD || isBed(f, c)) return OUTLINE_FIXED;
         if (f.wet[c]) return OUTLINE_WET;
         return f.anchored[c] ? OUTLINE_TREE : OUTLINE_OPEN;
       },
@@ -961,7 +962,7 @@ export function outlineOfLand(land: LandRead): OutlineRead {
     r = {
       top: (x, y) => land.top(x, y),
       kind: (x, y) => {
-        if (!land.natural(x, y) || land.flat(x, y) || land.way(x, y)) return OUTLINE_FIXED;
+        if (!land.natural(x, y) || land.flat(x, y) || land.way(x, y) || land.bed(x, y)) return OUTLINE_FIXED;
         if (land.wet(x, y)) return OUTLINE_WET;
         return land.anchored(x, y) ? OUTLINE_TREE : OUTLINE_OPEN;
       },

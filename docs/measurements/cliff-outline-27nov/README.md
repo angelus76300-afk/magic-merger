@@ -10,24 +10,24 @@ Each island's run is the longest straight off-axis cliff run of at least 6 cells
 
 | Island                 | Run               | Mode    | RMS   | Teeth per 10 cells | Land triangles     | Tile ms p50 / p95 |
 | ---------------------- | ----------------- | ------- | ----- | ------------------ | ------------------ | ----------------- |
-| plateau-7              | 11.7 cells, 59.0° | before  | 0.294 | 8.57               | 4,630,406          | 0.5 / 1.3         |
-|                        |                   | main    | 0.224 | 4.29               | 4,643,818          | 0.5 / 4.6         |
-|                        |                   | outline | 0.206 | 0.86               | 4,667,034 (+0.5%)  | 0.6 / 1.8         |
-| desert-plateau-3       | 15.6 cells, 39.8° | before  | 0.365 | 11.52              | 2,206,212          | 0.4 / 4.2         |
-|                        |                   | main    | 0.310 | 1.28               | 2,230,192          | 0.6 / 4.6         |
-|                        |                   | outline | 0.288 | 1.92               | 2,259,584 (+1.3%)  | 0.6 / 4.5         |
-| mesa-5                 | 15.7 cells, 26.6° | before  | 0.422 | 8.94               | 3,160,614          | 0.4 / 1.4         |
-|                        |                   | main    | 0.374 | 4.47               | 3,269,674          | 0.5 / 2.5         |
-|                        |                   | outline | 0.298 | 0.64               | 3,347,254 (+2.4%)  | 0.6 / 3.6         |
-|                        |                   | sharp 3 | 0.298 | 0.64               | 3,344,670 (+2.3%)  | 0.6 / 2.6         |
+| plateau-7              | 11.7 cells, 59.0° | before  | 0.294 | 8.57               | 4,630,406          | 0.5 / 1.4         |
+|                        |                   | main    | 0.224 | 4.29               | 4,643,818          | 0.5 / 1.6         |
+|                        |                   | outline | 0.206 | 0.86               | 4,666,994 (+0.5%)  | 0.7 / 1.9         |
+| desert-plateau-3       | 15.6 cells, 39.8° | before  | 0.365 | 11.52              | 2,206,212          | 0.4 / 1.4         |
+|                        |                   | main    | 0.310 | 1.28               | 2,230,192          | 0.5 / 3.4         |
+|                        |                   | outline | 0.288 | 1.92               | 2,259,948 (+1.3%)  | 0.6 / 2.1         |
+| mesa-5                 | 15.7 cells, 26.6° | before  | 0.422 | 8.94               | 3,160,614          | 0.5 / 1.7         |
+|                        |                   | main    | 0.374 | 4.47               | 3,269,674          | 0.5 / 1.7         |
+|                        |                   | outline | 0.298 | 0.64               | 3,352,994 (+2.5%)  | 0.6 / 1.7         |
+|                        |                   | sharp 3 | 0.298 | 0.64               | 3,350,062 (+2.5%)  | 0.6 / 1.7         |
 | volcanic-6 (lava foot) | 7.2 cells, 56.3°  | before  | 0.276 | 9.71               | 5,565,270          | 0.5 / 2.1         |
-|                        |                   | main    | 0.276 | 9.71               | 5,567,334          | 0.5 / 1.9         |
-|                        |                   | outline | 0.276 | 9.71               | 5,570,442 (+0.06%) | 0.7 / 4.0         |
-| forest-plateau-2       | 13.6 cells, 36.0° | before  | 0.375 | 10.29              | 4,148,496          | 0.4 / 2.1         |
-|                        |                   | main    | 0.301 | 4.41               | 4,203,488          | 0.5 / 1.8         |
-|                        |                   | outline | 0.255 | 3.68               | 4,255,984 (+1.2%)  | 0.7 / 4.4         |
+|                        |                   | main    | 0.276 | 9.71               | 5,567,334          | 0.6 / 4.7         |
+|                        |                   | outline | 0.276 | 9.71               | 5,570,442 (+0.06%) | 0.6 / 2.7         |
+| forest-plateau-2       | 13.6 cells, 36.0° | before  | 0.375 | 10.29              | 4,148,496          | 0.5 / 1.7         |
+|                        |                   | main    | 0.301 | 4.41               | 4,203,488          | 0.6 / 1.8         |
+|                        |                   | outline | 0.255 | 3.68               | 4,255,848 (+1.2%)  | 0.6 / 2.3         |
 
-Triangle changes are against main. Tile times come from the software renderer in this container, one run each, so the p95 values swing by 2 to 3 ms between runs. The p50 rises by 0.1 to 0.2 ms with the outline on.
+Triangle changes are against main. Tile times come from the software renderer in this container, one run each, so the p95 values swing by 2 to 3 ms between runs. The p50 rises by 0 to 0.2 ms with the outline on. These are from the last run, after the water bed fix (see below).
 
 Sheets: `plateau-7-compare-390.jpg`, `desert-plateau-3-compare-390.jpg`, `mesa-5-compare-390.jpg`, `volcanic-6-compare-390.jpg`, `forest-plateau-2-compare-390.jpg`, and the same at 344 (the Z Fold folded).
 
@@ -54,11 +54,13 @@ Other cases:
 
 The ground blend's ONE_LAND hash stays `370d4587` with the flag off.
 
+Fixed on the way: at first a water bed could take a dry cliff's rock in its corner. With the outline on, the small desert plateau of `scripts/cliff-corner-test.ts` then had 21 of 65 land columns in water cells standing more than SHORE_LOW over the water, a tan strip down the cliff's face. A water bed now trades nothing, in the mesher and in `fieldHeight`, and the count is 0 of 38. Lava still takes fill.
+
 ## What looks wrong
 
 1. **Ribbed walls.** The lip is straight now, but the face below it is a row of eighth-wide vertical columns, each set a little back from the one before. Up close (the eye frames of plateau-7 and mesa-5) that reads as organ pipes. Main ribs too, with wider, flatter facets. Before the flag goes on, the face needs one plane per wall run.
 2. **Lava foot.** On the real volcanic island the outline changes 68 columns along the run, and the measured lip does not move. Lava cells only take fill, and the anchored rock cells on the high side cannot cut into lava, so most of a cliff into lava stays on the cells' sides. The synthetic lava foot keeps its convex corners toothed for the same reason.
-3. **`sharp=3` does almost nothing on mesa-5.** 2,584 fewer triangles and the same lip. The run is a long 2:1 line with no corner of 3 straight cells, so nothing is kept sharp there. The variant needs a mesa with real corners to judge.
+3. **`sharp=3` does almost nothing on mesa-5.** 2,932 fewer triangles and the same lip. The run is a long 2:1 line with no corner of 3 straight cells, so nothing is kept sharp there. Worse, the outline rounds the mesa's square tops (the upper left of the above frames): those rectangles become one long curve, with or without `sharp=3`. A mesa reads as a mesa by those corners, so the sharp rule needs to catch shorter walls, or mesas keep the cells' sides.
 4. **Forest eye frames.** The eye camera at forest-plateau-2's foot stands against another wall and shows only rock. The above and play frames are the ones to judge there.
-5. **Desert-plateau-3.** Teeth per 10 cells are 1.92 with the outline against 1.28 on main. That is 3 teeth against 2 on one run, inside the noise of one run.
+5. **Desert-plateau-3.** Teeth per 10 cells are 1.92 with the outline against 1.28 on main. That is 3 teeth against 2 on one run, inside the noise of one run. The outline's above and play frames there also show a small dark slot in the lip, near the middle of the run. I have not traced it yet; it may be a lip break the old cell edge left behind.
 6. **Known limits.** `groundAt` on a wet cell still returns the water level where filled rock now stands. With `sharpRun` on, the outline reads one cell beyond the chunk's border of 3. At sub 4, the border columns read clamped cells. No sim walker guard is in yet: the prototype left it out.
