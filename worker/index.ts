@@ -1501,8 +1501,9 @@ async function handleLibrary(
 // program comes back as a candidate nobody is served; scripts/refresh-runner.ts
 // tests it (the test run, its promise probe and the five minute test of an
 // artifact), has the judge score it against the old one on the same frames,
-// and replaces the old one only if it passed and scored no lower (and its
-// creatures look no less alive). Players' votes then roll a replaced one back
+// and replaces the old one only if it passed and scored higher (a tie keeps the
+// old unless the old one fails its own test run; scripts/refresh-decide.ts), and its
+// creatures look no less alive. Players' votes then roll a replaced one back
 // if they like it less, as with any rewrite. Old versions are kept.
 // Capped at REFRESH_BUDGET_USD ($8) a month, estimates held before submitting.
 

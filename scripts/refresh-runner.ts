@@ -5,8 +5,9 @@
 //   2. frames of the old and the new program on the same Spell Lab island,
 //      at the same moments, saved to OUT (default refresh-frames/);
 //   3. the judge on both (/api/admin/judge-trial, nothing stored): the new one
-//      replaces the old only if it scores no lower, and its creatures look no
-//      less alive. Votes then roll it back if players like it less.
+//      replaces the old only if it scores higher (a tie keeps the old, unless
+//      the old one fails its own test run), and its creatures look no less
+//      alive (scripts/refresh-decide.ts). Votes then roll it back if players like it less.
 //
 //   MM_URL=... MM_TOKEN=<ADMIN_TOKEN> npx esbuild scripts/refresh-runner.ts --bundle --platform=node --format=esm \
 //     --outfile=node_modules/.cache/refresh-runner.mjs --external:playwright && node node_modules/.cache/refresh-runner.mjs [limit]
@@ -24,6 +25,7 @@ import type { Tier } from "../shared/tiers";
 // @ts-expect-error plain JavaScript, shared with the other lab scripts
 import { factsOf, openLab } from "./lab-browser.mjs";
 import { adminApi } from "./admin-api";
+import { decideRefresh } from "./refresh-decide";
 
 const url = process.env.MM_URL;
 const token = process.env.MM_TOKEN;
@@ -134,23 +136,7 @@ try {
       }
       const o = judged.old;
       const n = judged.new;
-      let replace = false;
-      let reason: string;
-      // 4.6: an old program that is not the kind of thing its item is (a Serpent
-      // of stone spheres, a Village that is a charm, a Serpent with a shield) fails the same test run;
-      // the judge's score of it then decides nothing.
-      const wrongKind = !!c.form && !!old && (old.problem === "kind" || old.problem === "size" || old.problem === "fit");
-      if (!check.ok) reason = `its test run failed (${check.problem}): ${check.detail}`;
-      else if (!n) reason = "the judge did not answer";
-      else if (wrongKind) {
-        replace = true;
-        reason = `the old one is not ${c.form === "object" ? "an object" : `a ${c.form}`} of its size (${old!.problem}); the new one passed its test run, judged ${n.score}${o ? ` against ${o.score}` : ""}`;
-      } else if (o && n.score < o.score) reason = `the judge scored it lower (${n.score} against ${o.score})`;
-      else if (o && o.alive === "yes" && n.alive === "no") reason = "its creatures looked less alive";
-      else {
-        replace = true;
-        reason = o ? `passed its test run, judged ${n.score} against ${o.score}` : `passed its test run, judged ${n.score}`;
-      }
+      const { replace, reason } = decideRefresh({ form: c.form, check, old, o, n });
       const row = {
         name: c.name,
         tier: c.tier,

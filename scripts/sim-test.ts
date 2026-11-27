@@ -25,6 +25,7 @@ import { looksChecks } from "./looks-test";
 import { cubesChecks } from "./cubes-test";
 import { coverCubesChecks } from "./cover-cubes-test";
 import { leftoversChecks } from "./leftovers-test";
+import { refreshDecideChecks } from "./refresh-decide-test";
 import { goalOfCreature } from "../src/sim/goals";
 import { abilitiesFrom } from "../src/sim/abilities";
 import { logDeeds, mindOf, remember } from "../src/sim/kin";
@@ -2736,6 +2737,8 @@ cubesChecks(check);
 coverCubesChecks(check);
 // What spells leave (voxels and covers) in small cubes: scripts/leftovers-test.ts.
 leftoversChecks(check);
+// The refresh's verdict, a tie keeps the old: scripts/refresh-decide-test.ts.
+refreshDecideChecks(check);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);
