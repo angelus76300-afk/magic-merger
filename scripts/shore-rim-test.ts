@@ -21,8 +21,9 @@ const BEHIND = 4;
 const LOW = 0.5;
 
 // The highest surface of `mat`'s meshes over each eighth column of the island, at its middle, NaN
-// where none (each triangle that is not upright).
-export function surface(world: World, meshes: Mesh[], mat: MeshBasicMaterial): Float32Array {
+// where none (each triangle that is not upright); the lowest with `lowest` (under a lip of grass
+// hanging over a cliff, the ground below it).
+export function surface(world: World, meshes: Mesh[], mat: MeshBasicMaterial, lowest = false): Float32Array {
   const W = world.w * SUB;
   const y = new Float32Array(W * world.h * SUB).fill(NaN);
   for (const m of meshes) {
@@ -59,7 +60,7 @@ export function surface(world: World, meshes: Mesh[], mat: MeshBasicMaterial): F
           if (l1 < -1e-6 || l2 < -1e-6 || l3 < -1e-6) continue;
           const at = l1 * ay + l2 * by + l3 * qy;
           const s = j * W + i;
-          if (!(y[s] >= at)) y[s] = at;
+          if (lowest ? !(y[s] <= at) : !(y[s] >= at)) y[s] = at;
         }
     }
   }

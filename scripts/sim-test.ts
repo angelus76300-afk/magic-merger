@@ -128,6 +128,7 @@ import { chunkFillChecks } from "./chunk-fill-test";
 import { farLandChecks } from "./far-land-test";
 import { waterLeftoversChecks } from "./water-leftovers-test";
 import { shoreRimChecks } from "./shore-rim-test";
+import { cliffCornerChecks } from "./cliff-corner-test";
 import { waterFiguresChecks } from "./water-figures-test";
 import { waterLightChecks } from "./water-light-test";
 import { lavaChecks } from "./lava-test";
@@ -2638,6 +2639,8 @@ lakeWeedChecks(check);
 waterLeftoversChecks(check);
 // Shores without a rim, the water a little under the land (23 November): scripts/shore-rim-test.ts.
 shoreRimChecks(check);
+// Cliff corners on the diagonal, no tan strip down a coast's cliff (26 November): scripts/cliff-corner-test.ts.
+cliffCornerChecks(check);
 // Figures and props on the water as drawn, in eighths, far and in whole cells (24 November): scripts/water-figures-test.ts.
 waterFiguresChecks(check);
 // Lava's crust and cracks (18 November): scripts/lava-test.ts.

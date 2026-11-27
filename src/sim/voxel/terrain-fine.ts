@@ -376,8 +376,19 @@ const BED_LINK = 4;
 const BED_SHORE = 2;
 const BED_SPAN = 2;
 export function fieldHeight(land: LandRead, px: number, py: number): number {
-  const cx = Math.floor(px);
-  const cy = Math.floor(py);
+  let cx = Math.floor(px);
+  let cy = Math.floor(py);
+  // A cliff's corner cut on the diagonal (cliffCorner): the point read as its neighbour's land.
+  if (CLIFF_CORNER.on && GRAPHICS.steps) {
+    const k = cliffCorner(cornerOfLand(land), cx, cy, px, py);
+    if (k === 1) {
+      cx += px - cx > 0.5 ? 1 : -1;
+      px = intoCell(px, cx);
+    } else if (k === 2) {
+      cy += py - cy > 0.5 ? 1 : -1;
+      py = intoCell(py, cy);
+    }
+  }
   const t = land.top(cx, cy);
   if (land.flat(cx, cy)) return t;
   const gx = px - 0.5;
@@ -442,6 +453,98 @@ export function joins(dt: number, steepA: boolean, steepB: boolean): boolean {
   return Math.abs(dt) <= 1 || (steepA && steepB && Math.abs(dt) <= STEEP_LINK);
 }
 
+// Cliff corners cut on the diagonal (26 November, the owner: "Look at how bad the borders look
+// now!"). A cliff too tall to curve stands on the cells' sides, so where it runs diagonally across
+// the cells it was a sawtooth of whole-cell notches, a dark notch of shadow in each. Where a cell
+// stands alone against the three others of the 2 by 2 cells round one of its corners (they at one
+// level, it a cliff above or below them), the corner's triangle beyond the line through the middles
+// of its two sides takes their level. A staircase of cells along a diagonal cliff then meets on one
+// straight line (the cut of the low cell at an inner step and of the high cell at the next outer
+// step lie on it), a little wavy (CLIFF_CORNER.wave). A lone cell keeps the diamond round its middle.
+// Only between dry natural ground, not where something stands on the cell cut (its middle never
+// changes anyway), so what stands on the land still stands on it; the slopes of snow and rock that
+// curve (joins) are left to the field. `on` is a switch for the checks
+// (scripts/cliff-corner-test.ts).
+export const CLIFF_CORNER = { on: true, cut: 0.5, wave: 0.08 };
+// What cliffCorner reads of a cell (x, y): its height in voxels, whether it is dry natural ground
+// that no house keeps flat (the other cells of a corner), whether something stands on it, and
+// whether it is snow or bare rock.
+export interface CornerRead {
+  top(x: number, y: number): number;
+  open(x: number, y: number): boolean;
+  anchored(x: number, y: number): boolean;
+  steep(x: number, y: number): boolean;
+}
+// The cell whose land the point (px, py) of cell (cx, cy) is drawn with: 0 its own, 1 its
+// neighbour along x toward the point, 2 along y.
+export function cliffCorner(r: CornerRead, cx: number, cy: number, px: number, py: number): number {
+  const fx = px - cx - 0.5;
+  const fy = py - cy - 0.5;
+  const ax = Math.abs(fx);
+  const ay = Math.abs(fy);
+  if (ax + ay <= CLIFF_CORNER.cut - CLIFF_CORNER.wave) return 0;
+  if (ax + ay <= CLIFF_CORNER.cut + (noise(px, py, 0.9, 71) - 0.5) * 2 * CLIFF_CORNER.wave) return 0;
+  if (!r.open(cx, cy) || r.anchored(cx, cy)) return 0;
+  const ex = cx + (fx > 0 ? 1 : -1);
+  const ey = cy + (fy > 0 ? 1 : -1);
+  if (!r.open(ex, cy) || !r.open(cx, ey) || !r.open(ex, ey)) return 0;
+  const t = r.top(cx, cy);
+  const tb = r.top(ex, cy);
+  const tc = r.top(cx, ey);
+  const td = r.top(ex, ey);
+  // The three others at one level.
+  if (Math.abs(tb - tc) > 1 || Math.abs(tb - td) > 1 || Math.abs(tc - td) > 1) return 0;
+  // This cell a cliff away from each of them.
+  const st = r.steep(cx, cy);
+  if (joins(tb - t, st, r.steep(ex, cy)) || joins(tc - t, st, r.steep(cx, ey)) || joins(td - t, st, r.steep(ex, ey))) return 0;
+  return ax >= ay ? 1 : 2;
+}
+// cliffCorner's reading of the island (LandRead, for groundAt) and of a chunk's cells (the mesher).
+const LAND_CORNER = new WeakMap<LandRead, CornerRead>();
+function cornerOfLand(land: LandRead): CornerRead {
+  let r = LAND_CORNER.get(land);
+  if (!r) {
+    r = {
+      top: (x, y) => land.top(x, y),
+      open: (x, y) => land.natural(x, y) && !land.wet(x, y) && !land.flat(x, y),
+      anchored: (x, y) => land.anchored(x, y),
+      steep: (x, y) => land.steep(x, y),
+    };
+    LAND_CORNER.set(land, r);
+  }
+  return r;
+}
+const CELLS_CORNER = new WeakMap<FineCells, CornerRead>();
+function cornerOfCells(f: FineCells): CornerRead {
+  let r = CELLS_CORNER.get(f);
+  if (!r) {
+    r = cornerReadOf(f);
+    CELLS_CORNER.set(f, r);
+  }
+  return r;
+}
+function cornerReadOf(f: FineCells): CornerRead {
+  const at = (x: number, y: number) => {
+    if (x < f.x0 - 3 || y < f.y0 - 3 || x >= f.x1 + 3 || y >= f.y1 + 3) return -1;
+    const c = fineAt(f, x, y);
+    return f.inside[c] ? c : -1;
+  };
+  return {
+    top: (x, y) => f.top[at(x, y)],
+    open: (x, y) => {
+      const c = at(x, y);
+      return c >= 0 && f.natural[c] === 1 && f.wet[c] === 0 && f.flat[c] === 0;
+    },
+    anchored: (x, y) => f.anchored[at(x, y)] === 1,
+    steep: (x, y) => f.steep[at(x, y)] === 1,
+  };
+}
+// A point (px, py) moved just inside cell (cx, cy) (a corner's triangle read as its neighbour's land).
+const CORNER_IN = 0.01;
+export function intoCell(p: number, c: number): number {
+  return Math.max(c + CORNER_IN, Math.min(c + 1 - CORNER_IN, p));
+}
+
 // The gentle swell of open ground: about a tenth of a voxel either way, over patches several
 // cells wide (it was over three cells, and flat ground read as granular).
 export function swell(px: number, py: number): number {
@@ -462,8 +565,20 @@ export function fieldStep(h: number, px: number, py: number, sub: number): numbe
 // fieldHeight on the fine cells' own arrays, for the mesher: the same field, without a call per
 // neighbour (16 of them a column).
 export function fieldFine(f: FineCells, px: number, py: number): number {
-  const cx = Math.floor(px);
-  const cy = Math.floor(py);
+  let cx = Math.floor(px);
+  let cy = Math.floor(py);
+  // A cliff's corner cut on the diagonal, as fieldHeight reads it (the mesher has already moved its
+  // columns into the cell they are drawn as: there this changes nothing).
+  if (CLIFF_CORNER.on && GRAPHICS.steps && cx >= f.x0 - 2 && cy >= f.y0 - 2 && cx < f.x1 + 2 && cy < f.y1 + 2) {
+    const k = cliffCorner(cornerOfCells(f), cx, cy, px, py);
+    if (k === 1) {
+      cx += px - cx > 0.5 ? 1 : -1;
+      px = intoCell(px, cx);
+    } else if (k === 2) {
+      cy += py - cy > 0.5 ? 1 : -1;
+      py = intoCell(py, cy);
+    }
+  }
   const c = fineAt(f, cx, cy);
   const t = f.top[c];
   if (f.flat[c]) return t;
@@ -650,6 +765,10 @@ let SUM = new Float64Array(0);
 // Each column's cell (fineAt), its riser (the tallest step drawn as part of a slope), its night glow
 // level (0 to GLOW_LEVELS), and the surface of the water over it (NaN where it is not under water).
 let CELL = new Int32Array(0);
+// The cell whose walls a column is drawn with (wallFaces): its own, the neighbour's whose land it
+// is drawn as at a cliff's corner (cliffCorner, then CELL too) or at the shore (shoreLine's land
+// raised over a water cell), -1 off the island.
+let WALLC = new Int32Array(0);
 let RS = new Uint8Array(0);
 let GL = new Uint8Array(0);
 // 1 where a column is a water bed under the water's surface (its faces are lit as the water lights them).
@@ -771,6 +890,7 @@ export function buildFineTile(
     LAND = new Uint8Array(SW * SH);
     SUM = new Float64Array((SW + 1) * (SH + 1));
     CELL = new Int32Array(SW * SH);
+    WALLC = new Int32Array(SW * SH);
     RS = new Uint8Array(SW * SH);
     GL = new Uint8Array(SW * SH);
     WET = new Uint8Array(SW * SH);
@@ -794,20 +914,38 @@ export function buildFineTile(
   // ones on snow and rock, whose slopes (STEEP_LINK) climb up to three voxels a cell and meet a
   // neighbour's in steps of a voxel or more where three cells of different heights meet.
   const steepRiser = Math.max(RISER, 2 * sub);
+  const corner = steps && CLIFF_CORNER.on ? cornerOfCells(f) : null;
 
   for (let j = 0; j < SH; j++) {
     for (let k = 0; k < SW; k++) {
       const sx = sx0 + k;
       const sy = sy0 + j;
-      const cx = Math.floor(sx / sub);
-      const cy = Math.floor(sy / sub);
+      let cx = Math.floor(sx / sub);
+      let cy = Math.floor(sy / sub);
       const s = j * SW + k;
+      // The column's middle, in cells, and where the field is read for it.
+      const px = (sx + 0.5) / sub;
+      const py = (sy + 0.5) / sub;
+      let qx = px;
+      let qy = py;
+      // A cliff's corner cut on the diagonal (cliffCorner): the column drawn as its neighbour's land.
+      if (corner && cx >= f.x0 - 2 && cy >= f.y0 - 2 && cx < f.x1 + 2 && cy < f.y1 + 2) {
+        const kc = cliffCorner(corner, cx, cy, px, py);
+        if (kc === 1) {
+          cx += px - cx > 0.5 ? 1 : -1;
+          qx = intoCell(px, cx);
+        } else if (kc === 2) {
+          cy += py - cy > 0.5 ? 1 : -1;
+          qy = intoCell(py, cy);
+        }
+      }
       const c = fineAt(f, cx, cy);
       if (cx < f.x0 - 3 || cy < f.y0 - 3 || cx >= f.x1 + 3 || cy >= f.y1 + 3 || !f.inside[c]) {
         H[s] = bottom;
         C[s] = 0;
         D[s] = 0;
         CELL[s] = -1;
+        WALLC[s] = -1;
         RS[s] = RISER;
         SANDY[s] = 0;
         FLOOD[s] = -1;
@@ -817,9 +955,6 @@ export function buildFineTile(
       WEEDS[s] = WEED_NONE;
       CELL[s] = c;
       RS[s] = f.steep[c] ? steepRiser : RISER;
-      // The column's middle, in cells.
-      const px = (sx + 0.5) / sub;
-      const py = (sy + 0.5) / sub;
       const t = f.top[c];
       let hgt = t * sub;
       let src = c;
@@ -827,11 +962,12 @@ export function buildFineTile(
       let raise = 0;
       let lifted = false;
       FLOOD[s] = -1;
-      const lx = sx - cx * sub;
-      const ly = sy - cy * sub;
+      // Within the cell (a column of a corner cut stands at its neighbour's edge).
+      const lx = Math.max(0, Math.min(sub - 1, sx - cx * sub));
+      const ly = Math.max(0, Math.min(sub - 1, sy - cy * sub));
       if (f.natural[c]) {
         // The secondary terrain map: slopes where the land rises one voxel, and water beds.
-        if (steps && !f.wet[c]) hgt = fieldStep(fieldFine(f, px, py), px, py, sub);
+        if (steps && !f.wet[c]) hgt = fieldStep(fieldFine(f, qx, qy), px, py, sub);
         else if (steps && isBed(f, c)) hgt = bedStep(fieldFine(f, px, py), f.water[c], sub);
         let border = Infinity;
         let shore = false;
@@ -854,8 +990,11 @@ export function buildFineTile(
           // At the foot of a cliff (not of a slope of snow or rock, which curves).
           if (dt >= 2 && af < 0.2 && !f.wet[n] && !(steps && joins(dt, f.steep[c] === 1, f.steep[n] === 1))) foot = n;
           if (!blend) continue;
-          if (f.wet[c] && !f.wet[n] && f.water[c] > -1e8 && f.top[n] >= f.water[c] - 0.5) {
-            // The shore: sand reaches into the shallows in a wavy line, just above the water.
+          if (f.wet[c] && !f.wet[n] && f.water[c] > -1e8 && f.top[n] >= f.water[c] - 0.5 && f.top[n] - f.water[c] <= SHORE_LOW) {
+            // The shore: sand reaches into the shallows in a wavy line, just above the water. Only
+            // from a low bank (SHORE_LOW): from a cliff's top, a column of the water cell rose to the
+            // cliff's height, and drawn as the shore's land (shoreLine) it stood as a thin tan strip
+            // down the cliff (26 November, the owner).
             if (af < 0.45 * Math.min(1, Math.max(0, (noise(px, py, 0.7, 3) - 0.3) * 2.2))) {
               const above = Math.ceil((f.water[c] + 0.04) * sub);
               hgt = Math.max(hgt, above, f.top[n] * sub);
@@ -931,6 +1070,7 @@ export function buildFineTile(
       if (water && f.wet[c] && f.water[c] > -1e8 && !f.lava[c] && !lifted)
         hgt = Math.min(hgt, Math.ceil(f.water[c] * sub) - 1 - raise, Math.ceil((drawnLevel(f, c, cx, cy, lx, ly, sub) - BED_UNDER) * sub) - 1 - raise);
       H[s] = hgt + raise;
+      WALLC[s] = lifted ? src : c;
       if (tops && sx >= tx0 * sub && sy >= ty0 * sub && sx < tx1 * sub && sy < ty1 * sub)
         tops.h[(sy - tops.y0 * sub) * tops.stride + (sx - tops.x0 * sub)] = hgt;
       const rock = f.ground[src] === G.ROCK;
@@ -2084,10 +2224,11 @@ function wallFaces(
   const T = H[s];
   let low = H[s + DX[d] + DY[d] * SW];
   if (low >= T) return 0;
-  const cx = Math.floor(sx / sub);
-  const cy = Math.floor(sy / sub);
-  const c = fineAt(f, cx, cy);
-  if (!f.inside[c]) return 0;
+  // The column's cell as drawn (WALLC): a cliff corner's or the shore's raised land has the walls of
+  // the land it is drawn as, not the sand of the water cell it stands in (26 November, the owner:
+  // thin tan strips down the coast's cliffs).
+  const c = WALLC[s];
+  if (c < 0 || !f.inside[c]) return 0;
   // Past the chunk's edge the neighbour may be drawn as whole cells: the wall goes down to its
   // cell's top too, so no gap opens between the two.
   const nx = Math.floor((sx + DX[d]) / sub);
