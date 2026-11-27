@@ -55,6 +55,7 @@ interface Cell {
   anchored?: boolean;
   flat?: boolean;
   built?: boolean;
+  square?: boolean;
 }
 type Layout = (x: number, y: number) => Cell;
 
@@ -89,6 +90,7 @@ function fill(layout: Layout): FineCells {
       f.raw[k] = c.top;
       f.anchored[k] = c.anchored || c.wet || c.flat || g === G.PATH ? 1 : 0;
       f.steep[k] = 0;
+      f.square[k] = c.square ? 1 : 0;
       f.wdeep[k] = 0x204060;
       f.wshallow[k] = 0x3070a0;
       f.wnarrow[k] = 0;
@@ -145,6 +147,7 @@ interface Built {
   tops: FineTops;
   tris: number;
   ms: number;
+  out: Writer;
 }
 function build(f: FineCells, sub: number): Built {
   const stride = (X1 - X0) * sub;
@@ -153,7 +156,49 @@ function build(f: FineCells, sub: number): Built {
   const t0 = performance.now();
   for (let ty = X0; ty < X1; ty += TILE)
     for (let tx = X0; tx < X1; tx += TILE) buildFineTile(f, out, 0, 0, sub, tx, ty, tx + TILE, ty + TILE, tops, null, false);
-  return { tops, tris: out.quads * 2, ms: performance.now() - t0 };
+  return { tops, tris: out.quads * 2, ms: performance.now() - t0, out };
+}
+// Ribs: of the wall faces at mid-height (scene height y, in voxels) in the measured cells,
+// the share of their area turned more than 10 degrees from the line at angle a. A wall of columns
+// along the axes is all ribs on a slanted line; a flat wall none.
+function ribsOf(out: Writer, a: number, y: number): number {
+  const { pos } = out.vertexArrays();
+  const r = (a * Math.PI) / 180;
+  const lx = Math.cos(r);
+  const lz = Math.sin(r);
+  let all = 0;
+  let ribs = 0;
+  for (let q = 0; q < out.quads; q++) {
+    const o = q * 18;
+    let y0 = Infinity;
+    let y1 = -Infinity;
+    let mx = 0;
+    let mz = 0;
+    for (let v = 0; v < 6; v++) {
+      y0 = Math.min(y0, pos[o + 3 * v + 1]);
+      y1 = Math.max(y1, pos[o + 3 * v + 1]);
+      mx += pos[o + 3 * v] / 6;
+      mz += pos[o + 3 * v + 2] / 6;
+    }
+    if (!(y0 < y && y1 > y) || mx < M0 || mx >= M1 || mz < M0 || mz >= M1) continue;
+    const ux = pos[o + 3] - pos[o];
+    const uy = pos[o + 4] - pos[o + 1];
+    const uz = pos[o + 5] - pos[o + 2];
+    const vx = pos[o + 6] - pos[o];
+    const vy = pos[o + 7] - pos[o + 1];
+    const vz = pos[o + 8] - pos[o + 2];
+    const nx = uy * vz - uz * vy;
+    const ny = uz * vx - ux * vz;
+    const nz = ux * vy - uy * vx;
+    const h = Math.hypot(nx, nz);
+    if (h < 1e-9 || Math.abs(ny) > h) continue;
+    // Two triangles of the same area: the face's area is the cross product's length. Its horizontal
+    // normal against the line's: sin of the turn is the normal's part along the line.
+    const area = Math.hypot(nx, ny, nz);
+    all += area;
+    if (Math.abs(nx * lx + nz * lz) / h > Math.sin((10 * Math.PI) / 180)) ribs += area;
+  }
+  return all ? ribs / all : 0;
 }
 
 // The side of the line through (CX, CY) at angle a (degrees) a point lies on, cells.
@@ -290,9 +335,12 @@ interface Mode {
   corner: boolean;
   outline: boolean;
   sharp?: number;
+  walls?: boolean;
 }
 const MAIN: Mode = { name: "main", corner: true, outline: false };
 const OUTLINE: Mode = { name: "outline", corner: true, outline: true };
+// The prototype of 27 November (no flat walls, no sharp corners), for the ribs.
+const PROTOTYPE: Mode = { name: "prototype", corner: true, outline: true, sharp: 0, walls: false };
 function withMode<T>(m: Mode, fn: () => T): T {
   const was = { ...GRAPHICS };
   const wasCorner = CLIFF_CORNER.on;
@@ -301,7 +349,8 @@ function withMode<T>(m: Mode, fn: () => T): T {
     for (const [k, v] of Object.entries(PRESETS.high)) GRAPHICS[k as LooksFlag] = v;
     CLIFF_CORNER.on = m.corner;
     CLIFF_OUTLINE.on = m.outline;
-    CLIFF_OUTLINE.sharpRun = m.sharp ?? 0;
+    if (m.sharp !== undefined) CLIFF_OUTLINE.sharpRun = m.sharp;
+    if (m.walls !== undefined) CLIFF_OUTLINE.walls = m.walls;
     return fn();
   } finally {
     Object.assign(GRAPHICS, was);
@@ -323,6 +372,7 @@ export interface AngleRow {
   wrong: number;
   wrongAt: string;
   ms: number;
+  ribs: number;
 }
 // 0, 3:1, 2:1, 45 degrees and 1:2.
 const DEG = 180 / Math.PI;
@@ -331,7 +381,7 @@ export function angleRows(): AngleRow[] {
   const rows: AngleRow[] = [];
   const flat = fill(() => ({ top: LOW }));
   for (const sub of [8, 4])
-    for (const m of [MAIN, OUTLINE])
+    for (const m of [MAIN, PROTOTYPE, OUTLINE])
       withMode(m, () => {
         const base = build(flat, sub).tris;
         for (const a of ANGLES) {
@@ -354,6 +404,7 @@ export function angleRows(): AngleRow[] {
             wrong: g.wrong,
             wrongAt: g.at,
             ms: b.ms,
+            ribs: ribsOf(b.out, a, (LOW + HIGH) / 2),
           });
         }
       });
@@ -486,6 +537,53 @@ export function extraRows(): Extra {
   return out;
 }
 
+// Corners: a block of high land 8 by 7 cells with a notch 2 cells square out of one corner, and a
+// staircase of 1-cell steps along 45 degrees, on ordinary land and on a mesa (Cell.square). Columns
+// moved to a neighbour's land within a cell of the block's six corners (its outer corners and the
+// notch's), with sharpRun 0, 2 and 3: 2 keeps every corner of runs of 2 cells or more, 3 only those
+// of 3 or more (the notch's corners round). On a mesa no column moves at all.
+const BLOCK_CORNERS = [
+  [14, 13],
+  [20, 13],
+  [20, 15],
+  [22, 15],
+  [22, 20],
+  [14, 20],
+];
+const block =
+  (square: boolean): Layout =>
+  (x, y) => ({ top: x >= 14 && x < 22 && y >= 13 && y < 20 && !(x >= 20 && y < 15) ? HIGH : LOW, square });
+const stairs =
+  (square: boolean): Layout =>
+  (x, y) => ({ top: x - y >= 1 ? HIGH : LOW, square });
+export interface SharpRow {
+  sharp: number;
+  outer: number;
+  notch: number;
+  stairs: number;
+  mesaBlock: number;
+  mesaStairs: number;
+}
+export function sharpRows(): SharpRow[] {
+  const rows: SharpRow[] = [];
+  for (const sharp of [0, 2, 3])
+    withMode({ name: `sharp ${sharp}`, corner: true, outline: true, sharp }, () => {
+      const row: SharpRow = { sharp, outer: 0, notch: 0, stairs: 0, mesaBlock: 0, mesaStairs: 0 };
+      traded(fill(block(false)), 8, (_cx, _cy, px, py) => {
+        BLOCK_CORNERS.forEach(([x, y], i) => {
+          if (Math.max(Math.abs(px - x), Math.abs(py - y)) > 1) return;
+          if (i === 1 || i === 2 || i === 3) row.notch++;
+          else row.outer++;
+        });
+      });
+      row.stairs = traded(fill(stairs(false)), 8);
+      row.mesaBlock = traded(fill(block(true)), 8);
+      row.mesaStairs = traded(fill(stairs(true)), 8);
+      rows.push(row);
+    });
+  return rows;
+}
+
 export function cliffOutlineChecks(check: Check): void {
   const rows = angleRows();
   const on = rows.filter((r) => r.mode === "outline");
@@ -504,6 +602,31 @@ export function cliffOutlineChecks(check: Check): void {
     "cliff outline: no straight teeth along an axis on a cliff more than 15 degrees off it",
     on.every((r) => r.angle <= 15 || r.teeth === 0),
     on.map(show).join("; "),
+  );
+  const proto = rows.filter((r) => r.mode === "prototype");
+  const ribsOf2 = (list: AngleRow[]) => list.map((r) => `${r.angle.toFixed(1)} deg sub ${r.sub}: ${(r.ribs * 100).toFixed(1)}%`).join("; ");
+  check(
+    "cliff outline: a cliff's wall is flat, at most 10% of its area at mid-height turned more than 10 degrees from its line (ribs)",
+    on.every((r) => r.ribs <= 0.1) && proto.filter((r) => r.angle > 15).every((r) => r.ribs > 0.9),
+    `flat walls: ${ribsOf2(on)} | prototype: ${ribsOf2(proto)}`,
+  );
+  const sh = sharpRows();
+  const at = (n: number) => sh.find((r) => r.sharp === n) as SharpRow;
+  check(
+    "cliff outline: sharpRun keeps a corner between walls of that many cells crisp (2: a block's and its notch's; 3: the block's only), and a mesa keeps every corner and step",
+    at(0).outer > 0 &&
+      at(0).notch > 0 &&
+      at(2).outer === 0 &&
+      at(2).notch === 0 &&
+      at(3).outer === 0 &&
+      at(3).notch > 0 &&
+      sh.every((r) => r.stairs > 0 && r.mesaBlock === 0 && r.mesaStairs === 0),
+    sh
+      .map(
+        (r) =>
+          `sharp ${r.sharp}: ${r.outer} moved by the outer corners, ${r.notch} by the notch's, ${r.stairs} on the stairs; mesa ${r.mesaBlock} / ${r.mesaStairs}`,
+      )
+      .join("; "),
   );
   check(
     "cliff outline: a cliff along an axis stays on the cells' side (no column moved)",
@@ -560,7 +683,7 @@ export function cliffOutlineChecks(check: Check): void {
 if (process.argv[1]?.endsWith("cliff-outline.mjs")) {
   for (const r of angleRows())
     console.log(
-      `${r.mode.padEnd(8)} sub ${r.sub} ${r.angle.toFixed(1).padStart(5)} deg  RMS ${r.rms.toFixed(3)}  teeth ${r.teeth} (${r.per10.toFixed(1)}/10 cells)  tris/cell ${r.trisPerCell.toFixed(0)}  moved ${r.traded}  feet ${r.differ}/${r.wrong} ${r.wrongAt}  ${r.ms.toFixed(1)} ms`,
+      `${r.mode.padEnd(9)} sub ${r.sub} ${r.angle.toFixed(1).padStart(5)} deg  RMS ${r.rms.toFixed(3)}  ribs ${(r.ribs * 100).toFixed(1)}%  teeth ${r.teeth} (${r.per10.toFixed(1)}/10 cells)  tris/cell ${r.trisPerCell.toFixed(0)}  moved ${r.traded}  feet ${r.differ}/${r.wrong} ${r.wrongAt}  ${r.ms.toFixed(1)} ms`,
     );
   console.log(JSON.stringify(extraRows()));
   cliffOutlineChecks((name, ok, detail) => console.log(`${ok ? "ok  " : "FAIL"} ${name}${detail ? `\n     ${detail}` : ""}`));

@@ -855,7 +855,16 @@ export class Terrain {
       const g = world.ground[y * world.w + x];
       return g === G.PATH || g === G.ROAD;
     },
+    square: (x, y) => {
+      const { world } = this;
+      return x >= 0 && y >= 0 && x < world.w && y < world.h && this.squareAt(y * world.w + x);
+    },
   };
+
+  // A mesa's land: a cliff's outline keeps its corners there (terrain-fine.ts FineCells.square).
+  private squareAt(i: number): boolean {
+    return biomeAt(this.world, i) === "mesa";
+  }
 
   // Snow or a mountain's bare rock: a step of up to STEEP_LINK voxels to such a neighbour curves
   // (terrain-fine.ts). Not the rock of a mesa's or a desert's cliffs, nor of a plateau island: their
@@ -1308,6 +1317,7 @@ export class Terrain {
         f.raw[k] = world.height[i] * V;
         f.anchored[k] = this.anchoredAt(i) ? 1 : 0;
         f.steep[k] = this.steepAt(i) ? 1 : 0;
+        f.square[k] = this.squareAt(i) ? 1 : 0;
         f.wdeep[k] = this.waterAt(i)[1];
         f.wshallow[k] = this.waterAt(i)[0];
         f.wnarrow[k] = this.waterWet(i) ? this.waterNarrow(x, y) : 0;

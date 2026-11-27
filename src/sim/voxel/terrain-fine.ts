@@ -68,6 +68,9 @@ export interface FineCells {
   anchored: Uint8Array;
   // Snow or bare rock: steps of up to STEEP_LINK voxels to such a neighbour curve (16 November).
   steep: Uint8Array;
+  // A mesa's land: a cliff's outline that touches it keeps the cells' edges, so the mesa's tops stay
+  // square and its steps crisp (easePass).
+  square: Uint8Array;
   // The deep colour of the water over the cell (its region's), for the water in eighths.
   wdeep: Uint32Array;
   // Its shallow colour, for the short sides of the water in eighths (a river's small falls).
@@ -121,6 +124,7 @@ export function makeFineCells(): FineCells {
     raw: new Float32Array(0),
     anchored: new Uint8Array(0),
     steep: new Uint8Array(0),
+    square: new Uint8Array(0),
     wdeep: new Uint32Array(0),
     wshallow: new Uint32Array(0),
     wnarrow: new Float32Array(0),
@@ -169,6 +173,7 @@ export function sizeFineCells(f: FineCells, x0: number, y0: number, x1: number, 
     f.raw = new Float32Array(n);
     f.anchored = new Uint8Array(n);
     f.steep = new Uint8Array(n);
+    f.square = new Uint8Array(n);
     f.wdeep = new Uint32Array(n);
     f.wshallow = new Uint32Array(n);
     f.wnarrow = new Float32Array(n);
@@ -348,6 +353,8 @@ export interface LandRead {
   natural(x: number, y: number): boolean;
   // A trodden path or a dirt road (a cliff's outline never moves it).
   way(x: number, y: number): boolean;
+  // A mesa's land (FineCells.square).
+  square?(x: number, y: number): boolean;
 }
 // Catmull-Rom weights for t in [0, 1], for the samples at -1, 0, 1, 2.
 function cr(t: number, w: number[]): void {
@@ -590,6 +597,7 @@ export interface OutlineRead {
   top(x: number, y: number): number;
   kind(x: number, y: number): number;
   steep(x: number, y: number): boolean;
+  square(x: number, y: number): boolean;
 }
 // The four ways from a lattice corner, y down: north, east, south, west.
 const OX = [0, 1, 0, -1];
@@ -708,9 +716,16 @@ function easePass(r: OutlineRead, L: number): OutlinePass {
   const run = CLIFF_OUTLINE.sharpRun;
   const sharp = [false, false, false, false, false];
   if (run > 0) for (let j = 0; j < 5; j++) sharp[j] = sharpTurn(r, TC[2 * j], TC[2 * j + 1], L, TT[j], TT[j + 1], run);
+  // A pass that touches a mesa keeps its cells' outline: square tops, crisp steps.
+  let mesa = false;
+  for (let j = 1; j <= 3 && !mesa; j++) {
+    const X = TC[2 * j];
+    const Y = TC[2 * j + 1];
+    mesa = r.square(X - 1, Y - 1) || r.square(X, Y - 1) || r.square(X - 1, Y) || r.square(X, Y);
+  }
   const pts: number[] = [];
   for (let j = 1; j <= 3; j++) {
-    if (sharp[j]) {
+    if (sharp[j] || mesa) {
       pts.push(TC[2 * j], TC[2 * j + 1]);
       continue;
     }
@@ -913,6 +928,7 @@ export function outlineOfCells(f: FineCells): OutlineRead {
         return f.anchored[c] ? OUTLINE_TREE : OUTLINE_OPEN;
       },
       steep: (x, y) => f.steep[at(x, y)] === 1,
+      square: (x, y) => f.square[at(x, y)] === 1,
     };
     CELLS_OUTLINE.set(f, r);
   }
@@ -967,6 +983,7 @@ export function outlineOfLand(land: LandRead): OutlineRead {
         return land.anchored(x, y) ? OUTLINE_TREE : OUTLINE_OPEN;
       },
       steep: (x, y) => land.steep(x, y),
+      square: (x, y) => land.square?.(x, y) === true,
     };
     LAND_OUTLINE.set(land, r);
   }
