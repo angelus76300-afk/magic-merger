@@ -397,7 +397,10 @@ export const BLEND_ISLANDS: { name: string; seed: number; land: LandOptions; gro
 // from and the shallows stopped rising up cliffs (scripts/cliff-corner-test.ts; d5501afb before,
 // e361f8ef after), then when a lake's bed was darkened by its depth eased between cells
 // (scripts/lake-depth-test.ts; e361f8ef before).
-const ONE_LAND = { cells: 152, seed: 7, hash: "3c5b3a15" };
+// And again on 27 November, when a lake's bed and rim joined the blend of two grounds, its sand and
+// grass no longer meeting in whole-cell stairs (scripts/lake-rim-test.ts; 3c5b3a15 before, the same
+// with LAKE_RIM off).
+const ONE_LAND = { cells: 152, seed: 7, hash: "370d4587" };
 
 // An island at noon (the fine land bakes a glow round lava and lit houses at night).
 function island(cells: number, seed: number, land: LandOptions): World {
