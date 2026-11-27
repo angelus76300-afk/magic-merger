@@ -314,12 +314,15 @@ async function shoot(page, cam) {
 }
 
 function cameras(run, groundAt) {
-  const mx = (run.x0 + run.x1) / 2;
-  const my = (run.y0 + run.y1) / 2;
+  // Every point a camera stands on or looks at is a cell's middle, which no mode moves: the same
+  // ground under it in each mode, so the frames line up (the orbit eases to groundAt of its target).
+  const mid = (v) => Math.floor(v) + 0.5;
+  const mx = mid((run.x0 + run.x1) / 2 - run.lowX);
+  const my = mid((run.y0 + run.y1) / 2 - run.lowY);
   // The camera's offset along the ground is (sin theta, cos theta): on the low side, a little turned.
   const theta = Math.atan2(run.lowX, run.lowY) + 0.35;
-  const fx = mx + run.lowX * 2.6;
-  const fy = my + run.lowY * 2.6;
+  const fx = mid((run.x0 + run.x1) / 2 + run.lowX * 2.6);
+  const fy = mid((run.y0 + run.y1) / 2 + run.lowY * 2.6);
   return [
     ["above", { x: mx, y: my, dist: 26, phi: 0.5, theta }],
     ["play", { x: mx, y: my, dist: 13, phi: 0.95, theta }],
@@ -348,8 +351,8 @@ try {
           continue;
         }
         const foot = await page.evaluate(({ x, y }) => window.__engine.view.terrain.groundAt(x, y), {
-          x: (run.x0 + run.x1) / 2 + run.lowX * 2.6,
-          y: (run.y0 + run.y1) / 2 + run.lowY * 2.6,
+          x: Math.floor((run.x0 + run.x1) / 2 + run.lowX * 2.6) + 0.5,
+          y: Math.floor((run.y0 + run.y1) / 2 + run.lowY * 2.6) + 0.5,
         });
         for (const [cam, c] of cameras(run, foot)) {
           if (SHOTS && !SHOTS.includes(`${name}:${cam}`)) continue;
