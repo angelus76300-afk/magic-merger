@@ -1,6 +1,6 @@
 # Cliffs: flat walls that follow the land, 28 November
 
-The owner's decision on 27 November, typed in the lead session: "cliffs: flat walls". The cliff outline (`cliffOutline` in `src/sim/voxel/terrain-fine.ts`, behind `CLIFF_OUTLINE.on`) now draws each wall between its lip's points as one slanted flat strip, keeps a mesa's corners on the cells' outline, lets the rock at a cliff's foot fill lava, and has a guard so a walker never stands on land drawn a cliff away from its cell. The flag stays off in the game (see "Flag" below).
+The owner's decision on 27 November, typed in the lead session: "cliffs: flat walls". The cliff outline (`cliffOutline` in `src/sim/voxel/terrain-fine.ts`, behind `CLIFF_OUTLINE.on`) now draws each wall between its lip's points as one slanted flat strip, keeps a mesa's corners on the cells' outline, lets the rock at a cliff's foot fill lava, and has a guard so a walker never stands on land drawn a cliff away from its cell. The flag is on in the game from this pull request's last commit (see "Flag" below).
 
 Each sheet holds the same cameras in three columns: before (`cliffs=corner`, the game today), the outline without flat walls or sharp corners (`cliffs=outline&walls=0&sharp=0`, the 27 November prototype plus this pass's mesa, lava and lattice fixes) and flat walls (`cliffs=outline`, the game's settings with the flag on). Made with `node scripts/cliff-frames.mjs` against `npx vite --port 5174`. Every camera stands on and looks at a cell's middle, which no mode moves, so the frames line up. Raw numbers: `cliff-frames.json` (lip rows, then `"bench"` rows) and `triangles.txt`.
 
@@ -16,52 +16,67 @@ Each sheet holds the same cameras in three columns: before (`cliffs=corner`, the
 
 ## Synthetic cliffs (`scripts/cliff-outline-test.ts`, in `npm test`)
 
-Kept from 27 November, with flat walls on: sub 8 RMS / teeth 18.4° 0.038 / 0, 26.6° 0.050 / 0, 45° 0.041 / 0, 63.4° 0.053 / 0; sub 4 0.068, 0.077, 0.082, 0.077, all 0 teeth. Terrace (three levels): RMS 0.057 / 0.059, 0 teeth, no level of its own (main: 0.157 / 0.164, 14 teeth). Water beds still trade nothing: 0 of 67 and 0 of 38 land columns in water cells stand more than SHORE_LOW over the water. The lake hashes of `lake-weed-test` and the ground blend's ONE_LAND hash `370d4587` are unchanged (flag off).
+Kept from 27 November, with flat walls on: sub 8 RMS / teeth 18.4° 0.038 / 0, 26.6° 0.050 / 0, 45° 0.041 / 0, 63.4° 0.053 / 0; sub 4 0.068, 0.077, 0.082, 0.077, all 0 teeth. Terrace (three levels): RMS 0.057 / 0.059, 0 teeth, no level of its own (main: 0.157 / 0.164, 14 teeth). Water beds still trade nothing: 0 of 67 and 0 of 38 land columns in water cells stand more than SHORE_LOW over the water. With the flag on, the lake hashes of `lake-weed-test` are unchanged; the ground blend's ONE_LAND hash moves from `370d4587` to `e550a1c6`, and is `370d4587` again with `CLIFF_OUTLINE.on` false, so nothing but the outline changed it.
 
 ## Triangles (`scripts/cliff-walls-count.ts`, whole island, every chunk in eighths)
 
+Counted as the index holds them: a wall piece cut to share its neighbours' corners is often a triangle, and its empty half is left out of the index (`quadsGeometry`).
+
 | Island           | Main      | Flat walls         | Slanted wall triangles |
 | ---------------- | --------- | ------------------ | ---------------------- |
-| plateau-7        | 1,848,880 | 1,862,582 (+0.74%) | 8,706                  |
-| desert-plateau-3 | 869,300   | 890,908 (+2.49%)   | 14,250                 |
+| plateau-7        | 1,848,880 | 1,869,204 (+1.10%) | 14,927                 |
+| desert-plateau-3 | 869,300   | 897,199 (+3.21%)   | 21,779                 |
 | mesa-5           | 1,083,270 | 1,040,232 (-3.97%) | 0                      |
-| volcanic-6       | 2,207,868 | 2,211,082 (+0.15%) | 1,432                  |
-| forest-plateau-2 | 1,661,814 | 1,691,374 (+1.78%) | 24,496                 |
+| volcanic-6       | 2,207,868 | 2,211,402 (+0.16%) | 2,085                  |
+| forest-plateau-2 | 1,661,814 | 1,701,744 (+2.40%) | 38,649                 |
 
-Mesa-5 drops because its walls stay on the cells' sides, which take fewer faces than main's corner cut. Tile build time p50 rises from about 5.6 ms to 7.4 to 8.2 ms in Node (the outline's passes), p95 stays inside the run-to-run swing.
+Up from the first pass (desert-plateau-3 +2.49%, 14,250 slanted) for two fixes below: wall pieces now split where their neighbours' edges break (the pinholes), and the lip's kinks are eased (the concave seam). Without the easing desert-plateau-3 is +3.09%; easing every crossing, not only the kinks, was +3.39%. Mesa-5 drops because its walls stay on the cells' sides, which take fewer faces than main's corner cut. Tile build time p50 rises from about 5.5 ms to 7.2 to 8.8 ms in Node.
 
 ## Frame time at 344 by 882 (the Z Fold folded)
 
-Sixty frames with the camera held, each waited for (`BENCH=60`). SwiftShader in this container, so the frame column is the software rasterizer, not a phone's GPU. Draw is the JavaScript side. Eye: the eye camera at the run's foot. Wide: the play angle from 60 cells away.
+Sixty frames with the camera held, each waited for (`BENCH=60`). SwiftShader in this container, so the frame column is the software rasterizer, not a phone's GPU, and it swings by up to about 9% between runs of the same build (main's plateau-7 wide: 410, 412.7 and 432.1 ms in three runs). Eye: the eye camera at the run's foot. Wide: the play angle from 60 cells away. Slanted strips are culled by their own facing (below).
 
 | Island           | Camera | Draw ms p50 / p95, main then walls | Frame ms p50, main then walls | Triangles drawn, main then walls |
 | ---------------- | ------ | ---------------------------------- | ----------------------------- | -------------------------------- |
-| plateau-7        | eye    | 2.8 / 6.7, 2.9 / 5.3               | 257, 266 (+3.6%)              | 1,181,752, 1,234,724 (+4.5%)     |
-|                  | wide   | 3.5 / 5.7, 3.8 / 5.8               | 390, 407 (+4.5%)              | 1,690,882, 1,802,564 (+6.6%)     |
-| desert-plateau-3 | eye    | 2.5 / 6.4, 2.4 / 5.5               | 75, 76 (+1.5%)                | 258,946, 277,906 (+7.3%)         |
-|                  | wide   | 3.1 / 7.0, 2.9 / 4.7               | 153, 154 (+1.0%)              | 565,578, 615,668 (+8.9%)         |
-| mesa-5           | eye    | 2.7 / 6.5, 2.9 / 5.8               | 70, 71 (+1.0%)                | 216,424, 213,310 (-1.4%)         |
-|                  | wide   | 3.3 / 5.0, 3.4 / 5.0               | 186, 191 (+2.7%)              | 804,360, 798,364 (-0.7%)         |
-| volcanic-6       | eye    | 2.7 / 4.9, 2.9 / 4.9               | 223, 241 (+8.1%)              | 1,071,416, 1,115,340 (+4.1%)     |
-|                  | wide   | 3.4 / 6.2, 3.5 / 5.4               | 468, 485 (+3.5%)              | 1,986,150, 2,053,908 (+3.4%)     |
-| forest-plateau-2 | eye    | 3.1 / 5.2, 3.3 / 5.1               | 278, 279 (+0.3%)              | 1,448,558, 1,521,826 (+5.1%)     |
-|                  | wide   | 4.3 / 7.4, 4.6 / 6.5               | 497, 520 (+4.5%)              | 2,192,928, 2,329,758 (+6.2%)     |
+| plateau-7        | eye    | 3.2 / 6.7, 3.3 / 6                 | 291.7, 297.6 (+2.0%)          | 1,181,490, 1,188,888 (+0.6%)     |
+|                  | wide   | 3.9 / 6, 3.8 / 6.6                 | 432.1, 446.1 (+3.2%)          | 1,691,098, 1,709,042 (+1.1%)     |
+| desert-plateau-3 | eye    | 2.9 / 5.4, 3.2 / 7                 | 83.7, 90.4 (+8.0%)            | 259,186, 265,895 (+2.6%)         |
+|                  | wide   | 3.4 / 6, 3 / 5                     | 172.3, 170.1 (-1.3%)          | 564,906, 582,972 (+3.2%)         |
+| mesa-5           | eye    | 2.9 / 6, 3.1 / 5                   | 78.4, 74.6 (-4.8%)            | 216,424, 211,452 (-2.3%)         |
+|                  | wide   | 3.4 / 4.8, 3.6 / 6.4               | 209.9, 191 (-9.0%)            | 804,120, 792,084 (-1.5%)         |
+| volcanic-6       | eye    | 3 / 5.4, 2.9 / 6.9                 | 251.7, 243.9 (-3.1%)          | 1,071,428, 1,075,549 (+0.4%)     |
+|                  | wide   | 4 / 5.9, 3.5 / 6.2                 | 499.6, 505.2 (+1.1%)          | 1,985,862, 1,992,106 (+0.3%)     |
+| forest-plateau-2 | eye    | 3.1 / 6.2, 3.6 / 6.4               | 280, 302.8 (+8.1%)            | 1,449,334, 1,466,385 (+1.2%)     |
+|                  | wide   | 4.7 / 8.1, 4.8 / 8.9               | 517, 529.5 (+2.4%)            | 2,193,712, 2,228,781 (+1.6%)     |
 
-The triangles drawn rise more than the island's total (up to +8.9% against +2.49%). A chunk's faces are drawn by the way they face, and a whole class is skipped when the camera is behind all of it (`drawFacing`). A slanted strip faces two ways at once, so its class plane is set to never skip, and a chunk with one slanted strip draws its east or west faces from every side.
+Triangles drawn: +0.3 to +3.2% (desert-plateau-3 wide the most), mesa-5 -1.5 and -2.3%. The first pass was up to +8.9%. Frame time: from -9.0% to +8.1%, mean +0.7% over the ten rows, with no tie to the triangles (mesa-5 wide draws fewer and swings -9%); a second run of the same build before the far-chunk change gave -4.5% to +5.0%. In this container the frame time is noise at this size of change.
+
+### Culling the slanted strips
+
+The first pass drew up to 8.9% more triangles in view than main against +2.49% on the whole island: a slanted strip faced two ways at once, so its chunk drew its east or west faces from every side. Now a slanted face has a class of its own (`FACE_SLANT`), drawn by the camera with the tops (a strip is a few faces a chunk) and left out of the sun's shadow pass except in a second copy at the end of the index (`FACE_SLANT_SUN`), so neither pass pulls in a whole axis class. `scripts/looks-cull-proof.mjs` on desert-plateau-3 with `cliffs=outline`: culling on and off draw the same frame (close and mid 0 pixels apart; whole, 0 pixels over 24 in a channel).
+
+## The pinholes and the concave seam
+
+- Pinholes: rows of pale dots down a wall, where two strips' upright edges met at different heights (one from 7 to 9.75 beside one from 7 to 9.625), a T-junction the rasterizer leaves open. Each wall's upright edge is now cut at every height any wall ending at that point breaks at (`slantFlush`). A new check in `cliff-outline-test.ts` counts upright edges with no matching edge on the next wall: 0 on all five angles, the terrace and the lava foot at sub 8 and 4. On forest-plateau-2's eye frame at 832 a detector of lone bright pixels finds 23 dots before and 0 now: `close-pinholes-forest-832.jpg`.
+- Concave seam: at a concave corner on desert-plateau-3 the lattice's levels turned the line by about 60 degrees within one column, and that column's strip faced the sun as a pale band. A crossing more than 0.12 of a column's side off its neighbours' line now moves half way toward it, three times (`smoothCuts`); straight runs stay put, so their strips still join. `close-seam-desert-390.jpg`: the band before and the eased corner now. RMS, teeth and ribs on the synthetic cliffs are unchanged.
+
+## Far chunks
+
+A far chunk (drawn in blocks of two columns from far away) drew no flat walls, so where it met a chunk in eighths the border's steps stood on different columns: `far-land-test`'s border check found 1,865 open samples. A far chunk now cuts its walls along its sides, as far in as a border column's crossings read (`FAR.edge` plus 4 columns), and blocks no column a wall crosses. The check now also reads a top by its corners (a cut column's top is a three to five cornered piece, smaller than its box) and counts a wall whose foot crosses the row; with that it finds 0 open both beside far chunks and between chunks in eighths, and still 1,865 with the far walls taken out. A far chunk's triangles: 0.59 of the same chunk in eighths, as before (566,784 against 560,668 without far walls).
 
 ## Flag
 
-Off. The five problems are fixed and measured, and the island totals stay under 3%. The cost in view does not: up to 8.9% more triangles drawn and up to 8% longer frames in software. What remains before it goes on:
+On. The lead's conditions, measured: triangles drawn within about 3% of main at 344 by 882 (+3.2% at most, desert-plateau-3 wide; frame time inside the software rasterizer's swing), the pinholes gone (0 cracks, 0 dots), the concave seam eased. Left as they are:
 
-1. Cull slanted strips by their own facing, for example a seventh face class with two planes, so the triangles drawn rise about as much as the island's total.
-2. A thin seam where two flat walls meet at a concave corner (desert-plateau-3's eye frame, the lip's top left). It is real geometry, not a crack, but reads as a dark notch.
-3. Pinhole pale dots on walls. In forest-plateau-2's eye frame at 832 they run down one vertical line, so they are most likely cracks where a strip's edge meets the next strip's or a riser's vertices at a different point (T-junctions). Not traced yet.
-4. A cliff into lava keeps its convex corners toothed at sub 8 (8 teeth on the synthetic run), where a lava cell's middle keeps a notch a quarter cell wide.
-5. A mesa's long diagonal walls keep the cells' steps (mesa-5's run: RMS 0.422, 14 teeth, as with cliffs off). That is the trade for square tops.
+1. Lava: a cliff into lava keeps teeth at its convex corners at sub 8, where a lava cell's middle keeps a notch a quarter cell wide. Synthetic 26.6 degree cliff: 8 teeth at sub 8 (main 17), 0 at sub 4 (main 17); volcanic-6's run: RMS 0.202, 1 tooth (main 0.276, 7). Not fixed: the fill would have to take a lava cell's middle, which the rule that no cell's middle changes forbids.
+2. A mesa's long diagonal walls keep the cells' steps (mesa-5's run: RMS 0.422, 14 teeth, as with cliffs off). That is the owner's trade for crisp mesa tops.
+3. Desert-plateau-3's eye frame keeps 9 lone dots, the dark notches of the lip against the sky, not cracks.
 
 ## Sheets
 
 - `<island>-compare-390.jpg`, `-344.jpg`: above, play and eye, the middle 60% of each frame.
 - `<island>-compare-700.jpg`, `-832.jpg`, `-1440.jpg`: above and eye.
+- The main and outline columns are the frames of the first pass (unchanged code paths); the flat walls column is this pass's.
 - forest-plateau-2's eye camera stands against another wall and shows only rock, as on 27 November; judge that island by its above and play frames.
 - `close-wall-390.jpg`, `close-wall-700.jpg` (plateau-7), `close-desert-wall-*.jpg`, `close-mesa-*.jpg`: a wall and a mesa from a few cells away.
+- `close-seam-desert-390.jpg`, `close-pinholes-forest-832.jpg`: the two fixes, before and now.

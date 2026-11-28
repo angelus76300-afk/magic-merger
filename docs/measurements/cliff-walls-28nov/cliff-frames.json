@@ -52,32 +52,6 @@
     "W": 152
   },
   {
-    "name": "plateau-7",
-    "mode": "walls",
-    "run": {
-      "len": 11.7,
-      "ang": 59,
-      "x0": 60,
-      "y0": 83,
-      "x1": 54,
-      "y1": 93,
-      "lo": 4,
-      "hi": 7,
-      "lowX": 0.8574929257125443,
-      "lowY": 0.5144957554275266
-    },
-    "sub": 8,
-    "rms": 0.173,
-    "teeth": 2,
-    "per10": 1.71,
-    "lipPoints": 104,
-    "tris": 4676946,
-    "tiles": 4096,
-    "tileP50": 0.6,
-    "tileP95": 3.6,
-    "W": 152
-  },
-  {
     "name": "desert-plateau-3",
     "mode": "main",
     "run": {
@@ -127,32 +101,6 @@
     "tiles": 4096,
     "tileP50": 0.6,
     "tileP95": 3.9,
-    "W": 112
-  },
-  {
-    "name": "desert-plateau-3",
-    "mode": "walls",
-    "run": {
-      "len": 15.6,
-      "ang": 39.8,
-      "x0": 101,
-      "y0": 68,
-      "x1": 89,
-      "y1": 78,
-      "lo": 14,
-      "hi": 16,
-      "lowX": -0.6401843996644797,
-      "lowY": -0.7682212795973757
-    },
-    "sub": 8,
-    "rms": 0.287,
-    "teeth": 2,
-    "per10": 1.28,
-    "lipPoints": 152,
-    "tris": 2280104,
-    "tiles": 4096,
-    "tileP50": 0.6,
-    "tileP95": 4.9,
     "W": 112
   },
   {
@@ -208,32 +156,6 @@
     "W": 152
   },
   {
-    "name": "mesa-5",
-    "mode": "walls",
-    "run": {
-      "len": 15.7,
-      "ang": 26.6,
-      "x0": 134,
-      "y0": 52,
-      "x1": 148,
-      "y1": 59,
-      "lo": 6,
-      "hi": 8,
-      "lowX": -0.4472135954999579,
-      "lowY": 0.8944271909999159
-    },
-    "sub": 8,
-    "rms": 0.422,
-    "teeth": 14,
-    "per10": 8.94,
-    "lipPoints": 148,
-    "tris": 3160614,
-    "tiles": 4096,
-    "tileP50": 0.6,
-    "tileP95": 1.7,
-    "W": 152
-  },
-  {
     "name": "volcanic-6",
     "mode": "main",
     "run": {
@@ -283,32 +205,6 @@
     "tiles": 4096,
     "tileP50": 0.7,
     "tileP95": 1.9,
-    "W": 152
-  },
-  {
-    "name": "volcanic-6",
-    "mode": "walls",
-    "run": {
-      "len": 7.2,
-      "ang": 56.3,
-      "x0": 72,
-      "y0": 57,
-      "x1": 76,
-      "y1": 63,
-      "lo": 17,
-      "hi": 19,
-      "lowX": 0.8320502943378436,
-      "lowY": -0.554700196225229
-    },
-    "sub": 8,
-    "rms": 0.202,
-    "teeth": 1,
-    "per10": 1.39,
-    "lipPoints": 70,
-    "tris": 4629754,
-    "tiles": 4096,
-    "tileP50": 0.7,
-    "tileP95": 2.2,
     "W": 152
   },
   {
@@ -364,6 +260,110 @@
     "W": 152
   },
   {
+    "name": "plateau-7",
+    "mode": "walls",
+    "run": {
+      "len": 11.7,
+      "ang": 59,
+      "x0": 60,
+      "y0": 83,
+      "x1": 54,
+      "y1": 93,
+      "lo": 4,
+      "hi": 7,
+      "lowX": 0.8574929257125443,
+      "lowY": 0.5144957554275266
+    },
+    "sub": 8,
+    "rms": 0.173,
+    "teeth": 2,
+    "per10": 1.71,
+    "lipPoints": 104,
+    "tris": 4732610,
+    "tiles": 4096,
+    "tileP50": 0.7,
+    "tileP95": 1.8,
+    "W": 152
+  },
+  {
+    "name": "desert-plateau-3",
+    "mode": "walls",
+    "run": {
+      "len": 15.6,
+      "ang": 39.8,
+      "x0": 101,
+      "y0": 68,
+      "x1": 89,
+      "y1": 78,
+      "lo": 14,
+      "hi": 16,
+      "lowX": -0.6401843996644797,
+      "lowY": -0.7682212795973757
+    },
+    "sub": 8,
+    "rms": 0.287,
+    "teeth": 2,
+    "per10": 1.28,
+    "lipPoints": 152,
+    "tris": 2350128,
+    "tiles": 4096,
+    "tileP50": 0.7,
+    "tileP95": 2.7,
+    "W": 112
+  },
+  {
+    "name": "mesa-5",
+    "mode": "walls",
+    "run": {
+      "len": 15.7,
+      "ang": 26.6,
+      "x0": 134,
+      "y0": 52,
+      "x1": 148,
+      "y1": 59,
+      "lo": 6,
+      "hi": 8,
+      "lowX": -0.4472135954999579,
+      "lowY": 0.8944271909999159
+    },
+    "sub": 8,
+    "rms": 0.422,
+    "teeth": 14,
+    "per10": 8.94,
+    "lipPoints": 148,
+    "tris": 3160614,
+    "tiles": 4096,
+    "tileP50": 0.7,
+    "tileP95": 1.7,
+    "W": 152
+  },
+  {
+    "name": "volcanic-6",
+    "mode": "walls",
+    "run": {
+      "len": 7.2,
+      "ang": 56.3,
+      "x0": 72,
+      "y0": 57,
+      "x1": 76,
+      "y1": 63,
+      "lo": 17,
+      "hi": 19,
+      "lowX": 0.8320502943378436,
+      "lowY": -0.554700196225229
+    },
+    "sub": 8,
+    "rms": 0.202,
+    "teeth": 1,
+    "per10": 1.39,
+    "lipPoints": 70,
+    "tris": 5579726,
+    "tiles": 4096,
+    "tileP50": 0.6,
+    "tileP95": 2.2,
+    "W": 152
+  },
+  {
     "name": "forest-plateau-2",
     "mode": "walls",
     "run": {
@@ -383,10 +383,10 @@
     "teeth": 4,
     "per10": 2.94,
     "lipPoints": 129,
-    "tris": 4275048,
+    "tris": 4401176,
     "tiles": 4096,
-    "tileP50": 0.6,
-    "tileP95": 2,
+    "tileP50": 0.8,
+    "tileP95": 2.3,
     "W": 152
   },
   {
@@ -396,9 +396,9 @@
     "cam": "eye",
     "size": "344x882",
     "frames": 60,
-    "draw": [2.8, 6.7],
-    "frame": [257.1, 306.4],
-    "triangles": 1181752
+    "draw": [3.2, 6.7],
+    "frame": [291.7, 337.6],
+    "triangles": 1181490
   },
   {
     "bench": true,
@@ -407,9 +407,9 @@
     "cam": "wide",
     "size": "344x882",
     "frames": 60,
-    "draw": [3.5, 5.7],
-    "frame": [389.7, 428],
-    "triangles": 1690882
+    "draw": [3.9, 6],
+    "frame": [432.1, 498.2],
+    "triangles": 1691098
   },
   {
     "bench": true,
@@ -418,9 +418,9 @@
     "cam": "eye",
     "size": "344x882",
     "frames": 60,
-    "draw": [2.9, 5.3],
-    "frame": [266.3, 297.5],
-    "triangles": 1234724
+    "draw": [3.3, 6],
+    "frame": [297.6, 334.5],
+    "triangles": 1188888
   },
   {
     "bench": true,
@@ -429,9 +429,9 @@
     "cam": "wide",
     "size": "344x882",
     "frames": 60,
-    "draw": [3.8, 5.8],
-    "frame": [407.3, 442.7],
-    "triangles": 1802564
+    "draw": [3.8, 6.6],
+    "frame": [446.1, 498.1],
+    "triangles": 1709042
   },
   {
     "bench": true,
@@ -440,9 +440,9 @@
     "cam": "eye",
     "size": "344x882",
     "frames": 60,
-    "draw": [2.5, 6.4],
-    "frame": [75, 84.7],
-    "triangles": 258946
+    "draw": [2.9, 5.4],
+    "frame": [83.7, 102.4],
+    "triangles": 259186
   },
   {
     "bench": true,
@@ -451,9 +451,9 @@
     "cam": "wide",
     "size": "344x882",
     "frames": 60,
-    "draw": [3.1, 7],
-    "frame": [152.5, 168.1],
-    "triangles": 565578
+    "draw": [3.4, 6],
+    "frame": [172.3, 208.3],
+    "triangles": 564906
   },
   {
     "bench": true,
@@ -462,9 +462,9 @@
     "cam": "eye",
     "size": "344x882",
     "frames": 60,
-    "draw": [2.4, 5.5],
-    "frame": [76.1, 89.2],
-    "triangles": 277906
+    "draw": [3.2, 7],
+    "frame": [90.4, 109.3],
+    "triangles": 265895
   },
   {
     "bench": true,
@@ -473,9 +473,9 @@
     "cam": "wide",
     "size": "344x882",
     "frames": 60,
-    "draw": [2.9, 4.7],
-    "frame": [154, 174.4],
-    "triangles": 615668
+    "draw": [3, 5],
+    "frame": [170.1, 207.3],
+    "triangles": 582972
   },
   {
     "bench": true,
@@ -484,8 +484,8 @@
     "cam": "eye",
     "size": "344x882",
     "frames": 60,
-    "draw": [2.7, 6.5],
-    "frame": [69.9, 82.7],
+    "draw": [2.9, 6],
+    "frame": [78.4, 97],
     "triangles": 216424
   },
   {
@@ -495,9 +495,9 @@
     "cam": "wide",
     "size": "344x882",
     "frames": 60,
-    "draw": [3.3, 5],
-    "frame": [185.9, 225.1],
-    "triangles": 804360
+    "draw": [3.4, 4.8],
+    "frame": [209.9, 242.9],
+    "triangles": 804120
   },
   {
     "bench": true,
@@ -506,9 +506,9 @@
     "cam": "eye",
     "size": "344x882",
     "frames": 60,
-    "draw": [2.9, 5.8],
-    "frame": [70.6, 79.6],
-    "triangles": 213310
+    "draw": [3.1, 5],
+    "frame": [74.6, 88],
+    "triangles": 211452
   },
   {
     "bench": true,
@@ -517,9 +517,9 @@
     "cam": "wide",
     "size": "344x882",
     "frames": 60,
-    "draw": [3.4, 5],
-    "frame": [190.9, 233.1],
-    "triangles": 798364
+    "draw": [3.6, 6.4],
+    "frame": [191, 237.4],
+    "triangles": 792084
   },
   {
     "bench": true,
@@ -528,9 +528,9 @@
     "cam": "eye",
     "size": "344x882",
     "frames": 60,
-    "draw": [2.7, 4.9],
-    "frame": [222.9, 239],
-    "triangles": 1071416
+    "draw": [3, 5.4],
+    "frame": [251.7, 286.8],
+    "triangles": 1071428
   },
   {
     "bench": true,
@@ -539,9 +539,9 @@
     "cam": "wide",
     "size": "344x882",
     "frames": 60,
-    "draw": [3.4, 6.2],
-    "frame": [468.3, 508.6],
-    "triangles": 1986150
+    "draw": [4, 5.9],
+    "frame": [499.6, 585.1],
+    "triangles": 1985862
   },
   {
     "bench": true,
@@ -550,9 +550,9 @@
     "cam": "eye",
     "size": "344x882",
     "frames": 60,
-    "draw": [2.9, 4.9],
-    "frame": [241, 279.6],
-    "triangles": 1115340
+    "draw": [2.9, 6.9],
+    "frame": [243.9, 282],
+    "triangles": 1075549
   },
   {
     "bench": true,
@@ -561,9 +561,9 @@
     "cam": "wide",
     "size": "344x882",
     "frames": 60,
-    "draw": [3.5, 5.4],
-    "frame": [484.7, 518.3],
-    "triangles": 2053908
+    "draw": [3.5, 6.2],
+    "frame": [505.2, 575.7],
+    "triangles": 1992106
   },
   {
     "bench": true,
@@ -572,9 +572,9 @@
     "cam": "eye",
     "size": "344x882",
     "frames": 60,
-    "draw": [3.1, 5.2],
-    "frame": [277.8, 317.7],
-    "triangles": 1448558
+    "draw": [3.1, 6.2],
+    "frame": [280, 333.8],
+    "triangles": 1449334
   },
   {
     "bench": true,
@@ -583,9 +583,9 @@
     "cam": "wide",
     "size": "344x882",
     "frames": 60,
-    "draw": [4.3, 7.4],
-    "frame": [497.1, 551.7],
-    "triangles": 2192928
+    "draw": [4.7, 8.1],
+    "frame": [517, 593.6],
+    "triangles": 2193712
   },
   {
     "bench": true,
@@ -594,9 +594,9 @@
     "cam": "eye",
     "size": "344x882",
     "frames": 60,
-    "draw": [3.3, 5.1],
-    "frame": [278.7, 316.8],
-    "triangles": 1521826
+    "draw": [3.6, 6.4],
+    "frame": [302.8, 338.5],
+    "triangles": 1466385
   },
   {
     "bench": true,
@@ -605,8 +605,8 @@
     "cam": "wide",
     "size": "344x882",
     "frames": 60,
-    "draw": [4.6, 6.5],
-    "frame": [519.7, 560.1],
-    "triangles": 2329758
+    "draw": [4.8, 8.9],
+    "frame": [529.5, 629.7],
+    "triangles": 2228781
   }
 ]

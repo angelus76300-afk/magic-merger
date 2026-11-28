@@ -1,20 +1,20 @@
-plateau-7          main       1,848,880 (0.00%)  tops 958,416 slanted 0  tile ms p50 6.14 p95 20.18
-plateau-7          prototype  1,857,686 (0.48%)  tops 962,994 slanted 0  tile ms p50 7.19 p95 13.97
-plateau-7          sharp 2    1,856,500 (0.41%)  tops 962,304 slanted 0  tile ms p50 7.13 p95 9.86
-plateau-7          flat walls 1,862,582 (0.74%)  tops 967,700 slanted 8,706  tile ms p50 8.18 p95 15.24
-desert-plateau-3   main       869,300 (0.00%)  tops 462,548 slanted 0  tile ms p50 5.75 p95 14.89
-desert-plateau-3   prototype  879,014 (1.12%)  tops 467,606 slanted 0  tile ms p50 7.44 p95 13.85
-desert-plateau-3   sharp 2    878,262 (1.03%)  tops 467,180 slanted 0  tile ms p50 7.52 p95 11.68
-desert-plateau-3   flat walls 890,908 (2.49%)  tops 476,522 slanted 14,250  tile ms p50 7.91 p95 10.06
-mesa-5             main       1,083,270 (0.00%)  tops 604,062 slanted 0  tile ms p50 5.61 p95 8.82
-mesa-5             prototype  1,040,232 (-3.97%)  tops 579,086 slanted 0  tile ms p50 7.50 p95 12.11
-mesa-5             sharp 2    1,040,232 (-3.97%)  tops 579,086 slanted 0  tile ms p50 7.62 p95 10.90
-mesa-5             flat walls 1,040,232 (-3.97%)  tops 579,086 slanted 0  tile ms p50 7.37 p95 12.96
-volcanic-6         main       2,207,868 (0.00%)  tops 1,132,608 slanted 0  tile ms p50 6.07 p95 8.15
-volcanic-6         prototype  2,210,570 (0.12%)  tops 1,134,396 slanted 0  tile ms p50 7.58 p95 11.55
-volcanic-6         sharp 2    2,210,570 (0.12%)  tops 1,134,396 slanted 0  tile ms p50 6.91 p95 11.13
-volcanic-6         flat walls 2,211,082 (0.15%)  tops 1,135,120 slanted 1,432  tile ms p50 7.60 p95 10.70
-forest-plateau-2   main       1,661,814 (0.00%)  tops 874,318 slanted 0  tile ms p50 5.39 p95 8.29
-forest-plateau-2   prototype  1,681,780 (1.20%)  tops 884,490 slanted 0  tile ms p50 7.18 p95 11.04
-forest-plateau-2   sharp 2    1,679,272 (1.05%)  tops 883,302 slanted 0  tile ms p50 7.07 p95 11.30
-forest-plateau-2   flat walls 1,691,374 (1.78%)  tops 897,006 slanted 24,496  tile ms p50 7.87 p95 10.40
+plateau-7          main       1,848,880 (0.00%)  tops 956,738 slanted 0  tile ms p50 6.21 p95 17.75
+plateau-7          prototype  1,857,686 (0.48%)  tops 961,250 slanted 0  tile ms p50 9.95 p95 16.95
+plateau-7          sharp 2    1,856,500 (0.41%)  tops 960,552 slanted 0  tile ms p50 7.92 p95 12.06
+plateau-7          flat walls 1,869,204 (1.10%)  tops 964,979 slanted 14,927  tile ms p50 8.29 p95 13.63
+desert-plateau-3   main       869,300 (0.00%)  tops 462,096 slanted 0  tile ms p50 7.51 p95 12.76
+desert-plateau-3   prototype  879,014 (1.12%)  tops 467,142 slanted 0  tile ms p50 7.34 p95 14.19
+desert-plateau-3   sharp 2    878,262 (1.03%)  tops 466,716 slanted 0  tile ms p50 7.41 p95 11.32
+desert-plateau-3   flat walls 897,199 (3.21%)  tops 473,253 slanted 21,779  tile ms p50 8.85 p95 13.50
+mesa-5             main       1,083,270 (0.00%)  tops 603,146 slanted 0  tile ms p50 5.45 p95 10.10
+mesa-5             prototype  1,040,232 (-3.97%)  tops 578,174 slanted 0  tile ms p50 8.39 p95 13.11
+mesa-5             sharp 2    1,040,232 (-3.97%)  tops 578,174 slanted 0  tile ms p50 6.89 p95 11.12
+mesa-5             flat walls 1,040,232 (-3.97%)  tops 578,174 slanted 0  tile ms p50 7.12 p95 10.75
+volcanic-6         main       2,207,868 (0.00%)  tops 1,131,396 slanted 0  tile ms p50 6.31 p95 9.92
+volcanic-6         prototype  2,210,570 (0.12%)  tops 1,133,184 slanted 0  tile ms p50 7.48 p95 11.65
+volcanic-6         sharp 2    2,210,570 (0.12%)  tops 1,133,184 slanted 0  tile ms p50 7.10 p95 12.59
+volcanic-6         flat walls 2,211,402 (0.16%)  tops 1,133,613 slanted 2,085  tile ms p50 8.26 p95 14.03
+forest-plateau-2   main       1,661,814 (0.00%)  tops 872,146 slanted 0  tile ms p50 5.38 p95 7.09
+forest-plateau-2   prototype  1,681,780 (1.20%)  tops 882,160 slanted 0  tile ms p50 6.85 p95 10.03
+forest-plateau-2   sharp 2    1,679,272 (1.05%)  tops 880,994 slanted 0  tile ms p50 7.79 p95 12.12
+forest-plateau-2   flat walls 1,701,744 (2.40%)  tops 890,415 slanted 38,649  tile ms p50 8.59 p95 12.39
