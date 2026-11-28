@@ -2955,6 +2955,108 @@ function cutSide(f: FineCells, way: number, k: number, j: number, X: number, Y: 
   SIDE_T[at] = t;
   return t;
 }
+// The lattice side (cutSide's index) column s's side a lies on.
+const sideOf = (s: number, a: number, SW: number): number => {
+  const k = s % SW;
+  const j = (s - k) / SW;
+  return a === 0 ? j * SIDE_W + k : a === 1 ? SIDE_N + j * SIDE_W + k + 1 : a === 2 ? (j + 1) * SIDE_W + k : SIDE_N + j * SIDE_W + k;
+};
+// Where the line crosses lattice side `at` at t along it, cells, into SM_P.
+function sidePoint(at: number, t: number, sx0: number, sy0: number, Q: number): void {
+  const way = at >= SIDE_N ? 1 : 0;
+  const r = at - way * SIDE_N;
+  const k = r % SIDE_W;
+  const j = (r - k) / SIDE_W;
+  SM_P[0] = (sx0 + k + (way === 0 ? t : 0)) * Q;
+  SM_P[1] = (sy0 + j + (way === 1 ? t : 0)) * Q;
+}
+const SM_P = new Float64Array(2);
+let SM_A = new Int32Array(0);
+let SM_NB = new Int32Array(0);
+let SM_T = new Float32Array(0);
+const SMOOTH_PASSES = 3;
+// How far off its neighbours' line, in a column's side, a crossing must lie to move.
+const SMOOTH_MIN = 0.12;
+// The line's crossings eased along their sides (28 November): each moves toward where the line
+// between its two neighbours (the other crossings of the two columns on its side) meets the side,
+// half way, three times. Near a concave corner the levels of the lattice turned the line by up to
+// 60 degrees within a column, and that column's wall caught the sun as a pale band down the cliff
+// (desert-plateau-3's eye frame). A crossing stays on its side, so the columns' corners and which
+// sides the line crosses do not change; one whose side has no crossed column beyond stays put, and
+// the tile's border of three cells keeps the eased crossings of its own columns the same in the
+// tile beside it.
+function smoothCuts(SW: number, SH: number, sx0: number, sy0: number, Q: number): void {
+  const n = SW * SH;
+  if (SM_A.length < 2 * n) SM_A = new Int32Array(2 * n);
+  if (SM_NB.length < 4 * SIDE_N) SM_NB = new Int32Array(4 * SIDE_N);
+  if (SM_T.length < 2 * SIDE_N) SM_T = new Float32Array(2 * SIDE_N);
+  // Each crossed column's two sides, and each side's two neighbours.
+  SM_NB.fill(-1, 0, 4 * SIDE_N);
+  for (let s = 0; s < n; s++) {
+    SM_A[2 * s] = -1;
+    if (!CUT[s]) continue;
+    let a = -1;
+    let b = -1;
+    for (let q = 0; q < 4; q++)
+      if (!Number.isNaN(CUT_T[4 * s + q])) {
+        if (a < 0) a = sideOf(s, q, SW);
+        else b = sideOf(s, q, SW);
+      }
+    if (a < 0 || b < 0) continue;
+    SM_A[2 * s] = a;
+    SM_A[2 * s + 1] = b;
+    for (const [x, y] of [
+      [a, b],
+      [b, a],
+    ]) {
+      if (SM_NB[2 * x] < 0) SM_NB[2 * x] = y;
+      else SM_NB[2 * x + 1] = y;
+    }
+  }
+  const lo = CUT_IN;
+  const hi = 1 - CUT_IN;
+  for (let pass = 0; pass < SMOOTH_PASSES; pass++) {
+    for (let s = 0; s < n; s++) {
+      if (SM_A[2 * s] < 0) continue;
+      for (let e = 0; e < 2; e++) {
+        const at = SM_A[2 * s + e];
+        SM_T[at] = SIDE_T[at];
+        const na = SM_NB[2 * at];
+        const nb = SM_NB[2 * at + 1];
+        if (na < 0 || nb < 0) continue;
+        sidePoint(na, SIDE_T[na], sx0, sy0, Q);
+        const ax = SM_P[0];
+        const ay = SM_P[1];
+        sidePoint(nb, SIDE_T[nb], sx0, sy0, Q);
+        const bx = SM_P[0];
+        const by = SM_P[1];
+        sidePoint(at, 0, sx0, sy0, Q);
+        const way = at >= SIDE_N ? 1 : 0;
+        // Along a side running x (way 0) the line meets y = its y; along one running y, x = its x.
+        const [pa, pb, qa, qb, c, o] = way === 0 ? [ay, by, ax, bx, SM_P[1], SM_P[0]] : [ax, bx, ay, by, SM_P[0], SM_P[1]];
+        const u = pa === pb ? 0.5 : Math.max(0, Math.min(1, (c - pa) / (pb - pa)));
+        const t = Math.max(lo, Math.min(hi, (qa + (qb - qa) * u - o) / Q));
+        // A crossing near its neighbours' line stays: a straight run keeps its points on one line,
+        // so its strips still join into one (slantFlush), and only a kink is eased.
+        if (Math.abs(t - SIDE_T[at]) > SMOOTH_MIN) SM_T[at] = (SIDE_T[at] + t) / 2;
+      }
+    }
+    for (let s = 0; s < n; s++) {
+      if (SM_A[2 * s] < 0) continue;
+      SIDE_T[SM_A[2 * s]] = SM_T[SM_A[2 * s]];
+      SIDE_T[SM_A[2 * s + 1]] = SM_T[SM_A[2 * s + 1]];
+    }
+  }
+  // Back into the columns: north and east run from the side's first corner, south and west back.
+  for (let s = 0; s < n; s++) {
+    if (SM_A[2 * s] < 0) continue;
+    for (let q = 0; q < 4; q++) {
+      if (Number.isNaN(CUT_T[4 * s + q])) continue;
+      const t = SIDE_T[sideOf(s, q, SW)];
+      CUT_T[4 * s + q] = q < 2 ? t : 1 - t;
+    }
+  }
+}
 // Whether side d (east, south, west, north) of a crossed column is all on the high side.
 function sideHigh(s: number, d: number): boolean {
   const e = (d + 1) % 4;
@@ -3060,6 +3162,7 @@ function cutWalls(f: FineCells, sub: number, sx0: number, sy0: number, SW: numbe
       any = true;
     }
   if (!any) return false;
+  smoothCuts(SW, SH, sx0, sy0, Q);
   // The land of each part: the nearest column round it (or itself) drawn whole at that level, of a
   // cliff (not a slope that curves).
   any = false;
@@ -3458,18 +3561,16 @@ function slantFlush(out: Writer): void {
         out.quad(r.ax, lo, r.az, r.ax, hi, r.az, bx, hi, bz, bx, lo, bz, ca, 1, cb, 1, 0, 0, true);
         continue;
       }
-      // Up both edges at once, a triangle at a time, each from the lower next corner.
+      // Up both edges at once: a four-cornered piece while both have a corner left, then triangles.
       const c = (h: number) => (ca === cb ? ca : mixColor(ca, cb, (h - lo) / (hi - lo)));
       let ia = 0;
       let ib = 0;
       while (ia < A.length - 1 || ib < B.length - 1) {
-        if (ib >= B.length - 1 || (ia < A.length - 1 && A[ia + 1] <= B[ib + 1])) {
-          out.tri(r.ax, A[ia], r.az, c(A[ia]), r.ax, A[ia + 1], r.az, c(A[ia + 1]), bx, B[ib], bz, c(B[ib]));
-          ia++;
-        } else {
-          out.tri(r.ax, A[ia], r.az, c(A[ia]), bx, B[ib + 1], bz, c(B[ib + 1]), bx, B[ib], bz, c(B[ib]));
-          ib++;
-        }
+        const na = Math.min(ia + 1, A.length - 1);
+        const nb = Math.min(ib + 1, B.length - 1);
+        out.side4(r.ax, A[ia], r.az, c(A[ia]), r.ax, A[na], r.az, c(A[na]), bx, B[nb], bz, c(B[nb]), bx, B[ib], bz, c(B[ib]));
+        ia = na;
+        ib = nb;
       }
     }
   }

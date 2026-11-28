@@ -2869,7 +2869,7 @@ function drawFacing(g: BufferGeometry, low: boolean, x: number, y: number, z: nu
     g.setDrawRange(0, 0);
     return;
   }
-  g.setDrawRange(f.first[a] * 6, (f.first[b] + f.counts[b] - f.first[a]) * 6);
+  g.setDrawRange(f.first[a], f.first[b] + f.counts[b] - f.first[a]);
 }
 
 // Whether a spell's own ground is something built, by its name, the one thing its material says
@@ -3077,6 +3077,11 @@ function quadsGeometry(a: QuadArrays): BufferGeometry | null {
   const quads = a.quads;
   if (quads === 0) return null;
   const way = new Uint8Array(quads);
+  // Which of a quad's two triangles are drawn: 1 the first, 2 the second. A flat wall's piece cut
+  // to share its neighbours' corners (terrain-fine.ts slantFlush) is often a triangle, two of its
+  // corners one point, and its empty half is left out of the index.
+  const tris = new Uint8Array(quads);
+  // Counts and firsts in indices, three a triangle.
   const counts = new Array<number>(FACE_WAYS).fill(0);
   const planes = { e: Infinity, s: Infinity, w: -Infinity, n: -Infinity, b: -Infinity };
   const p = a.pos;
@@ -3088,15 +3093,32 @@ function quadsGeometry(a: QuadArrays): BufferGeometry | null {
     const vx = p[o + 6] - p[o];
     const vy = p[o + 7] - p[o + 1];
     const vz = p[o + 8] - p[o + 2];
-    const nx = uy * vz - uz * vy;
-    const ny = uz * vx - ux * vz;
-    const nz = ux * vy - uy * vx;
+    const wx = p[o + 9] - p[o];
+    const wy = p[o + 10] - p[o + 1];
+    const wz = p[o + 11] - p[o + 2];
+    // Both triangles' normals, summed: the quad's way even when one of them is empty.
+    const n1x = uy * vz - uz * vy;
+    const n1y = uz * vx - ux * vz;
+    const n1z = ux * vy - uy * vx;
+    const n2x = vy * wz - vz * wy;
+    const n2y = vz * wx - vx * wz;
+    const n2z = vx * wy - vy * wx;
+    const nx = n1x + n2x;
+    const ny = n1y + n2y;
+    const nz = n1z + n2z;
     let k = FACE_TOP;
+    let t = 3;
     // A flat wall turned off the axes (terrain-fine.ts cutWalls) faces the camera from more places
     // than one axis's plane can say: a way of its own, always drawn.
     const slant = Math.abs(ny) < Math.max(Math.abs(nx), Math.abs(nz)) && Math.min(Math.abs(nx), Math.abs(nz)) > 1e-4 * Math.max(Math.abs(nx), Math.abs(nz));
-    if (slant) k = FACE_SLANT;
-    else if (Math.abs(nx) > Math.abs(ny) && Math.abs(nx) >= Math.abs(nz)) {
+    if (slant) {
+      k = FACE_SLANT;
+      const a1 = n1x * n1x + n1y * n1y + n1z * n1z;
+      const a2 = n2x * n2x + n2y * n2y + n2z * n2z;
+      const tiny = 1e-12 * Math.max(a1, a2);
+      if (a1 <= tiny) t = 2;
+      else if (a2 <= tiny) t = 1;
+    } else if (Math.abs(nx) > Math.abs(ny) && Math.abs(nx) >= Math.abs(nz)) {
       k = nx > 0 ? FACE_EAST : FACE_WEST;
       if (nx > 0) planes.e = Math.min(planes.e, p[o]);
       else planes.w = Math.max(planes.w, p[o]);
@@ -3109,17 +3131,30 @@ function quadsGeometry(a: QuadArrays): BufferGeometry | null {
       planes.b = Math.max(planes.b, p[o + 1]);
     }
     way[q] = k;
-    counts[k]++;
-    if (k === FACE_SLANT) counts[FACE_SLANT_SUN]++;
+    tris[q] = t;
+    const n = t === 3 ? 6 : 3;
+    counts[k] += n;
+    if (k === FACE_SLANT) counts[FACE_SLANT_SUN] += n;
   }
   const first = new Array<number>(FACE_WAYS).fill(0);
   for (let k = 1; k < FACE_WAYS; k++) first[k] = first[k - 1] + counts[k - 1];
   const next = [...first];
-  const index = new Uint32Array((quads + counts[FACE_SLANT_SUN]) * 6);
-  for (let q = 0; q < quads; q++) {
+  const index = new Uint32Array(first[FACE_WAYS - 1] + counts[FACE_WAYS - 1]);
+  const put = (q: number, k: number) => {
     const v = q * 4;
-    index.set([v, v + 1, v + 2, v, v + 2, v + 3], next[way[q]]++ * 6);
-    if (way[q] === FACE_SLANT) index.set([v, v + 1, v + 2, v, v + 2, v + 3], next[FACE_SLANT_SUN]++ * 6);
+    const t = tris[q];
+    if (t & 1) {
+      index.set([v, v + 1, v + 2], next[k]);
+      next[k] += 3;
+    }
+    if (t & 2) {
+      index.set([v, v + 2, v + 3], next[k]);
+      next[k] += 3;
+    }
+  };
+  for (let q = 0; q < quads; q++) {
+    put(q, way[q]);
+    if (way[q] === FACE_SLANT) put(q, FACE_SLANT_SUN);
   }
   const g = new BufferGeometry();
   g.setAttribute("position", new BufferAttribute(a.pos, 3));
@@ -3384,9 +3419,26 @@ export class Writer {
     v(dx, dy, dz, lowD);
   }
 
-  // One triangle of a side, wound as a quad's first one is, each corner its own packed colour: a
-  // quad whose last corner is its third (quadArrays reads a, b, c and the sixth vertex).
-  tri(ax: number, ay: number, az: number, ca: number, bx: number, by: number, bz: number, cb: number, cx: number, cy: number, cz: number, cc: number): void {
+  // A four-cornered piece of a side, a, b, c, d wound as quad's are, each corner its own packed
+  // colour. Two corners may be one point (a triangle: quadArrays reads a, b, c and the sixth vertex).
+  side4(
+    ax: number,
+    ay: number,
+    az: number,
+    ca: number,
+    bx: number,
+    by: number,
+    bz: number,
+    cb: number,
+    cx: number,
+    cy: number,
+    cz: number,
+    cc: number,
+    dx: number,
+    dy: number,
+    dz: number,
+    cd: number,
+  ): void {
     if ((this.n + 6) * 4 > this.col.length) this.grow();
     const ch = (c: number, s: number) => ((c >> s) & 255) / 255;
     const v = (x: number, y: number, z: number, c: number) => this.vertex(x, y, z, ch(c, 16), ch(c, 8), ch(c, 0), 1, 0, 0);
@@ -3395,7 +3447,7 @@ export class Writer {
     v(cx, cy, cz, cc);
     v(ax, ay, az, ca);
     v(cx, cy, cz, cc);
-    v(cx, cy, cz, cc);
+    v(dx, dy, dz, cd);
   }
 
   // The water in eighths as a geometry: colours with their alpha, the drawings' mask, the waves,

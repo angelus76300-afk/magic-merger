@@ -56,7 +56,7 @@ export function islandTriangles(q: string, mode: (typeof WALL_MODES)[number]): {
     const out = new Writer();
     const water = new Writer();
     const ms: number[] = [];
-    let quads = 0;
+    let tris = 0;
     let tops = 0;
     let slant = 0;
     const cols = Math.ceil(world.w / CHUNK);
@@ -71,25 +71,32 @@ export function islandTriangles(q: string, mode: (typeof WALL_MODES)[number]): {
           buildFineTile(f, out, -world.w / 2, -world.h / 2, 8, tx, ty, Math.min(f.x1, tx + TILE), Math.min(f.y1, ty + TILE), null, water, false);
           ms.push(performance.now() - t0);
         }
-      quads += out.quads;
       const { pos } = out.vertexArrays();
+      // Triangles as the index holds them (terrain.ts quadsGeometry): a quad's empty half is left out.
+      const cross = (o: number, i: number, j: number) => {
+        const ux = pos[o + i] - pos[o];
+        const uy = pos[o + i + 1] - pos[o + 1];
+        const uz = pos[o + i + 2] - pos[o + 2];
+        const vx = pos[o + j] - pos[o];
+        const vy = pos[o + j + 1] - pos[o + 1];
+        const vz = pos[o + j + 2] - pos[o + 2];
+        return [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
+      };
       for (let k = 0; k < out.quads; k++) {
         const o = k * 18;
-        const ux = pos[o + 3] - pos[o];
-        const uy = pos[o + 4] - pos[o + 1];
-        const uz = pos[o + 5] - pos[o + 2];
-        const vx = pos[o + 6] - pos[o];
-        const vy = pos[o + 7] - pos[o + 1];
-        const vz = pos[o + 8] - pos[o + 2];
-        const nx = uy * vz - uz * vy;
-        const ny = uz * vx - ux * vz;
-        const nz = ux * vy - uy * vx;
-        if (Math.abs(ny) > Math.abs(nx) && Math.abs(ny) > Math.abs(nz)) tops++;
-        else if (Math.abs(nx) > 1e-7 && Math.abs(nz) > 1e-7) slant++;
+        const n1 = cross(o, 3, 6);
+        const n2 = cross(o, 6, 15);
+        const [nx, ny, nz] = [n1[0] + n2[0], n1[1] + n2[1], n1[2] + n2[2]];
+        const a1 = Math.hypot(...n1);
+        const a2 = Math.hypot(...n2);
+        const drawn = (a1 > 1e-6 * Math.max(a1, a2) ? 1 : 0) + (a2 > 1e-6 * Math.max(a1, a2) ? 1 : 0);
+        tris += drawn;
+        if (Math.abs(ny) > Math.abs(nx) && Math.abs(ny) > Math.abs(nz)) tops += drawn;
+        else if (Math.abs(nx) > 1e-7 && Math.abs(nz) > 1e-7) slant += drawn;
       }
     }
     ms.sort((a, b) => a - b);
-    return { tris: quads * 2, p50: ms[Math.floor(ms.length * 0.5)], p95: ms[Math.floor(ms.length * 0.95)], tops: tops * 2, slant: slant * 2 };
+    return { tris, p50: ms[Math.floor(ms.length * 0.5)], p95: ms[Math.floor(ms.length * 0.95)], tops, slant };
   } finally {
     Object.assign(GRAPHICS, was);
     CLIFF_CORNER.on = wasCorner;
