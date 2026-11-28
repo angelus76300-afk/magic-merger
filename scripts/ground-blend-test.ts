@@ -402,7 +402,9 @@ export const BLEND_ISLANDS: { name: string; seed: number; land: LandOptions; gro
 // with LAKE_RIM off).
 // And again on 28 November, when cliffs stood on their own line with flat walls (the cliff outline
 // on in the game: scripts/cliff-outline-test.ts; 370d4587 before, the same with CLIFF_OUTLINE off).
-const ONE_LAND = { cells: 152, seed: 7, hash: "e550a1c6" };
+// The same day, after the playtest (no column cut to a sliver, a side's wall kept from behind a
+// flat wall's high part, no strip joined): e550a1c6 before.
+const ONE_LAND = { cells: 152, seed: 7, hash: "36eca3d9" };
 
 // An island at noon (the fine land bakes a glow round lava and lit houses at night).
 function island(cells: number, seed: number, land: LandOptions): World {

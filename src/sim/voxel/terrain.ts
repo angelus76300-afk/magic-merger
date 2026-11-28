@@ -814,16 +814,39 @@ export class Terrain {
   }
 
   // The walkers' guard (World.walkGuard) with the cliffs on their own line: whether point (x, y) of
-  // cell i is drawn as a neighbour's land more than a step (walk.ts STEP) above or below the cell's
-  // walk level, where a walker would be drawn in the air or in the rock.
+  // cell i is drawn more than a step (walk.ts STEP) above or below the cell's middle, as a cliff's
+  // other side, where a walker would be drawn in the air or in the rock. Where its chunk is drawn in
+  // the fine land, the tops the mesher drew there (drawnTop: the outline's trades and the flat walls'
+  // cut columns alike; the playtest of 28 November found the outline's trades alone missed the cut
+  // columns); elsewhere the outline's trade. Only beside a cliff (a neighbour that does not join, a
+  // step away), so a steep slope of joined cells stays open. Off on the low look (no fine land).
   private drawnOff(x: number, y: number, i: number): boolean {
-    if (!CLIFF_OUTLINE.on) return false;
+    if (!CLIFF_OUTLINE.on || !GRAPHICS.fine || !GRAPHICS.steps) return false;
     const { world } = this;
+    const cx = i % world.w;
+    const cy = (i - cx) / world.w;
+    const here = this.drawnTop(x, y);
+    const mid = this.drawnTop(cx + 0.5, cy + 0.5);
+    if (!Number.isNaN(here) && !Number.isNaN(mid)) return Math.abs(here - mid) > WALK_STEP && this.cliffBeside(cx, cy);
     const k = outlineTrade(outlineOfLand(this.landRead), x, y);
     if (k < 0) return false;
     const j = i + ((k % 3) - 1) + (Math.floor(k / 3) - 1) * world.w;
     if (j < 0 || j >= world.n) return false;
     return Math.abs(columnTop(world, j) - world.walkLevel(i) * V) > WALK_STEP;
+  }
+
+  // Whether a cell of the eight round (x, y) does not join it and stands more than a step away.
+  private cliffBeside(x: number, y: number): boolean {
+    const { world } = this;
+    const own = columnTop(world, y * world.w + x);
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if ((!dx && !dy) || nx < 0 || ny < 0 || nx >= world.w || ny >= world.h) continue;
+        if (Math.abs(columnTop(world, ny * world.w + nx) - own) > WALK_STEP && !this.landRead.linked(x, y, nx, ny)) return true;
+      }
+    return false;
   }
 
   private landRead: LandRead = {

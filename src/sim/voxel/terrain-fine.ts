@@ -1880,6 +1880,7 @@ export function buildFineTile(
               true,
               Number.isNaN(bl) ? 1 : bl / WALL_LIGHT[d],
             );
+            faces = lowStretch(n, (d + 3) % 4, d, faces, sx0 + k + DX[d], sy0 + j + DY[d], sub, ox, oz, false);
           } else {
             const bl = walls && H[s] - H[s + DX[d] + DY[d] * SW] >= sub ? besideLight(s, d, SW) : NaN;
             faces = Number.isNaN(bl)
@@ -3168,8 +3169,13 @@ function cutWalls(f: FineCells, sub: number, sx0: number, sy0: number, SW: numbe
                 : 1 - cutSide(f, 1, k, j, X, Y, Q, mid);
         CUT_T[4 * s + a] = t;
       }
-      CUT[s] = 1;
+      // A line through a corner cuts off a sliver: its strip lay a hair from the column's side and
+      // the side's wall, and the two showed through each other in triangles (28 November playtest,
+      // desert-plateau-3). The column stays whole; the walls of its sides close the step.
       CUT_M[s] = m;
+      const part = cutArea(s, m);
+      if (part < SLIVER || part > 1 - SLIVER) continue;
+      CUT[s] = 1;
       CUT_HI[s] = hi;
       CUT_LO[s] = lo;
       any = true;
@@ -3272,6 +3278,24 @@ function besideLight(s: number, d: number, SW: number): number {
     }
   return NaN;
 }
+// Whether the strips and the high tops of a straight run of columns are joined into one piece
+// (slantFlush, cutTops). Off since the 28 November playtest: the two were joined over different
+// runs (a strip breaks where the grass band's wavy edge changes, a top where its land does), so a
+// piece's corner fell inside the other's edge and the lip showed single sky-blue pixels along the
+// wall's top (desert-9's close frame); 1,577 such corners on desert-9, 6 with neither joined.
+const JOIN_ALONG = false;
+// How small a part of a column a wall may cut off, of its area.
+const SLIVER = 0.01;
+// The share of a column its high part covers (cutPolygon's polygon, in a unit square).
+function cutArea(s: number, m: number): number {
+  const n = cutPolygon(s, 0, 0, 1, m);
+  let a = 0;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    a += CUT_PT[2 * i] * CUT_PT[2 * j + 1] - CUT_PT[2 * j] * CUT_PT[2 * i + 1];
+  }
+  return Math.abs(a) / 2;
+}
 // The corners of a crossed column's high part, in cells (x, y pairs), in CUT_PT; how many.
 const CUT_PT: number[] = new Array(12).fill(0);
 function cutPolygon(s: number, X: number, Y: number, Q: number, m = CUT_M[s]): number {
@@ -3337,7 +3361,7 @@ function cutTops(out: Writer, sx0: number, sy0: number, SW: number, j0: number, 
         let by = pt(s, eb, X, Y, 1);
         for (;;) {
           const o = s + n * step;
-          if ((way === 0 ? k + n >= k1 : j + n >= j1) || !same(s, o)) break;
+          if (!JOIN_ALONG || (way === 0 ? k + n >= k1 : j + n >= j1) || !same(s, o)) break;
           const OX2 = X + (way === 0 ? n * Q : 0);
           const OY2 = Y + (way === 0 ? 0 : n * Q);
           const cx = pt(o, eb, OX2, OY2, 0);
@@ -3484,7 +3508,7 @@ function slantFlush(out: Writer): void {
     const r = STACKS[i];
     if (r.ghost) continue;
     const n = SLANT_AT.get(slantKey(r.bx, r.bz, r.sig));
-    if (n === undefined || n === i || !STACKS[n].head) continue;
+    if (!JOIN_ALONG || n === undefined || n === i || !STACKS[n].head) continue;
     r.next = n;
     STACKS[n].head = false;
   }
@@ -3691,7 +3715,11 @@ function cutFaces(
         const dd = (e + 3) % 4;
         const o = s + DX[dd] + DY[dd] * SW;
         // Down to the neighbour's high part, or to its top where no wall crosses it.
-        const below = CUT[o] ? CUT_HI[o] : H[o];
+        // Where the column's own side (the walls toward lower neighbours) stands across it from its
+        // low part's top, the step stops there: below, the two lay in one plane and showed through
+        // each other.
+        const wallLo = CUT[o] && sideHigh(o, (dd + 2) % 4) ? CUT_HI[o] : H[o];
+        const below = Math.max(CUT[o] ? CUT_HI[o] : H[o], H[s] > wallLo ? H[s] : -Infinity);
         if (below >= CUT_HI[s]) continue;
         const hq = (m >> e) & 1 ? e : (e + 1) % 4;
         let cx = X + CQX[hq] * Q;
@@ -3708,8 +3736,71 @@ function cutFaces(
         // down the wall (desert-plateau-3).
         slantFaces(sf, cx + ox, cy + oz, tx + ox, ty + oz, light / WALL_LIGHT[dd], sub, ghost);
       }
+      // The side facing it of a column beyond the tile, cut to its low stretch (lowStretch), as a
+      // ghost: the tile beside draws it, and both cut alike where it meets this strip.
+      for (const e of [pa, pb]) {
+        const o = s + DX[(e + 3) % 4] + DY[(e + 3) % 4] * SW;
+        const ok = o % SW;
+        const oj = (o - ok) / SW;
+        if (oj >= j0 && oj < j1 && ok >= k0 && ok < k1) continue;
+        const dd = (e + 1) % 4;
+        const high = CUT[o] && sideHigh(o, dd);
+        const sf = wallFaces(f, dd, sx0 + ok, sy0 + oj, o, SW, sub, grain, blend, out, ox, oz, high ? CUT_HS[o] : o, high ? CUT_HI[o] : H[o], H[s], false);
+        lowStretch(s, e, dd, sf, sx0 + k, sy0 + j, sub, ox, oz, true);
+      }
     }
   slantFlush(out);
+}
+// A column's side d facing a crossed column n whose side e (CUT_T's order, the one between them)
+// the line crosses: below n's high part, only the stretch beside n's low part is drawn, as a stack from
+// the side's low corner to the crossing (slantFaces); the rest of its faces (FACES, `faces` of
+// them) stay for the runs, and how many is returned. Drawn whole, the side stood behind the high
+// part a hair from its strip, and the two showed through each other in triangles, a sawtooth
+// along the wall's top where the line runs near a column's side (28 November playtest,
+// desert-plateau-3).
+const LOW_F: Face[] = Array.from({ length: 32 }, () => ({ ...FACES[0] }));
+const KEEP_F: Face[] = Array.from({ length: 32 }, () => ({ ...FACES[0] }));
+function lowStretch(n: number, e: number, d: number, faces: number, nsx: number, nsy: number, sub: number, ox: number, oz: number, ghost: boolean): number {
+  if (faces === 0 || !CUT[n] || Number.isNaN(CUT_T[4 * n + e])) return faces;
+  const c = CUT_HI[n];
+  let nb = 0;
+  let nk = 0;
+  for (let q = 0; q < faces; q++) {
+    const F = FACES[q];
+    if (F.lo >= c) Object.assign(KEEP_F[nk++], F);
+    else if (F.hi <= c) Object.assign(LOW_F[nb++], F);
+    else {
+      // Split at c, its foot's shade carried across.
+      const fc = F.foot + ((1 - F.foot) * (c - F.lo)) / (F.hi - F.lo);
+      const L = Object.assign(LOW_F[nb++], F);
+      L.hi = c;
+      L.light = F.light * fc;
+      L.foot = F.foot / fc;
+      const K = Object.assign(KEEP_F[nk++], F);
+      K.lo = c;
+      K.foot = fc;
+    }
+  }
+  if (nb === 0) return faces;
+  for (let q = 0; q < nb; q++) Object.assign(FACES[q], LOW_F[q]);
+  const Q = 1 / sub;
+  const X = nsx * Q;
+  const Y = nsy * Q;
+  const b = (e + 1) % 4;
+  const lq = (CUT_M[n] >> e) & 1 ? b : e;
+  const t = CUT_T[4 * n + e];
+  let cx = X + CQX[lq] * Q;
+  let cy = Y + CQY[lq] * Q;
+  let tx = X + (CQX[e] + (CQX[b] - CQX[e]) * t) * Q;
+  let ty = Y + (CQY[e] + (CQY[b] - CQY[e]) * t) * Q;
+  // Wound to face n (side d).
+  if ((ty - cy) * DX[d] - (tx - cx) * DY[d] < 0) {
+    [cx, tx] = [tx, cx];
+    [cy, ty] = [ty, cy];
+  }
+  slantFaces(nb, cx + ox, cy + oz, tx + ox, ty + oz, 1, sub, ghost);
+  for (let q = 0; q < nk; q++) Object.assign(FACES[q], KEEP_F[q]);
+  return nk;
 }
 
 // The faces of column (sx, sy)'s wall on side d, into FACES; returns how many. Overhanging grass

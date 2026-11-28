@@ -72,6 +72,55 @@ On. The lead's conditions, measured: triangles drawn within about 3% of main at 
 2. A mesa's long diagonal walls keep the cells' steps (mesa-5's run: RMS 0.422, 14 teeth, as with cliffs off). That is the owner's trade for crisp mesa tops.
 3. Desert-plateau-3's eye frame keeps 9 lone dots, the dark notches of the lip against the sky, not cracks.
 
+## The 28 November playtest
+
+Three things the lead's playtest found, measured and fixed on the same branch.
+
+### Walker guard
+
+The guard read the outline's trade (`outlineTrade` of `outlineOfLand`) instead of what the mesher draws, so a lizard at (13.00, 110.62) on desert-9 stood on a point drawn at 7 against 4.375 at its cell's middle. `Terrain.drawnOff` now reads `drawnTop` at the point and at the cell's middle (the fine tops the mesher drew) and refuses a step where they differ by more than a step and a cliff is beside the cell; it falls back to the old reading only where the chunk is not drawn in eighths. The test (`walkGuardRun`) now builds the fine land and counts, once a second, ground creatures whose drawn top at their point and at their cell's middle differ by more than 1.5.
+
+Node, desert-plateau-3, 111 beasts at cliff feet, 20 s: main 11 of 2,078 samples, flat walls 0 of 2,145, flat walls without the guard 24 of 2,126.
+
+Browser (the playtest's walker count, 60 s, a sample a second, every ground creature), main then flat walls, over eight runs:
+
+| Run | desert-9 | desert-plateau-3 |
+| --- | -------- | ---------------- |
+| 1   | 9, 0     | 1, 0             |
+| 2   | 16, 2    | 1, 1             |
+| 3   | 24, 2    | 4, 0             |
+| 4   | 17, 0    | 2, 1             |
+| 5   | 12, 2    | 3, 0             |
+| 6   | 16, 0    | 1, 1             |
+| 7   | 12, 0    | 5, 0             |
+| 8   | 9, 0     | 6, 0             |
+
+Runs 1 to 3 are before the two fixes below, 4 to 6 with the first sliver limit (0.03), 7 and 8 with the final code. At or below main in every run. The playtest's own count with the old guard was 13 to 132 on desert-9 and 19 to 55 on desert-plateau-3.
+
+### The sawtooth along a wall's grass
+
+Real. Where the line ran a few degrees off a column's side, the side's wall (drawn whole, down to the low land) stood behind the crossed column's high part, at most a hundredth of a cell from its strip, and the two showed through each other in triangles. Counted as wall triangles whose middle lies inside another wall triangle facing the same way, within 0.004:
+
+| Island           | Main | Before | Now |
+| ---------------- | ---- | ------ | --- |
+| desert-plateau-3 | 2    | 196    | 2   |
+| desert-9         | 0    | 650    | 0   |
+| forest-plateau-2 | 0    | 429    | 16  |
+
+Three fixes in `terrain-fine.ts`: below the high part, a side facing a crossed column is drawn only beside its low part (`lowStretch`, with ghosts so two tiles cut it alike); a line through a corner that would cut off under 1% of a column leaves the column whole (`SLIVER`); a step on a crossed side stops where the column's own side wall starts. `cliff-outline-test` checks desert-plateau-3 against main. The sliver limit costs some flatness: the ribs check (area at mid-height turned more than 10 degrees) reads 1.7 to 4.1% at sub 8 and 2.5 to 3.9% at sub 4, against 0 to 1.4% before, within its 10%; a limit of 3% read up to 12.3%.
+
+### Sky-blue pixels at the lip
+
+Real. A run of strips along a straight line was joined into one piece, and a run of high tops into one quad, but over different runs (a strip breaks where the grass band's wavy edge changes, a top where its land does), so a corner of one fell inside the other's edge: a T-junction, which the rasterizer can leave open. Corners inside an edge off the axes: desert-9 2,565 before, 7 now; desert-plateau-3 3 (main 0). Neither is joined now (`JOIN_ALONG`). `close-sky-dots-desert9-390.jpg`: the same camera before (top) and now, three dots down a wall's corner and a short line gone; the dot at the right is a pebble.
+
+### Triangles after these fixes
+
+Whole island, every chunk in eighths (`cliff-walls-count.ts`), flat walls against main: plateau-7 +0.99% (was +1.10%), desert-plateau-3 +3.19% (+3.21%), volcanic-6 +0.20% (+0.16%), forest-plateau-2 +2.78% (+2.40%); mesa-5 has no cut column and is unchanged. Unjoined pieces add triangles, uncut slivers take some away.
+
+### The low look
+
+A phone on the "low" look (`graphics.ts`, `fine: false`) draws no land in eighths, so it sees none of this change, and the walker guard is off there.
+
 ## Sheets
 
 - `<island>-compare-390.jpg`, `-344.jpg`: above, play and eye, the middle 60% of each frame.

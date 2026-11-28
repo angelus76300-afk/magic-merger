@@ -16,7 +16,7 @@
 // The triangles a cell of cliff costs are measured, not checked yet. Run with the other checks (npm
 // test, scripts/sim-test.ts); `node node_modules/.cache/cliff-outline.mjs` prints the table alone.
 import { MeshBasicMaterial } from "three";
-import { Terrain, WALK_STEP, Writer, columnTop } from "../src/sim/voxel/terrain";
+import { CHUNK, Terrain, WALK_STEP, Writer, columnTop } from "../src/sim/voxel/terrain";
 import { STEP } from "../src/sim/voxel/walk";
 import { generateWorld } from "../src/sim/world";
 import { readLand } from "../src/sim/land-options";
@@ -676,11 +676,16 @@ export function sharpRows(): SharpRow[] {
 // plateau, twenty seconds of the simulation with the outline on, with the guard Terrain gives the
 // world and without it. Counted: steps onto a point drawn as a neighbour's land more than a step
 // (walk.ts STEP) from the cell's walk level, from one that was not.
-export function walkGuardRun(guard: boolean): { walkers: number; entered: number; at: string } {
-  return withMode(OUTLINE, () => {
+// Walkers at cliffs' feet on desert-plateau-3 (small, seed 3), the fine land built over the whole
+// island: each second for 20 s, the ground walkers whose point is drawn (Terrain.drawnTop) more
+// than OFF_DRAWN from their cell's middle, the playtest of 28 November's count (a walker in the air
+// or in the rock). `mode` the cliffs, `guard` false takes the walk guard away.
+const OFF_DRAWN = 1.5;
+export function walkGuardRun(mode: "main" | "outline", guard: boolean, seed = 3): { walkers: number; off: number; samples: number; at: string } {
+  return withMode(mode === "main" ? MAIN : OUTLINE, () => {
     resetCreatureIds();
     const cells = WORLD_SIZES.small;
-    const world = generateWorld(cells, cells, 3, readLand({ biome: "desert", shape: "plateau", relief: 0.8 }));
+    const world = generateWorld(cells, cells, seed, readLand({ biome: "desert", shape: "plateau", relief: 0.8 }));
     const terrain = new Terrain(
       world,
       new MeshBasicMaterial(),
@@ -689,9 +694,12 @@ export function walkGuardRun(guard: boolean): { walkers: number; entered: number
       () => {},
     );
     terrain.wetClock = () => 0;
+    terrain.wantFar = () => 0;
     terrain.scan();
-    const off = world.walkGuard;
-    if (!off) throw new Error("Terrain gave the world no walk guard");
+    terrain.rebuild(true);
+    terrain.focus(0, 30, 0);
+    terrain.updateFine(0, true);
+    if (!world.walkGuard) throw new Error("Terrain gave the world no walk guard");
     if (!guard) world.walkGuard = null;
     const beast = KINDS.get("beast");
     if (!beast) throw new Error("no beast");
@@ -712,22 +720,159 @@ export function walkGuardRun(guard: boolean): { walkers: number; entered: number
         world.creatures.push(makeCreature("beast", x + 0.45, y + 0.45));
         walkers++;
       }
-    const at = (x: number, y: number) =>
-      off(x, y, Math.max(0, Math.min(world.h - 1, Math.floor(y))) * world.w + Math.max(0, Math.min(world.w - 1, Math.floor(x))));
     const rt = new Runtime(world, () => {});
-    let entered = 0;
+    let off = 0;
+    let samples = 0;
     let where = "";
-    const was = new Map<number, boolean>();
     for (let t = 0; t < 30 * 20; t++) {
-      for (const c of world.creatures) was.set(c.id, at(c.x, c.y));
       stepHeadless(world, rt);
+      if (t % 30 !== 29) continue;
       for (const c of world.creatures) {
-        if (c.dead || KINDS.get(c.kind)?.flying || was.get(c.id) !== false || !at(c.x, c.y)) continue;
-        entered++;
-        if (!where) where = `(${c.x.toFixed(2)}, ${c.y.toFixed(2)})`;
+        if (c.dead || KINDS.get(c.kind)?.flying || c.z > 0.2) continue;
+        const a = terrain.drawnTop(c.x, c.y);
+        const b = terrain.drawnTop(Math.floor(c.x) + 0.5, Math.floor(c.y) + 0.5);
+        if (Number.isNaN(a) || Number.isNaN(b)) continue;
+        samples++;
+        if (Math.abs(a - b) <= OFF_DRAWN) continue;
+        off++;
+        if (!where) where = `(${c.x.toFixed(2)}, ${c.y.toFixed(2)}) ${a.toFixed(2)} against ${b.toFixed(2)}`;
       }
     }
-    return { walkers, entered, at: where };
+    return { walkers, off, samples, at: where };
+  });
+}
+
+// Faults along the lip on an island (desert-plateau-3, every chunk built in eighths): `overlaps`,
+// wall triangles whose middle lies within 0.004 of another wall triangle facing the same way (the
+// two drew through each other in triangles, a sawtooth along the wall's grass, 28 November
+// playtest); `corners`, a triangle's corner inside another's edge that runs off the axes (a
+// T-junction: single sky-blue pixels where a wall meets the lip).
+export function lipFaults(mode: "main" | "outline"): { overlaps: number; corners: number; at: string } {
+  return withMode(mode === "main" ? MAIN : OUTLINE, () => {
+    const cells = WORLD_SIZES.small;
+    const world = generateWorld(cells, cells, 3, readLand({ biome: "desert", shape: "plateau", relief: 0.8 }));
+    const terrain = new Terrain(
+      world,
+      new MeshBasicMaterial(),
+      new MeshBasicMaterial(),
+      () => {},
+      () => {},
+    );
+    terrain.wetClock = () => 0;
+    terrain.scan();
+    const f = makeFineCells();
+    const out = new Writer();
+    const water = new Writer();
+    const tris: number[] = []; // nine numbers a triangle
+    const cols = Math.ceil(world.w / CHUNK);
+    for (let c = 0; c < cols * Math.ceil(world.h / CHUNK); c++) {
+      terrain.readFine(c, f);
+      out.reset();
+      water.reset();
+      for (let ty = f.y0; ty < f.y1; ty += TILE)
+        for (let tx = f.x0; tx < f.x1; tx += TILE)
+          buildFineTile(f, out, 0, 0, 8, tx, ty, Math.min(f.x1, tx + TILE), Math.min(f.y1, ty + TILE), null, water, false);
+      const { pos } = out.vertexArrays();
+      for (let v = 0; v + 9 <= out.quads * 18; v += 9) {
+        const ux = pos[v + 3] - pos[v];
+        const uy = pos[v + 4] - pos[v + 1];
+        const uz = pos[v + 5] - pos[v + 2];
+        const wx = pos[v + 6] - pos[v];
+        const wy = pos[v + 7] - pos[v + 1];
+        const wz = pos[v + 8] - pos[v + 2];
+        if (Math.hypot(uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx) > 1e-7) for (let k = 0; k < 9; k++) tris.push(pos[v + k]);
+      }
+    }
+    const P = (t: number, k: number, a: number) => tris[9 * t + 3 * k + a];
+    const normal = (t: number) => {
+      const ux = P(t, 1, 0) - P(t, 0, 0);
+      const uy = P(t, 1, 1) - P(t, 0, 1);
+      const uz = P(t, 1, 2) - P(t, 0, 2);
+      const wx = P(t, 2, 0) - P(t, 0, 0);
+      const wy = P(t, 2, 1) - P(t, 0, 1);
+      const wz = P(t, 2, 2) - P(t, 0, 2);
+      const n = [uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx];
+      const l = Math.hypot(n[0], n[1], n[2]);
+      return [n[0] / l, n[1] / l, n[2] / l];
+    };
+    const n = tris.length / 9;
+    const key = (x: number, z: number) => `${Math.floor(x * 4)},${Math.floor(z * 4)}`;
+    const grid = new Map<string, number[]>();
+    const add = (k: string, t: number) => {
+      const g = grid.get(k);
+      if (g) g.push(t);
+      else grid.set(k, [t]);
+    };
+    const walls: number[] = [];
+    const N: number[][] = [];
+    for (let t = 0; t < n; t++) {
+      N.push(normal(t));
+      if (Math.abs(N[t][1]) > 0.05) continue;
+      walls.push(t);
+      const xs = [0, 1, 2].map((k) => P(t, k, 0));
+      const zs = [0, 1, 2].map((k) => P(t, k, 2));
+      for (let gx = Math.floor(Math.min(...xs) * 4); gx <= Math.floor(Math.max(...xs) * 4); gx++)
+        for (let gz = Math.floor(Math.min(...zs) * 4); gz <= Math.floor(Math.max(...zs) * 4); gz++) add(`${gx},${gz}`, t);
+    }
+    // Whether point q lies in triangle t's plane (within 0.004) and well inside it.
+    const inside = (t: number, q: number[]) => {
+      const o = [P(t, 0, 0), P(t, 0, 1), P(t, 0, 2)];
+      const u = [P(t, 1, 0) - o[0], P(t, 1, 1) - o[1], P(t, 1, 2) - o[2]];
+      const w = [P(t, 2, 0) - o[0], P(t, 2, 1) - o[1], P(t, 2, 2) - o[2]];
+      const v = [q[0] - o[0], q[1] - o[1], q[2] - o[2]];
+      if (Math.abs(v[0] * N[t][0] + v[1] * N[t][1] + v[2] * N[t][2]) > 0.004) return false;
+      const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+      const d00 = dot(u, u);
+      const d01 = dot(u, w);
+      const d11 = dot(w, w);
+      const d20 = dot(v, u);
+      const d21 = dot(v, w);
+      const den = d00 * d11 - d01 * d01;
+      const b1 = (d11 * d20 - d01 * d21) / den;
+      const b2 = (d00 * d21 - d01 * d20) / den;
+      return b1 > 0.01 && b2 > 0.01 && b1 + b2 < 0.99;
+    };
+    let overlaps = 0;
+    let at = "";
+    for (const t of walls) {
+      const q = [0, 1, 2].map((a) => (P(t, 0, a) + P(t, 1, a) + P(t, 2, a)) / 3);
+      for (const o of grid.get(key(q[0], q[2])) ?? [])
+        if (o !== t && N[o][0] * N[t][0] + N[o][2] * N[t][2] > 0.5 && inside(o, q)) {
+          overlaps++;
+          if (!at) at = `overlap at (${q[0].toFixed(2)}, ${q[2].toFixed(2)}, ${q[1].toFixed(2)} high)`;
+          break;
+        }
+    }
+    // Corners inside edges off the axes.
+    const verts = new Map<string, number[]>();
+    for (let t = 0; t < n; t++)
+      for (let k = 0; k < 3; k++) {
+        const g = key(P(t, k, 0), P(t, k, 2));
+        const list = verts.get(g);
+        if (list) list.push(t, k);
+        else verts.set(g, [t, k]);
+      }
+    const hit = new Set<string>();
+    for (let t = 0; t < n; t++)
+      for (let e = 0; e < 3; e++) {
+        const a = [P(t, e, 0), P(t, e, 1), P(t, e, 2)];
+        const b = [P(t, (e + 1) % 3, 0), P(t, (e + 1) % 3, 1), P(t, (e + 1) % 3, 2)];
+        if (Math.abs(a[0] - b[0]) < 1e-4 || Math.abs(a[2] - b[2]) < 1e-4) continue;
+        const L = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+        const seen = new Set<string>();
+        for (let s = 0; s <= 8; s++) seen.add(key(a[0] + ((b[0] - a[0]) * s) / 8, a[2] + ((b[2] - a[2]) * s) / 8));
+        for (const g of seen) {
+          const list = verts.get(g) ?? [];
+          for (let i = 0; i < list.length; i += 2) {
+            const p = [P(list[i], list[i + 1], 0), P(list[i], list[i + 1], 1), P(list[i], list[i + 1], 2)];
+            const u = ((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1]) + (p[2] - a[2]) * (b[2] - a[2])) / (L * L);
+            if (u * L < 1e-3 || (1 - u) * L < 1e-3) continue;
+            if (Math.hypot(a[0] + (b[0] - a[0]) * u - p[0], a[1] + (b[1] - a[1]) * u - p[1], a[2] + (b[2] - a[2]) * u - p[2]) < 2e-4)
+              hit.add(p.map((v) => v.toFixed(4)).join(","));
+          }
+        }
+      }
+    return { overlaps, corners: hit.size, at };
   });
 }
 
@@ -821,12 +966,20 @@ export function cliffOutlineChecks(check: Check): void {
     cr.every((r) => r.cracks === 0),
     cr.map((r) => `${r.what.replace(/(\.\d)\d+/, "$1")} sub ${r.sub}: ${r.cracks}${r.at ? ` ${r.at}` : ""}`).join("; "),
   );
-  const g0 = walkGuardRun(false);
-  const g1 = walkGuardRun(true);
+  const gm = walkGuardRun("main", true);
+  const g0 = walkGuardRun("outline", false);
+  const g1 = walkGuardRun("outline", true);
   check(
-    "cliff outline: a walker never steps onto a point drawn more than a step from its cell's walk level (the guard Terrain gives the world; it does step there without it)",
-    g1.entered === 0 && g0.entered > 0 && g1.walkers === g0.walkers && WALK_STEP === STEP,
-    `${g0.walkers} beasts at cliffs' feet, 20 s: ${g0.entered} such steps without the guard ${g0.at}, ${g1.entered} with it ${g1.at}`,
+    "cliff outline: walkers at cliffs' feet stand where the land is drawn at their cell's height, no more often off it than on main (the guard Terrain gives the world reads the drawn tops; without it they stand off it more)",
+    g1.off <= gm.off && g0.off > g1.off && g1.walkers === g0.walkers && g1.samples > 0.9 * gm.samples && WALK_STEP === STEP,
+    `${g1.walkers} beasts, 20 s, a sample a second, points drawn more than ${OFF_DRAWN} from their cell's middle: main ${gm.off} of ${gm.samples} ${gm.at}; flat walls ${g1.off} of ${g1.samples} ${g1.at}; without the guard ${g0.off} of ${g0.samples} ${g0.at}`,
+  );
+  const fm = lipFaults("main");
+  const fo = lipFaults("outline");
+  check(
+    "cliff outline: no two walls drawn in one plane, and no corner inside a slanted edge, on desert-plateau-3 (the sawtooth and the sky-blue pixels of the 28 November playtest)",
+    fo.overlaps <= fm.overlaps && fo.corners <= 10,
+    `walls drawn over each other: main ${fm.overlaps}, flat walls ${fo.overlaps} ${fo.at}; corners inside slanted edges: main ${fm.corners}, flat walls ${fo.corners}`,
   );
   const tOn = x.terrace.filter((r) => r.mode === "outline");
   check(
