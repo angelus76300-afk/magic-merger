@@ -2823,14 +2823,24 @@ const OTHER_RANK = 4 * UNSEEN_RANK;
 const FINE_AGAIN_MS = 1.5;
 const FINE_TOP = 6;
 // The fine land's faces by the way they face, in the order of its index buffer (quadGeometry):
-// north walls, tops, west walls, then east walls, south walls and bottoms. Any ways a pass needs
-// out of the first three are one run of it, and of the last three another (drawFacing).
+// north walls, slanted walls, tops, west walls, then east walls, south walls, bottoms and the
+// slanted walls again. Any ways a pass needs out of the first four are one run of it, and of the
+// last four another (drawFacing). The slanted walls (terrain-fine.ts cutWalls, flat walls off the
+// axes) face too many ways for one plane, so they are always drawn: by the camera's pass next to
+// the tops, which it always draws, and by the sun's after the bottoms, which it always draws, so
+// neither holds in a way it would skip (28 November: in the east and west ways they held those in
+// from every side, up to 8.9% more triangles drawn).
 const FACE_NORTH = 0;
-const FACE_TOP = 1;
-const FACE_WEST = 2;
-const FACE_EAST = 3;
-const FACE_SOUTH = 4;
-const FACE_BOTTOM = 5;
+const FACE_SLANT = 1;
+const FACE_TOP = 2;
+const FACE_WEST = 3;
+const FACE_EAST = 4;
+const FACE_SOUTH = 5;
+const FACE_BOTTOM = 6;
+const FACE_SLANT_SUN = 7;
+const FACE_WAYS = 8;
+// The first way of the second run.
+const FACE_RUN = FACE_EAST;
 
 // Which of a fine chunk's faces a pass draws (15 November): only the faces that can face it. A
 // face turned away is never drawn (the land is drawn from its front side, and three draws the
@@ -2843,9 +2853,11 @@ const FACE_BOTTOM = 5;
 function drawFacing(g: BufferGeometry, low: boolean, x: number, y: number, z: number, sun: boolean): void {
   const f = g.userData.faces as { first: number[]; counts: number[]; planes: { e: number; s: number; w: number; n: number; b: number } } | undefined;
   if (!f) return;
-  const want = sun ? [z > 0, y < 0, x > 0, x < 0, z < 0, y > 0] : [z < f.planes.n, true, x < f.planes.w, x > f.planes.e, z > f.planes.s, y < f.planes.b];
-  const from = low ? 0 : 3;
-  const to = low ? 3 : 6;
+  const want = sun
+    ? [z > 0, false, y < 0, x > 0, x < 0, z < 0, y > 0, true]
+    : [z < f.planes.n, true, true, x < f.planes.w, x > f.planes.e, z > f.planes.s, y < f.planes.b, false];
+  const from = low ? 0 : FACE_RUN;
+  const to = low ? FACE_RUN : FACE_WAYS;
   let a = -1;
   let b = -1;
   for (let k = from; k < to; k++) {
@@ -3065,7 +3077,7 @@ function quadsGeometry(a: QuadArrays): BufferGeometry | null {
   const quads = a.quads;
   if (quads === 0) return null;
   const way = new Uint8Array(quads);
-  const counts = [0, 0, 0, 0, 0, 0];
+  const counts = new Array<number>(FACE_WAYS).fill(0);
   const planes = { e: Infinity, s: Infinity, w: -Infinity, n: -Infinity, b: -Infinity };
   const p = a.pos;
   for (let q = 0; q < quads; q++) {
@@ -3081,30 +3093,33 @@ function quadsGeometry(a: QuadArrays): BufferGeometry | null {
     const nz = ux * vy - uy * vx;
     let k = FACE_TOP;
     // A flat wall turned off the axes (terrain-fine.ts cutWalls) faces the camera from more places
-    // than its way's plane says: its way is always drawn.
+    // than one axis's plane can say: a way of its own, always drawn.
     const slant = Math.abs(ny) < Math.max(Math.abs(nx), Math.abs(nz)) && Math.min(Math.abs(nx), Math.abs(nz)) > 1e-4 * Math.max(Math.abs(nx), Math.abs(nz));
-    if (Math.abs(nx) > Math.abs(ny) && Math.abs(nx) >= Math.abs(nz)) {
+    if (slant) k = FACE_SLANT;
+    else if (Math.abs(nx) > Math.abs(ny) && Math.abs(nx) >= Math.abs(nz)) {
       k = nx > 0 ? FACE_EAST : FACE_WEST;
-      if (nx > 0) planes.e = slant ? -Infinity : Math.min(planes.e, p[o]);
-      else planes.w = slant ? Infinity : Math.max(planes.w, p[o]);
+      if (nx > 0) planes.e = Math.min(planes.e, p[o]);
+      else planes.w = Math.max(planes.w, p[o]);
     } else if (Math.abs(nz) > Math.abs(ny)) {
       k = nz > 0 ? FACE_SOUTH : FACE_NORTH;
-      if (nz > 0) planes.s = slant ? -Infinity : Math.min(planes.s, p[o + 2]);
-      else planes.n = slant ? Infinity : Math.max(planes.n, p[o + 2]);
+      if (nz > 0) planes.s = Math.min(planes.s, p[o + 2]);
+      else planes.n = Math.max(planes.n, p[o + 2]);
     } else if (ny < 0) {
       k = FACE_BOTTOM;
       planes.b = Math.max(planes.b, p[o + 1]);
     }
     way[q] = k;
     counts[k]++;
+    if (k === FACE_SLANT) counts[FACE_SLANT_SUN]++;
   }
-  const first = [0, 0, 0, 0, 0, 0];
-  for (let k = 1; k < 6; k++) first[k] = first[k - 1] + counts[k - 1];
+  const first = new Array<number>(FACE_WAYS).fill(0);
+  for (let k = 1; k < FACE_WAYS; k++) first[k] = first[k - 1] + counts[k - 1];
   const next = [...first];
-  const index = new Uint32Array(quads * 6);
+  const index = new Uint32Array((quads + counts[FACE_SLANT_SUN]) * 6);
   for (let q = 0; q < quads; q++) {
     const v = q * 4;
     index.set([v, v + 1, v + 2, v, v + 2, v + 3], next[way[q]]++ * 6);
+    if (way[q] === FACE_SLANT) index.set([v, v + 1, v + 2, v, v + 2, v + 3], next[FACE_SLANT_SUN]++ * 6);
   }
   const g = new BufferGeometry();
   g.setAttribute("position", new BufferAttribute(a.pos, 3));
