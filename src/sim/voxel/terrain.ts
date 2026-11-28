@@ -3384,6 +3384,20 @@ export class Writer {
     v(dx, dy, dz, lowD);
   }
 
+  // One triangle of a side, wound as a quad's first one is, each corner its own packed colour: a
+  // quad whose last corner is its third (quadArrays reads a, b, c and the sixth vertex).
+  tri(ax: number, ay: number, az: number, ca: number, bx: number, by: number, bz: number, cb: number, cx: number, cy: number, cz: number, cc: number): void {
+    if ((this.n + 6) * 4 > this.col.length) this.grow();
+    const ch = (c: number, s: number) => ((c >> s) & 255) / 255;
+    const v = (x: number, y: number, z: number, c: number) => this.vertex(x, y, z, ch(c, 16), ch(c, 8), ch(c, 0), 1, 0, 0);
+    v(ax, ay, az, ca);
+    v(bx, by, bz, cb);
+    v(cx, cy, cz, cc);
+    v(ax, ay, az, ca);
+    v(cx, cy, cz, cc);
+    v(cx, cy, cz, cc);
+  }
+
   // The water in eighths as a geometry: colours with their alpha, the drawings' mask, the waves,
   // and `waterFine` (1, the foam) for the water's shader (water-light.ts).
   waterGeometry(): BufferGeometry | null {

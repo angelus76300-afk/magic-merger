@@ -3312,16 +3312,29 @@ interface Stack {
   next: number;
   head: boolean;
   done: boolean;
+  // A wall of a column beyond the tile, read for where its ends break and never written (slantFlush).
+  ghost: boolean;
 }
 const STACKS: Stack[] = [];
 let NSTACKS = 0;
 const SLANT_F: number[] = [];
 const SLANT_HEADS: number[] = [];
 const SLANT_AT = new Map<string, number>();
-function slantFaces(nf: number, ax: number, az: number, bx: number, bz: number, k: number, sub: number): void {
+const SLANT_SPANS: (Stack | number)[] = [];
+const SLANT_BREAKS = new Map<string, number[]>();
+const SLANT_A: number[] = [];
+const SLANT_B: number[] = [];
+// The heights of `all` strictly between lo and hi, with lo and hi, in order and once each, into `to`.
+function cutsOf(all: number[], lo: number, hi: number, to: number[]): void {
+  to.length = 0;
+  to.push(lo, hi);
+  for (const h of all) if (h > lo + 1e-6 && h < hi - 1e-6 && !to.some((v) => Math.abs(v - h) <= 1e-6)) to.push(h);
+  to.sort((a, b) => a - b);
+}
+function slantFaces(nf: number, ax: number, az: number, bx: number, bz: number, k: number, sub: number, ghost = false): void {
   if (nf === 0) return;
   const Q = 1 / sub;
-  if (NSTACKS === STACKS.length) STACKS.push({ ax: 0, az: 0, bx: 0, bz: 0, first: 0, count: 0, sig: "", next: -1, head: true, done: false });
+  if (NSTACKS === STACKS.length) STACKS.push({ ax: 0, az: 0, bx: 0, bz: 0, first: 0, count: 0, sig: "", next: -1, head: true, done: false, ghost: false });
   const r = STACKS[NSTACKS++];
   r.ax = ax;
   r.az = az;
@@ -3332,6 +3345,7 @@ function slantFaces(nf: number, ax: number, az: number, bx: number, bz: number, 
   r.next = -1;
   r.head = true;
   r.done = false;
+  r.ghost = ghost;
   let sig = "";
   for (let q = 0; q < nf; q++) {
     const F = FACES[q];
@@ -3349,9 +3363,10 @@ const slantKey = (x: number, z: number, sig: string) => `${Math.round(x * 4096)}
 // Writes the stacks kept, those of one plane that meet end to end with the same faces as one.
 function slantFlush(out: Writer): void {
   SLANT_AT.clear();
-  for (let i = 0; i < NSTACKS; i++) SLANT_AT.set(slantKey(STACKS[i].ax, STACKS[i].az, STACKS[i].sig), i);
+  for (let i = 0; i < NSTACKS; i++) if (!STACKS[i].ghost) SLANT_AT.set(slantKey(STACKS[i].ax, STACKS[i].az, STACKS[i].sig), i);
   for (let i = 0; i < NSTACKS; i++) {
     const r = STACKS[i];
+    if (r.ghost) continue;
     const n = SLANT_AT.get(slantKey(r.bx, r.bz, r.sig));
     if (n === undefined || n === i || !STACKS[n].head) continue;
     r.next = n;
@@ -3361,16 +3376,9 @@ function slantFlush(out: Writer): void {
     const l = Math.hypot(bx - ax, bz - az);
     return l < 1e-9 ? 0 : Math.abs((bx - ax) * (pz - az) - (bz - az) * (px - ax)) / l;
   };
-  const write = (r: Stack, bx: number, bz: number) => {
-    for (let q = 0; q < r.count; q++) {
-      const o = r.first + 6 * q;
-      const lo = SLANT_F[o];
-      const hi = SLANT_F[o + 1];
-      out.e0 = SLANT_F[o + 4] / GLOW_LEVELS;
-      out.e1 = SLANT_F[o + 5];
-      out.quad(r.ax, lo, r.az, r.ax, hi, r.az, bx, hi, bz, bx, lo, bz, SLANT_F[o + 2], 1, SLANT_F[o + 3], 1, 0, 0, true);
-    }
-  };
+  const spans = SLANT_SPANS;
+  spans.length = 0;
+  const write = (r: Stack, bx: number, bz: number) => spans.push(r, bx, bz);
   const mids: number[] = [];
   const heads = SLANT_HEADS;
   heads.length = 0;
@@ -3403,6 +3411,69 @@ function slantFlush(out: Writer): void {
   }
   // Stacks joined in a ring, with no first one.
   for (let i = 0; i < NSTACKS; i++) if (!STACKS[i].done) write(STACKS[i], STACKS[i].bx, STACKS[i].bz);
+  // Where walls meet end to end (two strips of a line whose tops differ, a strip and the step
+  // beside it), each wall's upright edge there is cut at every height any of them breaks at, so
+  // they share their corners: an edge from 7 to 9.75 beside one from 7 to 9.625 drew a row of pale
+  // pinholes down the wall (28 November, forest-plateau-2's eye frame), as the two edges were
+  // rasterized apart.
+  const breaks = SLANT_BREAKS;
+  breaks.clear();
+  const at = (x: number, z: number) => {
+    const key = `${Math.round(x * 4096)},${Math.round(z * 4096)}`;
+    let b = breaks.get(key);
+    if (!b) {
+      b = [];
+      breaks.set(key, b);
+    }
+    return b;
+  };
+  for (let i = 0; i < spans.length; i += 3) {
+    const r = spans[i] as Stack;
+    const ends = [at(r.ax, r.az), at(spans[i + 1] as number, spans[i + 2] as number)];
+    for (let q = 0; q < r.count; q++) {
+      const o = r.first + 6 * q;
+      for (const b of ends) b.push(SLANT_F[o], SLANT_F[o + 1]);
+    }
+  }
+  const A = SLANT_A;
+  const B = SLANT_B;
+  for (let i = 0; i < spans.length; i += 3) {
+    const r = spans[i] as Stack;
+    if (r.ghost) continue;
+    const bx = spans[i + 1] as number;
+    const bz = spans[i + 2] as number;
+    const atA = at(r.ax, r.az);
+    const atB = at(bx, bz);
+    for (let q = 0; q < r.count; q++) {
+      const o = r.first + 6 * q;
+      const lo = SLANT_F[o];
+      const hi = SLANT_F[o + 1];
+      const ca = SLANT_F[o + 2];
+      const cb = SLANT_F[o + 3];
+      out.e0 = SLANT_F[o + 4] / GLOW_LEVELS;
+      out.e1 = SLANT_F[o + 5];
+      cutsOf(atA, lo, hi, A);
+      cutsOf(atB, lo, hi, B);
+      if (A.length === 2 && B.length === 2) {
+        out.quad(r.ax, lo, r.az, r.ax, hi, r.az, bx, hi, bz, bx, lo, bz, ca, 1, cb, 1, 0, 0, true);
+        continue;
+      }
+      // Up both edges at once, a triangle at a time, each from the lower next corner.
+      const c = (h: number) => (ca === cb ? ca : mixColor(ca, cb, (h - lo) / (hi - lo)));
+      let ia = 0;
+      let ib = 0;
+      while (ia < A.length - 1 || ib < B.length - 1) {
+        if (ib >= B.length - 1 || (ia < A.length - 1 && A[ia + 1] <= B[ib + 1])) {
+          out.tri(r.ax, A[ia], r.az, c(A[ia]), r.ax, A[ia + 1], r.az, c(A[ia + 1]), bx, B[ib], bz, c(B[ib]));
+          ia++;
+        } else {
+          out.tri(r.ax, A[ia], r.az, c(A[ia]), bx, B[ib + 1], bz, c(B[ib + 1]), bx, B[ib], bz, c(B[ib]));
+          ib++;
+        }
+      }
+    }
+  }
+  spans.length = 0;
   out.e0 = 0;
   out.e1 = 0;
   NSTACKS = 0;
@@ -3474,10 +3545,13 @@ function cutFaces(
   oz: number,
 ): void {
   const Q = 1 / sub;
-  for (let j = j0; j < j1; j++)
-    for (let k = k0; k < k1; k++) {
+  // A ring of columns beyond the tile too, as ghosts: their walls are read for where they break at
+  // the ends they share with the tile's, so the two tiles cut those edges alike.
+  for (let j = Math.max(1, j0 - 1); j < j1 + 1; j++)
+    for (let k = Math.max(1, k0 - 1); k < k1 + 1; k++) {
       const s = j * SW + k;
       if (!CUT[s]) continue;
+      const ghost = j < j0 || j >= j1 || k < k0 || k >= k1;
       const X = (sx0 + k) * Q;
       const Y = (sy0 + j) * Q;
       if (!cutLine(s, X, Y, Q)) continue;
@@ -3497,7 +3571,7 @@ function cutFaces(
       const light = CUT_L[s];
       const hs = CUT_HS[s];
       const nf = wallFaces(f, d, sx0 + k, sy0 + j, s, SW, sub, grain, blend, out, ox, oz, hs, CUT_HI[s], H[s], false);
-      slantFaces(nf, ax + ox, ay + oz, bx + ox, by + oz, light / WALL_LIGHT[d], sub);
+      slantFaces(nf, ax + ox, ay + oz, bx + ox, by + oz, light / WALL_LIGHT[d], sub, ghost);
       // The step between two high parts on a crossed side.
       for (const e of [pa, pb]) {
         const dd = (e + 3) % 4;
@@ -3518,7 +3592,7 @@ function cutFaces(
         const sf = wallFaces(f, dd, sx0 + k, sy0 + j, s, SW, sub, grain, blend, out, ox, oz, hs, CUT_HI[s], below, false);
         // Lit as the wall it closes, not as a side of its own: seen edge on it drew a pale seam
         // down the wall (desert-plateau-3).
-        slantFaces(sf, cx + ox, cy + oz, tx + ox, ty + oz, light / WALL_LIGHT[dd], sub);
+        slantFaces(sf, cx + ox, cy + oz, tx + ox, ty + oz, light / WALL_LIGHT[dd], sub, ghost);
       }
     }
   slantFlush(out);

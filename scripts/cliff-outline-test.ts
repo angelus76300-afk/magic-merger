@@ -209,6 +209,73 @@ function ribsOf(out: Writer, a: number, y: number): number {
   return all ? ribs / all : 0;
 }
 
+// Cracks: upright edges of the flat walls' triangles (turned off the axes) in the measured cells
+// that no triangle shares end for end (the same two points, the other way round), though another
+// wall's upright edge lies on the same line. Two walls that meet there with edges of different ends
+// (one from 7 to 9.75, the next from 7 to 9.625) leave such a pair, and the screen shows it as a row
+// of pale pinholes (forest-plateau-2's eye frame, 28 November). Returns the count and the first
+// one's middle.
+export function cracksOf(out: Writer): { cracks: number; at: string } {
+  const { pos } = out.vertexArrays();
+  const key = (i: number) => `${pos[3 * i]},${pos[3 * i + 1]},${pos[3 * i + 2]}`;
+  const edges = new Map<string, number>();
+  // Upright edges by their line (x, z): their spans, going down (-) or up (+).
+  const lines = new Map<string, number[]>();
+  const slanted: string[] = [];
+  const n = out.quads * 6;
+  for (let t = 0; t < n; t += 3) {
+    const ux = pos[3 * (t + 1)] - pos[3 * t];
+    const uy = pos[3 * (t + 1) + 1] - pos[3 * t + 1];
+    const uz = pos[3 * (t + 1) + 2] - pos[3 * t + 2];
+    const vx = pos[3 * (t + 2)] - pos[3 * t];
+    const vy = pos[3 * (t + 2) + 1] - pos[3 * t + 1];
+    const vz = pos[3 * (t + 2) + 2] - pos[3 * t + 2];
+    const nx = uy * vz - uz * vy;
+    const ny = uz * vx - ux * vz;
+    const nz = ux * vy - uy * vx;
+    const slant = Math.abs(ny) < 1e-6 * Math.hypot(nx, nz) && Math.min(Math.abs(nx), Math.abs(nz)) > 1e-4 * Math.max(Math.abs(nx), Math.abs(nz));
+    for (let e = 0; e < 3; e++) {
+      const i = t + e;
+      const j = t + ((e + 1) % 3);
+      const a = key(i);
+      const b = key(j);
+      if (a === b) continue;
+      const k = `${a}|${b}`;
+      edges.set(k, (edges.get(k) ?? 0) + 1);
+      if (pos[3 * i] !== pos[3 * j] || pos[3 * i + 2] !== pos[3 * j + 2]) continue;
+      const line = `${pos[3 * i]},${pos[3 * i + 2]}`;
+      const l = lines.get(line) ?? [];
+      l.push(pos[3 * i + 1], pos[3 * j + 1]);
+      lines.set(line, l);
+      if (slant) slanted.push(k);
+    }
+  }
+  let cracks = 0;
+  let at = "";
+  for (const k of slanted) {
+    const [a, b] = k.split("|");
+    if ((edges.get(`${b}|${a}`) ?? 0) > 0) continue;
+    const pa = a.split(",").map(Number);
+    const pb = b.split(",").map(Number);
+    const mx = (pa[0] + pb[0]) / 2;
+    const my = (pa[1] + pb[1]) / 2;
+    const mz = (pa[2] + pb[2]) / 2;
+    if (mx < M0 || mx >= M1 || mz < M0 || mz >= M1) continue;
+    // Another wall's edge the other way round beside it, over some of its height: two walls meet
+    // there. Else it is the wall's own end (its outline, a foot over lower land), not a meeting.
+    const l = lines.get(`${pa[0]},${pa[2]}`) ?? [];
+    const lo = Math.min(pa[1], pb[1]);
+    const hi = Math.max(pa[1], pb[1]);
+    let met = false;
+    for (let q = 0; q < l.length && !met; q += 2)
+      met = Math.sign(l[q + 1] - l[q]) === Math.sign(pa[1] - pb[1]) && Math.min(l[q], l[q + 1]) < hi - 1e-6 && Math.max(l[q], l[q + 1]) > lo + 1e-6;
+    if (!met) continue;
+    cracks++;
+    if (!at) at = `(${mx.toFixed(3)}, ${my.toFixed(3)}, ${mz.toFixed(3)})`;
+  }
+  return { cracks, at };
+}
+
 // The side of the line through (CX, CY) at angle a (degrees) a point lies on, cells.
 const CX = 20.31;
 const CY = 20.17;
@@ -470,6 +537,19 @@ export interface Extra {
   keep: { moved: number; tree: number; treeNear: number };
   canyon: { mode: string; sub: number; minWidth: number; maxWidth: number; diagMean: number }[];
 }
+// Cracks on the flat walls of straight cliffs, the terrace and the lava foot (cracksOf).
+export function crackRows(): { mode: string; sub: number; what: string; cracks: number; at: string }[] {
+  const rows: { mode: string; sub: number; what: string; cracks: number; at: string }[] = [];
+  for (const sub of [8, 4])
+    for (const m of [OUTLINE])
+      withMode(m, () => {
+        for (const a of ANGLES) rows.push({ mode: m.name, sub, what: `${a} deg`, ...cracksOf(build(fill(along(a)), sub).out) });
+        rows.push({ mode: m.name, sub, what: "terrace", ...cracksOf(build(fill(terrace), sub).out) });
+        rows.push({ mode: m.name, sub, what: "lava", ...cracksOf(build(fill(lavaFoot), sub).out) });
+      });
+  return rows;
+}
+
 export function extraRows(): Extra {
   const out: Extra = { terrace: [], lava: [], keep: { moved: 0, tree: 0, treeNear: 0 }, canyon: [] };
   for (const sub of [8, 4])
@@ -741,6 +821,12 @@ export function cliffOutlineChecks(check: Check): void {
       CLIFF_OUTLINE.on = was;
     }
   }
+  const cr = crackRows();
+  check(
+    "cliff outline: flat walls that meet share their upright edges' corners (no cracks, the rows of pale pinholes)",
+    cr.every((r) => r.cracks === 0),
+    cr.map((r) => `${r.what.replace(/(\.\d)\d+/, "$1")} sub ${r.sub}: ${r.cracks}${r.at ? ` ${r.at}` : ""}`).join("; "),
+  );
   const g0 = walkGuardRun(false);
   const g1 = walkGuardRun(true);
   check(
