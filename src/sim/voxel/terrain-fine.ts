@@ -564,8 +564,8 @@ export function intoCell(p: number, c: number): number {
   return Math.max(c + CORNER_IN, Math.min(c + 1 - CORNER_IN, p));
 }
 
-// Cliffs on their own line (27 November, the owner: "cliffs: rebuild"; a prototype, off in the
-// game). A cliff too tall to curve stands on the cells' sides, so off the axes it was a sawtooth of
+// Cliffs on their own line (27 November, the owner: "cliffs: rebuild", then "cliffs: flat walls";
+// on in the game since 28 November). A cliff too tall to curve stands on the cells' sides, so off the axes it was a sawtooth of
 // whole-cell notches, and cliffCorner cuts only a lone cell's corner. Here, for each level L between
 // the four cells round a lattice corner, the cell-edge outline of the cells at L or above becomes a
 // line through the middles of its unit edges, eased: where the outline runs as a staircase (of one
@@ -582,7 +582,7 @@ export function intoCell(p: number, c: number): number {
 // the reverse, and a water bed (drawn by the fine water) trades nothing, so no rock stands up in
 // it; no cell's middle ever changes. Walls stay vertical. `sharpRun` (0 off): a corner where two
 // straight walls of at least that many cells meet stays sharp, for a mesa.
-export const CLIFF_OUTLINE = { on: false, wave: 0.08, period: 2.5, sharpRun: 2, walls: true };
+export const CLIFF_OUTLINE = { on: true, wave: 0.08, period: 2.5, sharpRun: 2, walls: true };
 export const OUTLINE_OPEN = 0;
 export const OUTLINE_TREE = 1;
 export const OUTLINE_WET = 2;
@@ -1655,7 +1655,10 @@ export function buildFineTile(
   }
   // Flat walls (cutWalls): the columns a cliff's wall crosses take their low part's land, and keep
   // where the wall runs and what stands above it.
-  const walls = outline && CLIFF_OUTLINE.walls && !far && cutWalls(f, sub, sx0, sy0, SW, SH);
+  // A far chunk draws them along its sides only, as far in as a border column's crossings read
+  // (FAR_WALLS; blockFar leaves those columns alone), so it meets a chunk in eighths with the same
+  // walls and no gap opens (scripts/far-land-test.ts); inside, its cliffs keep the outline's steps.
+  const walls = outline && CLIFF_OUTLINE.walls && cutWalls(f, sub, sx0, sy0, SW, SH, far ? FAR.edge + FAR_WALLS : 0);
   // Light, kept in the colour so tops still merge. A slope of tiny steps is lit as the tilted
   // ground it stands for, by which way it faces, so it reads as a slope and not as stripes (its
   // risers take the same light, wallFaces); a top below a real wall sits in its shadow. The tilt is
@@ -1785,7 +1788,7 @@ export function buildFineTile(
     }
 
   // Far land (FAR): dry columns in blocks of two by two take one column's height and colour.
-  if (far) blockFar(f, sub, sx0, sy0, SW, j0, j1, k0, k1);
+  if (far) blockFar(f, sub, sx0, sy0, SW, j0, j1, k0, k1, walls);
 
   // Tops, merged into rectangles of one height, colour and glow.
   for (let j = j0; j < j1; j++) DONE.fill(0, j * SW + k0, j * SW + k1);
@@ -1962,7 +1965,7 @@ export function buildFineTile(
 // where it runs is coarser, by an eighth. Tops merge four times as far and half the walls go.
 // Kept as they are: columns within FAR.edge of the chunk's side, so two chunks at any level meet
 // with the same columns along their border and no gap opens; and columns of water, a bed, a
-// shore, weed or a spell's drawings. Blocks are aligned on the island, so the tiles of a chunk
+// shore, weed, a spell's drawings or a flat wall (cutWalls). Blocks are aligned on the island, so the tiles of a chunk
 // agree. Drawing only: what stands on the land stands on its columns in eighths (FineTops).
 // `edge` is a switch only for the checks (scripts/far-land-test.ts: at 0 the borders open).
 export const FAR = { block: 2, edge: 2 };
@@ -1970,7 +1973,7 @@ let HT = new Int32Array(0);
 let CT = new Uint32Array(0);
 let FAR_SAVED = 0;
 
-function blockFar(f: FineCells, sub: number, sx0: number, sy0: number, SW: number, j0: number, j1: number, k0: number, k1: number): void {
+function blockFar(f: FineCells, sub: number, sx0: number, sy0: number, SW: number, j0: number, j1: number, k0: number, k1: number, walls: boolean): void {
   const n = H.length;
   if (HT.length < n) {
     HT = new Int32Array(n);
@@ -1982,7 +1985,8 @@ function blockFar(f: FineCells, sub: number, sx0: number, sy0: number, SW: numbe
   const ey0 = f.y0 * sub + FAR.edge;
   const ex1 = f.x1 * sub - FAR.edge;
   const ey1 = f.y1 * sub - FAR.edge;
-  const plain = (s: number) => D[s] === 1 && WET[s] === 0 && FLOOD[s] < 0 && WEEDS[s] === WEED_NONE && CELL[s] >= 0;
+  // A column a flat wall crosses (cutWalls) is not plain: its strip stands on its own height.
+  const plain = (s: number) => D[s] === 1 && WET[s] === 0 && FLOOD[s] < 0 && WEEDS[s] === WEED_NONE && CELL[s] >= 0 && !(walls && CUT[s]);
   // The tile's columns and one more round (the walls read their neighbours).
   for (let j = j0 - 1; j <= j1; j++)
     for (let k = k0 - 1; k <= k1; k++) {
@@ -3065,7 +3069,11 @@ function sideHigh(s: number, d: number): boolean {
 }
 // Marks the columns of a tile (and its border but the outer ring) that a wall crosses, and gives
 // each its low part's land: false where none is.
-function cutWalls(f: FineCells, sub: number, sx0: number, sy0: number, SW: number, SH: number): boolean {
+// How far in from a far chunk's border columns its flat walls still stand, columns: the reach of
+// smoothCuts's passes and one more.
+const FAR_WALLS = 4;
+// `band` (0: all): only the columns within that many of the chunk's side are cut (a far chunk).
+function cutWalls(f: FineCells, sub: number, sx0: number, sy0: number, SW: number, SH: number, band: number): boolean {
   const n = SW * SH;
   if (CUT.length < n) {
     CUT = new Uint8Array(n);
@@ -3097,6 +3105,11 @@ function cutWalls(f: FineCells, sub: number, sx0: number, sy0: number, SW: numbe
       const s = j * SW + k;
       const c = CELL[s];
       if (c < 0 || !f.natural[c] || FLOOD[s] >= 0 || WALLC[s] !== c || (f.wet[c] && !f.lava[c])) continue;
+      if (band > 0) {
+        const sx = sx0 + k;
+        const sy = sy0 + j;
+        if (sx >= f.x0 * sub + band && sx < f.x1 * sub - band && sy >= f.y0 * sub + band && sy < f.y1 * sub - band) continue;
+      }
       const t = f.top[c];
       // A mesa keeps its cells' outline (easePass), so its walls stay on the cells' sides: a column
       // beside a mesa's cell is not cut, else its corners took a bevel a column wide (28 November).

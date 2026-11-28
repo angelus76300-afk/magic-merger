@@ -1,5 +1,5 @@
 // Cliffs on their own line (27 November, the owner: "cliffs: rebuild"; terrain-fine.ts
-// cliffOutline, a prototype off in the game). On cells laid out by hand (a cliff of four voxels along
+// cliffOutline, on in the game since 28 November). On cells laid out by hand (a cliff of four voxels along
 // a line at 0, 18.4, 26.6, 45 and 63.4 degrees, a terrace of three levels, a cliff over lava, cells
 // that must keep their land, a canyon a cell wide), the fine mesher's tops (FineTops) at eighths and
 // quarters, with the outline off (main: cliffCorner) and on:
@@ -808,18 +808,12 @@ export function cliffOutlineChecks(check: Check): void {
   );
   // The tan strips of 26 November (scripts/cliff-corner-test.ts), with the outline on.
   for (const k of [0, 1]) {
-    const was = CLIFF_OUTLINE.on;
-    CLIFF_OUTLINE.on = true;
-    try {
-      const r = cliffCorners(k);
-      check(
-        `cliff outline (${CLIFF_ISLANDS[k].name}): no column of land in a water cell stands up a cliff, a tan strip down its face`,
-        r.strips === 0,
-        `${r.strips} of ${r.water} columns of land in water cells more than SHORE_LOW over the water ${r.at.join(", ")}`,
-      );
-    } finally {
-      CLIFF_OUTLINE.on = was;
-    }
+    const r = cliffCorners(k, true, true);
+    check(
+      `cliff outline (${CLIFF_ISLANDS[k].name}): no column of land in a water cell stands up a cliff, a tan strip down its face`,
+      r.strips === 0,
+      `${r.strips} of ${r.water} columns of land in water cells more than SHORE_LOW over the water ${r.at.join(", ")}`,
+    );
   }
   const cr = crackRows();
   check(

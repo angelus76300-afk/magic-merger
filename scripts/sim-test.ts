@@ -2646,7 +2646,7 @@ waterLeftoversChecks(check);
 shoreRimChecks(check);
 // Cliff corners on the diagonal, no tan strip down a coast's cliff (26 November): scripts/cliff-corner-test.ts.
 cliffCornerChecks(check);
-// Cliffs on their own line, a prototype off in the game (27 November): scripts/cliff-outline-test.ts.
+// Cliffs on their own line, on in the game since 28 November: scripts/cliff-outline-test.ts.
 cliffOutlineChecks(check);
 // A lake's rim and bed blend sand and grass in eighths, no stairs (27 November): scripts/lake-rim-test.ts.
 lakeRimChecks(check);

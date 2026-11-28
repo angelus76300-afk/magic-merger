@@ -14,7 +14,7 @@ import { MeshBasicMaterial, type Mesh } from "three";
 import { generateWorld, type World } from "../src/sim/world";
 import { Terrain, columnTop, surfaceY } from "../src/sim/voxel/terrain";
 import { GRAPHICS, PRESETS, type LooksFlag } from "../src/sim/voxel/graphics";
-import { CLIFF_CORNER } from "../src/sim/voxel/terrain-fine";
+import { CLIFF_CORNER, CLIFF_OUTLINE } from "../src/sim/voxel/terrain-fine";
 import { DEFAULT_LAND, type LandOptions } from "../src/sim/land-options";
 import { C, F, G } from "../src/sim/materials";
 import { surface } from "./shore-rim-test";
@@ -56,13 +56,27 @@ function floodCliffFeet(world: World): void {
     }
 }
 
-export function cliffCorners(k: number, on = true): CliffCorners {
+// `outline`: with the cliff outline (terrain-fine.ts cliffOutline, the game's since 28 November),
+// which draws cliffs on their own line in cliffCorner's place; off, cliffCorner as on 26 November.
+// Each island and mode measured once a run (both checks read the outline's).
+const MEASURED = new Map<string, CliffCorners>();
+export function cliffCorners(k: number, on = true, outline = false): CliffCorners {
+  const key = `${k} ${on} ${outline}`;
+  const had = MEASURED.get(key);
+  if (had) return had;
+  const r = measureCorners(k, on, outline);
+  MEASURED.set(key, r);
+  return r;
+}
+function measureCorners(k: number, on: boolean, outline: boolean): CliffCorners {
   const I = CLIFF_ISLANDS[k];
   const was = { ...GRAPHICS };
   const wasOn = CLIFF_CORNER.on;
+  const wasOutline = CLIFF_OUTLINE.on;
   try {
     for (const [f, v] of Object.entries(PRESETS.high)) GRAPHICS[f as LooksFlag] = v;
     CLIFF_CORNER.on = on;
+    CLIFF_OUTLINE.on = outline;
     const world = generateWorld(I.cells, I.cells, I.seed, I.land);
     floodCliffFeet(world);
     const meshes: Mesh[] = [];
@@ -165,6 +179,7 @@ export function cliffCorners(k: number, on = true): CliffCorners {
   } finally {
     Object.assign(GRAPHICS, was);
     CLIFF_CORNER.on = wasOn;
+    CLIFF_OUTLINE.on = wasOutline;
   }
 }
 
@@ -173,10 +188,11 @@ export function cliffCornerChecks(check: Check): void {
     const name = CLIFF_ISLANDS[k].name;
     const r = cliffCorners(k);
     const off = cliffCorners(k, false);
+    const line = cliffCorners(k, true, true);
     check(
-      `cliffs (${name}): a lone cell's corner against three cells a cliff away is drawn at their level, so a diagonal cliff runs on a line, not in notches`,
-      r.corners >= 10 && r.cut >= r.corners * 0.85 && off.cut <= off.corners * 0.15,
-      `${r.cut} of ${r.corners} corners cut (with cliffCorner off: ${off.cut} of ${off.corners})`,
+      `cliffs (${name}): a lone cell's corner against three cells a cliff away is drawn at their level, so a diagonal cliff runs on a line, not in notches (cliffCorner, and the outline the game draws)`,
+      r.corners >= 10 && r.cut >= r.corners * 0.85 && off.cut <= off.corners * 0.15 && line.corners >= 10 && line.cut >= line.corners * 0.85,
+      `${r.cut} of ${r.corners} corners cut (with cliffCorner off: ${off.cut} of ${off.corners}; the outline: ${line.cut} of ${line.corners})`,
     );
     check(
       `cliffs (${name}): no column of land in a water cell stands up a cliff, a tan strip down its face`,

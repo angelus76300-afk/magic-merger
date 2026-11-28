@@ -86,6 +86,16 @@ interface Quad {
   y1: number;
   z0: number;
   z1: number;
+  // An upright quad: its foot from (ax, az) to (bx, bz); NaN for any other quad. A flat wall
+  // (terrain-fine.ts cutWalls) runs off the axes, or along one a hair inside the border.
+  ax: number;
+  az: number;
+  bx: number;
+  bz: number;
+  // Its corners in x and z, for a top's outline (a flat wall's column has a top of three to five
+  // corners, under its box).
+  xs: number[];
+  zs: number[];
 }
 
 function quads(m: Mesh): Quad[] {
@@ -95,7 +105,34 @@ function quads(m: Mesh): Quad[] {
     const xs = [p[o], p[o + 3], p[o + 6], p[o + 9]];
     const ys = [p[o + 1], p[o + 4], p[o + 7], p[o + 10]];
     const zs = [p[o + 2], p[o + 5], p[o + 8], p[o + 11]];
-    out.push({ x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys), z0: Math.min(...zs), z1: Math.max(...zs) });
+    const r = {
+      x0: Math.min(...xs),
+      x1: Math.max(...xs),
+      y0: Math.min(...ys),
+      y1: Math.max(...ys),
+      z0: Math.min(...zs),
+      z1: Math.max(...zs),
+      ax: NaN,
+      az: NaN,
+      bx: NaN,
+      bz: NaN,
+      xs,
+      zs,
+    };
+    if (r.y1 - r.y0 > E && Math.hypot(r.x1 - r.x0, r.z1 - r.z0) > E) {
+      // Upright when every corner lies on the line of the two farthest apart in x and z.
+      let i = 0;
+      let jj = 0;
+      let d = -1;
+      for (let a = 0; a < 4; a++)
+        for (let b = a + 1; b < 4; b++) {
+          const v = Math.hypot(xs[a] - xs[b], zs[a] - zs[b]);
+          if (v > d) [d, i, jj] = [v, a, b];
+        }
+      const off = (q: number) => Math.abs((xs[jj] - xs[i]) * (zs[q] - zs[i]) - (zs[jj] - zs[i]) * (xs[q] - xs[i])) / d;
+      if (d > E && [0, 1, 2, 3].every((q) => off(q) < E)) [r.ax, r.az, r.bx, r.bz] = [xs[i], zs[i], xs[jj], zs[jj]];
+    }
+    out.push(r);
   }
   return out;
 }
@@ -112,17 +149,41 @@ function borderGaps(inside: Inside, w: number, h: number): { rows: number; open:
   const q = inside.fine.map((m) => (m ? quads(m) : []));
   let checked = 0;
   let open = 0;
+  // Inside a top's corners (convex, either winding; a corner twice is a triangle).
+  const within = (r: Quad, x: number, z: number) => {
+    let pos = false;
+    let neg = false;
+    for (let a = 0; a < 4; a++) {
+      const b = (a + 1) % 4;
+      const l = Math.hypot(r.xs[b] - r.xs[a], r.zs[b] - r.zs[a]);
+      if (l < E) continue;
+      const c = ((r.xs[b] - r.xs[a]) * (z - r.zs[a]) - (r.zs[b] - r.zs[a]) * (x - r.xs[a])) / l;
+      if (c > E) pos = true;
+      if (c < -E) neg = true;
+    }
+    return !(pos && neg);
+  };
   const top = (list: Quad[], x: number, z: number) => {
     let best = -Infinity;
-    for (const r of list) if (r.y1 - r.y0 < E && r.x0 - E <= x && x <= r.x1 + E && r.z0 - E <= z && z <= r.z1 + E) best = Math.max(best, r.y0);
+    for (const r of list)
+      if (r.y1 - r.y0 < E && r.x0 - E <= x && x <= r.x1 + E && r.z0 - E <= z && z <= r.z1 + E && within(r, x, z)) best = Math.max(best, r.y0);
     return best;
+  };
+  // Or any wall whose foot crosses the row between the two columns' points (a flat wall).
+  const across = (r: Quad, px: number, pz: number, qx: number, qz: number) => {
+    if (Number.isNaN(r.ax)) return false;
+    const side = (x: number, z: number) => (r.bx - r.ax) * (z - r.az) - (r.bz - r.az) * (x - r.ax);
+    const ends = (x: number, z: number) => (qx - px) * (z - pz) - (qz - pz) * (x - px);
+    return side(px, pz) * side(qx, qz) <= E * E && ends(r.ax, r.az) * ends(r.bx, r.bz) <= E * E;
   };
   const closed = (lists: Quad[][], alongX: boolean, at: number, s: number, y: number) =>
     lists.some((list) =>
       list.some((r) =>
-        alongX
-          ? r.z1 - r.z0 < E && Math.abs(r.z0 - at) < E && r.x0 - E <= s && s <= r.x1 + E && r.y0 - E <= y && y <= r.y1 + E
-          : r.x1 - r.x0 < E && Math.abs(r.x0 - at) < E && r.z0 - E <= s && s <= r.z1 + E && r.y0 - E <= y && y <= r.y1 + E,
+        r.y0 - E <= y && y <= r.y1 + E
+          ? alongX
+            ? (r.z1 - r.z0 < E && Math.abs(r.z0 - at) < E && r.x0 - E <= s && s <= r.x1 + E) || across(r, s, at - 1 / 16, s, at + 1 / 16)
+            : (r.x1 - r.x0 < E && Math.abs(r.x0 - at) < E && r.z0 - E <= s && s <= r.z1 + E) || across(r, at - 1 / 16, s, at + 1 / 16, s)
+          : false,
       ),
     );
   for (let cy = 0; cy < rows; cy++)

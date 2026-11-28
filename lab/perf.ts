@@ -40,7 +40,7 @@ const land =
       ? resolveLand(readChoice({ warmth: num("warmth"), water: num("water"), relief: num("relief"), forest: num("forest") }), seed, WORLD_SIZES[size])
       : readLand({ biome: q.get("biome"), shape: q.get("shape"), relief: num("relief"), forest: num("forest") });
 // 27 November: "cliffs=off" draws cliffs on the cells' sides (no corner cut), "cliffs=corner" as the
-// game does (cliffCorner), "cliffs=outline" on their own line (cliffOutline, a prototype), with
+// game did before 28 November (cliffCorner), "cliffs=outline" on their own line (cliffOutline, the game), with
 // "sharp=N" keeping a mesa's corners where walls of N cells meet (CLIFF_OUTLINE.sharpRun, 2 now).
 const cliffs = q.get("cliffs");
 if (cliffs === "off" || cliffs === "corner" || cliffs === "outline") {

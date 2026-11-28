@@ -400,7 +400,9 @@ export const BLEND_ISLANDS: { name: string; seed: number; land: LandOptions; gro
 // And again on 27 November, when a lake's bed and rim joined the blend of two grounds, its sand and
 // grass no longer meeting in whole-cell stairs (scripts/lake-rim-test.ts; 3c5b3a15 before, the same
 // with LAKE_RIM off).
-const ONE_LAND = { cells: 152, seed: 7, hash: "370d4587" };
+// And again on 28 November, when cliffs stood on their own line with flat walls (the cliff outline
+// on in the game: scripts/cliff-outline-test.ts; 370d4587 before, the same with CLIFF_OUTLINE off).
+const ONE_LAND = { cells: 152, seed: 7, hash: "e550a1c6" };
 
 // An island at noon (the fine land bakes a glow round lava and lit houses at night).
 function island(cells: number, seed: number, land: LandOptions): World {

@@ -3096,16 +3096,21 @@ function quadsGeometry(a: QuadArrays): BufferGeometry | null {
     const wx = p[o + 9] - p[o];
     const wy = p[o + 10] - p[o + 1];
     const wz = p[o + 11] - p[o + 2];
-    // Both triangles' normals, summed: the quad's way even when one of them is empty.
+    // The first triangle's normal gives the quad's way, as it always has; the second's when the
+    // first is empty (a wall piece's triangle, two of its first corners one point).
     const n1x = uy * vz - uz * vy;
     const n1y = uz * vx - ux * vz;
     const n1z = ux * vy - uy * vx;
     const n2x = vy * wz - vz * wy;
     const n2y = vz * wx - vx * wz;
     const n2z = vx * wy - vy * wx;
-    const nx = n1x + n2x;
-    const ny = n1y + n2y;
-    const nz = n1z + n2z;
+    const a1 = n1x * n1x + n1y * n1y + n1z * n1z;
+    const a2 = n2x * n2x + n2y * n2y + n2z * n2z;
+    const tiny = 1e-12 * Math.max(a1, a2);
+    const first = a1 > tiny;
+    const nx = first ? n1x : n2x;
+    const ny = first ? n1y : n2y;
+    const nz = first ? n1z : n2z;
     let k = FACE_TOP;
     let t = 3;
     // A flat wall turned off the axes (terrain-fine.ts cutWalls) faces the camera from more places
@@ -3113,10 +3118,7 @@ function quadsGeometry(a: QuadArrays): BufferGeometry | null {
     const slant = Math.abs(ny) < Math.max(Math.abs(nx), Math.abs(nz)) && Math.min(Math.abs(nx), Math.abs(nz)) > 1e-4 * Math.max(Math.abs(nx), Math.abs(nz));
     if (slant) {
       k = FACE_SLANT;
-      const a1 = n1x * n1x + n1y * n1y + n1z * n1z;
-      const a2 = n2x * n2x + n2y * n2y + n2z * n2z;
-      const tiny = 1e-12 * Math.max(a1, a2);
-      if (a1 <= tiny) t = 2;
+      if (!first) t = 2;
       else if (a2 <= tiny) t = 1;
     } else if (Math.abs(nx) > Math.abs(ny) && Math.abs(nx) >= Math.abs(nz)) {
       k = nx > 0 ? FACE_EAST : FACE_WEST;
