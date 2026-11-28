@@ -2955,17 +2955,6 @@ function cutSide(f: FineCells, way: number, k: number, j: number, X: number, Y: 
   SIDE_T[at] = t;
   return t;
 }
-// The share of a column its high part covers (corners m, crossings CUT_T).
-const CUT_SLIVER = 0;
-function cutArea(s: number, m: number): number {
-  const n = cutPolygon(s, 0, 0, 1, m);
-  let a = 0;
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
-    a += CUT_PT[2 * i] * CUT_PT[2 * j + 1] - CUT_PT[2 * j] * CUT_PT[2 * i + 1];
-  }
-  return Math.abs(a) / 2;
-}
 // Whether side d (east, south, west, north) of a crossed column is all on the high side.
 function sideHigh(s: number, d: number): boolean {
   const e = (d + 1) % 4;
@@ -3059,10 +3048,6 @@ function cutWalls(f: FineCells, sub: number, sx0: number, sy0: number, SW: numbe
                 : 1 - cutSide(f, 1, k, j, X, Y, Q, mid);
         CUT_T[4 * s + a] = t;
       }
-      // A sliver of a column either side is left as the column is (its middle's land): the step it
-      // leaves is less than a column's width, closed by the neighbours' short sides (cutFaces).
-      const area = cutArea(s, m);
-      if (area < CUT_SLIVER || area > 1 - CUT_SLIVER) continue;
       CUT[s] = 1;
       CUT_M[s] = m;
       CUT_HI[s] = hi;
@@ -3213,7 +3198,6 @@ function cutTops(out: Writer, sx0: number, sy0: number, SW: number, j0: number, 
       for (let k = k0; k < k1; k++) {
         const s = j * SW + k;
         if (!CUT[s] || CUT_DONE[s]) continue;
-        if (way === 0) CUT_STATS.cut++;
         const m = CUT_M[s];
         // Across a row: north or south high, crossed on the west and east sides; down a column: west
         // or east high, crossed on the north and south.
@@ -3272,9 +3256,7 @@ function cutTops(out: Writer, sx0: number, sy0: number, SW: number, j0: number, 
 }
 // A crossed column's high top over the polygon `pts` (n corners, x, y pairs in cells, clockwise
 // from above with y down: north-west, north-east...), as a fan of quads.
-export const CUT_STATS = { cut: 0, polys: 0, strips: 0, steps: 0 };
 function cutQuad(out: Writer, s: number, pts: number[], n: number, sub: number, ox: number, oz: number): void {
-  CUT_STATS.polys += Math.floor((n - 1) / 2);
   const hs = CUT_HS[s];
   const y = CUT_HI[s] / sub;
   const col = scaleColor(C[hs], FACE_LIGHT.top);
@@ -3510,7 +3492,6 @@ function cutFaces(
       const light = CUT_L[s];
       const hs = CUT_HS[s];
       const nf = wallFaces(f, d, sx0 + k, sy0 + j, s, SW, sub, grain, blend, out, ox, oz, hs, CUT_HI[s], H[s], false);
-      CUT_STATS.strips += nf;
       slantFaces(nf, ax + ox, ay + oz, bx + ox, by + oz, light / WALL_LIGHT[d], sub);
       // The step between two high parts on a crossed side.
       for (const e of [pa, pb]) {
@@ -3530,7 +3511,6 @@ function cutFaces(
           [cy, ty] = [ty, cy];
         }
         const sf = wallFaces(f, dd, sx0 + k, sy0 + j, s, SW, sub, grain, blend, out, ox, oz, hs, CUT_HI[s], below, false);
-        CUT_STATS.steps += sf;
         // Lit as the wall it closes, not as a side of its own: seen edge on it drew a pale seam
         // down the wall (desert-plateau-3).
         slantFaces(sf, cx + ox, cy + oz, tx + ox, ty + oz, light / WALL_LIGHT[dd], sub);

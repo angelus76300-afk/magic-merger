@@ -965,6 +965,21 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       c.y = oy;
       c.sp *= 0.3;
     }
+    // Never onto a point the view draws as a cliff's other side (World.walkGuard): along the wall
+    // if it can, else where it was.
+    const guard = world.walkGuard;
+    if (guard && !k.flying && !k.aquatic && c.levitate <= 0 && c.z <= 1.5 && (c.x !== ox || c.y !== oy)) {
+      const off = (x: number, y: number) =>
+        guard(x, y, world.idx(Math.max(0, Math.min(world.w - 1, Math.floor(x))), Math.max(0, Math.min(world.h - 1, Math.floor(y)))));
+      if (off(c.x, c.y) && !off(ox, oy)) {
+        if (!off(c.x, oy)) c.y = oy;
+        else if (!off(ox, c.y)) c.x = ox;
+        else {
+          c.x = ox;
+          c.y = oy;
+        }
+      }
+    }
     wanted = stepped.wanted;
     if (stepped.jammed && speed > 0) {
       // Boxed in (born between trees and houses): after a while, out to the

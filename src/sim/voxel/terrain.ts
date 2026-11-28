@@ -23,6 +23,9 @@ import {
   lakeShare,
   lakeTint,
   makeFineCells,
+  CLIFF_OUTLINE,
+  outlineOfLand,
+  outlineTrade,
   putWaterCorners,
   riverNarrow,
   NARROW_SEEN,
@@ -139,6 +142,7 @@ export class Terrain {
     private add: (m: Mesh) => void,
     private remove: (m: Mesh) => void,
   ) {
+    world.walkGuard = (x, y, i) => this.drawnOff(x, y, i);
     this.cols = Math.ceil(world.w / CHUNK);
     this.rows = Math.ceil(world.h / CHUNK);
     this.chunks = Array.from({ length: this.cols * this.rows }, () => ({ land: null, fluid: null, water: null }));
@@ -807,6 +811,19 @@ export class Terrain {
         }
       }
     return sum / n;
+  }
+
+  // The walkers' guard (World.walkGuard) with the cliffs on their own line: whether point (x, y) of
+  // cell i is drawn as a neighbour's land more than a step (walk.ts STEP) above or below the cell's
+  // walk level, where a walker would be drawn in the air or in the rock.
+  private drawnOff(x: number, y: number, i: number): boolean {
+    if (!CLIFF_OUTLINE.on) return false;
+    const { world } = this;
+    const k = outlineTrade(outlineOfLand(this.landRead), x, y);
+    if (k < 0) return false;
+    const j = i + ((k % 3) - 1) + (Math.floor(k / 3) - 1) * world.w;
+    if (j < 0 || j >= world.n) return false;
+    return Math.abs(columnTop(world, j) - world.walkLevel(i) * V) > WALK_STEP;
   }
 
   private landRead: LandRead = {
@@ -2760,6 +2777,9 @@ const LAND_LOOK = 0x100ffff;
 // How far a fluid's surface moves before it is drawn again (scene units: an
 // eighth of a voxel was the old rounding step).
 const LEVEL_STEP = 0.15;
+// walk.ts STEP: the tallest step walked up or down (walk.ts imports this file, so it is repeated
+// here; cliff-outline-test.ts checks the two match).
+export const WALK_STEP = 1.05;
 // Depths at which a cell starts and stops being drawn wet.
 const WET_ON = 0.06;
 // How long water must have stood before weed grows in it (lake-weed), ms.

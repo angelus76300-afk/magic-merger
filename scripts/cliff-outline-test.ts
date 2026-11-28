@@ -15,7 +15,15 @@
 //   7. no tan strip down a coast's cliff (scripts/cliff-corner-test.ts's islands, the outline on).
 // The triangles a cell of cliff costs are measured, not checked yet. Run with the other checks (npm
 // test, scripts/sim-test.ts); `node node_modules/.cache/cliff-outline.mjs` prints the table alone.
-import { Writer } from "../src/sim/voxel/terrain";
+import { MeshBasicMaterial } from "three";
+import { Terrain, WALK_STEP, Writer, columnTop } from "../src/sim/voxel/terrain";
+import { STEP } from "../src/sim/voxel/walk";
+import { generateWorld } from "../src/sim/world";
+import { readLand } from "../src/sim/land-options";
+import { WORLD_SIZES } from "../src/sim/sizes";
+import { KINDS, makeCreature, resetCreatureIds } from "../src/sim/creatures";
+import { Runtime } from "../src/sim/runtime";
+import { stepHeadless } from "../src/sim/tick";
 import {
   CLIFF_CORNER,
   CLIFF_OUTLINE,
@@ -584,6 +592,65 @@ export function sharpRows(): SharpRow[] {
   return rows;
 }
 
+// Walkers at the foot of cliffs (World.walkGuard): beasts set beside every cliff of the small desert
+// plateau, twenty seconds of the simulation with the outline on, with the guard Terrain gives the
+// world and without it. Counted: steps onto a point drawn as a neighbour's land more than a step
+// (walk.ts STEP) from the cell's walk level, from one that was not.
+export function walkGuardRun(guard: boolean): { walkers: number; entered: number; at: string } {
+  return withMode(OUTLINE, () => {
+    resetCreatureIds();
+    const cells = WORLD_SIZES.small;
+    const world = generateWorld(cells, cells, 3, readLand({ biome: "desert", shape: "plateau", relief: 0.8 }));
+    const terrain = new Terrain(
+      world,
+      new MeshBasicMaterial(),
+      new MeshBasicMaterial(),
+      () => {},
+      () => {},
+    );
+    terrain.wetClock = () => 0;
+    terrain.scan();
+    const off = world.walkGuard;
+    if (!off) throw new Error("Terrain gave the world no walk guard");
+    if (!guard) world.walkGuard = null;
+    const beast = KINDS.get("beast");
+    if (!beast) throw new Error("no beast");
+    let walkers = 0;
+    for (let y = 2; y < world.h - 2 && walkers < 160; y += 2)
+      for (let x = 2; x < world.w - 2 && walkers < 160; x += 3) {
+        const i = world.idx(x, y);
+        if (world.fluid[i] || world.cover[i]) continue;
+        let foot = false;
+        for (const [dx, dy] of [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ])
+          if (columnTop(world, world.idx(x + dx, y + dy)) - columnTop(world, i) >= 2) foot = true;
+        if (!foot) continue;
+        world.creatures.push(makeCreature("beast", x + 0.45, y + 0.45));
+        walkers++;
+      }
+    const at = (x: number, y: number) =>
+      off(x, y, Math.max(0, Math.min(world.h - 1, Math.floor(y))) * world.w + Math.max(0, Math.min(world.w - 1, Math.floor(x))));
+    const rt = new Runtime(world, () => {});
+    let entered = 0;
+    let where = "";
+    const was = new Map<number, boolean>();
+    for (let t = 0; t < 30 * 20; t++) {
+      for (const c of world.creatures) was.set(c.id, at(c.x, c.y));
+      stepHeadless(world, rt);
+      for (const c of world.creatures) {
+        if (c.dead || KINDS.get(c.kind)?.flying || was.get(c.id) !== false || !at(c.x, c.y)) continue;
+        entered++;
+        if (!where) where = `(${c.x.toFixed(2)}, ${c.y.toFixed(2)})`;
+      }
+    }
+    return { walkers, entered, at: where };
+  });
+}
+
 export function cliffOutlineChecks(check: Check): void {
   const rows = angleRows();
   const on = rows.filter((r) => r.mode === "outline");
@@ -674,6 +741,13 @@ export function cliffOutlineChecks(check: Check): void {
       CLIFF_OUTLINE.on = was;
     }
   }
+  const g0 = walkGuardRun(false);
+  const g1 = walkGuardRun(true);
+  check(
+    "cliff outline: a walker never steps onto a point drawn more than a step from its cell's walk level (the guard Terrain gives the world; it does step there without it)",
+    g1.entered === 0 && g0.entered > 0 && g1.walkers === g0.walkers && WALK_STEP === STEP,
+    `${g0.walkers} beasts at cliffs' feet, 20 s: ${g0.entered} such steps without the guard ${g0.at}, ${g1.entered} with it ${g1.at}`,
+  );
   const tOn = x.terrace.filter((r) => r.mode === "outline");
   check(
     "cliff outline: a terrace of three levels draws both lips on their line, no column at a level of its own",
