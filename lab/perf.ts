@@ -9,6 +9,7 @@ import { readChoice, readLand, resolveLand } from "../src/sim/land";
 import { WORLD_SIZES } from "../src/sim/sizes";
 import { GRAPHICS, applyLooks, type GraphicsFlag } from "../src/sim/voxel/graphics";
 import { LAB_SKY, LAB_WEATHER } from "../src/sim/voxel/sky";
+import { CLIFF_CORNER, CLIFF_OUTLINE } from "../src/sim/voxel/terrain-fine";
 import type { SavedWorld } from "../src/sim/save";
 import { firstLook } from "../src/sim/firstlook";
 import { readDef, type WonderDef } from "../src/sim/wonders";
@@ -37,7 +38,18 @@ const land =
     ? undefined
     : q.has("mixed")
       ? resolveLand(readChoice({ warmth: num("warmth"), water: num("water"), relief: num("relief"), forest: num("forest") }), seed, WORLD_SIZES[size])
-      : readLand({ biome: q.get("biome"), shape: q.get("shape") });
+      : readLand({ biome: q.get("biome"), shape: q.get("shape"), relief: num("relief"), forest: num("forest") });
+// 27 November: "cliffs=off" draws cliffs on the cells' sides (no corner cut), "cliffs=corner" as the
+// game did before 28 November (cliffCorner), "cliffs=outline" on their own line (cliffOutline, the game), with
+// "sharp=N" keeping a mesa's corners where walls of N cells meet (CLIFF_OUTLINE.sharpRun, 2 now).
+const cliffs = q.get("cliffs");
+if (cliffs === "off" || cliffs === "corner" || cliffs === "outline") {
+  CLIFF_CORNER.on = cliffs !== "off";
+  CLIFF_OUTLINE.on = cliffs === "outline";
+}
+if (q.has("sharp")) CLIFF_OUTLINE.sharpRun = Number(q.get("sharp"));
+// "walls=0": the outline's columns drawn whole, as the prototype drew them (no flat walls).
+if (q.has("walls")) CLIFF_OUTLINE.walls = q.get("walls") !== "0";
 // 5.2.5: "peaks=1" makes the island as new islands are made now, with taller peaks.
 if (land && q.has("peaks")) land.peaks = true;
 // 4.4.5 part C: "pool=1" hands new islands the live wonders of lab/wonders
@@ -80,7 +92,8 @@ if (q.has("look")) {
 }
 const hud = new Hud(engine.stats);
 hud.show(true);
-if (!restored) engine.start();
+// "still=1": the island held as made, nothing ticking (scripts/cliff-frames.mjs draws it frame by frame).
+if (!restored && !q.has("still")) engine.start();
 (window as unknown as { __engine: Engine; __labSky: typeof LAB_SKY }).__engine = engine;
 (window as unknown as { __labSky: typeof LAB_SKY }).__labSky = LAB_SKY;
 // The switches, for the measures that turn one on and off on the same island (looks-shadow-flicker.mjs).

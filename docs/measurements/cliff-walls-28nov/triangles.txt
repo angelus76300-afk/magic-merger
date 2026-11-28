@@ -1,0 +1,20 @@
+plateau-7          main       1,848,880 (0.00%)  tops 956,738 slanted 0  tile ms p50 6.21 p95 17.75
+plateau-7          prototype  1,857,686 (0.48%)  tops 961,250 slanted 0  tile ms p50 9.95 p95 16.95
+plateau-7          sharp 2    1,856,500 (0.41%)  tops 960,552 slanted 0  tile ms p50 7.92 p95 12.06
+plateau-7          flat walls 1,869,204 (1.10%)  tops 964,979 slanted 14,927  tile ms p50 8.29 p95 13.63
+desert-plateau-3   main       869,300 (0.00%)  tops 462,096 slanted 0  tile ms p50 7.51 p95 12.76
+desert-plateau-3   prototype  879,014 (1.12%)  tops 467,142 slanted 0  tile ms p50 7.34 p95 14.19
+desert-plateau-3   sharp 2    878,262 (1.03%)  tops 466,716 slanted 0  tile ms p50 7.41 p95 11.32
+desert-plateau-3   flat walls 897,199 (3.21%)  tops 473,253 slanted 21,779  tile ms p50 8.85 p95 13.50
+mesa-5             main       1,083,270 (0.00%)  tops 603,146 slanted 0  tile ms p50 5.45 p95 10.10
+mesa-5             prototype  1,040,232 (-3.97%)  tops 578,174 slanted 0  tile ms p50 8.39 p95 13.11
+mesa-5             sharp 2    1,040,232 (-3.97%)  tops 578,174 slanted 0  tile ms p50 6.89 p95 11.12
+mesa-5             flat walls 1,040,232 (-3.97%)  tops 578,174 slanted 0  tile ms p50 7.12 p95 10.75
+volcanic-6         main       2,207,868 (0.00%)  tops 1,131,396 slanted 0  tile ms p50 6.31 p95 9.92
+volcanic-6         prototype  2,210,570 (0.12%)  tops 1,133,184 slanted 0  tile ms p50 7.48 p95 11.65
+volcanic-6         sharp 2    2,210,570 (0.12%)  tops 1,133,184 slanted 0  tile ms p50 7.10 p95 12.59
+volcanic-6         flat walls 2,211,402 (0.16%)  tops 1,133,613 slanted 2,085  tile ms p50 8.26 p95 14.03
+forest-plateau-2   main       1,661,814 (0.00%)  tops 872,146 slanted 0  tile ms p50 5.38 p95 7.09
+forest-plateau-2   prototype  1,681,780 (1.20%)  tops 882,160 slanted 0  tile ms p50 6.85 p95 10.03
+forest-plateau-2   sharp 2    1,679,272 (1.05%)  tops 880,994 slanted 0  tile ms p50 7.79 p95 12.12
+forest-plateau-2   flat walls 1,701,744 (2.40%)  tops 890,415 slanted 38,649  tile ms p50 8.59 p95 12.39

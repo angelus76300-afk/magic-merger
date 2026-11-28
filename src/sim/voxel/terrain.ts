@@ -23,6 +23,9 @@ import {
   lakeShare,
   lakeTint,
   makeFineCells,
+  CLIFF_OUTLINE,
+  outlineOfLand,
+  outlineTrade,
   putWaterCorners,
   riverNarrow,
   NARROW_SEEN,
@@ -139,6 +142,7 @@ export class Terrain {
     private add: (m: Mesh) => void,
     private remove: (m: Mesh) => void,
   ) {
+    world.walkGuard = (x, y, i) => this.drawnOff(x, y, i);
     this.cols = Math.ceil(world.w / CHUNK);
     this.rows = Math.ceil(world.h / CHUNK);
     this.chunks = Array.from({ length: this.cols * this.rows }, () => ({ land: null, fluid: null, water: null }));
@@ -809,6 +813,42 @@ export class Terrain {
     return sum / n;
   }
 
+  // The walkers' guard (World.walkGuard) with the cliffs on their own line: whether point (x, y) of
+  // cell i is drawn more than a step (walk.ts STEP) above or below the cell's middle, as a cliff's
+  // other side, where a walker would be drawn in the air or in the rock. Where its chunk is drawn in
+  // the fine land, the tops the mesher drew there (drawnTop: the outline's trades and the flat walls'
+  // cut columns alike; the playtest of 28 November found the outline's trades alone missed the cut
+  // columns); elsewhere the outline's trade. Only beside a cliff (a neighbour that does not join, a
+  // step away), so a steep slope of joined cells stays open. Off on the low look (no fine land).
+  private drawnOff(x: number, y: number, i: number): boolean {
+    if (!CLIFF_OUTLINE.on || !GRAPHICS.fine || !GRAPHICS.steps) return false;
+    const { world } = this;
+    const cx = i % world.w;
+    const cy = (i - cx) / world.w;
+    const here = this.drawnTop(x, y);
+    const mid = this.drawnTop(cx + 0.5, cy + 0.5);
+    if (!Number.isNaN(here) && !Number.isNaN(mid)) return Math.abs(here - mid) > WALK_STEP && this.cliffBeside(cx, cy);
+    const k = outlineTrade(outlineOfLand(this.landRead), x, y);
+    if (k < 0) return false;
+    const j = i + ((k % 3) - 1) + (Math.floor(k / 3) - 1) * world.w;
+    if (j < 0 || j >= world.n) return false;
+    return Math.abs(columnTop(world, j) - world.walkLevel(i) * V) > WALK_STEP;
+  }
+
+  // Whether a cell of the eight round (x, y) does not join it and stands more than a step away.
+  private cliffBeside(x: number, y: number): boolean {
+    const { world } = this;
+    const own = columnTop(world, y * world.w + x);
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if ((!dx && !dy) || nx < 0 || ny < 0 || nx >= world.w || ny >= world.h) continue;
+        if (Math.abs(columnTop(world, ny * world.w + nx) - own) > WALK_STEP && !this.landRead.linked(x, y, nx, ny)) return true;
+      }
+    return false;
+  }
+
   private landRead: LandRead = {
     top: (x, y) => {
       const { world } = this;
@@ -849,7 +889,22 @@ export class Terrain {
       const { world } = this;
       return x >= 0 && y >= 0 && x < world.w && y < world.h && this.naturalAt(y * world.w + x);
     },
+    way: (x, y) => {
+      const { world } = this;
+      if (x < 0 || y < 0 || x >= world.w || y >= world.h) return false;
+      const g = world.ground[y * world.w + x];
+      return g === G.PATH || g === G.ROAD;
+    },
+    square: (x, y) => {
+      const { world } = this;
+      return x >= 0 && y >= 0 && x < world.w && y < world.h && this.squareAt(y * world.w + x);
+    },
   };
+
+  // A mesa's land: a cliff's outline keeps its corners there (terrain-fine.ts FineCells.square).
+  private squareAt(i: number): boolean {
+    return biomeAt(this.world, i) === "mesa";
+  }
 
   // Snow or a mountain's bare rock: a step of up to STEEP_LINK voxels to such a neighbour curves
   // (terrain-fine.ts). Not the rock of a mesa's or a desert's cliffs, nor of a plateau island: their
@@ -1302,6 +1357,7 @@ export class Terrain {
         f.raw[k] = world.height[i] * V;
         f.anchored[k] = this.anchoredAt(i) ? 1 : 0;
         f.steep[k] = this.steepAt(i) ? 1 : 0;
+        f.square[k] = this.squareAt(i) ? 1 : 0;
         f.wdeep[k] = this.waterAt(i)[1];
         f.wshallow[k] = this.waterAt(i)[0];
         f.wnarrow[k] = this.waterWet(i) ? this.waterNarrow(x, y) : 0;
@@ -2744,6 +2800,9 @@ const LAND_LOOK = 0x100ffff;
 // How far a fluid's surface moves before it is drawn again (scene units: an
 // eighth of a voxel was the old rounding step).
 const LEVEL_STEP = 0.15;
+// walk.ts STEP: the tallest step walked up or down (walk.ts imports this file, so it is repeated
+// here; cliff-outline-test.ts checks the two match).
+export const WALK_STEP = 1.05;
 // Depths at which a cell starts and stops being drawn wet.
 const WET_ON = 0.06;
 // How long water must have stood before weed grows in it (lake-weed), ms.
@@ -2787,14 +2846,24 @@ const OTHER_RANK = 4 * UNSEEN_RANK;
 const FINE_AGAIN_MS = 1.5;
 const FINE_TOP = 6;
 // The fine land's faces by the way they face, in the order of its index buffer (quadGeometry):
-// north walls, tops, west walls, then east walls, south walls and bottoms. Any ways a pass needs
-// out of the first three are one run of it, and of the last three another (drawFacing).
+// north walls, slanted walls, tops, west walls, then east walls, south walls, bottoms and the
+// slanted walls again. Any ways a pass needs out of the first four are one run of it, and of the
+// last four another (drawFacing). The slanted walls (terrain-fine.ts cutWalls, flat walls off the
+// axes) face too many ways for one plane, so they are always drawn: by the camera's pass next to
+// the tops, which it always draws, and by the sun's after the bottoms, which it always draws, so
+// neither holds in a way it would skip (28 November: in the east and west ways they held those in
+// from every side, up to 8.9% more triangles drawn).
 const FACE_NORTH = 0;
-const FACE_TOP = 1;
-const FACE_WEST = 2;
-const FACE_EAST = 3;
-const FACE_SOUTH = 4;
-const FACE_BOTTOM = 5;
+const FACE_SLANT = 1;
+const FACE_TOP = 2;
+const FACE_WEST = 3;
+const FACE_EAST = 4;
+const FACE_SOUTH = 5;
+const FACE_BOTTOM = 6;
+const FACE_SLANT_SUN = 7;
+const FACE_WAYS = 8;
+// The first way of the second run.
+const FACE_RUN = FACE_EAST;
 
 // Which of a fine chunk's faces a pass draws (15 November): only the faces that can face it. A
 // face turned away is never drawn (the land is drawn from its front side, and three draws the
@@ -2807,9 +2876,11 @@ const FACE_BOTTOM = 5;
 function drawFacing(g: BufferGeometry, low: boolean, x: number, y: number, z: number, sun: boolean): void {
   const f = g.userData.faces as { first: number[]; counts: number[]; planes: { e: number; s: number; w: number; n: number; b: number } } | undefined;
   if (!f) return;
-  const want = sun ? [z > 0, y < 0, x > 0, x < 0, z < 0, y > 0] : [z < f.planes.n, true, x < f.planes.w, x > f.planes.e, z > f.planes.s, y < f.planes.b];
-  const from = low ? 0 : 3;
-  const to = low ? 3 : 6;
+  const want = sun
+    ? [z > 0, false, y < 0, x > 0, x < 0, z < 0, y > 0, true]
+    : [z < f.planes.n, true, true, x < f.planes.w, x > f.planes.e, z > f.planes.s, y < f.planes.b, false];
+  const from = low ? 0 : FACE_RUN;
+  const to = low ? FACE_RUN : FACE_WAYS;
   let a = -1;
   let b = -1;
   for (let k = from; k < to; k++) {
@@ -2821,7 +2892,7 @@ function drawFacing(g: BufferGeometry, low: boolean, x: number, y: number, z: nu
     g.setDrawRange(0, 0);
     return;
   }
-  g.setDrawRange(f.first[a] * 6, (f.first[b] + f.counts[b] - f.first[a]) * 6);
+  g.setDrawRange(f.first[a], f.first[b] + f.counts[b] - f.first[a]);
 }
 
 // Whether a spell's own ground is something built, by its name, the one thing its material says
@@ -3029,7 +3100,12 @@ function quadsGeometry(a: QuadArrays): BufferGeometry | null {
   const quads = a.quads;
   if (quads === 0) return null;
   const way = new Uint8Array(quads);
-  const counts = [0, 0, 0, 0, 0, 0];
+  // Which of a quad's two triangles are drawn: 1 the first, 2 the second. A flat wall's piece cut
+  // to share its neighbours' corners (terrain-fine.ts slantFlush) is often a triangle, two of its
+  // corners one point, and its empty half is left out of the index.
+  const tris = new Uint8Array(quads);
+  // Counts and firsts in indices, three a triangle.
+  const counts = new Array<number>(FACE_WAYS).fill(0);
   const planes = { e: Infinity, s: Infinity, w: -Infinity, n: -Infinity, b: -Infinity };
   const p = a.pos;
   for (let q = 0; q < quads; q++) {
@@ -3040,11 +3116,34 @@ function quadsGeometry(a: QuadArrays): BufferGeometry | null {
     const vx = p[o + 6] - p[o];
     const vy = p[o + 7] - p[o + 1];
     const vz = p[o + 8] - p[o + 2];
-    const nx = uy * vz - uz * vy;
-    const ny = uz * vx - ux * vz;
-    const nz = ux * vy - uy * vx;
+    const wx = p[o + 9] - p[o];
+    const wy = p[o + 10] - p[o + 1];
+    const wz = p[o + 11] - p[o + 2];
+    // The first triangle's normal gives the quad's way, as it always has; the second's when the
+    // first is empty (a wall piece's triangle, two of its first corners one point).
+    const n1x = uy * vz - uz * vy;
+    const n1y = uz * vx - ux * vz;
+    const n1z = ux * vy - uy * vx;
+    const n2x = vy * wz - vz * wy;
+    const n2y = vz * wx - vx * wz;
+    const n2z = vx * wy - vy * wx;
+    const a1 = n1x * n1x + n1y * n1y + n1z * n1z;
+    const a2 = n2x * n2x + n2y * n2y + n2z * n2z;
+    const tiny = 1e-12 * Math.max(a1, a2);
+    const first = a1 > tiny;
+    const nx = first ? n1x : n2x;
+    const ny = first ? n1y : n2y;
+    const nz = first ? n1z : n2z;
     let k = FACE_TOP;
-    if (Math.abs(nx) > Math.abs(ny) && Math.abs(nx) >= Math.abs(nz)) {
+    let t = 3;
+    // A flat wall turned off the axes (terrain-fine.ts cutWalls) faces the camera from more places
+    // than one axis's plane can say: a way of its own, always drawn.
+    const slant = Math.abs(ny) < Math.max(Math.abs(nx), Math.abs(nz)) && Math.min(Math.abs(nx), Math.abs(nz)) > 1e-4 * Math.max(Math.abs(nx), Math.abs(nz));
+    if (slant) {
+      k = FACE_SLANT;
+      if (!first) t = 2;
+      else if (a2 <= tiny) t = 1;
+    } else if (Math.abs(nx) > Math.abs(ny) && Math.abs(nx) >= Math.abs(nz)) {
       k = nx > 0 ? FACE_EAST : FACE_WEST;
       if (nx > 0) planes.e = Math.min(planes.e, p[o]);
       else planes.w = Math.max(planes.w, p[o]);
@@ -3057,15 +3156,30 @@ function quadsGeometry(a: QuadArrays): BufferGeometry | null {
       planes.b = Math.max(planes.b, p[o + 1]);
     }
     way[q] = k;
-    counts[k]++;
+    tris[q] = t;
+    const n = t === 3 ? 6 : 3;
+    counts[k] += n;
+    if (k === FACE_SLANT) counts[FACE_SLANT_SUN] += n;
   }
-  const first = [0, 0, 0, 0, 0, 0];
-  for (let k = 1; k < 6; k++) first[k] = first[k - 1] + counts[k - 1];
+  const first = new Array<number>(FACE_WAYS).fill(0);
+  for (let k = 1; k < FACE_WAYS; k++) first[k] = first[k - 1] + counts[k - 1];
   const next = [...first];
-  const index = new Uint32Array(quads * 6);
-  for (let q = 0; q < quads; q++) {
+  const index = new Uint32Array(first[FACE_WAYS - 1] + counts[FACE_WAYS - 1]);
+  const put = (q: number, k: number) => {
     const v = q * 4;
-    index.set([v, v + 1, v + 2, v, v + 2, v + 3], next[way[q]]++ * 6);
+    const t = tris[q];
+    if (t & 1) {
+      index.set([v, v + 1, v + 2], next[k]);
+      next[k] += 3;
+    }
+    if (t & 2) {
+      index.set([v, v + 2, v + 3], next[k]);
+      next[k] += 3;
+    }
+  };
+  for (let q = 0; q < quads; q++) {
+    put(q, way[q]);
+    if (way[q] === FACE_SLANT) put(q, FACE_SLANT_SUN);
   }
   const g = new BufferGeometry();
   g.setAttribute("position", new BufferAttribute(a.pos, 3));
@@ -3328,6 +3442,37 @@ export class Writer {
     v(ax, ay, az, lowA);
     v(cx, cy, cz, lowC);
     v(dx, dy, dz, lowD);
+  }
+
+  // A four-cornered piece of a side, a, b, c, d wound as quad's are, each corner its own packed
+  // colour. Two corners may be one point (a triangle: quadArrays reads a, b, c and the sixth vertex).
+  side4(
+    ax: number,
+    ay: number,
+    az: number,
+    ca: number,
+    bx: number,
+    by: number,
+    bz: number,
+    cb: number,
+    cx: number,
+    cy: number,
+    cz: number,
+    cc: number,
+    dx: number,
+    dy: number,
+    dz: number,
+    cd: number,
+  ): void {
+    if ((this.n + 6) * 4 > this.col.length) this.grow();
+    const ch = (c: number, s: number) => ((c >> s) & 255) / 255;
+    const v = (x: number, y: number, z: number, c: number) => this.vertex(x, y, z, ch(c, 16), ch(c, 8), ch(c, 0), 1, 0, 0);
+    v(ax, ay, az, ca);
+    v(bx, by, bz, cb);
+    v(cx, cy, cz, cc);
+    v(ax, ay, az, ca);
+    v(cx, cy, cz, cc);
+    v(dx, dy, dz, cd);
   }
 
   // The water in eighths as a geometry: colours with their alpha, the drawings' mask, the waves,

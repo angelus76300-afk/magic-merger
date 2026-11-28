@@ -136,6 +136,10 @@ export class World {
   // the deck height of each bridge cell; and a counter the view redraws on.
   roads: Road[] = [];
   readonly decks = new Map<number, number>();
+  // The view's guard on a walker's step (terrain.ts drawnOff, the cliffs on their own line): true
+  // where point (x, y) of cell i is drawn as land more than a step from the cell's walk level. A
+  // world with no view has none, so a sim without one runs as before.
+  walkGuard: ((x: number, y: number, i: number) => boolean) | null = null;
   roadsVersion = 0;
   // Houses and buildings going up (4.9 part 2, sites.ts), saved; and a
   // counter the view redraws them on.
