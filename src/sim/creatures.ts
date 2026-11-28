@@ -965,21 +965,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
       c.y = oy;
       c.sp *= 0.3;
     }
-    // Never onto a point the view draws as a cliff's other side (World.walkGuard): along the wall
-    // if it can, else where it was.
-    const guard = world.walkGuard;
-    if (guard && !k.flying && !k.aquatic && c.levitate <= 0 && c.z <= 1.5 && (c.x !== ox || c.y !== oy)) {
-      const off = (x: number, y: number) =>
-        guard(x, y, world.idx(Math.max(0, Math.min(world.w - 1, Math.floor(x))), Math.max(0, Math.min(world.h - 1, Math.floor(y)))));
-      if (off(c.x, c.y) && !off(ox, oy)) {
-        if (!off(c.x, oy)) c.y = oy;
-        else if (!off(ox, c.y)) c.x = ox;
-        else {
-          c.x = ox;
-          c.y = oy;
-        }
-      }
-    }
+    keepOnLand(world, c, k, ox, oy);
     wanted = stepped.wanted;
     if (stepped.jammed && speed > 0) {
       // Boxed in (born between trees and houses): after a while, out to the
@@ -996,6 +982,8 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   }
 
   // Being thrown, lifted or knocked around.
+  const px = c.x;
+  const py = c.y;
   c.x += c.vx * dt;
   c.y += c.vy * dt;
   const friction = c.z > 0.2 ? 0.6 : 6;
@@ -1024,6 +1012,7 @@ export function updateCreature(world: World, c: Creature, dt: number): void {
   }
   c.x = Math.max(0.5, Math.min(world.w - 1.5, c.x));
   c.y = Math.max(0.5, Math.min(world.h - 1.5, c.y));
+  keepOnLand(world, c, k, px, py);
   if (ai && !busy) sideEffects(world, c, ai, i, onGround, dt);
   if (world.reactions && !k.native) touch(world, c, k, dt);
   // Ridden, its abilities fire only when the player presses them (possess.ts act).
@@ -1077,7 +1066,7 @@ function free(c: Creature, x: number, y: number): void {
     const ny = c.y + ((y - c.y) / d) * s;
     if (!world.inside(nx, ny)) continue;
     const i = world.idx(nx, ny);
-    if (world.depth[i] > 0.5 || world.materials.get("cover", world.cover[i]).solid || danger(world, i)) continue;
+    if (world.depth[i] > 0.5 || world.materials.get("cover", world.cover[i]).solid || danger(world, i) || drawnOff(world, c, k, nx, ny)) continue;
     c.x = nx;
     c.y = ny;
     return;
@@ -1091,12 +1080,31 @@ function free(c: Creature, x: number, y: number): void {
   }
 }
 
+// Whether (x, y) is drawn as a cliff's other side for a walker (World.walkGuard), and a walker's
+// move from (ox, oy) kept off such points: along the wall if it can, else back where it was. Walking,
+// being knocked about, hopped out of a wall or freed from a crowd all go through it.
+function drawnOff(world: World, c: Creature, k: CreatureKind, x: number, y: number): boolean {
+  const guard = world.walkGuard;
+  if (!guard || k.flying || k.aquatic || c.levitate > 0 || c.z > 1.5) return false;
+  return guard(x, y, world.idx(Math.max(0, Math.min(world.w - 1, Math.floor(x))), Math.max(0, Math.min(world.h - 1, Math.floor(y)))));
+}
+function keepOnLand(world: World, c: Creature, k: CreatureKind, ox: number, oy: number): void {
+  if (!world.walkGuard || (c.x === ox && c.y === oy)) return;
+  if (!drawnOff(world, c, k, c.x, c.y) || drawnOff(world, c, k, ox, oy)) return;
+  if (!drawnOff(world, c, k, c.x, oy)) c.y = oy;
+  else if (!drawnOff(world, c, k, ox, c.y)) c.x = ox;
+  else {
+    c.x = ox;
+    c.y = oy;
+  }
+}
+
 function unstick(world: World, c: Creature, k: CreatureKind): void {
   for (let r = 1; r <= 4; r++)
     for (let a = 0; a < 8; a++) {
       const x = c.x + Math.cos((a / 8) * Math.PI * 2) * r;
       const y = c.y + Math.sin((a / 8) * Math.PI * 2) * r;
-      if (!blocked(world, x, y, c, k) && !blocked(world, x + 1, y, c, k) && !blocked(world, x, y + 1, c, k)) {
+      if (!blocked(world, x, y, c, k) && !blocked(world, x + 1, y, c, k) && !blocked(world, x, y + 1, c, k) && !drawnOff(world, c, k, x, y)) {
         c.x = x;
         c.y = y;
         return;
