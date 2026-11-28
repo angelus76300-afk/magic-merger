@@ -796,7 +796,16 @@ interface CornerOutline {
   tops: number[];
   levels: number[];
   passes: OutlinePass[][];
+  // How far each pass's line moves toward its low side: where the low side is lava, to the
+  // staircase's outer corners, so the rock fills the lava's corners and the lip runs straight
+  // (no dry column may be drawn as lava, so the line through the steps' middles left teeth). A lava
+  // cell's middle still keeps its own (OUTLINE_MIDDLE): a notch a quarter cell wide where the line
+  // passes over it.
+  shifts: number[][];
+  // Whether levels i - 1 and i are a cliff apart (they do not join); passes[i] its passes.
+  cliff: boolean[];
 }
+const LAVA_SHIFT_MAX = 0.5;
 function cornerOutline(r: OutlineRead, X: number, Y: number): CornerOutline | null {
   const tops = [r.top(X - 1, Y - 1), r.top(X, Y - 1), r.top(X - 1, Y), r.top(X, Y)];
   const lo = Math.min(tops[0], tops[1], tops[2], tops[3]);
@@ -808,48 +817,101 @@ function cornerOutline(r: OutlineRead, X: number, Y: number): CornerOutline | nu
   for (let q = 0; q < 4; q++) if (r.kind(X - 1 + (q & 1), Y - 1 + (q >> 1)) !== OUTLINE_FIXED) free++;
   if (free < 2) return null;
   const levels = [...new Set(tops)].sort((a, b) => a - b);
-  const passes: OutlinePass[][] = [];
+  // Levels a step apart that join (a slope) are one side of a cliff: one pass for each cliff
+  // between them, not one for each level, so two corners either side of a ledge cell trace the same
+  // line (desert-plateau-3: a corner of 14, 15 and 17 and the next of 14, 16 and 17 drew the cliff
+  // a third of a cell apart, an axis-aligned slot down the wall where they met). A cell of a level
+  // between the cliff's two sides goes with the nearer; half way, with the side that is one level
+  // here (the other is a slope, which it is not part of).
+  const steepAt = (v: number) => {
+    const q = tops.indexOf(v);
+    return r.steep(X - 1 + (q & 1), Y - 1 + (q >> 1));
+  };
+  const joined: boolean[] = [false];
+  for (let i = 1; i < levels.length; i++) joined.push(joins(levels[i] - levels[i - 1], steepAt(levels[i - 1]), steepAt(levels[i])));
+  const cliff = joined.map((j, i) => i > 0 && !j);
+  if (!cliff.some((c) => c)) return null;
+  const passes: OutlinePass[][] = [[]];
+  const shifts: number[][] = [[]];
   for (let i = 1; i < levels.length; i++) {
-    const L = levels[i];
+    if (joined[i]) {
+      passes.push([]);
+      shifts.push([]);
+      continue;
+    }
+    const a = levels[i - 1];
+    const bt = levels[i];
+    const lowOne = i - 1 === 0 || !joined[i - 1];
+    const highOne = i + 1 >= levels.length || !joined[i + 1];
+    const L = (a + bt) / 2 + (highOne && !lowOne ? -1e-6 : 1e-6);
     const b = outlineBits(r, X, Y, L);
+    // The low side all lava (a water bed is fixed, so wet here is lava).
+    let lava = true;
+    for (let q = 0; q < 4; q++) if (tops[q] < L && r.kind(X - 1 + (q & 1), Y - 1 + (q >> 1)) !== OUTLINE_WET) lava = false;
     const list: OutlinePass[] = [];
+    const shift: number[] = [];
     for (let d = 0; d < 4; d++) {
       if (edgeWay(b, d) !== -1) continue;
       const out = wayOut(b, d);
-      if (out >= 0 && tracePass(r, X, Y, L, d, out)) list.push(easePass(r, L));
+      if (out < 0 || !tracePass(r, X, Y, L, d, out)) continue;
+      const p = easePass(r, L);
+      let sh = 0;
+      if (lava) for (let j = 0; j < 5; j++) sh = Math.max(sh, -passSide(p, TC[2 * j], TC[2 * j + 1]));
+      list.push(p);
+      shift.push(Math.min(LAVA_SHIFT_MAX, sh));
     }
     passes.push(list);
+    shifts.push(shift);
   }
-  return { tops, levels, passes };
+  return { tops, levels, passes, shifts, cliff };
 }
 // The level drawn at (px, py) by the outlines round its nearest lattice corner (X, Y), and in
 // OUTLINE_CELL which of the corner's four cells (0 north-west .. 3 south-east) is drawn there: the
 // one of that level nearest the point, its own on a tie.
 let OUTLINE_CELL = -1;
 function outlineLevel(o: CornerOutline, X: number, Y: number, px: number, py: number): number {
-  const { tops, levels, passes } = o;
+  const { tops, levels, passes, shifts, cliff } = o;
   const own = (px >= X ? 1 : 0) + (py >= Y ? 2 : 0);
-  let level = levels[0];
-  for (let i = 0; i < passes.length; i++) {
+  // Which side of each cliff (passes[i], between levels i - 1 and i; none where they join) the
+  // point is drawn on, counted in cliffs from the lowest, and its own cell's.
+  let side = 0;
+  let ownSide = 0;
+  for (let i = 1; i < levels.length; i++) {
+    if (!cliff[i]) continue;
+    if (tops[own] >= levels[i]) ownSide++;
     let near = NaN;
     let far = Infinity;
     let amp = 0;
-    for (const p of passes[i]) {
-      const s = passSide(p, px, py);
+    for (let k = 0; k < passes[i].length; k++) {
+      const s = passSide(passes[i][k], px, py) + shifts[i][k];
       if (Math.abs(s) < far) {
         far = Math.abs(s);
         near = s;
         amp = OUTLINE_AMP;
       }
     }
-    const step = levels[i + 1] - levels[i];
-    // No outline through the corner at this level: the point's own cell says.
+    // No outline through the corner on this cliff: the point's own cell says.
     if (Number.isNaN(near)) {
-      if (tops[own] >= levels[i + 1]) level += step;
+      if (tops[own] >= levels[i]) side++;
       continue;
     }
     const wave = (noise(px, py, CLIFF_OUTLINE.period, 73) - 0.5) * 2 * CLIFF_OUTLINE.wave * amp;
-    if (near + wave > 0) level += step;
+    if (near + wave > 0) side++;
+  }
+  // On its own cell's side, its own level; else the level of that side nearest the own cell's.
+  let level = tops[own];
+  if (side !== ownSide) {
+    let n = 0;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 0; i < levels.length; i++) {
+      if (i > 0 && cliff[i]) n++;
+      if (n === side) {
+        lo = Math.min(lo, levels[i]);
+        hi = Math.max(hi, levels[i]);
+      }
+    }
+    level = side > ownSide ? lo : hi;
   }
   let best = -1;
   let gap = Infinity;
@@ -1790,8 +1852,37 @@ export function buildFineTile(
             const high = CUT[s] && sideHigh(s, d);
             const T = high ? CUT_HI[s] : H[s];
             const low = CUT[n] && sideHigh(n, (d + 2) % 4) ? CUT_HI[n] : H[n];
-            faces = wallFaces(f, d, sx0 + k, sy0 + j, s, SW, sub, grain, blend, out, ox, oz, high ? CUT_HS[s] : s, T, low);
-          } else faces = wallFaces(f, d, sx0 + k, sy0 + j, s, SW, sub, grain, blend, out, ox, oz);
+            // Lit as the flat wall it stands in, a column's side or two where the wall's line meets
+            // the columns' sides: lit as a side of its own it showed as a seam down the wall
+            // (desert-plateau-3).
+            let bl = T - low >= sub ? besideLight(s, d, SW) : NaN;
+            for (const o of [s, n])
+              if (Number.isNaN(bl) && CUT[o] && !Number.isNaN(CUT_L[o]) && cutLine(o, 0, 0, 1) && LN[4] * DX[d] + LN[5] * DY[d] > 0) bl = CUT_L[o];
+            faces = wallFaces(
+              f,
+              d,
+              sx0 + k,
+              sy0 + j,
+              s,
+              SW,
+              sub,
+              grain,
+              blend,
+              out,
+              ox,
+              oz,
+              high ? CUT_HS[s] : s,
+              T,
+              low,
+              true,
+              Number.isNaN(bl) ? 1 : bl / WALL_LIGHT[d],
+            );
+          } else {
+            const bl = walls && H[s] - H[s + DX[d] + DY[d] * SW] >= sub ? besideLight(s, d, SW) : NaN;
+            faces = Number.isNaN(bl)
+              ? wallFaces(f, d, sx0 + k, sy0 + j, s, SW, sub, grain, blend, out, ox, oz)
+              : wallFaces(f, d, sx0 + k, sy0 + j, s, SW, sub, grain, blend, out, ox, oz, s, H[s], H[s + DX[d] + DY[d] * SW], true, bl / WALL_LIGHT[d]);
+          }
         }
         // Each face carries on the open run it matches, or starts one.
         for (let q = 0; q < faces; q++) {
@@ -2791,6 +2882,7 @@ let CUT_T = new Float32Array(0); // where the line crosses each side (north, eas
 let CUT_HI = new Int32Array(0); // the high part's height (the high level while cutWalls works)
 let CUT_LO = new Int32Array(0); // the low level, then the column the low part is of
 let CUT_HS = new Int32Array(0); // the column whose land the high part is
+let CUT_L = new Float32Array(0); // the wall's light (cutLine), for the sides beside it
 // Corner q of a column, from its north-west corner: north-west, north-east, south-east, south-west.
 const CQX = [0, 1, 1, 0];
 const CQY = [0, 0, 1, 1];
@@ -2813,6 +2905,20 @@ function drawnTopAt(f: FineCells, px: number, py: number): number {
   const c = fineAt(f, cx, cy);
   return f.inside[c] && f.natural[c] ? f.top[c] : NaN;
 }
+// The level drawn at lattice corner (k, j) of the tile's columns (at X, Y, in cells): read once for
+// the four columns round it, so they agree on which side of the wall it is (read from inside each
+// column, two columns either side of a corner the line passes near disagreed, and a notch a column
+// wide stood in the wall, a seam down it: desert-plateau-3).
+let CORNER_T = new Float32Array(0);
+let CORNER_DONE = new Uint8Array(0);
+function cornerTop(f: FineCells, k: number, j: number, X: number, Y: number): number {
+  const at = j * SIDE_W + k;
+  if (CORNER_DONE[at]) return CORNER_T[at];
+  const v = drawnTopAt(f, X, Y);
+  CORNER_DONE[at] = 1;
+  CORNER_T[at] = v;
+  return v;
+}
 // Where the drawn line crosses a side of the lattice of columns, 0 to 1 from its first corner: the
 // side along x (way 0) or y (1) from lattice corner (k, j) of the tile, at (X, Y) in cells; read
 // once a tile, by halving between its ends (just inside them) on the level `mid`.
@@ -2832,8 +2938,8 @@ function cutSide(f: FineCells, way: number, k: number, j: number, X: number, Y: 
   const ay = Y + uy * e;
   const bx = X + dx - ux * e;
   const by = Y + dy - uy * e;
-  const ha = drawnTopAt(f, ax, ay) >= mid ? 1 : 0;
-  const hb = drawnTopAt(f, bx, by) >= mid ? 1 : 0;
+  const ha = cornerTop(f, k, j, X, Y) >= mid ? 1 : 0;
+  const hb = cornerTop(f, k + (way === 0 ? 1 : 0), j + (way === 0 ? 0 : 1), X + dx, Y + dy) >= mid ? 1 : 0;
   let t = 0.5;
   if (ha !== hb) {
     let t0 = 0;
@@ -2877,6 +2983,7 @@ function cutWalls(f: FineCells, sub: number, sx0: number, sy0: number, SW: numbe
     CUT_HI = new Int32Array(n);
     CUT_LO = new Int32Array(n);
     CUT_HS = new Int32Array(n);
+    CUT_L = new Float32Array(n);
   }
   CUT.fill(0, 0, n);
   const ne = (SW + 1) * (SH + 1);
@@ -2885,10 +2992,14 @@ function cutWalls(f: FineCells, sub: number, sx0: number, sy0: number, SW: numbe
     SIDE_DONE = new Uint8Array(2 * ne);
   }
   SIDE_DONE.fill(0, 0, 2 * ne);
+  if (CORNER_T.length < ne) {
+    CORNER_T = new Float32Array(ne);
+    CORNER_DONE = new Uint8Array(ne);
+  }
+  CORNER_DONE.fill(0, 0, ne);
   SIDE_W = SW + 1;
   SIDE_N = ne;
   const Q = 1 / sub;
-  const e = CUT_IN * Q;
   let any = false;
   for (let j = 1; j < SH - 1; j++)
     for (let k = 1; k < SW - 1; k++) {
@@ -2908,23 +3019,29 @@ function cutWalls(f: FineCells, sub: number, sx0: number, sy0: number, SW: numbe
       let lo = Infinity;
       let hi = -Infinity;
       for (let q = 0; q < 4; q++) {
-        const v = drawnTopAt(f, X + CQX[q] * Q + (CQX[q] ? -e : e), Y + CQY[q] * Q + (CQY[q] ? -e : e));
+        const v = cornerTop(f, k + CQX[q], j + CQY[q], X + CQX[q] * Q, Y + CQY[q] * Q);
         CUT_LV[q] = v;
         lo = Math.min(lo, v);
         hi = Math.max(hi, v);
       }
       if (!(hi - lo >= 2)) continue;
+      // Each corner high or low by the middle level. A third level a voxel from the high or the low
+      // one (a ledge a voxel under a cliff's top, a step at its foot) goes with it, else the wall
+      // left an axis-aligned slot where it met the ledge (desert-plateau-3); two cliffs in one
+      // column, or two high corners across from each other: as it was.
+      const mid = (hi + lo) / 2;
       let m = 0;
-      let odd = false;
+      let hl = Infinity;
+      let lh = -Infinity;
       for (let q = 0; q < 4; q++) {
-        if (CUT_LV[q] === hi) m |= 1 << q;
-        else if (CUT_LV[q] !== lo) odd = true;
+        if (CUT_LV[q] >= mid) {
+          m |= 1 << q;
+          hl = Math.min(hl, CUT_LV[q]);
+        } else lh = Math.max(lh, CUT_LV[q]);
       }
-      // Three levels in one column, or two high corners across from each other: as it was.
-      if (odd || m === 5 || m === 10) continue;
+      if (hi - hl > 1 || lh - lo > 1 || hl - lh < 2 || m === 5 || m === 10) continue;
       // Where the line crosses each side: one reading of each side of the lattice, so two columns
       // meet on the same point (cutSide).
-      const mid = (hi + lo) / 2;
       for (let a = 0; a < 4; a++) {
         const b = (a + 1) % 4;
         if (((m >> a) & 1) === ((m >> b) & 1)) {
@@ -2986,21 +3103,22 @@ function cutWalls(f: FineCells, sub: number, sx0: number, sy0: number, SW: numbe
           const t = f.top[c];
           const ox = dk + 0.5;
           const oy = dj + 0.5;
-          if (t === CUT_HI[s] && !f.wet[c]) {
-            const dd = (ox - hx) ** 2 + (oy - hy) ** 2;
+          const mid = (CUT_HI[s] + CUT_LO[s]) / 2;
+          if (t >= mid && t <= CUT_HI[s] && !f.wet[c]) {
+            const dd = (ox - hx) ** 2 + (oy - hy) ** 2 + (CUT_HI[s] - t) * 0.01;
             if (dd < hd) {
               hd = dd;
               hs = o;
             }
-          } else if (t === CUT_LO[s] && (!f.wet[c] || f.lava[c])) {
-            const dd = (ox - lx) ** 2 + (oy - ly) ** 2;
+          } else if (t < mid && t >= CUT_LO[s] && (!f.wet[c] || f.lava[c])) {
+            const dd = (ox - lx) ** 2 + (oy - ly) ** 2 + (t - CUT_LO[s]) * 0.01;
             if (dd < ld) {
               ld = dd;
               ls = o;
             }
           }
         }
-      if (hs < 0 || ls < 0 || joins(CUT_HI[s] - CUT_LO[s], f.steep[CELL[hs]] === 1, f.steep[CELL[ls]] === 1) || H[hs] - H[ls] < sub) {
+      if (hs < 0 || ls < 0 || joins(f.top[CELL[hs]] - f.top[CELL[ls]], f.steep[CELL[hs]] === 1, f.steep[CELL[ls]] === 1) || H[hs] - H[ls] < sub) {
         CUT[s] = 0;
         continue;
       }
@@ -3026,8 +3144,27 @@ function cutWalls(f: FineCells, sub: number, sx0: number, sy0: number, SW: numbe
       D[s] = D[ls];
       WEEDS[s] = WEEDS[ls];
       RAISE[s] = RAISE[ls];
+      // Its light between the two sides it is turned between.
+      if (cutLine(s, (sx0 + k) * Q, (sy0 + j) * Q, Q)) {
+        const nx = LN[4];
+        const ny = LN[5];
+        CUT_L[s] = nx * nx * (nx > 0 ? FACE_LIGHT.east : FACE_LIGHT.west) + ny * ny * (ny > 0 ? FACE_LIGHT.south : FACE_LIGHT.north);
+      } else CUT_L[s] = NaN;
     }
   return true;
+}
+// The light of a side of a column no wall crosses that stands in a flat wall (where the wall's line
+// runs along the columns' sides for a column or two): the wall's beside it, so it does not show as
+// a dark seam down the wall (desert-plateau-3); NaN where no crossed column is beside it.
+function besideLight(s: number, d: number, SW: number): number {
+  const p = d === 0 || d === 2 ? SW : 1;
+  const n = s + DX[d] + DY[d] * SW;
+  for (const o of [s - p, s + p, n - p, n + p, s - 2 * p, s + 2 * p, n - 2 * p, n + 2 * p])
+    if (o >= 0 && o < CUT.length && CUT[o] && !Number.isNaN(CUT_L[o]) && CUT_HI[o] - H[o] > 0) {
+      // Facing the same way as the side, within ninety degrees.
+      if (cutLine(o, 0, 0, 1) && LN[4] * DX[d] + LN[5] * DY[d] > 0) return CUT_L[o];
+    }
+  return NaN;
 }
 // The corners of a crossed column's high part, in cells (x, y pairs), in CUT_PT; how many.
 const CUT_PT: number[] = new Array(12).fill(0);
@@ -3288,6 +3425,51 @@ function slantFlush(out: Writer): void {
 // The flat walls: for each crossed column, the strip along its line from its low part's top to its
 // high part's, and where its high part stands above a crossed neighbour's on a side the line
 // crosses, the small step between them on that side's high stretch.
+// The line a wall crosses column s along (its corner at X, Y, width Q): LN its ends (ax, ay, bx,
+// by) taken so the wall faces the low side, its normal (nx, ny), the axis way nearest it and the two
+// sides it crosses; false if it has none.
+const LN = new Float64Array(9);
+function cutLine(s: number, X: number, Y: number, Q: number): boolean {
+  const m = CUT_M[s];
+  let pa = -1;
+  let pb = -1;
+  for (let q = 0; q < 4; q++)
+    if (!Number.isNaN(CUT_T[4 * s + q])) {
+      if (pa < 0) pa = q;
+      else pb = q;
+    }
+  if (pa < 0 || pb < 0) return false;
+  const at = (q: number, xy: 0 | 1) => {
+    const t = CUT_T[4 * s + q];
+    const b = (q + 1) % 4;
+    return xy === 0 ? X + (CQX[q] + (CQX[b] - CQX[q]) * t) * Q : Y + (CQY[q] + (CQY[b] - CQY[q]) * t) * Q;
+  };
+  let ax = at(pa, 0);
+  let ay = at(pa, 1);
+  let bx = at(pb, 0);
+  let by = at(pb, 1);
+  // Facing the low side: toward a low corner.
+  let lq = 0;
+  while ((m >> lq) & 1) lq++;
+  if ((X + CQX[lq] * Q - ax) * (by - ay) - (Y + CQY[lq] * Q - ay) * (bx - ax) < 0) {
+    [ax, bx] = [bx, ax];
+    [ay, by] = [by, ay];
+  }
+  const len = Math.hypot(bx - ax, by - ay);
+  if (len < 1e-6) return false;
+  const nx = (by - ay) / len;
+  const ny = -(bx - ax) / len;
+  LN[0] = ax;
+  LN[1] = ay;
+  LN[2] = bx;
+  LN[3] = by;
+  LN[4] = nx;
+  LN[5] = ny;
+  LN[6] = Math.abs(nx) >= Math.abs(ny) ? (nx > 0 ? 0 : 2) : ny > 0 ? 1 : 3;
+  LN[7] = pa;
+  LN[8] = pb;
+  return true;
+}
 function cutFaces(
   f: FineCells,
   out: Writer,
@@ -3311,40 +3493,21 @@ function cutFaces(
       if (!CUT[s]) continue;
       const X = (sx0 + k) * Q;
       const Y = (sy0 + j) * Q;
+      if (!cutLine(s, X, Y, Q)) continue;
+      const ax = LN[0];
+      const ay = LN[1];
+      const bx = LN[2];
+      const by = LN[3];
+      const d = LN[6];
+      const pa = LN[7];
+      const pb = LN[8];
       const m = CUT_M[s];
-      let pa = -1;
-      let pb = -1;
-      for (let q = 0; q < 4; q++)
-        if (!Number.isNaN(CUT_T[4 * s + q])) {
-          if (pa < 0) pa = q;
-          else pb = q;
-        }
-      if (pa < 0 || pb < 0) continue;
       const at = (q: number, xy: 0 | 1) => {
         const t = CUT_T[4 * s + q];
         const b = (q + 1) % 4;
         return xy === 0 ? X + (CQX[q] + (CQX[b] - CQX[q]) * t) * Q : Y + (CQY[q] + (CQY[b] - CQY[q]) * t) * Q;
       };
-      let ax = at(pa, 0);
-      let ay = at(pa, 1);
-      let bx = at(pb, 0);
-      let by = at(pb, 1);
-      // Facing the low side: toward a low corner.
-      let lq = 0;
-      while ((m >> lq) & 1) lq++;
-      const nxr = by - ay;
-      const nyr = -(bx - ax);
-      if ((X + CQX[lq] * Q - ax) * nxr + (Y + CQY[lq] * Q - ay) * nyr < 0) {
-        [ax, bx] = [bx, ax];
-        [ay, by] = [by, ay];
-      }
-      const len = Math.hypot(bx - ax, by - ay);
-      if (len < 1e-6) continue;
-      const nx = (by - ay) / len;
-      const ny = -(bx - ax) / len;
-      const d = Math.abs(nx) >= Math.abs(ny) ? (nx > 0 ? 0 : 2) : ny > 0 ? 1 : 3;
-      // Its light between the two sides it is turned between.
-      const light = nx * nx * (nx > 0 ? FACE_LIGHT.east : FACE_LIGHT.west) + ny * ny * (ny > 0 ? FACE_LIGHT.south : FACE_LIGHT.north);
+      const light = CUT_L[s];
       const hs = CUT_HS[s];
       const nf = wallFaces(f, d, sx0 + k, sy0 + j, s, SW, sub, grain, blend, out, ox, oz, hs, CUT_HI[s], H[s], false);
       CUT_STATS.strips += nf;
@@ -3368,7 +3531,9 @@ function cutFaces(
         }
         const sf = wallFaces(f, dd, sx0 + k, sy0 + j, s, SW, sub, grain, blend, out, ox, oz, hs, CUT_HI[s], below, false);
         CUT_STATS.steps += sf;
-        slantFaces(sf, cx + ox, cy + oz, tx + ox, ty + oz, 1, sub);
+        // Lit as the wall it closes, not as a side of its own: seen edge on it drew a pale seam
+        // down the wall (desert-plateau-3).
+        slantFaces(sf, cx + ox, cy + oz, tx + ox, ty + oz, light / WALL_LIGHT[dd], sub);
       }
     }
   slantFlush(out);
@@ -3396,6 +3561,7 @@ function wallFaces(
   T = H[s],
   lowIn = H[s + DX[d] + DY[d] * SW],
   extras = true,
+  lightK = 1,
 ): number {
   let low = lowIn;
   if (low >= T) return 0;
@@ -3414,7 +3580,7 @@ function wallFaces(
     low = f.inside[n] ? Math.min(low, f.top[n] * sub) : f.bottom * sub;
   }
   const bottom = f.bottom * sub;
-  const light = WALL_LIGHT[d];
+  const light = WALL_LIGHT[d] * lightK;
   const rocks = GRAPHICS.rocks;
   const foot = low > bottom ? CREASE : 1;
   const alongX = d === 1 || d === 3;

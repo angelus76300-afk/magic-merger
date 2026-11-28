@@ -3060,14 +3060,17 @@ function quadsGeometry(a: QuadArrays): BufferGeometry | null {
     const ny = uz * vx - ux * vz;
     const nz = ux * vy - uy * vx;
     let k = FACE_TOP;
+    // A flat wall turned off the axes (terrain-fine.ts cutWalls) faces the camera from more places
+    // than its way's plane says: its way is always drawn.
+    const slant = Math.abs(ny) < Math.max(Math.abs(nx), Math.abs(nz)) && Math.min(Math.abs(nx), Math.abs(nz)) > 1e-4 * Math.max(Math.abs(nx), Math.abs(nz));
     if (Math.abs(nx) > Math.abs(ny) && Math.abs(nx) >= Math.abs(nz)) {
       k = nx > 0 ? FACE_EAST : FACE_WEST;
-      if (nx > 0) planes.e = Math.min(planes.e, p[o]);
-      else planes.w = Math.max(planes.w, p[o]);
+      if (nx > 0) planes.e = slant ? -Infinity : Math.min(planes.e, p[o]);
+      else planes.w = slant ? Infinity : Math.max(planes.w, p[o]);
     } else if (Math.abs(nz) > Math.abs(ny)) {
       k = nz > 0 ? FACE_SOUTH : FACE_NORTH;
-      if (nz > 0) planes.s = Math.min(planes.s, p[o + 2]);
-      else planes.n = Math.max(planes.n, p[o + 2]);
+      if (nz > 0) planes.s = slant ? -Infinity : Math.min(planes.s, p[o + 2]);
+      else planes.n = slant ? Infinity : Math.max(planes.n, p[o + 2]);
     } else if (ny < 0) {
       k = FACE_BOTTOM;
       planes.b = Math.max(planes.b, p[o + 1]);

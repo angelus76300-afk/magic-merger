@@ -652,8 +652,11 @@ export function cliffOutlineChecks(check: Check): void {
   );
   const lOn = x.lava.filter((r) => r.mode === "outline");
   check(
-    "cliff outline: at a cliff's foot in lava, the rock may fill the lava's corner but no column of the cliff becomes lava",
-    lOn.every((r) => r.cut === 0 && r.fill > 0),
+    "cliff outline: at a cliff's foot in lava, the rock fills the lava's corners to the steps' outer line (half main's teeth or fewer) and no column of the cliff becomes lava",
+    lOn.every((r) => {
+      const m = x.lava.find((v) => v.mode === "main" && v.sub === r.sub);
+      return r.cut === 0 && r.fill > 0 && m !== undefined && r.teeth * 2 <= m.teeth && r.rms < m.rms;
+    }),
     x.lava.map((r) => `${r.mode} sub ${r.sub}: RMS ${r.rms.toFixed(3)}, ${r.teeth} teeth, ${r.cut} cut, ${r.fill} filled`).join("; "),
   );
   // The tan strips of 26 November (scripts/cliff-corner-test.ts), with the outline on.
