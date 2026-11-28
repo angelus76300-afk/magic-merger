@@ -1,18 +1,22 @@
-// Cliffs on their own line (27 November, the owner: "cliffs: rebuild"; terrain-fine.ts cliffOutline,
-// a prototype off in the game). The Perf Lab on high, held still as made (still=1), each island
-// drawn three ways with the same cameras: "off" (cliffs on the cells' sides, CLIFF_CORNER off),
-// "main" (the game today, cliffCorner) and "outline" (cliffOutline on); the mesa also "sharp"
-// (outline with CLIFF_OUTLINE.sharpRun 3). The camera target on each island is found by a scan of
-// its cliffs for the longest off-axis run of at least 6 cells (a cliff between cells that do not
-// join, more than 15 degrees off the axes, straight within 0.9 cell). Three cameras: "above"
-// (phi 0.5, as the owner's screenshots), "play" (the play angle, close), "eye" (the eye view at the
-// cliff's foot, looking at it). At 390 by 844 and 344 by 882. On each island at 390 by 844 it also
-// measures, from the tops the fine land drew (Terrain.drawnTop): the lip's RMS distance from the
-// run's line and its teeth (straight runs along an axis more than two columns longer than a true
-// line's steps at that angle, at least 0.3 cell), the land's triangles in view and the fine tiles'
-// build time. Writes <out>/<island>-<camera>-<mode>-<size>.png and <out>/cliff-frames.json.
+// Cliffs on their own line (27 November, the owner: "cliffs: rebuild", then "cliffs: flat walls";
+// terrain-fine.ts cliffOutline). The Perf Lab on high, held still as made (still=1), each island
+// drawn four ways with the same cameras: "off" (cliffs on the cells' sides, CLIFF_CORNER off),
+// "main" (cliffCorner, the game before the outline), "prototype" (the outline with neither flat
+// walls nor sharp corners, as on 27 November) and "walls" (the outline with the game's settings:
+// sharp corners and flat walls). The camera target on each island is found by a scan of its cliffs
+// for the longest off-axis run of at least 6 cells (a cliff between cells that do not join, more
+// than 15 degrees off the axes, straight within 0.9 cell). Four cameras: "above" (phi 0.5, as the
+// owner's screenshots), "play" (the play angle, close), "eye" (the eye view at the cliff's foot,
+// looking at it) and "close" (a wall from a few cells away). At the sizes of SIZES (default 390 by
+// 844 and 344 by 882). On each island at 390 by 844 it also measures, from the tops the fine land
+// drew (Terrain.drawnTop): the lip's RMS distance from the run's line and its teeth (straight runs
+// along an axis more than two columns longer than a true line's steps at that angle, at least 0.3
+// cell), the land's triangles in view and the fine tiles' build time. Writes
+// <out>/<island>-<camera>-<mode>-<size>.png and <out>/cliff-frames.json.
 //
 // SHOTS=island:camera,... draws only those; MODES=off,main,... and SIZES=390x844 limit the rest.
+// BENCH=60 also times that many frames at 344 by 882 (the Z Fold folded) from the eye camera and a
+// wide shot of the island (bench below), into cliff-frames.json's "bench" rows.
 //
 //   npx vite --port 5174 &
 //   NODE_PATH=$(npm root -g) node scripts/cliff-frames.mjs <out dir>
@@ -211,6 +215,19 @@ function measure(run) {
   const ny = (y1 - y0) * sub;
   // Column (i, j): high (1), low (0), outside the run's band (-1).
   const g = new Int8Array(nx * ny);
+  // Terrain.drawnTop, but on a lava cell too: a cliff into lava fills the lava's cells with rock
+  // columns (drawnTop is NaN on every wet cell, which counted them as low).
+  const top = (x, y) => {
+    const i = Math.floor(y) * W + Math.floor(x);
+    if (!t.wet[i]) return t.drawnTop(x, y);
+    const c = Math.floor(Math.floor(y) / 32) * t.cols + Math.floor(Math.floor(x) / 32);
+    const f = t.fineTops[c];
+    if (!f || !t.fineShown[c]) return NaN;
+    const s = t.fineLevel[c];
+    const sx = (Math.floor(x) - f.x0) * s + Math.min(s - 1, Math.floor((x - Math.floor(x)) * s));
+    const sy = (Math.floor(y) - f.y0) * s + Math.min(s - 1, Math.floor((y - Math.floor(y)) * s));
+    return f.h[sy * f.stride + sx] / s;
+  };
   for (let j = 0; j < ny; j++)
     for (let i = 0; i < nx; i++) {
       const px = x0 + (i + 0.5) * Q;
@@ -221,7 +238,7 @@ function measure(run) {
         g[j * nx + i] = -1;
         continue;
       }
-      const h = t.drawnTop(px, py);
+      const h = top(px, py);
       g[j * nx + i] = Number.isNaN(h) ? 0 : h >= level ? 1 : 0;
     }
   const mids = [];
@@ -313,6 +330,33 @@ async function shoot(page, cam) {
   }, cam);
 }
 
+// Frame time with the camera held: n frames drawn, each waited for (a one pixel read back), ms
+// p50 / p95 of the draw (JavaScript) and of the whole frame, and the triangles drawn.
+async function bench(page, cam, n) {
+  await shoot(page, cam);
+  return page.evaluate((n) => {
+    const e = window.__engine;
+    const gl = e.view.renderer.getContext();
+    const px = new Uint8Array(4);
+    const draw = [];
+    const frame = [];
+    for (let f = 0; f < n; f++) {
+      const t0 = performance.now();
+      e.render(1 / 30);
+      const t1 = performance.now();
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      draw.push(t1 - t0);
+      frame.push(performance.now() - t0);
+    }
+    const pick = (a) => {
+      const s = [...a].sort((x, y) => x - y);
+      const at = (p) => +s[Math.min(s.length - 1, Math.floor(p * s.length))].toFixed(1);
+      return [at(0.5), at(0.95)];
+    };
+    return { frames: n, draw: pick(draw), frame: pick(frame), triangles: e.view.counts().triangles };
+  }, n);
+}
+
 function cameras(run, groundAt) {
   // Every point a camera stands on or looks at is a cell's middle, which no mode moves: the same
   // ground under it in each mode, so the frames line up (the orbit eases to groundAt of its target).
@@ -362,6 +406,18 @@ try {
           const file = join(OUT, `${name}-${cam}-${mode}-${width}.png`);
           writeFileSync(file, Buffer.from(png.split(",")[1], "base64"));
           console.log(file);
+        }
+        if (process.env.BENCH && width === 344) {
+          const all = cameras(run, foot);
+          const eye = all.find(([c]) => c === "eye")[1];
+          const wide = { ...all.find(([c]) => c === "play")[1], dist: 60 };
+          for (const [cam, c] of [
+            ["eye", eye],
+            ["wide", wide],
+          ]) {
+            rows.push({ bench: true, name, mode, cam, size: `${width}x${height}`, ...(await bench(page, c, Number(process.env.BENCH))) });
+            console.log(JSON.stringify(rows.at(-1)));
+          }
         }
         // Measured once, at the phone's size, after the play camera's chunks (close, in eighths).
         if (width === SIZES[0][0]) {

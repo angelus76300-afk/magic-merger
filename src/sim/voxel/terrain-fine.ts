@@ -2996,13 +2996,18 @@ function cutWalls(f: FineCells, sub: number, sx0: number, sy0: number, SW: numbe
       const c = CELL[s];
       if (c < 0 || !f.natural[c] || FLOOD[s] >= 0 || WALLC[s] !== c || (f.wet[c] && !f.lava[c])) continue;
       const t = f.top[c];
+      // A mesa keeps its cells' outline (easePass), so its walls stay on the cells' sides: a column
+      // beside a mesa's cell is not cut, else its corners took a bevel a column wide (28 November).
       let near = false;
-      for (let dj = -1; dj <= 1 && !near; dj++)
+      let mesa = f.square[c] === 1;
+      for (let dj = -1; dj <= 1; dj++)
         for (let dk = -1; dk <= 1; dk++) {
           const m = CELL[s + dj * SW + dk];
-          if (m >= 0 && Math.abs(f.top[m] - t) >= 2) near = true;
+          if (m < 0) continue;
+          if (Math.abs(f.top[m] - t) >= 2) near = true;
+          if (f.square[m] === 1) mesa = true;
         }
-      if (!near) continue;
+      if (!near || mesa) continue;
       const X = (sx0 + k) * Q;
       const Y = (sy0 + j) * Q;
       let lo = Infinity;
